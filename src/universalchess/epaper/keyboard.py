@@ -198,6 +198,7 @@ class KeyboardWidget(Widget):
             if self.text:
                 self.text = self.text[:-1]
                 board.beep(board.SOUND_GENERAL)
+                self.invalidate_cache()
                 self.request_update(full=False)
             else:
                 # Empty text - cancel
@@ -217,6 +218,7 @@ class KeyboardWidget(Widget):
             if self.current_page > 1:
                 self.current_page -= 1
                 board.beep(board.SOUND_GENERAL)
+                self.invalidate_cache()
                 self.request_update(full=False)
             return True
         
@@ -224,6 +226,7 @@ class KeyboardWidget(Widget):
             if self.current_page < self.max_pages:
                 self.current_page += 1
                 board.beep(board.SOUND_GENERAL)
+                self.invalidate_cache()
                 self.request_update(full=False)
             return True
         
@@ -263,6 +266,7 @@ class KeyboardWidget(Widget):
                     board.beep(board.SOUND_GENERAL)
                 except ImportError:
                     pass
+                self.invalidate_cache()
                 self.request_update(full=False)
                 return True
         
