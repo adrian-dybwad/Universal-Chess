@@ -202,8 +202,7 @@ class BluetoothStatusWidget(Widget):
     def _on_bluetooth_change(self) -> None:
         """Called when Bluetooth state changes."""
         self.visible = self._state.bt_enabled
-        self.invalidate_cache()
-        self.request_update(full=False)
+        self.invalidate_and_update()
     
     def stop(self) -> None:
         """Unregister from state."""

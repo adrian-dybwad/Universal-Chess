@@ -72,9 +72,7 @@ class ClockWidget(Widget):
                 # Check if time has changed
                 if current_time_str != self._last_rendered_time:
                     self._last_rendered_time = current_time_str
-                    # Invalidate cache and request update
-                    self.invalidate_cache()
-                    self.request_update(full=False)
+                    self.invalidate_and_update()
                 
                 # Sleep for 0.1 seconds using interruptible wait
                 # This allows the thread to stop quickly when requested

@@ -86,8 +86,7 @@ class ChessBoardWidget(Widget):
         new_fen = self._game_state.fen
         if self.fen != new_fen:
             self.fen = new_fen
-            self.invalidate_cache()
-            self.request_update(full=False)
+            self.invalidate_and_update()
     
     def cleanup(self) -> None:
         """Unsubscribe from game state when widget is destroyed."""
@@ -189,9 +188,7 @@ class ChessBoardWidget(Widget):
         """Update the FEN string."""
         if self.fen != fen:
             self.fen = fen
-            self.invalidate_cache()
-            # Trigger update if scheduler is available
-            self.request_update(full=False)
+            self.invalidate_and_update()
     
     def set_flip(self, flip: bool) -> None:
         """Set board flip state (whether to render from black's perspective).
@@ -201,8 +198,7 @@ class ChessBoardWidget(Widget):
         """
         if self.flip != flip:
             self.flip = flip
-            self.invalidate_cache()
-            self.request_update(full=False)
+            self.invalidate_and_update()
     
     def set_max_square_index(self, max_index: int) -> None:
         """Set maximum square index to render (0-64). Used for incremental rendering."""

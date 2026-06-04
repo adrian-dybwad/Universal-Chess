@@ -93,13 +93,11 @@ class GameAnalysisWidget(Widget):
     
     def _on_score_change(self) -> None:
         """Handle score change from analysis state."""
-        self.invalidate_cache()
-        self.request_update(full=False)
-    
+        self.invalidate_and_update()
+
     def _on_history_change(self) -> None:
         """Handle history change from analysis state."""
-        self.invalidate_cache()
-        self.request_update(full=False)
+        self.invalidate_and_update()
     
     def set_show_graph(self, show: bool) -> None:
         """Set whether to show the history graph.
@@ -109,8 +107,7 @@ class GameAnalysisWidget(Widget):
         """
         if self._show_graph != show:
             self._show_graph = show
-            self.invalidate_cache()
-            self.request_update()
+            self.invalidate_and_update()
     
     def _handle_child_update(self, full: bool = False, immediate: bool = False):
         """Handle update requests from child widgets by forwarding to parent callback."""

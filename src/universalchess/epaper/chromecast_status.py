@@ -41,8 +41,7 @@ class ChromecastStatusWidget(Widget):
     def _on_state_changed(self) -> None:
         """Called by the state when it changes."""
         self.visible = self._state.is_active
-        self.invalidate_cache()
-        self.request_update(full=False)
+        self.invalidate_and_update()
     
     def stop(self) -> None:
         """Stop the widget (unregister from state).

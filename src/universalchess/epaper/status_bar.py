@@ -122,8 +122,7 @@ class StatusBarWidget(Widget):
         Returns:
             Future that completes when the display refresh finishes.
         """
-        self.invalidate_cache()
-        return self.request_update(full=full)
+        return self.invalidate_and_update(full=full)
     
     def stop(self) -> None:
         """Stop all child widgets and perform cleanup."""

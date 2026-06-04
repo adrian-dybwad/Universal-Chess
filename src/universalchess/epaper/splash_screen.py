@@ -133,9 +133,7 @@ class SplashScreen(Widget):
         log.info(f"[Startup] {message}")
         log.info("=" * 60)
         
-        # Invalidate our sprite cache and request update
-        self.invalidate_cache()
-        self.request_update(full=False)
+        self.invalidate_and_update()
     
     def render(self, sprite: Image.Image) -> None:
         """Render the splash screen with knight logo, UNIVERSAL text, and message.

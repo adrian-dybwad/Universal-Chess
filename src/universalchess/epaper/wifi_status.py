@@ -40,8 +40,7 @@ class WiFiStatusWidget(Widget):
     def _on_wifi_change(self) -> None:
         """Called when WiFi state changes."""
         self.visible = self._state.wifi_enabled
-        self.invalidate_cache()
-        self.request_update(full=False)
+        self.invalidate_and_update()
     
     def stop(self) -> None:
         """Unregister from state."""

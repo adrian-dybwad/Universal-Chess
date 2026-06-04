@@ -198,10 +198,8 @@ class GameOverWidget(Widget):
                 changed = True
         
         if changed:
-            self.invalidate_cache()
-            # Only request update if we're visible
-            if self.visible:
-                self.request_update(full=False)
+            # request_update() no-ops while hidden, so this is safe when not visible.
+            self.invalidate_and_update()
     
     def set_final_times(self, white_seconds: int, black_seconds: int) -> None:
         """Set the final times for display.
@@ -215,9 +213,8 @@ class GameOverWidget(Widget):
         if self.white_time != white_seconds or self.black_time != black_seconds:
             self.white_time = white_seconds
             self.black_time = black_seconds
-            self.invalidate_cache()
-            if self.visible:
-                self.request_update(full=False)
+            # request_update() no-ops while hidden, so this is safe when not visible.
+            self.invalidate_and_update()
     
     def show(self) -> None:
         """Show game over widget and turn off LEDs.

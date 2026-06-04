@@ -146,6 +146,13 @@ class Widget(ABC):
         Note:
             Widgets should NOT call the scheduler directly. The Manager must
             render all widgets first before submitting to ensure consistent state.
+
+            request_update() only triggers the (global) refresh; it does NOT
+            invalidate this widget's sprite cache. For the common case where the
+            widget's own content changed, use invalidate_and_update(), which
+            pairs invalidate_cache() with this call. Keep them separate when
+            either is needed alone: invalidate_cache() to defer the refresh, or
+            request_update() to refresh without re-rendering this widget.
         """
         # Ignore update requests from hidden widgets (unless forced)
         if not self.visible and not forced:
@@ -158,6 +165,35 @@ class Widget(ABC):
             log.debug(f"Widget.request_update(): {self.__class__.__name__} id={id(self)} requesting partial update")
         
         return self._update_callback(full, immediate)
+
+    def invalidate_and_update(self, full: bool = False, forced: bool = False, immediate: bool = False):
+        """Invalidate this widget's sprite cache, then request a display refresh.
+
+        Convenience for the common case where a widget's OWN content changed and
+        it needs to be re-rendered and shown. Equivalent to calling
+        invalidate_cache() followed by request_update(full, forced, immediate).
+
+        Invalidation happens first, before request_update()'s visibility check,
+        so the cache is cleared even if the request is suppressed for a hidden,
+        non-forced widget (it then re-renders fresh when next shown).
+
+        Use the primitives directly when only one is needed:
+        - invalidate_cache() alone to batch several state changes before a single
+          coordinated refresh (e.g. the chess board's reveal setters).
+        - request_update() alone to refresh without re-rendering this widget
+          (e.g. forwarding a child widget's change).
+
+        Args:
+            full: If True, force a full refresh instead of partial.
+            forced: If True, ignore the visibility check (used by show/hide).
+            immediate: If True, wake the scheduler immediately (bypass batching).
+
+        Returns:
+            Future: request_update()'s result (None if the widget is hidden and
+            not forced).
+        """
+        self.invalidate_cache()
+        return self.request_update(full=full, forced=forced, immediate=immediate)
     
     def set_background_shade(self, shade: int) -> None:
         """Set the background shade level.
@@ -168,8 +204,7 @@ class Widget(ABC):
         shade = max(0, min(16, shade))
         if shade != self._background_shade:
             self._background_shade = shade
-            self.invalidate_cache()
-            self.request_update(full=False)
+            self.invalidate_and_update()
     
     def invalidate_cache(self) -> None:
         """Invalidate the cached sprite, forcing re-render on next draw.
@@ -261,9 +296,8 @@ class Widget(ABC):
         """
         if not self.visible:
             self.visible = True
-            self.invalidate_cache()  # Force re-render
             log.info(f"Widget.show(): {self.__class__.__name__} id={id(self)} now visible")
-            self.request_update(full=False, forced=True)
+            self.invalidate_and_update(forced=True)
     
     def hide(self) -> None:
         """Hide the widget (make it invisible).
@@ -276,9 +310,8 @@ class Widget(ABC):
         """
         if self.visible:
             self.visible = False
-            self.invalidate_cache()
             log.info(f"Widget.hide(): {self.__class__.__name__} id={id(self)} now hidden")
-            self.request_update(full=False, forced=True)
+            self.invalidate_and_update(forced=True)
     
     def stop(self) -> None:
         """Stop the widget and perform cleanup tasks.

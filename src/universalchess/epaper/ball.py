@@ -18,8 +18,7 @@ class BallWidget(Widget):
         if self.x != x or self.y != y:
             self.x = x
             self.y = y
-            self.invalidate_cache()
-            self.request_update(full=False)
+            self.invalidate_and_update()
     
     def get_mask(self) -> Image.Image:
         """Get mask for transparent compositing."""

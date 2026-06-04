@@ -374,8 +374,7 @@ class IconMenuWidget(Widget):
                 actual_idx = visible_start + vis_idx
                 button.set_selected(actual_idx == self.selected_index)
         
-        self.invalidate_cache()
-        self.request_update(full=False, immediate=True)
+        self.invalidate_and_update(immediate=True)
     
     def get_selected_key(self) -> Optional[str]:
         """Get the key of the currently selected entry.
@@ -511,8 +510,7 @@ class IconMenuWidget(Widget):
         # is not in the visible scroll region
         if self._ensure_selection_visible():
             self._create_buttons()
-            self.invalidate_cache()
-            self.request_update(full=False)
+            self.invalidate_and_update()
         
         # Activate key handling
         self.activate()

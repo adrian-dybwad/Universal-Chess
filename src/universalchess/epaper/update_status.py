@@ -91,8 +91,7 @@ class UpdateStatusWidget(Widget):
             self._has_pending = False
             self.visible = False
         
-        self.invalidate_cache()
-        self.request_update(full=False)
+        self.invalidate_and_update()
     
     def stop(self) -> None:
         """Unregister from update service."""

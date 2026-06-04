@@ -84,8 +84,7 @@ class InstallStatusWidget(Widget):
             if not self._installing:
                 self.visible = True  # Show that something is queued
         
-        self.invalidate_cache()
-        self.request_update(full=False)
+        self.invalidate_and_update()
     
     def stop(self) -> None:
         """Unregister from engine manager."""

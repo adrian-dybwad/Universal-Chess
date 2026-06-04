@@ -131,13 +131,11 @@ class ChessClockWidget(Widget):
     
     def _on_clock_state_change(self) -> None:
         """Called when ChessClockState changes (times, running state)."""
-        self.invalidate_cache()
-        self.request_update(full=False)
+        self.invalidate_and_update()
     
     def _on_clock_tick(self) -> None:
         """Called every second when clock is running."""
-        self.invalidate_cache()
-        self.request_update(full=False)
+        self.invalidate_and_update()
     
     def _on_game_state_change(self) -> None:
         """Called when ChessGameState changes (turn changes after moves).
@@ -151,8 +149,7 @@ class ChessClockWidget(Widget):
             log.debug("[ChessClockWidget] Game reset detected - showing clock")
             self.show()
         
-        self.invalidate_cache()
-        self.request_update(full=False)
+        self.invalidate_and_update()
 
     def _on_game_over(self, result: str, termination: str) -> None:
         """Called when game ends (checkmate, resignation, flag, etc.).
@@ -173,8 +170,7 @@ class ChessClockWidget(Widget):
             white_name: New white player name.
             black_name: New black player name.
         """
-        self.invalidate_cache()
-        self.request_update(full=False)
+        self.invalidate_and_update()
 
     def stop(self) -> None:
         """Called when widget is removed from display.
@@ -203,8 +199,7 @@ class ChessClockWidget(Widget):
         """Set timed mode."""
         if self._timed_mode != value:
             self._timed_mode = value
-            self.invalidate_cache()
-            self.request_update(full=False)
+            self.invalidate_and_update()
     
     @property
     def white_time(self) -> int:
@@ -263,13 +258,11 @@ class ChessClockWidget(Widget):
         if color == 'white':
             if self._white_brain_hint != hint:
                 self._white_brain_hint = hint
-                self.invalidate_cache()
-                self.request_update(full=False)
+                self.invalidate_and_update()
         elif color == 'black':
             if self._black_brain_hint != hint:
                 self._black_brain_hint = hint
-                self.invalidate_cache()
-                self.request_update(full=False)
+                self.invalidate_and_update()
     
     def clear_brain_hint(self, color: str) -> None:
         """Clear the brain hint for a player.

@@ -34,8 +34,7 @@ class BatteryWidget(Widget):
     
     def _on_battery_change(self) -> None:
         """Called when battery state changes."""
-        self.invalidate_cache()
-        self.request_update(full=False)
+        self.invalidate_and_update()
     
     def start(self) -> None:
         """No-op. Polling is handled by SystemPollingService."""
