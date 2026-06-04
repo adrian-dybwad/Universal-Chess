@@ -30,6 +30,12 @@ class Scheduler:
     
     # Maximum queue size - when full, oldest items are dropped to make room for new ones
     QUEUE_MAX_SIZE = 5
+
+    # Seconds of inactivity after which the panel is parked in deep sleep to make
+    # it robust against light-induced darkening (see EPD.idle_sleep). Long enough
+    # not to interfere with normal navigation, short enough that a display left
+    # unattended settles quickly. Waking costs a reset+Clear, so this is a balance.
+    IDLE_SLEEP_SECONDS = 20.0
     
     def __init__(self, framebuffer: FrameBuffer, epd: EPD, on_display_updated=None):
         self._framebuffer = framebuffer
@@ -43,6 +49,9 @@ class Scheduler:
         self._partial_refresh_count = 0
         self._in_partial_mode = False  # Track if display is in partial refresh mode
         self._on_display_updated = on_display_updated  # Callback after display update
+        self._idle_sleep_seconds = self.IDLE_SLEEP_SECONDS
+        self._last_activity = None  # monotonic time of last refresh; None until first refresh
+        self._deep_asleep = False  # True while the panel is parked in idle deep sleep
     
     def start(self) -> None:
         """Start the refresh scheduler thread."""
@@ -131,6 +140,51 @@ class Scheduler:
                 future.set_result("queue-full")
         return future
     
+    def _mark_activity(self) -> None:
+        """Record that a refresh just happened, resetting the idle-sleep timer."""
+        self._last_activity = time.monotonic()
+
+    def _should_idle_sleep(self, now: float) -> bool:
+        """Return True if the panel is due to be parked in idle deep sleep.
+
+        Requires that at least one refresh has occurred (_last_activity set), the
+        panel is not already parked, and the inactivity threshold has elapsed.
+        """
+        if self._deep_asleep:
+            return False
+        if self._last_activity is None:
+            return False
+        return (now - self._last_activity) >= self._idle_sleep_seconds
+
+    def _enter_idle_sleep(self) -> None:
+        """Park the panel in deep sleep and force the next draw to re-init.
+
+        Setting _in_partial_mode False (and resetting the partial count) makes the
+        next refresh run its init() transition, whose reset() wakes the panel from
+        deep sleep. Errors are swallowed during shutdown races (SPI may be closing).
+        """
+        try:
+            self._epd.idle_sleep()
+        except Exception as e:
+            error_msg = str(e).lower()
+            is_shutdown_error = 'closed' in error_msg or 'uninitialized' in error_msg or 'gpio' in error_msg
+            if not self._stop_event.is_set() and not is_shutdown_error:
+                log.error(f"ERROR entering idle sleep: {e}")
+            return
+        self._deep_asleep = True
+        self._in_partial_mode = False
+        self._partial_refresh_count = 0
+        log.debug("Scheduler: panel parked in idle deep sleep")
+
+    def _maybe_idle_sleep(self, now: Optional[float] = None) -> None:
+        """Park the panel if it has been idle past the threshold."""
+        if self._stop_event.is_set():
+            return
+        if now is None:
+            now = time.monotonic()
+        if self._should_idle_sleep(now):
+            self._enter_idle_sleep()
+
     def _run(self) -> None:
         """Main scheduler loop."""
         while not self._stop_event.is_set():
@@ -162,6 +216,9 @@ class Scheduler:
                 
                 if batch:
                     self._process_batch(batch)
+                else:
+                    # No work this tick: park the panel if it has gone idle.
+                    self._maybe_idle_sleep()
                     
             except Exception as e:
                 log.error(f"ERROR in refresh scheduler: {e}")
@@ -206,11 +263,14 @@ class Scheduler:
             return
         
         try:
-            # Only re-initialize if we're transitioning from partial mode to full mode
-            if self._in_partial_mode:
-                log.debug(f"Scheduler._execute_full_refresh_single(): Transitioning from PARTIAL to FULL mode")
+            # Re-initialize when transitioning from partial mode, OR when waking the
+            # panel from idle deep sleep. init() calls reset(), which is what exits
+            # deep sleep; without it display() would write to an unresponsive panel.
+            if self._in_partial_mode or self._deep_asleep:
+                log.debug(f"Scheduler._execute_full_refresh_single(): init() (partial->full or wake from idle sleep)")
                 self._epd.init()
                 self._in_partial_mode = False
+                self._deep_asleep = False
             
             # Use provided image if available, otherwise take snapshot from framebuffer
             if image is not None:
@@ -222,6 +282,7 @@ class Scheduler:
             log.debug(f"Scheduler: Sending FULL refresh to display")
             self._epd.display(buf)
             self._partial_refresh_count = 0
+            self._mark_activity()
             
             # Invoke callback after successful display update
             if self._on_display_updated:
@@ -251,21 +312,24 @@ class Scheduler:
             return
         
         try:
-            # CRITICAL: Before first partial refresh after full refresh, we must reset and clear
-            # the display to establish a known state, exactly like the sample code does.
-            if not self._in_partial_mode:
+            # CRITICAL: Before first partial refresh after full refresh -- or when
+            # waking from idle deep sleep -- we must reset and clear the display to
+            # establish a known state, exactly like the sample code does. init()
+            # calls reset(), which is what exits deep sleep.
+            if not self._in_partial_mode or self._deep_asleep:
                 # Check again before using hardware (might have been shut down while processing)
                 if self._stop_event.is_set():
                     if not future.done():
                         future.set_result("shutdown")
                     return
                 
-                # We're transitioning from full mode to partial mode
+                # We're transitioning to partial mode (from full mode or idle sleep).
                 # Reset and clear to establish known state (matches sample code pattern exactly)
                 log.debug(f"Scheduler._execute_partial_refresh_single(): Transitioning to partial mode (calling init() and Clear())")
                 self._epd.init()
                 self._epd.Clear()
                 self._in_partial_mode = True
+                self._deep_asleep = False
                 log.debug(f"Scheduler._execute_partial_refresh_single(): Transition complete, _in_partial_mode is now True")
             
             # Use provided image or take snapshot from framebuffer
@@ -286,6 +350,7 @@ class Scheduler:
             self._epd.DisplayPartial(buf)
             
             self._partial_refresh_count += 1
+            self._mark_activity()
             
             # Invoke callback after successful display update
             if self._on_display_updated:

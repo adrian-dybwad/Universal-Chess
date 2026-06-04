@@ -151,6 +151,15 @@ class EPD:
         self.send_command(0x12)
         epdconfig.delay_ms(10)
         self.ReadBusy()
+        # Park the panel after the refresh settles: power off the DC-DC booster
+        # and source/gate drivers (0x02). The e-ink image is bistable and holds
+        # without active bias, and an unpowered panel is not disturbed by bright
+        # or IR-rich light (phone flashlight, sunlight) which otherwise photo-
+        # induces leakage in the panel TFTs and darkens the image. Every refresh
+        # path re-powers the panel (0x04) before driving, so this is reversible
+        # without a hardware reset (unlike deep sleep 0x07/0xA5).
+        self.send_command(0x02)
+        self.ReadBusy()
         
     def init(self):
         if (epdconfig.module_init() != 0):
@@ -238,6 +247,10 @@ class EPD:
         return buf
 
     def display(self, image):
+        # Wake the panel in case it was parked (powered off) after a prior
+        # refresh. Harmless if init() already powered it on this cycle.
+        self.send_command(0x04)
+        self.ReadBusy()
         self.send_command(0x10)
         self.send_data2([0x00] * int(self.width * self.height / 8))
         epdconfig.delay_ms(10)
@@ -301,6 +314,10 @@ class EPD:
 
     def Clear(self):
         print("Clearing display")
+        # Wake the panel in case it was parked (powered off) after a prior
+        # refresh. Harmless if init() already powered it on this cycle.
+        self.send_command(0x04)
+        self.ReadBusy()
         self.send_command(0x10)
         self.send_data2([0x00] * int(self.width * self.height / 8))
         epdconfig.delay_ms(10)
@@ -322,3 +339,27 @@ class EPD:
         self.send_data(0xA5)
         epdconfig.delay_ms(2000)
         epdconfig.module_exit()
+
+    def idle_sleep(self):
+        """Park the panel in the fully-settled deep-sleep state during inactivity.
+
+        Emits the same panel sequence as sleep() -- VCOM/border settle (0x50/0xf7),
+        power off (0x02), deep sleep (0x07/0xA5) -- which settles the pixels into a
+        stable bistable state. Unlike sleep(), this does NOT call module_exit(): the
+        SPI/GPIO handles stay open so the scheduler can wake the panel via the
+        existing init() transition (init() calls reset(), which is what exits deep
+        sleep). Keeping SPI open also avoids a double-close at shutdown.
+
+        This hardens the display against the light-induced darkening that occurs
+        when an e-ink panel is left un-settled: a bright/IR source (phone flashlight,
+        sunlight) photo-discharges un-settled pixels, and with no controller running
+        the image drifts dark. The settled deep-sleep state resists this even after a
+        hard power cut. The shorter delay (vs sleep()'s 2000 ms) is sufficient because
+        power is not being removed.
+        """
+        self.send_command(0X50)
+        self.send_data(0xf7)
+        self.send_command(0X02)
+        self.send_command(0X07)
+        self.send_data(0xA5)
+        epdconfig.delay_ms(100)
