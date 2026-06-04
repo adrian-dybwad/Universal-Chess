@@ -3251,30 +3251,21 @@ def main():
             )
             log.info("[Main] BleManager created")
             
-            # Initialize D-Bus mainloop for BleManager
+            # Create the GLib mainloop here (on the main thread) so that
+            # cleanup_and_exit() can reference the `mainloop` global to quit it.
             log.info("[Main] Creating GLib.MainLoop...")
             mainloop = GLib.MainLoop()
             log.info("[Main] GLib.MainLoop created")
-            
-            log.info("[Main] Starting BLE manager...")
-            if not ble_manager.start(mainloop):
-                log.error("[Main] Failed to start BLE manager")
-                sys.exit(1)
-            
-            log.info("[Main] BLE manager started successfully")
-            
-            # Start GLib mainloop in background thread
-            def ble_mainloop():
-                log.info("[BLE] Mainloop thread starting...")
-                try:
-                    mainloop.run()
-                    log.info("[BLE] Mainloop exited normally")
-                except Exception as e:
-                    log.error(f"[BLE] Error in mainloop: {e}", exc_info=True)
-            
-            ble_thread = threading.Thread(target=ble_mainloop, daemon=True)
-            ble_thread.start()
-            log.info("[Main] BLE mainloop thread started")
+
+            # Bring BLE up off the startup critical path. ble_manager.start()
+            # blocks for ~15s in BlueZ adapter-security calls (btmgmt stalls while
+            # bluetoothd owns the management socket); running it inline froze the
+            # splash on the "BLE..." stage. start_async() runs the identical setup
+            # plus the mainloop on a background daemon thread, so the menu appears
+            # immediately while BLE finishes initializing.
+            log.info("[Main] Starting BLE manager (async)...")
+            ble_manager.start_async(mainloop)
+            log.info("[Main] BLE setup/mainloop thread started")
         except Exception as e:
             log.error(f"[Main] Failed to initialize BLE: {e}", exc_info=True)
             raise

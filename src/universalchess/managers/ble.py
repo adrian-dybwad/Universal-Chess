@@ -40,6 +40,7 @@ Usage:
 """
 
 import subprocess
+import threading
 import dbus
 import dbus.service
 import dbus.mainloop.glib
@@ -398,7 +399,58 @@ class BleManager:
         
         log.info("[BleManager] Started successfully")
         return True
-    
+
+    def start_async(self, mainloop: GLib.MainLoop = None) -> threading.Thread:
+        """Run start() and the GLib mainloop on a background daemon thread.
+
+        start() blocks for ~15s in configure_adapter_security() -- three
+        `btmgmt` calls that stall while bluetoothd owns the management socket --
+        before the (fast) D-Bus/agent/GATT/advertisement registration. Calling
+        start() inline on the application startup path froze the splash for that
+        whole period. This method performs the IDENTICAL work (same start() call
+        with the same mainloop, then mainloop.run()) but on a dedicated thread,
+        returning immediately so the caller can continue bringing up the UI.
+
+        Behavior notes:
+        - Adapter state, pairing, advertising and GATT registration are
+          unchanged; only the thread on which the bring-up runs differs.
+        - Running start() and mainloop.run() on the SAME thread is also more
+          correct than the previous split (bus created on the main thread,
+          mainloop run on another): the D-Bus async reply handlers now fire on
+          the thread that owns the bus and mainloop.
+        - If start() returns False or raises, the mainloop is NOT run and the
+          error is logged. Unlike the previous inline path (which aborted the
+          whole process on failure), the application keeps running with BLE
+          unavailable, so a Bluetooth fault no longer prevents the device from
+          reaching the menu.
+
+        Args:
+            mainloop: GLib mainloop to run after a successful start(). If None,
+                start() creates one; either way the loop stored on the manager
+                (self._mainloop) is the one run.
+
+        Returns:
+            The started daemon thread (exposed for diagnostics and tests).
+        """
+        def _bring_up() -> None:
+            log.info("[BleManager] Async setup thread starting...")
+            try:
+                if not self.start(mainloop):
+                    log.error("[BleManager] start() failed - BLE will be unavailable")
+                    return
+                run_loop = self._mainloop
+                if run_loop is None:
+                    log.error("[BleManager] No mainloop after start() - BLE will be unavailable")
+                    return
+                run_loop.run()
+                log.info("[BleManager] Mainloop exited normally")
+            except Exception as e:
+                log.error(f"[BleManager] Error in async setup/mainloop: {e}", exc_info=True)
+
+        thread = threading.Thread(target=_bring_up, name="BleSetup", daemon=True)
+        thread.start()
+        return thread
+
     def stop(self):
         """Stop the BLE manager."""
         log.info("[BleManager] Stopping...")
