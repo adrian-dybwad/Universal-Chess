@@ -380,6 +380,13 @@ class DisplayManager:
         )
         board.display_manager.add_widget(self.game_over_widget)
         log.info("[DisplayManager] Game over widget initialized (hidden, observes game state)")
+
+        # The freshly created alert widget is hidden and unaware of any check /
+        # queen threat already present in the position. Re-derive the alert from
+        # the authoritative game state so a rebuild mid-check (e.g. after the
+        # king-lift resign or kings-in-center menu is cancelled) re-shows it rather
+        # than silently dropping it.
+        self._game_state.refresh_alerts()
     
     def set_key_callback(self, callback: callable):
         """Set the key callback for routing keys during normal play.

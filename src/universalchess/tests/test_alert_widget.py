@@ -16,6 +16,12 @@ from unittest.mock import MagicMock
 from PIL import Image
 
 from universalchess.epaper.alert_widget import AlertWidget
+from universalchess.state.chess_game import ChessGameState
+
+# White king on e1 is in check from the black knight on c2 (knight attacks e1).
+# Not checkmate, so the in-check state is stable. Taken from a real game log of
+# the reported bug.
+IN_CHECK_FEN = "3r2nr/1p1k1pbp/p2pp1p1/2p5/P1P1P3/2N3Pq/1PnP1P1N/R1B1KQ1R w KQ - 4 16"
 
 
 def _make_widget():
@@ -85,3 +91,73 @@ def test_switch_check_to_queen_while_visible_invalidates_and_updates():
     assert widget._alert_type == AlertWidget.ALERT_QUEEN
     assert widget._cached_sprite is None
     assert len(updates) >= 1
+
+
+def _make_widget_for_state(state):
+    """Build an AlertWidget observing the given ChessGameState.
+
+    Returns (widget, updates). Mirrors how DisplayManager constructs a fresh
+    AlertWidget (hidden by default) bound to the singleton game state.
+    """
+    updates = []
+
+    def update_cb(full=False, immediate=False):
+        updates.append((full, immediate))
+        return None
+
+    widget = AlertWidget(0, 144, 128, 40, update_cb, game_state=state)
+    return widget, updates
+
+
+def test_refresh_alerts_shows_check_on_freshly_built_widget():
+    """A widget created while a check is already active must show CHECK on refresh.
+
+    Why: when a transient UI (king-lift resign menu, kings-in-center menu) is
+    cancelled, DisplayManager._init_widgets() rebuilds every widget, producing a
+    brand-new AlertWidget that starts hidden. The check/threat alert is only ever
+    raised by push_move()/reset(); rebuilding mid-check therefore silently drops
+    it ("remove and replace a piece, the check alert goes away" bug). The rebuild
+    path must re-derive the alert from the authoritative ChessGameState via
+    refresh_alerts().
+
+    How the regression manifests: without refresh_alerts() re-emitting the check,
+    the freshly built widget stays hidden (visible False / _alert_type None) even
+    though the position is still in check.
+    """
+    state = ChessGameState()
+    state.set_position(IN_CHECK_FEN)
+    assert state.is_check is True
+
+    # Fresh widget (as produced by a rebuild) starts hidden and unaware of check.
+    widget, _ = _make_widget_for_state(state)
+    assert widget.visible is False
+    assert widget._alert_type is None
+
+    state.refresh_alerts()
+
+    assert widget.visible is True, "rebuilt widget must show the still-active check"
+    assert widget._alert_type == AlertWidget.ALERT_CHECK
+
+
+def test_refresh_alerts_hides_when_no_check_or_threat():
+    """refresh_alerts() on a quiet position must clear a stale visible alert.
+
+    Why: rebuilding widgets when there is no check/threat (the common case) must
+    not leave an alert showing. refresh_alerts() routes through the same
+    no-alert -> alert_clear path used after a move.
+
+    How the regression manifests: if refresh_alerts() failed to fire alert_clear,
+    a widget left visible from a prior state would remain on screen with no
+    underlying threat.
+    """
+    state = ChessGameState()  # starting position: no check, no threat
+    widget, _ = _make_widget_for_state(state)
+
+    # Force the widget visible as if a prior alert had been shown.
+    widget.show_check(False, 10, 4)
+    assert widget.visible is True
+
+    state.refresh_alerts()
+
+    assert widget.visible is False
+    assert widget._alert_type is None

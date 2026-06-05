@@ -348,6 +348,23 @@ class ChessGameState:
             except Exception:
                 pass
     
+    def refresh_alerts(self) -> None:
+        """Re-emit the current check / queen-threat status to all observers.
+
+        The CHECK and YOUR QUEEN alerts are normally raised only as a side effect
+        of push_move()/reset(). Their visible truth therefore lives transiently in
+        the observing widgets. Any flow that rebuilds those widgets without a move
+        (e.g. cancelling the king-lift resign or kings-in-center menu, which calls
+        DisplayManager._init_widgets()) produces fresh, hidden alert widgets that
+        are unaware of an in-progress check - silently dropping the alert ("remove
+        and replace a piece, the check alert goes away" bug).
+
+        Calling this after a widget rebuild re-derives the alert from this
+        authoritative state, so a still-active check/threat is re-shown and a quiet
+        position clears any stale alert. Idempotent and safe to call at any time.
+        """
+        self._notify_check_and_threats()
+
     def _notify_check_and_threats(self) -> None:
         """Detect and notify check/queen threat after a move.
         
