@@ -45,9 +45,20 @@ class Scheduler:
         self._thread = None
         self._stop_event = threading.Event()
         self._wake_event = threading.Event()  # Event to wake scheduler for immediate processing
-        self._max_partial_refreshes = 200
+        # Number of partial refreshes before forcing a periodic full refresh to
+        # clear e-paper ghosting. 0 disables the periodic full refresh entirely;
+        # full refreshes then happen only when explicitly requested (full=True),
+        # e.g. screen transitions. Disabled for now since proper panel sleep made
+        # the periodic flash unnecessary - raise above 0 to re-enable.
+        self._max_partial_refreshes = 0
         self._partial_refresh_count = 0
         self._in_partial_mode = False  # Track if display is in partial refresh mode
+        # The very first partial refresh must Clear() once to establish a known
+        # white baseline (controller RAM is undefined at power-on). After that the
+        # driver keeps the partial baseline in sync (self.buffer), so no further
+        # Clear() - and no white flash - is needed on full->partial transitions or
+        # deep-sleep wakes.
+        self._baseline_established = False
         self._on_display_updated = on_display_updated  # Callback after display update
         self._idle_sleep_seconds = self.IDLE_SLEEP_SECONDS
         self._last_activity = None  # monotonic time of last refresh; None until first refresh
@@ -247,8 +258,13 @@ class Scheduler:
                 full, future = item
                 image = None
             
-            # Full refresh when explicitly requested or when partial count exceeds max
-            full_refresh = full or self._partial_refresh_count >= self._max_partial_refreshes
+            # Full refresh when explicitly requested, or when the partial count
+            # reaches the periodic threshold. _max_partial_refreshes == 0 disables
+            # the periodic count-based full refresh.
+            full_refresh = full or (
+                self._max_partial_refreshes > 0
+                and self._partial_refresh_count >= self._max_partial_refreshes
+            )
             if full_refresh:
                 self._execute_full_refresh_single(full, future, image)
             else:
@@ -282,6 +298,9 @@ class Scheduler:
             log.debug(f"Scheduler: Sending FULL refresh to display")
             self._epd.display(buf)
             self._partial_refresh_count = 0
+            # A full refresh drives every pixel and records the shown image as the
+            # driver baseline, so the following partial needs no cold-start Clear().
+            self._baseline_established = True
             self._mark_activity()
             
             # Invoke callback after successful display update
@@ -312,25 +331,33 @@ class Scheduler:
             return
         
         try:
-            # CRITICAL: Before first partial refresh after full refresh -- or when
-            # waking from idle deep sleep -- we must reset and clear the display to
-            # establish a known state, exactly like the sample code does. init()
-            # calls reset(), which is what exits deep sleep.
-            if not self._in_partial_mode or self._deep_asleep:
+            # Prepare the panel for a partial refresh. Three distinct cases:
+            #  - Cold start: controller RAM is undefined, so init()+Clear() once to
+            #    establish a known white baseline matching the driver's buffer.
+            #  - Deep-sleep wake / full->partial transition: init() re-powers/resets
+            #    the panel (reset() is what exits deep sleep). No Clear() is needed:
+            #    DisplayPartial re-sends the preserved previous frame (self.buffer)
+            #    to old-RAM every call, and display() records the shown image, so
+            #    the partial baseline already matches the panel - skipping Clear()
+            #    removes the white flash.
+            needs_baseline = not self._baseline_established
+            needs_init = needs_baseline or self._deep_asleep or not self._in_partial_mode
+            if needs_init:
                 # Check again before using hardware (might have been shut down while processing)
                 if self._stop_event.is_set():
                     if not future.done():
                         future.set_result("shutdown")
                     return
                 
-                # We're transitioning to partial mode (from full mode or idle sleep).
-                # Reset and clear to establish known state (matches sample code pattern exactly)
-                log.debug(f"Scheduler._execute_partial_refresh_single(): Transitioning to partial mode (calling init() and Clear())")
                 self._epd.init()
-                self._epd.Clear()
+                if needs_baseline:
+                    log.debug("Scheduler._execute_partial_refresh_single(): cold start - init()+Clear() to establish baseline")
+                    self._epd.Clear()
+                    self._baseline_established = True
+                else:
+                    log.debug("Scheduler._execute_partial_refresh_single(): init() without Clear() (deep-sleep wake / full->partial)")
                 self._in_partial_mode = True
                 self._deep_asleep = False
-                log.debug(f"Scheduler._execute_partial_refresh_single(): Transition complete, _in_partial_mode is now True")
             
             # Use provided image or take snapshot from framebuffer
             if image is not None:

@@ -257,7 +257,12 @@ class EPD:
         self.send_command(0x13)
         self.send_data2(image)
         epdconfig.delay_ms(10)
-        self.buffer = [0xFF] * int(self.width * self.height / 8)    
+        # Record the image just shown as the partial-refresh baseline. The next
+        # DisplayPartial() re-sends this to the controller's old-RAM (0x10) to
+        # compute the diff, so it must match what is physically on the panel.
+        # (Previously reset to all-white, which forced a Clear() flash on the
+        # following partial to reconcile the mismatch.)
+        self.buffer = image.copy() if hasattr(image, 'copy') else list(image)
         self.TurnOnDisplay()
         
     def _dump_buffer(self, label, buf):

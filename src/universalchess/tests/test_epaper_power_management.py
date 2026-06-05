@@ -111,6 +111,24 @@ def test_display_wakes_then_parks():
     assert cmds.index(CMD_POWER_ON) < cmds.index(CMD_REFRESH) < cmds.index(CMD_POWER_OFF)
 
 
+def test_display_records_shown_image_as_partial_baseline():
+    """Full display() must store the shown image as the partial baseline.
+
+    DisplayPartial re-sends self.buffer to old-RAM (0x10) to compute the diff, so
+    after a full refresh self.buffer must equal the image just shown - otherwise
+    the next partial diffs against a stale baseline and ghosts (which previously
+    forced a Clear() flash to reconcile). Regression: buffer reset to all-white.
+    Failure manifests as buffer != shown image (all 0xFF) after display().
+    """
+    epd = EPD()
+    _instrument(epd)
+    image = [0x00] * BUF_LEN
+
+    epd.display(image)
+
+    assert epd.buffer == image, "display() must record the shown image as the baseline"
+
+
 def test_clear_wakes_then_parks():
     """Clear() must power on (0x04) first and power off (0x02) last.
 
@@ -283,15 +301,42 @@ def test_enter_idle_sleep_parks_and_sets_state():
 # Scheduler-level tests: wake-on-draw
 # ---------------------------------------------------------------------------
 
-def test_partial_refresh_wakes_from_deep_sleep():
-    """A partial refresh after idle-sleep must reset+init+Clear before drawing.
+def test_cold_start_partial_clears_to_establish_baseline():
+    """The first ever partial refresh must init()+Clear() once.
 
-    Waking from deep sleep (0x07/0xA5) requires a hardware reset, performed by
-    init(). Failure (drawing without init) writes to a deep-asleep panel -> the
-    pieces-on-blank-board symptom. Asserts init+Clear+DisplayPartial all run and
-    the asleep flag clears.
+    At power-on the controller RAM is undefined, so the driver baseline (all
+    white) does not match the panel. A one-time Clear() reconciles them. Failure
+    (no Clear at cold start) manifests as ghosting/garbage on the first partial
+    because old-RAM does not match the physical panel. Asserts the baseline flag
+    flips so subsequent refreshes skip the Clear.
     """
     sched, epd = _make_scheduler()
+    sched._baseline_established = False
+    sched._deep_asleep = False
+    sched._in_partial_mode = False
+    future = Future()
+
+    sched._execute_partial_refresh_single(False, future, image=MagicMock())
+
+    epd.init.assert_called()
+    epd.Clear.assert_called_once()
+    epd.DisplayPartial.assert_called_once()
+    assert sched._baseline_established is True
+    assert sched._in_partial_mode is True
+
+
+def test_partial_refresh_wakes_from_deep_sleep_without_clear():
+    """A deep-sleep wake (baseline established) must init() but NOT Clear().
+
+    Waking from deep sleep (0x07/0xA5) requires a hardware reset, performed by
+    init(). But the driver keeps the previous frame in self.buffer and re-sends
+    it on every DisplayPartial, so the partial baseline survives the reset - no
+    Clear() is needed, and skipping it removes the white-flash. Failure manifests
+    as Clear() being called (the visible periodic flash returns). Asserts init +
+    DisplayPartial run, Clear does not, and the asleep flag clears.
+    """
+    sched, epd = _make_scheduler()
+    sched._baseline_established = True  # device has run; baseline is valid
     sched._deep_asleep = True
     sched._in_partial_mode = False
     future = Future()
@@ -299,7 +344,7 @@ def test_partial_refresh_wakes_from_deep_sleep():
     sched._execute_partial_refresh_single(False, future, image=MagicMock())
 
     epd.init.assert_called()
-    epd.Clear.assert_called()
+    epd.Clear.assert_not_called()
     epd.DisplayPartial.assert_called_once()
     assert sched._deep_asleep is False
     assert sched._in_partial_mode is True
@@ -333,6 +378,7 @@ def test_normal_partial_does_not_reinit_when_already_partial():
     explicitly avoided). Asserts init/Clear are not called.
     """
     sched, epd = _make_scheduler()
+    sched._baseline_established = True
     sched._deep_asleep = False
     sched._in_partial_mode = True
     future = Future()
@@ -353,6 +399,7 @@ def test_refresh_marks_activity_for_idle_tracking():
     """
     sched, epd = _make_scheduler()
     sched._last_activity = None
+    sched._baseline_established = True
     sched._deep_asleep = False
     sched._in_partial_mode = True
     future = Future()
