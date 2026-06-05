@@ -75,17 +75,22 @@ class EngineHandle:
         self,
         board: chess.Board,
         limit: chess.engine.Limit,
-        multipv: int = 1
-    ) -> chess.engine.InfoDict:
+        multipv: Optional[int] = None
+    ):
         """Analyze position (serialized).
-        
+
         Args:
             board: Position to analyze
             limit: Time/depth limit
-            multipv: Number of principal variations
-            
+            multipv: Number of principal variations. Leave None for the common
+                single-line case. CRITICAL: python-chess returns a single
+                InfoDict only when multipv is None; passing any int (even 1)
+                makes it return a List[InfoDict]. Defaulting to 1 here silently
+                broke callers that index the result as a dict (e.g. analysis
+                score parsing got an empty result and never updated).
+
         Returns:
-            Analysis info dict
+            A single InfoDict when multipv is None, else a List[InfoDict].
         """
         with self.lock:
             return self.engine.analyse(board, limit, multipv=multipv)

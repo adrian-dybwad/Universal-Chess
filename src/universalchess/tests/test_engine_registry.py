@@ -236,6 +236,46 @@ class TestEngineRegistry:
         assert lock_held_during_call == [True]
     
     @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
+    def test_handle_analyse_defaults_to_single_info_not_list(self, mock_popen):
+        """EngineHandle.analyse() must forward multipv=None by default.
+
+        Why this test exists: python-chess returns a single InfoDict only when
+        multipv is None; passing any int (even 1) makes it return a List[InfoDict].
+        The previous default of multipv=1 silently broke every caller that indexed
+        the result as a dict (analysis score parsing did `"score" not in info` on a
+        list -> always True -> no score ever set, so the analysis widget stayed at
+        +0.0 with an empty graph).
+
+        How the regression manifests: if the default is an int again, the captured
+        multipv kwarg below is 1 (or the call passes a non-None int), and real
+        python-chess would hand callers a list instead of a dict.
+        """
+        import chess
+        from universalchess.services.engine_registry import get_engine_registry
+
+        mock_engine = MagicMock()
+        captured = {}
+
+        def fake_analyse(board, limit, **kwargs):
+            captured.update(kwargs)
+            # Mirror python-chess: None -> single InfoDict, int -> list.
+            if kwargs.get("multipv") is None:
+                return {"score": MagicMock()}
+            return [{"score": MagicMock()}]
+
+        mock_engine.analyse.side_effect = fake_analyse
+        mock_popen.return_value = mock_engine
+
+        registry = get_engine_registry()
+        handle = registry.acquire("/usr/games/stockfish")
+
+        result = handle.analyse(chess.Board(), chess.engine.Limit(time=0.1))
+
+        assert captured.get("multipv") is None, "default analyse must forward multipv=None"
+        assert isinstance(result, dict), "default analyse must return a single InfoDict, not a list"
+        assert "score" in result
+
+    @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
     def test_acquire_returns_none_on_failure(self, mock_popen):
         """Test that acquire() returns None when engine fails to load.
         
