@@ -383,7 +383,8 @@ def shutdown_countdown(countdown_seconds: int = 3) -> bool:
     try:
         if display_manager is not None:
             from universalchess.epaper import SplashScreen
-            countdown_splash = SplashScreen(display_manager.update, message=f"Shutdown in\n  {countdown_seconds}")
+            countdown_splash = SplashScreen(display_manager.update, message=f"Shutdown in\n  {countdown_seconds}",
+                                            leave_room_for_status_bar=False)
             future = display_manager.add_widget(countdown_splash)
             # Wait for initial render so splash is visible immediately
             if future:
@@ -932,7 +933,8 @@ def eventsThread(keycallback, fieldcallback, tout):
                     try:
                         from universalchess.epaper import SplashScreen
                         inactivity_countdown_splash = SplashScreen(
-                            display_manager.update, message=f"Inactivity\nShutdown in\n{remaining_int} seconds..."
+                            display_manager.update, message=f"Inactivity\nShutdown in\n{remaining_int} seconds...",
+                            leave_room_for_status_bar=False
                         )
                         future = display_manager.add_widget(inactivity_countdown_splash)
                         # Wait for initial render so splash is visible immediately

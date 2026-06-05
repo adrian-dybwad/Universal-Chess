@@ -2256,20 +2256,16 @@ def _handle_lichess_token():
 
 
 def _shutdown(message: str, reboot: bool = False):
-    """Shutdown the system with a message displayed on screen.
-    
+    """Shutdown (or reboot) the system from a menu selection.
+
+    The shutdown splash is shown by cleanup_and_exit(), so every shutdown path
+    (menu, long-press PLAY, inactivity timeout) gives consistent on-screen
+    feedback from a single place.
+
     Args:
-        message: Message to display on shutdown splash
-        reboot: If True, reboot instead of shutdown
+        message: Menu label that triggered the shutdown (logged as the reason).
+        reboot: If True, reboot instead of shutdown.
     """
-    board.display_manager.clear_widgets(addStatusBar=False)
-    promise = board.display_manager.add_widget(SplashScreen(board.display_manager.update, message=message, leave_room_for_status_bar=False))
-    if promise:
-        try:
-            promise.result(timeout=10.0)
-        except Exception:
-            pass
-    
     reason = f"User selected '{message}' from menu"
     cleanup_and_exit(reason=reason, system_shutdown=True, reboot=reboot)
 
@@ -2533,6 +2529,32 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
         kill = 1
         running = False
         
+        # Resolve the display that is actually driving the panel. During a game
+        # the game-level DisplayManager (module global) owns the screen; at the
+        # menu/idle screen that global is None and the always-present board-level
+        # Manager owns it. The shutdown countdown splash is rendered through
+        # board.display_manager, so falling back to it here guarantees the
+        # countdown frame is replaced rather than left on the e-paper panel.
+        active_display = display_manager if display_manager is not None else board.display_manager
+        
+        # Show the shutdown splash immediately for every shutdown path - menu
+        # selection, long-press PLAY, and inactivity timeout all funnel through
+        # here - so shutdown always gives prompt on-screen feedback before the
+        # (potentially several-second) subsystem teardown below. The pending-update
+        # and final shutdown stages replace this with their own splashes.
+        if system_shutdown and active_display is not None:
+            try:
+                splash_message = "Rebooting" if reboot else "Shutting down"
+                active_display.clear_widgets(addStatusBar=False)
+                promise = active_display.add_widget(
+                    SplashScreen(active_display.update, message=splash_message,
+                                 leave_room_for_status_bar=False)
+                )
+                if promise:
+                    promise.result(timeout=10.0)
+            except Exception as e:
+                log.debug(f"[Cleanup] Failed to show shutdown splash: {e}")
+        
         # Stop RFCOMM server (handles pairing manager, sockets, and threads)
         log.info("[Cleanup] Stopping RFCOMM server...")
         if rfcomm_server is not None:
@@ -2636,9 +2658,10 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
                 
                 # Display update splash
                 try:
-                    if display_manager is not None:
-                        update_splash = SplashScreen(display_manager.update, message="Installing\nupdate...")
-                        display_manager.add_widget(update_splash)
+                    if active_display is not None:
+                        update_splash = SplashScreen(active_display.update, message="Installing\nupdate...",
+                                                     leave_room_for_status_bar=False)
+                        active_display.add_widget(update_splash)
                 except Exception as e:
                     log.debug(f"[Cleanup] Failed to show update splash: {e}")
                 
@@ -2665,9 +2688,10 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
             # Display shutdown splash screen
             log.info("[Cleanup] Displaying shutdown splash screen...")
             try:
-                if display_manager is not None:
-                    shutdown_splash = SplashScreen(display_manager.update, message="Press [\u25b6]")
-                    future = display_manager.add_widget(shutdown_splash)
+                if active_display is not None:
+                    shutdown_splash = SplashScreen(active_display.update, message="Press [\u25b6]",
+                                                   leave_room_for_status_bar=False)
+                    future = active_display.add_widget(shutdown_splash)
                     if future:
                         future.result(timeout=5.0)
             except Exception as e:
@@ -3498,18 +3522,9 @@ def main():
                 log.info(f"[App] Main menu selection: {result}")
                 
                 if result == "BACK":
-                    # Show idle screen and wait for TICK
-                    ctx.clear()  # Clear any saved state when going to idle
-                    board.beep(board.SOUND_POWER_OFF, event_type='key_press')
-                    board.display_manager.clear_widgets()
-                    promise = board.display_manager.add_widget(SplashScreen(board.display_manager.update, message="Press [OK]"))
-                    if promise:
-                        try:
-                            promise.result(timeout=10.0)
-                        except Exception:
-                            pass
-                    # Wait for TICK to return to menu
-                    board.wait_for_key_up(accept=board.Key.TICK)
+                    # BACK at the root menu has nowhere to go - there is no parent
+                    # menu and no meaningful standby state - so it simply stays on
+                    # the menu (re-renders on the next loop iteration).
                     continue
                 
                 elif result == "SHUTDOWN":
