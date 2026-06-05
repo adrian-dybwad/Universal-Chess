@@ -110,41 +110,34 @@ class BatteryWidget(Widget):
         
         # Draw charging lightning bolt if connected
         if self.charger_connected:
-            # Lightning bolt - scaled to fit battery body
-            cx = (inner_left + inner_right) // 2
-            cy = (inner_top + inner_bottom) // 2
+            # Draw the bolt as a single bold polygon spanning the battery body,
+            # then XOR it onto the sprite so it reads as black over the (white)
+            # empty area and white over the (black) level bars - staying visible
+            # at any fill level. Points are fractions of the inner body box.
+            inner_height = inner_bottom - inner_top
             
-            # Scale bolt size based on inner dimensions
-            bolt_h = inner_bottom - inner_top
-            bolt_w = min(inner_width // 2, bolt_h)
+            def _bolt_point(fx: float, fy: float) -> tuple:
+                return (int(round(inner_left + fx * inner_width)),
+                        int(round(inner_top + fy * inner_height)))
             
-            # Create bolt mask (temporary image for XOR operation)
+            bolt_points = [
+                _bolt_point(0.70, 0.00),
+                _bolt_point(0.15, 0.60),
+                _bolt_point(0.45, 0.60),
+                _bolt_point(0.30, 1.00),
+                _bolt_point(0.85, 0.42),
+                _bolt_point(0.55, 0.42),
+            ]
+            
             bolt_mask = Image.new("1", (w, h), 0)
-            bolt_draw = ImageDraw.Draw(bolt_mask)
+            ImageDraw.Draw(bolt_mask).polygon(bolt_points, fill=1)
             
-            # Scale bolt points
-            sx = bolt_w / 10.0  # horizontal scale
-            sy = bolt_h / 8.0   # vertical scale
-            
-            top_triangle = [
-                (cx + int(4 * sx), inner_top),
-                (cx - int(2 * sx), cy),
-                (cx + int(1 * sx), cy),
-            ]
-            bolt_draw.polygon(top_triangle, fill=1)
-            
-            bottom_triangle = [
-                (cx + int(2 * sx), cy - 1),
-                (cx - int(4 * sx), inner_bottom),
-                (cx - int(1 * sx), cy - 1),
-            ]
-            bolt_draw.polygon(bottom_triangle, fill=1)
-            
-            # XOR the bolt onto the sprite
+            # XOR the bolt onto the sprite. Test the mask pixel as truthy (it is
+            # nonzero where drawn) to be independent of mode-"1" pixel-value
+            # conventions (0/1 vs 0/255) across Pillow versions.
             sprite_pixels = sprite.load()
             bolt_pixels = bolt_mask.load()
             for y in range(h):
                 for x in range(w):
-                    if bolt_pixels[x, y] == 1:
-                        current = sprite_pixels[x, y]
-                        sprite_pixels[x, y] = 255 if current == 0 else 0
+                    if bolt_pixels[x, y]:
+                        sprite_pixels[x, y] = 255 if sprite_pixels[x, y] == 0 else 0

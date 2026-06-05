@@ -68,24 +68,30 @@ class StatusBarWidget(Widget):
         if not os.path.exists(font_path):
             font_path = 'resources/Font.ttc'
         
+        # Children route their updates through _handle_child_update so this
+        # composite's cached sprite is invalidated when an autonomous child (clock
+        # tick, battery/wifi/bluetooth state change) updates; otherwise the stale
+        # composite would be re-pasted and the change never shown.
+        child_callback = self._handle_child_update
+        
         # Clock widget: 2.5x wider than tall = 40x16, starts at x=0
-        self._clock_widget = ClockWidget(0, 0, 40, 16, update_callback,
+        self._clock_widget = ClockWidget(0, 0, 40, 16, child_callback,
                                          font_size=14, font_path=font_path,
                                          show_seconds=False)
         
         # Install status widget (shows during engine installation)
-        self._install_widget = InstallStatusWidget(self.INSTALL_X, 0, 16, update_callback)
+        self._install_widget = InstallStatusWidget(self.INSTALL_X, 0, 16, child_callback)
         
         # Update status widget (shows when update is available)
-        self._update_widget = UpdateStatusWidget(self.UPDATE_X, 0, 16, update_callback)
+        self._update_widget = UpdateStatusWidget(self.UPDATE_X, 0, 16, child_callback)
         
         # Chromecast status widget (observes the ChromecastService singleton)
-        self._chromecast_widget = ChromecastStatusWidget(self.CHROMECAST_X, 0, 16, update_callback)
+        self._chromecast_widget = ChromecastStatusWidget(self.CHROMECAST_X, 0, 16, child_callback)
         
         # Other status widgets - all 16px tall to fill status bar
-        self._wifi_widget = WiFiStatusWidget(self.WIFI_X, 0, 16, update_callback)
-        self._bluetooth_widget = BluetoothStatusWidget(self.BLUETOOTH_X, 0, 12, 16, update_callback)
-        self._battery_widget = BatteryWidget(self.BATTERY_X, 0, 20, 16, update_callback)
+        self._wifi_widget = WiFiStatusWidget(self.WIFI_X, 0, 16, child_callback)
+        self._bluetooth_widget = BluetoothStatusWidget(self.BLUETOOTH_X, 0, 12, 16, child_callback)
+        self._battery_widget = BatteryWidget(self.BATTERY_X, 0, 20, 16, child_callback)
         
         # Collect child widgets for unified lifecycle management
         self._child_widgets: List[Widget] = [
@@ -108,10 +114,28 @@ class StatusBarWidget(Widget):
             widget.set_scheduler(scheduler)
     
     def set_update_callback(self, callback) -> None:
-        """Set update callback and propagate to all child widgets."""
+        """Set this widget's update callback.
+
+        Children keep routing through _handle_child_update (which reads the new
+        callback via self._update_callback), so the composite cache is still
+        invalidated on child changes. Re-asserted here in case a child's callback
+        was replaced elsewhere.
+        """
         super().set_update_callback(callback)
         for widget in self._child_widgets:
-            widget.set_update_callback(callback)
+            widget.set_update_callback(self._handle_child_update)
+
+    def _handle_child_update(self, full: bool = False, immediate: bool = False):
+        """Invalidate the composite cache on a child change, then refresh.
+
+        The status bar composites its children into a single cached sprite that
+        the Manager blits directly; render() (which redraws the children) only
+        runs on a cache miss. An autonomous child invalidates only its OWN cache,
+        so without invalidating this parent the stale composite would be re-pasted
+        and the child's change would never appear.
+        """
+        self.invalidate_cache()
+        return self._update_callback(full, immediate)
     
     def update(self, full: bool = False):
         """Invalidate cache and request display update.
