@@ -21,6 +21,9 @@ https://github.com/chessnutech/Chessnut_eBoards
 
 import time as _t
 import logging as _log_temp
+
+import chess
+
 _logger = _log_temp.getLogger(__name__)
 _s = _t.time()
 
@@ -35,7 +38,16 @@ _logger.debug(f"[chessnut import] events: {(_t.time() - _s)*1000:.0f}ms")
 
 from universalchess.utils.led import (
     LED_SPEED_NORMAL,
+    LED_SPEED_FAST,
     get_led_intensity_from_settings,
+)
+
+from universalchess.board.setup_tracker import SetupTracker, STANDARD_START_PLACEMENT
+from universalchess.board.setup_mode import (
+    classify_led_matrix,
+    squares_to_restore_start,
+    infer_side_to_move,
+    CLASS_SETUP,
 )
 
 
@@ -50,6 +62,18 @@ CMD_SOUND = 0x31             # Sound/beep control (no response)
 # Chessnut Air response bytes
 RESP_FEN_DATA = 0x01  # FEN notification header byte 0
 RESP_BATTERY = 0x2a   # Battery response header byte 0
+
+# Squares occupied in the standard start position (chess order: ranks 1-2 and
+# 7-8). Used to detect when the physical board is restored to the start position
+# during setup mode.
+START_OCCUPIED_SQUARES = frozenset(range(0, 16)) | frozenset(range(48, 64))
+
+# Minimum idle time (seconds) since the last streamed setup FEN before a changed
+# LED array is treated as a NEW target rather than a solicited correction. The
+# app can send more than one convergent correction array per move (lagging by a
+# frame), so corrections must be absorbed within this window; only an array that
+# arrives after the board has been idle is an unsolicited new puzzle selection.
+NEW_TARGET_IDLE_SECONDS = 2.0
 
 # Piece encoding for Chessnut Air FEN format
 # Index = piece code, value = FEN character
@@ -127,6 +151,42 @@ class Chessnut:
         
         # Track if we've already replayed move history (reset on disconnect)
         self._moves_replayed = False
+
+        # Chessnut setup mode (puzzle setup). When the app sends a mismatch LED
+        # matrix, the emulator enters setup mode: physical lift/place events are
+        # tracked as identity-preserving relocations (SetupTracker) instead of
+        # chess moves, and the tracker's FEN is streamed to the app so it can
+        # re-evaluate. Exited when the app sends an all-off matrix (matched).
+        self._setup_mode = False
+        self._setup_tracker = None
+
+        # Last mismatch array the app sent (frozenset of squares). The app computes
+        # its array as the diff between the FEN we stream and its target. A changed
+        # array that arrives while the board has been idle (no FEN streamed for
+        # NEW_TARGET_IDLE_SECONDS) is an UNSOLICITED correction = a NEW target (the
+        # operator picked a different puzzle without touching the board); a changed
+        # array shortly after a move is a solicited recompute of the same target.
+        # Per requirement, a new target is rebuilt from the start position: if the
+        # board is not at start, the operator is guided back first.
+        self._setup_target = None
+        # Monotonic timestamp of the last setup FEN we streamed to the app, used to
+        # tell solicited corrections (recent move) from unsolicited new targets.
+        self._last_setup_fen_send_monotonic = 0.0
+        self._returning_to_start = False
+
+        # After a setup handoff the side-to-move is unknown (the app never sends a
+        # FEN). The position is adopted provisionally as white-to-move; this flag
+        # requests that the first subsequent move indicator be used to correct the
+        # turn from the colour of the indicated move's from-square.
+        self._resolve_turn_pending = False
+
+        # Physical board occupancy during setup, tracked purely from lift/place
+        # events (toggled regardless of piece identity). Unlike the SetupTracker
+        # board - which omits unidentified placements and ignores places onto
+        # occupied squares - this set always mirrors what is physically on the
+        # board, so it reliably detects when the operator restores the start
+        # position. Anchored to the hardware on entry, then maintained by events.
+        self._physical_occupied = None
     
     def handle_manager_event(self, event, piece_event, field, time_in_seconds):
         """Handle game events from the manager.
@@ -147,6 +207,10 @@ class Chessnut:
             
             # Generate FEN update on piece events
             if event in (EVENT_LIFT_PIECE, EVENT_PLACE_PIECE):
+                if self._setup_mode and self._setup_tracker is not None:
+                    self._handle_setup_piece_event(piece_event, field)
+                    return
+
                 log.info(f"[Chessnut] Piece event detected, sending FEN notification")
                 self._send_fen_notification()
         except Exception as e:
@@ -236,6 +300,33 @@ class Chessnut:
         
         return self._handle_command(cmd, payload)
     
+    def _log_payload_decode(self, label, cmd, payload, decoded_indices, notes=None):
+        """Log a command payload with explicit decoded/undecoded byte accounting.
+
+        Surfaces exactly which payload bytes the emulator interprets, so any
+        undecoded bytes - or whole unknown commands - appear in the log instead
+        of being silently dropped. This is what lets a full comms capture answer
+        open protocol questions (e.g. whether the app ever communicates
+        side-to-move/castling) from evidence rather than assumption.
+
+        Args:
+            label: Human-readable command name.
+            cmd: Command byte.
+            payload: Payload bytes (excluding cmd and length).
+            decoded_indices: Iterable of payload byte indices the emulator
+                interprets. Any index not listed is reported as undecoded.
+            notes: Optional extra context.
+        """
+        full = ' '.join(f'{b:02x}' for b in payload) if payload else '(empty)'
+        decoded = set(decoded_indices)
+        undecoded = [f'[{i}]={payload[i]:02x}' for i in range(len(payload)) if i not in decoded]
+        undec_str = ' '.join(undecoded) if undecoded else '(none)'
+        msg = (f"[Chessnut] DECODE {label} cmd=0x{cmd:02x} len={len(payload)} "
+               f"payload=[{full}] undecoded={undec_str}")
+        if notes:
+            msg += f" :: {notes}"
+        log.info(msg)
+
     def _handle_command(self, cmd, payload):
         """Handle a complete Chessnut command.
         
@@ -252,15 +343,18 @@ class Chessnut:
         - 0x31 (SOUND): Sound/beep control
         """
         if cmd == CMD_INIT:
-            # Init/config command - no response expected
-            payload_hex = ' '.join(f'{b:02x}' for b in payload) if payload else ''
-            log.info(f"[Chessnut] Init/config command received: {payload_hex}")
+            # Init/config command - no response expected. Semantics of the
+            # payload are not yet decoded; logged in full for analysis.
+            self._log_payload_decode("INIT/CONFIG", cmd, payload, [],
+                                     notes="semantics not decoded (no response)")
             return True
         
         elif cmd == CMD_ENABLE_REPORTING:
-            log.info("[Chessnut] Enable reporting command received - setting reporting_enabled=True")
+            # Payload is currently ignored functionally; logged in full because it
+            # is a candidate for any game metadata (e.g. side-to-move).
+            self._log_payload_decode("ENABLE_REPORTING", cmd, payload, [],
+                                     notes="enabling FEN reporting; payload semantics not decoded")
             self.reporting_enabled = True
-            log.info(f"[Chessnut] reporting_enabled is now: {self.reporting_enabled}")
             # Send current position. Move history playback was attempted but
             # doesn't work with third-party apps - the SDK interprets each
             # position change as a move and responds with engine moves.
@@ -270,27 +364,35 @@ class Chessnut:
         elif cmd == CMD_HAPTIC:
             # Haptic feedback control - no response expected
             state = "on" if payload and payload[0] else "off"
-            log.info(f"[Chessnut] Haptic feedback: {state}")
+            self._log_payload_decode("HAPTIC", cmd, payload, [0] if payload else [],
+                                     notes=f"state={state}")
             return True
         
         elif cmd == CMD_BATTERY_REQUEST:
-            log.info("[Chessnut] Battery request command received")
+            self._log_payload_decode("BATTERY_REQUEST", cmd, payload, [],
+                                     notes="requesting battery level")
             self._send_battery_response()
             return True
         
         elif cmd == CMD_SOUND:
             # Sound control - no response expected
             state = "on" if payload and payload[0] else "off"
-            log.info(f"[Chessnut] Sound control: {state}")
+            self._log_payload_decode("SOUND", cmd, payload, [0] if payload else [],
+                                     notes=f"state={state}")
             return True
         
         elif cmd == CMD_LED_CONTROL:
-            payload_hex = ' '.join(f'{b:02x}' for b in payload) if payload else ''
-            log.info(f"[Chessnut] LED control command received: {payload_hex}")
+            # First 8 bytes are the 64-square matrix; any extra bytes are flagged.
+            self._log_payload_decode("LED_CONTROL", cmd, payload,
+                                     list(range(min(8, len(payload)))),
+                                     notes="8-byte board matrix")
             self._handle_led_command(payload)
             return True
         
         else:
+            # Unknown command: log the full payload so nothing is lost.
+            self._log_payload_decode(f"UNKNOWN_0x{cmd:02x}", cmd, payload, [],
+                                     notes="unrecognized command")
             log.warning(f"[Chessnut] Unknown command: 0x{cmd:02x}")
             return False
     
@@ -334,7 +436,45 @@ class Chessnut:
                     squares_to_light.append(square)
         
         if squares_to_light:
-            log.info(f"[Chessnut] LED command: lighting squares {squares_to_light}")
+            # Decode Centaur square indices (a1=0, h8=63) to algebraic so the lit
+            # squares are human-readable in the log. Order is board-scan order
+            # (rank 8 -> 1, file a -> h), which is the order before board.ledArray
+            # reverses it - relevant when diagnosing from/to LED sweep direction.
+            algebraic = [f"{chr(ord('a') + (sq % 8))}{(sq // 8) + 1}" for sq in squares_to_light]
+            log.info(f"[Chessnut] LED command decoded: squares={squares_to_light} algebraic={algebraic} (scan order)")
+
+        # While in setup mode, stay there until the app reports a match (all-off).
+        if self._setup_mode:
+            self._handle_led_in_setup(squares_to_light)
+            return
+
+        # First move indicator after a setup handoff resolves the side-to-move.
+        # The app never sends us a turn, so setup adopts a provisional white turn;
+        # the first move the app indicates reveals whose turn it really is (the
+        # mover's colour is read from the lit from/to squares).
+        if self._resolve_turn_pending and squares_to_light:
+            self._resolve_turn_from_indicator(squares_to_light)
+
+        # Not in setup: a matrix that no single legal move explains is a puzzle
+        # mismatch -> enter setup mode and start guiding the operator. Entry is
+        # only allowed from the standard start position. After a puzzle handoff
+        # the game is at the configured (non-start) position, so the app's
+        # opponent-move indicators can never be misread as a setup mismatch and
+        # falsely re-enter setup mode.
+        if squares_to_light:
+            classification = classify_led_matrix(squares_to_light, self._get_full_game_fen())
+            if classification == CLASS_SETUP:
+                if self._is_at_start_position():
+                    self._enter_setup_mode()
+                    self._handle_led_in_setup(squares_to_light)
+                    return
+                log.info(
+                    "[Chessnut] Mismatch matrix received but board is not at the "
+                    "start position - not entering setup mode"
+                )
+
+        # Normal move indicator (or all-off) - existing behavior.
+        if squares_to_light:
             try:
                 # Use ledArray with repeat=0 so LEDs stay on until next command
                 intensity = get_led_intensity_from_settings()
@@ -350,6 +490,334 @@ class Chessnut:
                 board.ledsOff()
             except Exception as e:
                 log.error(f"[Chessnut] Error turning off LEDs: {e}")
+
+    def _get_full_game_fen(self):
+        """Return the current game position as a full FEN (with side-to-move etc.).
+
+        Used to classify LED matrices (needs legal moves) and to seed the setup
+        tracker. Falls back to the standard start position.
+        """
+        try:
+            if self.manager and hasattr(self.manager, 'get_fen'):
+                return self.manager.get_fen()
+        except Exception as e:
+            log.error(f"[Chessnut] Error getting full game FEN: {e}")
+        return "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+
+    def _is_at_start_position(self):
+        """Return True when the current game placement is the standard start.
+
+        Setup mode may only be entered from the start position. The piece
+        placement field of the FEN is compared (side-to-move, castling and
+        clocks are irrelevant to whether the board is physically set up for a
+        fresh game).
+        """
+        placement = self._get_full_game_fen().split(" ", 1)[0]
+        return placement == STANDARD_START_PLACEMENT
+
+    def _resolve_turn_from_indicator(self, squares):
+        """Correct the adopted side-to-move using the app's first move indicator.
+
+        The app never sends a FEN, so setup adopts a provisional white turn. The
+        first move the app indicates after the handoff reveals whose turn it is:
+        the colour of the piece on the move's from-square is the side to move. The
+        attempt is made once; if the turn cannot be inferred the provisional turn
+        is kept.
+        """
+        self._resolve_turn_pending = False
+        full_fen = self._get_full_game_fen()
+        parts = full_fen.split(" ")
+        placement = parts[0]
+        current_side = parts[1] if len(parts) > 1 else "w"
+
+        inferred = infer_side_to_move(squares, placement)
+        if inferred is None:
+            log.info(
+                f"[Chessnut] Could not infer side-to-move from first post-setup "
+                f"indicator {[chess.square_name(s) for s in squares]}; keeping {current_side}"
+            )
+            return
+
+        inferred_side = "w" if inferred == chess.WHITE else "b"
+        if inferred_side == current_side:
+            log.info(f"[Chessnut] First move indicator confirms side-to-move {current_side}")
+            return
+
+        if self.manager and hasattr(self.manager, 'apply_setup_position'):
+            corrected = f"{placement} {inferred_side} - - 0 1"
+            log.info(
+                f"[Chessnut] First move indicator implies {inferred_side} to move - "
+                f"correcting adopted position: {corrected}"
+            )
+            self.manager.apply_setup_position(corrected)
+
+    def _enter_setup_mode(self):
+        """Enter setup mode, seeding the tracker from the current game position.
+
+        Entry is only reached at the standard start position (see the caller in
+        _handle_led_command), so identities are the canonical start identities and
+        the tracker can report a typed FEN as pieces are relocated. Move
+        interpretation is suppressed in the GameManager while setup mode is active.
+        """
+        seed_fen = self._get_full_game_fen()
+        self._setup_tracker = SetupTracker(fen=seed_fen)
+        self._setup_mode = True
+        self._setup_target = None
+        # Treat arrays arriving right after entry as solicited corrections to the
+        # position we just established (the app may send several convergent arrays
+        # before any piece is moved).
+        self._last_setup_fen_send_monotonic = _t.monotonic()
+        self._returning_to_start = False
+        # Anchor physical occupancy to the hardware so subsequent events maintain
+        # an exact mirror of the board. Falls back to the start occupancy (entry
+        # is only permitted at the start position).
+        self._physical_occupied = self._read_physical_occupied()
+        if self.manager and hasattr(self.manager, 'set_setup_mode_active'):
+            self.manager.set_setup_mode_active(True)
+        self._notify_setup_display(True)
+        log.info(f"[Chessnut] Entering setup mode, seed FEN={seed_fen}")
+
+    def _handle_led_in_setup(self, squares_to_light):
+        """Drive the board LEDs while in setup mode.
+
+        An all-off matrix means the app considers the board matched -> adopt the
+        configured position and resume play. Otherwise the array is the app's live
+        diff between the FEN we stream and its target.
+
+        Distinguishing a SOLICITED correction from a NEW target:
+        after each physical move we stream a FEN, and the app replies with one or
+        more convergent correction arrays (it can lag by a frame, so a single move
+        may yield two arrays for the SAME puzzle). Those are solicited - never a
+        new target. A NEW target is an UNSOLICITED array: a different diff that
+        arrives when no piece has been moved recently (the operator selected a
+        different puzzle in the app without touching the board). Per requirement,
+        a new target is rebuilt from the start position, guiding the operator back
+        to start first if the board is not already there.
+        """
+        target = frozenset(squares_to_light)
+        if not target:
+            self._finish_setup_mode()
+            return
+
+        idle_seconds = _t.monotonic() - self._last_setup_fen_send_monotonic
+        is_new_target = (
+            self._setup_target is not None
+            and target != self._setup_target
+            and idle_seconds >= NEW_TARGET_IDLE_SECONDS
+        )
+        self._setup_target = target
+
+        if is_new_target:
+            self._begin_new_target()
+            return
+
+        # Same target (initial array, or a recompute after our piece event):
+        # while returning to start, ignore the app's diff and show the return
+        # guidance; otherwise show the app's mismatch squares.
+        if self._returning_to_start:
+            self._light_setup_squares(self._restore_start_squares())
+            return
+        if self._flash_unknown_squares():
+            return
+        self._light_setup_squares(sorted(target))
+
+    def _begin_new_target(self):
+        """Start honoring a newly selected puzzle target, rebuilding from start.
+
+        If the board is already at the start occupancy, the tracker is reset to a
+        clean start and the new target's squares are shown. Otherwise the operator
+        is guided back to the start position first (lighting the full occupancy
+        difference); the switch to the new target happens once start is reached
+        (see _handle_setup_piece_event).
+        """
+        if self._physical_at_start():
+            new_target = self._setup_target
+            self._reset_tracker_to_start()
+            self._setup_target = new_target
+            self._light_setup_squares(sorted(new_target))
+        else:
+            self._returning_to_start = True
+            log.info("[Chessnut] New target while off start - guiding board back to start")
+            self._light_setup_squares(self._restore_start_squares())
+
+    def _handle_setup_piece_event(self, piece_event, field):
+        """Apply a physical lift/place to the tracker and refresh setup guidance.
+
+        Streams the evolving tracker FEN to the app and redraws the e-paper board.
+        While returning to start, drives the return guidance directly (the app's
+        diff points at the target, not at start) and completes the return once the
+        start occupancy is reached.
+        """
+        if piece_event == 0:
+            self._setup_tracker.lift(field)
+            if self._physical_occupied is not None:
+                self._physical_occupied.discard(field)
+        else:
+            self._setup_tracker.place(field)
+            if self._physical_occupied is not None:
+                self._physical_occupied.add(field)
+        log.info(
+            f"[Chessnut] Setup {'LIFT' if piece_event == 0 else 'PLACE'} "
+            f"{chess.square_name(field)} -> tracker FEN {self._setup_tracker.board_fen()}"
+        )
+        self._send_setup_fen_notification()
+        self._notify_setup_display(True)
+
+        # Whenever the physical board is restored to the start position - in any
+        # setup state - reset the tracker to a clean start. This is the universal
+        # "start over" gesture and recovers from any identity drift. Detection
+        # uses physical occupancy (not the tracker model, which can diverge from
+        # the board when placements are unidentified or onto occupied squares).
+        if self._physical_at_start():
+            self._reset_tracker_to_start()
+            self._leds_off()
+            log.info("[Chessnut] Board at start position - setup reset to start")
+            return
+
+        if self._returning_to_start:
+            self._light_setup_squares(self._restore_start_squares())
+        else:
+            self._flash_unknown_squares()
+
+    def _read_physical_occupied(self):
+        """Read the hardware occupancy as a set of occupied squares (chess order).
+
+        Returns the start occupancy as a fallback when the board state cannot be
+        read; setup entry is only permitted at the start position, so this is the
+        correct anchor when hardware reads transiently fail.
+        """
+        try:
+            state = board.getChessState()
+        except Exception as e:
+            log.error(f"[Chessnut] Error reading board state for setup: {e}")
+            state = None
+        if not state:
+            return set(START_OCCUPIED_SQUARES)
+        return {square for square, occupied in enumerate(state) if occupied}
+
+    def _physical_at_start(self):
+        """True when the physically occupied squares equal the start occupancy."""
+        return self._physical_occupied == set(START_OCCUPIED_SQUARES)
+
+    def _reset_tracker_to_start(self):
+        """Reset the setup tracker and target state to a clean start position.
+
+        Re-seeds piece identities to the canonical start, clears the
+        returning-to-start flag and pending target, and streams the start FEN so
+        the app recomputes its diff against a known baseline.
+        """
+        self._setup_tracker.reset()
+        self._returning_to_start = False
+        self._setup_target = None
+        self._send_setup_fen_notification()
+        self._notify_setup_display(True)
+
+    def _restore_start_squares(self):
+        """Squares to light to return the board to the start occupancy (sorted).
+
+        Computed from the physical occupancy (the symmetric difference against
+        the start occupancy) so the guidance always reflects what is actually on
+        the board, independent of the tracker's identity model.
+        """
+        if self._physical_occupied is None:
+            return sorted(squares_to_restore_start(self._setup_tracker.board_fen()))
+        return sorted(self._physical_occupied ^ set(START_OCCUPIED_SQUARES))
+
+    def _light_setup_squares(self, squares):
+        """Light the given squares at normal speed, or turn LEDs off if empty."""
+        if not squares:
+            self._leds_off()
+            return
+        try:
+            intensity = get_led_intensity_from_settings()
+            board.ledArray(squares,
+                           speed=LED_SPEED_NORMAL,
+                           intensity=intensity,
+                           repeat=0)
+        except Exception as e:
+            log.error(f"[Chessnut] Error setting setup LEDs: {e}")
+
+    def _leds_off(self):
+        """Turn all board LEDs off (guarded)."""
+        try:
+            board.ledsOff()
+        except Exception as e:
+            log.error(f"[Chessnut] Error turning off LEDs: {e}")
+
+    def _notify_setup_display(self, active):
+        """Drive the e-paper setup status / board preview via the manager."""
+        if not (self.manager and hasattr(self.manager, 'update_setup_display')):
+            return
+        fen = self._setup_tracker.board_fen() if (active and self._setup_tracker) else None
+        self.manager.update_setup_display(active, fen)
+
+    def _flash_unknown_squares(self):
+        """Fast-flash any squares holding an unidentified piece ("remove this").
+
+        Returns:
+            True if there were unknown squares (and a flash was issued), else False.
+        """
+        if not self._setup_tracker:
+            return False
+        unknown = sorted(self._setup_tracker.unknown_squares)
+        if not unknown:
+            return False
+        try:
+            intensity = get_led_intensity_from_settings()
+            board.ledArray(unknown,
+                           speed=LED_SPEED_FAST,
+                           intensity=intensity,
+                           repeat=0)
+            log.info(f"[Chessnut] Flagging unidentified pieces for removal: "
+                     f"{[chess.square_name(s) for s in unknown]}")
+        except Exception as e:
+            log.error(f"[Chessnut] Error flashing unknown squares: {e}")
+        return True
+
+    def _finish_setup_mode(self):
+        """Adopt the configured position as a new game and resume normal play.
+
+        The tracker yields a placement-only FEN; the side-to-move and castling
+        rights are not known (the app never sends them), so a white-to-move,
+        no-castling FEN is assumed. The operator/app can adjust if needed.
+        """
+        tracker = self._setup_tracker
+        self._setup_mode = False
+        self._setup_tracker = None
+        self._setup_target = None
+        self._last_setup_fen_send_monotonic = 0.0
+        self._returning_to_start = False
+        self._physical_occupied = None
+        if self.manager and hasattr(self.manager, 'set_setup_mode_active'):
+            self.manager.set_setup_mode_active(False)
+
+        self._leds_off()
+
+        if tracker is not None and self.manager and hasattr(self.manager, 'apply_setup_position'):
+            full_fen = f"{tracker.board_fen()} w - - 0 1"
+            log.info(f"[Chessnut] Setup matched - adopting position as new game: {full_fen}")
+            self.manager.apply_setup_position(full_fen)
+            # Side-to-move is provisional (white); correct it from the app's first
+            # move indicator, which reveals whose turn it is.
+            self._resolve_turn_pending = True
+
+        # Restore the normal turn indicator (board resyncs from the adopted game
+        # state) and stream the adopted position to the app.
+        self._notify_setup_display(False)
+        self.last_fen = None
+        self._send_fen_notification()
+
+    def _send_setup_fen_notification(self):
+        """Stream the setup tracker's current placement FEN to the app.
+
+        Records the send time so the LED handler can distinguish a solicited
+        correction (a changed array shortly after this FEN) from an unsolicited
+        new target (a changed array while the board has been idle).
+        """
+        if not self._setup_tracker or not self.sendMessage:
+            return
+        self._last_setup_fen_send_monotonic = _t.monotonic()
+        self._send_fen_direct(self._setup_tracker.board_fen())
     
     def _get_board_fen(self):
         """Get current board position as FEN string.
@@ -617,6 +1085,17 @@ class Chessnut:
         self.reporting_enabled = False
         self.last_fen = None
         self._moves_replayed = False  # Reset so moves can be replayed on next connection
+        if self._setup_mode and self.manager and hasattr(self.manager, 'set_setup_mode_active'):
+            self.manager.set_setup_mode_active(False)
+        if self._setup_mode:
+            self._notify_setup_display(False)
+        self._setup_mode = False
+        self._setup_tracker = None
+        self._setup_target = None
+        self._last_setup_fen_send_monotonic = 0.0
+        self._returning_to_start = False
+        self._resolve_turn_pending = False
+        self._physical_occupied = None
         log.debug("[Chessnut] Parser reset")
     
     def set_battery_level(self, level, is_charging=False):

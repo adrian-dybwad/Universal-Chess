@@ -352,26 +352,27 @@ class RemoteController(GameController):
     # =========================================================================
     
     def on_game_event(self, event, piece_event=None, field=None, time_seconds=None) -> None:
-        """Handle game event from GameManager.
-        
+        """Handle game-level event from GameManager (new game, turn, termination).
+
         Routes to the detected emulator for sync with the app.
+
+        Piece lift/place events are intentionally NOT handled here: they are
+        delivered to emulators via on_field_event (the raw board-event path).
+        ControllerManager.on_field_event drives both paths from the same source
+        under the same is_protocol_detected gating, so forwarding piece events
+        here too delivered every lift/place to the emulator twice. That is
+        harmless for the idempotent FEN handler but corrupts stateful handlers -
+        e.g. the Chessnut setup tracker, where a duplicate lift (same square,
+        already empty) discards the held piece. Single-source the piece events
+        through on_field_event.
         """
         if not self._active:
             return
-        
-        # Skip forwarding lift/place while HandBrain REVERSE is consuming events locally
-        try:
-            from universalchess.managers.events import EVENT_LIFT_PIECE, EVENT_PLACE_PIECE
-            if event == EVENT_LIFT_PIECE or event == EVENT_PLACE_PIECE:
-                pm = getattr(self._game_manager, "_player_manager", None)
-                if pm is not None:
-                    current = pm.get_player(self._game_manager.chess_board.turn)
-                    from universalchess.players.hand_brain import HandBrainPlayer, HandBrainMode
-                    if isinstance(current, HandBrainPlayer) and current.mode == HandBrainMode.REVERSE:
-                        return
-        except Exception:
-            pass
-        
+
+        from universalchess.managers.events import EVENT_LIFT_PIECE, EVENT_PLACE_PIECE
+        if event in (EVENT_LIFT_PIECE, EVENT_PLACE_PIECE):
+            return
+
         if self._is_millennium and self._millennium:
             if hasattr(self._millennium, 'handle_manager_event'):
                 self._millennium.handle_manager_event(event, piece_event, field, time_seconds)

@@ -50,6 +50,10 @@ class FieldEventContext:
     # Expected state helper
     chess_board_to_state_fn: Callable[[chess.Board], Optional[bytearray]]
 
+    # Setup mode (Chessnut): when active, the emulator tracks lift/place as a board
+    # setup (relocations), so this module must NOT interpret them as chess moves.
+    setup_mode_active_fn: Callable[[], bool] = lambda: False
+
 
 def process_field_event(
     ctx: FieldEventContext, piece_event: int, field: int, time_in_seconds: float
@@ -71,6 +75,16 @@ def process_field_event(
             piece_color = ctx.move_state.source_piece_color
         else:
             piece_color = ctx.chess_board.color_at(field)
+
+    # In setup mode the emulator has already been notified above (event_callback)
+    # and is tracking this lift/place as a board-setup relocation. Suppress all
+    # move interpretation so arbitrary setup manipulation is never read as a move.
+    if ctx.setup_mode_active_fn():
+        log.debug(
+            f"[GameManager.receive_field] setup mode active - suppressing move "
+            f"interpretation for {'LIFT' if piece_event == 0 else 'PLACE'} {field_name}"
+        )
+        return
 
     log.info(
         f"[GameManager.receive_field] piece_event={piece_event} field={field} fieldname={field_name} "

@@ -131,6 +131,16 @@ class GameManager:
         
         self.move_state = MoveState()
         self.correction_mode = CorrectionMode()
+
+        # Chessnut setup mode: when True, physical lift/place events are tracked as
+        # a board setup by the Chessnut emulator (not interpreted as chess moves).
+        # The emulator toggles this via set_setup_mode_active().
+        self._setup_mode_active = False
+
+        # Optional UI handler driven during setup mode. Injected via
+        # set_setup_display_handler() so game logic stays decoupled from the
+        # display layer. Signature: handler(active: bool, fen: Optional[str]).
+        self._setup_display_handler = None
         
         # Database control
         self.save_to_database = save_to_database
@@ -819,6 +829,7 @@ class GameManager:
             set_king_lift_resign_menu_active_fn=lambda v: setattr(self, "_king_lift_resign_menu_active", v),
             on_king_lift_resign_cancel_fn=self.on_king_lift_resign_cancel,
             chess_board_to_state_fn=self._chess_board_to_state,
+            setup_mode_active_fn=lambda: self._setup_mode_active,
         )
         process_field_event(ctx, piece_event, field, time_in_seconds)
     
@@ -1536,6 +1547,59 @@ class GameManager:
         Prefer using game_state.fen directly when possible.
         """
         return self._game_state.fen
+
+    def set_setup_mode_active(self, active: bool) -> None:
+        """Enable or disable Chessnut setup mode.
+
+        While active, physical lift/place events are not interpreted as chess
+        moves (see FieldEventContext.setup_mode_active_fn); the Chessnut emulator
+        tracks them as a board setup instead.
+        """
+        self._setup_mode_active = active
+        log.info(f"[GameManager] setup_mode_active = {active}")
+
+    def set_setup_display_handler(self, handler) -> None:
+        """Inject the UI handler invoked while setup mode is active.
+
+        Args:
+            handler: Callable(active: bool, fen: Optional[str]). Called to show or
+                hide the setup status display and to redraw the board as the setup
+                position evolves. May be None to disable.
+        """
+        self._setup_display_handler = handler
+
+    def update_setup_display(self, active: bool, fen: str = None) -> None:
+        """Notify the injected UI handler of setup-mode display state.
+
+        Args:
+            active: True to show the setup status (and redraw with ``fen``), False
+                to hide it and restore the normal turn indicator.
+            fen: Placement (or full) FEN to draw on the board, when active.
+        """
+        if self._setup_display_handler is None:
+            return
+        try:
+            self._setup_display_handler(active, fen)
+        except Exception as e:
+            log.error(f"[GameManager] Error in setup display handler: {e}")
+
+    def apply_setup_position(self, fen: str) -> None:
+        """Adopt a position configured during setup mode as a fresh game.
+
+        Called when the Chessnut app signals the puzzle is matched. Resets move
+        tracking, sets the game state to the configured FEN, and fires a new-game
+        event so play resumes from this position.
+
+        Args:
+            fen: Full FEN (placement plus side-to-move/castling/etc.).
+        """
+        self.move_state.reset()
+        self._game_state.set_position(fen)
+        self.game_db_id = -1
+        self.led.off()
+        if self.event_callback is not None:
+            self.event_callback(EVENT_NEW_GAME)
+        log.info(f"[GameManager] Setup position adopted as new game: {fen}")
     
     def subscribe_game(self, event_callback, move_callback, key_callback, takeback_callback=None):
         """Subscribe to the game manager.

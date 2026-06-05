@@ -1387,6 +1387,8 @@ def _start_game_mode(
     from universalchess.managers.game import GameManager
     game_manager = GameManager(save_to_database=save_to_database)
     game_manager.set_led_callbacks(led_callbacks)
+    # Drive the e-paper setup status / board preview during Chessnut puzzle setup.
+    game_manager.set_setup_display_handler(display_manager.on_setup_display)
     
     # Create ProtocolManager with GameManager dependency
     protocol_manager = ProtocolManager(game_manager=game_manager)
@@ -2463,7 +2465,18 @@ def sendMessage(data):
 
     tosend = bytearray(data)
     _last_message = tosend
-    log.info(f"[sendMessage] tosend={' '.join(f'{b:02x}' for b in tosend)}")
+
+    # Symmetric counterpart to the "[<PROTO> RX]" log emitted by ConnectionManager
+    # for inbound data. Logging here - the single outbound choke point for every
+    # emulator and both transports (BLE + RFCOMM) - means the full bidirectional
+    # conversation can be read or grepped as one stream without per-emulator logging.
+    if ble_manager is not None and ble_manager.connected:
+        client_label = ble_manager.client_type or "unknown"
+    elif rfcomm_server is not None and rfcomm_server.connected:
+        client_label = "rfcomm"
+    else:
+        client_label = "unknown"
+    log.info(f"[{client_label.upper()} TX] {len(tosend)} bytes - {' '.join(f'{b:02x}' for b in tosend)}")
     
     # In relay mode, messages are forwarded to the relay target, so don't send back to client
     if relay_mode:
@@ -2473,7 +2486,7 @@ def sendMessage(data):
     # Send via BLE if connected (BleManager handles protocol routing)
     if ble_manager is not None and ble_manager.connected:
         try:
-            log.info(f"[sendMessage] Sending {len(tosend)} bytes via BLE ({ble_manager.client_type})")
+            log.debug(f"[sendMessage] Sending {len(tosend)} bytes via BLE ({ble_manager.client_type})")
             ble_manager.send_notification(bytes(tosend))
         except Exception as e:
             log.error(f"[sendMessage] Error sending via BLE: {e}")

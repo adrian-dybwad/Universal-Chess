@@ -39,13 +39,14 @@ _SplashScreen = None
 _GameOverWidget = None
 _AlertWidget = None
 _PauseWidget = None
+_SetupStatusWidget = None
 
 
 def _load_widgets():
     """Lazily load widget classes."""
     global _widgets_loaded, _ChessBoardWidget, _GameAnalysisWidget, _ChessClockWidget
     global _IconMenuWidget, _IconMenuEntry, _SplashScreen
-    global _GameOverWidget, _AlertWidget, _PauseWidget
+    global _GameOverWidget, _AlertWidget, _PauseWidget, _SetupStatusWidget
     
     if _widgets_loaded:
         return
@@ -53,7 +54,7 @@ def _load_widgets():
     from universalchess.epaper import (
         ChessBoardWidget, GameAnalysisWidget, ChessClockWidget,
         IconMenuWidget, IconMenuEntry, SplashScreen,
-        AlertWidget
+        AlertWidget, SetupStatusWidget
     )
     from universalchess.epaper.game_over import GameOverWidget
     from universalchess.epaper.pause import PauseWidget
@@ -66,6 +67,7 @@ def _load_widgets():
     _GameOverWidget = GameOverWidget
     _AlertWidget = AlertWidget
     _PauseWidget = PauseWidget
+    _SetupStatusWidget = SetupStatusWidget
     _widgets_loaded = True
 
 
@@ -151,6 +153,7 @@ class DisplayManager:
         self.alert_widget = None
         self.pause_widget = None
         self.game_over_widget = None
+        self.setup_status_widget = None
         
         # Pause state
         self._is_paused = False
@@ -562,6 +565,48 @@ class DisplayManager:
             self._is_paused = False
             log.info("[DisplayManager] Pause state cleared")
     
+    def on_setup_display(self, active: bool, fen: str = None) -> None:
+        """Drive the display while Chessnut puzzle setup mode is active.
+
+        Replaces the turn indicator with a "SETUP MODE" status panel and redraws
+        the board from the evolving setup FEN. Idempotent: repeated active calls
+        only refresh the board. Injected into GameManager via
+        set_setup_display_handler so the emulator can signal setup progress.
+
+        Args:
+            active: True to show setup status (and redraw with ``fen``); False to
+                hide it and restore the normal turn indicator.
+            fen: Placement (or full) FEN to draw on the board while active.
+        """
+        if active:
+            self._show_setup_status()
+            if fen and self.chess_board_widget:
+                self.chess_board_widget.set_fen(fen)
+        else:
+            self._hide_setup_status()
+
+    def _show_setup_status(self) -> None:
+        """Show the setup status panel in the turn-indicator region (idempotent)."""
+        if self.setup_status_widget is not None:
+            return
+        # Hide the turn indicator while setup suspends normal play.
+        if self.clock_widget:
+            self.clock_widget.hide()
+        self.setup_status_widget = _SetupStatusWidget(
+            0, 144, 128, 72, board.display_manager.update
+        )
+        board.display_manager.add_widget(self.setup_status_widget)
+        log.info("[DisplayManager] Setup status shown (turn indicator hidden)")
+
+    def _hide_setup_status(self) -> None:
+        """Remove the setup status panel and restore the turn indicator."""
+        if self.setup_status_widget is not None:
+            board.display_manager.remove_widget(self.setup_status_widget)
+            self.setup_status_widget = None
+            log.info("[DisplayManager] Setup status hidden")
+        if self.clock_widget:
+            self.clock_widget.show()
+
     def get_clock_times(self) -> tuple:
         """Get the current clock times for both players.
 

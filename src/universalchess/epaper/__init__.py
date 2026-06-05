@@ -39,6 +39,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "AlertWidget": ("universalchess.epaper.alert_widget", "AlertWidget"),
     "ChessClockWidget": ("universalchess.epaper.chess_clock", "ChessClockWidget"),
     "InfoOverlayWidget": ("universalchess.epaper.info_overlay", "InfoOverlayWidget"),
+    "SetupStatusWidget": ("universalchess.epaper.setup_status", "SetupStatusWidget"),
 }
 
 
