@@ -119,6 +119,20 @@ class AlertWidget(Widget):
     def _handle_child_update(self, full: bool = False, immediate: bool = False):
         """Handle update requests from child widgets by forwarding to parent callback."""
         return self._update_callback(full, immediate)
+
+    def _show_with_refresh(self) -> None:
+        """Make the widget visible and force its sprite to re-render.
+
+        The alert content (type, colors, text) can change while the widget is
+        ALREADY visible - e.g. a QUEEN threat is replaced by CHECK on the very
+        next move, with no intervening hide(). Widget.show() only invalidates and
+        refreshes on a hidden->visible transition, so a content change while
+        visible would leave the stale cached sprite on screen (the "in check but
+        YOUR QUEEN is shown" bug). Invalidating unconditionally here forces the
+        new alert to render.
+        """
+        self.visible = True
+        self.invalidate_and_update(forced=True)
     
     def show_check(self, is_black_in_check: bool, attacker_square: int, king_square: int) -> None:
         """Show CHECK alert and flash LEDs.
@@ -138,8 +152,9 @@ class AlertWidget(Widget):
         # Flash LEDs from attacker to king (hint style: slow, dim)
         self._flash_leds(repeat=2)
         
-        # Use base class show() to handle visibility and update
-        super().show()
+        # Force re-render: the alert may already be visible (e.g. switching from
+        # a QUEEN threat to CHECK), where Widget.show() alone would not refresh.
+        self._show_with_refresh()
     
     def show_queen_threat(self, is_black_queen_threatened: bool, attacker_square: int, queen_square: int) -> None:
         """Show YOUR QUEEN alert and flash LEDs.
@@ -159,8 +174,9 @@ class AlertWidget(Widget):
         # Flash LEDs from attacker to queen (hint style: slow, dim)
         self._flash_leds(repeat=1)
         
-        # Use base class show() to handle visibility and update
-        super().show()
+        # Force re-render: the alert may already be visible (e.g. switching from
+        # CHECK to a QUEEN threat), where Widget.show() alone would not refresh.
+        self._show_with_refresh()
     
     def show_hint(self, move_text: str, from_square: int, to_square: int) -> None:
         """Show move hint with the suggested move.
@@ -181,8 +197,9 @@ class AlertWidget(Widget):
         # Flash LEDs from source to target (hint style: slow, dim)
         self._flash_leds(repeat=2)
         
-        # Use base class show() to handle visibility and update
-        super().show()
+        # Force re-render: the alert may already be visible when the hint content
+        # changes, where Widget.show() alone would not refresh.
+        self._show_with_refresh()
     
     def hide(self) -> None:
         """Hide the alert widget and clear alert state."""
