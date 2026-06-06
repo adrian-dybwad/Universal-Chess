@@ -231,10 +231,38 @@ class DisplayManager:
         self._show_clock = load_bool('show_clock', True)
         self._show_analysis = load_bool('show_analysis', True)
         self._show_graph = load_bool('show_graph', True)
-        
+
+        # Re-apply the selected chess sprite sheet so the board widget rebuilt by
+        # _init_widgets() reflects a sprite change made in the display menu (hot
+        # reload). The board widget reads the module-level sprites at construction.
+        self._reload_chess_sprites()
+
         log.info(f"[DisplayManager] Reloaded display settings: board={self._show_board}, "
                  f"clock={self._show_clock}, analysis={self._show_analysis}, "
                  f"graph={self._show_graph}")
+
+    def _reload_chess_sprites(self):
+        """Load the sprite sheet selected in settings and set it module-wide.
+
+        No-op if the resource loader is unavailable or the selected sheet cannot
+        be loaded (the previously set sprites remain in effect).
+        """
+        from universalchess.board.settings import Settings
+        from universalchess import resources as resources_module
+        from universalchess.epaper import chess_board as chess_board_module
+
+        loader = resources_module.get_resource_loader()
+        if loader is None:
+            return
+
+        selected_sheet = Settings.read('game', 'chess_sprites', loader.DEFAULT_SPRITE_SHEET)
+        sprites = loader.get_chess_sprites(selected_sheet)
+        if sprites is None and selected_sheet != loader.DEFAULT_SPRITE_SHEET:
+            log.warning(f"[DisplayManager] Sprite sheet '{selected_sheet}' not found, using default")
+            sprites = loader.get_chess_sprites(loader.DEFAULT_SPRITE_SHEET)
+        if sprites is not None:
+            chess_board_module.set_chess_sprites(sprites)
+            log.info(f"[DisplayManager] Chess sprites set to '{selected_sheet}'")
     
     def _init_widgets(self):
         """Create and add widgets to the display manager.

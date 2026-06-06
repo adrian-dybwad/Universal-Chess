@@ -144,32 +144,135 @@ class ResourceLoader:
         except Exception:
             return None
     
-    def get_chess_sprites(self) -> Optional[Image.Image]:
-        """Get chess piece sprite sheet.
-        
-        Returns the sprite sheet converted to 1-bit mode for e-paper display.
-        
+    # Prefix and suffix of selectable chess sprite-sheet resources. A sheet named
+    # ``chesssprites_<id>.bmp`` is exposed in the display menu under ``<id>``.
+    _SPRITE_SHEET_PREFIX = "chesssprites_"
+    _SPRITE_SHEET_SUFFIX = ".bmp"
+    DEFAULT_SPRITE_SHEET = "default"
+
+    def list_chess_sprite_sheets(self) -> "list[str]":
+        """List the identifiers of all available chess sprite sheets.
+
+        Scans the user and system resource directories for files named
+        ``chesssprites_<id>.bmp`` and returns each ``<id>`` once (user overrides
+        merge with system sheets). ``default`` is always listed first so the menu
+        cycles from a known starting point; the remaining ids are alphabetical.
+
         Returns:
-            PIL Image in mode '1', or None if not found
+            Ordered list of sheet identifiers, or empty if none are present.
         """
-        # Check cache first
-        cache_key = "chesssprites.bmp:1bit"
+        ids = set()
+        for directory in (self.user_dir, self.system_dir):
+            if not directory:
+                continue
+            try:
+                names = os.listdir(directory)
+            except OSError:
+                continue
+            for name in names:
+                if name.startswith(self._SPRITE_SHEET_PREFIX) and name.endswith(self._SPRITE_SHEET_SUFFIX):
+                    identifier = name[len(self._SPRITE_SHEET_PREFIX):-len(self._SPRITE_SHEET_SUFFIX)]
+                    if identifier:
+                        ids.add(identifier)
+
+        ordered = sorted(ids)
+        if self.DEFAULT_SPRITE_SHEET in ids:
+            ordered.remove(self.DEFAULT_SPRITE_SHEET)
+            ordered.insert(0, self.DEFAULT_SPRITE_SHEET)
+        return ordered
+
+    def get_chess_sprites(self, name: str = DEFAULT_SPRITE_SHEET) -> Optional[Image.Image]:
+        """Get a chess piece sprite sheet by identifier.
+
+        Loads ``chesssprites_<name>.bmp`` and converts it to 1-bit mode for the
+        e-paper display. Results are cached per-name so switching sheets does not
+        return a stale image.
+
+        Args:
+            name: Sheet identifier (e.g. ``"default"``, ``"fen"``). Defaults to
+                the built-in ``default`` sheet.
+
+        Returns:
+            PIL Image in mode '1', or None if the sheet is not found.
+        """
+        filename = f"{self._SPRITE_SHEET_PREFIX}{name}{self._SPRITE_SHEET_SUFFIX}"
+        cache_key = f"{filename}:1bit"
         if cache_key in self._image_cache:
             return self._image_cache[cache_key]
-        
-        img = self.get_image("chesssprites.bmp")
+
+        img = self.get_image(filename)
         if img is None:
             return None
-        
+
         # Convert to 1-bit mode
         if img.mode != "1":
             if img.mode != "L":
                 img = img.convert("L")
             img = img.point(lambda x: 0 if x < 128 else 255, mode="1")
-        
+
         self._image_cache[cache_key] = img
         return img
     
+    # Column x-position of each piece in the 16px sprite sheet. Row 0 (y=0..15)
+    # renders the piece on a light-square background, which composites cleanly
+    # onto the white menu. Matches ChessBoardWidget._piece_x.
+    _PIECE_SHEET_X = {
+        "P": 16, "R": 32, "N": 48, "B": 64, "Q": 80, "K": 96,
+        "p": 112, "r": 128, "n": 144, "b": 160, "q": 176, "k": 192,
+    }
+    _PIECE_CELL = 16
+
+    def get_chess_piece_preview(
+        self,
+        sheet_name: str,
+        piece: str = "k",
+        size: Optional[int] = None,
+        on_dark_square: bool = True,
+    ) -> Tuple[Optional[Image.Image], Optional[Image.Image]]:
+        """Get a single chess piece preview tile cropped from a sprite sheet.
+
+        Crops ``piece`` from ``chesssprites_<sheet_name>.bmp`` and returns the
+        whole 16px cell as an opaque tile (the square plus the piece). The sheet
+        has light-square pieces in row 0 (y=0) and dark-square pieces in row 1
+        (y=16); ``on_dark_square`` selects the row, defaulting to the dark square
+        so the black king is shown on its black square.
+
+        Args:
+            sheet_name: Sprite sheet identifier (e.g. ``"default"``).
+            piece: Piece letter using FEN case (uppercase = white, lowercase =
+                black). Defaults to the black king ``"k"``.
+            size: Optional square size to scale to, using nearest-neighbour to
+                preserve the pixel art. ``None`` keeps the native 16px cell.
+            on_dark_square: Crop the dark-square row (row 1) when True, else the
+                light-square row (row 0).
+
+        Returns:
+            ``(image, None)`` in mode '1' - the full opaque tile and no mask
+            (the whole square is shown). ``(None, None)`` if the piece letter is
+            unknown or the sheet/row is unavailable.
+        """
+        if piece not in self._PIECE_SHEET_X:
+            return None, None
+
+        sheet = self.get_chess_sprites(sheet_name)
+        if sheet is None:
+            return None, None
+
+        x = self._PIECE_SHEET_X[piece]
+        cell = self._PIECE_CELL
+        py = cell if on_dark_square else 0
+        if x + cell > sheet.width or py + cell > sheet.height:
+            return None, None
+
+        piece_img = sheet.crop((x, py, x + cell, py + cell))
+        if size is not None and size != cell:
+            piece_img = piece_img.resize((size, size), Image.NEAREST)
+        if piece_img.mode != "1":
+            piece_img = piece_img.convert("1")
+
+        # Full square tile: shown opaquely, so no transparency mask.
+        return piece_img, None
+
     def get_knight_logo(self, size: int = 100) -> Tuple[Optional[Image.Image], Optional[Image.Image]]:
         """Get knight logo image and its transparency mask.
         
@@ -216,3 +319,26 @@ class ResourceLoader:
         self._resized_cache[mask_cache_key] = mask
         
         return img, mask
+
+
+# ---------------------------------------------------------------------------
+# Module-level singleton
+#
+# The application builds one ResourceLoader at startup. Exposing it here lets
+# components that run after startup (the display menu's sprite selector, the
+# DisplayManager's hot-reload of the selected sheet) reuse that same loader -
+# and its caches - instead of re-instantiating it.
+# ---------------------------------------------------------------------------
+
+_resource_loader: Optional[ResourceLoader] = None
+
+
+def set_resource_loader(loader: ResourceLoader) -> None:
+    """Register the application-wide ResourceLoader singleton."""
+    global _resource_loader
+    _resource_loader = loader
+
+
+def get_resource_loader() -> Optional[ResourceLoader]:
+    """Get the application-wide ResourceLoader, or None if not yet set."""
+    return _resource_loader

@@ -134,6 +134,11 @@ class GameSettings:
         show_analysis: Show analysis widget
         show_graph: Show history graph in analysis widget
         led_brightness: LED brightness level (1-10, default 5)
+        chess_sprites: Identifier of the selected chesssprites_ sheet ("default"
+            maps to chesssprites_default.bmp). Must be a real field so the
+            Display > Board > Sprites selector can read the current selection via
+            to_dict() and persist changes via set(); otherwise the menu always
+            reads the default and cycling never advances.
     """
 
     section: str
@@ -145,6 +150,7 @@ class GameSettings:
     show_analysis: bool = True
     show_graph: bool = True
     led_brightness: int = 5  # LED brightness 1-10
+    chess_sprites: str = "default"
     _log: Optional[Any] = field(default=None, repr=False)
 
     def save(self, key: str) -> None:
@@ -186,6 +192,7 @@ class GameSettings:
             "show_analysis": self.show_analysis,
             "show_graph": self.show_graph,
             "led_brightness": self.led_brightness,
+            "chess_sprites": self.chess_sprites,
         }
 
     @classmethod
@@ -216,6 +223,7 @@ class GameSettings:
             show_analysis=data.get("show_analysis", defaults.get("show_analysis", True)),
             show_graph=data.get("show_graph", defaults.get("show_graph", True)),
             led_brightness=data.get("led_brightness", defaults.get("led_brightness", 5)),
+            chess_sprites=data.get("chess_sprites", defaults.get("chess_sprites", "default")),
             _log=log,
         )
 

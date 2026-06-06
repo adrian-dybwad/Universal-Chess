@@ -53,6 +53,13 @@ class IconMenuEntry:
         description: Optional long description text rendered below the icon+label area.
                     Displayed as smaller, word-wrapped text spanning the full button width.
         description_font_size: Font size for description text (default 11)
+        icon_image: Optional pre-rendered image used as the main icon instead of
+                    a drawn icon_name (e.g. a chess-piece sprite preview).
+        icon_mask: Optional transparency mask for icon_image (opaque where the
+                    image should show); required to composite onto the menu
+                    background rather than painting a solid box.
+        trailing_icon_name: Optional icon drawn at the right edge of the button
+                    (e.g. "radio_checked"/"radio_empty" to mark a radio selection).
     """
     key: str
     label: str
@@ -68,6 +75,9 @@ class IconMenuEntry:
     border_width: int = 2
     description: str = None
     description_font_size: int = 11
+    icon_image: Optional[Image.Image] = None
+    icon_mask: Optional[Image.Image] = None
+    trailing_icon_name: Optional[str] = None
 
 
 class IconMenuWidget(Widget):
@@ -268,7 +278,10 @@ class IconMenuWidget(Widget):
                 bold=entry.bold,
                 border_width=entry.border_width,
                 description=entry.description,
-                description_font_size=entry.description_font_size
+                description_font_size=entry.description_font_size,
+                icon_image=entry.icon_image,
+                icon_mask=entry.icon_mask,
+                trailing_icon_name=entry.trailing_icon_name
             )
             self._buttons.append(button)
             current_y += button_height

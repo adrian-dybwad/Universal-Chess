@@ -68,7 +68,10 @@ class IconButtonWidget(Widget):
                  font_size: int = 16,
                  bold: bool = False,
                  description: str = None,
-                 description_font_size: int = 11):
+                 description_font_size: int = 11,
+                 icon_image: Image.Image = None,
+                 icon_mask: Image.Image = None,
+                 trailing_icon_name: str = None):
         """Initialize icon button widget.
         
         Args:
@@ -95,11 +98,20 @@ class IconButtonWidget(Widget):
             bold: Whether to render text in bold (simulated via multi-draw)
             description: Optional long description text rendered below icon+label
             description_font_size: Font size for description text (default 11)
+            icon_image: Optional pre-rendered image used as the main icon instead
+                       of a drawn icon_name (composited via icon_mask)
+            icon_mask: Optional transparency mask for icon_image (opaque where the
+                       image should show)
+            trailing_icon_name: Optional icon drawn at the right edge (e.g. a
+                       radio indicator) in addition to the main icon
         """
         super().__init__(x, y, width, height, update_callback, background_shade=background_shade)
         self.key = key
         self.label = label
         self.icon_name = icon_name
+        self.icon_image = icon_image
+        self.icon_mask = icon_mask
+        self.trailing_icon_name = trailing_icon_name
         self.selected = selected
         self.icon_size = icon_size
         self.label_height = label_height
@@ -373,7 +385,7 @@ class IconButtonWidget(Widget):
         # Draw icon centered horizontally
         icon_x = content_left + content_width // 2
         icon_y = start_y + self.icon_size // 2
-        self._draw_icon(draw, self.icon_name, icon_x, icon_y, self.icon_size, self.selected)
+        self._draw_main_icon(draw, icon_x, icon_y, self.icon_size, self.selected)
         
         # Draw text centered below icon using TextWidget
         text_start_y = start_y + self.icon_size + icon_text_gap
@@ -407,14 +419,27 @@ class IconButtonWidget(Widget):
         icon_x = icon_left + self.icon_size // 2
         # Center icon vertically in content area
         icon_y = content_top + content_height // 2
-        self._draw_icon(draw, self.icon_name, icon_x, icon_y, self.icon_size, self.selected)
+        self._draw_main_icon(draw, icon_x, icon_y, self.icon_size, self.selected)
         
         # Icon right edge (including icon_margin on right side)
         icon_right = icon_left + self.icon_size + self.icon_margin
         
-        # Calculate text width (remaining space after icon)
+        # Draw an optional trailing icon (e.g. radio indicator) at the right edge
+        # and reserve space for it so text does not overlap.
+        trailing_reserved = 0
+        if self.trailing_icon_name:
+            trailing_size = min(self.icon_size, content_height)
+            trailing_cx = (self.width - self.margin - self.border_width
+                           - self.padding - self.icon_margin - trailing_size // 2)
+            trailing_cy = content_top + content_height // 2
+            self._draw_icon(draw, self.trailing_icon_name, trailing_cx, trailing_cy,
+                            trailing_size, self.selected)
+            trailing_reserved = trailing_size + 2 * self.icon_margin
+        
+        # Calculate text width (remaining space after icon and trailing marker)
         text_x = icon_right
-        text_width = self.width - text_x - self.margin - self.border_width - self.padding
+        text_width = (self.width - text_x - self.margin - self.border_width
+                      - self.padding - trailing_reserved)
         
         if len(lines) > 1:
             # Multi-line: center text block vertically
@@ -446,6 +471,65 @@ class IconButtonWidget(Widget):
         
         return mask
     
+    def _draw_main_icon(self, draw: ImageDraw.Draw, x: int, y: int,
+                        size: int, selected: bool):
+        """Draw the button's main icon: a preview image if set, else a named icon.
+
+        When icon_image is provided it is composited (through icon_mask) so it
+        sits on the menu background; otherwise the drawn icon_name is used.
+
+        Args:
+            draw: ImageDraw object whose backing image receives the paste
+            x: X center position
+            y: Y center position
+            size: Icon size in pixels
+            selected: Whether the button is selected (inverts the preview)
+        """
+        if self.icon_image is not None:
+            self._draw_image_icon(draw, x, y, size, selected)
+        else:
+            self._draw_icon(draw, self.icon_name, x, y, size, selected)
+
+    def _draw_image_icon(self, draw: ImageDraw.Draw, x: int, y: int,
+                         size: int, selected: bool):
+        """Composite a preview image (icon_image) centered at (x, y).
+
+        Scales the image and its mask to ``size`` with nearest-neighbour to keep
+        pixel art crisp, inverts the image when the button is selected so it
+        reads on the dark selected background, and pastes through the mask so the
+        menu background shows around the piece.
+        """
+        img = self.icon_image
+        mask = self.icon_mask
+        if img.size != (size, size):
+            img = img.resize((size, size), Image.NEAREST)
+            if mask is not None:
+                mask = mask.resize((size, size), Image.NEAREST)
+        if selected:
+            img = Image.eval(img, lambda p: 255 - p)
+        target_img = draw._image
+        target_img.paste(img, (x - size // 2, y - size // 2), mask)
+
+    def _draw_radio_icon(self, draw: ImageDraw.Draw, x: int, y: int,
+                         size: int, line_color: int, checked: bool):
+        """Draw a radio indicator (ring, with a filled centre dot when checked).
+
+        Args:
+            draw: ImageDraw object
+            x: X center position
+            y: Y center position
+            size: Icon size in pixels
+            line_color: Line color (0=black, 255=white)
+            checked: If True, fill the centre to mark the active selection
+        """
+        s = size / 36.0
+        r = max(4, int(11 * s))
+        line_width = max(2, int(2 * s))
+        draw.ellipse([x - r, y - r, x + r, y + r], outline=line_color, width=line_width)
+        if checked:
+            ir = max(2, int(5 * s))
+            draw.ellipse([x - ir, y - ir, x + ir, y + ir], fill=line_color, outline=line_color)
+
     def _draw_icon(self, draw: ImageDraw.Draw, icon_name: str,
                    x: int, y: int, size: int, selected: bool):
         """Draw an icon at the specified position.
@@ -562,6 +646,10 @@ class IconButtonWidget(Widget):
             self._draw_checkbox_icon(draw, x, y, size, line_color, checked=True)
         elif icon_name == "checkbox_empty":
             self._draw_checkbox_icon(draw, x, y, size, line_color, checked=False)
+        elif icon_name == "radio_checked":
+            self._draw_radio_icon(draw, x, y, size, line_color, checked=True)
+        elif icon_name == "radio_empty":
+            self._draw_radio_icon(draw, x, y, size, line_color, checked=False)
         elif icon_name == "display":
             self._draw_display_icon(draw, x, y, size, line_color)
         elif icon_name == "cast":

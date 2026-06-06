@@ -245,12 +245,26 @@ def _initialize_resources():
         # Create resource loader using paths (supports both installed and dev environments)
         loader = ResourceLoader(RESOURCES_DIR, USER_RESOURCES_DIR)
         
+        # Register as the app-wide singleton so the display menu's sprite selector
+        # and the DisplayManager's hot-reload reuse this loader (and its caches).
+        from universalchess import resources as resources_module
+        resources_module.set_resource_loader(loader)
+        
         # Set resource loader on modules that need fonts
         text_module.set_resource_loader(loader)
         keyboard_module.set_resource_loader(loader)
         
-        # Load and set chess sprites
-        sprites = loader.get_chess_sprites()
+        # Load and set the chess sprite sheet selected in settings (falls back to default).
+        # Read via Settings.read (not _game_settings_dict, which is defined later in
+        # this module): _initialize_resources() runs at import time, before that
+        # helper exists, and a NameError here would abort loading the knight logos
+        # below, breaking the splash screen.
+        from universalchess.board.settings import Settings
+        selected_sheet = Settings.read('game', 'chess_sprites', loader.DEFAULT_SPRITE_SHEET)
+        sprites = loader.get_chess_sprites(selected_sheet)
+        if sprites is None and selected_sheet != loader.DEFAULT_SPRITE_SHEET:
+            log.warning(f"[Startup] Chess sprite sheet '{selected_sheet}' not found, using default")
+            sprites = loader.get_chess_sprites(loader.DEFAULT_SPRITE_SHEET)
         if sprites:
             chess_board_module.set_chess_sprites(sprites)
         
@@ -535,6 +549,7 @@ GAME_SETTINGS_DEFAULTS = {
     'show_clock': True,
     'show_analysis': True,
     'show_graph': True,
+    'chess_sprites': 'default',
 }
 
 # Global settings instance (populated from centaur.ini on startup)
@@ -617,6 +632,36 @@ def _player2_settings_dict() -> Dict[str, Any]:
 def _game_settings_dict() -> Dict[str, Any]:
     """Get game settings as a dict."""
     return _get_settings().game.to_dict()
+
+
+def _list_chess_sprite_sheets() -> List[str]:
+    """List available chess sprite-sheet identifiers for the display menu.
+
+    Uses the app-wide ResourceLoader singleton; returns an empty list if it has
+    not been initialized yet.
+    """
+    from universalchess import resources as resources_module
+    loader = resources_module.get_resource_loader()
+    if loader is None:
+        return []
+    return loader.list_chess_sprite_sheets()
+
+
+def _chess_sprite_preview(sheet_name: str):
+    """Return a sheet's black-king preview as an ``(image, mask)`` pair, or None.
+
+    Used by the Board > Sprites radio list to show each sheet's piece as the row
+    icon. Returns None when the loader or sheet is unavailable so the menu falls
+    back to its drawn icon.
+    """
+    from universalchess import resources as resources_module
+    loader = resources_module.get_resource_loader()
+    if loader is None:
+        return None
+    image, mask = loader.get_chess_piece_preview(sheet_name, "k")
+    if image is None:
+        return None
+    return image, mask
 
 
 # Global menu context instance (MenuContext imported from utils/settings_persistence.py)
@@ -1144,10 +1189,6 @@ def _show_menu(entries: List[IconMenuEntry], initial_index: int = 0) -> str:
         Selected entry key, "BACK", "HELP", "SHUTDOWN", "CLIENT_CONNECTED", or "PIECE_MOVED"
     """
     global _menu_manager
-
-    # DEBUG: Log what initial_index we're receiving
-    entry_keys = [e.key for e in entries]
-    log.info(f"[DEBUG _show_menu] initial_index={initial_index}, entries={entry_keys}")
 
     # Clamp initial_index to valid range
     if initial_index < 0 or initial_index >= len(entries):
@@ -2071,6 +2112,8 @@ def _handle_system_menu():
             get_game_settings=_game_settings_dict,
             show_menu=_show_menu,
             save_game_setting=_save_game_setting,
+            list_sprite_sheets=_list_chess_sprite_sheets,
+            get_sprite_preview=_chess_sprite_preview,
             log=log,
             board=board,
         ),
@@ -3590,6 +3633,8 @@ def main():
                         get_game_settings=_game_settings_dict,
                         show_menu=_show_menu,
                         save_game_setting=_save_game_setting,
+                        list_sprite_sheets=_list_chess_sprite_sheets,
+                        get_sprite_preview=_chess_sprite_preview,
                         log=log,
                         board=board,
                     )
