@@ -3252,10 +3252,25 @@ def main():
         if app_state == AppState.GAME:
             _pending_settings_reload = True
     
+    # Re-broadcast the current game state on demand. The web app sends this
+    # request the moment a Live-board client connects without cached state
+    # (e.g. after a web-service restart): the game->web socket is one-way with
+    # no replay, so without an explicit pull the Live board would stay blank
+    # until the next physical move. Responding immediately fills it at once.
+    def _on_game_state_requested():
+        """A web client connected and asked for the current game state."""
+        log.debug("[Main] Web requested current game state, re-broadcasting")
+        try:
+            from universalchess.services.chess_game import get_chess_game_service
+            get_chess_game_service().broadcast_state()
+        except Exception as e:
+            log.debug(f"[Main] Game-state request error: {e}")
+
     try:
         from universalchess.services.game_broadcast import get_settings_subscriber
         settings_subscriber = get_settings_subscriber()
         settings_subscriber.add_callback(_on_settings_changed)
+        settings_subscriber.add_request_callback(_on_game_state_requested)
         settings_subscriber.start()
         log.info("[Main] Settings subscriber started (hot reload enabled)")
     except Exception as e:

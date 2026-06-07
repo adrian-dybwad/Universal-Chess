@@ -574,6 +574,35 @@ class SettingsPublisher:
             self._connected = False
             return False
     
+    def request_game_state(self) -> bool:
+        """Ask the main process to re-broadcast the current game state.
+        
+        Sent when a Live-board client connects but the web app has no cached
+        state (e.g. after a web-service restart). The game->web broadcast is
+        one-way with no replay, so this pull lets the Live board fill at once
+        instead of waiting for the next physical move.
+        
+        Returns:
+            True if sent successfully, False otherwise.
+        """
+        if not self._connected:
+            if not self.connect():
+                return False
+        
+        try:
+            socket_path = get_settings_socket_path()
+            message = json.dumps({"type": "request_game_state"}).encode("utf-8")
+            self._socket.sendto(message, str(socket_path))
+            log.debug("[SettingsPublisher] Sent request_game_state")
+            return True
+        except FileNotFoundError:
+            log.debug("[SettingsPublisher] Main process not listening")
+            return False
+        except Exception as e:
+            log.debug(f"[SettingsPublisher] Send failed: {e}")
+            self._connected = False
+            return False
+    
     def close(self) -> None:
         """Close the socket."""
         with self._lock:
@@ -598,6 +627,7 @@ class SettingsSubscriber:
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._callbacks: List[Callable[[], None]] = []
+        self._request_callbacks: List[Callable[[], None]] = []
         self._lock = threading.Lock()
     
     def _ensure_socket(self) -> None:
@@ -626,6 +656,18 @@ class SettingsSubscriber:
         """
         with self._lock:
             self._callbacks.append(callback)
+    
+    def add_request_callback(self, callback: Callable[[], None]) -> None:
+        """Register a callback for game-state request notifications.
+        
+        Invoked when the web app asks the main process to re-broadcast the
+        current game state (a Live-board client connected with no cached state).
+        
+        Args:
+            callback: Function to call on a state request (no arguments).
+        """
+        with self._lock:
+            self._request_callbacks.append(callback)
     
     def start(self) -> None:
         """Start the subscriber thread."""
@@ -675,7 +717,8 @@ class SettingsSubscriber:
                 message = data.decode("utf-8")
                 parsed = json.loads(message)
                 
-                if parsed.get("type") == "settings_changed":
+                msg_type = parsed.get("type")
+                if msg_type == "settings_changed":
                     log.info("[SettingsSubscriber] Received settings_changed, notifying callbacks")
                     with self._lock:
                         callbacks = list(self._callbacks)
@@ -685,6 +728,16 @@ class SettingsSubscriber:
                             callback()
                         except Exception as e:
                             log.error(f"[SettingsSubscriber] Callback error: {e}")
+                elif msg_type == "request_game_state":
+                    log.debug("[SettingsSubscriber] Received request_game_state, notifying callbacks")
+                    with self._lock:
+                        request_callbacks = list(self._request_callbacks)
+                    
+                    for callback in request_callbacks:
+                        try:
+                            callback()
+                        except Exception as e:
+                            log.error(f"[SettingsSubscriber] Request callback error: {e}")
                 
             except socket.timeout:
                 continue
@@ -724,4 +777,16 @@ def notify_main_process_settings_changed() -> bool:
         True if notification was sent, False otherwise.
     """
     return get_settings_publisher().notify_settings_changed()
+
+
+def request_game_state_broadcast() -> bool:
+    """Ask the main process to re-broadcast the current game state.
+    
+    Called from the web app when a Live-board client connects without a cached
+    state, so the board fills immediately rather than waiting for the next move.
+    
+    Returns:
+        True if the request was sent, False otherwise.
+    """
+    return get_settings_publisher().request_game_state()
 

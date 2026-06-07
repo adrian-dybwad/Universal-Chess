@@ -2496,6 +2496,13 @@ def sse_events():
             last_state = subscriber.get_last_state()
             if last_state:
                 yield f"data: {last_state.to_json()}\n\n"
+            else:
+                # No cached state (e.g. fresh web-service start): the game->web
+                # broadcast is one-way with no replay, so ask the board to
+                # re-broadcast now. This client_queue is already registered, so
+                # the response arrives on it below within milliseconds.
+                from universalchess.services.game_broadcast import request_game_state_broadcast
+                request_game_state_broadcast()
             
             # Stream updates as they arrive
             while True:

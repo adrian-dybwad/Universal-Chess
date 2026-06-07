@@ -1,12 +1,10 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { ChessBoard } from '../components/ChessBoard';
 import { Analysis } from '../components/Analysis';
 import { useGameStore } from '../stores/gameStore';
 import './LiveBoard.css';
 
 const SHOW_BEST_MOVE_KEY = 'universalChess.showBestMove';
-/** Animation duration for piece movement - matches react-chessboard default */
-const ANIMATION_DURATION_MS = 300;
 
 /**
  * Live board page - shows current game with real-time updates.
@@ -16,20 +14,16 @@ export function LiveBoard() {
   // Use store directly - SSE connection is managed by GameStateProvider
   const gameState = useGameStore((state) => state.gameState);
   const [displayFen, setDisplayFen] = useState<string | null>(null);
+  // Best move / played move for the position currently being viewed. These come
+  // straight from the Analysis component, which resets the best move to null on
+  // every position change and republishes it once analysis resolves. Because of
+  // that, these values are never stale, so the board can render them directly -
+  // no delayed copies or timers needed (an earlier design used those and the
+  // pending->own-move transition could leave the best-move arrow stuck hidden).
   const [bestMove, setBestMove] = useState<{ from: string; to: string } | null>(null);
   const [playedMove, setPlayedMove] = useState<{ from: string; to: string } | null>(null);
-  // Delayed arrows that wait for board animation to complete before showing
-  const [delayedBestMove, setDelayedBestMove] = useState<{ from: string; to: string } | null>(null);
-  const [delayedPlayedMove, setDelayedPlayedMove] = useState<{ from: string; to: string } | null>(null);
   const [pgnExpanded, setPgnExpanded] = useState(false);
   const [isAtLatestMove, setIsAtLatestMove] = useState(true);
-  // Track if initial position has been set (to avoid clearing arrows on initial load)
-  const hasInitialPositionRef = useRef(false);
-  const lastPositionRef = useRef<{ moveIndex: number; totalMoves: number } | null>(null);
-  // Timestamp when arrows can next be shown (after animation completes)
-  const arrowsAllowedAfterRef = useRef<number>(0);
-  // Timer for delayed arrow display
-  const arrowDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Best move visibility for latest position - defaults to hidden, persisted in localStorage
   const [showBestMoveEnabled, setShowBestMoveEnabled] = useState<boolean>(() => {
@@ -45,51 +39,10 @@ export function LiveBoard() {
   const toggleShowBestMove = useCallback(() => {
     setShowBestMoveEnabled((prev) => !prev);
   }, []);
-  
-  // When enabling show best move, immediately sync delayed arrows with current arrows
-  // This ensures arrows appear immediately when toggling on, without waiting for navigation
-  // BUT only if we're not within a navigation delay period
-  useEffect(() => {
-    if (showBestMoveEnabled && bestMove && !delayedBestMove) {
-      const now = Date.now();
-      const delay = arrowsAllowedAfterRef.current - now;
-      // Only set immediately if we're not in a delay period
-      if (delay <= 0) {
-        setDelayedBestMove(bestMove);
-      }
-    }
-  }, [showBestMoveEnabled, bestMove, delayedBestMove]);
 
   const handlePositionChange = useCallback((fen: string, moveIndex: number, totalMoves: number) => {
     setDisplayFen(fen);
     setIsAtLatestMove(moveIndex === totalMoves);
-    
-    // Check if position actually changed (navigation vs initial load)
-    const lastPos = lastPositionRef.current;
-    const positionActuallyChanged = lastPos && (lastPos.moveIndex !== moveIndex || lastPos.totalMoves !== totalMoves);
-    
-    // Update position tracking
-    lastPositionRef.current = { moveIndex, totalMoves };
-    hasInitialPositionRef.current = true;
-    
-    // Only clear arrows and delay if the position actually changed (navigation)
-    // Don't clear on initial load - let the arrows appear naturally from analysis
-    if (positionActuallyChanged) {
-      // Clear all arrows immediately and set a time-based delay
-      // This prevents arrows appearing before piece animation completes
-      setDelayedBestMove(null);
-      setDelayedPlayedMove(null);
-      setBestMove(null);
-      setPlayedMove(null);
-      // Block arrows until animation completes
-      arrowsAllowedAfterRef.current = Date.now() + ANIMATION_DURATION_MS;
-      // Clear any pending timer
-      if (arrowDelayTimerRef.current) {
-        clearTimeout(arrowDelayTimerRef.current);
-        arrowDelayTimerRef.current = null;
-      }
-    }
-    // On initial load, don't set any delay - arrows can appear immediately
   }, []);
 
   const handleBestMoveChange = useCallback((move: { from: string; to: string } | null) => {
@@ -99,39 +52,6 @@ export function LiveBoard() {
   const handlePlayedMoveChange = useCallback((move: { from: string; to: string } | null) => {
     setPlayedMove(move);
   }, []);
-  
-  // Sync delayed arrows with source arrows, respecting the time-based delay
-  // Key insight: bestMove arrives asynchronously from Stockfish, potentially AFTER
-  // the 300ms animation. We use a timestamp to ensure arrows never appear too early.
-  useEffect(() => {
-    // Clean up any pending timer
-    if (arrowDelayTimerRef.current) {
-      clearTimeout(arrowDelayTimerRef.current);
-      arrowDelayTimerRef.current = null;
-    }
-    
-    const now = Date.now();
-    const delay = arrowsAllowedAfterRef.current - now;
-    
-    if (delay > 0) {
-      // Still within the delay period - schedule update for later
-      arrowDelayTimerRef.current = setTimeout(() => {
-        setDelayedBestMove(bestMove);
-        setDelayedPlayedMove(playedMove);
-        arrowDelayTimerRef.current = null;
-      }, delay);
-    } else {
-      // Delay has passed - update immediately
-      setDelayedBestMove(bestMove);
-      setDelayedPlayedMove(playedMove);
-    }
-    
-    return () => {
-      if (arrowDelayTimerRef.current) {
-        clearTimeout(arrowDelayTimerRef.current);
-      }
-    };
-  }, [bestMove, playedMove]);
 
   const currentFen = displayFen || gameState?.fen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
   const currentPgn = gameState?.pgn || '';
@@ -157,21 +77,27 @@ export function LiveBoard() {
     return formatted;
   };
   
-  // Blue arrow: pending move (engine waiting) or last move (just executed)
-  // Shows "what just happened or needs to happen" on the physical board
-  const blueArrowMove = useMemo(() => {
-    // Prefer pending move if available (engine/Lichess move waiting to be executed)
+  // Blue arrow, pending: engine/Lichess move the player must physically make.
+  // This is an action, so the board shows it alone (suppresses the best-move arrow).
+  const pendingArrowMove = useMemo(() => {
     const pendingUci = gameState?.pending_move;
     if (pendingUci && pendingUci.length >= 4) {
       return { from: pendingUci.slice(0, 2), to: pendingUci.slice(2, 4) };
     }
-    // Fall back to last move (move that was just executed)
+    return null;
+  }, [gameState?.pending_move]);
+
+  // Blue arrow, last move: the move just executed. Informational only, so it
+  // coexists with the green best-move arrow when "Show Best" is on. Hidden while
+  // a pending move is shown, since that takes the board's full attention.
+  const lastArrowMove = useMemo(() => {
+    if (pendingArrowMove) return null;
     const lastUci = gameState?.last_move;
     if (lastUci && lastUci.length >= 4) {
       return { from: lastUci.slice(0, 2), to: lastUci.slice(2, 4) };
     }
     return null;
-  }, [gameState?.pending_move, gameState?.last_move]);
+  }, [pendingArrowMove, gameState?.last_move]);
 
   return (
     <div className="columns">
@@ -180,9 +106,10 @@ export function LiveBoard() {
         <ChessBoard 
           fen={currentFen} 
           maxBoardWidth={700} 
-          showBestMove={isAtLatestMove ? (showBestMoveEnabled ? delayedBestMove : null) : delayedBestMove} 
-          showPlayedMove={delayedPlayedMove}
-          showPendingMove={isAtLatestMove ? blueArrowMove : null}
+          showBestMove={isAtLatestMove ? (showBestMoveEnabled ? bestMove : null) : bestMove} 
+          showPlayedMove={playedMove}
+          showPendingMove={isAtLatestMove ? pendingArrowMove : null}
+          showLastMove={isAtLatestMove ? lastArrowMove : null}
         />
       </div>
 

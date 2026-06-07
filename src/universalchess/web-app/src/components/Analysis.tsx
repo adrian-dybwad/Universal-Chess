@@ -260,22 +260,40 @@ export function Analysis({ pgn, mode, onPositionChange, onBestMoveChange, onPlay
     processNext();
   }, [sfReady, moves.length]);
 
-  // Analyze current position at higher depth when movePos changes
-  useEffect(() => {
-    if (!sfReady || movePos < 0) return;
-    
-    const move = moves[movePos];
-    if (!move) return;
+  // FEN of the position currently being viewed. Used as the analysis key below.
+  const currentPositionFen = moves[movePos]?.fen ?? null;
 
-    const fenToAnalyze = move.fen;
+  // Analyze the current position at higher depth for eval + best move.
+  //
+  // Key this effect on the position FEN (a value), NOT the whole `moves` array.
+  // Background queue analysis mutates `moves` (a new array per analyzed ply), and
+  // if this effect re-ran on those updates it would bump analysisRequestId and
+  // discard its own in-flight result. While background analysis streams in, the
+  // best move would then never resolve and the green best-move arrow would never
+  // appear. Keying on the FEN re-runs only on a genuine position change.
+  useEffect(() => {
+    if (!sfReady || movePos < 0 || !currentPositionFen) return;
+
+    const fenToAnalyze = currentPositionFen;
+    
+    // Reset the best move for the new position before analyzing. Without this,
+    // bestMove keeps the previous position's value until the new analysis
+    // resolves; if the new best move is the same UCI string, the state never
+    // changes and the onBestMoveChange notify effect never fires. The parent
+    // (LiveBoard) clears its own arrow copy on every position change, so it
+    // would be left with no best move and the green arrow would not appear.
+    // Resetting here guarantees a null -> value transition that always re-notifies.
+    setBestMove(null);
     
     // Increment request ID to track this specific request
     // This ensures we only use results from the latest analysis, not stale ones
     analysisRequestIdRef.current += 1;
     const thisRequestId = analysisRequestIdRef.current;
 
+    // Priority: this is the position the user is viewing, so surface its eval
+    // and best move ahead of the background chart-fill backlog.
     const sf = getStockfishService();
-    sf.analyze(fenToAnalyze, 16)
+    sf.analyze(fenToAnalyze, 16, true)
       .then((result) => {
         // Ignore stale results - only update if this is still the latest request
         if (analysisRequestIdRef.current !== thisRequestId) {
@@ -304,7 +322,7 @@ export function Analysis({ pgn, mode, onPositionChange, onBestMoveChange, onPlay
       .catch(() => {
         // Keep previous eval
       });
-  }, [sfReady, movePos, moves]);
+  }, [sfReady, movePos, currentPositionFen]);
 
   // Notify parent of position change
   useEffect(() => {

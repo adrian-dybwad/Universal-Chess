@@ -149,8 +149,13 @@ export class StockfishService {
 
   /**
    * Analyze a position. Requests are queued and processed sequentially.
+   *
+   * @param priority When true, the request jumps to the front of the queue so
+   *   it runs next (after any in-flight request completes). Used for the
+   *   position the user is actually viewing, so its eval and best move surface
+   *   promptly instead of waiting behind a large background-fill backlog.
    */
-  async analyze(fen: string, depth = 18): Promise<AnalysisResult> {
+  async analyze(fen: string, depth = 18, priority = false): Promise<AnalysisResult> {
     if (!this.isReady) {
       await this.init();
     }
@@ -160,7 +165,12 @@ export class StockfishService {
     }
 
     return new Promise((resolve, reject) => {
-      this.queue.push({ fen, depth, resolve, reject });
+      const request = { fen, depth, resolve, reject };
+      if (priority) {
+        this.queue.unshift(request);
+      } else {
+        this.queue.push(request);
+      }
       this.processNext();
     });
   }

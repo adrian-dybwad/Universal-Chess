@@ -9,8 +9,13 @@ interface ChessBoardProps {
   showBestMove?: { from: string; to: string } | null;
   /** The actual move played (shown in red if different from best move) */
   showPlayedMove?: { from: string; to: string } | null;
-  /** Pending move from engine/Lichess waiting to be executed (shown in blue) */
+  /** Pending move from engine/Lichess waiting to be executed (shown in blue).
+   *  This is an action the player must perform, so it is shown alone and
+   *  suppresses analysis arrows. */
   showPendingMove?: { from: string; to: string } | null;
+  /** Last move just executed (shown in blue). Informational only, so it
+   *  coexists with the green best-move arrow. */
+  showLastMove?: { from: string; to: string } | null;
   boardOrientation?: 'white' | 'black';
 }
 
@@ -24,6 +29,7 @@ export function ChessBoard({
   showBestMove = null,
   showPlayedMove = null,
   showPendingMove = null,
+  showLastMove = null,
   boardOrientation = 'white',
 }: ChessBoardProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -59,48 +65,49 @@ export function ChessBoard({
     return fen?.split(' ')[0] || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
   }, [fen]);
 
-  // Build custom arrows for pending move (blue), best move (green), and played move (red)
+  // Build custom arrows. Rule: the green best-move arrow is shown ANY time a
+  // best move value is present - nothing suppresses it. The blue arrow (the
+  // pending move to play, else the last move played) and the red arrow (played
+  // move when it differs from best) coexist with it.
   const customArrows: Arrow[] = useMemo(() => {
     const arrows: Arrow[] = [];
+    const BLUE = 'rgba(0, 120, 215, 0.9)';
+    const GREEN = 'rgba(0, 180, 0, 0.8)';
+    const RED = 'rgba(220, 53, 69, 0.8)';
     
-    // Pending move arrow (blue) - engine/Lichess move waiting to be executed
-    // Takes priority and is shown alone (not combined with analysis arrows)
-    if (showPendingMove) {
-      arrows.push({
-        startSquare: showPendingMove.from,
-        endSquare: showPendingMove.to,
-        color: 'rgba(0, 120, 215, 0.9)',  // Blue for pending move
-      });
-      return arrows;  // Only show pending move, not analysis arrows
-    }
-    
-    // Best move arrow (green) - always show if available
+    // Best move arrow (green) - shown whenever a best move value exists.
     if (showBestMove) {
       arrows.push({
         startSquare: showBestMove.from,
         endSquare: showBestMove.to,
-        color: 'rgba(0, 180, 0, 0.8)',  // Green for best move
+        color: GREEN,
       });
       
-      // Played move arrow (red) - only show if we have a best move AND played move differs
-      // We require bestMove to exist to avoid showing red arrow during analysis loading
-      if (showPlayedMove) {
-        const isSameMove = 
-          showBestMove.from === showPlayedMove.from &&
-          showBestMove.to === showPlayedMove.to;
-        
-        if (!isSameMove) {
-          arrows.push({
-            startSquare: showPlayedMove.from,
-            endSquare: showPlayedMove.to,
-            color: 'rgba(220, 53, 69, 0.8)',  // Red for suboptimal played move
-          });
-        }
+      // Played move arrow (red) - only when it differs from the best move.
+      if (
+        showPlayedMove &&
+        !(showBestMove.from === showPlayedMove.from && showBestMove.to === showPlayedMove.to)
+      ) {
+        arrows.push({
+          startSquare: showPlayedMove.from,
+          endSquare: showPlayedMove.to,
+          color: RED,
+        });
       }
     }
     
+    // Blue arrow - the pending move to play, otherwise the last move played.
+    const blue = showPendingMove || showLastMove;
+    if (blue) {
+      arrows.push({
+        startSquare: blue.from,
+        endSquare: blue.to,
+        color: BLUE,
+      });
+    }
+    
     return arrows;
-  }, [showBestMove, showPlayedMove, showPendingMove]);
+  }, [showBestMove, showPlayedMove, showPendingMove, showLastMove]);
 
   // Custom square styles for DGT board colors
   const darkSquareStyle = { backgroundColor: '#b2b2b2' };

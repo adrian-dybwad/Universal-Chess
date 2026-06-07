@@ -274,10 +274,34 @@ class ChessGameService:
         do change the game_over/result status.
         """
         try:
+            from universalchess.services.game_broadcast import (
+                get_pending_move,
+                set_pending_move,
+            )
             players = get_players_state()
             move_stack = self._state.move_stack
             last_move = move_stack[-1].uci() if move_stack else None
-            
+
+            # Reconcile the pending move against the actual position. The pending
+            # move is a side channel: GameManager sets it when an engine/Lichess
+            # move is announced (blue "play this" arrow) and clears it via
+            # MoveState.reset() once the move is played. If that clear is ever
+            # missed, a stale pending (the move already on the board) lingers -
+            # the web then draws a lone blue arrow and suppresses the green
+            # best-move arrow. A genuine pending move is always legal in the
+            # current position; a played or otherwise invalidated one is not
+            # (its from-square is empty). Drop anything not currently legal so
+            # this single broadcast point stays authoritative for all clients.
+            pending = get_pending_move()
+            if pending is not None:
+                try:
+                    if chess.Move.from_uci(pending) not in self._state.legal_moves:
+                        set_pending_move(None)
+                        pending = None
+                except ValueError:
+                    set_pending_move(None)
+                    pending = None
+
             broadcast_game_state(
                 fen=self._state.fen,
                 pgn=self.get_pgn(),
@@ -289,6 +313,7 @@ class ChessGameService:
                 termination=self._state.termination,
                 white=players.white_name,
                 black=players.black_name,
+                pending_move=pending,
             )
         except Exception as e:
             log.debug(f"[ChessGameService] Error broadcasting game state: {e}")
