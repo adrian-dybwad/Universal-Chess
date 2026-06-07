@@ -20,6 +20,36 @@ from universalchess.utils.led import LedCallbacks
 BOARD_SIZE = 64
 
 
+def _castling_rook_move(board: chess.Board, move: chess.Move):
+    """Return the (rook_from, rook_to) squares for a castling king move.
+
+    Must be called before the move is pushed (legality query needs the pre-move
+    board). Returns None when `move` is not a castling move.
+
+    Castling is always the king's two-square move; the rook then follows from the
+    corner to the square the king crossed (kingside: h->f, queenside: a->d) on the
+    king's home rank.
+    """
+    if not board.is_castling(move):
+        return None
+    rank = chess.square_rank(move.from_square)
+    if board.is_kingside_castling(move):
+        return chess.square(7, rank), chess.square(5, rank)  # h-file -> f-file
+    return chess.square(0, rank), chess.square(3, rank)  # a-file -> d-file
+
+
+def _is_king_onto_rook_castle(board: chess.Board, move: chess.Move) -> bool:
+    """Return True for the "king onto rook" castling representation (e.g. e1h1).
+
+    python-chess accepts both the king's two-square move (e1g1/e1c1) and the
+    king-onto-rook form (e1h1/e1a1) as legal castling, even outside Chess960. Only
+    the two-square gesture is supported, so the rook-square form must be rejected.
+    """
+    if not board.is_castling(move):
+        return False
+    return abs(chess.square_file(move.to_square) - chess.square_file(move.from_square)) != 2
+
+
 @dataclass(frozen=True)
 class PlayerMoveContext:
     chess_board: chess.Board
@@ -37,11 +67,6 @@ class PlayerMoveContext:
     enter_correction_mode_fn: Callable[[], None]
     chess_board_to_state_fn: Callable[[chess.Board], Optional[list]]
     provide_correction_guidance_fn: Callable[[list, list], None]
-
-    # Late-castling support
-    player_supports_late_castling_fn: Callable[[], bool]
-    detect_late_castling_fn: Callable[[chess.Move], Optional[chess.Move]]
-    execute_late_castling_from_move_fn: Callable[[chess.Move], None]
 
     # Promotion UI
     set_is_showing_promotion_fn: Callable[[bool], None]
@@ -65,6 +90,10 @@ def execute_complete_move(ctx: PlayerMoveContext, move: chess.Move) -> None:
 
     fen_before_move = str(ctx.chess_board.fen())
     is_first_move = ctx.get_game_db_id_fn() < 0
+
+    # Castling is the king's two-square move; capture the rook-follow before the
+    # push so the rook physically following the king is recognised as completion.
+    rook_follow = _castling_rook_move(ctx.chess_board, move)
 
     try:
         ctx.game_state.push_move(move)
@@ -94,6 +123,14 @@ def execute_complete_move(ctx: PlayerMoveContext, move: chess.Move) -> None:
 
     ctx.move_state.reset()
 
+    if rook_follow is not None:
+        # Arm the rook-follow: the player must now slide the rook to its castling
+        # square. field_events recognises this as the castle's completion instead
+        # of an illegal interaction. Guide the rook with the from/to LEDs.
+        ctx.move_state.castling_rook_pending = rook_follow
+        rook_from, rook_to = rook_follow
+        ctx.led.from_to(rook_from, rook_to, repeat=0)
+
     if not game_ended:
         ctx.switch_turn_with_event_fn()
 
@@ -103,7 +140,6 @@ def execute_complete_move(ctx: PlayerMoveContext, move: chess.Move) -> None:
         fen_before_move=fen_before_move,
         fen_after_move=fen_after_move,
         is_first_move=is_first_move,
-        late_castling_in_progress=False,
         game_ended=game_ended,
         result_string=result_string,
         termination=termination,
@@ -230,20 +266,9 @@ def on_player_move(ctx: PlayerMoveContext, move: chess.Move) -> bool:
             move_to_execute = promotion_move
             log.info(f"[GameManager._on_player_move] Promotion handled: {move.uci()} -> {move_to_execute.uci()}")
 
-    if move_to_execute in ctx.chess_board.legal_moves:
+    if move_to_execute in ctx.chess_board.legal_moves and not _is_king_onto_rook_castle(ctx.chess_board, move_to_execute):
         log.info(f"[GameManager._on_player_move] Legal move, executing: {move_to_execute.uci()}")
         execute_complete_move(ctx, move_to_execute)
-        return True
-
-    late_castling_move = None
-    if ctx.player_supports_late_castling_fn():
-        late_castling_move = ctx.detect_late_castling_fn(move_to_execute)
-
-    if late_castling_move:
-        log.info(
-            f"[GameManager._on_player_move] Late castling detected: {move_to_execute.uci()} -> {late_castling_move.uci()}"
-        )
-        ctx.execute_late_castling_from_move_fn(late_castling_move)
         return True
 
     log.warning(f"[GameManager._on_player_move] Illegal move: {move_to_execute.uci()}, entering correction mode")

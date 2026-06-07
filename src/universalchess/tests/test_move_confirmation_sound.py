@@ -70,9 +70,6 @@ def _context(fake_board, flashes):
         enter_correction_mode_fn=lambda: None,
         chess_board_to_state_fn=lambda b: None,
         provide_correction_guidance_fn=lambda a, b: None,
-        player_supports_late_castling_fn=lambda: False,
-        detect_late_castling_fn=lambda m: None,
-        execute_late_castling_from_move_fn=lambda m: None,
         set_is_showing_promotion_fn=lambda v: None,
         on_promotion_needed_fn=None,
     )

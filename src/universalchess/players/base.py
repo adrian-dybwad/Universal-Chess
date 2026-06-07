@@ -193,22 +193,6 @@ class Player(ABC):
         """
         return True
     
-    def supports_late_castling(self) -> bool:
-        """Whether this player supports late castling.
-        
-        Late castling is when a player moves the rook first (e.g., h1f1),
-        then moves the king to the castling square (e.g., e1g1). The game
-        undoes the rook move and executes castling instead.
-        
-        This is a convenience feature for beginners on physical boards.
-        Not supported for online play (e.g., Lichess) where moves cannot
-        be undone after submission.
-        
-        Default is True for local players (human, engine).
-        Override to return False for remote/online players.
-        """
-        return True
-    
     @property
     def pending_move(self) -> Optional[chess.Move]:
         """The pending move this player wants executed on the board.

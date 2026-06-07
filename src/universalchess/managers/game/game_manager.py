@@ -56,8 +56,6 @@ from .move_state import (
     INVALID_SQUARE,
     MIN_UCI_MOVE_LENGTH,
     MoveState,
-    PROMOTION_ROW_BLACK,
-    PROMOTION_ROW_WHITE,
     BOARD_WIDTH,
 )
 from .task_worker import GameTaskWorker
@@ -71,9 +69,7 @@ from .move_persistence import persist_move_and_maybe_create_game
 from .post_move import handle_game_end, validate_physical_board_after_move
 from .correction_flow import handle_field_event_in_correction_mode
 from .starting_position import is_starting_position_state
-from .castling import detect_late_castling, execute_late_castling, execute_rook_first_castling
 from .field_events import FieldEventContext, process_field_event
-from .move_execution import MoveExecutionContext, execute_move
 from .player_moves import (
     PlayerMoveContext,
     check_and_handle_promotion,
@@ -348,43 +344,6 @@ class GameManager:
         except Exception as e:
             log.debug(f"[GameManager._broadcast_game_state] Error broadcasting: {e}")
     
-    def _handle_promotion(self, target_square: int, piece_name: str, is_forced: bool) -> str:
-        """Handle pawn promotion by requesting piece choice via callback.
-        
-        Uses the on_promotion_needed callback to request piece selection from the
-        display controller. The callback should return the selected piece letter.
-        
-        Args:
-            target_square: The target square index (0-63)
-            piece_name: The piece name ('P' for white pawn, 'p' for black pawn)
-            is_forced: Whether this is a forced/computer move (skip prompt if True)
-            
-        Returns:
-            Promotion piece letter ('q', 'r', 'b', 'n') or empty string if not a promotion
-        """
-        is_white_promotion = (target_square // BOARD_WIDTH) == PROMOTION_ROW_WHITE and piece_name == "P"
-        is_black_promotion = (target_square // BOARD_WIDTH) == PROMOTION_ROW_BLACK and piece_name == "p"
-        
-        if not (is_white_promotion or is_black_promotion):
-            return ""
-        
-        board.beep(board.SOUND_GENERAL, event_type='game_event')
-        if not is_forced:
-            self.is_showing_promotion = True
-            
-            # Request promotion choice via callback
-            if self.on_promotion_needed:
-                promotion_choice = self.on_promotion_needed(is_white_promotion)
-            else:
-                # Default to queen if no callback
-                log.warning("[GameManager] No promotion callback set, defaulting to queen")
-                promotion_choice = "q"
-            
-            self.is_showing_promotion = False
-            log.info(f"[GameManager] Promotion selected: {promotion_choice}")
-            return promotion_choice
-        return ""
-    
     def _check_takeback(self) -> bool:
         """Check if a takeback is in progress by comparing board states.
         
@@ -636,70 +595,9 @@ class GameManager:
                 self.move_state.king_lift_timer.start()
                 log.debug(f"[GameManager._handle_king_lift_resign] King lifted from {chess.square_name(field)}, started 3-second resign timer")
     
-    def _execute_castling_move(self, rook_source: int):
-        """Execute a castling move when the rook was moved first."""
-        self.game_db_id = execute_rook_first_castling(
-            rook_source=rook_source,
-            move_state=self.move_state,
-            chess_board=self.chess_board,
-            push_move_fn=self._game_state.push_move,
-            board_module=board,
-            led=self.led,
-            enter_correction_mode_fn=self._enter_correction_mode,
-            chess_board_to_state_fn=self._chess_board_to_state,
-            provide_correction_guidance_fn=self._provide_correction_guidance,
-            database_session=self.database_session,
-            game_db_id=self.game_db_id,
-            source_file=self.source_file,
-            game_info=self.game_info,
-            get_clock_times_for_db_fn=self._get_clock_times_for_db,
-            get_eval_score_for_db_fn=self._get_eval_score_for_db,
-            move_callback_fn=self.move_callback,
-            switch_turn_with_event_fn=self._switch_turn_with_event,
-            update_game_result_fn=self._update_game_result,
-        )
-    
-    def _execute_late_castling(self, rook_source: int):
-        """Execute castling when rook move was already made as a regular move."""
-        self.game_db_id = execute_late_castling(
-            rook_source=rook_source,
-            move_state=self.move_state,
-            chess_board=self.chess_board,
-            pop_move_fn=self._game_state.pop_move,
-            push_move_fn=self._game_state.push_move,
-            board_module=board,
-            led=self.led,
-            database_session=self.database_session,
-            game_db_id=self.game_db_id,
-            get_clock_times_for_db_fn=self._get_clock_times_for_db,
-            get_eval_score_for_db_fn=self._get_eval_score_for_db,
-            move_callback_fn=self.move_callback,
-            takeback_callback_fn=self.takeback_callback,
-            switch_turn_with_event_fn=self._switch_turn_with_event,
-            enter_correction_mode_fn=self._enter_correction_mode,
-            chess_board_to_state_fn=self._chess_board_to_state,
-            provide_correction_guidance_fn=self._provide_correction_guidance,
-            update_game_result_fn=self._update_game_result,
-        )
-    
-    def _execute_move(self, target_square: int):
-        """Execute a move from source to target square (delegates to move_execution)."""
-        ctx = MoveExecutionContext(
-            chess_board=self.chess_board,
-            game_state=self._game_state,
-            move_state=self.move_state,
-            board_module=board,
-            led=self.led,
-            handle_promotion_fn=self._handle_promotion,
-            switch_turn_with_event_fn=self._switch_turn_with_event,
-            enqueue_post_move_tasks_fn=self._enqueue_post_move_tasks,
-            get_game_db_id_fn=lambda: self.game_db_id,
-        )
-        execute_move(ctx, target_square)
-    
     def _enqueue_post_move_tasks(self, target_square: int, move_uci: str,
                                   fen_before_move: str, fen_after_move: str,
-                                  is_first_move: bool, late_castling_in_progress: bool,
+                                  is_first_move: bool,
                                   game_ended: bool, result_string: str, termination: str):
         """Queue post-move tasks for async execution in order.
         
@@ -764,7 +662,12 @@ class GameManager:
                 # Uses low-priority queue so validation doesn't delay piece event detection.
                 # If the queue is busy with polling, validation is skipped - which is fine
                 # since the chess engine already validates moves logically.
-                if not late_castling_in_progress:
+                #
+                # Skip while a castling rook-follow is pending: the king's two-square
+                # move is applied but the rook has not yet been physically moved, so the
+                # physical board legitimately lags the logical board. field_events handles
+                # that follow-up; validating here would spuriously enter correction mode.
+                if self.move_state.castling_rook_pending is None:
                     validate_physical_board_after_move(
                         board_module=board,
                         move_uci=move_uci,
@@ -812,6 +715,7 @@ class GameManager:
             correction_mode=self.correction_mode,
             player_manager=self._player_manager,
             board_module=board,
+            led=self.led,
             event_callback=self.event_callback,
             enter_correction_mode_fn=self._enter_correction_mode,
             provide_correction_guidance_fn=self._provide_correction_guidance,
@@ -1018,12 +922,6 @@ class GameManager:
 
     def _build_player_move_context(self) -> PlayerMoveContext:
         """Build context object for player move submission pipeline helpers."""
-        def supports_late_castling() -> bool:
-            if not self._player_manager:
-                return False
-            current_player = self._player_manager.get_current_player(self.chess_board)
-            return bool(current_player and current_player.supports_late_castling())
-
         return PlayerMoveContext(
             chess_board=self.chess_board,
             game_state=self._game_state,
@@ -1036,9 +934,6 @@ class GameManager:
             enter_correction_mode_fn=self._enter_correction_mode,
             chess_board_to_state_fn=self._chess_board_to_state,
             provide_correction_guidance_fn=self._provide_correction_guidance,
-            player_supports_late_castling_fn=supports_late_castling,
-            detect_late_castling_fn=self._detect_late_castling,
-            execute_late_castling_from_move_fn=self._execute_late_castling_from_move,
             set_is_showing_promotion_fn=lambda v: setattr(self, "is_showing_promotion", v),
             on_promotion_needed_fn=self.on_promotion_needed,
         )
@@ -1135,29 +1030,6 @@ class GameManager:
             log.error(f"[GameManager._on_pending_move] Error calling ledFromTo: {e}")
             import traceback
             traceback.print_exc()
-    
-    def _detect_late_castling(self, king_move: chess.Move) -> Optional[chess.Move]:
-        return detect_late_castling(
-            king_move=king_move,
-            chess_board=self.chess_board,
-            pop_move_fn=self._game_state.pop_move,
-            push_move_fn=self._game_state.push_move,
-        )
-    
-    def _execute_late_castling_from_move(self, castling_move: chess.Move) -> None:
-        """Execute a late castling move.
-        
-        Called after _detect_late_castling has already undone the rook move.
-        The board is now in a state where castling is legal.
-        
-        Args:
-            castling_move: The castling move to execute (e.g., e1g1)
-        """
-        log.info(f"[GameManager._execute_late_castling_from_move] Executing castling: {castling_move.uci()}")
-        
-        # The board is already in the correct state (rook move undone)
-        # Just execute the castling move normally
-        self._execute_complete_move(castling_move)
     
     def handle_resign(self, resigning_color: chess.Color = None) -> None:
         """Handle game resignation.

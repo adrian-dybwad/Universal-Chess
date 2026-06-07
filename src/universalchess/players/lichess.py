@@ -140,14 +140,6 @@ class LichessPlayer(Player):
         """The move from Lichess server waiting to be executed on the board."""
         return self._pending_move
     
-    def supports_late_castling(self) -> bool:
-        """Lichess does not support late castling.
-        
-        Once a move is sent to the Lichess server, it cannot be undone.
-        Players must castle properly (king first).
-        """
-        return False
-    
     @property
     def board_flip(self) -> bool:
         """Whether board display should be flipped (True if local player is black)."""

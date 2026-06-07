@@ -14,6 +14,7 @@ import chess
 from universalchess.board.logging import log
 from universalchess.managers.events import EVENT_LIFT_PIECE, EVENT_PLACE_PIECE
 from universalchess.state.chess_game import ChessGameState
+from universalchess.utils.led import LedCallbacks
 
 from .move_state import INVALID_SQUARE
 
@@ -25,6 +26,7 @@ class FieldEventContext:
     correction_mode: object
     player_manager: object
     board_module: object
+    led: LedCallbacks
 
     # Callbacks
     event_callback: Optional[Callable]
@@ -124,6 +126,51 @@ def process_field_event(
         if ctx.check_takeback_fn():
             log.info("[process_field_event] Takeback detected and executed")
             return
+
+    # ===========================================================================
+    # CASTLING ROOK-FOLLOW: after the king's two-square move the rook must be
+    # physically moved to its castling square. That follow-up is the completion of
+    # the castle, not a new move - recognise it here (before the pending-move and
+    # no-legal-moves guards, which would otherwise see the rook as an illegal piece
+    # on the opponent's turn). Any interaction other than the expected rook move is
+    # treated as invalid and handed to correction mode.
+    # ===========================================================================
+    rook_pending = getattr(ctx.move_state, "castling_rook_pending", None)
+    if rook_pending is not None:
+        rook_from, rook_to = rook_pending
+        if is_lift:
+            if field == rook_from:
+                return  # expected: wait for the rook to be placed on its castling square
+            log.warning(
+                f"[process_field_event] Expected castling rook from "
+                f"{chess.square_name(rook_from)}, but {chess.square_name(field)} was lifted - "
+                "entering correction mode"
+            )
+        elif field == rook_to:
+            ctx.move_state.castling_rook_pending = None
+            log.info(
+                f"[process_field_event] Castling completed: rook placed on {chess.square_name(rook_to)}"
+            )
+            ctx.board_module.beep(ctx.board_module.SOUND_GENERAL, event_type="piece_event")
+            ctx.led.off()
+            ctx.led.single_fast(rook_to, repeat=1)
+            return
+        else:
+            log.warning(
+                f"[process_field_event] Castling rook expected on {chess.square_name(rook_to)}, "
+                f"but placed on {chess.square_name(field)} - entering correction mode"
+            )
+
+        # Anything other than the expected rook move invalidates the rook-follow;
+        # hand off to correction mode for full board reconciliation.
+        ctx.move_state.castling_rook_pending = None
+        ctx.board_module.beep(ctx.board_module.SOUND_WRONG_MOVE, event_type="error")
+        ctx.enter_correction_mode_fn()
+        current_state = ctx.board_module.getChessState()
+        expected_state = ctx.chess_board_to_state_fn(ctx.chess_board)
+        if current_state is not None and expected_state is not None:
+            ctx.provide_correction_guidance_fn(current_state, expected_state)
+        return
 
     def _pending_move_context():
         """Build pending-move context safely.
@@ -368,8 +415,6 @@ def process_field_event(
         and piece_color is not None
         and piece_color == ctx.chess_board.turn
         and getattr(ctx.move_state, "source_square", INVALID_SQUARE) == INVALID_SQUARE
-        and not getattr(ctx.move_state, "late_castling_in_progress", False)
-        and not getattr(ctx.move_state, "castling_rook_placed", False)
     ):
         # Only treat this as a move start if the square has at least one legal move.
         if any(move.from_square == field for move in ctx.chess_board.legal_moves):
