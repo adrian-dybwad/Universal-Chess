@@ -52,7 +52,6 @@ def handle_reset_settings(
             # Reload from file (will use defaults since sections are empty)
             load_game_settings()
 
-            board.beep(board.SOUND_GENERAL, event_type="key_press")
             log.info("[Settings] Settings reset to defaults")
 
         except Exception as e:

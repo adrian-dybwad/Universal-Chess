@@ -43,7 +43,6 @@ def handle_time_control_menu(
             save_game_setting("time_control", str(new_time))
             game_settings["time_control"] = new_time
             log.info(f"[Settings] Time control changed: {old_time} -> {new_time} min")
-            board.beep(board.SOUND_GENERAL, event_type="key_press")
         except ValueError:
             pass
 

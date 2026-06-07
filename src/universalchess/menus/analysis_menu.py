@@ -69,7 +69,6 @@ def handle_analysis_mode_menu(
             game_settings["analysis_mode"] = not game_settings["analysis_mode"]
             save_game_setting("analysis_mode", game_settings["analysis_mode"])
             log.info(f"[Settings] Analysis mode set to {game_settings['analysis_mode']}")
-            board.beep(board.SOUND_GENERAL, event_type="key_press")
             return None
         elif result.key == "engine":
             engine_result = handle_analysis_engine_selection()
@@ -129,7 +128,6 @@ def handle_analysis_engine_selection(
         game_settings["analysis_engine"] = result
         save_game_setting("analysis_engine", result)
         log.info(f"[Settings] Analysis engine changed: {old_engine} -> {result}")
-        board.beep(board.SOUND_GENERAL, event_type="key_press")
 
     return None
 

@@ -881,6 +881,15 @@ def eventsThread(keycallback, fieldcallback, tout):
                                 else:
                                     # Short press - pass the key-up to callback
                                     key_pressed = next_key
+                                    # Central key-press feedback: a single click on
+                                    # every short button press, emitted on key-up and
+                                    # gated by the 'key_press' sound setting. This is
+                                    # the single source of truth for short-press audio
+                                    # feedback - individual menu handlers must NOT beep
+                                    # on selection or they would double-click. Long
+                                    # presses beep separately at detection time (above)
+                                    # so the user knows when to release.
+                                    beep(SOUND_GENERAL, event_type='key_press')
                                 break
                     
             except Exception as e:

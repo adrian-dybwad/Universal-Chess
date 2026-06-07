@@ -1785,6 +1785,15 @@ def _handle_settings(initial_selection: str = None):
                 _start_game_mode()
                 return
         
+        elif result == "DisplaySound":
+            ctx.enter_menu("DisplaySound", 0)
+            display_sound_result = _handle_display_sound_menu()
+            ctx.leave_menu()  # Pop DisplaySound, restore to Settings level
+            if is_break_result(display_sound_result):
+                ctx.clear()
+                app_state = AppState.MENU
+                return display_sound_result
+        
         elif result == "TimeControl":
             time_result = handle_time_control_menu(
                 ctx=ctx,
@@ -2096,8 +2105,30 @@ def _get_installed_version() -> str:
     return ""
 
 
+def _handle_display_sound_menu():
+    """Handle the combined Display & Sound submenu.
+
+    Single definition shared by the top-level Settings list and the in-game
+    long-press, so sound is adjustable during play. The Sound submenu is injected
+    via handle_sound to keep menus/display_menu decoupled from the sound impl.
+    """
+    return handle_display_settings(
+        get_game_settings=_game_settings_dict,
+        show_menu=_show_menu,
+        save_game_setting=_save_game_setting,
+        list_sprite_sheets=_list_chess_sprite_sheets,
+        get_sprite_preview=_chess_sprite_preview,
+        log=log,
+        board=board,
+        handle_sound=lambda: handle_sound_settings(
+            menu_manager=_menu_manager,
+            board=board,
+        ),
+    )
+
+
 def _handle_system_menu():
-    """Handle system submenu (display, sound, WiFi, Bluetooth, sleep timer, reset, shutdown, reboot).
+    """Handle system submenu (WiFi, Bluetooth, accounts, sleep timer, reset, shutdown, reboot).
     
     Uses MenuContext for tracking selection state.
     """
@@ -2108,19 +2139,6 @@ def _handle_system_menu():
         game_settings=_game_settings_dict(),
         menu_manager=_menu_manager,
         create_entries=lambda: create_system_entries(board, _game_settings_dict()),
-        handle_display_settings=lambda: handle_display_settings(
-            get_game_settings=_game_settings_dict,
-            show_menu=_show_menu,
-            save_game_setting=_save_game_setting,
-            list_sprite_sheets=_list_chess_sprite_sheets,
-            get_sprite_preview=_chess_sprite_preview,
-            log=log,
-            board=board,
-        ),
-        handle_sound_settings=lambda: handle_sound_settings(
-            menu_manager=_menu_manager,
-            board=board,
-        ),
         handle_analysis_mode_menu=lambda: handle_analysis_mode_menu(
             game_settings=_game_settings_dict(),
             menu_manager=_menu_manager,
@@ -3628,16 +3646,8 @@ def main():
                 # Check if display settings menu was requested (LONG_HELP)
                 elif _pending_display_settings:
                     _pending_display_settings = False
-                    log.info("[App] Showing display settings menu from game mode")
-                    handle_display_settings(
-                        get_game_settings=_game_settings_dict,
-                        show_menu=_show_menu,
-                        save_game_setting=_save_game_setting,
-                        list_sprite_sheets=_list_chess_sprite_sheets,
-                        get_sprite_preview=_chess_sprite_preview,
-                        log=log,
-                        board=board,
-                    )
+                    log.info("[App] Showing Display & Sound menu from game mode")
+                    _handle_display_sound_menu()
                     # Recreate widgets with updated settings
                     # _init_widgets() now preserves game state:
                     # - Uses _current_fen for board position

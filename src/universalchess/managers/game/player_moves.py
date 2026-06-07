@@ -75,7 +75,10 @@ def execute_complete_move(ctx: PlayerMoveContext, move: chess.Move) -> None:
         return
 
     ctx.led.off()
-    ctx.board_module.beep(ctx.board_module.SOUND_GENERAL, event_type="game_event")
+    # Move/place confirmation beep: fires with the place-confirmation flash on the
+    # target square, so it is categorised as a piece_event (controlled by the
+    # Sound menu's "Piece Events" switch), not a game_event (check/checkmate).
+    ctx.board_module.beep(ctx.board_module.SOUND_GENERAL, event_type="piece_event")
     ctx.led.single_fast(target_square, repeat=1)
 
     fen_after_move = str(ctx.chess_board.fen())

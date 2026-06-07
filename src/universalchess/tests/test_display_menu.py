@@ -24,6 +24,7 @@ from universalchess.menus.display_menu import (
     build_display_entries,
     build_board_entries,
     handle_board_settings,
+    handle_display_settings,
 )
 
 
@@ -59,6 +60,138 @@ def _settings(**overrides):
     }
     base.update(overrides)
     return base
+
+
+def test_top_level_includes_sound_submenu_entry():
+    """The combined Display & Sound menu offers Sound as its last entry.
+
+    Why this test exists: Sound was promoted out of Settings > System into the
+    same menu that the in-game long-press opens, so sound is reachable during a
+    game. Sound is a submenu entry (mirrors Board), keyed 'sound'.
+
+    How the regression manifests: if the merge is lost, the 'sound' key is absent
+    and the in-game menu again exposes only display controls (Sound unreachable
+    mid-game).
+    """
+    keys = [e.key for e in build_display_entries(_settings())]
+
+    assert keys == [
+        "board",
+        "show_clock",
+        "show_analysis",
+        "show_graph",
+        "led_brightness",
+        "sound",
+    ], "combined menu must list display controls then a Sound submenu entry"
+
+
+def test_selecting_sound_invokes_injected_sound_handler():
+    """Choosing the Sound row calls the injected sound handler exactly once.
+
+    Why this test exists: display_menu must stay decoupled from the sound
+    implementation and the menu_manager (Modularity rule); it dispatches into an
+    injected handle_sound callback. This pins that the 'sound' key routes there.
+
+    How the regression manifests: handle_sound is never called (count 0) if the
+    dispatch branch is missing, so the Sound submenu would never open.
+    """
+    settings = _settings()
+    calls = []
+
+    def handle_sound():
+        calls.append("sound")
+        return None
+
+    script = iter(["sound", "BACK"])
+
+    def show_menu(entries, initial_index=0):
+        return next(script)
+
+    handle_display_settings(
+        get_game_settings=lambda: settings,
+        show_menu=show_menu,
+        save_game_setting=lambda k, v: settings.__setitem__(k, v),
+        list_sprite_sheets=lambda: ["default"],
+        log=_NullLog(),
+        board=_FakeBoard(),
+        get_sprite_preview=_fake_preview,
+        handle_sound=handle_sound,
+    )
+
+    assert calls == ["sound"]
+
+
+def test_sound_handler_break_result_propagates():
+    """A break result from the sound handler breaks out of the display menu too.
+
+    Why this test exists: break results (PIECE_MOVED / CLIENT_CONNECTED) must
+    unwind every nested menu so play/connection resumes immediately. If the
+    display menu swallowed the sound submenu's break, the user would be stranded
+    in the menu after a piece move.
+
+    How the regression manifests: handle_display_settings returns None (or loops)
+    instead of returning the break result; here show_menu would be asked for a
+    second value and raise StopIteration.
+    """
+    settings = _settings()
+
+    def handle_sound():
+        return "PIECE_MOVED"
+
+    # Only one menu selection is scripted: if the break is not propagated, the
+    # loop asks for another and StopIteration fails the test.
+    script = iter(["sound"])
+
+    def show_menu(entries, initial_index=0):
+        return next(script)
+
+    result = handle_display_settings(
+        get_game_settings=lambda: settings,
+        show_menu=show_menu,
+        save_game_setting=lambda k, v: settings.__setitem__(k, v),
+        list_sprite_sheets=lambda: ["default"],
+        log=_NullLog(),
+        board=_FakeBoard(),
+        get_sprite_preview=_fake_preview,
+        handle_sound=handle_sound,
+    )
+
+    assert result == "PIECE_MOVED"
+
+
+def test_analysis_and_graph_rows_relabelled_show_prefixed():
+    """The analysis view toggles read 'Show Analysis' and 'Show Graph'.
+
+    Why this test exists: 'Analysis'/'Graph' were ambiguous against the System
+    'Analysis Engine' item. These rows toggle *visibility* of the on-screen
+    analysis and graph, so they are disambiguated with a 'Show ' prefix. Keys are
+    unchanged so persistence/dispatch are unaffected.
+
+    How the regression manifests: a label reverts to the bare 'Analysis'/'Graph',
+    reintroducing the naming clash with the engine selector.
+    """
+    by_key = {e.key: e for e in build_display_entries(_settings())}
+
+    assert by_key["show_analysis"].label == "Show Analysis"
+    assert by_key["show_graph"].label == "Show Graph"
+
+
+def test_graph_row_disabled_when_analysis_off():
+    """Show Graph is gated on Show Analysis (it nests under it).
+
+    Why this test exists: the graph overlays the analysis, so it is meaningless
+    with analysis hidden. The dependency is expressed by disabling the Show Graph
+    row when show_analysis is False, which is the structural 'grouping' of graph
+    under analysis in a flat icon list.
+
+    How the regression manifests: Show Graph stays enabled with analysis off,
+    letting the user toggle a setting that has no visible effect.
+    """
+    by_key_on = {e.key: e for e in build_display_entries(_settings(show_analysis=True))}
+    by_key_off = {e.key: e for e in build_display_entries(_settings(show_analysis=False))}
+
+    assert by_key_on["show_graph"].enabled is True
+    assert by_key_off["show_graph"].enabled is False
 
 
 def test_top_level_has_board_submenu_not_direct_checkbox():

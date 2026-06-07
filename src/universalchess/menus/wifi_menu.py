@@ -103,7 +103,6 @@ def handle_wifi_settings_menu(
                 on_scan()
             elif wifi_result == "Toggle":
                 on_toggle_enable(is_enabled)
-                board.beep(board.SOUND_GENERAL, event_type="key_press")
     finally:
         wifi_info_module.unsubscribe(_on_wifi_status_change)
 

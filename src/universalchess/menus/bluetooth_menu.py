@@ -72,8 +72,7 @@ def handle_bluetooth_menu(
             if bt_status["enabled"]:
                 bluetooth_status_module.disable_bluetooth()
             else:
-                if bluetooth_status_module.enable_bluetooth():
-                    board.beep(board.SOUND_GENERAL, event_type="key_press")
+                bluetooth_status_module.enable_bluetooth()
         return None
 
     return menu_manager.run_menu_loop(build_entries, handle_selection, initial_index=2)

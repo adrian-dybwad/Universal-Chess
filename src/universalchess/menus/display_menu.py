@@ -15,8 +15,9 @@ def build_display_entries(game_settings: Dict[str, Any]) -> List[IconMenuEntry]:
     """Build the top-level Display settings entries.
 
     The "Board" item is a submenu (Show Board toggle + sprite-sheet selector);
-    every other item (Clock, Analysis, Graph, LED) remains a direct control as
-    before.
+    every other item (Clock, Show Analysis, Show Graph, LED) remains a direct
+    control. "Show Graph" nests under "Show Analysis": it is disabled while
+    analysis is hidden, since the graph overlays the analysis.
     """
     led_brightness = game_settings.get("led_brightness", 5)
     return [
@@ -34,13 +35,13 @@ def build_display_entries(game_settings: Dict[str, Any]) -> List[IconMenuEntry]:
         ),
         IconMenuEntry(
             key="show_analysis",
-            label="Analysis",
+            label="Show Analysis",
             icon_name="checkbox_checked" if game_settings["show_analysis"] else "checkbox_empty",
             enabled=True,
         ),
         IconMenuEntry(
             key="show_graph",
-            label="Graph",
+            label="Show Graph",
             icon_name="checkbox_checked" if game_settings["show_graph"] else "checkbox_empty",
             enabled=game_settings["show_analysis"],
         ),
@@ -48,6 +49,12 @@ def build_display_entries(game_settings: Dict[str, Any]) -> List[IconMenuEntry]:
             key="led_brightness",
             label=f"LED: {led_brightness}",
             icon_name="star",
+            enabled=True,
+        ),
+        IconMenuEntry(
+            key="sound",
+            label="Sound",
+            icon_name="sound",
             enabled=True,
         ),
     ]
@@ -155,14 +162,12 @@ def handle_board_settings(
             new_value = not game_settings["show_board"]
             save_game_setting("show_board", new_value)
             log.info(f"[Display] show_board changed to {new_value}")
-            board.beep(board.SOUND_GENERAL, event_type="key_press")
         elif result.startswith(_SPRITE_KEY_PREFIX):
             sheet = result[len(_SPRITE_KEY_PREFIX):]
             current_sheet = game_settings.get("chess_sprites", DEFAULT_SPRITE_SHEET)
             if sheet != current_sheet:
                 save_game_setting("chess_sprites", sheet)
                 log.info(f"[Display] chess_sprites changed: {current_sheet} -> {sheet}")
-            board.beep(board.SOUND_GENERAL, event_type="key_press")
 
 
 def handle_display_settings(
@@ -173,11 +178,14 @@ def handle_display_settings(
     log,
     board,
     get_sprite_preview: Optional[Callable[[str], Any]] = None,
+    handle_sound: Optional[Callable[[], Optional[str]]] = None,
 ) -> Optional[str]:
-    """Handle the Display settings submenu.
+    """Handle the Display & Sound settings submenu.
 
-    Shows the Board submenu plus checkboxes for each widget that can be
-    shown/hidden during a game, and the LED brightness setting.
+    Shows the Board submenu, checkboxes for each widget that can be shown/hidden
+    during a game, the LED brightness setting, and a Sound submenu. This single
+    menu is shared by the top-level Settings list and the in-game long-press, so
+    sound is adjustable mid-game.
 
     Args:
         get_game_settings: Callback to get game settings (called each iteration for fresh values)
@@ -188,6 +196,10 @@ def handle_display_settings(
         board: Board module
         get_sprite_preview: Optional callback returning a sheet's (image, mask)
             black-king preview, forwarded to the Board submenu
+        handle_sound: Optional callback that opens the Sound submenu and returns
+            its result. Injected so this module stays decoupled from the sound
+            implementation and the menu_manager. When absent, the Sound row is a
+            no-op.
 
     Returns:
         Break result if user triggered a break action, None otherwise
@@ -229,6 +241,11 @@ def handle_display_settings(
             )
             if is_break_result(sub_result):
                 return sub_result
+        elif result == "sound":
+            if handle_sound is not None:
+                sub_result = handle_sound()
+                if is_break_result(sub_result):
+                    return sub_result
         elif result == "led_brightness":
             # Cycle through brightness: 1-2-3-4-5-6-7-8-9-10-1...
             led_brightness = game_settings.get("led_brightness", 5)
@@ -236,10 +253,8 @@ def handle_display_settings(
             game_settings["led_brightness"] = new_brightness
             save_game_setting("led_brightness", new_brightness)
             log.info(f"[Display] LED brightness changed to {new_brightness}")
-            board.beep(board.SOUND_GENERAL, event_type="key_press")
         elif result in game_settings and isinstance(game_settings[result], bool):
             new_value = not game_settings[result]
             game_settings[result] = new_value
             save_game_setting(result, new_value)
             log.info(f"[Display] {result} changed to {new_value}")
-            board.beep(board.SOUND_GENERAL, event_type="key_press")

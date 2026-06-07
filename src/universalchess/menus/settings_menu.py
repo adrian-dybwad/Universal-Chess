@@ -51,6 +51,7 @@ def create_settings_entries(
 
     return [
         IconMenuEntry(key="Players", label=players_label, icon_name="players", enabled=True, font_size=12, height_ratio=0.8),
+        IconMenuEntry(key="DisplaySound", label="Display\n& Sound", icon_name="display", enabled=True, font_size=12, height_ratio=0.8),
         IconMenuEntry(key="TimeControl", label=time_label, icon_name=time_icon, enabled=True, font_size=12, height_ratio=0.8),
         IconMenuEntry(key="Positions", label="Positions", icon_name="positions", enabled=True, font_size=12, height_ratio=0.8),
         IconMenuEntry(key="Chromecast", label="Chromecast", icon_name="cast", enabled=True, font_size=12, height_ratio=0.8),

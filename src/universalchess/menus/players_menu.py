@@ -202,7 +202,6 @@ def handle_player1_menu(
             save_player1_setting("hand_brain_mode", new_mode)
             player1_settings["hand_brain_mode"] = new_mode  # Update local dict for UI refresh
             log.info(f"[Settings] Player1 hand_brain_mode toggled: {old_mode} -> {new_mode}")
-            board.beep(board.SOUND_GENERAL, event_type='key_press')
             continue
 
         elif result == "Engine":
@@ -332,7 +331,6 @@ def handle_players_menu(
                 return p2_result
 
         elif result == "StartGame":
-            board.beep(board.SOUND_GENERAL, event_type="key_press")
             return "START_GAME"
 
 
@@ -381,7 +379,6 @@ def handle_color_selection(
         old_color = player_settings["color"]
         save_player_setting("color", result)
         log.info(f"[Settings] Player color changed: {old_color} -> {result}")
-        board.beep(board.SOUND_GENERAL, event_type="key_press")
 
     return None
 
@@ -445,7 +442,6 @@ def handle_type_selection(
         old_type = player_settings["type"]
         save_player_setting("type", result)
         log.info(f"[Settings] {player_label} type changed: {old_type} -> {result}")
-        board.beep(board.SOUND_GENERAL, event_type="key_press")
 
     return None
 
@@ -483,7 +479,6 @@ def handle_hand_brain_mode_selection(
         old_mode = player_settings["hand_brain_mode"]
         save_player_setting("hand_brain_mode", result)
         log.info(f"[Settings] {player_label} hand_brain_mode changed: {old_mode} -> {result}")
-        board.beep(board.SOUND_GENERAL, event_type="key_press")
 
     return None
 
@@ -607,7 +602,6 @@ def handle_player2_menu(
             save_player2_setting("hand_brain_mode", new_mode)
             player2_settings["hand_brain_mode"] = new_mode  # Update local dict for UI refresh
             log.info(f"[Settings] Player2 hand_brain_mode toggled: {old_mode} -> {new_mode}")
-            board.beep(board.SOUND_GENERAL, event_type='key_press')
             continue
 
         elif result == "Engine":

@@ -19,19 +19,63 @@ def create_system_entries(board_module, game_settings: Dict[str, object]) -> Lis
 
     analysis_mode_icon = "checkbox_checked" if game_settings["analysis_mode"] else "checkbox_empty"
 
+    # Grouped by concern: connectivity, engines (Engine Manager then the analysis
+    # engine selector), device, reset, and finally the isolated Power submenu that
+    # holds the destructive Shutdown/Reboot actions. The analysis item keeps the
+    # dispatch key "AnalysisMode" but is labelled "Analysis Engine" to disambiguate
+    # it from the in-game "Show Analysis" view toggle.
     return [
-        IconMenuEntry(key="Display", label="Display", icon_name="display", enabled=True),
         IconMenuEntry(key="WiFi", label="WiFi", icon_name="wifi", enabled=True),
         IconMenuEntry(key="Bluetooth", label="Bluetooth", icon_name="bluetooth", enabled=True),
         IconMenuEntry(key="Accounts", label="Accounts", icon_name="account", enabled=True),
-        IconMenuEntry(key="Sound", label="Sound", icon_name="sound", enabled=True),
-        IconMenuEntry(key="AnalysisMode", label="Analysis\nMode", icon_name=analysis_mode_icon, enabled=True),
         IconMenuEntry(key="Engines", label="Engine\nManager", icon_name="engine", enabled=True),
+        IconMenuEntry(key="AnalysisMode", label="Analysis\nEngine", icon_name=analysis_mode_icon, enabled=True),
         IconMenuEntry(key="Inactivity", label=timeout_label, icon_name=timeout_icon, enabled=True),
         IconMenuEntry(key="ResetSettings", label="Reset\nSettings", icon_name="cancel", enabled=True),
+        IconMenuEntry(key="Power", label="Power", icon_name="shutdown", enabled=True),
+    ]
+
+
+def create_power_entries() -> List[IconMenuEntry]:
+    """Create entries for the Power submenu (isolated destructive actions)."""
+    return [
         IconMenuEntry(key="Shutdown", label="Shutdown", icon_name="shutdown", enabled=True),
         IconMenuEntry(key="Reboot", label="Reboot", icon_name="reboot", enabled=True),
     ]
+
+
+def handle_power_menu(ctx, board, menu_manager, shutdown_fn: Callable[[str, bool], None]):
+    """Handle the Power submenu: Shutdown and Reboot.
+
+    Both actions clear the menu context first so no stale menu state survives the
+    shutdown/reboot. Reboot runs a brief LED sweep as visible confirmation before
+    handing off to ``shutdown_fn``.
+    """
+
+    def handle_selection(result: MenuSelection):
+        if result.key == "Shutdown":
+            ctx.clear()
+            shutdown_fn("Shutdown", False)
+            return result
+        elif result.key == "Reboot":
+            ctx.clear()
+            try:
+                for i in range(0, 8):
+                    board.led(i, intensity=LED_INTENSITY_DEFAULT,
+                              speed=LED_SPEED_NORMAL, repeat=0)
+                    import time as _time
+                    _time.sleep(0.2)
+            except Exception:
+                pass
+            shutdown_fn("Rebooting", True)
+            return result
+        return None
+
+    return menu_manager.run_menu_loop(
+        create_power_entries,
+        handle_selection,
+        initial_index=ctx.current_index()
+    )
 
 
 def handle_system_menu(
@@ -40,8 +84,6 @@ def handle_system_menu(
     game_settings: Dict[str, object],
     menu_manager,
     create_entries: Callable[[], List[IconMenuEntry]],
-    handle_display_settings: Callable[[], Optional[MenuSelection]],
-    handle_sound_settings: Callable[[], Optional[MenuSelection]],
     handle_analysis_mode_menu: Callable[[], Optional[MenuSelection]],
     handle_engine_manager_menu: Callable[[], Optional[MenuSelection]],
     handle_wifi_settings: Callable[[], Optional[MenuSelection]],
@@ -56,19 +98,7 @@ def handle_system_menu(
     """Handle system submenu (display, sound, WiFi, Bluetooth, etc.)."""
 
     def handle_selection(result: MenuSelection):
-        if result.key == "Display":
-            ctx.enter_menu("Display", 0)
-            sub_result = handle_display_settings()
-            ctx.leave_menu()
-            if is_break_result(sub_result):
-                return sub_result
-        elif result.key == "Sound":
-            ctx.enter_menu("Sound", 0)
-            sub_result = handle_sound_settings()
-            ctx.leave_menu()
-            if is_break_result(sub_result):
-                return sub_result
-        elif result.key == "AnalysisMode":
+        if result.key == "AnalysisMode":
             ctx.enter_menu("AnalysisMode", 0)
             sub_result = handle_analysis_mode_menu()
             ctx.leave_menu()
@@ -116,22 +146,12 @@ def handle_system_menu(
             ctx.leave_menu()
             if is_break_result(sub_result):
                 return sub_result
-        elif result.key == "Shutdown":
-            ctx.clear()
-            shutdown_fn("Shutdown", False)
-            return result
-        elif result.key == "Reboot":
-            ctx.clear()
-            try:
-                for i in range(0, 8):
-                    board.led(i, intensity=LED_INTENSITY_DEFAULT,
-                              speed=LED_SPEED_NORMAL, repeat=0)
-                    import time as _time
-                    _time.sleep(0.2)
-            except Exception:
-                pass
-            shutdown_fn("Rebooting", True)
-            return result
+        elif result.key == "Power":
+            ctx.enter_menu("Power", 0)
+            sub_result = handle_power_menu(ctx, board, menu_manager, shutdown_fn)
+            ctx.leave_menu()
+            if is_break_result(sub_result):
+                return sub_result
         return None
 
     return menu_manager.run_menu_loop(

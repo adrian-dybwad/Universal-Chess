@@ -90,7 +90,9 @@ def execute_move(ctx: MoveExecutionContext, target_square: int) -> None:
         return
 
     ctx.led.off()
-    ctx.board_module.beep(ctx.board_module.SOUND_GENERAL, event_type="game_event")
+    # Move/place confirmation beep (fires with the place-confirmation flash) ->
+    # piece_event, consistent with execute_complete_move.
+    ctx.board_module.beep(ctx.board_module.SOUND_GENERAL, event_type="piece_event")
     ctx.led.single_fast(target_square, repeat=1)
 
     fen_after_move = str(ctx.chess_board.fen())

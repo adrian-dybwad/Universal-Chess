@@ -200,7 +200,6 @@ def handle_engine_detail_menu(
                     pass
 
             engine_manager.uninstall_engine(engine_name)
-            board.beep(board.SOUND_GENERAL, event_type="key_press")
             uninstall_splash.set_message(f"{display_name}\nuninstalled")
             time.sleep(1)
             return MenuSelection("BACK", 0)

@@ -42,7 +42,6 @@ def handle_engine_selection(
         log.info(f"[Settings] engine changed: {old_engine} -> {result}")
         # Reset ELO to Default when engine changes
         save_player_setting("elo", "Default")
-        board.beep(board.SOUND_GENERAL, event_type="key_press")
 
     return None
 
@@ -75,7 +74,6 @@ def handle_elo_selection(
         old_elo = player_settings["elo"]
         save_player_setting("elo", result)
         log.info(f"[Settings] ELO changed: {old_elo} -> {result}")
-        board.beep(board.SOUND_GENERAL, event_type="key_press")
 
     return None
 
