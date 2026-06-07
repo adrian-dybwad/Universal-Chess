@@ -367,7 +367,7 @@ class LichessPlayer(Player):
         """
         # Clear pending state
         self._pending_move = None
-        self._lifted_square = None
+        self._lifted_squares = []
         
         # If this was the remote player's move (this player's move), don't send to server
         # The move came FROM the server, so we don't echo it back

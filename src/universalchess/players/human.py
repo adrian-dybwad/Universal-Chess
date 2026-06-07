@@ -111,7 +111,7 @@ class HumanPlayer(Player):
     def on_new_game(self) -> None:
         """Notification that a new game is starting."""
         log.debug("[HumanPlayer] New game")
-        self._lifted_square = None
+        self._lifted_squares = []
     
     def supports_takeback(self) -> bool:
         """Human players always support takeback."""

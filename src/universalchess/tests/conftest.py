@@ -23,6 +23,7 @@ _hardware_modules = [
     "lgpio",
     "smbus",
     "smbus2",
+    "serial",
 ]
 
 for module_name in _hardware_modules:
