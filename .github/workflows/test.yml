@@ -37,6 +37,9 @@ jobs:
           pip install pytest
           # Install requirements, but skip RPi-specific packages that won't work on x86
           pip install berserk bleak casttube ndjson pyserial python-chess
+          # Web-app deps so the Flask web-security tests run (otherwise they
+          # importorskip and the regressions they guard go unchecked in CI).
+          pip install flask werkzeug sqlalchemy Pillow
           # Install mock packages for RPi hardware (tests mock these anyway)
           pip install fake-rpi || true
       
@@ -46,3 +49,31 @@ jobs:
         env:
           PYTEST_CURRENT_TEST: "true"
           PYTHONPATH: ${{ github.workspace }}/src
+
+  frontend:
+    name: Frontend typecheck & build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: src/universalchess/web-app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: src/universalchess/web-app
+        run: npm ci
+
+      # `npm run build` is `tsc -b && vite build`: the typecheck fails the job
+      # on any type error (e.g. the Select/Card/LoginDialog regressions) and the
+      # bundle step proves the shipped artifact still builds. This mirrors the
+      # release build (build.sh), but runs on every push/PR instead of only on
+      # version tags.
+      - name: Typecheck and build
+        working-directory: src/universalchess/web-app
+        run: npm run build
