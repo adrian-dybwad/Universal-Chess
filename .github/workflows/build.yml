@@ -1,17 +1,29 @@
-# Build .deb package on version tags
+# Build and verify the .deb package.
+#
+# Runs on every push/PR (branch builds) to continuously verify the full
+# installer assembly - React build + packaging together - and on version tags
+# (the release path). The standalone frontend typecheck job lived in test.yml
+# but was redundant once this runs on every push: scripts/build.sh runs
+# `npm run build` (tsc -b && vite build) inside buildReactApp, so any type error
+# fails this job before dpkg-deb packaging.
 name: Build Package
 
 on:
   push:
+    branches: [main, UniversalChess]
     tags:
       - 'v*'
+  pull_request:
+    branches: [main, UniversalChess]
   workflow_dispatch:  # Allow manual trigger
 
 jobs:
   build:
     name: Build .deb Package
     runs-on: ubuntu-latest
-    
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -23,9 +35,11 @@ jobs:
           cache: 'npm'
           cache-dependency-path: src/universalchess/web-app/package-lock.json
       
-      - name: Extract version from tag
+      - name: Extract version
         id: version
         run: |
+          # Tag pushes carry the release version; branch/PR builds fall back to
+          # the control-file version so the artifact still has a stable name.
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             VERSION="${GITHUB_REF#refs/tags/v}"
           else
@@ -63,3 +77,13 @@ jobs:
           dpkg-deb --info *.deb
           dpkg-deb --contents *.deb | head -50
 
+      - name: Verify React app is packaged
+        run: |
+          # The web UI ships as a static bundle under /opt/universalchess/web/react-app.
+          # Guards against scripts/build.sh silently skipping buildReactApp (e.g. if
+          # npm is missing) and shipping a deb without the frontend.
+          if ! dpkg-deb --contents *.deb | grep -q 'opt/universalchess/web/react-app/index.html'; then
+            echo "ERROR: React app (web/react-app/index.html) missing from package" >&2
+            exit 1
+          fi
+          echo "React app present in package."

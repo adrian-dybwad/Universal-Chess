@@ -19,6 +19,13 @@
 # This and any other notices must remain intact and unaltered in any
 # distribution, modification, variant, or derivative of this software.
 
+# Defer annotation evaluation so PEP 604 unions (e.g. `dict[...] | None`) parse
+# as strings instead of executing at import time. Without this, module-level
+# annotations like `_piece_images: dict[str, Image.Image] | None = None` raise
+# TypeError on Python 3.9, which the board still targets (Raspberry Pi OS
+# Bullseye). Matches the convention used across the rest of the package.
+from __future__ import annotations
+
 from flask import Flask, render_template, Response, request, redirect, send_file, abort, stream_with_context, url_for
 from werkzeug.utils import secure_filename
 from universalchess.db import models
