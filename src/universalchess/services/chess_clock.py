@@ -21,6 +21,30 @@ except ImportError:
 from universalchess.state import get_chess_clock as get_clock_state
 
 
+def _elapsed_whole_seconds(last_anchor: float, now: float) -> tuple:
+    """Return (whole_seconds_elapsed, advanced_anchor) since last_anchor.
+
+    Pure drift-correction arithmetic for the countdown loop. The anchor advances
+    by exactly the whole seconds consumed (not to `now`), so the sub-second
+    remainder is carried forward and never lost. This is what keeps total
+    decrements equal to real elapsed time regardless of per-cycle overhead or a
+    loop body that occasionally exceeds one second.
+
+    Args:
+        last_anchor: Monotonic time of the last counted second boundary.
+        now: Current monotonic time.
+
+    Returns:
+        (ticks, new_anchor): number of whole seconds to decrement and the
+        advanced anchor. Returns (0, last_anchor) if no whole second has elapsed
+        or the clock appears to have gone backwards.
+    """
+    if now <= last_anchor:
+        return 0, last_anchor
+    whole = int(now - last_anchor)
+    return whole, last_anchor + whole
+
+
 class ChessClockService:
     """Service managing chess clock countdown thread.
     
@@ -216,21 +240,39 @@ class ChessClockService:
     # -------------------------------------------------------------------------
     
     def _countdown_loop(self) -> None:
-        """Background thread that decrements the active player's time."""
+        """Background thread that decrements the active player's time.
+
+        Decrements are anchored to a monotonic clock rather than assuming each
+        loop cycle is exactly one second. Each wake decrements by the true whole
+        seconds elapsed since the last anchor (carrying the sub-second remainder
+        forward), so loop/render overhead and occasional >1s cycles do not cause
+        the clock to drift slow. The anchor is reset whenever the clock is not
+        actively counting (stopped, paused, or no active colour) so paused/idle
+        wall-time is never charged to a player.
+        """
+        last_anchor = None
         while not self._stop_event.is_set():
-            # Wait for 1 second (interruptible)
+            # Wait for ~1 second (interruptible)
             if self._stop_event.wait(timeout=1.0):
                 break
             
-            # Check if we should tick
-            if not self._state._is_running or self._state._is_paused:
+            # Re-anchor when not actively counting so idle/paused time is not charged.
+            if (not self._state._is_running
+                    or self._state._is_paused
+                    or self._state.active_color is None):
+                last_anchor = None
                 continue
             
-            if self._state.active_color is None:
+            now = time.monotonic()
+            if last_anchor is None:
+                # First counting cycle establishes the reference point.
+                last_anchor = now
                 continue
             
-            # Tick the state (decrements time, notifies observers)
-            self._state.tick()
+            ticks, last_anchor = _elapsed_whole_seconds(last_anchor, now)
+            # Decrement the state once per elapsed whole second (notifies observers).
+            for _ in range(ticks):
+                self._state.tick()
 
 
 # -----------------------------------------------------------------------------
