@@ -20,6 +20,7 @@
 # distribution, modification, variant, or derivative of this software.
 
 from flask import Flask, render_template, Response, request, redirect, send_file, abort, stream_with_context, url_for
+from werkzeug.utils import secure_filename
 from universalchess.db import models
 from universalchess.paths import get_current_fen, get_current_placement, get_resource_path
 from universalchess.services.game_broadcast import get_subscriber, GameState
@@ -104,6 +105,44 @@ CACHE_LONG = 86400 * 7  # 7 days for static assets that rarely change
 CACHE_SHORT = 3600      # 1 hour for assets that may change
 CACHE_NONE = 0          # No caching for dynamic content
 
+# Content Security Policy applied to every response.
+# Notes on the relaxations (each is required by an existing, trusted feature):
+#   - script-src 'unsafe-inline': the legacy Jinja templates (configure.html,
+#     pgn.html, analyse.html, ...) embed inline <script> blocks. The React build
+#     uses external bundles and does not rely on this.
+#   - script-src 'wasm-unsafe-eval' + worker-src blob:: the React analysis board
+#     runs Stockfish compiled to WebAssembly inside a Web Worker.
+#   - connect-src 'self': SSE (/events) and the JSON API are same-origin.
+# object-src 'none', base-uri 'self' and frame-ancestors 'self' are the
+# meaningful hardening (no plugins, no <base> hijack, no framing/clickjacking).
+CONTENT_SECURITY_POLICY = "; ".join([
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    "worker-src 'self' blob:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "frame-ancestors 'self'",
+])
+
+
+def apply_security_headers(response):
+    """Attach baseline security headers to a response.
+
+    Sets nosniff, anti-clickjacking, a strict referrer policy and the CSP.
+    Applied to all responses so API/SSE/media paths are covered too; the CSP
+    only constrains document/script execution contexts.
+    """
+    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    response.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
+    response.headers.setdefault('Referrer-Policy', 'no-referrer')
+    response.headers.setdefault('Content-Security-Policy', CONTENT_SECURITY_POLICY)
+    return response
+
+
 # File extensions that should be cached
 CACHEABLE_EXTENSIONS = {
     '.js': CACHE_LONG,
@@ -125,8 +164,12 @@ CACHEABLE_EXTENSIONS = {
 
 @app.after_request
 def add_cache_headers(response):
-    """Add appropriate cache headers based on content type and path."""
-    # Skip if Cache-Control already set (e.g., SSE, dynamic endpoints)
+    """Add security headers (always) and cache headers (by content/path)."""
+    # Security headers apply to every response, including the early returns
+    # below for already-cached or dynamic content.
+    apply_security_headers(response)
+
+    # Skip cache handling if Cache-Control already set (e.g., SSE, dynamic).
     if 'Cache-Control' in response.headers:
         return response
     
@@ -704,6 +747,30 @@ def get_engine_path():
         Path string to the engines directory
     """
     return str(pathlib.Path(__file__).parent.resolve()) + "/../engines/"
+
+def resolve_engine_file(filename):
+    """Resolve an engine filename to a safe path inside the engines directory.
+
+    Defends /uploadengine and /delengine against path traversal: the name is
+    run through secure_filename (which strips directory separators and parent
+    references) and the result is verified to be a direct child of the engines
+    directory. Returns the resolved absolute Path, or None if the name is empty
+    or would escape the engines directory.
+    """
+    if not filename:
+        return None
+    safe = secure_filename(filename)
+    if not safe:
+        return None
+    base = pathlib.Path(get_engine_path()).resolve()
+    target = (base / safe).resolve()
+    try:
+        target.relative_to(base)
+    except ValueError:
+        return None
+    if target.parent != base:
+        return None
+    return target
 
 def extract_game_id_from_path(path):
     """
@@ -1473,31 +1540,36 @@ def license():
     
     return render_template('license.html', gpl3_text=gpl3_text, apache2_text=apache2_text)
 
-@app.route("/return2dgtcentaurmods")
+@app.route("/return2dgtcentaurmods", methods=["POST"])
+@requires_auth
 def return2dgtcentaurmods():
     os.system("pkill centaur")
     time.sleep(1)
     os.system("sudo systemctl restart universal-chess.service")
     return "ok"
 
-@app.route("/shutdownboard")
+@app.route("/shutdownboard", methods=["POST"])
+@requires_auth
 def shutdownboard():
     os.system("pkill centaur")
     os.system("systemctl poweroff")
     return "ok"
 
-@app.route("/lichesskey/<key>")
+@app.route("/lichesskey/<key>", methods=["POST"])
+@requires_auth
 def lichesskey(key):
     centaurflask.set_lichess_api(key)
     os.system("sudo systemctl restart universal-chess.service")
     return "ok"
 
-@app.route("/lichessrange/<newrange>")
+@app.route("/lichessrange/<newrange>", methods=["POST"])
+@requires_auth
 def lichessrange(newrange):
     centaurflask.set_lichess_range(newrange)
     return "ok"
 
-@app.route("/menuoptions/<engines>/<handbrain>/<analysis>/<emulateeb>/<cast>/<settings>/<about>")
+@app.route("/menuoptions/<engines>/<handbrain>/<analysis>/<emulateeb>/<cast>/<settings>/<about>", methods=["POST"])
+@requires_auth
 def menuoptions(engines, handbrain, analysis, emulateeb, cast, settings, about):
     centaurflask.set_menuEngines(convert_menu_option(engines))
     centaurflask.set_menuHandBrain(convert_menu_option(handbrain))
@@ -1512,7 +1584,8 @@ def menuoptions(engines, handbrain, analysis, emulateeb, cast, settings, about):
 def analyse(gameid):
     return render_template('analysis.html', gameid=gameid)
 
-@app.route("/deletegame/<gameid>")
+@app.route("/deletegame/<gameid>", methods=["POST"])
+@requires_auth
 def deletegame(gameid):
     session = get_db_session()
     try:
@@ -1559,22 +1632,28 @@ def engines():
     return json.dumps(files)
 
 @app.route("/uploadengine", methods=['POST'])
+@requires_auth
 def uploadengine():
-    if request.method != 'POST':
-        return
-    file = request.files['file']
-    if file.filename == '':
-        return
-    enginepath = get_engine_path()
-    filepath = os.path.join(enginepath, file.filename)
-    file.save(filepath)
-    os.chmod(filepath, 0o777)
+    file = request.files.get('file')
+    if file is None or file.filename == '':
+        abort(400)
+    target = resolve_engine_file(file.filename)
+    if target is None:
+        abort(400)
+    file.save(str(target))
+    # Engines are executed, so they need the execute bit, but must not be
+    # world-writable (0o777 previously allowed any local user to replace the
+    # binary). 0o755: owner-writable, group/other read+execute only.
+    os.chmod(str(target), 0o755)
     return redirect("/configure")
 
-@app.route("/delengine/<enginename>")
+@app.route("/delengine/<enginename>", methods=["POST"])
+@requires_auth
 def delengine(enginename):
-    enginepath = get_engine_path()
-    os.remove(os.path.join(enginepath, enginename))
+    target = resolve_engine_file(enginename)
+    if target is None or not target.is_file():
+        abort(404)
+    os.remove(str(target))
     return "ok"
 
 @app.route("/getpgn/<gameid>")

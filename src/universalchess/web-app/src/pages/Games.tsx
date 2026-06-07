@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Card, Badge } from '../components/ui';
+import { LoginDialog } from '../components/LoginDialog';
 import type { GameRecord } from '../types/game';
-import { apiFetch } from '../utils/api';
+import { apiFetch, getStoredCredentials } from '../utils/api';
 import './Games.css';
 
 /**
@@ -13,6 +14,9 @@ export function Games() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [expandedPgn, setExpandedPgn] = useState<Record<number, string>>({});
+  const [loginDialogOpen, setLoginDialogOpen] = useState(false);
+  const [loginError, setLoginError] = useState<string | undefined>(undefined);
+  const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
 
   const fetchGames = useCallback(async () => {
     setLoading(true);
@@ -52,13 +56,42 @@ export function Games() {
     }
   };
 
-  const deleteGame = async (gameId: number) => {
-    if (!confirm('Delete this game? This cannot be undone.')) return;
+  // Deleting a game mutates the database and requires authentication via a
+  // POST. On 401 the login dialog is shown and the delete is retried once the
+  // user authenticates (pendingDeleteId drives the retry).
+  const deleteGame = async (gameId: number, skipConfirm = false) => {
+    if (!skipConfirm && !confirm('Delete this game? This cannot be undone.')) return;
     try {
-      await apiFetch(`/deletegame/${gameId}`);
+      const response = await apiFetch(`/deletegame/${gameId}`, {
+        method: 'POST',
+        requiresAuth: true,
+      });
+
+      if (response.status === 401) {
+        setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
+        setPendingDeleteId(gameId);
+        setLoginDialogOpen(true);
+        return;
+      }
+
+      if (!response.ok) {
+        console.error('Failed to delete game:', response.status);
+        return;
+      }
+
       fetchGames();
     } catch (e) {
       console.error('Failed to delete game:', e);
+    }
+  };
+
+  const handleLoginSuccess = () => {
+    setLoginDialogOpen(false);
+    setLoginError(undefined);
+    const retryId = pendingDeleteId;
+    setPendingDeleteId(null);
+    if (retryId !== null) {
+      deleteGame(retryId, true);
     }
   };
 
@@ -122,6 +155,16 @@ export function Games() {
           ))}
         </div>
       )}
+
+      <LoginDialog
+        isOpen={loginDialogOpen}
+        onClose={() => {
+          setLoginDialogOpen(false);
+          setPendingDeleteId(null);
+        }}
+        onSuccess={handleLoginSuccess}
+        errorMessage={loginError}
+      />
     </div>
   );
 }

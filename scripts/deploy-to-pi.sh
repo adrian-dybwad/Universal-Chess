@@ -22,7 +22,8 @@
 #       --no-restart   Sync only; do not restart the service.
 #   -H, --host HOST    SSH target            (default: pi@dgt.local)
 #       --path PATH    Remote source dir     (default: /opt/universalchess/)
-#       --service NAME systemd unit          (default: universal-chess)
+#       --service NAME board systemd unit    (default: universal-chess)
+#       --web-service NAME web systemd unit   (default: universal-chess-web)
 #   -h, --help         Show this help and exit.
 #
 # Examples:
@@ -39,7 +40,11 @@ set -euo pipefail
 
 HOST="pi@dgt.local"
 REMOTE_PATH="/opt/universalchess/"
+# Both units run from the same tree: the board controller and the Flask web
+# interface. Web/template/React changes only take effect once the web unit is
+# restarted, so both are restarted on every deploy.
 SERVICE="universal-chess"
+WEB_SERVICE="universal-chess-web"
 DRY_RUN=0
 CHECK_ONLY=0
 RESTART=1
@@ -69,6 +74,7 @@ while [[ $# -gt 0 ]]; do
 		-H|--host) HOST="$2"; shift 2 ;;
 		--path) REMOTE_PATH="$2"; shift 2 ;;
 		--service) SERVICE="$2"; shift 2 ;;
+		--web-service) WEB_SERVICE="$2"; shift 2 ;;
 		-h|--help) usage; exit 0 ;;
 		*) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
 	esac
@@ -110,10 +116,13 @@ if [[ $RESTART -eq 0 ]]; then
 	exit 0
 fi
 
-echo "Restarting ${SERVICE} on ${HOST} ..."
+echo "Restarting ${SERVICE} and ${WEB_SERVICE} on ${HOST} ..."
 $SSH_OPTS "$HOST" \
-	"sudo systemctl restart ${SERVICE} && sleep 3 && systemctl is-active ${SERVICE} \
-	&& (journalctl -u ${SERVICE} -n 15 --no-pager | grep -iE 'error|traceback|exception' \
+	"sudo systemctl restart ${SERVICE} ${WEB_SERVICE} && sleep 3 \
+	&& for unit in ${SERVICE} ${WEB_SERVICE}; do \
+		printf '%s: ' \"\$unit\"; systemctl is-active \"\$unit\"; \
+	done \
+	&& (journalctl -u ${SERVICE} -u ${WEB_SERVICE} -n 20 --no-pager | grep -iE 'error|traceback|exception' \
 	&& echo 'WARNING: errors seen in recent log' || echo 'no errors in recent log')"
 
 echo "Deploy complete."

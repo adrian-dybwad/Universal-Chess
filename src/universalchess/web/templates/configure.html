@@ -875,7 +875,11 @@
     if (!confirm('Switch to the original Centaur software? Universal Chess will stop running.')) {
       return;
     }
-    fetch('/return2dgtcentaurmods').then(() => {
+    fetch('/return2dgtcentaurmods', { method: 'POST' }).then((res) => {
+      if (res.status === 401) {
+        showNotification('Authentication required. Please use the main app.', 'error');
+        return;
+      }
       showNotification('Switching to original Centaur...', 'info');
     });
   }

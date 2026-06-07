@@ -50,8 +50,14 @@
     
     function deletePGN(gameid) {
         if (!confirm('Delete this game? This cannot be undone.')) return;
-        fetch('/deletegame/' + gameid)
-            .then(() => getGamesPGNList());
+        fetch('/deletegame/' + gameid, { method: 'POST' })
+            .then((res) => {
+                if (res.status === 401) {
+                    alert('Authentication required to delete games. Please use the main app.');
+                    return;
+                }
+                getGamesPGNList();
+            });
     }
     
     function prevPage() {
