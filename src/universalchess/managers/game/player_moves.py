@@ -73,6 +73,26 @@ class PlayerMoveContext:
     on_promotion_needed_fn: Optional[Callable[[bool], str]]
 
 
+def _abort_move_attempt(ctx: PlayerMoveContext) -> None:
+    """Reject a move attempt before it is applied, leaving clean state.
+
+    Used by every non-success exit of execute_complete_move so that cleanup is a
+    guaranteed post-condition rather than tied to the success path. Resets the
+    in-progress lift tracking (so a stale source_square cannot bleed into the
+    next physical event) and recovers via correction mode + guidance, mirroring
+    on_player_move's illegal-move handling: when a move is rejected at the push,
+    a piece may be sitting on a square the logical board never accepted.
+    """
+    ctx.board_module.beep(ctx.board_module.SOUND_WRONG_MOVE, event_type="error")
+    ctx.led.off()
+    ctx.move_state.reset()
+    ctx.enter_correction_mode_fn()
+    current_state = ctx.board_module.getChessState()
+    expected_state = ctx.chess_board_to_state_fn(ctx.chess_board)
+    if current_state is not None and expected_state is not None:
+        ctx.provide_correction_guidance_fn(current_state, expected_state)
+
+
 def execute_complete_move(ctx: PlayerMoveContext, move: chess.Move) -> None:
     """Execute a complete move submitted by a player (behavior-identical to prior GameManager impl)."""
     outcome = ctx.chess_board.outcome(claim_draw=True)
@@ -81,8 +101,7 @@ def execute_complete_move(ctx: PlayerMoveContext, move: chess.Move) -> None:
             "[GameManager._execute_complete_move] Attempted to execute move after game ended. "
             f"Result: {ctx.chess_board.result()}, Termination: {outcome.termination}"
         )
-        ctx.board_module.beep(ctx.board_module.SOUND_WRONG_MOVE, event_type="error")
-        ctx.led.off()
+        _abort_move_attempt(ctx)
         return
 
     move_uci = move.uci()
@@ -99,8 +118,7 @@ def execute_complete_move(ctx: PlayerMoveContext, move: chess.Move) -> None:
         ctx.game_state.push_move(move)
     except (ValueError, AssertionError) as e:
         log.error(f"[GameManager._execute_complete_move] Chess engine push failed: {move_uci}. Error: {e}")
-        ctx.board_module.beep(ctx.board_module.SOUND_WRONG_MOVE, event_type="error")
-        ctx.led.off()
+        _abort_move_attempt(ctx)
         return
 
     ctx.led.off()
