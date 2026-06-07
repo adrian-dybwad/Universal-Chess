@@ -1897,25 +1897,96 @@ def api_save_settings():
 @app.route("/api/settings/apply", methods=["POST"])
 @requires_auth
 def api_apply_settings():
-    """Apply settings to the running chess board. Requires authentication.
-    
-    This sends a signal to the main process to reload settings.
-    For now, it just restarts the service.
+    """Apply saved settings to the running chess board. Requires authentication.
+
+    Sends a hot-reload signal to the main process (the same notification that a
+    save emits) rather than restarting the service. A restart would interrupt an
+    in-progress game and bounce the board; a hot reload re-reads centaur.ini and
+    rebuilds the live display in place.
+
+    Note: a small number of startup-only settings (notably DATABASE.database_uri,
+    which binds the DB engine at process start) are NOT picked up by a hot reload
+    and still require a manual service restart.
     """
     try:
-        # Reload settings in the running application
-        # For now, we signal by touching a reload file or restarting service
-        # A future improvement could use IPC to signal the main process
-        import subprocess
-        
-        # Gentle restart - signal the main process to reload config
-        # For now, full restart
-        subprocess.run(["sudo", "systemctl", "restart", "universal-chess.service"], 
-                       capture_output=True, timeout=10)
-        
-        return json.dumps({"success": True, "message": "Settings applied"})
+        from universalchess.services.game_broadcast import notify_main_process_settings_changed
+        notified = notify_main_process_settings_changed()
+        if notified:
+            return json.dumps({"success": True, "message": "Settings reloaded"})
+        # The main process may not be running (e.g. board service stopped); the
+        # settings are still persisted and will load on next start.
+        return json.dumps({
+            "success": True,
+            "message": "Settings saved; board not running to reload",
+        })
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/sprites", methods=["GET"])
+def api_get_sprites():
+    """List available chess sprite-sheet identifiers for the Sprites selector.
+
+    The board's ResourceLoader singleton is owned by the main process, not this
+    web process, so a fresh loader is constructed over the same resource
+    directories to reuse its discovery logic (scans for chesssprites_<id>.bmp,
+    user overrides merged over system sheets, 'default' first).
+    """
+    try:
+        from universalchess.resources import ResourceLoader
+        from universalchess.paths import RESOURCES_DIR, USER_RESOURCES_DIR
+
+        loader = ResourceLoader(RESOURCES_DIR, USER_RESOURCES_DIR)
+        sheets = loader.list_chess_sprite_sheets()
+        if not sheets:
+            sheets = [ResourceLoader.DEFAULT_SPRITE_SHEET]
+        return json.dumps(sheets)
+    except Exception as e:
+        app.logger.warning(f"Failed to list sprite sheets: {e}")
+        return json.dumps(["default"])
+
+
+# Upscale factor for the sprite-sheet preview. The native sheet is 16px-per-cell
+# pixel art; nearest-neighbour scaling keeps it crisp at a web-visible size.
+SPRITE_PREVIEW_SCALE = 5
+
+
+@app.route("/api/sprites/<sheet>/image", methods=["GET"])
+def api_get_sprite_image(sheet):
+    """Serve the full sprite sheet as a scaled PNG for the Sprites preview.
+
+    Renders every piece in the sheet (both the light-square and dark-square
+    rows) so the web Sprites selector can show exactly what the board draws.
+    The sheet name is validated against the discovered set, so it cannot be
+    used for path traversal.
+    """
+    try:
+        from universalchess.resources import ResourceLoader
+        from universalchess.paths import RESOURCES_DIR, USER_RESOURCES_DIR
+
+        loader = ResourceLoader(RESOURCES_DIR, USER_RESOURCES_DIR)
+        if sheet not in loader.list_chess_sprite_sheets():
+            abort(404)
+
+        filename = f"{ResourceLoader._SPRITE_SHEET_PREFIX}{sheet}{ResourceLoader._SPRITE_SHEET_SUFFIX}"
+        img = loader.get_image(filename)
+        if img is None:
+            abort(404)
+
+        if img.mode not in ("L", "RGB"):
+            img = img.convert("L")
+        scaled = img.resize(
+            (img.width * SPRITE_PREVIEW_SCALE, img.height * SPRITE_PREVIEW_SCALE),
+            Image.NEAREST,
+        )
+
+        buf = io.BytesIO()
+        scaled.save(buf, format="PNG")
+        buf.seek(0)
+        return send_file(buf, mimetype="image/png")
+    except Exception as e:
+        app.logger.warning(f"Failed to render sprite sheet '{sheet}': {e}")
+        abort(404)
 
 
 @app.route("/api/engines", methods=["GET"])

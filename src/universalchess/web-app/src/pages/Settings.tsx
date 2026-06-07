@@ -104,6 +104,7 @@ interface FormSettings {
     show_analysis: boolean;
     show_graph: boolean;
     led_brightness: number;
+    chess_sprites: string;
   };
   lichess: {
     api_token: string;
@@ -134,6 +135,7 @@ const defaultFormSettings: FormSettings = {
     show_analysis: true,
     show_graph: true,
     led_brightness: 5,
+    chess_sprites: 'default',
   },
   lichess: { api_token: '', range: '' },
   sound: { enabled: true, key_press: true, game_events: true, piece_events: true, errors: true },
@@ -186,6 +188,7 @@ function parseRawSettings(data: SettingsData): FormSettings {
       show_analysis: parseConfigBool(data.game?.show_analysis, true),
       show_graph: parseConfigBool(data.game?.show_graph, true),
       led_brightness: parseInt(data.game?.led_brightness || '5'),
+      chess_sprites: data.game?.chess_sprites || 'default',
     },
     lichess: {
       api_token: data.lichess?.api_token || '',
@@ -216,6 +219,7 @@ export function Settings() {
   const [engines, setEngines] = useState<EngineDefinition[]>([]);
   const [installedEngines, setInstalledEngines] = useState<EngineDefinition[]>([]);
   const [engineLevels, setEngineLevels] = useState<{ [key: string]: string[] }>({});
+  const [spriteSheets, setSpriteSheets] = useState<string[]>(['default']);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
@@ -233,13 +237,15 @@ export function Settings() {
 
   // Fetch settings function (reusable for initial load and SSE refresh)
   const fetchSettings = useCallback(async () => {
-    const [settingsData, enginesData] = await Promise.all([
+    const [settingsData, enginesData, spritesData] = await Promise.all([
       apiFetch('/api/settings').then((r) => r.json()),
       apiFetch('/api/engines/all').then((r) => r.json()),
+      apiFetch('/api/sprites').then((r) => r.json()).catch(() => ['default']),
     ]);
     setRawSettings(settingsData);
     setEngines(enginesData);
     setInstalledEngines(enginesData.filter((e: EngineDefinition) => e.installed));
+    setSpriteSheets(Array.isArray(spritesData) && spritesData.length > 0 ? spritesData : ['default']);
     
     const parsed = parseRawSettings(settingsData);
     setFormSettings(parsed);
@@ -727,6 +733,47 @@ export function Settings() {
                 disabled={!formSettings.game.show_analysis}
                 onChange={(v) => updateFormSettings('game', { show_graph: v })}
               />
+            </Card>
+
+            {/* Sprite sheet selects the piece artwork drawn on the board widget.
+                Mirrors the board's Display & Sound -> Sprites list; each option
+                renders the full sheet (every piece, both square rows) served by
+                /api/sprites/<id>/image so the choice is visual. */}
+            <Card className="mb-6">
+              <CardHeader title="Piece Sprites" />
+              <p className="text-muted mb-4" style={{ fontSize: '0.875rem' }}>
+                Sprite sheet used to draw pieces on the e-paper board
+              </p>
+              <div className="sprite-options" role="radiogroup" aria-label="Piece sprites">
+                {spriteSheets.map((id) => {
+                  const selected = formSettings.game.chess_sprites === id;
+                  const label = id
+                    .split('_')
+                    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+                    .join(' ');
+                  return (
+                    <label
+                      key={id}
+                      className={`sprite-option${selected ? ' sprite-option--selected' : ''}`}
+                    >
+                      <input
+                        type="radio"
+                        name="chess_sprites"
+                        value={id}
+                        checked={selected}
+                        onChange={() => updateFormSettings('game', { chess_sprites: id })}
+                      />
+                      <img
+                        className="sprite-option-image"
+                        src={buildApiUrl(`/api/sprites/${id}/image`)}
+                        alt={`${label} sprite sheet`}
+                        loading="lazy"
+                      />
+                      <span className="sprite-option-label">{label}</span>
+                    </label>
+                  );
+                })}
+              </div>
             </Card>
 
             <Card className="mb-6">

@@ -491,6 +491,7 @@ _is_position_game = False  # Flag to track if current game is a position (practi
 _switch_to_normal_game = False  # Flag to signal switch from position game to normal game
 _pending_ble_client_type: str = None  # Flag for BLE connection when between menus
 _pending_display_settings = False  # Flag to show display settings menu from game mode
+_pending_settings_reload = False  # Flag: web changed settings, rebuild live game display
 _last_position_category_index = 0  # Remember last selected category in positions menu
 _last_position_index = 0  # Remember last selected position in positions menu
 _last_position_category = None  # Remember last selected category name for direct return
@@ -3162,7 +3163,7 @@ def main():
     global running, kill
     global mainloop, relay_mode, protocol_manager, relay_manager, app_state, _args
     global _pending_piece_events, _return_to_positions_menu, _switch_to_normal_game, _menu_manager
-    global _pending_display_settings
+    global _pending_display_settings, _pending_settings_reload
     
     try:
         log.info("[Main] Parsing arguments...")
@@ -3230,12 +3231,26 @@ def main():
     # Start settings subscriber for hot reload from web app
     # Must be after MenuManager init so we can refresh menus
     def _on_settings_changed():
-        """Callback when settings are changed from web app."""
+        """Callback when settings are changed from web app.
+
+        Runs on the settings-subscriber thread. Reloads the in-memory settings and
+        refreshes any active menu directly, but defers rebuilding the live game
+        display to the main loop via _pending_settings_reload: display widgets must
+        only be (re)built on the main thread, the same way the on-board display
+        menu applies changes (see the GAME-state handling of this flag).
+        """
+        global _pending_settings_reload
         log.info("[Main] Settings changed from web app, reloading...")
         _load_game_settings()
         # Refresh the current menu if one is active (so it shows updated values)
         if _menu_manager is not None:
             _menu_manager.refresh_menu()
+        # Signal the main loop to rebuild the live display so display/sprite
+        # changes apply mid-game (sound is read fresh per-beep, so needs no rebuild).
+        # Only relevant in GAME state; menus already refresh above, and a game
+        # start rebuilds widgets anyway, so avoid leaving a stale flag set.
+        if app_state == AppState.GAME:
+            _pending_settings_reload = True
     
     try:
         from universalchess.services.game_broadcast import get_settings_subscriber
@@ -3652,6 +3667,15 @@ def main():
                     # _init_widgets() now preserves game state:
                     # - Uses _current_fen for board position
                     # - ChessClock service preserves times (not reset if already running)
+                    if display_manager:
+                        display_manager._init_widgets()
+                # Apply a settings change pushed from the web app during a game so
+                # display/sprite toggles take effect live, matching the on-board
+                # display menu. Rebuilt here (main thread) - never from the
+                # subscriber thread that set the flag.
+                elif _pending_settings_reload:
+                    _pending_settings_reload = False
+                    log.info("[App] Applying web settings change to live display")
                     if display_manager:
                         display_manager._init_widgets()
                 else:
