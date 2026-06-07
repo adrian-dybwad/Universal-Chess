@@ -141,6 +141,24 @@ const defaultFormSettings: FormSettings = {
 };
 
 /**
+ * Coerce a config string into a boolean, tolerant of every representation the
+ * board can persist. The board writes Python-capitalised booleans (`True`/
+ * `False`) for the `game`/`system` sections via configparser, but `on`/`off`
+ * for the `sound` section, and configparser's getboolean also accepts
+ * `1`/`0`/`yes`/`no`. Matching only one spelling (e.g. lowercase `'false'`)
+ * silently shows the wrong value, so normalise before comparing.
+ *
+ * Falls back to `defaultValue` when the key is absent or unrecognised.
+ */
+function parseConfigBool(value: string | undefined, defaultValue: boolean): boolean {
+  if (value === undefined || value === null || value === '') return defaultValue;
+  const normalized = String(value).trim().toLowerCase();
+  if (['false', 'off', '0', 'no'].includes(normalized)) return false;
+  if (['true', 'on', '1', 'yes'].includes(normalized)) return true;
+  return defaultValue;
+}
+
+/**
  * Parse raw settings from the API into the form settings structure.
  */
 function parseRawSettings(data: SettingsData): FormSettings {
@@ -161,12 +179,12 @@ function parseRawSettings(data: SettingsData): FormSettings {
     },
     game: {
       time_control: data.game?.time_control || '0',
-      analysis_mode: data.game?.analysis_mode !== 'false',
+      analysis_mode: parseConfigBool(data.game?.analysis_mode, true),
       analysis_engine: data.game?.analysis_engine || 'stockfish',
-      show_board: data.game?.show_board !== 'false',
-      show_clock: data.game?.show_clock !== 'false',
-      show_analysis: data.game?.show_analysis !== 'false',
-      show_graph: data.game?.show_graph !== 'false',
+      show_board: parseConfigBool(data.game?.show_board, true),
+      show_clock: parseConfigBool(data.game?.show_clock, true),
+      show_analysis: parseConfigBool(data.game?.show_analysis, true),
+      show_graph: parseConfigBool(data.game?.show_graph, true),
       led_brightness: parseInt(data.game?.led_brightness || '5'),
     },
     lichess: {
@@ -174,14 +192,14 @@ function parseRawSettings(data: SettingsData): FormSettings {
       range: data.lichess?.range || '',
     },
     sound: {
-      enabled: data.sound?.sound !== 'off',
-      key_press: data.sound?.key_press !== 'off',
-      game_events: data.sound?.game_event !== 'off',
-      piece_events: data.sound?.piece_event !== 'off',
-      errors: data.sound?.error !== 'off',
+      enabled: parseConfigBool(data.sound?.sound, true),
+      key_press: parseConfigBool(data.sound?.key_press, true),
+      game_events: parseConfigBool(data.sound?.game_event, true),
+      piece_events: parseConfigBool(data.sound?.piece_event, true),
+      errors: parseConfigBool(data.sound?.error, true),
     },
     system: {
-      developer_mode: data.system?.developer === 'True' || data.system?.developer === 'true',
+      developer_mode: parseConfigBool(data.system?.developer, false),
       database_uri: data.DATABASE?.database_uri || '',
     },
   };
