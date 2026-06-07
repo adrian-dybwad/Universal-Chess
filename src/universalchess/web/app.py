@@ -66,21 +66,27 @@ try:
 except ImportError:
     HAS_SPWD = False
 
-# Try to import PAM for authentication (alternative to crypt/spwd)
+# Preferred password-auth backend: the PyPI "python-pam" module, whose
+# pam.pam().authenticate(username, password) API is what verify_webdav_authentication
+# relies on. This is required on Python 3.13+ where the crypt/spwd fallbacks below
+# no longer exist in the stdlib.
+#
+# Note: do NOT fall back to Debian's "PAM" (uppercase, the PyPAM C extension). It
+# imports successfully but exposes a conversation-callback API with no
+# (username, password) authenticate() - aliasing it here would set HAS_PAM=True
+# while every authentication silently fails. When python-pam is absent we leave
+# HAS_PAM False and rely on the crypt/spwd fallbacks (older OS/Python).
 HAS_PAM = False
 try:
     import pam
     HAS_PAM = True
 except ImportError as e:
-    try:
-        # Some systems may have it as PAM (uppercase)
-        import PAM as pam
-        HAS_PAM = True
-    except ImportError:
-        # Log to stderr so it's visible at startup
-        import sys
-        print(f"Warning: PAM module not available: {e}. Install with: sudo apt-get install python3-pam", file=sys.stderr)
-        HAS_PAM = False
+    import sys
+    print(
+        f"Warning: python-pam module not available: {e}. "
+        "Install it into the venv with: pip install python-pam",
+        file=sys.stderr,
+    )
 
 app = Flask(__name__)
 app.config['UCI_UPLOAD_EXTENSIONS'] = ['.txt']

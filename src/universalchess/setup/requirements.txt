@@ -8,3 +8,12 @@ pyserial
 spidev
 RPi.GPIO
 python-chess
+# Web-UI password auth backend. The code calls pam.pam().authenticate(user, pw)
+# from the PyPI "python-pam" module (NOT Debian's "PAM"/PyPAM C extension, whose
+# API is incompatible). Required on Python 3.13+ where the stdlib crypt/spwd
+# modules used by the older fallback paths were removed. On older OS/Python the
+# crypt/spwd fallbacks still work, so this is purely additive.
+python-pam
+# python-pam 2.0.2 imports `six` at runtime but fails to declare it as a
+# dependency, so it must be installed explicitly.
+six
