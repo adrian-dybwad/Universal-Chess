@@ -383,11 +383,24 @@ class EnginePlayer(Player):
     
     def on_move_made(self, move: chess.Move, board: chess.Board) -> None:
         """Notification that a move was made.
-        
-        Clears pending state after a move is executed.
+
+        Clears the consumed pending move. This is a normal move completion, not
+        a position invalidation, so it must NOT bump the think generation or
+        abort an in-flight computation: when the opponent's move switches the
+        turn to the engine, the controller starts the engine thinking
+        (request_move) and announces that move (on_move_made) at essentially the
+        same time. Invalidating here would discard the engine's own freshly
+        computed move and the engine would never play. Cancellation belongs only
+        to takeback / new-game / external-clear (see _invalidate_pending).
         """
         log.debug(f"[EnginePlayer] Move made: {move.uci()}")
-        self._invalidate_pending()
+        with self._lock:
+            # A computation for the engine's own turn is in flight and races
+            # with this notification; it owns the pending/thinking state.
+            if self._thinking:
+                return
+            self._pending_move = None
+        self._lifted_squares = []
     
     def on_new_game(self) -> None:
         """Notification that a new game is starting.

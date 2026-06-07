@@ -154,6 +154,37 @@ def test_second_request_while_thinking_is_ignored():
     assert player._pending_move == E2E4
 
 
+def test_on_move_made_does_not_cancel_in_flight_think():
+    """on_move_made must not cancel the engine's freshly-started think.
+
+    Why: when the opponent's move switches the turn to the engine, the controller
+    starts the engine thinking (request_move) and also notifies on_move_made for
+    that same move; these race. on_move_made is a normal completion, not a
+    position invalidation, so it must only clear the consumed pending move - it
+    must NOT abort the in-flight computation for the engine's own turn.
+
+    How the regression manifests: if on_move_made invalidates (bumps the think
+    generation), the engine computes its move but discards it as "superseded",
+    so the engine never plays its turn - _pending_move stays None and the LED
+    callback never fires.
+    """
+    handle = _BlockingHandle(E2E4)
+    player = _engine_with_handle(handle)
+    notified = []
+    player._pending_move_callback = lambda m: notified.append(m)
+    board = chess.Board()
+
+    player._do_request_move(board)  # engine starts thinking for its turn
+    assert handle.play_started.wait(timeout=3)
+    # The move that triggered the engine's turn is announced while it thinks.
+    player.on_move_made(chess.Move.from_uci("d2d4"), board)
+    handle.release.set()
+    player._think_thread.join(timeout=3)
+
+    assert player._pending_move == E2E4
+    assert notified == [E2E4]
+
+
 def test_stop_clears_handle_and_stops_even_if_release_raises():
     """stop() must not leak the handle or skip STOPPED if release() raises.
 
