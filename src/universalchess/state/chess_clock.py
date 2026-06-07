@@ -10,6 +10,8 @@ just tracks time remaining for the countdown.
 
 from typing import Optional, Callable, List
 
+from universalchess.utils.observers import notify_observers
+
 
 class ChessClockState:
     """Observable chess clock state.
@@ -143,27 +145,15 @@ class ChessClockState:
     
     def _notify_tick(self) -> None:
         """Notify all tick observers."""
-        for callback in self._on_tick:
-            try:
-                callback()
-            except Exception:
-                pass
+        notify_observers(self._on_tick, context="clock_on_tick")
     
     def _notify_state_change(self) -> None:
         """Notify all state change observers."""
-        for callback in self._on_state_change:
-            try:
-                callback()
-            except Exception:
-                pass
+        notify_observers(self._on_state_change, context="clock_on_state_change")
     
     def _notify_flag(self, color: str) -> None:
         """Notify all flag observers."""
-        for callback in self._on_flag:
-            try:
-                callback(color)
-            except Exception:
-                pass
+        notify_observers(self._on_flag, color, context="clock_on_flag")
     
     # -------------------------------------------------------------------------
     # State mutations (called by clock service)

@@ -21,10 +21,11 @@ blocking fake handle makes the interleaving deterministic (no sleeps/races).
 
 import threading
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import chess
 
-from universalchess.players.engine import EnginePlayer
+from universalchess.players.engine import EnginePlayer, PlayerState
 
 E2E4 = chess.Move.from_uci("e2e4")
 
@@ -151,3 +152,27 @@ def test_second_request_while_thinking_is_ignored():
 
     assert handle.play_calls == 1
     assert player._pending_move == E2E4
+
+
+def test_stop_clears_handle_and_stops_even_if_release_raises():
+    """stop() must not leak the handle or skip STOPPED if release() raises.
+
+    Why: the engine handle is a shared resource; an exception during release must
+    not leave the player holding a dangling reference or stuck in a non-stopped
+    state (the original code had no try/finally around the release).
+
+    How the regression manifests: without the guarded release, the raised error
+    propagates, _engine_handle stays set (leak) and state never becomes STOPPED.
+    """
+    player = EnginePlayer()
+    player._engine_handle = object()
+
+    class _BoomRegistry:
+        def release(self, handle):
+            raise RuntimeError("registry release failed")
+
+    with patch("universalchess.players.engine.get_engine_registry", return_value=_BoomRegistry()):
+        player.stop()  # must not raise
+
+    assert player._engine_handle is None
+    assert player._state == PlayerState.STOPPED

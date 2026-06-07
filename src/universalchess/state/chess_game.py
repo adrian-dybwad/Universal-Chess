@@ -14,6 +14,8 @@ imports fast for widgets.
 import chess
 from typing import Optional, Callable, List
 
+from universalchess.utils.observers import notify_observers
+
 
 class ChessGameState:
     """Observable chess game state.
@@ -329,11 +331,7 @@ class ChessGameState:
         Called automatically by mutation methods (push_move, pop_move, etc.).
         Can also be called manually after direct board modifications.
         """
-        for callback in self._on_position_change:
-            try:
-                callback()
-            except Exception:
-                pass  # Don't let observer errors break the state
+        notify_observers(self._on_position_change, context="on_position_change")
     
     def notify_game_over(self, result: str, termination: str) -> None:
         """Notify all game over observers.
@@ -342,11 +340,7 @@ class ChessGameState:
             result: Game result ('1-0', '0-1', '1/2-1/2')
             termination: How game ended
         """
-        for callback in self._on_game_over:
-            try:
-                callback(result, termination)
-            except Exception:
-                pass
+        notify_observers(self._on_game_over, result, termination, context="on_game_over")
     
     def refresh_alerts(self) -> None:
         """Re-emit the current check / queen-threat status to all observers.
@@ -375,30 +369,26 @@ class ChessGameState:
         check_info = self.get_check_info()
         if check_info:
             is_black_in_check, attacker_square, king_square = check_info
-            for callback in self._on_check:
-                try:
-                    callback(is_black_in_check, attacker_square, king_square)
-                except Exception:
-                    pass
+            notify_observers(
+                self._on_check,
+                is_black_in_check, attacker_square, king_square,
+                context="on_check",
+            )
             return
         
         # Check for queen threat
         queen_info = self.get_queen_threat_info()
         if queen_info:
             is_black_threatened, attacker_square, queen_square = queen_info
-            for callback in self._on_queen_threat:
-                try:
-                    callback(is_black_threatened, attacker_square, queen_square)
-                except Exception:
-                    pass
+            notify_observers(
+                self._on_queen_threat,
+                is_black_threatened, attacker_square, queen_square,
+                context="on_queen_threat",
+            )
             return
         
         # No check or threat - clear alerts
-        for callback in self._on_alert_clear:
-            try:
-                callback()
-            except Exception:
-                pass
+        notify_observers(self._on_alert_clear, context="on_alert_clear")
     
     # -------------------------------------------------------------------------
     # State mutations (trigger observer notifications)

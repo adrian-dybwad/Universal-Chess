@@ -566,7 +566,7 @@ class SyncCentaur:
                 try:
                     self.key_up_queue.put_nowait(key)
                 except queue.Full:
-                    pass
+                    log.error(f"[SyncCentaur] key queue full, dropping key event: {key.name}")
             else:
                 # No key event found in non-empty payload - this means the key buffer is empty
                 if self._discard_stale_keys:

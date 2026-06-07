@@ -186,14 +186,22 @@ class EnginePlayer(Player):
         if self._init_thread and self._init_thread.is_alive():
             self._init_thread.join(timeout=1.0)
         
-        # Release engine handle back to registry
+        # Detach the handle under the lock, then release it back to the registry
+        # outside the lock. The release is guarded so a registry error cannot leak
+        # the handle reference or skip the STOPPED transition (the local reference
+        # is already cleared, and state is always set in the finally).
         with self._lock:
-            if self._engine_handle:
-                get_engine_registry().release(self._engine_handle)
-                log.info(f"[EnginePlayer] Engine released: {self.engine_name}")
-                self._engine_handle = None
+            handle = self._engine_handle
+            self._engine_handle = None
         
-        self._set_state(PlayerState.STOPPED)
+        try:
+            if handle is not None:
+                get_engine_registry().release(handle)
+                log.info(f"[EnginePlayer] Engine released: {self.engine_name}")
+        except Exception as e:
+            log.error(f"[EnginePlayer] Error releasing engine {self.engine_name}: {e}")
+        finally:
+            self._set_state(PlayerState.STOPPED)
     
     def _invalidate_pending(self) -> Optional[chess.Move]:
         """Cancel any in-flight computation and clear the pending move.
