@@ -11,7 +11,7 @@ interface SettingsData {
   };
 }
 
-type SettingsTab = 'players' | 'game' | 'display' | 'accounts' | 'engines' | 'sound' | 'system';
+type SettingsTab = 'players' | 'display' | 'game' | 'accounts' | 'engines' | 'system';
 
 // SVG icons from legacy app - Material Design icons
 const TabIcons: Record<SettingsTab, React.ReactNode> = {
@@ -40,11 +40,6 @@ const TabIcons: Record<SettingsTab, React.ReactNode> = {
       <path d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
     </svg>
   ),
-  sound: (
-    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-      <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
-    </svg>
-  ),
   system: (
     <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
       <path d="M17 11c.34 0 .67.04 1 .09V6.27L10.5 3 3 6.27v4.91c0 4.54 3.2 8.79 7.5 9.82.55-.13 1.08-.32 1.6-.55-.69-.98-1.1-2.17-1.1-3.45 0-3.31 2.69-6 6-6z"/>
@@ -53,13 +48,15 @@ const TabIcons: Record<SettingsTab, React.ReactNode> = {
   ),
 };
 
+// Order mirrors the board's Settings nav: Players, then the combined
+// Display & Sound menu (promoted to second), then Game, then the
+// account/engine/system groupings.
 const tabs: { id: SettingsTab; label: string }[] = [
   { id: 'players', label: 'Players' },
+  { id: 'display', label: 'Display & Sound' },
   { id: 'game', label: 'Game' },
-  { id: 'display', label: 'Display' },
   { id: 'accounts', label: 'Accounts' },
   { id: 'engines', label: 'Engines' },
-  { id: 'sound', label: 'Sound' },
   { id: 'system', label: 'System' },
 ];
 
@@ -560,7 +557,7 @@ export function Settings() {
 
                 {formSettings.player1.type === 'human' && (
                   <p className="text-muted" style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
-                    Hints will use <strong>{getEngineDisplayName(formSettings.game.analysis_engine || 'stockfish')}</strong> (configured in Game Settings → Analysis Engine)
+                    Hints will use <strong>{getEngineDisplayName(formSettings.game.analysis_engine || 'stockfish')}</strong> (configured in System Settings → Analysis Engine)
                   </p>
                 )}
             </Card>
@@ -621,7 +618,7 @@ export function Settings() {
 
                 {formSettings.player2.type === 'human' && (
                   <p className="text-muted" style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
-                    Hints will use <strong>{getEngineDisplayName(formSettings.game.analysis_engine || 'stockfish')}</strong> (configured in Game Settings → Analysis Engine)
+                    Hints will use <strong>{getEngineDisplayName(formSettings.game.analysis_engine || 'stockfish')}</strong> (configured in System Settings → Analysis Engine)
                   </p>
                 )}
             </Card>
@@ -673,31 +670,14 @@ export function Settings() {
                 />
               </FormRow>
             </Card>
-
-            <Card className="mb-6">
-              <CardHeader title="Analysis" />
-              <Toggle
-                label="Live Analysis"
-                help="Show engine evaluation during play"
-                checked={formSettings.game.analysis_mode}
-                onChange={(v) => updateFormSettings('game', { analysis_mode: v })}
-              />
-              <FormRow label="Analysis Engine" help="Engine used for position analysis">
-                <Select
-                  value={formSettings.game.analysis_engine}
-                  options={engineOptions}
-                  onChange={(e) => updateFormSettings('game', { analysis_engine: e.target.value })}
-                />
-              </FormRow>
-            </Card>
           </section>
         )}
 
-        {/* DISPLAY TAB */}
+        {/* DISPLAY & SOUND TAB */}
         {activeTab === 'display' && (
           <section>
-            <h2 className="page-title">Display Settings</h2>
-            <p className="text-muted mb-6">Control what appears on the e-paper display and LEDs</p>
+            <h2 className="page-title">Display &amp; Sound</h2>
+            <p className="text-muted mb-6">Control what appears on the e-paper display, the LEDs, and audio feedback</p>
 
             <Card className="mb-6">
               <CardHeader title="E-Paper Display" />
@@ -719,10 +699,14 @@ export function Settings() {
                 checked={formSettings.game.show_analysis}
                 onChange={(v) => updateFormSettings('game', { show_analysis: v })}
               />
+              {/* Show Graph nests under Show Analysis: the graph overlays the
+                  analysis widget, so it is disabled while analysis is hidden
+                  (mirrors the board's Display & Sound menu). */}
               <Toggle
                 label="Show Evaluation Graph"
                 help="Display evaluation history graph"
                 checked={formSettings.game.show_graph}
+                disabled={!formSettings.game.show_analysis}
                 onChange={(v) => updateFormSettings('game', { show_graph: v })}
               />
             </Card>
@@ -739,6 +723,47 @@ export function Settings() {
                   onChange={(e) => updateFormSettings('game', { led_brightness: parseInt(e.target.value) })}
                 />
               </FormRow>
+            </Card>
+
+            {/* Sound is nested in the board's Display & Sound menu; mirror that
+                here. Row order matches the board's Sound submenu: master switch
+                first, then per-category toggles. */}
+            <Card className="mb-6">
+              <CardHeader title="Sound" />
+              <Toggle
+                label="Sound Enabled"
+                help="Master switch for all sound effects"
+                checked={formSettings.sound.enabled}
+                onChange={(v) => updateFormSettings('sound', { enabled: v })}
+              />
+              <Toggle
+                label="Piece Events"
+                help="Beep when pieces are lifted or placed"
+                checked={formSettings.sound.piece_events}
+                disabled={!formSettings.sound.enabled}
+                onChange={(v) => updateFormSettings('sound', { piece_events: v })}
+              />
+              <Toggle
+                label="Game Events"
+                help="Beep for check, checkmate, and other game events"
+                checked={formSettings.sound.game_events}
+                disabled={!formSettings.sound.enabled}
+                onChange={(v) => updateFormSettings('sound', { game_events: v })}
+              />
+              <Toggle
+                label="Errors"
+                help="Beep on error conditions"
+                checked={formSettings.sound.errors}
+                disabled={!formSettings.sound.enabled}
+                onChange={(v) => updateFormSettings('sound', { errors: v })}
+              />
+              <Toggle
+                label="Key Press"
+                help="Beep when buttons are pressed"
+                checked={formSettings.sound.key_press}
+                disabled={!formSettings.sound.enabled}
+                onChange={(v) => updateFormSettings('sound', { key_press: v })}
+              />
             </Card>
           </section>
         )}
@@ -807,53 +832,31 @@ export function Settings() {
           </section>
         )}
 
-        {/* SOUND TAB */}
-        {activeTab === 'sound' && (
-          <section>
-            <h2 className="page-title">Sound Settings</h2>
-            <p className="text-muted mb-6">Audio feedback configuration</p>
-
-            <Card className="mb-6">
-              <CardHeader title="Audio Feedback" />
-              <Toggle
-                label="Sound Enabled"
-                help="Master switch for all sound effects"
-                checked={formSettings.sound.enabled}
-                onChange={(v) => updateFormSettings('sound', { enabled: v })}
-              />
-              <Toggle
-                label="Key Press"
-                help="Beep when buttons are pressed"
-                checked={formSettings.sound.key_press}
-                onChange={(v) => updateFormSettings('sound', { key_press: v })}
-              />
-              <Toggle
-                label="Game Events"
-                help="Beep for check, checkmate, and other game events"
-                checked={formSettings.sound.game_events}
-                onChange={(v) => updateFormSettings('sound', { game_events: v })}
-              />
-              <Toggle
-                label="Piece Events"
-                help="Beep when pieces are lifted or placed"
-                checked={formSettings.sound.piece_events}
-                onChange={(v) => updateFormSettings('sound', { piece_events: v })}
-              />
-              <Toggle
-                label="Errors"
-                help="Beep on error conditions"
-                checked={formSettings.sound.errors}
-                onChange={(v) => updateFormSettings('sound', { errors: v })}
-              />
-            </Card>
-          </section>
-        )}
-
         {/* SYSTEM TAB */}
         {activeTab === 'system' && (
           <section>
             <h2 className="page-title">System Settings</h2>
             <p className="text-muted mb-6">Advanced configuration for developers and power users</p>
+
+            {/* Analysis lives under System (not Game): the board groups the
+                Analysis Engine selector here because changing the engine
+                mid-game would require re-running the move history through it. */}
+            <Card className="mb-6">
+              <CardHeader title="Analysis" />
+              <Toggle
+                label="Live Analysis"
+                help="Show engine evaluation during play"
+                checked={formSettings.game.analysis_mode}
+                onChange={(v) => updateFormSettings('game', { analysis_mode: v })}
+              />
+              <FormRow label="Analysis Engine" help="Engine used for position analysis (best changed between games)">
+                <Select
+                  value={formSettings.game.analysis_engine}
+                  options={engineOptions}
+                  onChange={(e) => updateFormSettings('game', { analysis_engine: e.target.value })}
+                />
+              </FormRow>
+            </Card>
 
             <Card className="mb-6">
               <CardHeader title="Software Updates" />
@@ -1204,12 +1207,11 @@ function UpdateManager() {
 
   return (
     <>
-      {showLoginDialog && (
-        <LoginDialog
-          onSuccess={handleLoginSuccess}
-          onCancel={() => setShowLoginDialog(false)}
-        />
-      )}
+      <LoginDialog
+        isOpen={showLoginDialog}
+        onClose={() => setShowLoginDialog(false)}
+        onSuccess={handleLoginSuccess}
+      />
       
       <div className="update-manager">
         {/* Current Version */}
@@ -1272,10 +1274,11 @@ function UpdateManager() {
             value={status.channel}
             onChange={(e) => setChannel(e.target.value)}
             disabled={isLoading}
-          >
-            <option value="stable">Stable (Recommended)</option>
-            <option value="nightly">Nightly (Development)</option>
-          </Select>
+            options={[
+              { value: 'stable', label: 'Stable (Recommended)' },
+              { value: 'nightly', label: 'Nightly (Development)' },
+            ]}
+          />
         </FormRow>
 
         {/* Auto Update Toggle */}

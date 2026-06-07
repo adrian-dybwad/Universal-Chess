@@ -51,6 +51,21 @@
   border: 1px solid var(--color-border);
 }
 
+/* Status-emphasis variants (used by e.g. the update manager). The accent
+   colours are applied as a left border + tint so the card still reads as a
+   card while signalling its state. */
+.card--primary {
+  border-left: 4px solid var(--color-primary, #6d28d9);
+}
+
+.card--success {
+  border-left: 4px solid var(--color-success, #16a34a);
+}
+
+.card--danger {
+  border-left: 4px solid var(--color-danger, #dc2626);
+}
+
 .card-header {
   display: flex;
   justify-content: space-between;
