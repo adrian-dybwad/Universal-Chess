@@ -874,20 +874,26 @@ class LichessPlayer(Player):
         if self._remote_moves == self._last_processed_moves:
             return
         
-        self._last_processed_moves = self._remote_moves
-        
         # Determine who made the last move
         move_count = len(moves_list)
         last_move_was_white = (move_count % 2 == 1)
         
-        # Check if this is the local user's own move echoed back
-        if self._player_is_white is not None:
-            if self._player_is_white and last_move_was_white:
-                log.debug(f"[LichessPlayer] Ignoring echo of local move: {last_move}")
-                return
-            elif not self._player_is_white and not last_move_was_white:
-                log.debug(f"[LichessPlayer] Ignoring echo of local move: {last_move}")
-                return
+        # Echo classification needs the local player's colour. Until player info
+        # has been parsed (_player_is_white set) the move cannot be classified as
+        # the opponent's move vs an echo of our own. Defer WITHOUT consuming it
+        # (leave _last_processed_moves unchanged) so it is re-evaluated once the
+        # colour is known, rather than fabricating a possibly-self-echo pending move.
+        if self._player_is_white is None:
+            log.warning(f"[LichessPlayer] Deferring remote move {last_move}: local colour not yet known")
+            return
+        
+        self._last_processed_moves = self._remote_moves
+        
+        # An echo of the local player's own move: the last move's colour matches
+        # the local player's colour. Ignore it (already played and sent).
+        if self._player_is_white == last_move_was_white:
+            log.debug(f"[LichessPlayer] Ignoring echo of local move: {last_move}")
+            return
         
         log.info(f"[LichessPlayer] Remote move from server: {last_move}")
         
