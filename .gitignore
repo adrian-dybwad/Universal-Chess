@@ -21,3 +21,6 @@ __pycache__
 # React web-app
 **/web-app/node_modules/
 **/web-app/dist/
+# Built bundle staged for deploy/packaging (produced by scripts/build.sh and
+# deploy-to-pi.sh; never committed - it is generated from web-app/).
+src/universalchess/web/react-app/
