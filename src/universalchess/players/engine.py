@@ -81,8 +81,17 @@ class EnginePlayer(Player):
         # Threading
         self._init_thread: Optional[threading.Thread] = None
         self._think_thread: Optional[threading.Thread] = None
+        # _lock guards the cross-thread state below (_engine_handle, _thinking,
+        # _pending_move, _think_generation), shared by the game thread and the
+        # background think thread.
         self._lock = threading.Lock()
         self._thinking = False
+        # Monotonic token identifying the current think request. A background
+        # computation only commits its result if its captured generation still
+        # matches; invalidations (move made, takeback, new game, external clear)
+        # bump it so an in-flight computation discards a now-stale result instead
+        # of resurrecting a pending move.
+        self._think_generation = 0
         
         # UCI options loaded from config file
         self._uci_options: Dict[str, str] = {}
@@ -186,16 +195,36 @@ class EnginePlayer(Player):
         
         self._set_state(PlayerState.STOPPED)
     
+    def _invalidate_pending(self) -> Optional[chess.Move]:
+        """Cancel any in-flight computation and clear the pending move.
+
+        Bumps the think generation (so a background computation still running
+        discards its result rather than resurrecting a stale pending move) and
+        clears _pending_move / _thinking atomically under the lock. Returns the
+        move that was cleared (for logging), or None.
+        """
+        with self._lock:
+            self._think_generation += 1
+            cleared = self._pending_move
+            self._pending_move = None
+            self._thinking = False
+        self._lifted_squares = []
+        # A discarded in-flight computation will not reset the state, so do it
+        # here. Safe outside the lock and never re-enters _do_request_move
+        # (THINKING -> READY is not the INITIALIZING transition).
+        if self._state == PlayerState.THINKING:
+            self._set_state(PlayerState.READY)
+        return cleared
+
     def clear_pending_move(self) -> None:
         """Clear any pending move.
         
         Called when an external app connects and takes over game control.
         The engine may have computed a move that should now be discarded.
         """
-        if self._pending_move is not None:
-            log.info(f"[EnginePlayer] Clearing pending move: {self._pending_move.uci()}")
-            self._pending_move = None
-            self._lifted_squares = []
+        cleared = self._invalidate_pending()
+        if cleared is not None:
+            log.info(f"[EnginePlayer] Clearing pending move: {cleared.uci()}")
     
     def _do_request_move(self, board: chess.Board) -> None:
         """Request the engine to compute a move.
@@ -207,31 +236,33 @@ class EnginePlayer(Player):
         Args:
             board: Current chess position.
         """
-        if self._thinking:
-            log.debug("[EnginePlayer] Already thinking, ignoring duplicate call")
-            return
-        
-        # If we already have a pending move waiting for execution, don't restart
-        if self._pending_move is not None:
-            log.debug(f"[EnginePlayer] Already have pending move {self._pending_move.uci()}, ignoring request")
-            return
-        
+        # Atomic guard + claim: the thinking/pending checks and the _thinking
+        # set must not interleave with the background thread clearing them.
         with self._lock:
+            if self._thinking:
+                log.debug("[EnginePlayer] Already thinking, ignoring duplicate call")
+                return
+            if self._pending_move is not None:
+                log.debug(f"[EnginePlayer] Already have pending move {self._pending_move.uci()}, ignoring request")
+                return
             if not self._engine_handle:
                 log.warning("[EnginePlayer] Engine not initialized")
                 return
             handle = self._engine_handle
+            self._think_generation += 1
+            generation = self._think_generation
+            self._thinking = True
         
         # Reset state for new turn
         self._lifted_squares = []
         
-        self._thinking = True
         self._set_state(PlayerState.THINKING)
         
         # Copy board immediately to capture current state
         board_copy = board.copy()
         
         def _think():
+            move = None
             try:
                 log.info(f"[EnginePlayer] {self.engine_name} thinking...")
                 
@@ -243,25 +274,39 @@ class EnginePlayer(Player):
                     options=self._uci_options if self._uci_options else None
                 )
                 move = result.move
-                
-                if move:
-                    log.info(f"[EnginePlayer] {self.engine_name} computed: {move.uci()}")
-                    self._pending_move = move
-                    
-                    # Notify for LED display
-                    if self._pending_move_callback:
-                        self._pending_move_callback(move)
-                else:
-                    log.warning("[EnginePlayer] Engine returned no move")
-                    
             except Exception as e:
                 log.error(f"[EnginePlayer] Error getting move: {e}")
                 import traceback
                 traceback.print_exc()
-            finally:
+            
+            # Commit the result only if this computation is still current. An
+            # invalidation (move made / takeback / new game / external clear) or
+            # a newer request bumps the generation, in which case the successor
+            # owns _thinking / state and this result is dropped.
+            callback = None
+            committed = False
+            with self._lock:
+                if generation != self._think_generation:
+                    log.info(
+                        f"[EnginePlayer] Discarding superseded engine result"
+                        f"{(' ' + move.uci()) if move else ''}"
+                    )
+                    return
                 self._thinking = False
-                if self._state == PlayerState.THINKING:
-                    self._set_state(PlayerState.READY)
+                if move is not None:
+                    self._pending_move = move
+                    callback = self._pending_move_callback
+                    committed = True
+            
+            if committed:
+                log.info(f"[EnginePlayer] {self.engine_name} computed: {move.uci()}")
+                if callback:
+                    callback(move)
+            elif move is None:
+                log.warning("[EnginePlayer] Engine returned no move")
+            
+            if self._state == PlayerState.THINKING:
+                self._set_state(PlayerState.READY)
         
         self._think_thread = threading.Thread(
             target=_think,
@@ -285,7 +330,11 @@ class EnginePlayer(Player):
         """
         log.debug(f"[EnginePlayer] Move formed: {move.uci()}")
         
-        if self._pending_move is None:
+        # Snapshot once: the think thread may set, and invalidations may clear,
+        # _pending_move concurrently. Use the local for the whole comparison so it
+        # cannot be cleared mid-method (which would raise on .to_square).
+        pending = self._pending_move
+        if pending is None:
             # Engine still computing - user moved pieces prematurely
             log.warning(f"[EnginePlayer] Move formed but no pending move - engine still thinking")
             self._report_error("move_mismatch")
@@ -294,23 +343,23 @@ class EnginePlayer(Player):
         # Handle destination-only move (missed lift event)
         # If from_square == to_square and matches pending move's to_square, trust it
         if move.from_square == move.to_square:
-            if move.to_square == self._pending_move.to_square:
+            if move.to_square == pending.to_square:
                 log.warning(f"[EnginePlayer] MISSED LIFT RECOVERY: Destination-only move to {chess.square_name(move.to_square)} matches pending move's destination")
                 if self._move_callback:
-                    self._move_callback(self._pending_move)
+                    self._move_callback(pending)
                 return
             else:
-                log.warning(f"[EnginePlayer] Destination-only move {chess.square_name(move.to_square)} does not match pending {self._pending_move.uci()}")
+                log.warning(f"[EnginePlayer] Destination-only move {chess.square_name(move.to_square)} does not match pending {pending.uci()}")
                 self._report_error("move_mismatch")
                 return
         
         # Check if move matches (ignoring promotion - use pending move's promotion)
-        if move.from_square == self._pending_move.from_square and \
-           move.to_square == self._pending_move.to_square:
+        if move.from_square == pending.from_square and \
+           move.to_square == pending.to_square:
             # Match! Submit the pending move (includes promotion if any)
-            log.info(f"[EnginePlayer] Move matches pending: {self._pending_move.uci()}")
+            log.info(f"[EnginePlayer] Move matches pending: {pending.uci()}")
             if self._move_callback:
-                self._move_callback(self._pending_move)
+                self._move_callback(pending)
             else:
                 log.warning("[EnginePlayer] No move callback set, cannot submit move")
         else:
@@ -319,7 +368,7 @@ class EnginePlayer(Player):
             # and wait for the board state check to validate the move.
             # The field_events.py "board state as source of truth" check will
             # execute the move when the physical board matches the expected state.
-            log.warning(f"[EnginePlayer] Move {move.uci()} does not match pending {self._pending_move.uci()} - "
+            log.warning(f"[EnginePlayer] Move {move.uci()} does not match pending {pending.uci()} - "
                        "resetting and waiting for correct placement")
             self._lifted_squares = []
             # Don't report error - let the board state check handle it
@@ -330,8 +379,7 @@ class EnginePlayer(Player):
         Clears pending state after a move is executed.
         """
         log.debug(f"[EnginePlayer] Move made: {move.uci()}")
-        self._pending_move = None
-        self._lifted_squares = []
+        self._invalidate_pending()
     
     def on_new_game(self) -> None:
         """Notification that a new game is starting.
@@ -340,9 +388,7 @@ class EnginePlayer(Player):
         previously (ERROR state), attempts to re-initialize it.
         """
         log.info(f"[EnginePlayer] New game - resetting {self.engine_name}")
-        self._pending_move = None
-        self._lifted_squares = []
-        self._thinking = False
+        self._invalidate_pending()
         
         # If engine is in error state, attempt to re-initialize
         if self._state == PlayerState.ERROR:
@@ -358,10 +404,9 @@ class EnginePlayer(Player):
         Clear any pending move since the position has changed and the
         computed move is no longer valid.
         """
-        if self._pending_move is not None:
-            log.info(f"[EnginePlayer] Takeback - clearing pending move {self._pending_move.uci()}")
-            self._pending_move = None
-            self._lifted_squares = []
+        cleared = self._invalidate_pending()
+        if cleared is not None:
+            log.info(f"[EnginePlayer] Takeback - clearing pending move {cleared.uci()}")
         else:
             log.debug("[EnginePlayer] Takeback - no pending move to clear")
     
