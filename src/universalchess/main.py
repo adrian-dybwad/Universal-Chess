@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 # Initialize display FIRST, before board module is imported
 # This allows showing a splash screen while the board initializes
 from universalchess.board.logging import log
-from universalchess.epaper import Manager, SplashScreen, IconMenuWidget, IconMenuEntry, KeyboardWidget
+from universalchess.epaper import Manager, SplashScreen, IconMenuWidget, IconMenuEntry, KeyboardWidget, show_fullscreen_splash
 from universalchess.epaper.status_bar import STATUS_BAR_HEIGHT
 from universalchess.menus import (
     create_main_menu_entries,
@@ -2559,6 +2559,24 @@ _cleanup_done = False  # Guard against running cleanup twice
 _shutdown_requested = False  # Flag to request shutdown from main thread (set by events thread)
 
 
+def _show_shutdown_splash(message: str, timeout: float = 5.0) -> None:
+    """Render a full-screen shutdown splash on the panel.
+
+    Always targets ``board.display_manager`` - the low-level epaper Manager that
+    owns the panel in every app state. The game-level ``DisplayManager`` global is
+    deliberately not used: it implements none of the widget API and forwards those
+    calls to ``board.display_manager``, so routing splashes through it during a
+    game raised AttributeError that was silently swallowed - which is why the
+    shutdown splashes never appeared mid-game. Delegates to the shared, unit-tested
+    ``show_fullscreen_splash`` so the choice of panel manager lives in one place.
+
+    Args:
+        message: Text to show on the splash.
+        timeout: Seconds to wait for the render to complete.
+    """
+    show_fullscreen_splash(board.display_manager, message, timeout=timeout)
+
+
 def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False, reboot: bool = False):
     """Clean up connections and resources, then exit the process.
     
@@ -2591,31 +2609,13 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
         kill = 1
         running = False
         
-        # Resolve the display that is actually driving the panel. During a game
-        # the game-level DisplayManager (module global) owns the screen; at the
-        # menu/idle screen that global is None and the always-present board-level
-        # Manager owns it. The shutdown countdown splash is rendered through
-        # board.display_manager, so falling back to it here guarantees the
-        # countdown frame is replaced rather than left on the e-paper panel.
-        active_display = display_manager if display_manager is not None else board.display_manager
-        
         # Show the shutdown splash immediately for every shutdown path - menu
         # selection, long-press PLAY, and inactivity timeout all funnel through
         # here - so shutdown always gives prompt on-screen feedback before the
         # (potentially several-second) subsystem teardown below. The pending-update
         # and final shutdown stages replace this with their own splashes.
-        if system_shutdown and active_display is not None:
-            try:
-                splash_message = "Rebooting" if reboot else "Shutting down"
-                active_display.clear_widgets(addStatusBar=False)
-                promise = active_display.add_widget(
-                    SplashScreen(active_display.update, message=splash_message,
-                                 leave_room_for_status_bar=False)
-                )
-                if promise:
-                    promise.result(timeout=10.0)
-            except Exception as e:
-                log.debug(f"[Cleanup] Failed to show shutdown splash: {e}")
+        if system_shutdown:
+            _show_shutdown_splash("Rebooting" if reboot else "Shutting down", timeout=10.0)
         
         # Stop RFCOMM server (handles pairing manager, sockets, and threads)
         log.info("[Cleanup] Stopping RFCOMM server...")
@@ -2719,13 +2719,7 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
                 board.beep(board.SOUND_POWER_OFF)
                 
                 # Display update splash
-                try:
-                    if active_display is not None:
-                        update_splash = SplashScreen(active_display.update, message="Installing\nupdate...",
-                                                     leave_room_for_status_bar=False)
-                        active_display.add_widget(update_splash)
-                except Exception as e:
-                    log.debug(f"[Cleanup] Failed to show update splash: {e}")
+                _show_shutdown_splash("Installing\nupdate...", timeout=5.0)
                 
                 # All LEDs for update install
                 try:
@@ -2749,15 +2743,7 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
             
             # Display shutdown splash screen
             log.info("[Cleanup] Displaying shutdown splash screen...")
-            try:
-                if active_display is not None:
-                    shutdown_splash = SplashScreen(active_display.update, message="Press [\u25b6]",
-                                                   leave_room_for_status_bar=False)
-                    future = active_display.add_widget(shutdown_splash)
-                    if future:
-                        future.result(timeout=5.0)
-            except Exception as e:
-                log.debug(f"[Cleanup] Failed to show shutdown splash: {e}")
+            _show_shutdown_splash("Press [\u25b6]", timeout=5.0)
             
             # Play power off beep
             log.info("[Cleanup] Playing power off beep...")

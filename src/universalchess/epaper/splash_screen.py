@@ -155,3 +155,44 @@ class SplashScreen(Widget):
         
         # Draw message text directly onto the sprite
         self._text_widget.draw_on(sprite, self.TEXT_MARGIN, self.TEXT_Y)
+
+
+def show_fullscreen_splash(manager, message: str, timeout: float = 5.0) -> bool:
+    """Render a full-screen modal splash on the given panel manager.
+
+    Replaces whatever widgets are currently on the panel with a single
+    SplashScreen, then waits (up to ``timeout``) for the render to complete so the
+    caller can rely on the frame reaching the e-paper before proceeding.
+
+    The manager is injected rather than imported so this stays usable from any app
+    state and unit-testable. It MUST be the low-level epaper Manager that owns the
+    panel (``board.display_manager``): the game-level DisplayManager implements
+    none of the widget API (add_widget / clear_widgets / update) and forwards those
+    calls to the panel manager, so passing it here would raise AttributeError and
+    silently render nothing.
+
+    Args:
+        manager: Panel manager exposing clear_widgets/add_widget/update. May be
+            None, in which case nothing is rendered and False is returned, so
+            callers need not guard.
+        message: Text to show on the splash.
+        timeout: Seconds to wait for the render promise to resolve.
+
+    Returns:
+        True if the splash was rendered, False if no manager was available or
+        rendering failed.
+    """
+    if manager is None:
+        return False
+    try:
+        manager.clear_widgets(addStatusBar=False)
+        promise = manager.add_widget(
+            SplashScreen(manager.update, message=message,
+                         leave_room_for_status_bar=False)
+        )
+        if promise:
+            promise.result(timeout=timeout)
+        return True
+    except Exception as e:
+        log.debug(f"[Splash] Failed to show splash '{message}': {e}")
+        return False
