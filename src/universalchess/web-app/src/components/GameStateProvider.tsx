@@ -31,7 +31,36 @@ export function GameStateProvider({ children }: { children: React.ReactNode }) {
   }, [location.pathname, toast, hideToast]);
 
   useEffect(() => {
+    // Client-driven reconnection. The native EventSource only auto-retries while
+    // it is CONNECTING; once it transitions to CLOSED (server returned an error
+    // or was down during a restart) it never retries, which previously left the
+    // UI stuck on "reconnecting" until a manual page reload. We close the dead
+    // source and reconnect with capped exponential backoff instead.
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectAttempts = 0;
+    let disposed = false;
+
+    const clearReconnectTimer = () => {
+      if (reconnectTimer !== null) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+    };
+
+    const scheduleReconnect = () => {
+      if (disposed || reconnectTimer !== null) return;
+      // 1s, 2s, 4s ... capped at 10s so a long outage doesn't hammer the board.
+      const delay = Math.min(1000 * 2 ** reconnectAttempts, 10000);
+      reconnectAttempts += 1;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, delay);
+    };
+
     const connect = () => {
+      if (disposed) return;
+      clearReconnectTimer();
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
       }
@@ -43,6 +72,8 @@ export function GameStateProvider({ children }: { children: React.ReactNode }) {
 
       es.onopen = () => {
         console.log('[SSE] Connected');
+        reconnectAttempts = 0;
+        clearReconnectTimer();
         setConnectionStatus('connected');
       };
 
@@ -93,14 +124,41 @@ export function GameStateProvider({ children }: { children: React.ReactNode }) {
       };
 
       es.onerror = () => {
-        console.log('[SSE] Connection error, will auto-reconnect');
         setConnectionStatus('reconnecting');
+        // Only drive our own reconnect once the source has given up (CLOSED).
+        // While CONNECTING the browser is still retrying on its own, so leave it.
+        if (es.readyState === EventSource.CLOSED) {
+          console.log('[SSE] Connection closed, scheduling reconnect');
+          es.close();
+          scheduleReconnect();
+        }
       };
     };
 
     connect();
 
+    // Reconnect promptly when the tab is refocused or the network returns,
+    // instead of waiting out the current backoff delay.
+    const handleWake = () => {
+      if (disposed) return;
+      const es = eventSourceRef.current;
+      if (!es || es.readyState === EventSource.CLOSED) {
+        reconnectAttempts = 0;
+        clearReconnectTimer();
+        connect();
+      }
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') handleWake();
+    };
+    window.addEventListener('online', handleWake);
+    document.addEventListener('visibilitychange', handleVisibility);
+
     return () => {
+      disposed = true;
+      clearReconnectTimer();
+      window.removeEventListener('online', handleWake);
+      document.removeEventListener('visibilitychange', handleVisibility);
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
