@@ -110,6 +110,10 @@ class MenuManager:
         # This allows users to press keys before a menu finishes rendering
         self._key_queue: List[Any] = []
         self._menu_loading = False  # True while menu is being set up
+
+        # Latched when a shutdown is requested (long-press PLAY) so that any
+        # subsequent menu display unwinds immediately. See show_menu().
+        self._shutdown_requested = False
     
     @classmethod
     def get_instance(cls) -> 'MenuManager':
@@ -198,6 +202,15 @@ class MenuManager:
         Args:
             result: Result string to return from the menu
         """
+        # Latch shutdown before touching the active widget. A shutdown can be
+        # requested while a deeply nested submenu (e.g. WiFi) is on screen; the
+        # latch makes every later show_menu() return SHUTDOWN so the request is
+        # not swallowed by intermediate handlers that only propagate break
+        # results. Set unconditionally (even with no active widget) to avoid a
+        # race where the request lands between menu displays.
+        if result == "SHUTDOWN":
+            self._shutdown_requested = True
+
         # Clear any queued keys when cancelling
         self._key_queue.clear()
         if self._active_widget is not None:
@@ -241,9 +254,21 @@ class MenuManager:
         Returns:
             MenuSelection with the user's selection or break result
         """
+        # Once shutdown is requested (long-press PLAY), unwind instead of
+        # rendering. The request can arrive while a nested submenu is on screen;
+        # without this short-circuit the SHUTDOWN result is swallowed by
+        # intermediate handlers (which only propagate break results) and the
+        # user is dropped one level up with nothing happening. Returning
+        # SHUTDOWN here lets each level's existing SHUTDOWN/exit check unwind to
+        # the top, where _shutdown() runs. Checked before the board guard since
+        # the display may already be tearing down. Guards against the submenu
+        # shutdown-hang regression.
+        if self._shutdown_requested:
+            return MenuSelection.from_key("SHUTDOWN")
+
         if self._board is None:
             raise RuntimeError("MenuManager.set_board() must be called before show_menu()")
-        
+
         # Clear any stale queued keys and mark as loading
         self._key_queue.clear()
         self._menu_loading = True
