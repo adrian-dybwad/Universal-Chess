@@ -98,7 +98,6 @@ DGT_BUTTON_CODES = {
     0x40: "HELP",
     0x04: "PLAY",
     0x06: "LONG_PLAY",
-    0x46: "LONG_HELP",  # Synthetic code for long-press of HELP (0x40 + 0x06 offset)
 }
 
 from enum import IntEnum

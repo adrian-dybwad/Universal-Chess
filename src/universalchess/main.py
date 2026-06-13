@@ -493,8 +493,11 @@ _return_to_positions_menu = False  # Flag to signal return to positions menu fro
 _is_position_game = False  # Flag to track if current game is a position (practice) game
 _switch_to_normal_game = False  # Flag to signal switch from position game to normal game
 _pending_ble_client_type: str = None  # Flag for BLE connection when between menus
-_pending_display_settings = False  # Flag to show display settings menu from game mode
 _pending_settings_reload = False  # Flag: web changed settings, rebuild live game display
+# Menu navigation path captured when entering a game from the menu, so suspending
+# (PLAY) returns the full menu to that exact submenu position. None means "no
+# captured position"; it is cleared when a game truly ends (see _return_to_menu).
+_suspended_menu_restore_path = None
 _last_position_category_index = 0  # Remember last selected category in positions menu
 _last_position_index = 0  # Remember last selected position in positions menu
 _last_position_category = None  # Remember last selected category name for direct return
@@ -827,6 +830,21 @@ def _clear_menu_state():
     """
     ctx = _get_menu_context()
     ctx.clear()
+
+
+def _capture_menu_for_resume():
+    """Snapshot the current menu navigation path for a later game suspend.
+
+    Captured at the moment the game is entered from the menu (PLAY / piece lift /
+    client connect), before the blocking menu stack unwinds - the unwind clears
+    the live MenuContext, so reading it afterwards would lose the position. When
+    the game is later suspended back to the menu, this snapshot re-enters the
+    same submenu (see the restore block in main()). Stored in a transient global
+    rather than persisted config, so it does not affect cross-boot startup
+    restoration.
+    """
+    global _suspended_menu_restore_path
+    _suspended_menu_restore_path = _get_menu_context().get_restore_path()
 
 
 
@@ -1360,6 +1378,13 @@ def _start_game_mode(
     global app_state, protocol_manager, display_manager, controller_manager, _is_position_game
 
     log.info(f"[App] Transitioning to GAME mode (position_game={is_position_game})")
+
+    # Tear down any prior game first. Since a game can now be suspended (managers
+    # kept alive) behind the menu, an explicit "start new game" path (e.g. player
+    # config -> START_GAME) could otherwise overwrite the manager globals and
+    # leak the suspended game's threads/resources.
+    if protocol_manager is not None or display_manager is not None or controller_manager is not None:
+        _cleanup_game()
     
     # Clear saved menu state since we're now in a game
     _clear_menu_state()
@@ -1751,7 +1776,6 @@ def _start_game_mode(
             from universalchess.services.analysis import get_analysis_service
             get_analysis_service().reset()
             display_manager.reset_clock()
-            display_manager.clear_pause()
             # Clear brain hints for both players on new game
             display_manager.clear_brain_hint('white')
             display_manager.clear_brain_hint('black')
@@ -1832,13 +1856,18 @@ def _return_to_menu(reason: str):
     Args:
         reason: Reason for returning to menu (for logging)
     """
-    global app_state, _return_to_positions_menu, _is_position_game
+    global app_state, _return_to_positions_menu, _is_position_game, _suspended_menu_restore_path
 
     # Check if this was a position game BEFORE cleanup clears the flag
     was_position_game = _is_position_game
 
     log.info(f"[App] Returning to menu: {reason} (was_position_game={was_position_game})")
     _cleanup_game()
+
+    # The game has truly ended (not suspended), so any captured suspend position
+    # is stale - drop it so the menu opens at the root rather than re-entering a
+    # submenu the user is no longer playing through.
+    _suspended_menu_restore_path = None
     
     if was_position_game:
         # Return to positions menu, not main menu
@@ -1846,6 +1875,99 @@ def _return_to_menu(reason: str):
         app_state = AppState.SETTINGS
     else:
         app_state = AppState.MENU
+
+
+def _has_suspended_game() -> bool:
+    """Return True when a resumable game is in progress.
+
+    A game is "suspended" when its managers are still alive (``protocol_manager``
+    is not None) but the full menu is showing. The game must not be over - a
+    finished game is cleaned up, not suspended, so the next PLAY starts a new
+    one. Drives the PLAY-button action and the RESUME/PLAY menu relabel.
+    """
+    if protocol_manager is None:
+        return False
+    from universalchess.state import get_chess_game
+    return not get_chess_game().is_game_over
+
+
+def _suspend_game():
+    """Suspend the running game back to the full menu.
+
+    Pauses the clock and turns LEDs off via the display manager but keeps every
+    game manager alive so the game can be resumed. Switches to MENU state.
+    Menu navigation state is intentionally preserved (not cleared) so the menu
+    reappears where the user last left it.
+
+    A finished game (checkmate/stalemate/resign/flag) is not resumable, so PLAY
+    on a game-over screen tears the game down via _return_to_menu() instead.
+    This keeps the invariant that a live ``protocol_manager`` behind the menu
+    always means a resumable game, so the next PLAY starts fresh without leaking
+    the finished game's managers.
+    """
+    global app_state
+    from universalchess.state import get_chess_game
+    if get_chess_game().is_game_over:
+        _return_to_menu("PLAY pressed after game over")
+        return
+    if display_manager:
+        # Stop the clock and LEDs immediately (suspend() pauses the clock as its
+        # first action, before the slower render), then show a "Suspending"
+        # splash so the button press gets instant on-screen feedback while the
+        # main loop builds and renders the (slower) full menu over it.
+        display_manager.suspend()
+        display_manager.show_splash("Suspending")
+    app_state = AppState.MENU
+    log.info("[App] Game suspended to menu")
+
+
+def _resume_game_mode():
+    """Resume a suspended game and return to the game screen.
+
+    Rebuilds the board widgets and restores the clock/LEDs via
+    ``display_manager.resume()``, then switches back to GAME state so input
+    routing returns to the game controller.
+    """
+    global app_state
+    app_state = AppState.GAME
+    if display_manager:
+        display_manager.resume()
+    log.info("[App] Game resumed from menu")
+
+
+def _enter_game():
+    """Enter the game screen from the menu, resuming or starting as appropriate.
+
+    Single entry point for every menu->game transition (PLAY button, piece lift,
+    client connect, settings break-out). When a suspended game exists it is
+    resumed so PLAY never discards an in-progress game; otherwise a fresh game is
+    started (and menu navigation state cleared). Any piece events queued while
+    the menu was showing are forwarded as the first move, and an already-
+    connected client is switched to remote control.
+    """
+    if _has_suspended_game():
+        _resume_game_mode()
+    else:
+        _get_menu_context().clear()
+        _start_game_mode()
+
+    # Forward piece events queued while the menu was showing (e.g. the lift that
+    # triggered entry) so they are processed as the first move. The queue may
+    # grow during forwarding as more events arrive, so drain until empty.
+    while _pending_piece_events:
+        pe, field, ts = _pending_piece_events.pop(0)
+        log.info(f"[App] Forwarding piece event: field={field}, event={pe}")
+        if controller_manager:
+            controller_manager.on_field_event(pe, field, ts)
+        elif protocol_manager:
+            protocol_manager.receive_field(pe, field, ts)
+
+    # If a client is already connected, switch to remote control.
+    if (ble_manager and ble_manager.connected) or (rfcomm_server and rfcomm_server.connected):
+        if controller_manager:
+            controller_manager.activate_remote()
+        if protocol_manager:
+            protocol_manager.on_app_connected()
 
 
 def _handle_settings(initial_selection: str = None):
@@ -2610,6 +2732,7 @@ def _on_ble_connected(client_type: str):
     # Case 2: In menu or settings mode with active menu widget - cancel menu to trigger game start
     if (app_state == AppState.MENU or app_state == AppState.SETTINGS) and _menu_manager.active_widget is not None:
         log.info(f"[BLE] Client connected while in {app_state.name} - cancelling menu to start game")
+        _capture_menu_for_resume()
         _menu_manager.cancel_selection("CLIENT_CONNECTED")
         return  # ProtocolManager will be notified after game mode starts
     
@@ -3149,10 +3272,14 @@ def key_callback(key_id):
     
     # Route based on app state
     if app_state == AppState.MENU or app_state == AppState.SETTINGS:
-        # PLAY key in menu state is not a menu action - ignore it
-        # (LONG_PLAY for shutdown is handled above, short PLAY does nothing)
+        # PLAY in the menu starts a new game or resumes a suspended one. Cancel
+        # the blocking menu with "PLAY"; is_break_result("PLAY") lets it bubble
+        # up from nested Settings submenus to the main loop, which routes it
+        # through _enter_game(). (LONG_PLAY for shutdown is handled above.)
         if key_id == board.Key.PLAY:
-            log.debug("[App] PLAY key ignored in menu state (not a menu action)")
+            if _menu_manager is not None and _menu_manager.active_widget is not None:
+                _capture_menu_for_resume()
+                _menu_manager.cancel_selection("PLAY")
             _reset_unhandled_key_count()
             return
         
@@ -3174,27 +3301,11 @@ def key_callback(key_id):
         return
     
     elif app_state == AppState.GAME:
-        # Check if game is paused - any key unpauses
-        if display_manager and display_manager.is_paused():
-            display_manager.toggle_pause()
-            log.info("[App] Game unpaused by key press")
-            _reset_unhandled_key_count()
-            return  # Don't process the key that unpaused
-        
         # Priority: DisplayManager menu (resign/draw, promotion) > app keys > game
         if display_manager and display_manager.is_menu_active():
             display_manager.handle_key(key_id)
             _reset_unhandled_key_count()
             return
-        
-        # Check for MenuManager menu overlay (display settings from LONG_HELP)
-        # This handles the case where a menu is shown over the game via _pending_display_settings
-        if _menu_manager is not None and _menu_manager.active_widget is not None:
-            handled = _menu_manager.active_widget.handle_key(key_id)
-            if handled:
-                log.info(f"[App] Key {key_id} handled by MenuManager overlay in GAME mode")
-                _reset_unhandled_key_count()
-                return
         
         # Handle app-level keys
         if key_id == board.Key.HELP:
@@ -3237,24 +3348,20 @@ def key_callback(key_id):
             _reset_unhandled_key_count()
             return
         
-        if key_id == board.Key.LONG_HELP:
-            # Long press HELP: Signal main thread to show display settings menu
-            # Cannot call handle_display_settings() here because it blocks on menu selection,
-            # which would block the events thread and prevent further key events.
-            global _pending_display_settings
-            _pending_display_settings = True
-            log.info("[App] LONG_HELP in game - signaling main thread to show display settings")
+        if key_id == board.Key.TICK:
+            # OK during a game forces a full e-paper refresh to clear ghosting.
+            # In menus TICK means "select" and is handled by the menu widget, not
+            # this branch. This replaces the old (hidden) long-press-any-key
+            # refresh at the board layer.
+            if board.display_manager:
+                board.display_manager.update(full=True)
             _reset_unhandled_key_count()
             return
         
         if key_id == board.Key.PLAY:
-            # Toggle pause - pauses clock, turns off LEDs, shows pause widget
-            if display_manager:
-                is_paused = display_manager.toggle_pause()
-                if is_paused:
-                    log.info("[App] Game paused")
-                else:
-                    log.info("[App] Game resumed")
+            # Suspend the game back to the full menu (clock paused, LEDs off,
+            # managers kept alive). PLAY from the menu later resumes it.
+            _suspend_game()
             _reset_unhandled_key_count()
             return
         
@@ -3328,6 +3435,7 @@ def field_callback(piece_event, field, time_in_seconds):
             # Only trigger game start on first event (avoid multiple cancel calls)
             if len(_pending_piece_events) == 1 and active_widget is not None:
                 log.info("[App] Cancelling menu selection with PIECE_MOVED")
+                _capture_menu_for_resume()
                 _menu_manager.cancel_selection("PIECE_MOVED")
             elif active_widget is None:
                 log.info("[App] Menu widget is None, events will be processed on next menu loop iteration")
@@ -3335,12 +3443,6 @@ def field_callback(piece_event, field, time_in_seconds):
     
     # Priority 3: Game mode
     if app_state == AppState.GAME:
-        # Check if game is paused - any piece event unpauses
-        if display_manager and display_manager.is_paused():
-            display_manager.toggle_pause()
-            log.info("[App] Game unpaused by piece event")
-            return  # Don't process the piece event that unpaused
-        
         # Route through controller manager (handles local vs remote routing)
         if controller_manager:
             controller_manager.on_field_event(piece_event, field, time_in_seconds)
@@ -3363,7 +3465,7 @@ def main():
     global running, kill
     global mainloop, relay_mode, protocol_manager, relay_manager, app_state, _args
     global _pending_piece_events, _return_to_positions_menu, _switch_to_normal_game, _menu_manager
-    global _pending_display_settings, _pending_settings_reload
+    global _pending_settings_reload
     
     try:
         log.info("[Main] Parsing arguments...")
@@ -3783,30 +3885,16 @@ def main():
                 # Check for pending BLE client connection (set when connection happens between menus)
                 global _pending_ble_client_type
                 if _pending_ble_client_type is not None:
-                    log.info(f"[App] Pending BLE client connection detected ({_pending_ble_client_type}) - starting game mode")
+                    log.info(f"[App] Pending BLE client connection detected ({_pending_ble_client_type}) - entering game")
                     _pending_ble_client_type = None
-                    _start_game_mode()
-                    if protocol_manager:
-                        protocol_manager.on_app_connected()
+                    _enter_game()
                     continue  # Re-check app_state (now should be GAME)
                 
                 # Check for pending piece events before showing menu
                 # These may have been queued while in a submenu
                 if _pending_piece_events:
-                    log.info(f"[App] Pending piece events detected ({len(_pending_piece_events)}) - starting game mode")
-                    _start_game_mode()
-                    while _pending_piece_events:
-                        pe, field, ts = _pending_piece_events.pop(0)
-                        log.info(f"[App] Forwarding piece event: field={field}, event={pe}")
-                        if controller_manager:
-                            controller_manager.on_field_event(pe, field, ts)
-                        elif protocol_manager:
-                            protocol_manager.receive_field(pe, field, ts)
-                    if (ble_manager and ble_manager.connected) or (rfcomm_server and rfcomm_server.connected):
-                        if controller_manager:
-                            controller_manager.activate_remote()
-                        if protocol_manager:
-                            protocol_manager.on_app_connected()
+                    log.info(f"[App] Pending piece events detected ({len(_pending_piece_events)}) - entering game")
+                    _enter_game()
                     continue  # Re-check app_state (now should be GAME)
                 
                 # Check if we need to restore to Settings menu (on startup)
@@ -3816,14 +3904,34 @@ def main():
                     settings_result = _handle_settings(initial_selection=restore_settings_submenu)
                     restore_settings_submenu = None  # Clear after use
                     if is_break_result(settings_result):
-                        _start_game_mode()
-                        if protocol_manager:
-                            protocol_manager.on_app_connected()
+                        _enter_game()
                     continue  # After settings, loop back to check state
                 
-                # Show main menu
-                # Use MenuContext to track main menu selection (at root level)
-                entries = create_main_menu_entries(centaur_available=centaur_available)
+                # Restore the submenu the user was in when they suspended the
+                # game (PLAY), so the full menu reopens at its last position.
+                # One-shot: consumed here so a normal BACK out of the submenu does
+                # not immediately re-enter it.
+                global _suspended_menu_restore_path
+                if _suspended_menu_restore_path is not None:
+                    resume_path = _suspended_menu_restore_path
+                    _suspended_menu_restore_path = None
+                    if resume_path and resume_path[0][0] == "Settings":
+                        ctx.restore_from_path(resume_path)
+                        resume_submenu = resume_path[1][0] if len(resume_path) > 1 else None
+                        log.info(f"[App] Restoring suspended menu position (submenu={resume_submenu})")
+                        settings_result = _handle_settings(initial_selection=resume_submenu)
+                        if is_break_result(settings_result):
+                            _enter_game()
+                        continue
+                    # A non-Settings (e.g. root) capture has nothing to restore;
+                    # fall through to show the main menu normally.
+                
+                # Show main menu. The top entry relabels to RESUME when a game
+                # is suspended (managers alive) so PLAY resumes it.
+                entries = create_main_menu_entries(
+                    centaur_available=centaur_available,
+                    game_in_progress=_has_suspended_game(),
+                )
                 
                 # Get initial index from context if at root, else use 0
                 main_menu_index = ctx.current_index() if ctx.depth() == 0 else 0
@@ -3855,39 +3963,18 @@ def main():
                     _run_centaur()
                     # Note: _run_centaur() exits the process
                 
-                elif result == "Universal" or result == "CLIENT_CONNECTED" or result == "PIECE_MOVED":
-                    # Start game mode - clear menu state
-                    ctx.clear()
-                    _start_game_mode()
-                    
-                    # Forward all pending piece events (may have accumulated during _start_game_mode)
-                    # GameManager queues events if not ready and replays them when ready
-                    # Keep forwarding until queue is empty (events may arrive during forwarding)
-                    while _pending_piece_events:
-                        pe, field, ts = _pending_piece_events.pop(0)
-                        log.info(f"[App] Forwarding piece event: field={field}, event={pe}")
-                        if controller_manager:
-                            controller_manager.on_field_event(pe, field, ts)
-                        elif protocol_manager:
-                            protocol_manager.receive_field(pe, field, ts)
-                    
-                    # If client is already connected, switch to remote controller
-                    if (ble_manager and ble_manager.connected) or (rfcomm_server and rfcomm_server.connected):
-                        if controller_manager:
-                            controller_manager.activate_remote()
-                        if protocol_manager:
-                            protocol_manager.on_app_connected()
+                elif result in ("Universal", "PLAY", "CLIENT_CONNECTED", "PIECE_MOVED"):
+                    # Start a new game or resume the suspended one. _enter_game()
+                    # decides which, forwards queued piece events, and wires up an
+                    # already-connected client.
+                    _enter_game()
                 
                 elif result == "Settings":
                     settings_result = _handle_settings()
-                    # Check if a BLE client connected during settings
+                    # A board event or PLAY pressed inside Settings breaks out to
+                    # enter (start or resume) the game.
                     if is_break_result(settings_result):
-                        ctx.clear()
-                        _start_game_mode()
-                        if controller_manager:
-                            controller_manager.activate_remote()
-                        if protocol_manager:
-                            protocol_manager.on_app_connected()
+                        _enter_game()
                     # After settings, continue to main menu
                 
                 elif result == "HELP":
@@ -3901,17 +3988,6 @@ def main():
                     log.info("[App] Switching from position game to normal game")
                     _cleanup_game()
                     _start_game_mode(starting_fen=None, is_position_game=False)
-                # Check if display settings menu was requested (LONG_HELP)
-                elif _pending_display_settings:
-                    _pending_display_settings = False
-                    log.info("[App] Showing Display & Sound menu from game mode")
-                    _handle_display_sound_menu()
-                    # Recreate widgets with updated settings
-                    # _init_widgets() now preserves game state:
-                    # - Uses _current_fen for board position
-                    # - ChessClock service preserves times (not reset if already running)
-                    if display_manager:
-                        display_manager._init_widgets()
                 # Apply a settings change pushed from the web app during a game so
                 # display/sprite toggles take effect live, matching the on-board
                 # display menu. Rebuilt here (main thread) - never from the

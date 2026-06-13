@@ -715,10 +715,15 @@ def eventsThread(keycallback, fieldcallback, tout):
     adjustments (e.g., NTP sync on Raspberry Pi startup that can jump the clock
     forward and trigger premature shutdown).
     
-    Key handling:
-    - PLAY_DOWN: Starts shutdown countdown (releasing cancels).
-    - Other keys held for 1+ second: Triggers full display refresh (key consumed).
-    - Short presses: Key-up events passed to callback.
+    Key handling (every key acts on release):
+    - Short press: the key-up event is passed to the callback.
+    - PLAY_DOWN held 1+ second: starts the shutdown countdown (releasing during
+      the countdown cancels it).
+    - Any other key held 1+ second: an "abort" gesture - a beep fires at the
+      threshold to signal the press was cancelled, and on release the key is
+      consumed (no callback). This lets the user back out of a press they
+      changed their mind about. A full e-paper refresh is a short OK/TICK press
+      during a game, handled in the app, not here.
     """
     global eventsrunning
     
@@ -824,28 +829,27 @@ def eventsThread(keycallback, fieldcallback, tout):
             try:
                 key_pressed = controller.get_next_key(timeout=0.0)
 
-                # All key-down events: track for long-press handling
+                # All key-down events: every key acts on RELEASE. PLAY held 1s
+                # runs the shutdown countdown; any other key held 1s is an
+                # "abort" gesture (beep at threshold, consumed on release) so the
+                # user can back out of a press they changed their mind about.
                 if key_pressed is not None and key_pressed.value >= 0x80:
-                    # This is a _DOWN event - start long-press detection
+                    # This is a _DOWN event
                     long_press_key = key_pressed
                     long_press_start = time.monotonic()
-                    long_press_triggered = False
+                    is_play = (long_press_key == Key.PLAY_DOWN)
+                    long_triggered = False  # crossed the 1s threshold
                     
-                    # Wait for key-up while checking for long press threshold (1 second)
+                    # Wait for key-up while watching the 1s long-press threshold
                     while True:
                         time.sleep(0.05)
                         
-                        # Check if held long enough for long-press action
-                        if not long_press_triggered and (time.monotonic() - long_press_start) >= 1.0:
+                        # Held past the threshold
+                        if not long_triggered and (time.monotonic() - long_press_start) >= 1.0:
                             beep(SOUND_GENERAL, event_type='key_press')
-                            long_press_triggered = True
-                            
-                            # HELP long-press: send LONG_HELP event to callback
-                            if long_press_key == Key.HELP_DOWN:
-                                log.info('[board.events] Long press HELP detected, sending LONG_HELP event')
-                                # Will be sent to callback after key-up
-                            # PLAY long-press: start shutdown countdown
-                            elif long_press_key == Key.PLAY_DOWN:
+                            long_triggered = True
+                            if is_play:
+                                # PLAY long-press: run the shutdown countdown
                                 log.info('[board.events] Long press PLAY detected, starting shutdown countdown')
                                 if shutdown_countdown():
                                     # Send LONG_PLAY to callback - main.py handles cleanup_and_exit
@@ -854,15 +858,12 @@ def eventsThread(keycallback, fieldcallback, tout):
                                 else:
                                     log.info('[board.events] Shutdown cancelled (button released)')
                                 key_pressed = None
-                                break  # Exit the long-press detection loop
+                                break  # Exit the detection loop
                             else:
-                                # Other keys: trigger full display refresh
-                                log.info('[board.events] Long press detected, triggering full refresh')
-                                if display_manager is not None:
-                                    try:
-                                        display_manager.update(full=True)
-                                    except Exception as e:
-                                        log.error(f"[board.events] Full refresh error: {e}")
+                                # Abort gesture armed: the beep tells the user that
+                                # releasing now cancels the press. Keep waiting for
+                                # key-up, which will be consumed below.
+                                log.info('[board.events] Long press detected, key-press cancelled (release to no-op)')
                         
                         # Check for key-up
                         next_key = controller.get_next_key(timeout=0.0)
@@ -871,24 +872,20 @@ def eventsThread(keycallback, fieldcallback, tout):
                             base_code = long_press_key.value - 0x80
                             if next_key.value == base_code:
                                 # Matching key-up received
-                                if long_press_triggered:
-                                    # Long press - check if HELP (send LONG_HELP), else already handled
-                                    # PLAY long-press is handled above with shutdown_countdown
-                                    if long_press_key == Key.HELP_DOWN:
-                                        key_pressed = Key.LONG_HELP
-                                    else:
-                                        key_pressed = None
+                                if long_triggered:
+                                    # Long press: PLAY already handled above; any
+                                    # other key is an aborted press - consume it.
+                                    key_pressed = None
                                 else:
-                                    # Short press - pass the key-up to callback
+                                    # Short press: deliver the key-up to callback.
                                     key_pressed = next_key
                                     # Central key-press feedback: a single click on
-                                    # every short button press, emitted on key-up and
-                                    # gated by the 'key_press' sound setting. This is
-                                    # the single source of truth for short-press audio
-                                    # feedback - individual menu handlers must NOT beep
-                                    # on selection or they would double-click. Long
-                                    # presses beep separately at detection time (above)
-                                    # so the user knows when to release.
+                                    # every delivered button press, emitted on
+                                    # key-up and gated by the 'key_press' sound
+                                    # setting. This is the single source of truth
+                                    # for short-press audio feedback - individual
+                                    # menu handlers must NOT beep on selection or
+                                    # they would double-click.
                                     beep(SOUND_GENERAL, event_type='key_press')
                                 break
                     

@@ -5,14 +5,25 @@ from typing import List
 from universalchess.epaper.icon_menu import IconMenuEntry
 
 
-def create_main_menu_entries(centaur_available: bool = True) -> List[IconMenuEntry]:
-    """Create the standard main menu entry configuration."""
+def create_main_menu_entries(
+    centaur_available: bool = True,
+    game_in_progress: bool = False,
+) -> List[IconMenuEntry]:
+    """Create the standard main menu entry configuration.
+
+    Args:
+        centaur_available: Whether to include the "Original Centaur" entry.
+        game_in_progress: When True the top entry reads "RESUME" because PLAY
+            will resume the suspended game; otherwise it reads "PLAY" and starts
+            a new one. The entry key is unchanged so the main loop's routing is
+            independent of the label.
+    """
     entries: List[IconMenuEntry] = []
 
     entries.append(
         IconMenuEntry(
             key="Universal",
-            label="PLAY",
+            label="RESUME" if game_in_progress else "PLAY",
             icon_name="universal_logo",
             enabled=True,
             height_ratio=2.0,

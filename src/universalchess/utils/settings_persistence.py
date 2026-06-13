@@ -340,6 +340,22 @@ class MenuContext:
         """
         return list(zip(self.path_stack, self.index_stack))
 
+    def restore_from_path(self, path: List[tuple]) -> None:
+        """Reset navigation to a previously captured (menu_name, index) path.
+
+        Repopulates the path/index stacks and rewinds the runtime navigation
+        depth to the root so a subsequent re-entry (e.g. _handle_settings calling
+        enter_menu) restores level by level. Used to re-enter a submenu after a
+        game is suspended back to the full menu, mirroring startup restoration.
+
+        Args:
+            path: List of (menu_name, index) tuples from root to target level.
+        """
+        self.path_stack = [name for name, _ in path]
+        self.index_stack = [index for _, index in path]
+        self._nav_depth = 0
+        self.save()
+
     def enter_menu(self, menu_name: str, default_index: int = 0) -> int:
         """Enter a submenu, handling both fresh navigation and restoration.
 

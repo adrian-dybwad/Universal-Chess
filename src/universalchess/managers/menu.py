@@ -26,6 +26,7 @@ class MenuResult(Enum):
     HELP = auto()           # Help requested
     CLIENT_CONNECTED = auto()  # BLE/RFCOMM client connected
     PIECE_MOVED = auto()    # Piece moved on board
+    PLAY = auto()           # PLAY pressed - start/resume game from any menu depth
     
 
 # Result strings that map to MenuResult enum
@@ -35,10 +36,15 @@ RESULT_MAP = {
     "HELP": MenuResult.HELP,
     "CLIENT_CONNECTED": MenuResult.CLIENT_CONNECTED,
     "PIECE_MOVED": MenuResult.PIECE_MOVED,
+    "PLAY": MenuResult.PLAY,
 }
 
-# Results that should break out of all nested menus
-BREAK_RESULTS = {MenuResult.CLIENT_CONNECTED, MenuResult.PIECE_MOVED}
+# Results that should break out of all nested menus. PLAY is included so that
+# pressing PLAY in any submenu (including loops driven by run_menu_loop or
+# handlers that test MenuSelection.is_break directly) unwinds to the main loop
+# to start/resume a game, rather than being treated as an unknown selection that
+# just refreshes the current menu.
+BREAK_RESULTS = {MenuResult.CLIENT_CONNECTED, MenuResult.PIECE_MOVED, MenuResult.PLAY}
 
 
 @dataclass
@@ -408,7 +414,10 @@ def is_break_result(result: Union[str, MenuSelection, None]) -> bool:
         return False
     if isinstance(result, MenuSelection):
         return result.is_break
-    return result in {"CLIENT_CONNECTED", "PIECE_MOVED"}
+    # Derive from the same enum source (BREAK_RESULTS via from_key) so the string
+    # and MenuSelection paths cannot drift. A new break result therefore only
+    # needs to be added to RESULT_MAP/BREAK_RESULTS in one place.
+    return MenuSelection.from_key(result).is_break
 
 
 def is_refresh_result(result: Union[str, MenuSelection, None]) -> bool:

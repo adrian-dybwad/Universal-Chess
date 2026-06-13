@@ -38,7 +38,6 @@ _IconMenuEntry = None
 _SplashScreen = None
 _GameOverWidget = None
 _AlertWidget = None
-_PauseWidget = None
 _SetupStatusWidget = None
 
 
@@ -46,7 +45,7 @@ def _load_widgets():
     """Lazily load widget classes."""
     global _widgets_loaded, _ChessBoardWidget, _GameAnalysisWidget, _ChessClockWidget
     global _IconMenuWidget, _IconMenuEntry, _SplashScreen
-    global _GameOverWidget, _AlertWidget, _PauseWidget, _SetupStatusWidget
+    global _GameOverWidget, _AlertWidget, _SetupStatusWidget
     
     if _widgets_loaded:
         return
@@ -57,7 +56,6 @@ def _load_widgets():
         AlertWidget, SetupStatusWidget
     )
     from universalchess.epaper.game_over import GameOverWidget
-    from universalchess.epaper.pause import PauseWidget
     _ChessBoardWidget = ChessBoardWidget
     _GameAnalysisWidget = GameAnalysisWidget
     _ChessClockWidget = ChessClockWidget
@@ -66,7 +64,6 @@ def _load_widgets():
     _SplashScreen = SplashScreen
     _GameOverWidget = GameOverWidget
     _AlertWidget = AlertWidget
-    _PauseWidget = PauseWidget
     _SetupStatusWidget = SetupStatusWidget
     _widgets_loaded = True
 
@@ -151,13 +148,13 @@ class DisplayManager:
         self.analysis_widget = None
         self._analysis_engine_handle = None  # EngineHandle from registry
         self.alert_widget = None
-        self.pause_widget = None
         self.game_over_widget = None
         self.setup_status_widget = None
         
-        # Pause state
-        self._is_paused = False
-        self._on_resume_callback = None  # Called when game resumes to restore LEDs
+        # Suspend/resume state. The game can be suspended back to the full menu
+        # (clock paused, LEDs off) while its managers stay alive; resume() then
+        # rebuilds the board and restores LEDs via this callback.
+        self._on_resume_callback = None
         
         # Menu state
         self._menu_active = False
@@ -510,95 +507,37 @@ class DisplayManager:
         self._clock.reset()
         log.info(f"[DisplayManager] Clock reset to {self._time_control} min per player")
     
-    def toggle_pause(self) -> bool:
-        """Toggle pause state for the game.
-        
-        When paused:
-        - Clock is paused
-        - LEDs are turned off
-        - A pause widget is shown in the center of the screen
-        
-        When resumed:
-        - Clock resumes for the previously active player
-        - Pause widget is hidden
-        
-        Returns:
-            True if now paused, False if now resumed
+    def suspend(self) -> None:
+        """Suspend the running game so the full menu can take over the screen.
+
+        Pauses the clock and turns LEDs off, but shows no overlay widget - the
+        caller replaces the screen with the full menu. The game managers stay
+        alive so resume() can restore the board and clock. This replaces the old
+        in-place pause overlay; "suspended" state is tracked by the caller (the
+        game managers being alive while the menu shows), not by this manager.
         """
-        if self._is_paused:
-            self._resume_game()
-            return False
-        else:
-            self._pause_game()
-            return True
-    
-    def _pause_game(self) -> None:
-        """Pause the game - stop clock, turn off LEDs, show pause widget."""
-        if self._is_paused:
-            return
-        
-        self._is_paused = True
         self._clock.pause()
-        
-        # Turn off LEDs via callback
         if self._led_off:
             self._led_off()
         else:
             log.warning("[DisplayManager] LED off callback not set, skipping LED off")
-        
-        # Show pause widget (centered on screen)
-        # Import here to avoid circular imports
-        self.pause_widget = _PauseWidget(update_callback=board.display_manager.update)
-        board.display_manager.add_widget(self.pause_widget)
-        
-        log.info("[DisplayManager] Game paused")
-    
-    def _resume_game(self) -> None:
-        """Resume the game - restart clock, remove pause widget, restore LEDs."""
-        if not self._is_paused:
-            return
-        
-        self._is_paused = False
-        
-        # Remove pause widget
-        if self.pause_widget:
-            board.display_manager.remove_widget(self.pause_widget)
-            self.pause_widget = None
-        
-        # Resume clock (turn indicator comes from ChessGameState, not clock service)
+        log.info("[DisplayManager] Game suspended")
+
+    def resume(self) -> None:
+        """Resume a suspended game and rebuild the game screen.
+
+        Recreates the board/clock/analysis widgets via _init_widgets() (which
+        performs a full refresh to clear menu ghosting), resumes the clock for
+        the previously active player, and restores LEDs via the resume callback.
+        """
+        self._init_widgets()
         self._clock.resume()
-        log.info("[DisplayManager] Clock resumed")
-        
-        # Notify resume callback to restore LEDs if needed
         if self._on_resume_callback:
             try:
                 self._on_resume_callback()
             except Exception as e:
                 log.warning(f"[DisplayManager] Error in resume callback: {e}")
-        
         log.info("[DisplayManager] Game resumed")
-    
-    def is_paused(self) -> bool:
-        """Check if the game is currently paused.
-        
-        Returns:
-            True if game is paused, False otherwise
-        """
-        return self._is_paused
-    
-    def clear_pause(self) -> None:
-        """Clear pause state without resuming clock.
-        
-        Called on new game to ensure clean state.
-        """
-        if self._is_paused:
-    
-            # Remove pause widget if present
-            if self.pause_widget:
-                board.display_manager.remove_widget(self.pause_widget)
-                self.pause_widget = None
-            self._is_paused = False
-            log.info("[DisplayManager] Pause state cleared")
     
     def on_setup_display(self, active: bool, fen: str = None) -> None:
         """Drive the display while Chessnut puzzle setup mode is active.
@@ -988,7 +927,13 @@ class DisplayManager:
         try:
             if board.display_manager:
                 board.display_manager.clear_widgets(addStatusBar=False)
-                splash = _SplashScreen(board.display_manager.update, message=message)
+                # Fill the whole screen (no status-bar gap); the status bar was
+                # not added above, so the splash covers the full 296px height.
+                splash = _SplashScreen(
+                    board.display_manager.update,
+                    message=message,
+                    leave_room_for_status_bar=False,
+                )
                 future = board.display_manager.add_widget(splash)
                 if future:
                     try:
