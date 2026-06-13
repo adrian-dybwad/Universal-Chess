@@ -143,7 +143,8 @@ class BleManager:
                  on_connected: Callable[[str], None] = None,
                  on_disconnected: Callable[[], None] = None,
                  relay_mode: bool = False,
-                 on_relay_data: Callable[[bytes], None] = None):
+                 on_relay_data: Callable[[bytes], None] = None,
+                 on_display_passkey: Callable[[Optional[str]], None] = None):
         """Initialize the BLE manager.
         
         Args:
@@ -153,6 +154,10 @@ class BleManager:
             on_disconnected: Callback() when client disconnects
             relay_mode: If True, forward received data via on_relay_data
             on_relay_data: Callback(data: bytes) for relay mode data forwarding
+            on_display_passkey: Callback(passkey: Optional[str]) invoked when the
+                pairing agent must display a passkey (e.g. for a Bluetooth
+                keyboard). Called with the 6-digit string to show, or None to
+                clear the display when pairing finishes or is cancelled.
         """
         self.device_name = device_name
         self._on_data_received = on_data_received
@@ -160,6 +165,7 @@ class BleManager:
         self._on_disconnected = on_disconnected
         self._relay_mode = relay_mode
         self._on_relay_data = on_relay_data
+        self._on_display_passkey = on_display_passkey
         
         # Connection state
         self.connected = False
@@ -493,8 +499,14 @@ class BleManager:
         log.info("[BleManager] Stopped")
     
     def _register_agent(self):
-        """Register the NoInputNoOutput agent."""
-        self._agent = _NoInputNoOutputAgent(self._bus)
+        """Register the pairing agent (KeyboardDisplay capability).
+
+        KeyboardDisplay is required so BlueZ will ask us to *display* a passkey
+        when a Bluetooth keyboard pairs (the user then types it on the keyboard).
+        Chess-app pairings (numeric comparison / Just Works) are still
+        auto-accepted by the agent, preserving prior behaviour.
+        """
+        self._agent = _PairingAgent(self._bus, on_display_passkey=self._on_display_passkey)
         
         agent_manager = dbus.Interface(
             self._bus.get_object(BLUEZ_SERVICE_NAME, '/org/bluez'),
@@ -599,51 +611,95 @@ class BleManager:
 # Internal D-Bus Classes
 # ============================================================================
 
-class _NoInputNoOutputAgent(dbus.service.Object):
-    """Bluetooth agent that auto-accepts connections without user interaction."""
-    
+class _PairingAgent(dbus.service.Object):
+    """Bluetooth pairing agent for the board.
+
+    Uses ``KeyboardDisplay`` capability so BlueZ will request a passkey to be
+    *displayed* when a Bluetooth keyboard pairs; the user types the displayed
+    passkey on the keyboard to complete pairing. All other pairing requests
+    (numeric comparison from phones, service authorization from chess apps) are
+    auto-accepted, preserving the previous no-interaction behaviour.
+
+    The displayed passkey is forwarded to ``on_display_passkey(text)`` and
+    cleared via ``on_display_passkey(None)`` when pairing ends or is cancelled.
+    """
+
     AGENT_PATH = "/org/bluez/universal_agent"
-    CAPABILITY = "NoInputNoOutput"
-    
-    def __init__(self, bus):
+    CAPABILITY = "KeyboardDisplay"
+
+    def __init__(self, bus, on_display_passkey=None):
         self.bus = bus
+        self._on_display_passkey = on_display_passkey
         dbus.service.Object.__init__(self, bus, self.AGENT_PATH)
-    
+
+    def _show_passkey(self, passkey) -> None:
+        """Forward a passkey to the display callback, formatted for the user."""
+        if self._on_display_passkey is None:
+            return
+        from universalchess.managers.bt_keyboard import format_passkey
+        try:
+            self._on_display_passkey(format_passkey(int(passkey)))
+        except Exception as e:  # noqa: BLE001 - display must not break pairing
+            log.error(f"[BleManager] Failed to display passkey: {e}")
+
+    def _clear_passkey(self) -> None:
+        """Clear any displayed passkey."""
+        if self._on_display_passkey is None:
+            return
+        try:
+            self._on_display_passkey(None)
+        except Exception as e:  # noqa: BLE001
+            log.error(f"[BleManager] Failed to clear passkey display: {e}")
+
     @dbus.service.method(AGENT_IFACE, in_signature='', out_signature='')
     def Release(self):
         log.info("[BleManager] Agent released")
-    
+        self._clear_passkey()
+
     @dbus.service.method(AGENT_IFACE, in_signature='os', out_signature='')
     def AuthorizeService(self, device, uuid):
         log.info(f"[BleManager] AuthorizeService: {device} -> {uuid}")
-    
+
     @dbus.service.method(AGENT_IFACE, in_signature='o', out_signature='s')
     def RequestPinCode(self, device):
+        # Legacy pairing: no PIN required.
         return ""
-    
+
     @dbus.service.method(AGENT_IFACE, in_signature='o', out_signature='u')
     def RequestPasskey(self, device):
+        # Only reached if the peer expects us to *input* a passkey, which does
+        # not apply to a keyboard peer (it inputs, we display). Return 0.
         return dbus.UInt32(0)
-    
+
     @dbus.service.method(AGENT_IFACE, in_signature='ouq', out_signature='')
     def DisplayPasskey(self, device, passkey, entered):
-        pass
-    
+        log.info(f"[BleManager] DisplayPasskey for {device}: {int(passkey):06d} "
+                 f"(entered={entered})")
+        self._show_passkey(passkey)
+
     @dbus.service.method(AGENT_IFACE, in_signature='os', out_signature='')
     def DisplayPinCode(self, device, pincode):
-        pass
-    
+        log.info(f"[BleManager] DisplayPinCode for {device}: {pincode}")
+        if self._on_display_passkey is not None:
+            try:
+                self._on_display_passkey(str(pincode))
+            except Exception as e:  # noqa: BLE001
+                log.error(f"[BleManager] Failed to display PIN: {e}")
+
     @dbus.service.method(AGENT_IFACE, in_signature='ou', out_signature='')
     def RequestConfirmation(self, device, passkey):
-        pass
-    
+        # Numeric comparison: auto-accept (return without error).
+        log.info(f"[BleManager] RequestConfirmation for {device}: {int(passkey):06d}")
+
     @dbus.service.method(AGENT_IFACE, in_signature='o', out_signature='')
     def RequestAuthorization(self, device):
-        pass
-    
+        # Auto-authorize incoming pairing.
+        log.info(f"[BleManager] RequestAuthorization for {device}")
+
     @dbus.service.method(AGENT_IFACE, in_signature='', out_signature='')
     def Cancel(self):
-        pass
+        log.info("[BleManager] Pairing cancelled")
+        self._clear_passkey()
 
 
 class _Advertisement(dbus.service.Object):

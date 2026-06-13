@@ -48,27 +48,39 @@ class TestRfcommManager(unittest.TestCase):
     
     @patch('subprocess.Popen')
     @patch('universalchess.managers.rfcomm._process_iter')
-    def test_start_discovery(self, mock_process_iter, mock_popen):
+    @patch('universalchess.managers.rfcomm.RfcommManager._read_controller_inquiry_classes', return_value={})
+    @patch('universalchess.managers.rfcomm.RfcommManager._discover_bredr_with_btmgmt', return_value=[])
+    @patch('universalchess.managers.rfcomm.RfcommManager._discover_keyboards_from_inquiry_classes', return_value=[])
+    def test_start_discovery(self, _inquiry, _btmgmt, _classes, mock_process_iter, mock_popen):
         """Test starting device discovery"""
         from universalchess.managers import RfcommManager
         
-        # Mock subprocess
+        # Mock subprocess with a realistic, terminating scan stream.
         mock_proc = MagicMock()
         mock_proc.stdin = MagicMock()
         mock_proc.stdout = MagicMock()
         mock_proc.poll.return_value = None
+        mock_proc.stdout.readline.side_effect = [
+            "Discovery started\n",
+            "[\x1b[0;92mNEW\x1b[0m] Device 49:71:2D:41:07:E3 Logi K380\n",
+            "",  # terminates the read loop
+        ]
         mock_popen.return_value = mock_proc
         
         # Mock process iteration
         mock_process_iter.return_value = []
         
         controller = RfcommManager()
-        controller.start_discovery(timeout=5)
+        # Force the readline path (MagicMock stdout is not a pollable fd).
+        with patch("universalchess.managers.rfcomm.select.poll", side_effect=Exception):
+            devices = controller.start_discovery(timeout=5)
         
         # Verify scan on was called
         assert mock_proc.stdin.write.called
         write_calls = [str(call_args[0][0]) for call_args in mock_proc.stdin.write.call_args_list]
         assert any("scan on" in str(call) for call in write_calls)
+        # And the ANSI-tagged [NEW] line is actually parsed into a device.
+        assert devices == [{"address": "49:71:2D:41:07:E3", "name": "Logi K380"}]
     
     @patch('subprocess.Popen')
     @patch('universalchess.managers.rfcomm._process_iter')

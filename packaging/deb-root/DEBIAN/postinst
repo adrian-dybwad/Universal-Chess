@@ -171,6 +171,11 @@ sudo usermod -a -G kmem pi
 # Allow Bluetooth service advertising (required for advertise_service)
 sudo usermod -a -G bluetooth pi
 
+# Allow reading Bluetooth HID keyboard events from /dev/input/event* (the
+# devices BlueZ creates for a paired keyboard are owned root:input). The
+# service runs as 'pi', so it must be in the 'input' group to read them.
+sudo usermod -a -G input pi
+
 
 ##### Enable systemd services.
 echo -e "::: Setup services"

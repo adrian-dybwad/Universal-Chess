@@ -57,6 +57,7 @@ from universalchess.menus import (
     handle_wifi_settings_menu,
     handle_wifi_scan_menu,
     handle_bluetooth_menu,
+    handle_keyboard_pairing_menu,
     handle_accounts_menu,
     mask_token,
     handle_about_menu,
@@ -510,6 +511,55 @@ def _clear_active_keyboard_widget() -> None:
     """Clear the active keyboard widget reference."""
     global _active_keyboard_widget
     _active_keyboard_widget = None
+
+
+# Bluetooth keyboard state
+bt_keyboard_manager = None  # BluetoothKeyboardManager, started in main()
+_active_passkey_widget = None  # Modal passkey widget shown during keyboard pairing
+
+
+def _get_keyboard_text_sink():
+    """Return the active text-entry widget for Bluetooth-keyboard characters.
+
+    The Bluetooth keyboard manager calls this to decide whether a printable
+    keystroke should be typed into an on-screen field (e.g. the WiFi password)
+    or ignored. Only widgets that accept characters (expose ``handle_char``)
+    qualify; the navigation key mappings are applied regardless.
+    """
+    widget = _active_keyboard_widget
+    if widget is not None and hasattr(widget, "handle_char"):
+        return widget
+    return None
+
+
+def _on_display_passkey(passkey) -> None:
+    """Show or clear the Bluetooth pairing passkey on the e-paper.
+
+    Invoked by the BlueZ pairing agent (on the D-Bus/GLib thread) when a
+    keyboard pairing needs a passkey displayed. ``passkey`` is the formatted
+    string to show, or None to remove the display when pairing finishes or is
+    cancelled. Failures are logged but never propagated, so a display problem
+    cannot break the pairing handshake.
+    """
+    global _active_passkey_widget
+    try:
+        display_mgr = getattr(board, "display_manager", None)
+        if display_mgr is None:
+            return
+        if passkey is None:
+            if _active_passkey_widget is not None:
+                display_mgr.remove_widget(_active_passkey_widget)
+                _active_passkey_widget = None
+            return
+        from universalchess.epaper.passkey_widget import PasskeyWidget
+        if _active_passkey_widget is None:
+            _active_passkey_widget = PasskeyWidget(display_mgr.update, passkey=passkey)
+            display_mgr.add_widget(_active_passkey_widget)
+        else:
+            _active_passkey_widget.set_passkey(passkey)
+    except Exception as e:  # noqa: BLE001 - display must never break pairing
+        log.error(f"[App] Failed to update passkey display: {e}")
+
 
 # About widget state (for support QR screen)
 _active_about_widget = None
@@ -2081,6 +2131,47 @@ def _handle_wifi_scan():
     )
 
 
+def _handle_pair_keyboard():
+    """Scan for and pair a Bluetooth keyboard (Settings > Bluetooth).
+
+    Pairing requests are serviced by the application's KeyboardDisplay agent, so
+    a passkey (if the keyboard requires one) is shown on the board during the
+    pair step. After pairing the device is trusted and connected; BlueZ then
+    exposes it as an input device which the keyboard manager begins reading.
+    """
+    if rfcomm_manager is None:
+        return
+
+    def pair_keyboard(address: str) -> bool:
+        if not rfcomm_manager.pair_device(address):
+            return False
+        rfcomm_manager.trust_device(address)
+        return rfcomm_manager.connect_device(address)
+
+    def scan_keyboards():
+        # Pair Keyboard only needs keyboard-class devices. Try the fast
+        # controller inquiry path before falling back to the broad BlueZ scan.
+        keyboards = rfcomm_manager.discover_keyboards(timeout=8)
+        log.info(f"[BTKeyboard] {len(keyboards)} keyboard device(s) discovered")
+        return keyboards
+
+    def continue_scan_keyboards():
+        keyboards = rfcomm_manager.discover_keyboards_broad_fallback(timeout=4)
+        log.info(f"[BTKeyboard] {len(keyboards)} supplemental keyboard device(s) discovered")
+        return keyboards
+
+    return handle_keyboard_pairing_menu(
+        scan_devices=scan_keyboards,
+        pair_keyboard=pair_keyboard,
+        show_menu=_show_menu,
+        is_break_result_fn=is_break_result,
+        board=board,
+        log=log,
+        continue_scan_devices=continue_scan_keyboards,
+        refresh_menu=_menu_manager.refresh_menu if _menu_manager else None,
+    )
+
+
 def _get_installed_version() -> str:
     """Get the installed Universal Chess version from dpkg.
     
@@ -2198,6 +2289,7 @@ def _handle_system_menu():
             rfcomm_connected=(rfcomm_server.connected if rfcomm_server else False),
             board=board,
             log=log,
+            on_pair_keyboard=_handle_pair_keyboard if rfcomm_manager else None,
         ),
         handle_chromecast_menu=lambda: handle_chromecast_menu(
             show_menu=_show_menu,
@@ -2596,7 +2688,7 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
     """
     global kill, running, mainloop
     global protocol_manager, display_manager, controller_manager, rfcomm_server, ble_manager, relay_manager
-    global _cleanup_done
+    global _cleanup_done, bt_keyboard_manager
     
     # Guard against running cleanup twice (signal handler + finally block)
     if _cleanup_done:
@@ -2627,6 +2719,14 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
                 log.error(f"[Cleanup] Error stopping rfcomm_server: {e}", exc_info=True)
         else:
             log.info("[Cleanup] RFCOMM server was None")
+        
+        # Stop Bluetooth keyboard manager (evdev reader thread)
+        if bt_keyboard_manager is not None:
+            try:
+                bt_keyboard_manager.stop()
+                log.info("[Cleanup] Bluetooth keyboard manager stopped")
+            except Exception as e:
+                log.error(f"[Cleanup] Error stopping bt_keyboard_manager: {e}", exc_info=True)
         
         # Stop relay manager (shadow target connection)
         log.info("[Cleanup] Stopping relay manager...")
@@ -3361,7 +3461,8 @@ def main():
                 on_data_received=_on_ble_data_received,
                 on_connected=_on_ble_connected,
                 on_disconnected=_on_ble_disconnected,
-                relay_mode=relay_mode
+                relay_mode=relay_mode,
+                on_display_passkey=_on_display_passkey
             )
             log.info("[Main] BleManager created")
             
@@ -3414,8 +3515,18 @@ def main():
             """Handle data received from RFCOMM client."""
             _connection_manager.receive_data(data, "rfcomm")
         
-        # Create pairing manager
-        rfcomm_pairing_manager = RfcommManager(device_name=args.device_name)
+        # Create pairing manager. When BLE is enabled, our KeyboardDisplay
+        # D-Bus agent (registered by BleManager) is the authoritative pairing
+        # agent, so RFCOMM must not spawn bt-agent (which would register itself
+        # as the default agent and, lacking KeyboardDisplay capability, prevent
+        # passkey display for Bluetooth keyboards). When BLE is disabled there is
+        # no D-Bus agent, so bt-agent remains the fallback.
+        global rfcomm_manager
+        rfcomm_pairing_manager = RfcommManager(
+            device_name=args.device_name,
+            use_external_agent=not args.no_ble,
+        )
+        rfcomm_manager = rfcomm_pairing_manager
         
         # Create and start RFCOMM server
         rfcomm_server = RfcommServer(
@@ -3428,6 +3539,22 @@ def main():
         )
         rfcomm_server.start(startup_splash)
         log.info("[RFCOMM] Server started")
+    
+    # Start Bluetooth HID keyboard input. Reads paired keyboards via evdev and
+    # injects events through the same key_callback the physical buttons use, so
+    # navigation works everywhere; typed characters feed an active text field.
+    global bt_keyboard_manager
+    try:
+        from universalchess.managers import BluetoothKeyboardManager
+        bt_keyboard_manager = BluetoothKeyboardManager(
+            on_button=key_callback,
+            get_text_sink=_get_keyboard_text_sink,
+            on_keyboard_connected=lambda: _on_display_passkey(None),
+        )
+        bt_keyboard_manager.start()
+        log.info("[Main] Bluetooth keyboard manager started")
+    except Exception as e:
+        log.error(f"[Main] Failed to start Bluetooth keyboard manager: {e}", exc_info=True)
     
     # Connect to shadow target if relay mode
     if relay_mode:

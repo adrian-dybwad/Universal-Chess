@@ -1,6 +1,9 @@
 # pip-installed, inside the app's private venv
 berserk
 bleak
+# Reads Bluetooth HID keyboard events from /dev/input/event* for the
+# keyboard-control feature (see managers/bt_keyboard.py).
+evdev
 cairosvg
 casttube
 ndjson

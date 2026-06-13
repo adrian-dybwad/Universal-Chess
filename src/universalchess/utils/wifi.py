@@ -80,8 +80,54 @@ def scan_wifi_networks(board, log) -> List[dict]:
     return networks
 
 
+def remove_wifi_profiles(log, ssid: str) -> None:
+    """Delete any saved NetworkManager profiles for the given SSID.
+
+    A prior failed connect (e.g. a wrong password) leaves a saved profile named
+    after the SSID. ``nmcli device wifi connect`` then tries to *update* that
+    stale profile on the next attempt instead of creating a clean one, which
+    fails with "802-11-wireless-security.key-mgmt: property is missing" and
+    never associates. Removing matching profiles first guarantees each attempt
+    starts from a clean, fully-specified profile. Deleting is safe here because
+    a (re)connect immediately recreates the profile.
+
+    Matching is by exact connection name AND a wireless type, so this never
+    touches the active non-WiFi connections or a different network.
+    """
+    try:
+        listing = subprocess.run(
+            ["nmcli", "-t", "-f", "UUID,NAME,TYPE", "connection", "show"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if listing.returncode != 0:
+            log.debug(f"[WiFi] Could not list connections: {listing.stderr}")
+            return
+        for line in listing.stdout.splitlines():
+            # -t output is colon-separated; the name may itself contain an
+            # escaped colon ("\:"), so split into exactly 3 fields from the ends.
+            parts = line.split(":")
+            if len(parts) < 3:
+                continue
+            uuid = parts[0]
+            conn_type = parts[-1]
+            name = ":".join(parts[1:-1]).replace("\\:", ":")
+            if name == ssid and "wireless" in conn_type:
+                log.info(f"[WiFi] Removing stale profile for '{ssid}' (uuid={uuid})")
+                subprocess.run(["sudo", "nmcli", "connection", "delete", "uuid", uuid],
+                               capture_output=True, text=True, timeout=10)
+    except subprocess.TimeoutExpired:
+        log.warning("[WiFi] Timed out removing stale profiles")
+    except Exception as e:
+        log.warning(f"[WiFi] Error removing stale profiles: {e}")
+
+
 def connect_to_wifi(board, log, ssid: str, password: Optional[str] = None) -> bool:
-    """Connect to a WiFi network using nmcli."""
+    """Connect to a WiFi network using nmcli.
+
+    Any stale saved profile for the SSID is removed first so that retries after
+    a failed attempt (e.g. a mistyped password) start clean instead of failing
+    with a "key-mgmt: property is missing" profile-update error.
+    """
     try:
         board.display_manager.clear_widgets(addStatusBar=False)
         promise = board.display_manager.add_widget(
@@ -92,6 +138,9 @@ def connect_to_wifi(board, log, ssid: str, password: Optional[str] = None) -> bo
                 promise.result(timeout=5.0)
             except Exception:
                 pass
+
+        # Clear any stale profile so this attempt builds a fresh, valid one.
+        remove_wifi_profiles(log, ssid)
 
         if password:
             result = subprocess.run(
@@ -113,17 +162,56 @@ def connect_to_wifi(board, log, ssid: str, password: Optional[str] = None) -> bo
             board.beep(board.SOUND_GENERAL, event_type="key_press")
             return True
 
-        log.error(f"[WiFi] Failed to connect: {result.stderr}")
+        # Failure: surface a clear reason and remove the half-created profile so
+        # the next attempt is not poisoned by it.
+        stderr = (result.stderr or "").strip()
+        log.error(f"[WiFi] Failed to connect: {stderr}")
+        message = _format_connect_error(stderr, bool(password))
+        remove_wifi_profiles(log, ssid)
+        _show_message(board, message, hold_seconds=3.0)
         board.beep(board.SOUND_WRONG, event_type="error")
         return False
     except subprocess.TimeoutExpired:
         log.error("[WiFi] Connection timed out")
+        remove_wifi_profiles(log, ssid)
+        _show_message(board, "Connection\ntimed out", hold_seconds=3.0)
         board.beep(board.SOUND_WRONG, event_type="error")
         return False
     except Exception as e:
         log.error(f"[WiFi] Error connecting: {e}")
         board.beep(board.SOUND_WRONG, event_type="error")
         return False
+
+
+def _format_connect_error(stderr: str, had_password: bool) -> str:
+    """Map an nmcli failure to a short, board-friendly message.
+
+    A wrong PSK surfaces from nmcli as a "Secrets were required, but not
+    provided" / "no-secrets" style message; treat that as a bad password so the
+    user knows to re-enter it rather than assuming a system fault.
+    """
+    lowered = stderr.lower()
+    if had_password and ("secret" in lowered or "no-secrets" in lowered or "802-1x" in lowered):
+        return "Wrong password\nTry again"
+    if "property is missing" in lowered:
+        # Should no longer happen now that stale profiles are removed first.
+        return "Profile error\nTry again"
+    return "Connection\nfailed"
+
+
+def _show_message(board, message: str, hold_seconds: float = 0.0) -> None:
+    """Show a full-screen status message, optionally holding it briefly."""
+    board.display_manager.clear_widgets(addStatusBar=False)
+    promise = board.display_manager.add_widget(
+        SplashScreen(board.display_manager.update, message=message, leave_room_for_status_bar=False)
+    )
+    if promise:
+        try:
+            promise.result(timeout=2.0)
+        except Exception:
+            pass
+    if hold_seconds > 0:
+        time.sleep(hold_seconds)
 
 
 def get_wifi_password_from_board(

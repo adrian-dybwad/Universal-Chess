@@ -236,6 +236,32 @@ class KeyboardWidget(Widget):
         
         return False
     
+    def handle_char(self, ch: str) -> bool:
+        """Append a typed character to the input buffer.
+
+        Used by the Bluetooth keyboard path: a printable key typed on a paired
+        keyboard is delivered here, mirroring the behaviour of typing via piece
+        placement. Respects ``max_length`` and invalidates the sprite cache so
+        the new character becomes visible (a prior regression showed beeps with
+        no visible glyph when the cache was not invalidated).
+
+        Args:
+            ch: A single printable character to append.
+
+        Returns:
+            True if the character was appended, False if rejected (buffer full).
+        """
+        if len(self.text) >= self.max_length:
+            return False
+        self.text += ch
+        try:
+            from universalchess.board import board
+            board.beep(board.SOUND_GENERAL)
+        except ImportError:
+            pass
+        self.invalidate_and_update()
+        return True
+
     def handle_field_event(self, field: int, piece_present: bool) -> bool:
         """Handle piece placement/removal events.
         
