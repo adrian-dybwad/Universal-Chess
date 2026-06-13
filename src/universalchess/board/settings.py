@@ -22,8 +22,10 @@
 # distribution, modification, variant, or derivative of this software.
 
 import configparser
+import io
 import logging
 import os
+import tempfile
 
 class Settings:
     """ Class handling config.ini """
@@ -40,8 +42,7 @@ class Settings:
         directory is missing or key doesn't exist.
         """
         Settings.ensure_key_exists(section, key, default)
-        config = configparser.ConfigParser()
-        config.read(Settings.configfile)
+        config = Settings._safe_read()
         
         if config.has_section(section) and config.has_option(section, key):
             return config[section][key]
@@ -58,8 +59,7 @@ class Settings:
     def write(section, key, value, default = ''):
         """ Write a value to the key in the section """
         Settings.ensure_key_exists(section, key, default)
-        config = configparser.ConfigParser()
-        config.read(Settings.configfile)
+        config = Settings._safe_read()
         # If config directory is missing, ensure_key_exists() can't persist the section.
         # Do not raise here; log and attempt a best-effort write.
         if not config.has_section(section):
@@ -70,8 +70,7 @@ class Settings:
     @staticmethod
     def delete(section, key):
         Settings.ensure_key_exists(section, key, '')
-        config = configparser.ConfigParser()
-        config.read(Settings.configfile)
+        config = Settings._safe_read()
         if not config.has_section(section):
             # Nothing persisted, so nothing to delete. Keep behavior non-fatal.
             return
@@ -81,8 +80,7 @@ class Settings:
     @staticmethod
     def ensure_key_exists(section, key, default = ''):
         """ Ensures that the key exists in config.ini """
-        config = configparser.ConfigParser()
-        config.read(Settings.configfile)
+        config = Settings._safe_read()
         # First make sure the section is there
         if not config.has_section(section):
             config.add_section(section)
@@ -104,9 +102,68 @@ class Settings:
 
     @staticmethod
     def get_config():
+        return Settings._safe_read()
+
+    @staticmethod
+    def _safe_read():
+        """Read the live config, recovering automatically from a corrupt file.
+
+        configparser.read() raises ParsingError when the file is unparseable -
+        e.g. zero-filled by an unclean shutdown (the SD-card null-byte
+        corruption observed on hardware). Because the config is read at import
+        time, letting that error propagate crash-loops the whole app on boot
+        (blank screen). Instead the corrupt file is replaced from the bundled
+        defaults (best effort) and re-read; if defaults are also unavailable an
+        empty config is returned so the app still boots and ensure_key_exists()
+        can rebuild keys from there.
+
+        read() silently ignores a missing file, so a first-run absent config is
+        not treated as corruption.
+        """
         config = configparser.ConfigParser()
-        config.read(Settings.configfile)
+        try:
+            config.read(Settings.configfile)
+            return config
+        except configparser.Error as exc:
+            logging.error(
+                f"Corrupt config {Settings.configfile} ({exc}); "
+                "restoring from defaults")
+        Settings._restore_from_defaults()
+        config = configparser.ConfigParser()
+        try:
+            config.read(Settings.configfile)
+        except configparser.Error as exc:
+            # The restore wrote unparseable content (defaults themselves
+            # corrupt). Fall back to an empty config so the app still boots.
+            logging.error(
+                f"Config still unreadable after restore ({exc}); starting empty")
+            config = configparser.ConfigParser()
         return config
+
+    @staticmethod
+    def _restore_from_defaults():
+        """Overwrite the live config with the bundled defaults.
+
+        Recovery path for a corrupt live file. If the defaults are missing or
+        unreadable, the live file is reset to empty (still parseable) so the next
+        read succeeds and ensure_key_exists() repopulates it. Writes atomically
+        so the recovery itself cannot leave another partial file.
+        """
+        config_dir = os.path.dirname(Settings.configfile)
+        try:
+            os.makedirs(config_dir, exist_ok=True)
+        except OSError as exc:
+            logging.error(f"Cannot create config dir {config_dir}: {exc}")
+            return
+        contents = ""
+        if os.path.exists(Settings.defconfigfile):
+            try:
+                with open(Settings.defconfigfile, "r", encoding="utf-8") as src:
+                    contents = src.read()
+            except OSError as exc:
+                logging.error(
+                    f"Cannot read defaults {Settings.defconfigfile}: {exc}")
+        Settings._atomic_write_text(contents)
 
     @staticmethod
     def write_config(config):
@@ -124,5 +181,34 @@ class Settings:
                 "Please reinstall DGTCentaurMods or create the directory manually."
             )
             return
-        with open(Settings.configfile, 'w', encoding="utf-8") as f:
-            config.write(f)
+        buffer = io.StringIO()
+        config.write(buffer)
+        Settings._atomic_write_text(buffer.getvalue())
+
+    @staticmethod
+    def _atomic_write_text(text):
+        """Write text to the config file atomically.
+
+        Writes to a temp file in the same directory, flushes + fsyncs it, then
+        os.replace()s it over the target. os.replace is atomic on POSIX, so a
+        reader (or a power loss) always sees either the complete old file or the
+        complete new one - never the truncated/zero-filled file a plain in-place
+        open(...,'w') leaves when interrupted mid-write. That truncation was the
+        root cause of the boot-loop corruption this guards against.
+        """
+        config_dir = os.path.dirname(Settings.configfile)
+        fd, tmp_path = tempfile.mkstemp(
+            dir=config_dir, prefix=".centaur.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(text)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, Settings.configfile)
+        except OSError as exc:
+            logging.error(
+                f"Atomic write to {Settings.configfile} failed: {exc}")
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
