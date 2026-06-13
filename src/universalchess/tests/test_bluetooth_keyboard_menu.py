@@ -53,26 +53,36 @@ class TestHandleKeyboardPairingMenu(unittest.TestCase):
         board.display_manager.add_widget.return_value = promise
         return board
 
-    def test_only_placeholder_devices_reports_none_found(self):
-        """A scan of only nameless devices reports 'no devices' and pairs none.
+    def test_only_placeholder_devices_offers_no_selectable_entry(self):
+        """A stream of only nameless devices offers no pairable entry.
 
         Regression manifestation: without the placeholder filter the menu would
-        be shown with junk MAC-named entries instead of reporting nothing
-        usable was found.
+        be shown with junk MAC-named entries that a user could "pair", instead
+        of only the non-selectable Scanning/No-devices row. The user backs out
+        and nothing is paired.
         """
-        scan = lambda: [
-            {"address": "49:71:2D:41:07:E3", "name": "49-71-2D-41-07-E3"},
-            {"address": "AA:BB:CC:DD:EE:FF", "name": "Unknown"},
-        ]
+        def scan_stream(on_found, stop_event):
+            on_found({"address": "49:71:2D:41:07:E3", "name": "49-71-2D-41-07-E3"})
+            on_found({"address": "AA:BB:CC:DD:EE:FF", "name": "Unknown"})
+            stop_event.wait(timeout=2.0)
+
         pair = MagicMock()
-        show_menu = MagicMock()
+        calls = []
+
+        def show_menu(entries):
+            calls.append(entries)
+            return "BACK"
 
         handle_keyboard_pairing_menu(
-            scan_devices=scan, pair_keyboard=pair, show_menu=show_menu,
+            scan_stream=scan_stream, pair_keyboard=pair, show_menu=show_menu,
             is_break_result_fn=lambda r: False, board=self._board(), log=MagicMock(),
         )
 
-        show_menu.assert_not_called()  # never reached the selection menu
+        # The only offered row is the non-selectable status row, never a device.
+        assert all(
+            e.key in ("Scanning", "NoDevices") and e.selectable is False
+            for entries in calls for e in entries
+        )
         pair.assert_not_called()
 
     def test_named_device_is_offered_and_paired(self):
@@ -82,45 +92,56 @@ class TestHandleKeyboardPairingMenu(unittest.TestCase):
         named keyboard, so show_menu would receive no matching entry and
         pair_keyboard would never run.
         """
-        scan = lambda: [
-            {"address": "49:71:2D:41:07:E3", "name": "49-71-2D-41-07-E3"},  # filtered
-            {"address": "C9:B6:A5:3F:41:D3", "name": "Real Keyboard"},      # kept
-        ]
+        emitted = threading.Event()
+
+        def scan_stream(on_found, stop_event):
+            on_found({"address": "49:71:2D:41:07:E3", "name": "49-71-2D-41-07-E3"})  # filtered
+            on_found({"address": "C9:B6:A5:3F:41:D3", "name": "Real Keyboard"})      # kept
+            emitted.set()
+            stop_event.wait(timeout=2.0)
+
         pair = MagicMock(return_value=True)
-        # show_menu returns the address key of the named device.
-        show_menu = MagicMock(return_value="C9:B6:A5:3F:41:D3")
+        calls = []
+
+        def show_menu(entries):
+            calls.append(entries)
+            # Wait until discovery has reported the keyboard, then re-render.
+            emitted.wait(timeout=1.0)
+            keys = [e.key for e in entries]
+            if "C9:B6:A5:3F:41:D3" in keys:
+                return "C9:B6:A5:3F:41:D3"
+            return "REFRESH"
 
         handle_keyboard_pairing_menu(
-            scan_devices=scan, pair_keyboard=pair, show_menu=show_menu,
+            scan_stream=scan_stream, pair_keyboard=pair, show_menu=show_menu,
             is_break_result_fn=lambda r: False, board=self._board(), log=MagicMock(),
         )
 
-        # Exactly one entry was offered: the real keyboard.
-        offered = show_menu.call_args.args[0]
+        # Exactly one entry was offered on the final render: the real keyboard.
+        offered = calls[-1]
         assert [e.key for e in offered] == ["C9:B6:A5:3F:41:D3"]
         assert [e.label for e in offered] == ["Real Keyboard"]
         assert [e.max_height for e in offered] == [_KEYBOARD_DEVICE_ENTRY_MAX_HEIGHT]
         assert [e.height_ratio for e in offered] == [1.0]
         pair.assert_called_once_with("C9:B6:A5:3F:41:D3")
 
-    def test_supplemental_scan_refreshes_menu_with_new_keyboard(self):
-        """A later keyboard appears in the list without blocking initial display.
+    def test_streaming_arrival_refreshes_menu_with_new_keyboard(self):
+        """A keyboard found after the menu is shown becomes selectable.
 
-        Regression manifestation: returning immediately after the first keyboard
-        prevents a second keyboard from ever becoming selectable during the same
-        pairing attempt.
+        Regression manifestation: a one-shot scan that returns before a keyboard
+        responds would never surface it; continuous discovery must keep
+        reporting keyboards and refresh the live menu so a late keyboard can be
+        paired during the same attempt.
         """
         refresh_seen = threading.Event()
         first_menu_seen = threading.Event()
-        scan = lambda: [
-            {"address": "11:22:33:44:55:66", "name": "First Keyboard"},
-        ]
 
-        def continue_scan():
+        def scan_stream(on_found, stop_event):
             first_menu_seen.wait(timeout=1.0)
-            return [
-                {"address": "AA:BB:CC:DD:EE:FF", "name": "Second Keyboard"},
-            ]
+            on_found({"address": "11:22:33:44:55:66", "name": "First Keyboard"})
+            on_found({"address": "AA:BB:CC:DD:EE:FF", "name": "Second Keyboard"})
+            stop_event.wait(timeout=2.0)
+
         pair = MagicMock(return_value=True)
 
         def refresh_menu():
@@ -128,30 +149,70 @@ class TestHandleKeyboardPairingMenu(unittest.TestCase):
 
         calls = []
 
-        def tracked_show_menu(entries):
+        def show_menu(entries):
             calls.append(entries)
-            if len(calls) == 1:
-                first_menu_seen.set()
-                refresh_seen.wait(timeout=1.0)
+            keys = [entry.key for entry in entries]
+            if "AA:BB:CC:DD:EE:FF" in keys:
+                return "AA:BB:CC:DD:EE:FF"
+            first_menu_seen.set()
+            if refresh_seen.wait(timeout=1.0):
+                refresh_seen.clear()
                 return "REFRESH"
-            return "AA:BB:CC:DD:EE:FF"
+            return "BACK"
 
         handle_keyboard_pairing_menu(
-            scan_devices=scan,
+            scan_stream=scan_stream,
             pair_keyboard=pair,
-            show_menu=tracked_show_menu,
+            show_menu=show_menu,
             is_break_result_fn=lambda r: False,
             board=self._board(),
             log=MagicMock(),
-            continue_scan_devices=continue_scan,
             refresh_menu=refresh_menu,
         )
 
-        assert [[e.key for e in entries] for entries in calls] == [
-            ["11:22:33:44:55:66"],
-            ["11:22:33:44:55:66", "AA:BB:CC:DD:EE:FF"],
-        ]
+        assert [e.key for e in calls[-1]] == [
+            "11:22:33:44:55:66", "AA:BB:CC:DD:EE:FF"]
         pair.assert_called_once_with("AA:BB:CC:DD:EE:FF")
+
+    def test_list_screen_shown_immediately_while_scanning(self):
+        """The Pair Keyboard screen must remain escapable while discovery runs.
+
+        Regression manifestation: if discovery is performed before showing a
+        menu, a stuck controller inquiry leaves the board frozen on a splash and
+        Back/Shutdown cannot be handled by the menu widget. The screen must show
+        the list with a Scanning row immediately, not a splash.
+        """
+        scan_started = threading.Event()
+
+        def scan_stream(on_found, stop_event):
+            scan_started.set()
+            stop_event.wait(timeout=2.0)
+
+        pair = MagicMock(return_value=True)
+        calls = []
+        board = self._board()
+
+        def show_menu(entries):
+            calls.append(entries)
+            return "BACK"
+
+        handle_keyboard_pairing_menu(
+            scan_stream=scan_stream,
+            pair_keyboard=pair,
+            show_menu=show_menu,
+            is_break_result_fn=lambda r: False,
+            board=board,
+            log=MagicMock(),
+            refresh_menu=MagicMock(),
+        )
+
+        assert scan_started.wait(timeout=1.0), "scan did not start in background"
+        board.display_manager.add_widget.assert_not_called()
+        assert len(calls) == 1, "menu was not shown while scan was running"
+        assert [e.key for e in calls[0]] == ["Scanning"]
+        assert calls[0][0].enabled is True
+        assert calls[0][0].selectable is False
+        pair.assert_not_called()
 
 
 if __name__ == "__main__":

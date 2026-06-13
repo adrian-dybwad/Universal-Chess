@@ -48,42 +48,6 @@ class TestRfcommManager(unittest.TestCase):
     
     @patch('subprocess.Popen')
     @patch('universalchess.managers.rfcomm._process_iter')
-    @patch('universalchess.managers.rfcomm.RfcommManager._read_controller_inquiry_classes', return_value={})
-    @patch('universalchess.managers.rfcomm.RfcommManager._discover_bredr_with_btmgmt', return_value=[])
-    @patch('universalchess.managers.rfcomm.RfcommManager._discover_keyboards_from_inquiry_classes', return_value=[])
-    def test_start_discovery(self, _inquiry, _btmgmt, _classes, mock_process_iter, mock_popen):
-        """Test starting device discovery"""
-        from universalchess.managers import RfcommManager
-        
-        # Mock subprocess with a realistic, terminating scan stream.
-        mock_proc = MagicMock()
-        mock_proc.stdin = MagicMock()
-        mock_proc.stdout = MagicMock()
-        mock_proc.poll.return_value = None
-        mock_proc.stdout.readline.side_effect = [
-            "Discovery started\n",
-            "[\x1b[0;92mNEW\x1b[0m] Device 49:71:2D:41:07:E3 Logi K380\n",
-            "",  # terminates the read loop
-        ]
-        mock_popen.return_value = mock_proc
-        
-        # Mock process iteration
-        mock_process_iter.return_value = []
-        
-        controller = RfcommManager()
-        # Force the readline path (MagicMock stdout is not a pollable fd).
-        with patch("universalchess.managers.rfcomm.select.poll", side_effect=Exception):
-            devices = controller.start_discovery(timeout=5)
-        
-        # Verify scan on was called
-        assert mock_proc.stdin.write.called
-        write_calls = [str(call_args[0][0]) for call_args in mock_proc.stdin.write.call_args_list]
-        assert any("scan on" in str(call) for call in write_calls)
-        # And the ANSI-tagged [NEW] line is actually parsed into a device.
-        assert devices == [{"address": "49:71:2D:41:07:E3", "name": "Logi K380"}]
-    
-    @patch('subprocess.Popen')
-    @patch('universalchess.managers.rfcomm._process_iter')
     @patch('select.poll')
     def test_start_pairing_classic_bluetooth(self, mock_poll, mock_process_iter, mock_popen):
         """Test starting pairing for Classic Bluetooth"""
@@ -222,6 +186,33 @@ class TestRfcommManager(unittest.TestCase):
         write_calls = [str(call_args[0][0]) for call_args in mock_proc.stdin.write.call_args_list]
         assert any("discoverable on" in str(call) for call in write_calls)
         assert any("pairable on" in str(call) for call in write_calls)
+
+    @patch("universalchess.managers.rfcomm.RfcommManager.start_pairing")
+    @patch("universalchess.managers.rfcomm.RfcommManager.kill_bt_agent")
+    @patch("universalchess.managers.rfcomm.RfcommManager.keep_discoverable")
+    def test_external_agent_mode_does_not_spawn_bt_agent(
+            self, mock_keep, mock_kill, mock_start_pairing):
+        """In external-agent mode the pairing thread must not run bt-agent.
+
+        bt-agent registers itself as the *default* BlueZ agent and lacks the
+        KeyboardDisplay capability, so if it ran it would prevent the board from
+        displaying a keyboard passkey (host pairing in bluez_pairing relies on
+        the application's KeyboardDisplay agent staying the default). The
+        external-agent thread must instead only maintain discoverability.
+
+        Failure manifestation: a call to start_pairing() (which spawns bt-agent)
+        would mean the default agent gets hijacked and keyboard passkey pairing
+        breaks. Also asserts stale bt-agents are killed so none can be default.
+        """
+        from universalchess.managers import RfcommManager
+        manager = RfcommManager(device_name="Test Board", use_external_agent=True)
+
+        thread = manager.start_pairing_thread()
+        thread.join(timeout=1.0)
+        manager.stop_pairing_thread()
+
+        mock_start_pairing.assert_not_called()
+        mock_kill.assert_called()
 
 
 if __name__ == '__main__':

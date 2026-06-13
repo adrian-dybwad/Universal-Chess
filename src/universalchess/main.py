@@ -480,6 +480,7 @@ _last_message = None  # Last message sent via sendMessage
 relay_mode = False  # Whether relay mode is enabled (connects to relay target)
 mainloop = None  # GLib mainloop for BLE
 rfcomm_manager = None  # RfcommManager for RFCOMM pairing
+bluez_pairing_manager = None  # BluezPairingManager for host-side keyboard pairing
 rfcomm_server: Optional[RfcommServer] = None  # RFCOMM server for classic Bluetooth
 ble_manager = None  # BleManager for BLE GATT services
 relay_manager = None  # RelayManager for shadow target connections
@@ -2139,35 +2140,28 @@ def _handle_pair_keyboard():
     pair step. After pairing the device is trusted and connected; BlueZ then
     exposes it as an input device which the keyboard manager begins reading.
     """
-    if rfcomm_manager is None:
-        return
+    global bluez_pairing_manager
+    if bluez_pairing_manager is None:
+        from universalchess.managers import BluezPairingManager
+        bluez_pairing_manager = BluezPairingManager()
 
     def pair_keyboard(address: str) -> bool:
-        if not rfcomm_manager.pair_device(address):
-            return False
-        rfcomm_manager.trust_device(address)
-        return rfcomm_manager.connect_device(address)
+        return bluez_pairing_manager.pair_keyboard(address)
 
-    def scan_keyboards():
-        # Pair Keyboard only needs keyboard-class devices. Try the fast
-        # controller inquiry path before falling back to the broad BlueZ scan.
-        keyboards = rfcomm_manager.discover_keyboards(timeout=8)
-        log.info(f"[BTKeyboard] {len(keyboards)} keyboard device(s) discovered")
-        return keyboards
-
-    def continue_scan_keyboards():
-        keyboards = rfcomm_manager.discover_keyboards_broad_fallback(timeout=4)
-        log.info(f"[BTKeyboard] {len(keyboards)} supplemental keyboard device(s) discovered")
-        return keyboards
+    def scan_stream(on_found, stop_event):
+        # Continuous BlueZ discovery (BR/EDR inquiry + LE scan) reports each
+        # keyboard the moment it appears and keeps running until the pairing
+        # screen is dismissed, so an intermittently-discoverable keyboard is not
+        # missed by a fixed-length scan.
+        bluez_pairing_manager.discover_keyboards_stream(on_found, stop_event)
 
     return handle_keyboard_pairing_menu(
-        scan_devices=scan_keyboards,
+        scan_stream=scan_stream,
         pair_keyboard=pair_keyboard,
         show_menu=_show_menu,
         is_break_result_fn=is_break_result,
         board=board,
         log=log,
-        continue_scan_devices=continue_scan_keyboards,
         refresh_menu=_menu_manager.refresh_menu if _menu_manager else None,
     )
 

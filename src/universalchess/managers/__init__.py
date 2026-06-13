@@ -29,6 +29,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "RelayManager": ("universalchess.managers.relay", "RelayManager"),
     "ConnectionManager": ("universalchess.managers.connection", "ConnectionManager"),
     "RfcommManager": ("universalchess.managers.rfcomm", "RfcommManager"),
+    "BluezPairingManager": ("universalchess.managers.bluez_pairing", "BluezPairingManager"),
     "BluetoothKeyboardManager": ("universalchess.managers.bt_keyboard", "BluetoothKeyboardManager"),
     # display
     "DisplayManager": ("universalchess.managers.display", "DisplayManager"),
@@ -74,6 +75,7 @@ __all__ = [
     'ConnectionManager',
     'DisplayManager',
     'RfcommManager',
+    'BluezPairingManager',
     'BluetoothKeyboardManager',
     'GameManager',
     'EVENT_NEW_GAME',

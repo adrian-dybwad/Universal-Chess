@@ -21,8 +21,9 @@ How a regression manifests:
 """
 
 import sys
+import subprocess
 import threading
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 # Stub the D-Bus and GObject-introspection stacks so the real BleManager module
 # imports on non-hardware machines. These are only used for live BlueZ access,
@@ -123,3 +124,57 @@ def test_start_async_survives_start_exception():
 
     assert not thread.is_alive(), "BLE thread did not finish after start() raised"
     assert fake_loop.run.call_count == 0, "mainloop must not run when start() raises"
+
+
+@patch("universalchess.managers.ble.subprocess.Popen")
+def test_configure_adapter_security_uses_noninteractive_sudo(mock_popen):
+    """Adapter setup must never block behind an invisible sudo password prompt.
+
+    Regression: using plain ``sudo btmgmt`` can hang the BLE startup thread on a
+    board without passwordless sudo or leave root btmgmt children alive.
+    ``sudo -n timeout ... btmgmt`` fails immediately on auth and lets root-owned
+    timeout kill root-owned btmgmt.
+    """
+    proc = MagicMock()
+    proc.communicate.return_value = ("", "")
+    proc.returncode = 0
+    mock_popen.return_value = proc
+
+    _make_manager().configure_adapter_security()
+
+    commands = [call.args[0] for call in mock_popen.call_args_list]
+    assert commands == [
+        ["sudo", "-n", "timeout", "-k", "1s", "5s", "btmgmt", "bondable", "off"],
+        ["sudo", "-n", "timeout", "-k", "1s", "5s", "btmgmt", "le", "on"],
+        ["sudo", "-n", "timeout", "-k", "1s", "5s", "btmgmt", "connectable", "on"],
+    ]
+    assert all(call.kwargs["start_new_session"] is True for call in mock_popen.call_args_list)
+
+
+@patch("universalchess.managers.ble.os.killpg")
+@patch("universalchess.managers.ble.subprocess.Popen")
+def test_bluetooth_management_timeout_kills_process_group(mock_popen, mock_killpg):
+    """Timed-out btmgmt commands must not survive as service child processes.
+
+    Regression: ``subprocess.run(timeout=...)`` can time out the sudo parent
+    while leaving the btmgmt child alive. The board then appears frozen because
+    stale management commands keep holding BlueZ resources.
+    """
+    proc = MagicMock()
+    proc.pid = 1234
+    proc.communicate.side_effect = [
+        subprocess.TimeoutExpired(["sudo", "-n", "btmgmt", "le", "on"], 5.0),
+        ("partial stdout", "partial stderr"),
+    ]
+    mock_popen.return_value = proc
+
+    try:
+        BleManager._run_bluetooth_management_command(
+            ["sudo", "-n", "btmgmt", "le", "on"], timeout_seconds=5.0)
+    except subprocess.TimeoutExpired as exc:
+        assert exc.output == "partial stdout"
+        assert exc.stderr == "partial stderr"
+    else:
+        raise AssertionError("expected btmgmt timeout")
+
+    mock_killpg.assert_called_once_with(1234, 9)

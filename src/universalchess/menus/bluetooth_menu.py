@@ -109,9 +109,11 @@ def handle_bluetooth_menu(
 def _has_friendly_name(device: dict) -> bool:
     """Return True if a discovered device advertises a real, selectable name.
 
-    Filters out the placeholders bluetoothctl uses for nameless devices: the
-    literal "Unknown", the raw address, or the address with ':' replaced by '-'.
-    A real keyboard advertises a proper name and therefore passes.
+    Filters out the placeholders used for nameless devices: the literal
+    "Unknown", the raw address, or the address with ':' replaced by '-'. A device
+    often appears mid-discovery with an address-only name before BlueZ resolves
+    the friendly name; this hides it until a real name arrives. A real keyboard
+    advertises a proper name and therefore passes.
     """
     name = (device.get("name") or "").strip()
     address = (device.get("address") or "").strip()
@@ -142,67 +144,74 @@ _KEYBOARD_DEVICE_ENTRY_MAX_HEIGHT = 56
 
 
 def handle_keyboard_pairing_menu(
-    scan_devices: Callable[[], List[dict]],
+    scan_stream: Callable[[Callable[[dict], None], threading.Event], None],
     pair_keyboard: Callable[[str], bool],
     show_menu: Callable[[list], str],
     is_break_result_fn: Callable[[str], bool],
     board,
     log,
-    continue_scan_devices: Optional[Callable[[], List[dict]]] = None,
     refresh_menu: Optional[Callable[[], None]] = None,
 ):
-    """Scan for Bluetooth devices and pair the selected one as a keyboard.
+    """Continuously scan for Bluetooth keyboards and pair the selected one.
 
-    Mirrors the WiFi scan/connect flow: show a scanning splash, list the
-    discovered devices, and on selection run pair/trust/connect. The passkey (if
-    the keyboard requires one) is displayed automatically by the pairing agent.
+    Discovery runs for the whole lifetime of this screen rather than for a fixed
+    window: real keyboards answer a BR/EDR inquiry on their own schedule and some
+    advertise only intermittently, so a keyboard that responds late still appears
+    as soon as it is seen. The list screen is shown immediately with a
+    "Scanning..." row and repopulates as keyboards arrive. The passkey (if the
+    keyboard requires one) is displayed automatically by the pairing agent.
 
     Args:
-        scan_devices: Returns a list of {'address', 'name'} dicts.
+        scan_stream: Runs continuous discovery, calling its ``on_found`` argument
+            with a {'address', 'name'} dict for each keyboard the first time it
+            is seen and again when its resolved name changes, until the passed
+            stop Event is set.
         pair_keyboard: Pairs/trusts/connects the given address; returns success.
         show_menu: Renders an IconMenuEntry list and returns the selected key.
         is_break_result_fn: Detects break results from show_menu.
         board: Board module (for display access).
         log: Logger.
-        continue_scan_devices: Optional supplemental scanner used after the
-            initial list is shown. New devices are merged into the list.
-        refresh_menu: Optional callback that asks the active menu to rebuild
-            after the supplemental scanner finds another keyboard.
+        refresh_menu: Optional callback that asks the active menu to rebuild when
+            a keyboard arrives, so the list updates without user input.
     """
-    log.info("[BTKeyboard] Starting device scan for pairing...")
-    _show_splash(board, "Scanning for\nkeyboards...")
-    devices = scan_devices()
-    log.info(f"[BTKeyboard] Scan found {len(devices)} device(s)")
-
-    devices_by_address = {
-        str(d.get("address")): d
-        for d in devices
-        if d.get("address")
-    }
+    log.info("[BTKeyboard] Starting continuous keyboard discovery...")
+    devices_by_address: dict = {}
     devices_lock = threading.Lock()
     stop_scan = threading.Event()
+    scan_ended = threading.Event()
 
-    # Only show devices that advertise a real, human-readable name. bluetoothctl
-    # substitutes a MAC-derived placeholder ("49-71-2D-..." or the raw address)
-    # for nameless beacons; listing those would bury a real keyboard among dozens
-    # of anonymous entries (and past the display cap).
+    # Only show devices that advertise a real, human-readable name; a keyboard
+    # often appears mid-discovery with an address-only name before BlueZ resolves
+    # the friendly name, and listing those would bury a real keyboard among
+    # anonymous entries (and past the display cap).
     def current_named_devices() -> List[dict]:
         with devices_lock:
             return [d for d in devices_by_address.values() if _has_friendly_name(d)]
 
-    def merge_devices(new_devices: List[dict]) -> int:
-        added = 0
+    def on_found(device: dict) -> None:
+        address = device.get("address")
+        if not address or not _has_friendly_name(device):
+            return
         with devices_lock:
-            for device in new_devices:
-                address = device.get("address")
-                if not address or not _has_friendly_name(device):
-                    continue
-                if address in devices_by_address:
-                    devices_by_address[address].update(device)
-                    continue
+            existing = devices_by_address.get(address)
+            if existing is not None:
+                if existing.get("name") == device.get("name"):
+                    return
+                existing.update(device)
+            else:
                 devices_by_address[address] = device
-                added += 1
-        return added
+        if not stop_scan.is_set() and refresh_menu is not None:
+            refresh_menu()
+
+    def run_scan() -> None:
+        try:
+            scan_stream(on_found, stop_scan)
+        except Exception as e:
+            log.error(f"[BTKeyboard] Keyboard discovery failed: {e}")
+        finally:
+            scan_ended.set()
+            if not stop_scan.is_set() and refresh_menu is not None:
+                refresh_menu()
 
     def build_entries(named_devices: List[dict]) -> List[IconMenuEntry]:
         entries = []
@@ -215,50 +224,46 @@ def handle_keyboard_pairing_menu(
                               height_ratio=1.0,
                               max_height=_KEYBOARD_DEVICE_ENTRY_MAX_HEIGHT)
             )
+        if not entries:
+            still_scanning = not scan_ended.is_set()
+            entries.append(
+                IconMenuEntry(
+                    key="Scanning" if still_scanning else "NoDevices",
+                    label="Scanning..." if still_scanning else "No devices",
+                    icon_name="bluetooth",
+                    enabled=True,
+                    selectable=False,
+                    font_size=14,
+                    height_ratio=1.0,
+                    max_height=_KEYBOARD_DEVICE_ENTRY_MAX_HEIGHT,
+                )
+            )
         return entries
 
-    def supplemental_scan() -> None:
-        if continue_scan_devices is None:
-            return
-        try:
-            more_devices = continue_scan_devices()
-        except Exception as e:
-            log.error(f"[BTKeyboard] Supplemental keyboard scan failed: {e}")
-            return
-        if stop_scan.is_set():
-            return
-        added = merge_devices(more_devices)
-        if added:
-            log.info(f"[BTKeyboard] Supplemental scan added {added} keyboard device(s)")
-            if refresh_menu is not None:
-                refresh_menu()
-
-    scan_thread = None
-    if continue_scan_devices is not None:
-        scan_thread = threading.Thread(target=supplemental_scan, daemon=True)
-        scan_thread.start()
-
-    named = current_named_devices()
-    if not named:
-        stop_scan.set()
-        _show_splash(board, "No devices found", hold_seconds=2.0)
-        return
+    scan_thread = threading.Thread(target=run_scan, daemon=True)
+    scan_thread.start()
 
     try:
         while True:
-            named = current_named_devices()
-            result = show_menu(build_entries(named))
+            result = show_menu(build_entries(current_named_devices()))
             if result == "REFRESH":
                 continue
             if is_break_result_fn(result):
                 return result
             if result in ["BACK", "SHUTDOWN", "HELP"]:
                 return
+            if result in ["Scanning", "NoDevices"]:
+                continue
             break
     finally:
         stop_scan.set()
 
-    selected = next((d for d in named if d["address"] == result), None)
+    # Wind down discovery before pairing: an active inquiry keeps the controller
+    # busy, which makes the pairing connection time out.
+    scan_thread.join(timeout=6.0)
+
+    selected = next(
+        (d for d in current_named_devices() if d["address"] == result), None)
     if not selected:
         return
 

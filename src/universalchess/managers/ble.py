@@ -39,6 +39,8 @@ Usage:
     manager.start()
 """
 
+import os
+import signal
 import subprocess
 import threading
 import dbus
@@ -273,18 +275,52 @@ class BleManager:
                 return o
         return None
     
+    @staticmethod
+    def _run_bluetooth_management_command(cmd, timeout_seconds: float = 5.0):
+        """Run a btmgmt command and kill its whole process group on timeout.
+
+        ``sudo btmgmt`` can leave the child ``btmgmt`` process running after
+        ``subprocess.run(..., timeout=...)`` times out. Starting a new session
+        lets timeout cleanup kill both sudo and btmgmt so BLE startup cannot
+        leave management commands stuck behind the service.
+        """
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            stdout, stderr = process.communicate(timeout=timeout_seconds)
+            return subprocess.CompletedProcess(
+                cmd, process.returncode, stdout=stdout, stderr=stderr)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            stdout, stderr = process.communicate()
+            raise subprocess.TimeoutExpired(
+                cmd, timeout_seconds, output=stdout, stderr=stderr)
+
     def configure_adapter_security(self):
         """Configure Bluetooth adapter for BLE operation without pairing."""
         commands = [
-            ['sudo', 'btmgmt', 'bondable', 'off'],
-            ['sudo', 'btmgmt', 'le', 'on'],
-            ['sudo', 'btmgmt', 'connectable', 'on'],
+            ['sudo', '-n', 'timeout', '-k', '1s', '5s',
+             'btmgmt', 'bondable', 'off'],
+            ['sudo', '-n', 'timeout', '-k', '1s', '5s',
+             'btmgmt', 'le', 'on'],
+            ['sudo', '-n', 'timeout', '-k', '1s', '5s',
+             'btmgmt', 'connectable', 'on'],
         ]
         
         for cmd in commands:
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-                cmd_str = ' '.join(cmd[1:])
+                result = self._run_bluetooth_management_command(
+                    cmd, timeout_seconds=7.0)
+                btmgmt_index = cmd.index('btmgmt')
+                cmd_str = ' '.join(cmd[btmgmt_index:])
                 if result.returncode == 0:
                     stdout = result.stdout.strip()
                     if stdout:
