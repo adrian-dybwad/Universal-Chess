@@ -38,10 +38,10 @@ def test_load_reads_stored_chess_sprites(monkeypatch):
     # always re-read "default" and the user's choice is silently ignored.
     def fake_load_section(section, defaults):
         data = dict(defaults)
-        data["chess_sprites"] = "default_dithered"
+        data["chess_sprites"] = "staunton"
         return data
 
     monkeypatch.setattr(settings_mod, "load_section", fake_load_section)
     settings = GameSettings.load("game", {"chess_sprites": "default"})
-    assert settings.chess_sprites == "default_dithered"
-    assert settings.to_dict()["chess_sprites"] == "default_dithered"
+    assert settings.chess_sprites == "staunton"
+    assert settings.to_dict()["chess_sprites"] == "staunton"
