@@ -321,5 +321,161 @@ class TestPairKeyboard(unittest.TestCase):
         manager._set_trusted.assert_not_called()
 
 
+class TestListPairedDevices(unittest.TestCase):
+    """`list_paired_devices` reduces the BlueZ object tree to the paired
+    devices belonging to this adapter, for the on-board management screen.
+
+    Unlike discovery this needs NO inquiry: paired devices persist in the
+    object tree, so the screen reads the cached objects directly.
+    """
+
+    def _manager(self, objects):
+        manager = BluezPairingManager()
+        manager._managed_objects = MagicMock(return_value=objects)
+        return manager
+
+    def test_returns_only_paired_devices_under_this_adapter(self):
+        """Only Device1 objects under the adapter whose Paired flag is set
+        are listed; unpaired devices, other adapters' devices, and the
+        adapter object itself are excluded.
+
+        Regression manifestation: dropping the Paired filter lists nearby
+        unpaired devices in the "paired devices" screen; dropping the adapter
+        prefix filter leaks a second adapter's devices into the list.
+        """
+        manager = self._manager({
+            "/org/bluez/hci0/dev_AA_AA_AA_AA_AA_AA": {
+                "org.bluez.Device1": {"Address": "AA:AA:AA:AA:AA:AA",
+                                      "Name": "Zed Keyboard",
+                                      "Paired": True, "Connected": True},
+            },
+            "/org/bluez/hci0/dev_BB_BB_BB_BB_BB_BB": {
+                "org.bluez.Device1": {"Address": "BB:BB:BB:BB:BB:BB",
+                                      "Name": "Alpha Mouse",
+                                      "Paired": True, "Connected": False},
+            },
+            "/org/bluez/hci0/dev_CC_CC_CC_CC_CC_CC": {
+                "org.bluez.Device1": {"Address": "CC:CC:CC:CC:CC:CC",
+                                      "Name": "Unpaired Phone", "Paired": False},
+            },
+            "/org/bluez/hci1/dev_DD_DD_DD_DD_DD_DD": {
+                "org.bluez.Device1": {"Address": "DD:DD:DD:DD:DD:DD",
+                                      "Name": "Other Adapter", "Paired": True},
+            },
+            "/org/bluez/hci0": {"org.bluez.Adapter1": {}},
+        })
+
+        devices = manager.list_paired_devices()
+
+        # Sorted by name (case-insensitive), so Alpha precedes Zed.
+        assert devices == [
+            {"address": "BB:BB:BB:BB:BB:BB", "name": "Alpha Mouse",
+             "connected": False},
+            {"address": "AA:AA:AA:AA:AA:AA", "name": "Zed Keyboard",
+             "connected": True},
+        ], f"Filtered/sorted paired list wrong; got {devices}"
+
+    def test_name_falls_back_to_alias_then_address(self):
+        """A paired device with no Name uses Alias; with neither, the address.
+
+        Regression manifestation: a nameless paired device would render a
+        blank, untappable row if the fallback chain were dropped.
+        """
+        manager = self._manager({
+            "/org/bluez/hci0/dev_AA_AA_AA_AA_AA_AA": {
+                "org.bluez.Device1": {"Address": "AA:AA:AA:AA:AA:AA",
+                                      "Alias": "Aliased KB", "Paired": True},
+            },
+            "/org/bluez/hci0/dev_BB_BB_BB_BB_BB_BB": {
+                "org.bluez.Device1": {"Address": "BB:BB:BB:BB:BB:BB",
+                                      "Paired": True},
+            },
+        })
+
+        by_addr = {d["address"]: d for d in manager.list_paired_devices()}
+        assert by_addr["AA:AA:AA:AA:AA:AA"]["name"] == "Aliased KB"
+        assert by_addr["BB:BB:BB:BB:BB:BB"]["name"] == "BB:BB:BB:BB:BB:BB"
+
+    def test_connected_flag_defaults_false_when_absent(self):
+        """A paired device whose Connected property is absent reports
+        connected=False rather than raising or omitting the key.
+
+        Regression manifestation: the detail screen keys its Connect/Disconnect
+        action off this flag; a missing key must read as "not connected", not
+        crash the row build.
+        """
+        manager = self._manager({
+            "/org/bluez/hci0/dev_AA_AA_AA_AA_AA_AA": {
+                "org.bluez.Device1": {"Address": "AA:AA:AA:AA:AA:AA",
+                                      "Name": "KB", "Paired": True},
+            },
+        })
+        assert manager.list_paired_devices()[0]["connected"] is False
+
+    def test_empty_when_no_paired_devices(self):
+        """No paired devices yields an empty list (the screen shows its
+        own 'No devices' row, so the manager must not fabricate one)."""
+        manager = self._manager({"/org/bluez/hci0": {"org.bluez.Adapter1": {}}})
+        assert manager.list_paired_devices() == []
+
+
+class TestPairedDeviceActions(unittest.TestCase):
+    """connect / disconnect / forget validate the address and report a
+    boolean outcome the UI can toast. The dbus action itself lives in thin
+    primitives (mocked here), matching the rest of this module."""
+
+    def test_connect_validates_mac(self):
+        with self.assertRaises(ValueError):
+            BluezPairingManager().connect_device("not-a-mac")
+
+    def test_disconnect_validates_mac(self):
+        with self.assertRaises(ValueError):
+            BluezPairingManager().disconnect_device("not-a-mac")
+
+    def test_forget_validates_mac(self):
+        with self.assertRaises(ValueError):
+            BluezPairingManager().forget_device("not-a-mac")
+
+    def test_connect_delegates_and_returns_outcome(self):
+        """connect_device returns whatever the dbus primitive reports.
+
+        Regression manifestation: swallowing the primitive's result would make
+        the UI always toast success even when Connect() failed.
+        """
+        manager = BluezPairingManager()
+        manager._do_connect = MagicMock(return_value=True)
+        assert manager.connect_device(ADDRESS) is True
+        manager._do_connect.assert_called_once()
+        assert manager._do_connect.call_args[0][0] == ADDRESS
+
+        manager._do_connect = MagicMock(return_value=False)
+        assert manager.connect_device(ADDRESS) is False
+
+    def test_disconnect_delegates_and_returns_outcome(self):
+        manager = BluezPairingManager()
+        manager._do_disconnect = MagicMock(return_value=True)
+        assert manager.disconnect_device(ADDRESS) is True
+        manager._do_disconnect.assert_called_once()
+        assert manager._do_disconnect.call_args[0][0] == ADDRESS
+
+        manager._do_disconnect = MagicMock(return_value=False)
+        assert manager.disconnect_device(ADDRESS) is False
+
+    def test_forget_delegates_to_remove_device(self):
+        """forget_device removes the bond via _remove_device and returns its
+        boolean outcome so the UI knows whether the device is gone.
+
+        Regression manifestation: returning success unconditionally would leave
+        a still-bonded device on screen after a failed removal.
+        """
+        manager = BluezPairingManager()
+        manager._remove_device = MagicMock(return_value=True)
+        assert manager.forget_device(ADDRESS) is True
+        manager._remove_device.assert_called_once_with(ADDRESS)
+
+        manager._remove_device = MagicMock(return_value=False)
+        assert manager.forget_device(ADDRESS) is False
+
+
 if __name__ == "__main__":
     unittest.main()

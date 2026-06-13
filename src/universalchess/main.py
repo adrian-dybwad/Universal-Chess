@@ -58,6 +58,7 @@ from universalchess.menus import (
     handle_wifi_scan_menu,
     handle_bluetooth_menu,
     handle_keyboard_pairing_menu,
+    handle_paired_devices_menu,
     handle_accounts_menu,
     mask_token,
     handle_about_menu,
@@ -518,6 +519,13 @@ def _clear_active_keyboard_widget() -> None:
 bt_keyboard_manager = None  # BluetoothKeyboardManager, started in main()
 _active_passkey_widget = None  # Modal passkey widget shown during keyboard pairing
 
+# Incoming-pairing confirmation state. The modal overlay shows the numeric code
+# and Pair/Reject options when a phone/app pairs to the board; the lock ensures
+# only one confirmation runs at a time.
+_active_pairing_confirm = None
+_pairing_confirm_lock = threading.Lock()
+PAIRING_CONFIRM_TIMEOUT_SECONDS = 30.0
+
 
 def _get_keyboard_text_sink():
     """Return the active text-entry widget for Bluetooth-keyboard characters.
@@ -560,6 +568,85 @@ def _on_display_passkey(passkey) -> None:
             _active_passkey_widget.set_passkey(passkey)
     except Exception as e:  # noqa: BLE001 - display must never break pairing
         log.error(f"[App] Failed to update passkey display: {e}")
+
+
+def _confirm_pairing_on_board(passkey) -> bool:
+    """Show a modal Pair/Reject prompt for an incoming Bluetooth pairing.
+
+    Invoked by the BlueZ pairing agent (on a worker thread) when a phone or chess
+    app pairs to the board. Displays the numeric-comparison ``passkey`` (None for
+    just-works pairing) and blocks until the user accepts on the board, declines,
+    or ``PAIRING_CONFIRM_TIMEOUT_SECONDS`` elapses. Returns True only on an
+    explicit Pair selection, so an unattended board or an unknown device is
+    refused rather than paired silently.
+
+    Only one confirmation runs at a time; a second concurrent request is refused
+    rather than clobbering the first prompt. Keys reach the overlay via the
+    high-priority hook in ``key_callback`` regardless of menu/game state.
+    """
+    global _active_pairing_confirm
+
+    display_mgr = getattr(board, "display_manager", None)
+    if display_mgr is None:
+        return False  # No display to ask on - refuse.
+
+    if not _pairing_confirm_lock.acquire(blocking=False):
+        log.warning("[App] Pairing confirm already active; rejecting new request")
+        return False
+    try:
+        from universalchess.menus.pairing_confirm import (
+            build_pairing_confirm_entries, is_pairing_accepted, REJECT_KEY)
+
+        def make_entry(key, label, icon_name, selectable):
+            return IconMenuEntry(key=key, label=label, icon_name=icon_name,
+                                 selectable=selectable)
+
+        entries = build_pairing_confirm_entries(passkey, make_entry)
+        reject_index = next(i for i, entry in enumerate(entries)
+                            if entry.key == REJECT_KEY)
+
+        confirm_menu = IconMenuWidget(
+            0, 0, 128, 296, display_mgr.update,
+            entries=entries, selected_index=reject_index)
+        # Render as a modal overlay so removing it restores whatever screen
+        # (menu or game) was underneath without rebuilding it here.
+        confirm_menu.is_modal = True
+
+        _active_pairing_confirm = confirm_menu
+        display_mgr.add_widget(confirm_menu)
+        # add_widget renders a partial refresh, which draws full-screen content
+        # at low e-paper contrast (the "faded" look). Force a full refresh so the
+        # modal appears crisply over whatever screen was underneath.
+        display_mgr.update(full=True, immediate=True)
+        try:
+            board.beep(board.SOUND_GENERAL)
+        except Exception as e:  # noqa: BLE001 - audio is non-essential
+            log.debug(f"[App] Pairing confirm beep failed: {e}")
+
+        timer = threading.Timer(
+            PAIRING_CONFIRM_TIMEOUT_SECONDS,
+            lambda: confirm_menu.cancel_selection("TIMEOUT"))
+        timer.daemon = True
+        timer.start()
+        try:
+            result = confirm_menu.wait_for_selection(initial_index=reject_index)
+        finally:
+            timer.cancel()
+
+        accepted = is_pairing_accepted(result)
+        log.info(f"[App] Pairing confirm result={result} accepted={accepted}")
+        return accepted
+    finally:
+        if _active_pairing_confirm is not None:
+            try:
+                display_mgr.remove_widget(_active_pairing_confirm)
+                # Match the show path with a full refresh so the restored
+                # screen underneath redraws crisply rather than faded.
+                display_mgr.update(full=True, immediate=True)
+            except Exception as e:  # noqa: BLE001
+                log.error(f"[App] Failed to remove pairing confirm widget: {e}")
+            _active_pairing_confirm = None
+        _pairing_confirm_lock.release()
 
 
 # About widget state (for support QR screen)
@@ -2166,6 +2253,30 @@ def _handle_pair_keyboard():
     )
 
 
+def _handle_manage_devices():
+    """List paired Bluetooth devices and connect/disconnect/forget them.
+
+    Opens the management screen (Settings > Bluetooth > Devices). Paired devices
+    persist in the BlueZ object tree, so the list is read without an inquiry;
+    selecting a device shows its connection status and the relevant actions.
+    """
+    global bluez_pairing_manager
+    if bluez_pairing_manager is None:
+        from universalchess.managers import BluezPairingManager
+        bluez_pairing_manager = BluezPairingManager()
+
+    return handle_paired_devices_menu(
+        list_devices=bluez_pairing_manager.list_paired_devices,
+        connect_device=bluez_pairing_manager.connect_device,
+        disconnect_device=bluez_pairing_manager.disconnect_device,
+        forget_device=bluez_pairing_manager.forget_device,
+        show_menu=_show_menu,
+        is_break_result_fn=is_break_result,
+        board=board,
+        log=log,
+    )
+
+
 def _get_installed_version() -> str:
     """Get the installed Universal Chess version from dpkg.
     
@@ -2284,6 +2395,7 @@ def _handle_system_menu():
             board=board,
             log=log,
             on_pair_keyboard=_handle_pair_keyboard if rfcomm_manager else None,
+            on_manage_devices=_handle_manage_devices,
         ),
         handle_chromecast_menu=lambda: handle_chromecast_menu(
             show_menu=_show_menu,
@@ -3026,6 +3138,14 @@ def key_callback(key_id):
         if handled:
             _reset_unhandled_key_count()
             return
+
+    # Priority 3: Incoming-pairing confirmation overlay consumes all keys until
+    # the user accepts or rejects, so a pairing cannot be confirmed by accident
+    # nor leak keys to the menu/game underneath.
+    if _active_pairing_confirm is not None:
+        _active_pairing_confirm.handle_key(key_id)
+        _reset_unhandled_key_count()
+        return
     
     # Route based on app state
     if app_state == AppState.MENU or app_state == AppState.SETTINGS:
@@ -3456,7 +3576,8 @@ def main():
                 on_connected=_on_ble_connected,
                 on_disconnected=_on_ble_disconnected,
                 relay_mode=relay_mode,
-                on_display_passkey=_on_display_passkey
+                on_display_passkey=_on_display_passkey,
+                on_confirm_pairing=_confirm_pairing_on_board
             )
             log.info("[Main] BleManager created")
             

@@ -146,7 +146,8 @@ class BleManager:
                  on_disconnected: Callable[[], None] = None,
                  relay_mode: bool = False,
                  on_relay_data: Callable[[bytes], None] = None,
-                 on_display_passkey: Callable[[Optional[str]], None] = None):
+                 on_display_passkey: Callable[[Optional[str]], None] = None,
+                 on_confirm_pairing: Callable[[Optional[str]], bool] = None):
         """Initialize the BLE manager.
         
         Args:
@@ -160,6 +161,11 @@ class BleManager:
                 pairing agent must display a passkey (e.g. for a Bluetooth
                 keyboard). Called with the 6-digit string to show, or None to
                 clear the display when pairing finishes or is cancelled.
+            on_confirm_pairing: Callback(passkey: Optional[str]) -> bool invoked
+                when a phone/app pairs to the board (numeric comparison or
+                just-works). Must show the code on the board and block until the
+                user accepts (return True) or declines (return False). When None,
+                such pairings are rejected so no device can pair unprompted.
         """
         self.device_name = device_name
         self._on_data_received = on_data_received
@@ -168,6 +174,7 @@ class BleManager:
         self._relay_mode = relay_mode
         self._on_relay_data = on_relay_data
         self._on_display_passkey = on_display_passkey
+        self._on_confirm_pairing = on_confirm_pairing
         
         # Connection state
         self.connected = False
@@ -539,10 +546,15 @@ class BleManager:
 
         KeyboardDisplay is required so BlueZ will ask us to *display* a passkey
         when a Bluetooth keyboard pairs (the user then types it on the keyboard).
-        Chess-app pairings (numeric comparison / Just Works) are still
-        auto-accepted by the agent, preserving prior behaviour.
+        Chess-app/phone pairings (numeric comparison / just-works) are gated by
+        ``on_confirm_pairing``: the agent shows the code on the board and only
+        completes the bond after the user accepts on the board.
         """
-        self._agent = _PairingAgent(self._bus, on_display_passkey=self._on_display_passkey)
+        self._agent = _PairingAgent(
+            self._bus,
+            on_display_passkey=self._on_display_passkey,
+            on_confirm_pairing=self._on_confirm_pairing,
+        )
         
         agent_manager = dbus.Interface(
             self._bus.get_object(BLUEZ_SERVICE_NAME, '/org/bluez'),
@@ -647,26 +659,59 @@ class BleManager:
 # Internal D-Bus Classes
 # ============================================================================
 
+class _Rejected(dbus.DBusException):
+    """Raised/returned to BlueZ to refuse a pairing the user did not approve."""
+    _dbus_error_name = "org.bluez.Error.Rejected"
+
+
 class _PairingAgent(dbus.service.Object):
     """Bluetooth pairing agent for the board.
 
     Uses ``KeyboardDisplay`` capability so BlueZ will request a passkey to be
     *displayed* when a Bluetooth keyboard pairs; the user types the displayed
-    passkey on the keyboard to complete pairing. All other pairing requests
-    (numeric comparison from phones, service authorization from chess apps) are
-    auto-accepted, preserving the previous no-interaction behaviour.
+    passkey on the keyboard to complete pairing.
 
-    The displayed passkey is forwarded to ``on_display_passkey(text)`` and
-    cleared via ``on_display_passkey(None)`` when pairing ends or is cancelled.
+    Phone/app pairings that use numeric comparison (``RequestConfirmation``) or
+    just-works (``RequestAuthorization``) are gated by ``on_confirm_pairing``:
+    the board shows the code (if any) and the user must accept on the board
+    before the bond completes. These two methods reply asynchronously so the
+    GLib main loop stays responsive while the user decides; a refusal or any
+    failure returns ``org.bluez.Error.Rejected`` so an unknown device can never
+    pair unprompted.
+
+    The displayed keyboard passkey is forwarded to ``on_display_passkey(text)``
+    and cleared via ``on_display_passkey(None)`` when pairing ends or is
+    cancelled.
     """
 
     AGENT_PATH = "/org/bluez/universal_agent"
     CAPABILITY = "KeyboardDisplay"
 
-    def __init__(self, bus, on_display_passkey=None):
+    def __init__(self, bus, on_display_passkey=None, on_confirm_pairing=None):
         self.bus = bus
         self._on_display_passkey = on_display_passkey
+        self._on_confirm_pairing = on_confirm_pairing
         dbus.service.Object.__init__(self, bus, self.AGENT_PATH)
+
+    def _confirm_async(self, passkey, reply, error):
+        """Run the on-board Pair/Reject prompt off the GLib loop, then reply.
+
+        The confirmation blocks until the user decides (or a timeout elapses),
+        so it must not run on the D-Bus dispatch thread. ``run_pairing_confirmation``
+        translates the user's choice into the async ``reply``/``error`` callbacks.
+        """
+        from universalchess.menus.pairing_confirm import run_pairing_confirmation
+
+        def worker():
+            run_pairing_confirmation(
+                self._on_confirm_pairing, passkey,
+                accept=reply,
+                reject=lambda: error(_Rejected("Pairing rejected on board")),
+                log=log,
+            )
+
+        threading.Thread(target=worker, daemon=True,
+                         name="bt-pair-confirm").start()
 
     def _show_passkey(self, passkey) -> None:
         """Forward a passkey to the display callback, formatted for the user."""
@@ -722,15 +767,25 @@ class _PairingAgent(dbus.service.Object):
             except Exception as e:  # noqa: BLE001
                 log.error(f"[BleManager] Failed to display PIN: {e}")
 
-    @dbus.service.method(AGENT_IFACE, in_signature='ou', out_signature='')
-    def RequestConfirmation(self, device, passkey):
-        # Numeric comparison: auto-accept (return without error).
-        log.info(f"[BleManager] RequestConfirmation for {device}: {int(passkey):06d}")
+    @dbus.service.method(AGENT_IFACE, in_signature='ou', out_signature='',
+                         async_callbacks=('reply', 'error'))
+    def RequestConfirmation(self, device, passkey, reply, error):
+        # Numeric comparison (e.g. iPhone): show the 6-digit code on the board
+        # and require the user to accept before the bond completes.
+        from universalchess.managers.bt_keyboard import format_passkey
+        code = format_passkey(int(passkey))
+        log.info(f"[BleManager] RequestConfirmation for {device}: {code} "
+                 f"- awaiting on-board confirmation")
+        self._confirm_async(code, reply, error)
 
-    @dbus.service.method(AGENT_IFACE, in_signature='o', out_signature='')
-    def RequestAuthorization(self, device):
-        # Auto-authorize incoming pairing.
-        log.info(f"[BleManager] RequestAuthorization for {device}")
+    @dbus.service.method(AGENT_IFACE, in_signature='o', out_signature='',
+                         async_callbacks=('reply', 'error'))
+    def RequestAuthorization(self, device, reply, error):
+        # Just-works pairing (no code): still require explicit acceptance on the
+        # board so an unknown device cannot pair unprompted.
+        log.info(f"[BleManager] RequestAuthorization for {device} "
+                 f"- awaiting on-board confirmation")
+        self._confirm_async(None, reply, error)
 
     @dbus.service.method(AGENT_IFACE, in_signature='', out_signature='')
     def Cancel(self):

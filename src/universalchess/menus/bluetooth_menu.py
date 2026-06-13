@@ -20,6 +20,7 @@ def handle_bluetooth_menu(
     board,
     log,
     on_pair_keyboard: Optional[Callable[[], None]] = None,
+    on_manage_devices: Optional[Callable[[], object]] = None,
 ) -> MenuSelection:
     """Handle Bluetooth settings submenu (status + enable/disable).
 
@@ -27,6 +28,9 @@ def handle_bluetooth_menu(
         on_pair_keyboard: Optional callable that runs the keyboard pairing flow
             (scan + select + pair). When provided, a "Pair Keyboard" entry is
             shown.
+        on_manage_devices: Optional callable that opens the paired-device
+            management screen (list + connect/disconnect/forget). When provided,
+            a "Devices" entry is shown.
     """
 
     def build_entries():
@@ -74,6 +78,20 @@ def handle_bluetooth_menu(
             ),
         ]
 
+        if on_manage_devices is not None:
+            entries.append(
+                IconMenuEntry(
+                    key="ManageDevices",
+                    label="Devices",
+                    icon_name="bluetooth",
+                    enabled=is_enabled,
+                    selectable=is_enabled,
+                    height_ratio=0.8,
+                    layout="horizontal",
+                    font_size=14,
+                )
+            )
+
         if on_pair_keyboard is not None:
             entries.append(
                 IconMenuEntry(
@@ -99,6 +117,12 @@ def handle_bluetooth_menu(
                 bluetooth_status_module.disable_bluetooth()
             else:
                 bluetooth_status_module.enable_bluetooth()
+        elif result.key == "ManageDevices" and on_manage_devices is not None:
+            manage_result = on_manage_devices()
+            # Propagate break/exit results (a client connecting, a piece moving)
+            # so the menu stack unwinds instead of trapping the user here.
+            if manage_result is not None:
+                return manage_result
         elif result.key == "PairKeyboard" and on_pair_keyboard is not None:
             on_pair_keyboard()
         return None
@@ -125,12 +149,20 @@ def _has_friendly_name(device: dict) -> bool:
 
 
 def _show_splash(board, message: str, hold_seconds: float = 0.0) -> None:
-    """Show a full-screen status message, optionally holding it briefly."""
+    """Show a full-screen status message, optionally holding it briefly.
+
+    Forces a full e-paper refresh: ``add_widget`` schedules a partial refresh,
+    which renders full-screen content at low contrast (the "faded/unreadable"
+    look) when it draws over the menu that was underneath. A full refresh draws
+    the message crisply. The brief flash is the correct trade for legibility on
+    a transient status screen.
+    """
     board.display_manager.clear_widgets(addStatusBar=False)
-    promise = board.display_manager.add_widget(
+    board.display_manager.add_widget(
         SplashScreen(board.display_manager.update, message=message,
                      leave_room_for_status_bar=False)
     )
+    promise = board.display_manager.update(full=True, immediate=True)
     if promise:
         try:
             promise.result(timeout=2.0)
@@ -141,6 +173,171 @@ def _show_splash(board, message: str, hold_seconds: float = 0.0) -> None:
 
 
 _KEYBOARD_DEVICE_ENTRY_MAX_HEIGHT = 56
+_PAIRED_DEVICE_ENTRY_MAX_HEIGHT = 56
+# Cap on rows shown in the paired-device list; matches the keyboard list so the
+# two BT screens scroll/paginate identically.
+_PAIRED_DEVICE_LIST_LIMIT = 10
+_DEVICE_LABEL_MAX_CHARS = 18
+
+
+def _build_paired_list_entries(devices: List[dict]) -> List[IconMenuEntry]:
+    """Build the paired-device list rows (one selectable row per device).
+
+    Falls back to a single non-selectable 'No devices' row when nothing is
+    paired, so the screen is never blank and the user can still back out.
+    """
+    entries: List[IconMenuEntry] = []
+    for dev in devices[:_PAIRED_DEVICE_LIST_LIMIT]:
+        name = str(dev.get("name") or dev.get("address") or "")
+        label = name[:_DEVICE_LABEL_MAX_CHARS]
+        entries.append(
+            IconMenuEntry(key=dev["address"], label=label, icon_name="bluetooth",
+                          enabled=True, font_size=14, height_ratio=1.0,
+                          max_height=_PAIRED_DEVICE_ENTRY_MAX_HEIGHT)
+        )
+    if not entries:
+        entries.append(
+            IconMenuEntry(key="NoDevices", label="No devices",
+                          icon_name="bluetooth", enabled=True, selectable=False,
+                          font_size=14, height_ratio=1.0,
+                          max_height=_PAIRED_DEVICE_ENTRY_MAX_HEIGHT)
+        )
+    return entries
+
+
+def _build_device_detail_entries(name: str, connected: bool) -> List[IconMenuEntry]:
+    """Build the per-device detail rows: a status header plus the actions.
+
+    The connect/disconnect action is chosen from the current connection state so
+    only the meaningful action is offered (Connect when down, Disconnect when
+    up). Forget is always available.
+    """
+    status_label = f"{name[:_DEVICE_LABEL_MAX_CHARS]}\n" + (
+        "Connected" if connected else "Not connected")
+    entries = [
+        IconMenuEntry(key="Info", label=status_label, icon_name="bluetooth",
+                      enabled=True, selectable=False, height_ratio=1.5,
+                      icon_size=36, layout="vertical", font_size=11,
+                      border_width=1),
+    ]
+    if connected:
+        entries.append(
+            IconMenuEntry(key="Disconnect", label="Disconnect", icon_name="cancel",
+                          enabled=True, selectable=True, height_ratio=0.8,
+                          layout="horizontal", font_size=14))
+    else:
+        entries.append(
+            IconMenuEntry(key="Connect", label="Connect", icon_name="bluetooth",
+                          enabled=True, selectable=True, height_ratio=0.8,
+                          layout="horizontal", font_size=14))
+    entries.append(
+        IconMenuEntry(key="Forget", label="Forget", icon_name="exit",
+                      enabled=True, selectable=True, height_ratio=0.8,
+                      layout="horizontal", font_size=14))
+    return entries
+
+
+def _handle_device_detail(
+    device: dict,
+    connect_device: Callable[[str], bool],
+    disconnect_device: Callable[[str], bool],
+    forget_device: Callable[[str], bool],
+    show_menu: Callable[[list], str],
+    is_break_result_fn: Callable[[str], bool],
+    board,
+    log,
+):
+    """Run the detail screen for one paired device.
+
+    Returns one of:
+        * ``None`` to go back to the list (Back pressed, or device forgotten).
+        * a break result / "SHUTDOWN" / "HELP" to propagate up the menu stack.
+
+    Connection status is re-derived locally after each action so the action row
+    flips between Connect and Disconnect without needing a re-query.
+    """
+    address = device["address"]
+    name = str(device.get("name") or address)
+    connected = bool(device.get("connected", False))
+
+    while True:
+        result = show_menu(_build_device_detail_entries(name, connected))
+        if is_break_result_fn(result):
+            return result
+        if result in ("SHUTDOWN", "HELP"):
+            return result
+        if result == "BACK":
+            return None
+        if result == "Connect":
+            _show_splash(board, f"Connecting\n{name[:14]}...")
+            ok = connect_device(address)
+            _show_splash(board, "Connected" if ok else "Connect failed",
+                         hold_seconds=2.0)
+            connected = ok
+        elif result == "Disconnect":
+            _show_splash(board, f"Disconnecting\n{name[:14]}...")
+            ok = disconnect_device(address)
+            _show_splash(board, "Disconnected" if ok else "Disconnect failed",
+                         hold_seconds=2.0)
+            # A successful disconnect clears the link; a failure leaves it up.
+            connected = not ok
+        elif result == "Forget":
+            _show_splash(board, f"Forgetting\n{name[:14]}...")
+            ok = forget_device(address)
+            _show_splash(board, "Forgotten" if ok else "Forget failed",
+                         hold_seconds=2.0)
+            if ok:
+                return None  # Device is gone; return to the (re-queried) list.
+
+
+def handle_paired_devices_menu(
+    list_devices: Callable[[], List[dict]],
+    connect_device: Callable[[str], bool],
+    disconnect_device: Callable[[str], bool],
+    forget_device: Callable[[str], bool],
+    show_menu: Callable[[list], str],
+    is_break_result_fn: Callable[[str], bool],
+    board,
+    log,
+):
+    """List paired Bluetooth devices and manage the selected one.
+
+    Selecting a device opens a detail screen showing its connection status with
+    Connect/Disconnect and Forget actions. The list is re-queried each time it is
+    shown so a forgotten device disappears and connection-state changes are
+    reflected.
+
+    Args:
+        list_devices: Returns the current paired devices as
+            ``[{"address", "name", "connected"}, ...]``.
+        connect_device/disconnect_device/forget_device: Act on an address and
+            return success.
+        show_menu: Renders an IconMenuEntry list and returns the selected key.
+        is_break_result_fn: Detects break results from show_menu.
+        board: Board module (for splash display access).
+        log: Logger.
+    """
+    while True:
+        devices = list_devices()
+        result = show_menu(_build_paired_list_entries(devices))
+        if is_break_result_fn(result):
+            return result
+        if result in ("BACK", "SHUTDOWN", "HELP"):
+            return result if result in ("SHUTDOWN", "HELP") else None
+        if result == "NoDevices":
+            continue
+
+        selected = next((d for d in devices if d["address"] == result), None)
+        if not selected:
+            continue
+
+        detail_result = _handle_device_detail(
+            selected, connect_device, disconnect_device, forget_device,
+            show_menu, is_break_result_fn, board, log)
+        if detail_result is None:
+            continue  # Back from detail (or forgotten) -> re-list.
+        if is_break_result_fn(detail_result) or detail_result in ("SHUTDOWN", "HELP"):
+            return detail_result
 
 
 def handle_keyboard_pairing_menu(

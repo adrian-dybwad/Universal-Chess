@@ -205,13 +205,21 @@ class BluezPairingManager:
         path = self._device_path(self._adapter_path, address)
         return path in self._managed_objects()
 
-    def _remove_device(self, address: str) -> None:
+    def _remove_device(self, address: str) -> bool:
+        """Remove a device's BlueZ object and bond. Returns success.
+
+        Used both by the pairing flow (which clears a stale bond before a fresh
+        pair and ignores the result) and by :meth:`forget_device` (which reports
+        the result to the UI).
+        """
         import dbus
         path = self._device_path(self._adapter_path, address)
         try:
             self._adapter().RemoveDevice(path)
+            return True
         except dbus.exceptions.DBusException as exc:
             log.debug(f"[BluezPairing] RemoveDevice {address}: {exc}")
+            return False
 
     def _pair(self, address: str, timeout_seconds: float) -> str:
         """Pair a device. Returns "ok", "auth_failed", or "failed"."""
@@ -236,14 +244,38 @@ class BluezPairingManager:
         except dbus.exceptions.DBusException as exc:
             log.warning(f"[BluezPairing] Could not trust {address}: {exc}")
 
-    def _connect(self, address: str, timeout_seconds: float) -> None:
+    def _do_connect(self, address: str, timeout_seconds: float) -> bool:
+        """Connect a device via BlueZ. Returns True on success, False on error.
+
+        Thin dbus primitive shared by the best-effort post-pair connect and the
+        user-initiated :meth:`connect_device`; isolating the dbus call keeps the
+        orchestration unit-testable without a live bus.
+        """
         import dbus
         try:
             self._device(address).Connect(timeout=timeout_seconds)
+            return True
         except dbus.exceptions.DBusException as exc:
-            # Pairing + trust already succeeded; a trusted HID device reconnects
-            # autonomously, so a transient connect error here is not fatal.
-            log.info(f"[BluezPairing] Connect after pair for {address}: {exc}")
+            log.info(
+                f"[BluezPairing] Connect {address}: {exc.get_dbus_name() or exc}")
+            return False
+
+    def _do_disconnect(self, address: str, timeout_seconds: float) -> bool:
+        """Disconnect a device via BlueZ. Returns True on success, False on error."""
+        import dbus
+        try:
+            self._device(address).Disconnect(timeout=timeout_seconds)
+            return True
+        except dbus.exceptions.DBusException as exc:
+            log.info(
+                f"[BluezPairing] Disconnect {address}: {exc.get_dbus_name() or exc}")
+            return False
+
+    def _connect(self, address: str, timeout_seconds: float) -> None:
+        # Best-effort connect after pairing: pairing + trust already succeeded
+        # and a trusted HID device reconnects autonomously, so a transient
+        # failure here is not fatal. The boolean result is intentionally ignored.
+        self._do_connect(address, timeout_seconds)
 
     # ------------------------------------------------------------------
     # Orchestration (unit-testable via the primitives above)
@@ -405,3 +437,59 @@ class BluezPairingManager:
             return True
         log.warning(f"[BluezPairing] {address} not rediscovered after bond clear")
         return False
+
+    # ------------------------------------------------------------------
+    # Paired-device management (list / connect / disconnect / forget)
+    # ------------------------------------------------------------------
+    def list_paired_devices(self) -> List[Dict[str, object]]:
+        """List paired devices belonging to this adapter for the management UI.
+
+        Each entry is ``{"address", "name", "connected"}``. Reads the cached
+        BlueZ object tree directly -- paired devices persist there, so no inquiry
+        is needed. Filters to ``Device1`` objects under this adapter whose
+        ``Paired`` flag is set, resolves a display name (Name, then Alias, then
+        the address for a nameless device), and sorts by name so the row order is
+        stable between polls (the raw ObjectManager order is volatile and would
+        shift rows under the user's selection).
+        """
+        prefix = self._adapter_path + "/dev_"
+        devices: List[Dict[str, object]] = []
+        for path, interfaces in self._managed_objects().items():
+            if not path.startswith(prefix):
+                continue
+            props = interfaces.get(DEVICE_IFACE)
+            if not props or not props.get("Paired"):
+                continue
+            address = str(props.get("Address", ""))
+            if not address:
+                continue
+            name = str(props.get("Name") or props.get("Alias") or address)
+            devices.append({
+                "address": address,
+                "name": name,
+                "connected": bool(props.get("Connected", False)),
+            })
+        devices.sort(key=lambda d: (str(d["name"]).lower(), str(d["address"])))
+        return devices
+
+    def connect_device(self, address: str, timeout_seconds: float = 20.0) -> bool:
+        """Connect an already-paired device. Returns success for the UI to toast."""
+        if not self._validate_mac_address(address):
+            raise ValueError(f"Invalid MAC address format: {address}")
+        return self._do_connect(address, timeout_seconds)
+
+    def disconnect_device(self, address: str, timeout_seconds: float = 20.0) -> bool:
+        """Disconnect a connected device. Returns success for the UI to toast."""
+        if not self._validate_mac_address(address):
+            raise ValueError(f"Invalid MAC address format: {address}")
+        return self._do_disconnect(address, timeout_seconds)
+
+    def forget_device(self, address: str) -> bool:
+        """Remove a device's bond and BlueZ object ('forget'). Returns success.
+
+        After this the device no longer appears in :meth:`list_paired_devices`
+        and must be paired again to reconnect.
+        """
+        if not self._validate_mac_address(address):
+            raise ValueError(f"Invalid MAC address format: {address}")
+        return self._remove_device(address)

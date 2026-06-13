@@ -30,7 +30,11 @@ from .chromecast_menu import handle_chromecast_menu
 from .inactivity_menu import handle_inactivity_timeout
 from .wifi_menu import handle_wifi_settings_menu
 from .wifi_menu import handle_wifi_scan_menu
-from .bluetooth_menu import handle_bluetooth_menu, handle_keyboard_pairing_menu
+from .bluetooth_menu import (
+    handle_bluetooth_menu,
+    handle_keyboard_pairing_menu,
+    handle_paired_devices_menu,
+)
 from .accounts_menu import handle_accounts_menu, mask_token
 from .about_menu import handle_about_menu
 from .engine_manager_menu import (
@@ -72,6 +76,7 @@ __all__ = [
     "handle_wifi_scan_menu",
     "handle_bluetooth_menu",
     "handle_keyboard_pairing_menu",
+    "handle_paired_devices_menu",
     "handle_accounts_menu",
     "mask_token",
     "handle_update_menu",
