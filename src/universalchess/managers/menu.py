@@ -120,6 +120,12 @@ class MenuManager:
         # Latched when a shutdown is requested (long-press PLAY) so that any
         # subsequent menu display unwinds immediately. See show_menu().
         self._shutdown_requested = False
+
+        # Optional presenter for the focused entry's help tip (HELP key). Set by
+        # the application (which owns the modal widget + key routing) via
+        # set_help_presenter(). When unset, HELP propagates to the caller as
+        # before, keeping the manager usable without a presenter (e.g. in tests).
+        self._help_presenter: Optional[Callable[[str, Optional[str]], None]] = None
     
     @classmethod
     def get_instance(cls) -> 'MenuManager':
@@ -135,6 +141,20 @@ class MenuManager:
             board: The board module for display management
         """
         self._board = board
+
+    def set_help_presenter(self, presenter: Optional[Callable[[str, Optional[str]], None]]):
+        """Register a callback to present a focused entry's help tip.
+
+        The presenter receives ``(title, body)`` where title is the focused
+        entry's label and body is its help text (may be None). It is expected to
+        display a modal and block until the user dismisses it. Injecting it keeps
+        MenuManager free of the board's modal/key-routing concerns.
+
+        Args:
+            presenter: Callable, or None to disable in-menu help (HELP then
+                propagates to the caller as a normal result).
+        """
+        self._help_presenter = presenter
     
     def set_dimensions(self, width: int, height: int, status_bar_height: int = 16):
         """Set display dimensions.
@@ -275,59 +295,82 @@ class MenuManager:
         if self._board is None:
             raise RuntimeError("MenuManager.set_board() must be called before show_menu()")
 
-        # Clear any stale queued keys and mark as loading
-        self._key_queue.clear()
-        self._menu_loading = True
-        
-        # Clear existing widgets and add status bar before showing menu
-        # This ensures a clean slate after splash screens or other temporary displays
-        self._board.display_manager.clear_widgets()
-        
-        # Create menu widget
-        log.info(f"[DEBUG MenuManager] Creating IconMenuWidget with selected_index={initial_index}")
-        menu_widget = IconMenuWidget(
-            0,
-            self._status_bar_height,
-            self._display_width,
-            self._display_height - self._status_bar_height,
-            self._board.display_manager.update,
-            entries=entries,
-            selected_index=initial_index
-        )
-        log.info(f"[DEBUG MenuManager] IconMenuWidget created, menu_widget.selected_index={menu_widget.selected_index}")
-        
-        # Register as active menu (keys will be queued until loading completes)
-        self._active_widget = menu_widget
-        
-        # Add widget to display
-        promise = self._board.display_manager.add_widget(menu_widget)
-        if promise:
-            try:
-                promise.result(timeout=5.0)
-            except Exception as e:
-                log.warning(f"[MenuManager] Error waiting for menu render: {e}")
-        
-        try:
-            # Activate the widget for key handling
-            menu_widget.activate()
-            
-            # Menu is now ready - stop queuing keys
-            self._menu_loading = False
-            
-            # Replay any keys that were pressed during loading
-            self._replay_queued_keys()
-            
-            # Wait for selection (widget is already activated)
-            log.info("MenuManager: Waiting for selection...")
-            menu_widget._selection_event.wait()
-            result_key = menu_widget._selection_result or "BACK"
-            log.info(f"MenuManager: Selection result='{result_key}'")
-            return MenuSelection.from_key(result_key)
-        finally:
-            self._menu_loading = False
+        # HELP is handled in-place: when a presenter is registered, pressing HELP
+        # shows the focused entry's tip as a modal and the menu is re-displayed at
+        # the same entry rather than exiting. The loop re-renders for that case;
+        # every other result returns to the caller. current_index tracks the
+        # focused entry across a help cycle.
+        current_index = initial_index
+        while True:
+            # Clear any stale queued keys and mark as loading
             self._key_queue.clear()
-            menu_widget.deactivate()
-            self._active_widget = None
+            self._menu_loading = True
+
+            # Clear existing widgets and add status bar before showing menu
+            # This ensures a clean slate after splash screens or other temporary displays
+            self._board.display_manager.clear_widgets()
+
+            # Create menu widget
+            log.info(f"[DEBUG MenuManager] Creating IconMenuWidget with selected_index={current_index}")
+            menu_widget = IconMenuWidget(
+                0,
+                self._status_bar_height,
+                self._display_width,
+                self._display_height - self._status_bar_height,
+                self._board.display_manager.update,
+                entries=entries,
+                selected_index=current_index
+            )
+            log.info(f"[DEBUG MenuManager] IconMenuWidget created, menu_widget.selected_index={menu_widget.selected_index}")
+
+            # Register as active menu (keys will be queued until loading completes)
+            self._active_widget = menu_widget
+
+            # Add widget to display
+            promise = self._board.display_manager.add_widget(menu_widget)
+            if promise:
+                try:
+                    promise.result(timeout=5.0)
+                except Exception as e:
+                    log.warning(f"[MenuManager] Error waiting for menu render: {e}")
+
+            try:
+                # Activate the widget for key handling
+                menu_widget.activate()
+
+                # Menu is now ready - stop queuing keys
+                self._menu_loading = False
+
+                # Replay any keys that were pressed during loading
+                self._replay_queued_keys()
+
+                # Wait for selection (widget is already activated)
+                log.info("MenuManager: Waiting for selection...")
+                menu_widget._selection_event.wait()
+                result_key = menu_widget._selection_result or "BACK"
+                log.info(f"MenuManager: Selection result='{result_key}'")
+            finally:
+                self._menu_loading = False
+                self._key_queue.clear()
+                menu_widget.deactivate()
+                self._active_widget = None
+
+            # HELP with a registered presenter: show the focused entry's tip and
+            # re-display the menu at the same entry. Without a presenter, fall
+            # through and return HELP to the caller (legacy behavior).
+            if result_key == "HELP" and self._help_presenter is not None:
+                current_index = menu_widget.selected_index
+                title = ""
+                if menu_widget.entries and current_index < len(menu_widget.entries):
+                    title = menu_widget.entries[current_index].label
+                help_text = menu_widget.get_selected_help()
+                try:
+                    self._help_presenter(title, help_text)
+                except Exception as e:
+                    log.warning(f"[MenuManager] Help presenter error: {e}")
+                continue
+
+            return MenuSelection.from_key(result_key)
     
     def run_menu_loop(
         self,

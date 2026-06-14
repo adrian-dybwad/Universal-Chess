@@ -66,6 +66,9 @@ class IconMenuEntry:
     icon_name: str
     enabled: bool = True
     selectable: bool = True
+    # Help tip shown by the e-paper help dialog when this entry is focused and
+    # the HELP key is pressed. Sourced from the menu catalog; None when no tip.
+    help: Optional[str] = None
     height_ratio: float = 1.0
     max_height: int = None
     icon_size: int = None
@@ -397,6 +400,17 @@ class IconMenuWidget(Widget):
         """
         if self.entries and self.selected_index < len(self.entries):
             return self.entries[self.selected_index].key
+        return None
+
+    def get_selected_help(self) -> Optional[str]:
+        """Get the help tip of the currently focused entry.
+
+        Returns the focused entry's ``help`` text (from the catalog), or None if
+        there are no entries or the entry has no help. Used by the board help
+        dialog when HELP is pressed.
+        """
+        if self.entries and self.selected_index < len(self.entries):
+            return self.entries[self.selected_index].help
         return None
     
     def render(self, sprite: Image.Image) -> None:
