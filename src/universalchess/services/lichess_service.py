@@ -101,8 +101,15 @@ def show_time_control_menu(menu_manager, find_entry_index, time_options, current
 
 
 def ensure_token(menu_manager, keyboard_factory: Callable, get_token: Callable[[], str], set_token: Callable[[str], None], log, board):
-    """Prompt for token entry."""
-    keyboard = keyboard_factory(board.display_manager.update, title="Lichess Token", max_length=64)
+    """Prompt for token entry.
+
+    Calls ``keyboard_factory`` positionally as ``(update_fn, title, max_length)``,
+    matching its documented contract and every other call site (e.g. wifi
+    password entry). Passing the limit by keyword previously broke here because
+    the app's factories name the parameter ``max_len``; positional invocation is
+    immune to that parameter-name drift.
+    """
+    keyboard = keyboard_factory(board.display_manager.update, "Lichess Token", 64)
     keyboard.text = get_token() or ""
     promise = board.display_manager.add_widget(keyboard)
     if promise:
