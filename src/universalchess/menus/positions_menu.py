@@ -98,6 +98,22 @@ def build_position_entries(
     return entries
 
 
+def _confirm_end_running_game(
+    show_menu: Callable[[List[IconMenuEntry], int], str],
+):
+    """Ask the player to confirm ending the in-progress game.
+
+    Returns the raw menu result so the caller can both detect confirmation
+    (``"confirm"``) and propagate break/shutdown results unchanged. The cursor
+    defaults to Cancel so an accidental confirm cannot silently discard a game.
+    """
+    entries = [
+        IconMenuEntry(key="confirm", label="End Game?", icon_name="exit", enabled=True),
+        IconMenuEntry(key="cancel", label="Cancel", icon_name="cancel", enabled=True),
+    ]
+    return show_menu(entries, initial_index=1)
+
+
 def handle_positions_menu(
     ctx,
     load_positions_config: Callable[[], Dict[str, Dict[str, Tuple[str, str]]]],
@@ -110,8 +126,17 @@ def handle_positions_menu(
     last_position_index_ref: List[int],
     last_position_category_ref: List[Optional[str]],
     return_to_last_position: bool = False,
+    is_game_in_progress: Optional[Callable[[], bool]] = None,
+    abort_game: Optional[Callable[[], None]] = None,
 ) -> Optional[bool]:
-    """Handle the Positions submenu."""
+    """Handle the Positions submenu.
+
+    When ``is_game_in_progress`` reports a resumable game, selecting a position
+    first asks for confirmation (setting up a position discards that game). On
+    confirm the running game is recorded as aborted via ``abort_game`` (DB
+    result = "*") before the new position is set up; on cancel the running game
+    is left untouched and the menu stays open.
+    """
     positions = load_positions_config()
     if not positions:
         log.warning("[Positions] No positions available")
@@ -169,6 +194,17 @@ def handle_positions_menu(
             display_name = position_result.replace("_", " ").title()
             last_position_category_ref[0] = category
             last_position_index_ref[0] = find_entry_index(position_entries, position_result)
+
+            if is_game_in_progress is not None and is_game_in_progress():
+                confirm_result = _confirm_end_running_game(show_menu)
+                if is_break_result(confirm_result):
+                    return confirm_result
+                if confirm_result != "confirm":
+                    # Player declined; keep the running game and stay in the menu.
+                    continue
+                if abort_game is not None:
+                    abort_game()
+
             if start_from_position(fen, display_name, hint_move):
                 return True
 
