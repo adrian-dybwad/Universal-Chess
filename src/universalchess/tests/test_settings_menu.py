@@ -44,23 +44,41 @@ def test_settings_includes_display_sound_entry():
 
 
 def test_settings_full_entry_order():
-    """Display & Sound is the second item (right below Players); rest unchanged.
+    """Settings groups game setup first, then appearance, then device groups.
 
-    Why: the merged menu is the most-used in-game adjustment, so it sits second,
-    directly under Players. Asserting the full ordered key list guards against
-    accidental removal/reordering of a sibling entry.
+    Why: the regrouping pass makes the three pre-game setup items contiguous
+    (Players, Time Control, Positions), then Display & Sound, then the two device
+    groups (Connectivity, System). Chromecast moved into Connectivity and About
+    moved into System, so neither appears at this level. Asserting the full
+    ordered key list guards against accidental removal/reordering of a sibling.
 
-    How the regression manifests: a missing/extra key, or DisplaySound landing in
-    an unexpected position, changes this exact list.
+    How the regression manifests: Chromecast or About reappears here, Connectivity
+    is missing, or an item lands in an unexpected position - changing this exact
+    list.
     """
     keys = [e.key for e in create_settings_entries(_game_settings(), _player(), _player())]
 
     assert keys == [
         "Players",
-        DISPLAY_SOUND_KEY,
         "TimeControl",
         "Positions",
-        "Chromecast",
+        DISPLAY_SOUND_KEY,
+        "Connectivity",
         "System",
-        "About",
     ]
+
+
+def test_settings_no_longer_has_chromecast_or_about():
+    """Chromecast and About are no longer top-level Settings items.
+
+    Why: Chromecast moved into the new Connectivity submenu (grouped with WiFi/
+    Bluetooth/Accounts) and About moved into System. Leaving either here would
+    re-create the inconsistent placement the regroup removed.
+
+    How the regression manifests: 'Chromecast' or 'About' reappears in the
+    top-level Settings key set.
+    """
+    keys = [e.key for e in create_settings_entries(_game_settings(), _player(), _player())]
+
+    assert "Chromecast" not in keys, "Chromecast lives in Connectivity now"
+    assert "About" not in keys, "About lives in System now"

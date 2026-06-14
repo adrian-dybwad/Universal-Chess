@@ -53,6 +53,8 @@ from universalchess.menus import (
     handle_positions_menu,
     handle_time_control_menu,
     handle_chromecast_menu,
+    create_connectivity_entries,
+    handle_connectivity_menu,
     handle_inactivity_timeout,
     handle_wifi_settings_menu,
     handle_wifi_scan_menu,
@@ -2094,19 +2096,14 @@ def _handle_settings(initial_selection: str = None):
                 ctx.clear()
                 return
         
-        elif result == "Chromecast":
-            ctx.enter_menu("Chromecast", 0)
-            chromecast_result = handle_chromecast_menu(
-                show_menu=_show_menu,
-                board=board,
-                log=log,
-                get_chromecast_service=lambda: __import__("universalchess.services", fromlist=["get_chromecast_service"]).get_chromecast_service(),
-            )
-            ctx.leave_menu()  # Pop Chromecast, restore to Settings level
-            if is_break_result(chromecast_result):
+        elif result == "Connectivity":
+            ctx.enter_menu("Connectivity", 0)
+            connectivity_result = _handle_connectivity_menu()
+            ctx.leave_menu()  # Pop Connectivity, restore to Settings level
+            if is_break_result(connectivity_result):
                 ctx.clear()
                 app_state = AppState.MENU
-                return chromecast_result
+                return connectivity_result
         
         elif result == "System":
             ctx.enter_menu("System", 0)
@@ -2116,24 +2113,6 @@ def _handle_settings(initial_selection: str = None):
                 ctx.clear()
                 app_state = AppState.MENU
                 return system_result
-        
-        elif result == "About":
-            ctx.enter_menu("About", 0)
-            about_result = handle_about_menu(
-                ctx=ctx,
-                menu_manager=_menu_manager,
-                board=board,
-                log=log,
-                get_installed_version=_get_installed_version,
-                handle_update_menu=handle_update_menu,
-                show_menu=_show_menu,
-                find_entry_index=find_entry_index,
-            )
-            ctx.leave_menu()
-            if is_break_result(about_result):
-                ctx.clear()
-                app_state = AppState.MENU
-                return about_result
 
 
 # ============================================================================
@@ -2447,9 +2426,11 @@ def _handle_display_sound_menu():
 
 
 def _handle_system_menu():
-    """Handle system submenu (WiFi, Bluetooth, accounts, sleep timer, reset, shutdown, reboot).
-    
-    Uses MenuContext for tracking selection state.
+    """Handle system submenu (engines, sleep timer, reset, about, power).
+
+    Connectivity (WiFi/Bluetooth/Chromecast/Accounts) now lives in its own
+    Connectivity submenu (see _handle_connectivity_menu). Uses MenuContext for
+    tracking selection state.
     """
     ctx = _get_menu_context()
     return handle_system_menu(
@@ -2492,6 +2473,47 @@ def _handle_system_menu():
                 ),
             ),
         ),
+        handle_inactivity_timeout=lambda: handle_inactivity_timeout(
+            board=board,
+            log=log,
+            menu_manager=_menu_manager,
+        ),
+        handle_reset_settings=lambda: handle_reset_settings(
+            show_menu=_show_menu,
+            load_game_settings=_load_game_settings,
+            log=log,
+            board=board,
+            settings_section=SETTINGS_SECTION,
+            player1_section=PLAYER1_SECTION,
+            player2_section=PLAYER2_SECTION,
+        ),
+        handle_about=lambda: handle_about_menu(
+            ctx=_get_menu_context(),
+            menu_manager=_menu_manager,
+            board=board,
+            log=log,
+            get_installed_version=_get_installed_version,
+            handle_update_menu=handle_update_menu,
+            show_menu=_show_menu,
+            find_entry_index=find_entry_index,
+        ),
+        shutdown_fn=lambda reason, reboot=False: _shutdown(reason, reboot=reboot),
+        log=log,
+    )
+
+
+def _handle_connectivity_menu():
+    """Handle the Connectivity submenu (WiFi, Bluetooth, Chromecast, Accounts).
+
+    Groups the outward-facing features that previously lived split between the
+    top-level Settings list (Chromecast) and System (WiFi/Bluetooth/Accounts).
+    Uses MenuContext for tracking selection state.
+    """
+    ctx = _get_menu_context()
+    return handle_connectivity_menu(
+        ctx=ctx,
+        menu_manager=_menu_manager,
+        create_entries=create_connectivity_entries,
         handle_wifi_settings=lambda: handle_wifi_settings_menu(
             menu_manager=_menu_manager,
             wifi_info_module=__import__("DGTCentaurMods.epaper.wifi_info", fromlist=["get_wifi_status"]),
@@ -2526,22 +2548,6 @@ def _handle_system_menu():
             get_chromecast_service=lambda: __import__("universalchess.services", fromlist=["get_chromecast_service"]).get_chromecast_service(),
         ),
         handle_accounts_menu=_handle_accounts_menu,
-        handle_inactivity_timeout=lambda: handle_inactivity_timeout(
-            board=board,
-            log=log,
-            menu_manager=_menu_manager,
-        ),
-        handle_reset_settings=lambda: handle_reset_settings(
-            show_menu=_show_menu,
-            load_game_settings=_load_game_settings,
-            log=log,
-            board=board,
-            settings_section=SETTINGS_SECTION,
-            player1_section=PLAYER1_SECTION,
-            player2_section=PLAYER2_SECTION,
-        ),
-        shutdown_fn=lambda reason, reboot=False: _shutdown(reason, reboot=reboot),
-        log=log,
     )
 
 
@@ -2563,8 +2569,7 @@ def _handle_lichess_menu():
         handle_accounts_menu_fn=_handle_accounts_menu,
         centaur_module=centaur,
         board=board,
-        log=log,
-    )
+        log=log,    )
 
 
 def _start_lichess_game(lichess_config) -> bool:
@@ -2633,8 +2638,7 @@ def _handle_lichess_token():
         get_token=centaur.get_lichess_api,
         set_token=centaur.set_lichess_api,
         log=log,
-        board=board,
-    )
+        board=board,    )
 
 
 def _shutdown(message: str, reboot: bool = False):

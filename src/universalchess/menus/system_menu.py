@@ -3,7 +3,7 @@
 from typing import Dict, List, Callable, Optional
 
 from universalchess.epaper.icon_menu import IconMenuEntry
-from universalchess.managers.menu import MenuSelection, is_break_result, is_refresh_result
+from universalchess.managers.menu import MenuSelection, is_break_result
 from universalchess.utils.led import LED_SPEED_NORMAL, LED_INTENSITY_DEFAULT
 
 
@@ -19,19 +19,19 @@ def create_system_entries(board_module, game_settings: Dict[str, object]) -> Lis
 
     analysis_mode_icon = "checkbox_checked" if game_settings["analysis_mode"] else "checkbox_empty"
 
-    # Grouped by concern: connectivity, engines (Engine Manager then the analysis
-    # engine selector), device, reset, and finally the isolated Power submenu that
-    # holds the destructive Shutdown/Reboot actions. The analysis item keeps the
-    # dispatch key "AnalysisMode" but is labelled "Analysis Engine" to disambiguate
-    # it from the in-game "Show Analysis" view toggle.
+    # Grouped by concern now that connectivity (WiFi/Bluetooth/Accounts) lives in
+    # the dedicated Connectivity submenu: engines (Engine Manager then the analysis
+    # engine selector), device (sleep timer), maintenance (reset, about), and
+    # finally the isolated Power submenu that holds the destructive Shutdown/Reboot
+    # actions. The analysis item keeps the dispatch key "AnalysisMode" but is
+    # labelled "Analysis Engine" to disambiguate it from the in-game "Show
+    # Analysis" view toggle.
     return [
-        IconMenuEntry(key="WiFi", label="WiFi", icon_name="wifi", enabled=True),
-        IconMenuEntry(key="Bluetooth", label="Bluetooth", icon_name="bluetooth", enabled=True),
-        IconMenuEntry(key="Accounts", label="Accounts", icon_name="account", enabled=True),
         IconMenuEntry(key="Engines", label="Engine\nManager", icon_name="engine", enabled=True),
         IconMenuEntry(key="AnalysisMode", label="Analysis\nEngine", icon_name=analysis_mode_icon, enabled=True),
         IconMenuEntry(key="Inactivity", label=timeout_label, icon_name=timeout_icon, enabled=True),
         IconMenuEntry(key="ResetSettings", label="Reset\nSettings", icon_name="cancel", enabled=True),
+        IconMenuEntry(key="About", label="About", icon_name="info", enabled=True),
         IconMenuEntry(key="Power", label="Power", icon_name="shutdown", enabled=True),
     ]
 
@@ -86,16 +86,13 @@ def handle_system_menu(
     create_entries: Callable[[], List[IconMenuEntry]],
     handle_analysis_mode_menu: Callable[[], Optional[MenuSelection]],
     handle_engine_manager_menu: Callable[[], Optional[MenuSelection]],
-    handle_wifi_settings: Callable[[], Optional[MenuSelection]],
-    handle_bluetooth_settings: Callable[[], Optional[MenuSelection]],
-    handle_chromecast_menu: Callable[[], Optional[MenuSelection]],
-    handle_accounts_menu: Callable[[], Optional[MenuSelection]],
     handle_inactivity_timeout: Callable[[], Optional[MenuSelection]],
     handle_reset_settings: Callable[[], Optional[MenuSelection]],
+    handle_about: Callable[[], Optional[MenuSelection]],
     shutdown_fn: Callable[[str, bool], None],
     log,
 ) -> Optional[MenuSelection]:
-    """Handle system submenu (display, sound, WiFi, Bluetooth, etc.)."""
+    """Handle system submenu (engines, sleep timer, reset, about, power)."""
 
     def handle_selection(result: MenuSelection):
         if result.key == "AnalysisMode":
@@ -110,30 +107,6 @@ def handle_system_menu(
             ctx.leave_menu()
             if is_break_result(sub_result):
                 return sub_result
-        elif result.key == "WiFi":
-            ctx.enter_menu("WiFi", 0)
-            sub_result = handle_wifi_settings()
-            ctx.leave_menu()
-            if is_break_result(sub_result):
-                return sub_result
-        elif result.key == "Bluetooth":
-            ctx.enter_menu("Bluetooth", 0)
-            sub_result = handle_bluetooth_settings()
-            ctx.leave_menu()
-            if is_break_result(sub_result):
-                return sub_result
-        elif result.key == "Chromecast":
-            ctx.enter_menu("Chromecast", 0)
-            sub_result = handle_chromecast_menu()
-            ctx.leave_menu()
-            if is_break_result(sub_result):
-                return sub_result
-        elif result.key == "Accounts":
-            ctx.enter_menu("Accounts", 0)
-            sub_result = handle_accounts_menu()
-            ctx.leave_menu()
-            if is_break_result(sub_result):
-                return sub_result
         elif result.key == "Inactivity":
             ctx.enter_menu("Inactivity", 0)
             sub_result = handle_inactivity_timeout()
@@ -143,6 +116,12 @@ def handle_system_menu(
         elif result.key == "ResetSettings":
             ctx.enter_menu("ResetSettings", 0)
             sub_result = handle_reset_settings()
+            ctx.leave_menu()
+            if is_break_result(sub_result):
+                return sub_result
+        elif result.key == "About":
+            ctx.enter_menu("About", 0)
+            sub_result = handle_about()
             ctx.leave_menu()
             if is_break_result(sub_result):
                 return sub_result

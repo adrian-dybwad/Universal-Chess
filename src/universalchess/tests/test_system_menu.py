@@ -42,29 +42,42 @@ def test_system_menu_no_longer_has_display_or_sound():
 
 
 def test_system_menu_order_groups_related_items_and_isolates_power():
-    """System lists connectivity, engines, device, reset, then a Power submenu.
+    """System lists engines, device, reset, about, then a Power submenu.
 
-    Why this test exists: the optimization pass regroups System so the two
-    engine-related items sit together (Engine Manager then Analysis Engine) and
-    the destructive power actions (Shutdown/Reboot) are isolated behind a single
-    Power submenu entry rather than living loose at the top level.
+    Why this test exists: connectivity (WiFi/Bluetooth/Accounts) moved into the
+    dedicated Connectivity submenu, so System now holds engines (Engine Manager
+    then Analysis Engine), device prefs (Sleep Timer), maintenance (Reset, About)
+    and the isolated destructive Power submenu, in that order.
 
-    How the regression manifests: a reordering that splits the engine items, or
-    a revert that puts Shutdown/Reboot back at the top level, changes this exact
-    key sequence and fails here.
+    How the regression manifests: a connectivity item reappears here, About is
+    missing, the engine items split, or Shutdown/Reboot return to the top level -
+    each changes this exact key sequence and fails here.
     """
     keys = [e.key for e in create_system_entries(_FakeBoard(), _game_settings())]
 
     assert keys == [
-        "WiFi",
-        "Bluetooth",
-        "Accounts",
         "Engines",
         "AnalysisMode",
         "Inactivity",
         "ResetSettings",
+        "About",
         "Power",
     ]
+
+
+def test_system_menu_no_longer_has_connectivity_items():
+    """WiFi/Bluetooth/Accounts moved out of System into Connectivity.
+
+    Why: connectivity is now grouped in one submenu; leaving these in System would
+    re-create the split placement the regroup removed.
+
+    How the regression manifests: 'WiFi', 'Bluetooth', or 'Accounts' reappears in
+    the System key set.
+    """
+    keys = [e.key for e in create_system_entries(_FakeBoard(), _game_settings())]
+
+    for moved in ("WiFi", "Bluetooth", "Accounts"):
+        assert moved not in keys, f"{moved} belongs in the Connectivity submenu"
 
 
 def test_shutdown_and_reboot_moved_off_top_level():

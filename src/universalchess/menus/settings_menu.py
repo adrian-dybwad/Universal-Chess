@@ -49,14 +49,17 @@ def create_settings_entries(
         time_label = f"Time\n{time_control} min"
         time_icon = "timer_checked"
 
+    # Grouped: the three pre-game setup items first (Players, Time Control,
+    # Positions), then appearance (Display & Sound), then the two device groups
+    # (Connectivity, System). Chromecast moved into Connectivity and About moved
+    # into System, so neither appears at this level.
     return [
         IconMenuEntry(key="Players", label=players_label, icon_name="players", enabled=True, font_size=12, height_ratio=0.8),
-        IconMenuEntry(key="DisplaySound", label="Display\n& Sound", icon_name="display", enabled=True, font_size=12, height_ratio=0.8),
         IconMenuEntry(key="TimeControl", label=time_label, icon_name=time_icon, enabled=True, font_size=12, height_ratio=0.8),
         IconMenuEntry(key="Positions", label="Positions", icon_name="positions", enabled=True, font_size=12, height_ratio=0.8),
-        IconMenuEntry(key="Chromecast", label="Chromecast", icon_name="cast", enabled=True, font_size=12, height_ratio=0.8),
+        IconMenuEntry(key="DisplaySound", label="Display\n& Sound", icon_name="display", enabled=True, font_size=12, height_ratio=0.8),
+        IconMenuEntry(key="Connectivity", label="Connectivity", icon_name="wifi", enabled=True, font_size=12, height_ratio=0.8),
         IconMenuEntry(key="System", label="System", icon_name="system", enabled=True, font_size=12, height_ratio=0.8),
-        IconMenuEntry(key="About", label="About", icon_name="info", enabled=True, font_size=12, height_ratio=0.8),
     ]
 
 

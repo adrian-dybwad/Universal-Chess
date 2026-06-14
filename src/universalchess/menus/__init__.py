@@ -27,6 +27,7 @@ from .engine_menu import (
     handle_elo_selection,
 )
 from .chromecast_menu import handle_chromecast_menu
+from .connectivity_menu import create_connectivity_entries, handle_connectivity_menu
 from .inactivity_menu import handle_inactivity_timeout
 from .wifi_menu import handle_wifi_settings_menu
 from .wifi_menu import handle_wifi_scan_menu
@@ -71,6 +72,8 @@ __all__ = [
     "handle_time_control_menu",
     "handle_positions_menu",
     "handle_chromecast_menu",
+    "create_connectivity_entries",
+    "handle_connectivity_menu",
     "handle_inactivity_timeout",
     "handle_wifi_settings_menu",
     "handle_wifi_scan_menu",
