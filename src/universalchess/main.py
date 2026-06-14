@@ -496,6 +496,11 @@ _is_position_game = False  # Flag to track if current game is a position (practi
 _switch_to_normal_game = False  # Flag to signal switch from position game to normal game
 _pending_ble_client_type: str = None  # Flag for BLE connection when between menus
 _pending_settings_reload = False  # Flag: web changed settings, rebuild live game display
+# Board-control command pushed from the web app (set up a position / abort the
+# game) over the settings socket. Set on the subscriber thread and applied on
+# the main thread (see _process_pending_board_command), since it rebuilds the
+# live game display. None means "no command pending".
+_pending_board_command = None
 # Menu navigation path captured when entering a game from the menu, so suspending
 # (PLAY) returns the full menu to that exact submenu position. None means "no
 # captured position"; it is cleared when a game truly ends (see _return_to_menu).
@@ -518,6 +523,45 @@ def _clear_active_keyboard_widget() -> None:
     """Clear the active keyboard widget reference."""
     global _active_keyboard_widget
     _active_keyboard_widget = None
+
+
+def _present_menu_help(title: str, body: "Optional[str]") -> None:
+    """Show the focused menu entry's help tip as a modal, blocking until dismissed.
+
+    Registered with MenuManager as the help presenter. Runs on the menu thread
+    (the thread blocked in show_menu); the events thread dismisses the dialog on
+    any key via the ``_active_help_widget`` check in ``_handle_key``. When there
+    is no help text for the focused entry, the menu is simply re-displayed
+    (no modal), so HELP never exits the menu.
+
+    Args:
+        title: Focused entry label (used as the dialog heading).
+        body: Help tip text, or None when the entry has no tip.
+    """
+    global _active_help_widget
+
+    if not body:
+        return
+    # The board's framework display manager owns widget add/remove and modal
+    # layering (the same one MenuManager.show_menu renders the menu through), so
+    # the help modal overlays the menu and removal reveals it again.
+    fdm = getattr(board, "display_manager", None)
+    if fdm is None:
+        return
+
+    from universalchess.epaper.help_dialog import HelpDialogWidget
+
+    widget = HelpDialogWidget(fdm.update, title=title, body=body)
+    _active_help_widget = widget
+    try:
+        fdm.add_widget(widget)
+        widget.wait_for_dismiss()
+    finally:
+        _active_help_widget = None
+        try:
+            fdm.remove_widget(widget)
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"[App] Error removing help dialog: {e}")
 
 
 # Bluetooth keyboard state
@@ -556,6 +600,9 @@ def _on_display_passkey(passkey) -> None:
     cannot break the pairing handshake.
     """
     global _active_passkey_widget
+    # Mirror the passkey (or its clearing) to the web UI regardless of whether a
+    # local display is available, so a web-initiated pairing shows the code.
+    _broadcast_bt_event("bt_passkey", {"passkey": passkey})
     try:
         display_mgr = getattr(board, "display_manager", None)
         if display_mgr is None:
@@ -618,6 +665,9 @@ def _confirm_pairing_on_board(passkey) -> bool:
         confirm_menu.is_modal = True
 
         _active_pairing_confirm = confirm_menu
+        # Mirror the prompt to the web UI so it can show the code and let the
+        # user accept/reject there too (resolved via _resolve_web_pairing_confirm).
+        _broadcast_bt_event("bt_pair_request", {"passkey": passkey, "active": True})
         display_mgr.add_widget(confirm_menu)
         # add_widget renders a partial refresh, which draws full-screen content
         # at low e-paper contrast (the "faded" look). Force a full refresh so the
@@ -651,11 +701,132 @@ def _confirm_pairing_on_board(passkey) -> bool:
             except Exception as e:  # noqa: BLE001
                 log.error(f"[App] Failed to remove pairing confirm widget: {e}")
             _active_pairing_confirm = None
+        # Tell the web UI the prompt is gone so it can dismiss its mirror.
+        _broadcast_bt_event("bt_pair_request", {"active": False})
         _pairing_confirm_lock.release()
+
+
+def _broadcast_bt_event(event_type: str, data: dict = None) -> None:
+    """Publish a Bluetooth pairing event to the web UI (board -> web).
+
+    Reuses the game broadcaster's generic event channel (game.sock), which the
+    web app already forwards verbatim to SSE clients. Used to mirror the board's
+    pairing passkey and incoming-pair prompt to the web Connectivity page so the
+    user can see the passkey and accept a pairing from either surface. Failures
+    are swallowed: the web mirror is best-effort and must never break pairing.
+    """
+    try:
+        from universalchess.services.game_broadcast import get_broadcaster
+        get_broadcaster().broadcast_event(event_type, data)
+    except Exception as e:  # noqa: BLE001 - web mirror is best-effort
+        log.debug(f"[App] Failed to broadcast {event_type}: {e}")
+
+
+def _start_web_pairing(address: str) -> None:
+    """Pair a keyboard requested from the web UI, on a background thread.
+
+    Runs the proven ``BluezPairingManager.pair_keyboard`` flow (the same one the
+    board menu uses) off the IPC subscriber thread because it blocks for the
+    duration of the BlueZ handshake. The board's KeyboardDisplay agent still
+    services any passkey; ``_on_display_passkey`` mirrors that passkey to the web.
+    The start and final result are broadcast so the web card can show progress.
+    """
+    global bluez_pairing_manager
+    if not address:
+        return
+    if bluez_pairing_manager is None:
+        from universalchess.managers import BluezPairingManager
+        bluez_pairing_manager = BluezPairingManager()
+
+    def worker():
+        _broadcast_bt_event("bt_pair_result", {"address": address, "status": "started"})
+        success = False
+        try:
+            success = bool(bluez_pairing_manager.pair_keyboard(address))
+        except Exception as e:  # noqa: BLE001 - report failure, never crash
+            log.warning(f"[App] Web pairing of {address} failed: {e}")
+        # Clear any lingering passkey on both surfaces, then report the outcome.
+        _on_display_passkey(None)
+        _broadcast_bt_event("bt_pair_result", {"address": address, "success": success})
+
+    threading.Thread(target=worker, daemon=True, name="web-bt-pair").start()
+
+
+def _resolve_web_pairing_confirm(accept: bool) -> None:
+    """Resolve the board's active incoming-pairing prompt from a web decision.
+
+    When a phone/app pairs to the board, ``_confirm_pairing_on_board`` shows a
+    modal and blocks on its selection. A web user can accept/reject the same
+    request; this injects that decision by completing the modal's wait with the
+    Pair or Reject key, so whichever surface acts first decides. A no-op if no
+    prompt is currently active (e.g. it already timed out).
+    """
+    widget = _active_pairing_confirm
+    if widget is None:
+        log.debug("[App] Web pairing confirm with no active prompt; ignoring")
+        return
+    from universalchess.menus.pairing_confirm import PAIR_KEY, REJECT_KEY
+    widget.cancel_selection(PAIR_KEY if accept else REJECT_KEY)
+
+
+def _broadcast_chromecast_state() -> None:
+    """Mirror the board's Chromecast state to the web UI (board -> web).
+
+    Registered as a ChromecastState observer and also invoked on demand for a
+    'chromecast_status' command, so the web Connectivity page reflects the
+    streaming state (idle/connecting/streaming/error + device) that the board
+    process owns. Best-effort; never raises into the observer notification.
+    """
+    try:
+        from universalchess.state import get_chromecast
+        from universalchess.connectivity import chromecast as cast
+        _broadcast_bt_event("chromecast_state", cast.status_payload(get_chromecast()))
+    except Exception as e:  # noqa: BLE001 - web mirror is best-effort
+        log.debug(f"[App] Failed to broadcast chromecast state: {e}")
+
+
+def _handle_web_chromecast_command(command: str, parsed: dict) -> None:
+    """Apply a web Chromecast command (start/stop/status) on the board.
+
+    start/stop drive the board's ChromecastService singleton (which owns the
+    active stream and the e-paper snapshots it serves); status just re-broadcasts
+    the current state for a page that just loaded. Runs off the main loop because
+    the service manages its own threads.
+    """
+    try:
+        from universalchess.services import get_chromecast_service
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[App] Chromecast service unavailable: {e}")
+        return
+
+    if command == "chromecast_start":
+        device = parsed.get("device")
+        if device:
+            source = parsed.get("source")
+            if source in ("live_board", "classic"):
+                from universalchess.board.settings import Settings
+                Settings.write(
+                    "chromecast",
+                    "use_live_board",
+                    "True" if source == "live_board" else "False",
+                    "True",
+                )
+            get_chromecast_service().start_streaming(device)
+    elif command == "chromecast_stop":
+        # Optional device: stop a single cast, or all when omitted ("Stop all").
+        device = parsed.get("device")
+        get_chromecast_service().stop_streaming(device if device else None)
+    elif command == "chromecast_status":
+        _broadcast_chromecast_state()
 
 
 # About widget state (for support QR screen)
 _active_about_widget = None
+
+# Help dialog state. Set while the focused menu entry's help tip is shown as a
+# modal (HELP key in a menu). Any key dismisses it (see _handle_key), and the
+# MenuManager help presenter blocks on it until dismissed.
+_active_help_widget = None
 
 # Args (stored globally after parsing for access in callbacks)
 _args = None
@@ -1972,6 +2143,94 @@ def _enter_game():
             protocol_manager.on_app_connected()
 
 
+def _abort_current_game() -> None:
+    """Record any in-progress game as abandoned (DB result = "*").
+
+    Called before a web-initiated action that ends the running game (setting up
+    a position or aborting). Marks the live game abandoned via the existing
+    abandonment path so the history reflects the abort, then leaves teardown to
+    the caller (``_start_from_position`` / ``_return_to_menu`` clean up managers).
+    No-op when no resumable game is in progress.
+    """
+    if protocol_manager is None:
+        return
+    game_manager = getattr(protocol_manager, "game_manager", None)
+    if game_manager is None:
+        return
+    try:
+        game_manager.abandon_current_game()
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[App] Error aborting current game: {e}")
+
+
+def _on_board_command(parsed: dict) -> None:
+    """Receive a web board-control command (runs on the subscriber thread).
+
+    Stores the command for the main thread to apply (display/game work must not
+    happen here) and, when the top-level main menu is showing, cancels its
+    selection so the main loop wakes and applies it promptly. A deep settings
+    submenu is left untouched; the command is applied when the board returns to
+    the main menu, so the on-board user's navigation is not interrupted.
+    """
+    global _pending_board_command
+    command = parsed.get("command")
+    # Bluetooth pairing commands are handled here (off the main loop): pairing
+    # runs on its own worker thread and confirming an incoming pairing only
+    # resolves an already-displayed modal, so neither needs main-thread display
+    # or game-lifecycle work like setup_position/abort_game do.
+    if command == "bt_pair":
+        _start_web_pairing(parsed.get("address"))
+        return
+    if command == "bt_pair_confirm":
+        _resolve_web_pairing_confirm(bool(parsed.get("accept")))
+        return
+    if command in ("chromecast_start", "chromecast_stop", "chromecast_status"):
+        _handle_web_chromecast_command(command, parsed)
+        return
+
+    _pending_board_command = parsed
+    if (
+        app_state == AppState.MENU
+        and _menu_manager is not None
+        and _menu_manager.active_widget is not None
+    ):
+        _menu_manager.cancel_selection("WEB_COMMAND")
+
+
+def _process_pending_board_command() -> None:
+    """Apply a pending web board-control command on the main thread.
+
+    Handles 'setup_position' (abort any running game, then set up the position)
+    and 'abort_game' (abort and return to the menu). Runs only from the main
+    loop so display widgets and game managers are mutated on the main thread.
+    """
+    global _pending_board_command
+    cmd = _pending_board_command
+    _pending_board_command = None
+    if not cmd:
+        return
+
+    command = cmd.get("command")
+    if command == "setup_position":
+        fen = cmd.get("fen")
+        if not fen:
+            log.warning("[App] setup_position command missing FEN")
+            return
+        name = cmd.get("name") or "Position"
+        hint = cmd.get("hint")
+        log.info(f"[App] Web setup_position: {name}")
+        _abort_current_game()
+        if not _start_from_position(fen, name, hint):
+            log.warning(f"[App] Web setup_position failed for {name}")
+    elif command == "abort_game":
+        log.info("[App] Web abort_game")
+        if protocol_manager is not None:
+            _abort_current_game()
+            _return_to_menu("Web abort")
+    else:
+        log.warning(f"[App] Unknown board command: {command}")
+
+
 def _handle_settings(initial_selection: str = None):
     """Handle the Settings submenu.
     
@@ -2086,6 +2345,8 @@ def _handle_settings(initial_selection: str = None):
                 last_position_category_index_ref=[_last_position_category_index],
                 last_position_index_ref=[_last_position_index],
                 last_position_category_ref=[_last_position_category],
+                is_game_in_progress=_has_suspended_game,
+                abort_game=_abort_current_game,
             )
             ctx.leave_menu()  # Pop Positions, restore to Settings level
             if is_break_result(position_result):
@@ -2375,6 +2636,7 @@ def _handle_manage_devices():
         is_break_result_fn=is_break_result,
         board=board,
         log=log,
+        connect_device_status=getattr(bluez_pairing_manager, "connect_device_status", None),
     )
 
 
@@ -3259,6 +3521,14 @@ def key_callback(key_id):
             _menu_manager.cancel_selection("SHUTDOWN")
         return
     
+    # Priority 0: Active help dialog - any key dismisses it. Checked first so the
+    # help overlay (shown for the focused menu entry) consumes the next key
+    # rather than letting it reach the menu/keyboard underneath.
+    if _active_help_widget is not None:
+        _active_help_widget.dismiss()
+        _reset_unhandled_key_count()
+        return
+
     # Priority 1: Active about widget - any key dismisses it
     if _active_about_widget is not None:
         _active_about_widget.dismiss()
@@ -3535,6 +3805,7 @@ def main():
         _menu_manager = MenuManager.get_instance()
         _menu_manager.set_board(board)
         _menu_manager.set_dimensions(DISPLAY_WIDTH, DISPLAY_HEIGHT, STATUS_BAR_HEIGHT)
+        _menu_manager.set_help_presenter(_present_menu_help)
         log.info("[Main] MenuManager initialized")
     except Exception as e:
         log.error(f"[Main] Failed to initialize MenuManager: {e}", exc_info=True)
@@ -3583,11 +3854,21 @@ def main():
         settings_subscriber = get_settings_subscriber()
         settings_subscriber.add_callback(_on_settings_changed)
         settings_subscriber.add_request_callback(_on_game_state_requested)
+        settings_subscriber.add_command_callback(_on_board_command)
         settings_subscriber.start()
         log.info("[Main] Settings subscriber started (hot reload enabled)")
     except Exception as e:
         log.warning(f"[Main] Failed to start settings subscriber: {e}")
         # Continue anyway - hot reload is optional
+
+    # Mirror Chromecast state changes to the web Connectivity page. Observe the
+    # always-present state singleton (not the lazily-created service) so the web
+    # reflects start/stop/error transitions owned by the board process.
+    try:
+        from universalchess.state import get_chromecast
+        get_chromecast().add_observer(_broadcast_chromecast_state)
+    except Exception as e:  # noqa: BLE001 - web mirror is optional
+        log.debug(f"[Main] Failed to register chromecast state observer: {e}")
     
     try:
         log.info("[Main] Initializing ConnectionManager...")
@@ -3892,6 +4173,12 @@ def main():
     try:
         while running and not kill:
             if app_state == AppState.MENU:
+                # Apply a web board-control command (set up position / abort) that
+                # arrived while the menu was showing. Runs here on the main thread.
+                if _pending_board_command is not None:
+                    _process_pending_board_command()
+                    continue  # Re-check app_state (may now be GAME)
+
                 # Check for pending BLE client connection (set when connection happens between menus)
                 global _pending_ble_client_type
                 if _pending_ble_client_type is not None:
@@ -3946,7 +4233,13 @@ def main():
                 # Get initial index from context if at root, else use 0
                 main_menu_index = ctx.current_index() if ctx.depth() == 0 else 0
                 result = _show_menu(entries, initial_index=main_menu_index)
-                
+
+                # A web board-control command cancelled the menu; loop back so the
+                # top-of-branch handler applies it (avoids writing the sentinel as
+                # a menu index).
+                if result == "WEB_COMMAND":
+                    continue
+
                 # Update context with current selection (at root level, we just track the index)
                 selected_index = find_entry_index(entries, result)
                 if ctx.depth() == 0:
@@ -4007,6 +4300,10 @@ def main():
                     log.info("[App] Applying web settings change to live display")
                     if display_manager:
                         display_manager._init_widgets()
+                elif _pending_board_command is not None:
+                    # Web set up a position / aborted while a game was running.
+                    # Applied here on the main thread (rebuilds the game display).
+                    _process_pending_board_command()
                 else:
                     # Stay in game mode - key_callback handles exit via _return_to_menu
                     time.sleep(0.5)
@@ -4029,6 +4326,8 @@ def main():
                         last_position_index_ref=[_last_position_index],
                         last_position_category_ref=[_last_position_category],
                         return_to_last_position=True,
+                        is_game_in_progress=_has_suspended_game,
+                        abort_game=_abort_current_game,
                     )
                     if is_break_result(position_result):
                         # BLE client connected during positions menu

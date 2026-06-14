@@ -1,0 +1,115 @@
+.conn-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-3);
+}
+
+.conn-status-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.conn-status-ssid {
+  font-weight: 600;
+}
+
+.conn-status-detail {
+  font-size: var(--text-sm, 0.875rem);
+}
+
+.conn-actions {
+  margin: var(--space-3) 0;
+}
+
+.conn-message {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-3);
+  font-size: var(--text-sm, 0.875rem);
+}
+
+.conn-message--success {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+.conn-message--error {
+  background: rgba(220, 38, 38, 0.12);
+  color: #dc2626;
+}
+
+.conn-list {
+  margin-top: var(--space-3);
+}
+
+.conn-list-title {
+  font-size: var(--text-sm, 0.875rem);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin: var(--space-2) 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.conn-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-card);
+  color: var(--color-text);
+  cursor: pointer;
+  margin-bottom: var(--space-2);
+  text-align: left;
+}
+
+.conn-list-item:hover:not(.conn-list-item--static):not(:disabled) {
+  border-color: var(--color-primary);
+  background: var(--color-bg-muted);
+}
+
+.conn-list-item--static {
+  cursor: default;
+}
+
+.conn-list-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 500;
+}
+
+.conn-active-badge {
+  font-size: var(--text-xs, 0.75rem);
+  font-weight: 600;
+  color: var(--color-primary);
+  background: var(--color-primary-light);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm, 4px);
+}
+
+.conn-lock {
+  font-size: var(--text-xs, 0.75rem);
+}
+
+.conn-btn-group {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.conn-passkey {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-align: center;
+  padding: var(--space-3);
+  margin: var(--space-2) 0;
+  font-family: var(--font-mono, monospace);
+  color: var(--color-primary);
+}

@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Button, Card, CardHeader, Input, Select, Toggle, Badge } from '../components/ui';
 import { LoginDialog } from '../components/LoginDialog';
+import { MenuIcon } from '../components/MenuIcon';
 import type { EngineDefinition } from '../types/game';
+import type { MenuCatalog, MenuOption } from '../types/menuCatalog';
+import { fieldById } from '../types/menuCatalog';
 import { apiFetch, buildApiUrl, getStoredCredentials } from '../utils/api';
 import './Settings.css';
 
@@ -11,68 +14,35 @@ interface SettingsData {
   };
 }
 
-type SettingsTab = 'players' | 'display' | 'game' | 'accounts' | 'engines' | 'system';
+type SettingsTab = 'players' | 'display' | 'game' | 'engines' | 'system';
 
-// SVG icons from legacy app - Material Design icons
-const TabIcons: Record<SettingsTab, React.ReactNode> = {
-  players: (
-    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-      <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
-    </svg>
-  ),
-  game: (
-    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-      <path d="M15 1H9v2h6V1zm-4 13h2V8h-2v6zm8.03-6.61l1.42-1.42c-.43-.51-.9-.99-1.41-1.41l-1.42 1.42C16.07 4.74 14.12 4 12 4c-4.97 0-9 4.03-9 9s4.02 9 9 9 9-4.03 9-9c0-2.12-.74-4.07-1.97-5.61zM12 20c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/>
-    </svg>
-  ),
-  display: (
-    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-      <path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/>
-    </svg>
-  ),
-  accounts: (
-    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
-    </svg>
-  ),
-  engines: (
-    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-      <path d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
-    </svg>
-  ),
-  system: (
-    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-      <path d="M17 11c.34 0 .67.04 1 .09V6.27L10.5 3 3 6.27v4.91c0 4.54 3.2 8.79 7.5 9.82.55-.13 1.08-.32 1.6-.55-.69-.98-1.1-2.17-1.1-3.45 0-3.31 2.69-6 6-6z"/>
-      <path d="M17 13c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm0 1.38c.62 0 1.12.51 1.12 1.12s-.51 1.12-1.12 1.12-1.12-.51-1.12-1.12.5-1.12 1.12-1.12zm0 5.37c-.93 0-1.74-.46-2.24-1.17.05-.72 1.51-1.08 2.24-1.08s2.19.36 2.24 1.08c-.5.71-1.31 1.17-2.24 1.17z"/>
-    </svg>
-  ),
-};
-
-// Order mirrors the board's Settings nav: Players, then the combined
-// Display & Sound menu (promoted to second), then Game, then the
-// account/engine/system groupings.
-const tabs: { id: SettingsTab; label: string }[] = [
-  { id: 'players', label: 'Players' },
-  { id: 'display', label: 'Display & Sound' },
-  { id: 'game', label: 'Game' },
-  { id: 'accounts', label: 'Accounts' },
-  { id: 'engines', label: 'Engines' },
-  { id: 'system', label: 'System' },
+// Fallbacks used only when the catalog (GET /api/menu-schema) is unavailable.
+// The catalog is the source of truth for tab order/labels/icons and option sets
+// (shared with the e-paper board); these mirror it so the page still renders if
+// the fetch fails. Tab order mirrors the board's Settings nav: Players, then the
+// combined Display & Sound menu, then Game, then engine/system. Accounts
+// (Lichess) lives on the Connectivity page, not here.
+const FALLBACK_TABS: { id: SettingsTab; label: string; icon: string }[] = [
+  { id: 'players', label: 'Players', icon: 'players' },
+  { id: 'display', label: 'Display & Sound', icon: 'display' },
+  { id: 'game', label: 'Game', icon: 'timer_checked' },
+  { id: 'engines', label: 'Engines', icon: 'engine' },
+  { id: 'system', label: 'System', icon: 'system' },
 ];
 
-const playerTypeOptions = [
+const FALLBACK_PLAYER_TYPE_OPTIONS: MenuOption[] = [
   { value: 'human', label: 'Human' },
   { value: 'engine', label: 'Engine' },
   { value: 'hand_brain', label: 'Hand + Brain' },
   { value: 'lichess', label: 'Lichess' },
 ];
 
-const handBrainModeOptions = [
+const FALLBACK_HAND_BRAIN_MODE_OPTIONS: MenuOption[] = [
   { value: 'normal', label: 'Normal (Engine = Brain)' },
   { value: 'reverse', label: 'Reverse (Human = Brain)' },
 ];
 
-const timeControlOptions = [
+const FALLBACK_TIME_CONTROL_OPTIONS: MenuOption[] = [
   { value: '0', label: 'Untimed' },
   { value: '1', label: '1 min (Bullet)' },
   { value: '3', label: '3 min (Blitz)' },
@@ -82,6 +52,11 @@ const timeControlOptions = [
   { value: '30', label: '30 min (Classical)' },
   { value: '60', label: '60 min (Classical)' },
   { value: '90', label: '90 min (Classical)' },
+];
+
+const FALLBACK_UPDATE_CHANNEL_OPTIONS: MenuOption[] = [
+  { value: 'stable', label: 'Stable (Recommended)' },
+  { value: 'nightly', label: 'Nightly (Development)' },
 ];
 
 interface PlayerSettings {
@@ -213,6 +188,7 @@ function parseRawSettings(data: SettingsData): FormSettings {
  */
 export function Settings() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('players');
+  const [catalog, setCatalog] = useState<MenuCatalog | null>(null);
   const [, setRawSettings] = useState<SettingsData>({});
   const [formSettings, setFormSettings] = useState<FormSettings>(defaultFormSettings);
   const [originalSettings, setOriginalSettings] = useState<FormSettings>(defaultFormSettings);
@@ -237,15 +213,19 @@ export function Settings() {
 
   // Fetch settings function (reusable for initial load and SSE refresh)
   const fetchSettings = useCallback(async () => {
-    const [settingsData, enginesData, spritesData] = await Promise.all([
+    const [settingsData, enginesData, spritesData, catalogData] = await Promise.all([
       apiFetch('/api/settings').then((r) => r.json()),
       apiFetch('/api/engines/all').then((r) => r.json()),
       apiFetch('/api/sprites').then((r) => r.json()).catch(() => ['default']),
+      // Catalog is metadata only; a failure must not block settings rendering
+      // (the FALLBACK_* constants cover the labels/icons/options it provides).
+      apiFetch('/api/menu-schema').then((r) => r.json()).catch(() => null),
     ]);
     setRawSettings(settingsData);
     setEngines(enginesData);
     setInstalledEngines(enginesData.filter((e: EngineDefinition) => e.installed));
     setSpriteSheets(Array.isArray(spritesData) && spritesData.length > 0 ? spritesData : ['default']);
+    if (catalogData && !catalogData.error) setCatalog(catalogData as MenuCatalog);
     
     const parsed = parseRawSettings(settingsData);
     setFormSettings(parsed);
@@ -491,6 +471,27 @@ export function Settings() {
     return engine?.display_name || engineName;
   };
 
+  // Catalog-driven metadata (tabs, option sets, field label/help). Each falls
+  // back to a local constant when the catalog is absent so the page renders
+  // identically offline. Value plumbing and save/apply are unaffected.
+  const tabs = (catalog?.sections?.filter((s) =>
+    FALLBACK_TABS.some((t) => t.id === s.id)
+  ) as { id: SettingsTab; label: string; icon: string }[] | undefined) ?? FALLBACK_TABS;
+
+  const optionSet = (name: string, fallback: MenuOption[]): MenuOption[] =>
+    catalog?.optionSets?.[name] ?? fallback;
+  const playerTypeOptions = optionSet('player_type', FALLBACK_PLAYER_TYPE_OPTIONS);
+  const handBrainModeOptions = optionSet('hand_brain_mode', FALLBACK_HAND_BRAIN_MODE_OPTIONS);
+  const timeControlOptions = optionSet('time_control', FALLBACK_TIME_CONTROL_OPTIONS);
+
+  // Field label/help lookups by catalog id, with explicit fallbacks. Rich help
+  // that needs JSX (links, <code>) is rendered inline at the call site and not
+  // sourced from the catalog (which only carries plain text).
+  const fieldLabel = (id: string, fallback: string): string =>
+    (catalog ? fieldById(catalog, id)?.label : undefined) ?? fallback;
+  const fieldHelp = (id: string, fallback: string): string =>
+    (catalog ? fieldById(catalog, id)?.help : undefined) ?? fallback;
+
   return (
     <>
       <LoginDialog
@@ -512,7 +513,7 @@ export function Settings() {
             onClick={() => setActiveTab(tab.id)}
             title={tab.label}
           >
-            <span className="sidebar-icon">{TabIcons[tab.id]}</span>
+            <span className="sidebar-icon">{tab.icon ? <MenuIcon name={tab.icon} /> : null}</span>
             <span className="sidebar-label">{tab.label}</span>
           </button>
         ))}
@@ -529,7 +530,7 @@ export function Settings() {
             <Card className="mb-6">
               <CardHeader title="Player 1 (White by default)" />
                 
-                <FormRow label="Player Type" help="Human, Engine, Hand+Brain, or Lichess">
+                <FormRow label={fieldLabel('field.player.type', 'Player Type')} help={fieldHelp('field.player.type', 'Human, Engine, Hand+Brain, or Lichess')}>
                   <Select
                     value={formSettings.player1.type}
                     options={playerTypeOptions}
@@ -537,7 +538,7 @@ export function Settings() {
                   />
                 </FormRow>
 
-                <FormRow label="Player Name" help="Optional name for PGN headers">
+                <FormRow label={fieldLabel('field.player.name', 'Player Name')} help={fieldHelp('field.player.name', 'Optional name for PGN headers')}>
                   <Input
                     value={formSettings.player1.name}
                     placeholder={
@@ -551,7 +552,7 @@ export function Settings() {
 
                 {(formSettings.player1.type === 'engine' || formSettings.player1.type === 'hand_brain') && (
                   <>
-                    <FormRow label="Engine" help="Chess engine to use">
+                    <FormRow label={fieldLabel('field.player.engine', 'Engine')} help={fieldHelp('field.player.engine', 'Chess engine to use')}>
                       <Select
                         value={formSettings.player1.engine}
                         options={engineOptions}
@@ -559,7 +560,7 @@ export function Settings() {
                       />
                     </FormRow>
 
-                    <FormRow label="ELO / Style" help="Engine strength or personality">
+                    <FormRow label={fieldLabel('field.player.elo', 'ELO / Style')} help={fieldHelp('field.player.elo', 'Engine strength or personality')}>
                       <Select
                         value={formSettings.player1.elo}
                         options={(engineLevels[formSettings.player1.engine] || ['Default']).map((l) => ({ value: l, label: l }))}
@@ -570,7 +571,7 @@ export function Settings() {
                 )}
 
                 {formSettings.player1.type === 'hand_brain' && (
-                  <FormRow label="Hand+Brain Mode" help="How the human and engine collaborate">
+                  <FormRow label={fieldLabel('field.player.hand_brain_mode', 'Hand+Brain Mode')} help={fieldHelp('field.player.hand_brain_mode', 'How the human and engine collaborate')}>
                     <Select
                       value={formSettings.player1.hand_brain_mode}
                       options={handBrainModeOptions}
@@ -590,7 +591,7 @@ export function Settings() {
             <Card className="mb-6">
               <CardHeader title="Player 2 (Black by default)" />
                 
-                <FormRow label="Player Type" help="Human, Engine, Hand+Brain, or Lichess">
+                <FormRow label={fieldLabel('field.player.type', 'Player Type')} help={fieldHelp('field.player.type', 'Human, Engine, Hand+Brain, or Lichess')}>
                   <Select
                     value={formSettings.player2.type}
                     options={playerTypeOptions}
@@ -598,7 +599,7 @@ export function Settings() {
                   />
                 </FormRow>
 
-                <FormRow label="Player Name" help="Optional name for PGN headers">
+                <FormRow label={fieldLabel('field.player.name', 'Player Name')} help={fieldHelp('field.player.name', 'Optional name for PGN headers')}>
                   <Input
                     value={formSettings.player2.name}
                     placeholder={
@@ -612,7 +613,7 @@ export function Settings() {
 
                 {(formSettings.player2.type === 'engine' || formSettings.player2.type === 'hand_brain') && (
                   <>
-                    <FormRow label="Engine" help="Chess engine to use">
+                    <FormRow label={fieldLabel('field.player.engine', 'Engine')} help={fieldHelp('field.player.engine', 'Chess engine to use')}>
                       <Select
                         value={formSettings.player2.engine}
                         options={engineOptions}
@@ -620,7 +621,7 @@ export function Settings() {
                       />
                     </FormRow>
 
-                    <FormRow label="ELO / Style" help="Engine strength or personality">
+                    <FormRow label={fieldLabel('field.player.elo', 'ELO / Style')} help={fieldHelp('field.player.elo', 'Engine strength or personality')}>
                       <Select
                         value={formSettings.player2.elo}
                         options={(engineLevels[formSettings.player2.engine] || ['Default']).map((l) => ({ value: l, label: l }))}
@@ -631,7 +632,7 @@ export function Settings() {
                 )}
 
                 {formSettings.player2.type === 'hand_brain' && (
-                  <FormRow label="Hand+Brain Mode" help="How the human and engine collaborate">
+                  <FormRow label={fieldLabel('field.player.hand_brain_mode', 'Hand+Brain Mode')} help={fieldHelp('field.player.hand_brain_mode', 'How the human and engine collaborate')}>
                     <Select
                       value={formSettings.player2.hand_brain_mode}
                       options={handBrainModeOptions}
@@ -686,7 +687,7 @@ export function Settings() {
 
             <Card className="mb-6">
               <CardHeader title="Time Control" />
-              <FormRow label="Time per Player" help="Minutes per player (0 = untimed)">
+              <FormRow label={fieldLabel('field.game.time_control', 'Time per Player')} help={fieldHelp('field.game.time_control', 'Minutes per player (0 = untimed)')}>
                 <Select
                   value={formSettings.game.time_control}
                   options={timeControlOptions}
@@ -706,20 +707,20 @@ export function Settings() {
             <Card className="mb-6">
               <CardHeader title="E-Paper Display" />
               <Toggle
-                label="Show Board"
-                help="Display chess board on screen"
+                label={fieldLabel('field.display.show_board', 'Show Board')}
+                help={fieldHelp('field.display.show_board', 'Display chess board on screen')}
                 checked={formSettings.game.show_board}
                 onChange={(v) => updateFormSettings('game', { show_board: v })}
               />
               <Toggle
-                label="Show Clock"
-                help="Display game clock and turn indicator"
+                label={fieldLabel('field.display.show_clock', 'Show Clock')}
+                help={fieldHelp('field.display.show_clock', 'Display game clock and turn indicator')}
                 checked={formSettings.game.show_clock}
                 onChange={(v) => updateFormSettings('game', { show_clock: v })}
               />
               <Toggle
-                label="Show Analysis"
-                help="Display engine analysis widget"
+                label={fieldLabel('field.display.show_analysis', 'Show Analysis')}
+                help={fieldHelp('field.display.show_analysis', 'Display engine analysis widget')}
                 checked={formSettings.game.show_analysis}
                 onChange={(v) => updateFormSettings('game', { show_analysis: v })}
               />
@@ -727,8 +728,8 @@ export function Settings() {
                   analysis widget, so it is disabled while analysis is hidden
                   (mirrors the board's Display & Sound menu). */}
               <Toggle
-                label="Show Evaluation Graph"
-                help="Display evaluation history graph"
+                label={fieldLabel('field.display.show_graph', 'Show Evaluation Graph')}
+                help={fieldHelp('field.display.show_graph', 'Display evaluation history graph')}
                 checked={formSettings.game.show_graph}
                 disabled={!formSettings.game.show_analysis}
                 onChange={(v) => updateFormSettings('game', { show_graph: v })}
@@ -740,9 +741,9 @@ export function Settings() {
                 renders the full sheet (every piece, both square rows) served by
                 /api/sprites/<id>/image so the choice is visual. */}
             <Card className="mb-6">
-              <CardHeader title="Piece Sprites" />
+              <CardHeader title={fieldLabel('field.display.chess_sprites', 'Piece Sprites')} />
               <p className="text-muted mb-4" style={{ fontSize: '0.875rem' }}>
-                Sprite sheet used to draw pieces on the e-paper board
+                {fieldHelp('field.display.chess_sprites', 'Sprite sheet used to draw pieces on the e-paper board')}
               </p>
               <div className="sprite-options" role="radiogroup" aria-label="Piece sprites">
                 {spriteSheets.map((id) => {
@@ -778,7 +779,7 @@ export function Settings() {
 
             <Card className="mb-6">
               <CardHeader title="LEDs" />
-              <FormRow label="LED Brightness" help={`Level: ${formSettings.game.led_brightness}`}>
+              <FormRow label={fieldLabel('field.display.led_brightness', 'LED Brightness')} help={`Level: ${formSettings.game.led_brightness}`}>
                 <input
                   type="range"
                   className="range-slider"
@@ -796,80 +797,39 @@ export function Settings() {
             <Card className="mb-6">
               <CardHeader title="Sound" />
               <Toggle
-                label="Sound Enabled"
-                help="Master switch for all sound effects"
+                label={fieldLabel('field.sound.enabled', 'Sound Enabled')}
+                help={fieldHelp('field.sound.enabled', 'Master switch for all sound effects')}
                 checked={formSettings.sound.enabled}
                 onChange={(v) => updateFormSettings('sound', { enabled: v })}
               />
               <Toggle
-                label="Piece Events"
-                help="Beep when pieces are lifted or placed"
+                label={fieldLabel('field.sound.piece_events', 'Piece Events')}
+                help={fieldHelp('field.sound.piece_events', 'Beep when pieces are lifted or placed')}
                 checked={formSettings.sound.piece_events}
                 disabled={!formSettings.sound.enabled}
                 onChange={(v) => updateFormSettings('sound', { piece_events: v })}
               />
               <Toggle
-                label="Game Events"
-                help="Beep for check, checkmate, and other game events"
+                label={fieldLabel('field.sound.game_events', 'Game Events')}
+                help={fieldHelp('field.sound.game_events', 'Beep for check, checkmate, and other game events')}
                 checked={formSettings.sound.game_events}
                 disabled={!formSettings.sound.enabled}
                 onChange={(v) => updateFormSettings('sound', { game_events: v })}
               />
               <Toggle
-                label="Errors"
-                help="Beep on error conditions"
+                label={fieldLabel('field.sound.errors', 'Errors')}
+                help={fieldHelp('field.sound.errors', 'Beep on error conditions')}
                 checked={formSettings.sound.errors}
                 disabled={!formSettings.sound.enabled}
                 onChange={(v) => updateFormSettings('sound', { errors: v })}
               />
               <Toggle
-                label="Key Press"
-                help="Beep when buttons are pressed"
+                label={fieldLabel('field.sound.key_press', 'Key Press')}
+                help={fieldHelp('field.sound.key_press', 'Beep when buttons are pressed')}
                 checked={formSettings.sound.key_press}
                 disabled={!formSettings.sound.enabled}
                 onChange={(v) => updateFormSettings('sound', { key_press: v })}
               />
-            </Card>
-          </section>
-        )}
-
-        {/* ACCOUNTS TAB */}
-        {activeTab === 'accounts' && (
-          <section>
-            <h2 className="page-title">Accounts</h2>
-            <p className="text-muted mb-6">Connect external services and accounts</p>
-
-            <Card className="mb-4">
-              <CardHeader title="Lichess" />
-              <p className="text-muted mb-4" style={{ fontSize: '0.875rem' }}>
-                Connect to Lichess for online play against other players.
-              </p>
-
-              <FormRow 
-                label="API Token" 
-                help={
-                  <>
-                    <a href="https://lichess.org/account/oauth/token" target="_blank" rel="noopener noreferrer">
-                      Get a token
-                    </a>{' '}
-                    with challenge:write and board:play permissions
-                  </>
-                }
-              >
-                <Input
-                  type="password"
-                  value={formSettings.lichess.api_token}
-                  placeholder="lip_xxxxxxxx"
-                  onChange={(e) => updateFormSettings('lichess', { api_token: e.target.value })}
-                />
-              </FormRow>
-              <FormRow label="Rating Range" help="Preferred opponent rating range for matchmaking">
-                <Input
-                  value={formSettings.lichess.range}
-                  placeholder="1000-1600"
-                  onChange={(e) => updateFormSettings('lichess', { range: e.target.value })}
-                />
-              </FormRow>
             </Card>
           </section>
         )}
@@ -909,12 +869,12 @@ export function Settings() {
             <Card className="mb-6">
               <CardHeader title="Analysis" />
               <Toggle
-                label="Live Analysis"
-                help="Show engine evaluation during play"
+                label={fieldLabel('field.system.analysis_mode', 'Live Analysis')}
+                help={fieldHelp('field.system.analysis_mode', 'Show engine evaluation during play')}
                 checked={formSettings.game.analysis_mode}
                 onChange={(v) => updateFormSettings('game', { analysis_mode: v })}
               />
-              <FormRow label="Analysis Engine" help="Engine used for position analysis (best changed between games)">
+              <FormRow label={fieldLabel('field.game.analysis_engine', 'Analysis Engine')} help={fieldHelp('field.game.analysis_engine', 'Engine used for position analysis (best changed between games)')}>
                 <Select
                   value={formSettings.game.analysis_engine}
                   options={engineOptions}
@@ -925,13 +885,13 @@ export function Settings() {
 
             <Card className="mb-6">
               <CardHeader title="Software Updates" />
-              <UpdateManager />
+              <UpdateManager catalog={catalog} />
             </Card>
 
             <Card className="mb-6">
               <CardHeader title="Developer Mode" />
               <Toggle
-                label="Enable Developer Mode"
+                label={fieldLabel('field.system.developer_mode', 'Enable Developer Mode')}
                 help={
                   <>
                     Enables verbose debug logging. View logs with:{' '}
@@ -949,7 +909,7 @@ export function Settings() {
                 Universal Chess stores all your games in a database. By default, it uses SQLite at{' '}
                 <code>/opt/universalchess/db/centaur.db</code>.
               </p>
-              <FormRow label="Database URI" help="Leave empty for default SQLite. Supports any SQLAlchemy-compatible URI.">
+              <FormRow label={fieldLabel('field.system.database_uri', 'Database URI')} help={fieldHelp('field.system.database_uri', 'Leave empty for default SQLite. Supports any SQLAlchemy-compatible URI.')}>
                 <Input
                   value={formSettings.system.database_uri}
                   placeholder="(default SQLite)"
@@ -1122,7 +1082,7 @@ interface UpdateStatus {
   is_installing: boolean;
 }
 
-function UpdateManager() {
+function UpdateManager({ catalog }: { catalog: MenuCatalog | null }) {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
@@ -1167,7 +1127,7 @@ function UpdateManager() {
     setChecking(true);
     setError(null);
     try {
-      const response = await apiFetch('/api/updates/check', { method: 'POST' });
+      const response = await apiFetch('/api/updates/check', { method: 'POST', requiresAuth: true });
       if (response.status === 401) {
         handleAuthRequired(checkForUpdates);
         return;
@@ -1177,7 +1137,7 @@ function UpdateManager() {
         setError(data.error || 'Check failed');
       }
       await fetchStatus();
-    } catch (e) {
+    } catch {
       setError('Network error');
     } finally {
       setChecking(false);
@@ -1188,7 +1148,7 @@ function UpdateManager() {
     setDownloading(true);
     setError(null);
     try {
-      const response = await apiFetch('/api/updates/download', { method: 'POST' });
+      const response = await apiFetch('/api/updates/download', { method: 'POST', requiresAuth: true });
       if (response.status === 401) {
         handleAuthRequired(downloadUpdate);
         return;
@@ -1198,7 +1158,7 @@ function UpdateManager() {
         setError(data.error || 'Download failed');
       }
       await fetchStatus();
-    } catch (e) {
+    } catch {
       setError('Network error');
     } finally {
       setDownloading(false);
@@ -1211,7 +1171,7 @@ function UpdateManager() {
     setInstalling(true);
     setError(null);
     try {
-      const response = await apiFetch('/api/updates/install', { method: 'POST' });
+      const response = await apiFetch('/api/updates/install', { method: 'POST', requiresAuth: true });
       if (response.status === 401) {
         handleAuthRequired(installUpdate);
         return;
@@ -1223,7 +1183,7 @@ function UpdateManager() {
         // Service will restart - show message
         setError('Update installed. Service restarting...');
       }
-    } catch (e) {
+    } catch {
       setError('Network error');
     } finally {
       setInstalling(false);
@@ -1236,13 +1196,14 @@ function UpdateManager() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ channel }),
+        requiresAuth: true,
       });
       if (response.status === 401) {
         handleAuthRequired(() => setChannel(channel));
         return;
       }
       await fetchStatus();
-    } catch (e) {
+    } catch {
       setError('Failed to set channel');
     }
   };
@@ -1253,13 +1214,14 @@ function UpdateManager() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled }),
+        requiresAuth: true,
       });
       if (response.status === 401) {
         handleAuthRequired(() => setAutoUpdate(enabled));
         return;
       }
       await fetchStatus();
-    } catch (e) {
+    } catch {
       setError('Failed to set auto-update');
     }
   };
@@ -1332,24 +1294,21 @@ function UpdateManager() {
 
         {/* Channel Selection */}
         <FormRow
-          label="Update Channel"
-          help="Stable releases are recommended. Nightly builds may contain bugs."
+          label={(catalog && fieldById(catalog, 'field.system.update_channel')?.label) || 'Update Channel'}
+          help={(catalog && fieldById(catalog, 'field.system.update_channel')?.help) || 'Stable releases are recommended. Nightly builds may contain bugs.'}
         >
           <Select
             value={status.channel}
             onChange={(e) => setChannel(e.target.value)}
             disabled={isLoading}
-            options={[
-              { value: 'stable', label: 'Stable (Recommended)' },
-              { value: 'nightly', label: 'Nightly (Development)' },
-            ]}
+            options={catalog?.optionSets?.update_channel ?? FALLBACK_UPDATE_CHANNEL_OPTIONS}
           />
         </FormRow>
 
         {/* Auto Update Toggle */}
         <Toggle
-          label="Auto-Update"
-          help="Automatically download updates when available"
+          label={(catalog && fieldById(catalog, 'field.system.auto_update')?.label) || 'Auto-Update'}
+          help={(catalog && fieldById(catalog, 'field.system.auto_update')?.help) || 'Automatically download updates when available'}
           checked={status.auto_update}
           onChange={(v) => setAutoUpdate(v)}
           disabled={isLoading}

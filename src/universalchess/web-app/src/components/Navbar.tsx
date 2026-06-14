@@ -57,6 +57,20 @@ export function Navbar() {
             Games
           </Link>
           <Link
+            to="/positions"
+            className={`navbar-item ${isActive('/positions') ? 'is-active' : ''}`}
+            onClick={() => setMenuOpen(false)}
+          >
+            Positions
+          </Link>
+          <Link
+            to="/connectivity"
+            className={`navbar-item ${isActive('/connectivity') ? 'is-active' : ''}`}
+            onClick={() => setMenuOpen(false)}
+          >
+            Connectivity
+          </Link>
+          <Link
             to="/settings"
             className={`navbar-item ${isActive('/settings') ? 'is-active' : ''}`}
             onClick={() => setMenuOpen(false)}

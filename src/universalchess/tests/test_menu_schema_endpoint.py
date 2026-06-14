@@ -1,0 +1,67 @@
+"""Tests for the GET /api/menu-schema endpoint.
+
+The web Settings UI fetches the shared menu catalog from this endpoint to render
+tabs, fields, help tips, and option sets. These tests guard that the endpoint
+returns the catalog (not an error) and that the payload carries the structures
+the React renderer depends on.
+"""
+
+import importlib
+import json
+import sys
+
+import pytest
+
+pytest.importorskip("flask")
+pytest.importorskip("sqlalchemy")
+
+from PIL import Image
+
+# Mirror test_web_security: the app module builds a DB engine against /opt and
+# opens a packaged logo at import time, neither of which exist in a checkout.
+import universalchess.db.uri as _uri  # noqa: E402
+
+_uri.get_database_uri = lambda: "sqlite:///:memory:"
+_orig_image_open = Image.open
+Image.open = lambda *a, **k: Image.new("RGBA", (8, 8))
+try:
+    if "universalchess.web.app" in sys.modules:
+        webapp = importlib.reload(sys.modules["universalchess.web.app"])
+    else:
+        import universalchess.web.app as webapp  # noqa: E402
+finally:
+    Image.open = _orig_image_open
+
+
+@pytest.fixture
+def client():
+    webapp.app.config.update(TESTING=True)
+    return webapp.app.test_client()
+
+
+def test_menu_schema_returns_catalog(client):
+    """The endpoint must return the catalog with nodes/sections/optionSets.
+
+    If the loader failed or the route returned an error, the React Settings page
+    would have no structure to render. This asserts a 200 with the top-level
+    keys the renderer reads.
+    """
+    resp = client.get("/api/menu-schema")
+    assert resp.status_code == 200
+    data = json.loads(resp.data)
+    assert isinstance(data.get("nodes"), list) and data["nodes"]
+    assert isinstance(data.get("sections"), list) and data["sections"]
+    assert "optionSets" in data
+
+
+def test_menu_schema_includes_known_field_help(client):
+    """A known field's help text must be present in the payload.
+
+    Help tips were migrated into the catalog; the web UI now reads them from
+    here. This checks a representative field (player type) carries its help so a
+    regression that drops help strings is caught.
+    """
+    resp = client.get("/api/menu-schema")
+    data = json.loads(resp.data)
+    by_id = {n["id"]: n for n in data["nodes"]}
+    assert by_id["field.player.type"]["help"] == "Human, Engine, Hand+Brain, or Lichess"

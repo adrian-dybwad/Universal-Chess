@@ -34,7 +34,7 @@ from universalchess.services.game_broadcast import get_subscriber, GameState
 from universalchess.paths import EPAPER_STATIC_JPG
 from .chessboard import LiveBoard
 from . import centaurflask
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine, MetaData
 from sqlalchemy.sql import func
@@ -1725,30 +1725,131 @@ if os.path.isfile(epaper_path):
     sc = Image.open(epaper_path)
     moddate = os.stat(epaper_path)[8]
 
-def generateVideoFrame():
+# Cap the cast MJPEG frame rate. The board only changes on moves and the clock
+# ticks once per second, so a high frame rate just pegs a CPU core (each frame
+# is a 1920x1080 JPEG) and starves the rest of the web server during casting.
+# ~5 fps keeps the clock smooth while leaving headroom.
+VIDEO_FRAME_INTERVAL_SECONDS = 0.2
+
+
+def _parse_config_bool(value: str, default: bool = True) -> bool:
+    """Parse board config booleans written as True/False, on/off, yes/no, or 1/0."""
+    if value is None:
+        return default
+    normalized = str(value).strip().lower()
+    if normalized in ("true", "on", "1", "yes"):
+        return True
+    if normalized in ("false", "off", "0", "no"):
+        return False
+    return default
+
+
+def get_chromecast_use_live_board() -> bool:
+    """Return whether Chromecast /video should default to Live Board mode."""
+    from universalchess.board.settings import Settings
+
+    return _parse_config_bool(
+        Settings.read("chromecast", "use_live_board", "True"),
+        default=True,
+    )
+
+
+def set_chromecast_use_live_board(use_live_board: bool) -> None:
+    """Persist the Chromecast source mode shared by web and e-paper menus."""
+    from universalchess.board.settings import Settings
+
+    Settings.write(
+        "chromecast",
+        "use_live_board",
+        "True" if use_live_board else "False",
+        "True",
+    )
+
+
+def _selected_chromecast_video_source() -> str:
+    """Resolve the requested /video source.
+
+    Bare /video is the long-standing classic feed. The Live Board checkbox is
+    applied by Chromecast starts through an explicit source query parameter.
+    """
+    source = (request.args.get("source") or "").strip().lower()
+    if source in ("live_board", "classic"):
+        return source
+    return "classic"
+
+
+def _render_live_board_frame(curfen, piece_images):
+    """Render the refreshed Chromecast frame: Live Board content only."""
+    image = Image.new(mode="RGBA", size=(1920, 1080), color=(18, 18, 18))
+    draw = ImageDraw.Draw(image)
+    sqsize = 130.9
+    board_width = int(8 * sqsize + 32)
+    x_offset = int((1920 - board_width) / 2)
+    y_offset = 0
+
+    draw.rectangle(
+        [(x_offset, 0), (x_offset + board_width, 1080)],
+        fill=(33, 33, 33),
+        outline=(33, 33, 33),
+    )
+    draw.rectangle(
+        [(x_offset + 9, 9), (x_offset + board_width - 9, 1071)],
+        fill=(225, 225, 225),
+        outline=(225, 225, 225),
+    )
+    draw.rectangle(
+        [(x_offset + 12, 12), (x_offset + board_width - 13, 1067)],
+        fill=(33, 33, 33),
+        outline=(33, 33, 33),
+    )
+
+    draw_chess_board(draw, x_offset, y_offset, sqsize)
+    render_chess_pieces(image, curfen, piece_images, x_offset, 16, sqsize)
+    return image
+
+
+def _render_classic_cast_frame(curfen, piece_images):
+    """Render the classic Chromecast frame with e-paper image beside the board."""
     global logo, sc, moddate
-    piece_images = _get_piece_images()
     x_offset = 345
     y_offset = 16
     sqsize = 130.9
-    
-    while True:
-        curfen = parse_fen_to_board_string(get_current_fen())
-        image = Image.new(mode="RGBA", size=(1920, 1080), color=(255, 255, 255))
-        draw = ImageDraw.Draw(image)
-        draw.rectangle([(x_offset, 0), (x_offset + 1329 - 100, 1080)], fill=(33, 33, 33), outline=(33, 33, 33))
-        draw.rectangle([(x_offset + 9, 9), (x_offset + 1220 - 149, 1071)], fill=(225, 225, 225), outline=(225, 225, 225))
-        draw.rectangle([(x_offset + 12, 12), (x_offset + 1216 - 149, 1067)], fill=(33, 33, 33), outline=(33, 33, 33))
-        
-        draw_chess_board(draw, x_offset, 0, sqsize)
-        render_chess_pieces(image, curfen, piece_images, x_offset, y_offset, sqsize)
-        
+
+    image = Image.new(mode="RGBA", size=(1920, 1080), color=(255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle([(x_offset, 0), (x_offset + 1329 - 100, 1080)], fill=(33, 33, 33), outline=(33, 33, 33))
+    draw.rectangle([(x_offset + 9, 9), (x_offset + 1220 - 149, 1071)], fill=(225, 225, 225), outline=(225, 225, 225))
+    draw.rectangle([(x_offset + 12, 12), (x_offset + 1216 - 149, 1067)], fill=(33, 33, 33), outline=(33, 33, 33))
+
+    draw_chess_board(draw, x_offset, 0, sqsize)
+    render_chess_pieces(image, curfen, piece_images, x_offset, y_offset, sqsize)
+
+    try:
         newmoddate = os.stat(EPAPER_STATIC_JPG)[8]
-        if newmoddate != moddate:
-            sc = Image.open(EPAPER_STATIC_JPG)
+        if newmoddate != moddate or sc is None:
+            with Image.open(EPAPER_STATIC_JPG) as snapshot:
+                sc = snapshot.convert("RGB").copy()
             moddate = newmoddate
-        image.paste(sc, (x_offset + 1216 - 130, 635))
-        image.paste(logo, (x_offset + 1216 - 130, 0), logo)
+    except (OSError, UnidentifiedImageError) as e:
+        app.logger.warning("Could not load e-paper snapshot for Chromecast classic mode: %s", e)
+        if sc is None:
+            sc = Image.new(mode="RGB", size=(400, 360), color=(255, 255, 255))
+    image.paste(sc, (x_offset + 1216 - 130, 635))
+    image.paste(logo, (x_offset + 1216 - 130, 0), logo)
+    return image
+
+
+def generateVideoFrame():
+    piece_images = _get_piece_images()
+    source = _selected_chromecast_video_source()
+
+    while True:
+        frame_started = time.monotonic()
+        curfen = parse_fen_to_board_string(get_current_fen())
+        if source == "classic":
+            image = _render_classic_cast_frame(curfen, piece_images)
+        else:
+            image = _render_live_board_frame(curfen, piece_images)
         output = io.BytesIO()
         image = image.convert("RGB")
         image.save(output, "JPEG", quality=30)
@@ -1758,9 +1859,25 @@ def generateVideoFrame():
             b'Content-Length: ' + f"{len(cnn)}".encode() + b'\r\n'
             b'\r\n' + cnn + b'\r\n')
 
+        # Throttle to the target frame rate, accounting for render time so a
+        # slow frame does not add extra delay on top of the interval.
+        elapsed = time.monotonic() - frame_started
+        remaining = VIDEO_FRAME_INTERVAL_SECONDS - elapsed
+        if remaining > 0:
+            time.sleep(remaining)
+
 @app.route('/video')
 def video_feed():
-    return Response(generateVideoFrame(),mimetype='multipart/x-mixed-replace; boundary=frame')
+    return Response(
+        stream_with_context(generateVideoFrame()),
+        mimetype='multipart/x-mixed-replace; boundary=frame',
+        headers={
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+            'X-Accel-Buffering': 'no',
+        },
+    )
 
 def fenToImage(fen):
     global logo
@@ -1951,6 +2068,509 @@ def api_get_sprites():
     except Exception as e:
         app.logger.warning(f"Failed to list sprite sheets: {e}")
         return json.dumps(["default"])
+
+
+@app.route("/api/menu-schema", methods=["GET"])
+def api_get_menu_schema():
+    """Serve the shared menu catalog for the web UI to render settings from.
+
+    The catalog (menu.json) is the single source of truth shared with the board.
+    Served read-only and unauthenticated like /api/sprites; it contains only menu
+    structure, labels, help tips, icons, and option sets - no secrets or values.
+    """
+    try:
+        from universalchess.menus.catalog import get_catalog
+
+        return json.dumps(get_catalog().raw_menu())
+    except Exception as e:
+        app.logger.warning(f"Failed to load menu schema: {e}")
+        return json.dumps({"error": str(e)}), 500
+
+
+@app.route("/api/positions", methods=["GET"])
+def api_get_positions():
+    """List predefined board positions for the web Positions page.
+
+    Reads the same positions.ini the board uses (via load_positions_config), so
+    web and board share one position catalog. Served read-only and
+    unauthenticated like /api/sprites; positions contain no secrets. Shape:
+        {"categories": [{"name": str,
+                          "positions": [{"name", "fen", "hint"}]}]}
+    """
+    try:
+        from universalchess.utils.positions import load_positions_config
+
+        raw = load_positions_config(app.logger)
+        categories = [
+            {
+                "name": category,
+                "positions": [
+                    {"name": name, "fen": fen, "hint": hint}
+                    for name, (fen, hint) in entries.items()
+                ],
+            }
+            for category, entries in raw.items()
+        ]
+        return json.dumps({"categories": categories})
+    except Exception as e:
+        app.logger.warning(f"Failed to load positions: {e}")
+        return json.dumps({"error": str(e)}), 500
+
+
+@app.route("/api/board/setup-position", methods=["POST"])
+@requires_auth
+def api_board_setup_position():
+    """Set up a predefined position on the board. Requires authentication.
+
+    Validates the FEN, then asks the main process to abort any running game and
+    set up the position. The web UI is responsible for confirming with the user
+    when a game is in progress before calling this (the board records the
+    interrupted game as abandoned, result = "*").
+
+    Body: {"fen": str, "name"?: str, "hint"?: str}
+    """
+    try:
+        import chess
+
+        body = request.get_json(silent=True) or {}
+        fen = (body.get("fen") or "").strip()
+        if not fen:
+            return json.dumps({"success": False, "error": "No FEN provided"}), 400
+        try:
+            chess.Board(fen)
+        except ValueError:
+            return json.dumps({"success": False, "error": "Invalid FEN"}), 400
+
+        name = (body.get("name") or "Position").strip()
+        hint = body.get("hint")
+        params = {"fen": fen, "name": name}
+        if hint:
+            params["hint"] = hint
+
+        from universalchess.services.game_broadcast import send_board_command
+
+        sent = send_board_command("setup_position", params)
+        if sent:
+            return json.dumps({"success": True, "message": f"Setting up {name}"})
+        return json.dumps({
+            "success": False,
+            "error": "Board not running",
+        }), 503
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/board/abort-game", methods=["POST"])
+@requires_auth
+def api_board_abort_game():
+    """Abort the running game on the board. Requires authentication.
+
+    Asks the main process to record the in-progress game as abandoned
+    (result = "*") and return to the menu. The web UI confirms with the user
+    before calling this.
+    """
+    try:
+        from universalchess.services.game_broadcast import send_board_command
+
+        sent = send_board_command("abort_game")
+        if sent:
+            return json.dumps({"success": True, "message": "Game aborted"})
+        return json.dumps({"success": False, "error": "Board not running"}), 503
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}), 500
+
+
+# ============================================================================
+# Connectivity - WiFi
+# ============================================================================
+# The WiFi system calls (iwlist/nmcli/rfkill) run in this web process via the
+# shared, UI-agnostic universalchess.connectivity.wifi core (same code the board
+# menu uses). Status is read-only and unauthenticated like other GET endpoints;
+# scan/connect/forget/enable are privileged (sudo) and change network state, so
+# they require authentication. Changing or forgetting the active network can drop
+# the very connection the browser is using; the UI warns before doing so.
+
+
+@app.route("/api/connectivity/wifi/status", methods=["GET"])
+def api_wifi_status():
+    """Return current WiFi adapter status (enabled, connected SSID, IP, signal)."""
+    try:
+        from universalchess.epaper.wifi_info import get_wifi_status
+
+        return json.dumps(get_wifi_status())
+    except Exception as e:
+        app.logger.warning(f"Failed to get WiFi status: {e}")
+        return json.dumps({"error": str(e)}), 500
+
+
+@app.route("/api/connectivity/wifi/scan", methods=["POST"])
+@requires_auth
+def api_wifi_scan():
+    """Scan for nearby WiFi networks. Requires authentication (privileged scan)."""
+    try:
+        from universalchess.connectivity import wifi as wifi_core
+
+        return json.dumps({"networks": wifi_core.scan_networks(app.logger)})
+    except Exception as e:
+        app.logger.warning(f"WiFi scan failed: {e}")
+        return json.dumps({"error": str(e)}), 500
+
+
+@app.route("/api/connectivity/wifi/saved", methods=["GET"])
+@requires_auth
+def api_wifi_saved():
+    """List saved WiFi networks, flagging the active one. Requires authentication."""
+    try:
+        from universalchess.connectivity import wifi as wifi_core
+
+        return json.dumps({"networks": wifi_core.list_saved_networks(app.logger)})
+    except Exception as e:
+        app.logger.warning(f"Failed to list saved WiFi networks: {e}")
+        return json.dumps({"error": str(e)}), 500
+
+
+@app.route("/api/connectivity/wifi/connect", methods=["POST"])
+@requires_auth
+def api_wifi_connect():
+    """Connect to a WiFi network. Requires authentication.
+
+    Body: {"ssid": str, "password"?: str}. Returns the core's success flag and a
+    short human-readable message (e.g. "Wrong password") on failure.
+    """
+    try:
+        from universalchess.connectivity import wifi as wifi_core
+
+        body = request.get_json(silent=True) or {}
+        ssid = (body.get("ssid") or "").strip()
+        if not ssid:
+            return json.dumps({"success": False, "error": "No SSID provided"}), 400
+        password = body.get("password") or None
+        success, message = wifi_core.connect_network(ssid, password, app.logger)
+        status_code = 200 if success else 400
+        return json.dumps({"success": success, "message": message}), status_code
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/connectivity/wifi/forget", methods=["POST"])
+@requires_auth
+def api_wifi_forget():
+    """Forget a saved WiFi network. Requires authentication.
+
+    Body: {"ssid": str}. Returns success=False with 404 if no matching saved
+    profile existed, so the UI does not claim it forgot a network it never had.
+    """
+    try:
+        from universalchess.connectivity import wifi as wifi_core
+
+        body = request.get_json(silent=True) or {}
+        ssid = (body.get("ssid") or "").strip()
+        if not ssid:
+            return json.dumps({"success": False, "error": "No SSID provided"}), 400
+        removed = wifi_core.forget_network(ssid, app.logger)
+        if removed:
+            return json.dumps({"success": True, "message": f"Forgot {ssid}"})
+        return json.dumps({"success": False, "error": "No saved network found"}), 404
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/connectivity/wifi/enable", methods=["POST"])
+@requires_auth
+def api_wifi_enable():
+    """Enable or disable the WiFi radio via rfkill. Requires authentication.
+
+    Body: {"enabled": bool}.
+    """
+    try:
+        from universalchess.epaper.wifi_info import enable_wifi, disable_wifi
+
+        body = request.get_json(silent=True) or {}
+        enabled = bool(body.get("enabled"))
+        ok = enable_wifi() if enabled else disable_wifi()
+        return json.dumps({"success": ok, "enabled": enabled})
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}), 500
+
+
+# ============================================================================
+# Connectivity - Bluetooth
+# ============================================================================
+# Read/manage operations run in this web process over the system D-Bus via the
+# shared connectivity.bluetooth helpers (BlueZ allows multiple client
+# connections and these never touch the board's pairing agent). Pairing a new
+# keyboard and confirming an incoming pairing require the board's KeyboardDisplay
+# agent in the main process, so those are routed over IPC (board_command +
+# SSE events), not handled here. All actions require authentication.
+
+
+@app.route("/api/connectivity/bluetooth/status", methods=["GET"])
+def api_bt_status():
+    """Return Bluetooth radio state and the list of paired devices."""
+    try:
+        from universalchess.connectivity import bluetooth as bt
+
+        return json.dumps(bt.get_status(log=app.logger))
+    except Exception as e:
+        app.logger.warning(f"Failed to get Bluetooth status: {e}")
+        return json.dumps({"error": str(e)}), 500
+
+
+@app.route("/api/connectivity/bluetooth/enable", methods=["POST"])
+@requires_auth
+def api_bt_enable():
+    """Enable or disable the Bluetooth radio. Body: {"enabled": bool}."""
+    try:
+        from universalchess.connectivity import bluetooth as bt
+
+        body = request.get_json(silent=True) or {}
+        enabled = bool(body.get("enabled"))
+        ok = bt.set_enabled(enabled, log=app.logger)
+        return json.dumps({"success": ok, "enabled": enabled})
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/connectivity/bluetooth/scan", methods=["POST"])
+@requires_auth
+def api_bt_scan():
+    """Scan for nearby Bluetooth keyboards (bounded window). Requires auth."""
+    try:
+        from universalchess.connectivity import bluetooth as bt
+
+        return json.dumps({"devices": bt.scan_keyboards(log=app.logger)})
+    except Exception as e:
+        app.logger.warning(f"Bluetooth scan failed: {e}")
+        return json.dumps({"error": str(e)}), 500
+
+
+def _bt_device_action(action_name):
+    """Run a connect/disconnect/forget action keyed by a request body address.
+
+    Shared by the three management endpoints: validates the address (the manager
+    raises ValueError on a malformed MAC -> 400) and maps the boolean result to a
+    JSON response. Keeps the three routes free of duplicated parsing/error code.
+    """
+    from universalchess.connectivity import bluetooth as bt
+
+    body = request.get_json(silent=True) or {}
+    address = (body.get("address") or "").strip()
+    if not address:
+        return json.dumps({"success": False, "error": "No address provided"}), 400
+    try:
+        ok = action_name(bt, address, app.logger)
+    except ValueError as ve:
+        return json.dumps({"success": False, "error": str(ve)}), 400
+    return json.dumps({"success": ok})
+
+
+@app.route("/api/connectivity/bluetooth/connect", methods=["POST"])
+@requires_auth
+def api_bt_connect():
+    """Connect an already-paired Bluetooth device. Body: {"address": str}."""
+    try:
+        from universalchess.connectivity import bluetooth as bt
+
+        body = request.get_json(silent=True) or {}
+        address = (body.get("address") or "").strip()
+        if not address:
+            return json.dumps({"success": False, "error": "No address provided"}), 400
+        try:
+            status = bt.connect_device_status(address, log=app.logger)
+        except ValueError as ve:
+            return json.dumps({"success": False, "error": str(ve)}), 400
+        if status == "ok":
+            return json.dumps({"success": True})
+        if status == "auth_failed":
+            return json.dumps({
+                "success": False,
+                "stalePairing": True,
+                "error": "Saved pairing was rejected. Remove it and pair again?",
+            })
+        return json.dumps({
+            "success": False,
+            "error": "Could not connect. Make sure the device is on and nearby.",
+        })
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/connectivity/bluetooth/disconnect", methods=["POST"])
+@requires_auth
+def api_bt_disconnect():
+    """Disconnect a connected Bluetooth device. Body: {"address": str}."""
+    try:
+        return _bt_device_action(lambda bt, addr, lg: bt.disconnect_device(addr, log=lg))
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/connectivity/bluetooth/forget", methods=["POST"])
+@requires_auth
+def api_bt_forget():
+    """Forget (unpair) a Bluetooth device. Body: {"address": str}."""
+    try:
+        return _bt_device_action(lambda bt, addr, lg: bt.forget_device(addr, log=lg))
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/connectivity/bluetooth/pair", methods=["POST"])
+@requires_auth
+def api_bt_pair():
+    """Pair a new Bluetooth keyboard via the board. Body: {"address": str}.
+
+    Pairing needs the board's KeyboardDisplay agent (main process), so this is a
+    fire-and-forget command to the board. Progress is reported back over SSE as
+    'bt_passkey' (code to show) and 'bt_pair_result' (started/success) events,
+    which the Connectivity page listens for.
+    """
+    try:
+        from universalchess.services.game_broadcast import send_board_command
+
+        body = request.get_json(silent=True) or {}
+        address = (body.get("address") or "").strip()
+        if not address:
+            return json.dumps({"success": False, "error": "No address provided"}), 400
+        sent = send_board_command("bt_pair", {"address": address})
+        if sent:
+            return json.dumps({"success": True, "message": "Pairing started"})
+        return json.dumps({"success": False, "error": "Board not running"}), 503
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/connectivity/bluetooth/pair-confirm", methods=["POST"])
+@requires_auth
+def api_bt_pair_confirm():
+    """Accept or reject an incoming Bluetooth pairing shown on the board.
+
+    Body: {"accept": bool}. Resolves the board's active pairing prompt (the same
+    one shown on the e-paper) from the web, mirrored with the board so whichever
+    surface acts first decides.
+    """
+    try:
+        from universalchess.services.game_broadcast import send_board_command
+
+        body = request.get_json(silent=True) or {}
+        accept = bool(body.get("accept"))
+        sent = send_board_command("bt_pair_confirm", {"accept": accept})
+        if sent:
+            return json.dumps({"success": True})
+        return json.dumps({"success": False, "error": "Board not running"}), 503
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}), 500
+
+
+# ============================================================================
+# Connectivity - Chromecast
+# ============================================================================
+# Discovery is a stateless mDNS scan run in this web process. The active stream
+# is owned by the ChromecastService singleton in the board (main) process (it
+# also writes the e-paper snapshots the stream serves), so start/stop are board
+# commands and the current status is mirrored to the web over SSE
+# ('chromecast_state' events). All actions require authentication.
+
+
+@app.route("/api/connectivity/chromecast/discover", methods=["POST"])
+@requires_auth
+def api_cast_discover():
+    """Discover Chromecast devices on the network (bounded scan). Requires auth."""
+    try:
+        from universalchess.connectivity import chromecast as cast
+
+        return json.dumps({"devices": cast.discover(log=app.logger)})
+    except Exception as e:
+        app.logger.warning(f"Chromecast discovery failed: {e}")
+        return json.dumps({"error": str(e)}), 500
+
+
+@app.route("/api/connectivity/chromecast/start", methods=["POST"])
+@requires_auth
+def api_cast_start():
+    """Start streaming the board to a Chromecast device. Body: {"device": str}."""
+    try:
+        from universalchess.services.game_broadcast import send_board_command
+
+        body = request.get_json(silent=True) or {}
+        device = (body.get("device") or "").strip()
+        if not device:
+            return json.dumps({"success": False, "error": "No device provided"}), 400
+        source = "live_board" if get_chromecast_use_live_board() else "classic"
+        sent = send_board_command(
+            "chromecast_start",
+            {"device": device, "source": source},
+        )
+        if sent:
+            return json.dumps({"success": True, "message": f"Streaming to {device}"})
+        return json.dumps({"success": False, "error": "Board not running"}), 503
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/connectivity/chromecast/source", methods=["GET"])
+def api_cast_source_get():
+    """Return the selected Chromecast display source."""
+    return json.dumps({"useLiveBoard": get_chromecast_use_live_board()})
+
+
+@app.route("/api/connectivity/chromecast/source", methods=["POST"])
+@requires_auth
+def api_cast_source_set():
+    """Persist the selected Chromecast display source. Body: {"useLiveBoard": bool}."""
+    try:
+        body = request.get_json(silent=True) or {}
+        raw_value = body.get("useLiveBoard", True)
+        use_live_board = (
+            raw_value
+            if isinstance(raw_value, bool)
+            else _parse_config_bool(raw_value, default=True)
+        )
+        set_chromecast_use_live_board(use_live_board)
+        broadcast_sse_event("settings_changed")
+        return json.dumps({"success": True, "useLiveBoard": use_live_board})
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/connectivity/chromecast/stop", methods=["POST"])
+@requires_auth
+def api_cast_stop():
+    """Stop streaming. Body: optional {"device": str} to stop one device.
+
+    With no device (or empty), stops every active stream ("Stop all").
+    """
+    try:
+        from universalchess.services.game_broadcast import send_board_command
+
+        body = request.get_json(silent=True) or {}
+        device = (body.get("device") or "").strip()
+        payload = {"device": device} if device else {}
+        sent = send_board_command("chromecast_stop", payload)
+        if sent:
+            msg = f"Stopped {device}" if device else "Streaming stopped"
+            return json.dumps({"success": True, "message": msg})
+        return json.dumps({"success": False, "error": "Board not running"}), 503
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/connectivity/chromecast/status", methods=["POST"])
+@requires_auth
+def api_cast_status():
+    """Ask the board to (re)broadcast its current Chromecast status over SSE.
+
+    The status lives in the board process; this triggers a 'chromecast_state'
+    event the Connectivity page consumes, so the page can fill on load without a
+    request/response IPC channel.
+    """
+    try:
+        from universalchess.services.game_broadcast import send_board_command
+
+        sent = send_board_command("chromecast_status")
+        return json.dumps({"success": bool(sent)})
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}), 500
 
 
 # Upscale factor for the sprite-sheet preview. The native sheet is 16px-per-cell
