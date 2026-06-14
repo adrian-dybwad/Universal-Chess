@@ -1128,6 +1128,40 @@ class GameManager:
         if self.event_callback:
             self.event_callback("Termination.TIME_FORFEIT")
 
+    def abandon_current_game(self) -> bool:
+        """Record the in-progress database game as abandoned (result = "*").
+
+        Marks the current game row abandoned only when it exists in the database
+        and has no result yet (i.e. it was genuinely in progress). The "*" PGN
+        result code is the existing convention for an unfinished/abandoned game,
+        so this reuses that path rather than introducing a new termination type.
+        Resets ``game_db_id`` to -1 afterwards so the same game is never marked
+        twice (e.g. by a subsequent cleanup).
+
+        Used both by the on-board reset (starting-position detection) and by the
+        web "set up position"/"abort game" commands, which must end any running
+        game before replacing it.
+
+        Returns:
+            True if a game row was marked abandoned, False otherwise.
+        """
+        if self.database_session is None or self.game_db_id < 0:
+            return False
+        try:
+            models = _get_models()
+            previous_game = self.database_session.query(models.Game).filter(
+                models.Game.id == self.game_db_id
+            ).first()
+            if previous_game is not None and previous_game.result is None:
+                previous_game.result = "*"  # "*" indicates game abandoned/unfinished
+                self.database_session.commit()
+                log.info(f"[GameManager.abandon_current_game] Marked game (id={self.game_db_id}) as abandoned")
+                self.game_db_id = -1
+                return True
+        except Exception as abandon_error:
+            log.warning(f"[GameManager.abandon_current_game] Error marking game as abandoned: {abandon_error}")
+        return False
+
     def _reset_game(self):
         """Abandon current game and reset to starting position.
         
@@ -1156,20 +1190,7 @@ class GameManager:
                     log.warning(f"[GameManager._reset_game] Error rolling back database transactions: {rollback_error}")
             
             # Step 3: Mark previous game as abandoned if it was in progress
-            if self.database_session is not None and self.game_db_id >= 0:
-                try:
-                    # Check if the previous game has a result (if not, it was abandoned)
-                    models = _get_models()
-                    previous_game = self.database_session.query(models.Game).filter(
-                        models.Game.id == self.game_db_id
-                    ).first()
-                    if previous_game is not None and previous_game.result is None:
-                        # Mark as abandoned (no result means game was in progress)
-                        previous_game.result = "*"  # "*" indicates game abandoned/unfinished
-                        self.database_session.commit()
-                        log.info(f"[GameManager._reset_game] Marked previous game (id={self.game_db_id}) as abandoned")
-                except Exception as abandon_error:
-                    log.warning(f"[GameManager._reset_game] Error marking previous game as abandoned: {abandon_error}")
+            self.abandon_current_game()
             
             # Step 4: Reset all game state
             self.move_state.reset()  # Clear move state (source square, legal moves, forced moves, etc.)
