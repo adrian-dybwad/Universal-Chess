@@ -1,8 +1,15 @@
-"""Settings menu helpers."""
+"""Settings menu helpers.
+
+Entry structure, labels, icons, and e-paper styling for the top-level Settings
+menu live in the shared catalog under the ``settings`` container. This builder
+reads it and overrides the two entries whose label/icon depend on current
+settings: the Players summary and the Time Control state.
+"""
 
 from typing import List, Dict
 
 from universalchess.epaper.icon_menu import IconMenuEntry
+from universalchess.menus.catalog.entry_builder import build_menu_entries
 
 
 def _get_player_type_label(player_type: str) -> str:
@@ -49,18 +56,15 @@ def create_settings_entries(
         time_label = f"Time\n{time_control} min"
         time_icon = "timer_checked"
 
-    # Grouped: the three pre-game setup items first (Players, Time Control,
-    # Positions), then appearance (Display & Sound), then the two device groups
-    # (Connectivity, System). Chromecast moved into Connectivity and About moved
-    # into System, so neither appears at this level.
-    return [
-        IconMenuEntry(key="Players", label=players_label, icon_name="players", enabled=True, font_size=12, height_ratio=0.8),
-        IconMenuEntry(key="TimeControl", label=time_label, icon_name=time_icon, enabled=True, font_size=12, height_ratio=0.8),
-        IconMenuEntry(key="Positions", label="Positions", icon_name="positions", enabled=True, font_size=12, height_ratio=0.8),
-        IconMenuEntry(key="DisplaySound", label="Display\n& Sound", icon_name="display", enabled=True, font_size=12, height_ratio=0.8),
-        IconMenuEntry(key="Connectivity", label="Connectivity", icon_name="wifi", enabled=True, font_size=12, height_ratio=0.8),
-        IconMenuEntry(key="System", label="System", icon_name="system", enabled=True, font_size=12, height_ratio=0.8),
-    ]
+    # Order and chrome come from the catalog's "settings" container. Only the
+    # Players summary and Time Control state are computed at runtime.
+    return build_menu_entries(
+        "settings",
+        overrides={
+            "Players": {"label": players_label},
+            "TimeControl": {"label": time_label, "icon": time_icon},
+        },
+    )
 
 
 __all__ = [

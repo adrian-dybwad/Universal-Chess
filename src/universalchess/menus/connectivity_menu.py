@@ -15,21 +15,18 @@ from typing import Callable, List, Optional
 
 from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.managers.menu import MenuSelection, is_break_result
+from universalchess.menus.catalog.entry_builder import build_menu_entries
 
 
 def create_connectivity_entries() -> List[IconMenuEntry]:
     """Create entries for the Connectivity submenu.
 
-    Returns WiFi, Bluetooth, Chromecast and Accounts, in that order. The keys are
-    unchanged from their previous locations so the existing per-feature handlers
-    and menu-state restoration continue to key off the same identifiers.
+    Returns WiFi, Bluetooth, Chromecast and Accounts, in that order, built from
+    the catalog's "connectivity" container. The keys are unchanged from their
+    previous locations so the existing per-feature handlers and menu-state
+    restoration continue to key off the same identifiers.
     """
-    return [
-        IconMenuEntry(key="WiFi", label="WiFi", icon_name="wifi", enabled=True),
-        IconMenuEntry(key="Bluetooth", label="Bluetooth", icon_name="bluetooth", enabled=True),
-        IconMenuEntry(key="Chromecast", label="Chromecast", icon_name="cast", enabled=True),
-        IconMenuEntry(key="Accounts", label="Accounts", icon_name="account", enabled=True),
-    ]
+    return build_menu_entries("connectivity")
 
 
 def handle_connectivity_menu(

@@ -1,0 +1,493 @@
+{
+  "version": 1,
+  "description": "Shared menu catalog. Single source of truth for menu structure, labels, icons, help tips, e-paper styles, and web field metadata. The e-paper board and the React web UI each render this through their own renderer; inherently dynamic menus (device scans, engine/player lists) stay code-driven but read their chrome (label/icon/help) from here.",
+  "roots": ["main", "settings", "connectivity", "system", "power"],
+
+  "sections": [
+    { "id": "players", "label": "Players", "icon": "players" },
+    { "id": "display", "label": "Display & Sound", "icon": "display" },
+    { "id": "game", "label": "Game", "icon": "timer_checked" },
+    { "id": "accounts", "label": "Accounts", "icon": "account" },
+    { "id": "engines", "label": "Engines", "icon": "engine" },
+    { "id": "system", "label": "System", "icon": "system" }
+  ],
+
+  "optionSets": {
+    "player_type": [
+      { "value": "human", "label": "Human" },
+      { "value": "engine", "label": "Engine" },
+      { "value": "hand_brain", "label": "Hand + Brain" },
+      { "value": "lichess", "label": "Lichess" }
+    ],
+    "hand_brain_mode": [
+      { "value": "normal", "label": "Normal (Engine = Brain)" },
+      { "value": "reverse", "label": "Reverse (Human = Brain)" }
+    ],
+    "time_control": [
+      { "value": "0", "label": "Untimed" },
+      { "value": "1", "label": "1 min (Bullet)" },
+      { "value": "3", "label": "3 min (Blitz)" },
+      { "value": "5", "label": "5 min (Blitz)" },
+      { "value": "10", "label": "10 min (Rapid)" },
+      { "value": "15", "label": "15 min (Rapid)" },
+      { "value": "30", "label": "30 min (Classical)" },
+      { "value": "60", "label": "60 min (Classical)" },
+      { "value": "90", "label": "90 min (Classical)" }
+    ],
+    "update_channel": [
+      { "value": "stable", "label": "Stable (Recommended)" },
+      { "value": "nightly", "label": "Nightly (Development)" }
+    ]
+  },
+
+  "nodes": [
+    {
+      "id": "main",
+      "type": "menu",
+      "label": "Main Menu",
+      "platforms": ["board"],
+      "children": ["main.play", "main.settings", "main.centaur"]
+    },
+    {
+      "id": "main.play",
+      "key": "Universal",
+      "type": "action",
+      "label": "PLAY",
+      "label_in_progress": "RESUME",
+      "icon": "universal_logo",
+      "help": "Start a new game. When a game is suspended this reads RESUME and continues it.",
+      "platforms": ["board"],
+      "epaper": { "height_ratio": 2.0, "icon_size": 80, "layout": "vertical", "font_size": 32, "bold": true }
+    },
+    {
+      "id": "main.settings",
+      "key": "Settings",
+      "type": "submenu",
+      "label": "Settings",
+      "icon": "settings",
+      "help": "Configure players, time control, positions, display, connectivity, and system options.",
+      "target": "settings",
+      "platforms": ["board"],
+      "epaper": { "height_ratio": 1.0, "layout": "horizontal", "font_size": 16 }
+    },
+    {
+      "id": "main.centaur",
+      "key": "Centaur",
+      "type": "action",
+      "label": "Original\nCentaur",
+      "icon": "centaur",
+      "help": "Switch back to the original DGT Centaur software.",
+      "platforms": ["board"],
+      "epaper": { "height_ratio": 0.67, "icon_size": 28, "layout": "horizontal", "font_size": 14 }
+    },
+
+    {
+      "id": "settings",
+      "type": "menu",
+      "label": "Settings",
+      "children": ["settings.players", "settings.timecontrol", "settings.positions", "settings.displaysound", "settings.connectivity", "settings.system"]
+    },
+    {
+      "id": "settings.players",
+      "key": "Players",
+      "type": "submenu",
+      "label": "Players",
+      "icon": "players",
+      "help": "Configure player names, types, and engine preferences.",
+      "section": "players",
+      "epaper": { "font_size": 12, "height_ratio": 0.8 }
+    },
+    {
+      "id": "settings.timecontrol",
+      "key": "TimeControl",
+      "type": "submenu",
+      "label": "Time Control",
+      "icon": "timer_checked",
+      "help": "Minutes per player for the game clock (0 = untimed).",
+      "section": "game",
+      "epaper": { "font_size": 12, "height_ratio": 0.8 }
+    },
+    {
+      "id": "settings.positions",
+      "key": "Positions",
+      "type": "submenu",
+      "label": "Positions",
+      "icon": "positions",
+      "help": "Set up a predefined position on the board to practice or analyze.",
+      "platforms": ["board", "web"],
+      "epaper": { "font_size": 12, "height_ratio": 0.8 }
+    },
+    {
+      "id": "settings.displaysound",
+      "key": "DisplaySound",
+      "type": "submenu",
+      "label": "Display\n& Sound",
+      "icon": "display",
+      "help": "Control what appears on the e-paper display, the LEDs, and audio feedback.",
+      "section": "display",
+      "epaper": { "font_size": 12, "height_ratio": 0.8 }
+    },
+    {
+      "id": "settings.connectivity",
+      "key": "Connectivity",
+      "type": "submenu",
+      "label": "Connectivity",
+      "icon": "wifi",
+      "help": "Network, peripherals, screen mirroring, and account connections.",
+      "target": "connectivity",
+      "platforms": ["board", "web"],
+      "epaper": { "font_size": 12, "height_ratio": 0.8 }
+    },
+    {
+      "id": "settings.system",
+      "key": "System",
+      "type": "submenu",
+      "label": "System",
+      "icon": "system",
+      "help": "Engines, maintenance, software updates, and power.",
+      "target": "system",
+      "section": "system",
+      "epaper": { "font_size": 12, "height_ratio": 0.8 }
+    },
+
+    {
+      "id": "connectivity",
+      "type": "menu",
+      "label": "Connectivity",
+      "platforms": ["board", "web"],
+      "children": ["connectivity.wifi", "connectivity.bluetooth", "connectivity.chromecast", "connectivity.accounts"]
+    },
+    {
+      "id": "connectivity.wifi",
+      "key": "WiFi",
+      "type": "submenu",
+      "label": "WiFi",
+      "icon": "wifi",
+      "help": "Connect the board to a wireless network.",
+      "platforms": ["board", "web"]
+    },
+    {
+      "id": "connectivity.bluetooth",
+      "key": "Bluetooth",
+      "type": "submenu",
+      "label": "Bluetooth",
+      "icon": "bluetooth",
+      "help": "Pair a Bluetooth keyboard with the board.",
+      "platforms": ["board", "web"]
+    },
+    {
+      "id": "connectivity.chromecast",
+      "key": "Chromecast",
+      "type": "submenu",
+      "label": "Chromecast",
+      "icon": "cast",
+      "help": "Mirror the board to a Chromecast device.",
+      "platforms": ["board", "web"]
+    },
+    {
+      "id": "connectivity.accounts",
+      "key": "Accounts",
+      "type": "submenu",
+      "label": "Accounts",
+      "icon": "account",
+      "help": "Connect external services such as Lichess.",
+      "section": "accounts",
+      "platforms": ["board", "web"]
+    },
+
+    {
+      "id": "system",
+      "type": "menu",
+      "label": "System",
+      "platforms": ["board"],
+      "children": ["system.engines", "system.analysis", "system.inactivity", "system.reset", "system.about", "system.power"]
+    },
+    {
+      "id": "system.engines",
+      "key": "Engines",
+      "type": "submenu",
+      "label": "Engine\nManager",
+      "icon": "engine",
+      "help": "Install and manage chess engines for play and analysis.",
+      "section": "engines",
+      "platforms": ["board", "web"]
+    },
+    {
+      "id": "system.analysis",
+      "key": "AnalysisMode",
+      "type": "submenu",
+      "label": "Analysis\nEngine",
+      "icon": "checkbox_empty",
+      "help": "Choose the engine used for position analysis (best changed between games).",
+      "platforms": ["board", "web"]
+    },
+    {
+      "id": "system.inactivity",
+      "key": "Inactivity",
+      "type": "submenu",
+      "label": "Sleep Timer",
+      "icon": "timer",
+      "help": "Automatically put the board to sleep after a period of inactivity.",
+      "platforms": ["board"]
+    },
+    {
+      "id": "system.reset",
+      "key": "ResetSettings",
+      "type": "action",
+      "label": "Reset\nSettings",
+      "icon": "cancel",
+      "help": "Restore all settings to their defaults.",
+      "platforms": ["board"]
+    },
+    {
+      "id": "system.about",
+      "key": "About",
+      "type": "submenu",
+      "label": "About",
+      "icon": "info",
+      "help": "Version and support information.",
+      "platforms": ["board", "web"]
+    },
+    {
+      "id": "system.power",
+      "key": "Power",
+      "type": "submenu",
+      "label": "Power",
+      "icon": "shutdown",
+      "help": "Shut down or reboot the board.",
+      "target": "power",
+      "platforms": ["board"]
+    },
+
+    {
+      "id": "power",
+      "type": "menu",
+      "label": "Power",
+      "platforms": ["board"],
+      "children": ["power.shutdown", "power.reboot"]
+    },
+    {
+      "id": "power.shutdown",
+      "key": "Shutdown",
+      "type": "action",
+      "label": "Shutdown",
+      "icon": "shutdown",
+      "help": "Power off the board.",
+      "platforms": ["board"]
+    },
+    {
+      "id": "power.reboot",
+      "key": "Reboot",
+      "type": "action",
+      "label": "Reboot",
+      "icon": "reboot",
+      "help": "Restart the board.",
+      "platforms": ["board"]
+    },
+
+    {
+      "id": "field.player.type",
+      "type": "select",
+      "label": "Player Type",
+      "help": "Human, Engine, Hand+Brain, or Lichess",
+      "optionSet": "player_type",
+      "section": "players",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.player.name",
+      "type": "text",
+      "label": "Player Name",
+      "help": "Optional name for PGN headers",
+      "section": "players",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.player.engine",
+      "type": "select",
+      "label": "Engine",
+      "help": "Chess engine to use",
+      "section": "players",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.player.elo",
+      "type": "select",
+      "label": "ELO / Style",
+      "help": "Engine strength or personality",
+      "section": "players",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.player.hand_brain_mode",
+      "type": "select",
+      "label": "Hand+Brain Mode",
+      "help": "How the human and engine collaborate",
+      "optionSet": "hand_brain_mode",
+      "section": "players",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.game.time_control",
+      "type": "select",
+      "label": "Time per Player",
+      "help": "Minutes per player (0 = untimed)",
+      "optionSet": "time_control",
+      "section": "game",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.display.show_board",
+      "type": "toggle",
+      "label": "Show Board",
+      "help": "Display chess board on screen",
+      "section": "display",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.display.show_clock",
+      "type": "toggle",
+      "label": "Show Clock",
+      "help": "Display game clock and turn indicator",
+      "section": "display",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.display.show_analysis",
+      "type": "toggle",
+      "label": "Show Analysis",
+      "help": "Display engine analysis widget",
+      "section": "display",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.display.show_graph",
+      "type": "toggle",
+      "label": "Show Evaluation Graph",
+      "help": "Display evaluation history graph",
+      "section": "display",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.display.chess_sprites",
+      "type": "select",
+      "label": "Piece Sprites",
+      "help": "Sprite sheet used to draw pieces on the e-paper board",
+      "section": "display",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.display.led_brightness",
+      "type": "range",
+      "label": "LED Brightness",
+      "help": "Brightness level for the board LEDs",
+      "section": "display",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.sound.enabled",
+      "type": "toggle",
+      "label": "Sound Enabled",
+      "help": "Master switch for all sound effects",
+      "section": "display",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.sound.piece_events",
+      "type": "toggle",
+      "label": "Piece Events",
+      "help": "Beep when pieces are lifted or placed",
+      "section": "display",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.sound.game_events",
+      "type": "toggle",
+      "label": "Game Events",
+      "help": "Beep for check, checkmate, and other game events",
+      "section": "display",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.sound.errors",
+      "type": "toggle",
+      "label": "Errors",
+      "help": "Beep on error conditions",
+      "section": "display",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.sound.key_press",
+      "type": "toggle",
+      "label": "Key Press",
+      "help": "Beep when buttons are pressed",
+      "section": "display",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.lichess.api_token",
+      "type": "text",
+      "label": "API Token",
+      "help": "Get a token from lichess.org with challenge:write and board:play permissions",
+      "section": "accounts",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.lichess.range",
+      "type": "text",
+      "label": "Rating Range",
+      "help": "Preferred opponent rating range for matchmaking",
+      "section": "accounts",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.system.analysis_mode",
+      "type": "toggle",
+      "label": "Live Analysis",
+      "help": "Show engine evaluation during play",
+      "section": "system",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.game.analysis_engine",
+      "type": "select",
+      "label": "Analysis Engine",
+      "help": "Engine used for position analysis (best changed between games)",
+      "section": "system",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.system.update_channel",
+      "type": "select",
+      "label": "Update Channel",
+      "help": "Stable releases are recommended. Nightly builds may contain bugs.",
+      "optionSet": "update_channel",
+      "section": "system",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.system.auto_update",
+      "type": "toggle",
+      "label": "Auto-Update",
+      "help": "Automatically download updates when available",
+      "section": "system",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.system.developer_mode",
+      "type": "toggle",
+      "label": "Enable Developer Mode",
+      "help": "Enables verbose debug logging. View logs with: journalctl -u universal-chess -f",
+      "section": "system",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.system.database_uri",
+      "type": "text",
+      "label": "Database URI",
+      "help": "Leave empty for default SQLite. Supports any SQLAlchemy-compatible URI.",
+      "section": "system",
+      "platforms": ["web"]
+    }
+  ]
+}

@@ -4,11 +4,17 @@ from typing import Dict, List, Callable, Optional
 
 from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.managers.menu import MenuSelection, is_break_result
+from universalchess.menus.catalog.entry_builder import build_menu_entries
 from universalchess.utils.led import LED_SPEED_NORMAL, LED_INTENSITY_DEFAULT
 
 
 def create_system_entries(board_module, game_settings: Dict[str, object]) -> List[IconMenuEntry]:
-    """Create entries for the system submenu."""
+    """Create entries for the system submenu.
+
+    Structure and chrome come from the catalog's "system" container. Two entries
+    have runtime state: the Sleep Timer (label + icon reflect the configured
+    timeout) and the Analysis Engine (checkbox icon reflects analysis_mode).
+    """
     timeout = board_module.get_inactivity_timeout()
     if timeout == 0:
         timeout_label = "Sleep Timer\nDisabled"
@@ -19,29 +25,18 @@ def create_system_entries(board_module, game_settings: Dict[str, object]) -> Lis
 
     analysis_mode_icon = "checkbox_checked" if game_settings["analysis_mode"] else "checkbox_empty"
 
-    # Grouped by concern now that connectivity (WiFi/Bluetooth/Accounts) lives in
-    # the dedicated Connectivity submenu: engines (Engine Manager then the analysis
-    # engine selector), device (sleep timer), maintenance (reset, about), and
-    # finally the isolated Power submenu that holds the destructive Shutdown/Reboot
-    # actions. The analysis item keeps the dispatch key "AnalysisMode" but is
-    # labelled "Analysis Engine" to disambiguate it from the in-game "Show
-    # Analysis" view toggle.
-    return [
-        IconMenuEntry(key="Engines", label="Engine\nManager", icon_name="engine", enabled=True),
-        IconMenuEntry(key="AnalysisMode", label="Analysis\nEngine", icon_name=analysis_mode_icon, enabled=True),
-        IconMenuEntry(key="Inactivity", label=timeout_label, icon_name=timeout_icon, enabled=True),
-        IconMenuEntry(key="ResetSettings", label="Reset\nSettings", icon_name="cancel", enabled=True),
-        IconMenuEntry(key="About", label="About", icon_name="info", enabled=True),
-        IconMenuEntry(key="Power", label="Power", icon_name="shutdown", enabled=True),
-    ]
+    return build_menu_entries(
+        "system",
+        overrides={
+            "Inactivity": {"label": timeout_label, "icon": timeout_icon},
+            "AnalysisMode": {"icon": analysis_mode_icon},
+        },
+    )
 
 
 def create_power_entries() -> List[IconMenuEntry]:
     """Create entries for the Power submenu (isolated destructive actions)."""
-    return [
-        IconMenuEntry(key="Shutdown", label="Shutdown", icon_name="shutdown", enabled=True),
-        IconMenuEntry(key="Reboot", label="Reboot", icon_name="reboot", enabled=True),
-    ]
+    return build_menu_entries("power")
 
 
 def handle_power_menu(ctx, board, menu_manager, shutdown_fn: Callable[[str, bool], None]):

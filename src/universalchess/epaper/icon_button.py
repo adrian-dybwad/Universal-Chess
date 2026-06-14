@@ -660,6 +660,12 @@ class IconButtonWidget(Widget):
             self._draw_download_icon(draw, x, y, size, line_color)
         elif icon_name == "star":
             self._draw_star_icon(draw, x, y, size, line_color)
+        elif icon_name == "play":
+            self._draw_play_icon(draw, x, y, size, line_color)
+        elif icon_name == "update":
+            self._draw_update_icon(draw, x, y, size, line_color)
+        elif icon_name == "undo":
+            self._draw_undo_icon(draw, x, y, size, line_color)
         else:
             # Default: simple square placeholder
             draw.rectangle([left + 4, top + 4, right - 4, bottom - 4],
@@ -1140,10 +1146,14 @@ class IconButtonWidget(Widget):
         draw.rectangle([x - int(7*s), y - int(4*s), x + int(7*s), base_top],
                       fill=line_color, outline=line_color)
         
-        # Battlements (top)
+        # Battlements (top). The rectangle spans from the crenellation top
+        # (battlement_top, smaller y) down to where it meets the body
+        # (battlement_base, larger y). Coordinates must be ordered y0 <= y1;
+        # the previous order was inverted and only rendered because older
+        # Pillow tolerated swapped rectangle bounds.
         battlement_base = y - int(4*s)
         battlement_top = y - half + int(2*s)
-        draw.rectangle([x - int(9*s), battlement_base, x + int(9*s), battlement_top + int(4*s)],
+        draw.rectangle([x - int(9*s), battlement_top, x + int(9*s), battlement_base],
                       fill=line_color, outline=line_color)
         
         # Cut out the gaps in battlements
@@ -2235,3 +2245,98 @@ class IconButtonWidget(Widget):
         # Right side
         draw.line([(x + tray_width, tray_top), (x + tray_width, tray_bottom)],
                  fill=line_color, width=line_width)
+
+    def _draw_play_icon(self, draw: ImageDraw.Draw, x: int, y: int,
+                        size: int, line_color: int):
+        """Draw a play icon (filled right-pointing triangle).
+
+        Used for PLAY / start actions. Shares the "play" id with the web SVG.
+
+        Args:
+            draw: ImageDraw object
+            x: X center position
+            y: Y center position
+            size: Icon size in pixels
+            line_color: Line color (0=black, 255=white)
+        """
+        s = size / 36.0
+        # A slightly left-offset triangle reads as centered because its
+        # visual mass sits behind the tip.
+        half_h = int(11 * s)
+        left = x - int(8 * s)
+        right = x + int(12 * s)
+        draw.polygon(
+            [(left, y - half_h), (left, y + half_h), (right, y)],
+            fill=line_color,
+            outline=line_color,
+        )
+
+    def _draw_update_icon(self, draw: ImageDraw.Draw, x: int, y: int,
+                          size: int, line_color: int):
+        """Draw an update icon (circular refresh arrows).
+
+        Used for software-update entries. Shares the "update" id with the web
+        SVG. Drawn as a near-complete ring with a gap and an arrowhead so it
+        reads as a refresh symbol on the 1-bit display.
+
+        Args:
+            draw: ImageDraw object
+            x: X center position
+            y: Y center position
+            size: Icon size in pixels
+            line_color: Line color (0=black, 255=white)
+        """
+        s = size / 36.0
+        line_width = max(2, int(2 * s))
+        r = int(11 * s)
+        # Arc from 40deg around to -210deg, leaving a gap at the top-right for
+        # the arrowhead.
+        draw.arc([x - r, y - r, x + r, y + r], start=40, end=300,
+                 fill=line_color, width=line_width)
+        # Arrowhead at the arc's start (around 40deg, upper-right).
+        import math
+        a = math.radians(40)
+        tip_x = x + int(r * math.cos(a))
+        tip_y = y + int(r * math.sin(a))
+        head = max(3, int(5 * s))
+        draw.polygon(
+            [
+                (tip_x + head, tip_y - head // 2),
+                (tip_x - head, tip_y - head),
+                (tip_x, tip_y + head),
+            ],
+            fill=line_color,
+            outline=line_color,
+        )
+
+    def _draw_undo_icon(self, draw: ImageDraw.Draw, x: int, y: int,
+                        size: int, line_color: int):
+        """Draw an undo icon (curved arrow pointing back/left).
+
+        Used for takeback actions. Shares the "undo" id with the web SVG.
+
+        Args:
+            draw: ImageDraw object
+            x: X center position
+            y: Y center position
+            size: Icon size in pixels
+            line_color: Line color (0=black, 255=white)
+        """
+        s = size / 36.0
+        line_width = max(2, int(2 * s))
+        r = int(10 * s)
+        # Upper arc curving from the left around the top to the right.
+        draw.arc([x - r, y - r, x + r, y + r], start=180, end=20,
+                 fill=line_color, width=line_width)
+        # Arrowhead at the left end pointing down-left (the "back" direction).
+        left_x = x - r
+        head = max(3, int(5 * s))
+        draw.polygon(
+            [
+                (left_x - head, y),
+                (left_x + head, y - head),
+                (left_x + head, y + head),
+            ],
+            fill=line_color,
+            outline=line_color,
+        )
