@@ -51,6 +51,7 @@ package.
 """
 
 import re
+import subprocess
 import time
 from typing import Callable, Dict, List, Optional
 
@@ -78,6 +79,10 @@ _PEER_SELF_HEAL_DELAY_SECONDS = 2.0
 # bound on both how quickly a newly-found keyboard is surfaced and how quickly a
 # streaming scan reacts to its stop request.
 _DISCOVERY_POLL_SECONDS = 0.5
+
+CONNECT_OK = "ok"
+CONNECT_AUTH_FAILED = "auth_failed"
+CONNECT_FAILED = "failed"
 
 
 class BluezPairingManager:
@@ -233,6 +238,23 @@ class BluezPairingManager:
             name = exc.get_dbus_name() or ""
             if name.endswith("AuthenticationFailed"):
                 return "auth_failed"
+            if name.endswith("NoReply"):
+                # BlueZ can complete the bond but fail to reply before the D-Bus
+                # timeout expires. Trust the cached Paired flag in that case so
+                # the caller still runs trust/connect and the UI reports the real
+                # outcome rather than a false "Pairing failed".
+                try:
+                    if self._is_paired(address):
+                        log.info(
+                            f"[BluezPairing] Pair {address} timed out but "
+                            "BlueZ reports Paired: yes"
+                        )
+                        return "ok"
+                except Exception as state_exc:  # noqa: BLE001 - fall through to failed
+                    log.debug(
+                        f"[BluezPairing] Could not verify post-timeout pair "
+                        f"state for {address}: {state_exc}"
+                    )
             log.info(f"[BluezPairing] Pair {address} failed: {name or exc}")
             return "failed"
 
@@ -244,21 +266,67 @@ class BluezPairingManager:
         except dbus.exceptions.DBusException as exc:
             log.warning(f"[BluezPairing] Could not trust {address}: {exc}")
 
-    def _do_connect(self, address: str, timeout_seconds: float) -> bool:
-        """Connect a device via BlueZ. Returns True on success, False on error.
+    def _recent_connect_auth_failure(self, address: str, since_timestamp: float) -> bool:
+        """Return True if bluetoothd logged an auth failure for this connect.
+
+        BlueZ does not always surface the exact controller/profile error through
+        the D-Bus ``Connect()`` exception. On the board/WiFi Key stale-bond case
+        authoritative evidence is emitted by bluetoothd for the target address
+        during the connect attempt:
+
+        * ``Authentication Failed (0x05)`` when the controller reports the
+          baseband authentication failure directly.
+        * ``control_connect_cb() ... Invalid exchange (52)`` when HID control
+          setup fails after the peer removed its bond but the board still has
+          one saved.
+
+        The markers are intentionally narrow so generic failures (out of range,
+        NoReply, already connected elsewhere) do not trigger a stale-pairing
+        confirmation.
+        """
+        since = time.strftime(
+            "%Y-%m-%d %H:%M:%S", time.localtime(max(0, since_timestamp - 1)))
+        try:
+            result = subprocess.run(
+                ["journalctl", "-u", "bluetooth", "--since", since, "--no-pager"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+        except (subprocess.SubprocessError, OSError) as exc:
+            log.debug(f"[BluezPairing] Could not inspect bluetoothd log: {exc}")
+            return False
+        output = ((result.stdout or "") + (result.stderr or "")).lower()
+        return address.lower() in output and (
+            "authentication failed (0x05)" in output
+            or "control_connect_cb()" in output
+            and "invalid exchange (52)" in output
+        )
+
+    def _connect_status(self, address: str, timeout_seconds: float) -> str:
+        """Connect a device via BlueZ and return ok/auth_failed/failed.
 
         Thin dbus primitive shared by the best-effort post-pair connect and the
         user-initiated :meth:`connect_device`; isolating the dbus call keeps the
         orchestration unit-testable without a live bus.
         """
         import dbus
+        started_at = time.time()
         try:
             self._device(address).Connect(timeout=timeout_seconds)
-            return True
+            return CONNECT_OK
         except dbus.exceptions.DBusException as exc:
-            log.info(
-                f"[BluezPairing] Connect {address}: {exc.get_dbus_name() or exc}")
-            return False
+            name = exc.get_dbus_name() or ""
+            if name.endswith("AuthenticationFailed") or self._recent_connect_auth_failure(
+                    address, started_at):
+                log.info(f"[BluezPairing] Connect {address}: authentication failed")
+                return CONNECT_AUTH_FAILED
+            log.info(f"[BluezPairing] Connect {address}: {name or exc}")
+            return CONNECT_FAILED
+
+    def _do_connect(self, address: str, timeout_seconds: float) -> bool:
+        """Connect a device via BlueZ. Returns True on success, False on error."""
+        return self._connect_status(address, timeout_seconds) == CONNECT_OK
 
     def _do_disconnect(self, address: str, timeout_seconds: float) -> bool:
         """Disconnect a device via BlueZ. Returns True on success, False on error."""
@@ -476,7 +544,19 @@ class BluezPairingManager:
         """Connect an already-paired device. Returns success for the UI to toast."""
         if not self._validate_mac_address(address):
             raise ValueError(f"Invalid MAC address format: {address}")
-        return self._do_connect(address, timeout_seconds)
+        return self.connect_device_status(address, timeout_seconds) == CONNECT_OK
+
+    def connect_device_status(self, address: str,
+                              timeout_seconds: float = 20.0) -> str:
+        """Connect a paired device and return ok/auth_failed/failed.
+
+        UI callers use ``auth_failed`` to offer a stale-pairing removal prompt.
+        Other failures stay generic because they do not prove the saved bond is
+        bad.
+        """
+        if not self._validate_mac_address(address):
+            raise ValueError(f"Invalid MAC address format: {address}")
+        return self._connect_status(address, timeout_seconds)
 
     def disconnect_device(self, address: str, timeout_seconds: float = 20.0) -> bool:
         """Disconnect a connected device. Returns success for the UI to toast."""

@@ -237,6 +237,21 @@ def _build_device_detail_entries(name: str, connected: bool) -> List[IconMenuEnt
     return entries
 
 
+def _build_stale_pairing_entries(name: str) -> List[IconMenuEntry]:
+    """Build the stale-pairing confirmation shown after auth failure only."""
+    return [
+        IconMenuEntry(key="Info", label=f"{name[:16]}\nrejected pairing",
+                      icon_name="bluetooth", enabled=True, selectable=False,
+                      height_ratio=1.2, layout="vertical", font_size=11),
+        IconMenuEntry(key="RemovePairing", label="Remove\nPairing",
+                      icon_name="exit", enabled=True, selectable=True,
+                      height_ratio=0.8, layout="horizontal", font_size=14),
+        IconMenuEntry(key="KeepPairing", label="Keep\nPairing",
+                      icon_name="cancel", enabled=True, selectable=True,
+                      height_ratio=0.8, layout="horizontal", font_size=14),
+    ]
+
+
 def _handle_device_detail(
     device: dict,
     connect_device: Callable[[str], bool],
@@ -246,6 +261,7 @@ def _handle_device_detail(
     is_break_result_fn: Callable[[str], bool],
     board,
     log,
+    connect_device_status: Optional[Callable[[str], str]] = None,
 ):
     """Run the detail screen for one paired device.
 
@@ -270,10 +286,29 @@ def _handle_device_detail(
             return None
         if result == "Connect":
             _show_splash(board, f"Connecting\n{name[:14]}...")
-            ok = connect_device(address)
-            _show_splash(board, "Connected" if ok else "Connect failed",
-                         hold_seconds=2.0)
-            connected = ok
+            status = (connect_device_status(address)
+                      if connect_device_status is not None
+                      else ("ok" if connect_device(address) else "failed"))
+            if status == "ok":
+                _show_splash(board, "Connected", hold_seconds=2.0)
+                connected = True
+            elif status == "auth_failed":
+                confirm = show_menu(_build_stale_pairing_entries(name))
+                if is_break_result_fn(confirm):
+                    return confirm
+                if confirm in ("SHUTDOWN", "HELP"):
+                    return confirm
+                if confirm == "RemovePairing":
+                    _show_splash(board, f"Forgetting\n{name[:14]}...")
+                    ok = forget_device(address)
+                    _show_splash(board, "Pairing removed" if ok else "Forget failed",
+                                 hold_seconds=2.0)
+                    if ok:
+                        return None
+                connected = False
+            else:
+                _show_splash(board, "Connect failed", hold_seconds=2.0)
+                connected = False
         elif result == "Disconnect":
             _show_splash(board, f"Disconnecting\n{name[:14]}...")
             ok = disconnect_device(address)
@@ -299,6 +334,7 @@ def handle_paired_devices_menu(
     is_break_result_fn: Callable[[str], bool],
     board,
     log,
+    connect_device_status: Optional[Callable[[str], str]] = None,
 ):
     """List paired Bluetooth devices and manage the selected one.
 
@@ -333,7 +369,8 @@ def handle_paired_devices_menu(
 
         detail_result = _handle_device_detail(
             selected, connect_device, disconnect_device, forget_device,
-            show_menu, is_break_result_fn, board, log)
+            show_menu, is_break_result_fn, board, log,
+            connect_device_status=connect_device_status)
         if detail_result is None:
             continue  # Back from detail (or forgotten) -> re-list.
         if is_break_result_fn(detail_result) or detail_result in ("SHUTDOWN", "HELP"):

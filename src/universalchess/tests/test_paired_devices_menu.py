@@ -49,7 +49,7 @@ class TestHandlePairedDevicesMenu(unittest.TestCase):
         return board
 
     def _run(self, *, devices, script, connect=None, disconnect=None,
-             forget=None, is_break=lambda r: False):
+             forget=None, connect_status=None, is_break=lambda r: False):
         menu = _ScriptedMenu(script)
         deps = dict(
             list_devices=lambda: [dict(d) for d in devices],
@@ -60,6 +60,7 @@ class TestHandlePairedDevicesMenu(unittest.TestCase):
             is_break_result_fn=is_break,
             board=self._board(),
             log=MagicMock(),
+            connect_device_status=connect_status,
         )
         result = handle_paired_devices_menu(**deps)
         return result, menu, deps
@@ -148,6 +149,50 @@ class TestHandlePairedDevicesMenu(unittest.TestCase):
         # calls: 0=list, 1=detail(disconnected), 2=detail(connected), 3=list
         assert "Connect" in _keys(menu.calls[1])
         assert "Disconnect" in _keys(menu.calls[2])
+
+    def test_auth_failed_connect_prompts_to_remove_pairing(self):
+        """Authentication failure asks before removing the saved pairing.
+
+        Regression manifestation: a stale local bond would remain stuck in the
+        paired-device list with no targeted repair path after the peer rejects it.
+        """
+        devices = [{"address": "AA:AA:AA:AA:AA:AA", "name": "WiFi Key",
+                    "connected": False}]
+        connect_status = MagicMock(return_value="auth_failed")
+        forget = MagicMock(return_value=True)
+
+        result, menu, _ = self._run(
+            devices=devices,
+            script=["AA:AA:AA:AA:AA:AA", "Connect", "RemovePairing", "BACK"],
+            connect_status=connect_status,
+            forget=forget)
+
+        assert result is None
+        connect_status.assert_called_once_with("AA:AA:AA:AA:AA:AA")
+        forget.assert_called_once_with("AA:AA:AA:AA:AA:AA")
+        assert "RemovePairing" in _keys(menu.calls[2])
+
+    def test_generic_connect_failure_does_not_prompt_to_remove_pairing(self):
+        """Generic connect failure does not offer stale-pairing removal.
+
+        Regression manifestation: range/power/no-reply failures could delete a
+        valid bond even though no authentication mismatch was observed.
+        """
+        devices = [{"address": "AA:AA:AA:AA:AA:AA", "name": "Keeb",
+                    "connected": False}]
+        connect_status = MagicMock(return_value="failed")
+        forget = MagicMock(return_value=True)
+
+        result, menu, _ = self._run(
+            devices=devices,
+            script=["AA:AA:AA:AA:AA:AA", "Connect", "BACK", "BACK"],
+            connect_status=connect_status,
+            forget=forget)
+
+        assert result is None
+        connect_status.assert_called_once_with("AA:AA:AA:AA:AA:AA")
+        forget.assert_not_called()
+        assert len(menu.calls) == 4
 
     def test_disconnect_action_invokes_disconnect_and_flips_to_connect(self):
         """Selecting Disconnect calls disconnect_device and the detail then

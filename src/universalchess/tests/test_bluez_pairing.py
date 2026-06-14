@@ -20,6 +20,7 @@ tested without a live bus.
 
 import threading
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from universalchess.managers.bluez_pairing import BluezPairingManager
@@ -320,6 +321,57 @@ class TestPairKeyboard(unittest.TestCase):
         manager._pair.assert_called_once()
         manager._set_trusted.assert_not_called()
 
+    def test_pair_noreply_is_success_when_bluez_reports_paired(self):
+        """A D-Bus Pair NoReply is success if BlueZ has already bonded.
+
+        Failure manifestation: hardware pairs successfully, but the D-Bus method
+        times out before replying. Returning "failed" here makes the web UI show
+        "Pairing failed" and skips trust/connect, leaving the keyboard bonded but
+        not usable.
+        """
+        class FakeDBusException(Exception):
+            def get_dbus_name(self):
+                return "org.freedesktop.DBus.Error.NoReply"
+
+        fake_dbus = SimpleNamespace(
+            exceptions=SimpleNamespace(DBusException=FakeDBusException)
+        )
+        manager = BluezPairingManager()
+        device = MagicMock()
+        device.Pair.side_effect = FakeDBusException()
+        manager._device = MagicMock(return_value=device)
+        manager._is_paired = MagicMock(return_value=True)
+
+        with patch.dict("sys.modules", {"dbus": fake_dbus}):
+            assert manager._pair(ADDRESS, timeout_seconds=30.0) == "ok"
+
+        manager._is_paired.assert_called_once_with(ADDRESS)
+
+    def test_pair_noreply_is_failure_when_not_paired(self):
+        """A D-Bus Pair NoReply remains failure when no bond was created.
+
+        Failure manifestation: treating every timeout as success would report a
+        paired keyboard when BlueZ has no bond, making later trust/connect fail
+        in a less clear way.
+        """
+        class FakeDBusException(Exception):
+            def get_dbus_name(self):
+                return "org.freedesktop.DBus.Error.NoReply"
+
+        fake_dbus = SimpleNamespace(
+            exceptions=SimpleNamespace(DBusException=FakeDBusException)
+        )
+        manager = BluezPairingManager()
+        device = MagicMock()
+        device.Pair.side_effect = FakeDBusException()
+        manager._device = MagicMock(return_value=device)
+        manager._is_paired = MagicMock(return_value=False)
+
+        with patch.dict("sys.modules", {"dbus": fake_dbus}):
+            assert manager._pair(ADDRESS, timeout_seconds=30.0) == "failed"
+
+        manager._is_paired.assert_called_once_with(ADDRESS)
+
 
 class TestListPairedDevices(unittest.TestCase):
     """`list_paired_devices` reduces the BlueZ object tree to the paired
@@ -437,19 +489,120 @@ class TestPairedDeviceActions(unittest.TestCase):
             BluezPairingManager().forget_device("not-a-mac")
 
     def test_connect_delegates_and_returns_outcome(self):
-        """connect_device returns whatever the dbus primitive reports.
+        """connect_device returns True only for an ok connect status.
 
-        Regression manifestation: swallowing the primitive's result would make
-        the UI always toast success even when Connect() failed.
+        Regression manifestation: treating auth_failed as boolean success would
+        hide a stale bond and skip the remove-pairing prompt.
         """
         manager = BluezPairingManager()
-        manager._do_connect = MagicMock(return_value=True)
+        manager._connect_status = MagicMock(return_value="ok")
         assert manager.connect_device(ADDRESS) is True
-        manager._do_connect.assert_called_once()
-        assert manager._do_connect.call_args[0][0] == ADDRESS
+        manager._connect_status.assert_called_once()
+        assert manager._connect_status.call_args[0][0] == ADDRESS
 
-        manager._do_connect = MagicMock(return_value=False)
+        manager._connect_status = MagicMock(return_value="auth_failed")
         assert manager.connect_device(ADDRESS) is False
+
+    def test_connect_device_status_delegates(self):
+        """connect_device_status exposes the auth failure code to UI callers.
+
+        Failure manifestation: if the status is collapsed to False, the web and
+        e-paper UIs cannot distinguish stale pairings from ordinary failures.
+        """
+        manager = BluezPairingManager()
+        manager._connect_status = MagicMock(return_value="auth_failed")
+
+        assert manager.connect_device_status(ADDRESS) == "auth_failed"
+        manager._connect_status.assert_called_once_with(ADDRESS, 20.0)
+
+    def test_connect_status_maps_dbus_authentication_failed(self):
+        """A D-Bus AuthenticationFailed connect becomes auth_failed.
+
+        Failure manifestation: a known stale bond would be shown as a generic
+        failure, so the user would not be offered the targeted repair action.
+        """
+        class FakeDBusException(Exception):
+            def get_dbus_name(self):
+                return "org.bluez.Error.AuthenticationFailed"
+
+        fake_dbus = SimpleNamespace(
+            exceptions=SimpleNamespace(DBusException=FakeDBusException)
+        )
+        manager = BluezPairingManager()
+        device = MagicMock()
+        device.Connect.side_effect = FakeDBusException()
+        manager._device = MagicMock(return_value=device)
+        manager._recent_connect_auth_failure = MagicMock(return_value=False)
+
+        with patch.dict("sys.modules", {"dbus": fake_dbus}):
+            assert manager._connect_status(ADDRESS, timeout_seconds=20.0) == "auth_failed"
+
+        manager._recent_connect_auth_failure.assert_not_called()
+
+    def test_connect_status_uses_active_bluetoothd_auth_failure(self):
+        """A connect-time bluetoothd auth log also becomes auth_failed.
+
+        Failure manifestation: BlueZ sometimes reports only NoReply over D-Bus
+        while bluetoothd logs Authentication Failed (0x05); missing that active
+        signal would hide the stale-pairing repair prompt for WiFi Key.
+        """
+        class FakeDBusException(Exception):
+            def get_dbus_name(self):
+                return "org.freedesktop.DBus.Error.NoReply"
+
+        fake_dbus = SimpleNamespace(
+            exceptions=SimpleNamespace(DBusException=FakeDBusException)
+        )
+        manager = BluezPairingManager()
+        device = MagicMock()
+        device.Connect.side_effect = FakeDBusException()
+        manager._device = MagicMock(return_value=device)
+        manager._recent_connect_auth_failure = MagicMock(return_value=True)
+
+        with patch.dict("sys.modules", {"dbus": fake_dbus}):
+            assert manager._connect_status(ADDRESS, timeout_seconds=20.0) == "auth_failed"
+
+    @patch("universalchess.managers.bluez_pairing.subprocess.run")
+    def test_recent_connect_auth_failure_accepts_hid_invalid_exchange(self, run):
+        """WiFi Key stale bonds can surface as HID Invalid exchange (52).
+
+        Failure manifestation: after removing the board pairing from WiFi Key,
+        the board still has a saved bond and BlueZ logs this HID control error;
+        without recognizing it, the UI shows a generic connect failure instead
+        of offering to remove the stale board-side pairing.
+        """
+        run.return_value = SimpleNamespace(
+            stdout=(
+                "profiles/input/device.c:control_connect_cb() connect to "
+                f"{ADDRESS}: Invalid exchange (52)"
+            ),
+            stderr="",
+        )
+        manager = BluezPairingManager()
+
+        assert manager._recent_connect_auth_failure(ADDRESS, 1000.0) is True
+
+    def test_connect_status_keeps_generic_failures_generic(self):
+        """A non-auth connect error stays failed.
+
+        Failure manifestation: prompting to remove pairing for range/power/no
+        reply errors would discard valid bonds that were not rejected.
+        """
+        class FakeDBusException(Exception):
+            def get_dbus_name(self):
+                return "org.freedesktop.DBus.Error.NoReply"
+
+        fake_dbus = SimpleNamespace(
+            exceptions=SimpleNamespace(DBusException=FakeDBusException)
+        )
+        manager = BluezPairingManager()
+        device = MagicMock()
+        device.Connect.side_effect = FakeDBusException()
+        manager._device = MagicMock(return_value=device)
+        manager._recent_connect_auth_failure = MagicMock(return_value=False)
+
+        with patch.dict("sys.modules", {"dbus": fake_dbus}):
+            assert manager._connect_status(ADDRESS, timeout_seconds=20.0) == "failed"
 
     def test_disconnect_delegates_and_returns_outcome(self):
         manager = BluezPairingManager()
