@@ -574,6 +574,42 @@ class SettingsPublisher:
             self._connected = False
             return False
     
+    def send_board_command(self, command: str, params: Optional[dict] = None) -> bool:
+        """Send a board-control command to the main process.
+
+        Carries web-initiated actions that change the board's live game (e.g.
+        setting up a predefined position or aborting the current game) over the
+        same settings socket. The main process applies the command on its main
+        thread; see SettingsSubscriber command callbacks.
+
+        Args:
+            command: Command name (e.g. 'setup_position', 'abort_game').
+            params: Optional command parameters merged into the message.
+
+        Returns:
+            True if sent successfully, False otherwise.
+        """
+        if not self._connected:
+            if not self.connect():
+                return False
+
+        try:
+            socket_path = get_settings_socket_path()
+            message_dict = {"type": "board_command", "command": command}
+            if params:
+                message_dict.update(params)
+            message = json.dumps(message_dict).encode("utf-8")
+            self._socket.sendto(message, str(socket_path))
+            log.debug(f"[SettingsPublisher] Sent board_command: {command}")
+            return True
+        except FileNotFoundError:
+            log.debug("[SettingsPublisher] Main process not listening")
+            return False
+        except Exception as e:
+            log.debug(f"[SettingsPublisher] Send failed: {e}")
+            self._connected = False
+            return False
+
     def request_game_state(self) -> bool:
         """Ask the main process to re-broadcast the current game state.
         
@@ -628,6 +664,7 @@ class SettingsSubscriber:
         self._thread: Optional[threading.Thread] = None
         self._callbacks: List[Callable[[], None]] = []
         self._request_callbacks: List[Callable[[], None]] = []
+        self._command_callbacks: List[Callable[[dict], None]] = []
         self._lock = threading.Lock()
     
     def _ensure_socket(self) -> None:
@@ -668,7 +705,21 @@ class SettingsSubscriber:
         """
         with self._lock:
             self._request_callbacks.append(callback)
-    
+
+    def add_command_callback(self, callback: Callable[[dict], None]) -> None:
+        """Register a callback for board-control commands.
+
+        Invoked with the parsed message dict for each ``board_command`` message
+        (carrying a ``command`` name and any parameters). Handlers must defer any
+        display/game-lifecycle work to the main thread, as this runs on the
+        subscriber thread.
+
+        Args:
+            callback: Function to call with the parsed command dict.
+        """
+        with self._lock:
+            self._command_callbacks.append(callback)
+
     def start(self) -> None:
         """Start the subscriber thread."""
         if self._running:
@@ -738,6 +789,16 @@ class SettingsSubscriber:
                             callback()
                         except Exception as e:
                             log.error(f"[SettingsSubscriber] Request callback error: {e}")
+                elif msg_type == "board_command":
+                    log.info(f"[SettingsSubscriber] Received board_command: {parsed.get('command')}")
+                    with self._lock:
+                        command_callbacks = list(self._command_callbacks)
+
+                    for callback in command_callbacks:
+                        try:
+                            callback(parsed)
+                        except Exception as e:
+                            log.error(f"[SettingsSubscriber] Command callback error: {e}")
                 
             except socket.timeout:
                 continue
@@ -777,6 +838,22 @@ def notify_main_process_settings_changed() -> bool:
         True if notification was sent, False otherwise.
     """
     return get_settings_publisher().notify_settings_changed()
+
+
+def send_board_command(command: str, params: Optional[dict] = None) -> bool:
+    """Send a board-control command to the main process.
+
+    Called from the web app to set up a position or abort the running game on
+    the board. The main process applies it on its main thread.
+
+    Args:
+        command: Command name (e.g. 'setup_position', 'abort_game').
+        params: Optional command parameters.
+
+    Returns:
+        True if the command was sent, False otherwise.
+    """
+    return get_settings_publisher().send_board_command(command, params)
 
 
 def request_game_state_broadcast() -> bool:
