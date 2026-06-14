@@ -2569,7 +2569,10 @@ def _handle_lichess_menu():
         handle_accounts_menu_fn=_handle_accounts_menu,
         centaur_module=centaur,
         board=board,
-        log=log,    )
+        log=log,
+        set_active_keyboard=_set_active_keyboard_widget,
+        clear_active_keyboard=_clear_active_keyboard_widget,
+    )
 
 
 def _start_lichess_game(lichess_config) -> bool:
@@ -2638,7 +2641,10 @@ def _handle_lichess_token():
         get_token=centaur.get_lichess_api,
         set_token=centaur.set_lichess_api,
         log=log,
-        board=board,    )
+        board=board,
+        set_active_keyboard=_set_active_keyboard_widget,
+        clear_active_keyboard=_clear_active_keyboard_widget,
+    )
 
 
 def _shutdown(message: str, reboot: bool = False):

@@ -100,8 +100,25 @@ def show_time_control_menu(menu_manager, find_entry_index, time_options, current
     return result.key if hasattr(result, "key") else result
 
 
-def ensure_token(menu_manager, keyboard_factory: Callable, get_token: Callable[[], str], set_token: Callable[[str], None], log, board):
+def ensure_token(
+    menu_manager,
+    keyboard_factory: Callable,
+    get_token: Callable[[], str],
+    set_token: Callable[[str], None],
+    log,
+    board,
+    set_active_keyboard: Callable[[object], None],
+    clear_active_keyboard: Callable[[], None],
+):
     """Prompt for token entry.
+
+    Registers the keyboard as the application's active keyboard widget so board
+    key presses (BACK/TICK/UP/DOWN/PLAY) and piece placements are routed to it,
+    mirroring the WiFi-password and player-name entry paths. Without this
+    registration the keyboard is unresponsive - keys and typing never reach it,
+    so even BACK does nothing (the "Back does not go back in Lichess" bug). The
+    active keyboard is cleared in a finally so a cancel or exception cannot leave
+    a stale keyboard swallowing later menu input.
 
     Calls ``keyboard_factory`` positionally as ``(update_fn, title, max_length)``,
     matching its documented contract and every other call site (e.g. wifi
@@ -109,20 +126,25 @@ def ensure_token(menu_manager, keyboard_factory: Callable, get_token: Callable[[
     the app's factories name the parameter ``max_len``; positional invocation is
     immune to that parameter-name drift.
     """
+    board.display_manager.clear_widgets(addStatusBar=False)
     keyboard = keyboard_factory(board.display_manager.update, "Lichess Token", 64)
     keyboard.text = get_token() or ""
+    set_active_keyboard(keyboard)
     promise = board.display_manager.add_widget(keyboard)
     if promise:
         try:
             promise.result(timeout=5.0)
         except Exception:
             pass
-    result = keyboard.wait_for_input(timeout=300.0)
-    if result is not None:
-        set_token(result)
-        log.info(f"[Accounts] Lichess token saved ({len(result)} chars)")
-        board.beep(board.SOUND_GENERAL)
-    return result
+    try:
+        result = keyboard.wait_for_input(timeout=300.0)
+        if result is not None:
+            set_token(result)
+            log.info(f"[Accounts] Lichess token saved ({len(result)} chars)")
+            board.beep(board.SOUND_GENERAL)
+        return result
+    finally:
+        clear_active_keyboard()
 
 
 def show_lichess_ongoing_games(client, menu_manager, log) -> Optional[str]:
@@ -533,6 +555,8 @@ def handle_lichess_menu(
     centaur_module,
     board,
     log,
+    set_active_keyboard: Callable,
+    clear_active_keyboard: Callable,
 ):
     """Handle Lichess submenu with New Game, Ongoing, and Challenges options.
 
@@ -546,6 +570,9 @@ def handle_lichess_menu(
         centaur_module: Centaur module for token get/set
         board: Board module
         log: Logger instance
+        set_active_keyboard: Register a keyboard widget as active so board input
+            is routed to it (forwarded to ensure_token for the Token entry).
+        clear_active_keyboard: Clear the active keyboard registration.
 
     Returns:
         True if a Lichess game was started, break result if break action,
@@ -620,6 +647,8 @@ def handle_lichess_menu(
                 set_token=centaur_module.set_lichess_api,
                 log=log,
                 board=board,
+                set_active_keyboard=set_active_keyboard,
+                clear_active_keyboard=clear_active_keyboard,
             )
         return None
 

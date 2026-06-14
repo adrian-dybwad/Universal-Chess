@@ -33,6 +33,9 @@ class _FakeDisplayManager:
     def update(self, *args, **kwargs):
         return None
 
+    def clear_widgets(self, addStatusBar=True):
+        return None
+
     def add_widget(self, widget):
         # No render promise in the fake; ensure_token tolerates a falsy return.
         return None
@@ -83,6 +86,8 @@ def test_ensure_token_calls_factory_positionally_and_saves():
         set_token=lambda t: saved.__setitem__("token", t),
         log=log,
         board=board,
+        set_active_keyboard=lambda w: None,
+        clear_active_keyboard=lambda: None,
     )
 
     assert result == "tok_abcdef", "entered token must be returned"
@@ -113,8 +118,50 @@ def test_ensure_token_cancelled_does_not_save():
         set_token=lambda t: saved.__setitem__("token", t),
         log=log,
         board=board,
+        set_active_keyboard=lambda w: None,
+        clear_active_keyboard=lambda: None,
     )
 
     assert result is None, "cancel returns None"
     assert "token" not in saved, "cancel must not persist a token"
     assert board.beeps == [], "no confirmation beep on cancel"
+
+
+def test_ensure_token_registers_and_clears_active_keyboard():
+    """The token keyboard must be registered active, then cleared afterward.
+
+    Why this test exists: board key presses and piece placements are only routed
+    to the keyboard while it is the registered "active keyboard widget". Without
+    registration the Lichess token keyboard is dead - BACK/TICK and typing never
+    reach it (the reported "Back does not go back in Lichess" bug). The clear must
+    run in a finally so a cancel or exception cannot leave a stale active keyboard
+    swallowing later menu input.
+
+    How the regression manifests: set_active_keyboard is never called with the
+    keyboard, or clear_active_keyboard is not the last action.
+    """
+    events = []
+    board = _FakeBoard()
+    kb_holder = {}
+
+    def factory(update_fn, title, max_len):
+        kb = _FakeKeyboard("tok")
+        kb_holder["kb"] = kb
+        return kb
+
+    ensure_token(
+        menu_manager=None,
+        keyboard_factory=factory,
+        get_token=lambda: "",
+        set_token=lambda t: None,
+        log=log,
+        board=board,
+        set_active_keyboard=lambda w: events.append(("set", w)),
+        clear_active_keyboard=lambda: events.append(("clear",)),
+    )
+
+    assert ("set", kb_holder["kb"]) in events, "keyboard must be registered as active"
+    assert events[-1] == ("clear",), "active keyboard must be cleared last (finally)"
+    assert events.index(("set", kb_holder["kb"])) < events.index(("clear",)), (
+        "must register before clearing"
+    )
