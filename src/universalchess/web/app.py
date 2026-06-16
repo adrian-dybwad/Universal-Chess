@@ -218,6 +218,37 @@ def add_cache_headers(response):
     return response
 
 
+# ---------------------------------------------------------------------------
+# Inactivity timer reset: any user-initiated web request resets the board's
+# sleep countdown.  Fires only for API and legacy action endpoints (POST or
+# GET to /api/*), not for static assets, SSE streams, or the periodic /fen
+# poll.  Best-effort: failures are silently ignored so a broken IPC socket
+# never blocks the web response.
+# ---------------------------------------------------------------------------
+_INACTIVITY_RESET_PREFIXES = ("/api/",)
+_INACTIVITY_RESET_EXACT = (
+    "/configure", "/deletegame/", "/lichesskey/", "/lichessrange/",
+    "/menuoptions/", "/return2dgtcentaurmods", "/shutdownboard",
+    "/uploadengine", "/delengine/", "/rodentivtuner",
+)
+
+
+@app.after_request
+def reset_board_inactivity(response):
+    """Signal user activity to the board so the sleep timer resets."""
+    path = request.path
+    if any(path.startswith(p) for p in _INACTIVITY_RESET_PREFIXES) or (
+        request.method == "POST"
+        and any(path.startswith(p) for p in _INACTIVITY_RESET_EXACT)
+    ):
+        try:
+            from universalchess.services.game_broadcast import send_board_command
+            send_board_command("reset_inactivity")
+        except Exception:
+            pass
+    return response
+
+
 # System paths for conditional features
 ENGINES_DIR = "/opt/universalchess/engines"
 RODENTIV_PATH = os.path.join(ENGINES_DIR, "rodentIV")

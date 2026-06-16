@@ -34,11 +34,18 @@ import time
 from typing import Optional
 from concurrent.futures import Future
 
+import threading
+
 from universalchess.board.logging import log, logging
 
 # Inactivity timeout configuration
 INACTIVITY_TIMEOUT_DEFAULT = 900  # Default: 15 minutes of inactivity before shutdown
 INACTIVITY_WARNING_SECONDS = 120  # Show countdown 2 minutes before shutdown
+
+# Thread-safe flag set by the web process (via IPC) to signal user activity.
+# The events thread checks and clears this each iteration to reset the
+# inactivity deadline, preventing shutdown while the web UI is in use.
+_web_activity_event = threading.Event()
 
 def get_inactivity_timeout() -> int:
     """Get the inactivity timeout from settings.
@@ -59,6 +66,16 @@ def set_inactivity_timeout(seconds: int) -> None:
         seconds: Timeout in seconds (0 = disabled/infinite)
     """
     Settings.write('system', 'inactivity_timeout', str(seconds))
+
+
+def signal_web_activity() -> None:
+    """Signal that user-initiated activity occurred in the web UI.
+
+    Sets a thread-safe flag that the events thread checks each iteration.
+    When the flag is set, the inactivity deadline is reset just as it would
+    be for a physical key press or piece movement on the board.
+    """
+    _web_activity_event.set()
 
 from universalchess.state import get_system as _get_system_state
 
@@ -787,6 +804,23 @@ def eventsThread(keycallback, fieldcallback, tout):
                 tout, timeout_disabled = get_current_timeout()
                 to = time.monotonic() + tout
                 events_paused = False
+
+            # Reset timeout on web UI activity (flag set by signal_web_activity)
+            if _web_activity_event.is_set():
+                _web_activity_event.clear()
+                tout, timeout_disabled = get_current_timeout()
+                to = time.monotonic() + tout
+                if inactivity_countdown_shown and inactivity_countdown_splash is not None:
+                    log.info('[board.events] Inactivity countdown cancelled by web activity')
+                    try:
+                        future = display_manager.remove_widget(inactivity_countdown_splash)
+                        if future:
+                            future.result(timeout=5.0)
+                    except Exception as e:
+                        log.error(f'[board.events] Error removing inactivity countdown: {e}')
+                    inactivity_countdown_shown = False
+                    inactivity_countdown_splash = None
+                    inactivity_last_displayed_seconds = None
 
             key_pressed = None
             

@@ -45,11 +45,18 @@ def client(monkeypatch):
 
 @pytest.fixture
 def capture_commands(monkeypatch):
-    """Record commands forwarded to the board; report success by default."""
+    """Record action commands forwarded to the board; report success by default.
+
+    Filters out ``reset_inactivity`` which the after_request hook sends on
+    every API request — those are tested separately in
+    test_web_activity_inactivity.py.
+    """
     sent = []
     monkeypatch.setattr(
         "universalchess.services.game_broadcast.send_board_command",
-        lambda command, params=None: sent.append((command, params)) or True,
+        lambda command, params=None: (
+            sent.append((command, params)) if command != "reset_inactivity" else None
+        ) or True,
     )
     return sent
 

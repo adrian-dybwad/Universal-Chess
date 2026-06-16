@@ -2187,6 +2187,9 @@ def _on_board_command(parsed: dict) -> None:
     if command in ("chromecast_start", "chromecast_stop", "chromecast_status"):
         _handle_web_chromecast_command(command, parsed)
         return
+    if command == "reset_inactivity":
+        board.signal_web_activity()
+        return
 
     _pending_board_command = parsed
     if (
