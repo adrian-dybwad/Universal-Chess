@@ -260,6 +260,17 @@ CENTAUR_SOFTWARE_PATH = "/home/pi/centaur/centaur"
 WEBDAV_BASE_PATH = "/home/pi"
 
 
+def _internal_error(exception):
+    """Build a generic 500 JSON error response and log the real exception.
+
+    Prevents leaking internal details (file paths, DB errors, stack traces) to
+    the client while preserving them server-side for debugging. Every catch-all
+    ``except Exception`` handler should use this instead of ``str(e)``.
+    """
+    app.logger.exception("Internal error: %s", exception)
+    return json.dumps({"success": False, "error": "Internal server error"}), 500
+
+
 def is_rodentiv_installed() -> bool:
     """Check if Rodent IV engine is installed."""
     return os.path.isfile(RODENTIV_PATH) and os.access(RODENTIV_PATH, os.X_OK)
@@ -2038,7 +2049,7 @@ def api_get_settings():
         settings = get_all_settings()
         return json.dumps(settings)
     except Exception as e:
-        return json.dumps({"error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/settings", methods=["POST"])
@@ -2053,7 +2064,7 @@ def api_save_settings():
         save_all_settings(settings)
         return json.dumps({"success": True})
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/settings/apply", methods=["POST"])
@@ -2082,7 +2093,7 @@ def api_apply_settings():
             "message": "Settings saved; board not running to reload",
         })
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/sprites", methods=["GET"])
@@ -2122,7 +2133,7 @@ def api_get_menu_schema():
         return json.dumps(get_catalog().raw_menu())
     except Exception as e:
         app.logger.warning(f"Failed to load menu schema: {e}")
-        return json.dumps({"error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/positions", methods=["GET"])
@@ -2152,7 +2163,7 @@ def api_get_positions():
         return json.dumps({"categories": categories})
     except Exception as e:
         app.logger.warning(f"Failed to load positions: {e}")
-        return json.dumps({"error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/board/setup-position", methods=["POST"])
@@ -2189,13 +2200,13 @@ def api_board_setup_position():
 
         sent = send_board_command("setup_position", params)
         if sent:
-            return json.dumps({"success": True, "message": f"Setting up {name}"})
+            return json.dumps({"success": True, "message": "Position setup started"})
         return json.dumps({
             "success": False,
             "error": "Board not running",
         }), 503
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/board/abort-game", methods=["POST"])
@@ -2215,7 +2226,7 @@ def api_board_abort_game():
             return json.dumps({"success": True, "message": "Game aborted"})
         return json.dumps({"success": False, "error": "Board not running"}), 503
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 # ============================================================================
@@ -2245,7 +2256,7 @@ def _system_board_action(command: str, success_message: str):
             return json.dumps({"success": True, "message": success_message})
         return json.dumps({"success": False, "error": "Board not running"}), 503
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/system/info", methods=["GET"])
@@ -2259,7 +2270,7 @@ def api_system_info():
     try:
         return json.dumps({"centaur_available": os.path.exists(CENTAUR_SOFTWARE)})
     except Exception as e:
-        return json.dumps({"error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/system/reset", methods=["POST"])
@@ -2326,7 +2337,7 @@ def api_wifi_status():
         return json.dumps(get_wifi_status())
     except Exception as e:
         app.logger.warning(f"Failed to get WiFi status: {e}")
-        return json.dumps({"error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/connectivity/wifi/scan", methods=["POST"])
@@ -2339,7 +2350,7 @@ def api_wifi_scan():
         return json.dumps({"networks": wifi_core.scan_networks(app.logger)})
     except Exception as e:
         app.logger.warning(f"WiFi scan failed: {e}")
-        return json.dumps({"error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/connectivity/wifi/saved", methods=["GET"])
@@ -2352,7 +2363,7 @@ def api_wifi_saved():
         return json.dumps({"networks": wifi_core.list_saved_networks(app.logger)})
     except Exception as e:
         app.logger.warning(f"Failed to list saved WiFi networks: {e}")
-        return json.dumps({"error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/connectivity/wifi/connect", methods=["POST"])
@@ -2375,7 +2386,7 @@ def api_wifi_connect():
         status_code = 200 if success else 400
         return json.dumps({"success": success, "message": message}), status_code
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/connectivity/wifi/forget", methods=["POST"])
@@ -2395,10 +2406,10 @@ def api_wifi_forget():
             return json.dumps({"success": False, "error": "No SSID provided"}), 400
         removed = wifi_core.forget_network(ssid, app.logger)
         if removed:
-            return json.dumps({"success": True, "message": f"Forgot {ssid}"})
+            return json.dumps({"success": True, "message": "Network removed"})
         return json.dumps({"success": False, "error": "No saved network found"}), 404
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/connectivity/wifi/enable", methods=["POST"])
@@ -2416,7 +2427,7 @@ def api_wifi_enable():
         ok = enable_wifi() if enabled else disable_wifi()
         return json.dumps({"success": ok, "enabled": enabled})
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 # ============================================================================
@@ -2439,7 +2450,7 @@ def api_bt_status():
         return json.dumps(bt.get_status(log=app.logger))
     except Exception as e:
         app.logger.warning(f"Failed to get Bluetooth status: {e}")
-        return json.dumps({"error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/connectivity/bluetooth/enable", methods=["POST"])
@@ -2454,7 +2465,7 @@ def api_bt_enable():
         ok = bt.set_enabled(enabled, log=app.logger)
         return json.dumps({"success": ok, "enabled": enabled})
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/connectivity/bluetooth/scan", methods=["POST"])
@@ -2467,7 +2478,7 @@ def api_bt_scan():
         return json.dumps({"devices": bt.scan_keyboards(log=app.logger)})
     except Exception as e:
         app.logger.warning(f"Bluetooth scan failed: {e}")
-        return json.dumps({"error": str(e)}), 500
+        return _internal_error(e)
 
 
 def _bt_device_action(action_name):
@@ -2485,8 +2496,8 @@ def _bt_device_action(action_name):
         return json.dumps({"success": False, "error": "No address provided"}), 400
     try:
         ok = action_name(bt, address, app.logger)
-    except ValueError as ve:
-        return json.dumps({"success": False, "error": str(ve)}), 400
+    except ValueError:
+        return json.dumps({"success": False, "error": "Invalid address"}), 400
     return json.dumps({"success": ok})
 
 
@@ -2503,8 +2514,8 @@ def api_bt_connect():
             return json.dumps({"success": False, "error": "No address provided"}), 400
         try:
             status = bt.connect_device_status(address, log=app.logger)
-        except ValueError as ve:
-            return json.dumps({"success": False, "error": str(ve)}), 400
+        except ValueError:
+            return json.dumps({"success": False, "error": "Invalid address"}), 400
         if status == "ok":
             return json.dumps({"success": True})
         if status == "auth_failed":
@@ -2518,7 +2529,7 @@ def api_bt_connect():
             "error": "Could not connect. Make sure the device is on and nearby.",
         })
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/connectivity/bluetooth/disconnect", methods=["POST"])
@@ -2528,7 +2539,7 @@ def api_bt_disconnect():
     try:
         return _bt_device_action(lambda bt, addr, lg: bt.disconnect_device(addr, log=lg))
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/connectivity/bluetooth/forget", methods=["POST"])
@@ -2538,7 +2549,7 @@ def api_bt_forget():
     try:
         return _bt_device_action(lambda bt, addr, lg: bt.forget_device(addr, log=lg))
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/connectivity/bluetooth/pair", methods=["POST"])
@@ -2563,7 +2574,7 @@ def api_bt_pair():
             return json.dumps({"success": True, "message": "Pairing started"})
         return json.dumps({"success": False, "error": "Board not running"}), 503
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/connectivity/bluetooth/pair-confirm", methods=["POST"])
@@ -2585,7 +2596,7 @@ def api_bt_pair_confirm():
             return json.dumps({"success": True})
         return json.dumps({"success": False, "error": "Board not running"}), 503
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 # ============================================================================
@@ -2608,7 +2619,7 @@ def api_cast_discover():
         return json.dumps({"devices": cast.discover(log=app.logger)})
     except Exception as e:
         app.logger.warning(f"Chromecast discovery failed: {e}")
-        return json.dumps({"error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/connectivity/chromecast/start", methods=["POST"])
@@ -2628,10 +2639,10 @@ def api_cast_start():
             {"device": device, "source": source},
         )
         if sent:
-            return json.dumps({"success": True, "message": f"Streaming to {device}"})
+            return json.dumps({"success": True, "message": "Streaming started"})
         return json.dumps({"success": False, "error": "Board not running"}), 503
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/connectivity/chromecast/source", methods=["GET"])
@@ -2654,9 +2665,9 @@ def api_cast_source_set():
         )
         set_chromecast_use_live_board(use_live_board)
         broadcast_sse_event("settings_changed")
-        return json.dumps({"success": True, "useLiveBoard": use_live_board})
+        return json.dumps({"success": True, "useLiveBoard": get_chromecast_use_live_board()})
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/connectivity/chromecast/stop", methods=["POST"])
@@ -2674,11 +2685,10 @@ def api_cast_stop():
         payload = {"device": device} if device else {}
         sent = send_board_command("chromecast_stop", payload)
         if sent:
-            msg = f"Stopped {device}" if device else "Streaming stopped"
-            return json.dumps({"success": True, "message": msg})
+            return json.dumps({"success": True, "message": "Streaming stopped"})
         return json.dumps({"success": False, "error": "Board not running"}), 503
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/connectivity/chromecast/status", methods=["POST"])
@@ -2696,7 +2706,7 @@ def api_cast_status():
         sent = send_board_command("chromecast_status")
         return json.dumps({"success": bool(sent)})
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 # Upscale factor for the sprite-sheet preview. The native sheet is 16px-per-cell
@@ -2829,7 +2839,7 @@ def api_get_all_engines():
         
         return json.dumps(engines_list)
     except Exception as e:
-        return json.dumps({"error": str(e)}), 500
+        return _internal_error(e)
 
 
 # Engine installation state (singleton)
@@ -2862,10 +2872,11 @@ def _run_engine_install(engine_name: str):
             "error": None if success else "Installation failed"
         }
     except Exception as e:
+        app.logger.exception("Engine install failed: %s", e)
         _engine_install_state["last_result"] = {
             "engine": engine_name,
             "success": False,
-            "error": str(e)
+            "error": "Installation failed"
         }
     finally:
         _engine_install_state["installing"] = False
@@ -2887,12 +2898,12 @@ def api_install_engine():
         
         from universalchess.managers.engine_manager import ENGINES
         if engine_name not in ENGINES:
-            return json.dumps({"success": False, "error": f"Unknown engine: {engine_name}"}), 400
+            return json.dumps({"success": False, "error": "Unknown engine"}), 400
         
         if _engine_install_state["installing"]:
             return json.dumps({
                 "success": False, 
-                "error": f"Already installing {_engine_install_state['engine']}"
+                "error": "Another installation is in progress"
             }), 409
         
         # Start installation in background thread
@@ -2905,9 +2916,9 @@ def api_install_engine():
         thread = threading.Thread(target=_run_engine_install, args=(engine_name,), daemon=True)
         thread.start()
         
-        return json.dumps({"success": True, "message": f"Installing {engine_name}"})
+        return json.dumps({"success": True, "message": "Installation started"})
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/engines/uninstall", methods=["POST"])
@@ -2923,7 +2934,7 @@ def api_uninstall_engine():
         from universalchess.managers.engine_manager import EngineManager, ENGINES
         
         if engine_name not in ENGINES:
-            return json.dumps({"success": False, "error": f"Unknown engine: {engine_name}"}), 400
+            return json.dumps({"success": False, "error": "Unknown engine"}), 400
         
         engine_def = ENGINES[engine_name]
         if not engine_def.can_uninstall:
@@ -2937,7 +2948,7 @@ def api_uninstall_engine():
         else:
             return json.dumps({"success": False, "error": "Uninstall failed"})
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/engines/status", methods=["GET"])
@@ -2968,7 +2979,7 @@ def api_update_status():
         service = get_update_service()
         return json.dumps(service.get_status_dict())
     except Exception as e:
-        return json.dumps({"error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/updates/check", methods=["POST"])
@@ -3001,7 +3012,7 @@ def api_update_check():
                 "current_version": service.get_current_version(),
             })
     except Exception as e:
-        return json.dumps({"error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/updates/download", methods=["POST"])
@@ -3028,7 +3039,7 @@ def api_update_download():
                 "error": "Download failed",
             }), 500
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/updates/install", methods=["POST"])
@@ -3054,7 +3065,7 @@ def api_update_install():
                 "error": "Installation failed",
             }), 500
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/updates/channel", methods=["GET"])
@@ -3067,7 +3078,7 @@ def api_update_channel_get():
             "channel": service.get_channel().value,
         })
     except Exception as e:
-        return json.dumps({"error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/updates/channel", methods=["POST"])
@@ -3088,7 +3099,7 @@ def api_update_channel_set():
         try:
             channel = UpdateChannel(channel_str)
         except ValueError:
-            return json.dumps({"error": f"Invalid channel: {channel_str}"}), 400
+            return json.dumps({"error": "Invalid channel"}), 400
         
         service.set_channel(channel)
         return json.dumps({
@@ -3096,7 +3107,7 @@ def api_update_channel_set():
             "channel": channel.value,
         })
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/updates/auto", methods=["GET"])
@@ -3109,7 +3120,7 @@ def api_update_auto_get():
             "auto_update": service.is_auto_update_enabled(),
         })
     except Exception as e:
-        return json.dumps({"error": str(e)}), 500
+        return _internal_error(e)
 
 
 @app.route("/api/updates/auto", methods=["POST"])
@@ -3133,7 +3144,7 @@ def api_update_auto_set():
             "auto_update": service.is_auto_update_enabled(),
         })
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}), 500
+        return _internal_error(e)
 
 
 # -----------------------------------------------------------------------------
