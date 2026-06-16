@@ -1,5 +1,6 @@
 """System menu helpers."""
 
+import time
 from typing import Dict, List, Callable, Optional
 
 from universalchess.epaper.icon_menu import IconMenuEntry
@@ -39,30 +40,53 @@ def create_power_entries() -> List[IconMenuEntry]:
     return build_menu_entries("power")
 
 
+def perform_shutdown(shutdown_fn: Callable[[str, bool], None]) -> None:
+    """Power off the board via ``shutdown_fn``.
+
+    The single shutdown code path shared by the e-paper Power menu and the web
+    Power control, so both surfaces produce identical behavior (same shutdown
+    reason/splash via the injected ``shutdown_fn``). ``shutdown_fn`` is expected
+    to be the board's ``_shutdown(message, reboot)`` which routes through
+    ``cleanup_and_exit`` for the on-screen splash and hardware cleanup.
+    """
+    shutdown_fn("Shutdown", False)
+
+
+def perform_reboot(board, shutdown_fn: Callable[[str, bool], None]) -> None:
+    """Reboot the board, running the confirmation LED sweep first.
+
+    Shared by the e-paper Power menu and the web Power control. The LED sweep is
+    part of the reboot's user-visible behavior, so it lives here rather than in a
+    UI layer to guarantee the web reboot matches the on-board reboot exactly. A
+    failing sweep (e.g. board not attached) must not block the reboot, so it is
+    best-effort.
+    """
+    try:
+        for i in range(0, 8):
+            board.led(i, intensity=LED_INTENSITY_DEFAULT,
+                      speed=LED_SPEED_NORMAL, repeat=0)
+            time.sleep(0.2)
+    except Exception:
+        pass
+    shutdown_fn("Rebooting", True)
+
+
 def handle_power_menu(ctx, board, menu_manager, shutdown_fn: Callable[[str, bool], None]):
     """Handle the Power submenu: Shutdown and Reboot.
 
     Both actions clear the menu context first so no stale menu state survives the
-    shutdown/reboot. Reboot runs a brief LED sweep as visible confirmation before
-    handing off to ``shutdown_fn``.
+    shutdown/reboot, then hand off to the shared ``perform_shutdown`` /
+    ``perform_reboot`` helpers (also used by the web Power control).
     """
 
     def handle_selection(result: MenuSelection):
         if result.key == "Shutdown":
             ctx.clear()
-            shutdown_fn("Shutdown", False)
+            perform_shutdown(shutdown_fn)
             return result
         elif result.key == "Reboot":
             ctx.clear()
-            try:
-                for i in range(0, 8):
-                    board.led(i, intensity=LED_INTENSITY_DEFAULT,
-                              speed=LED_SPEED_NORMAL, repeat=0)
-                    import time as _time
-                    _time.sleep(0.2)
-            except Exception:
-                pass
-            shutdown_fn("Rebooting", True)
+            perform_reboot(board, shutdown_fn)
             return result
         return None
 

@@ -136,7 +136,37 @@ def test_web_implemented_submenus_are_enabled_for_web():
         "system.engines",
         "system.analysis",
         "system.about",
+        # System/power actions now have web controls (Settings -> System).
+        "system.inactivity",
+        "system.reset",
+        "system.power",
+        "power.shutdown",
+        "power.reboot",
+        "main.centaur",
     }.issubset(web_enabled)
+
+
+def test_sleep_timer_option_set_matches_board_choices():
+    """The sleep_timer option set must list the exact Sleep Timer choices in seconds.
+
+    Why this test exists: the board Sleep Timer menu and the web Sleep Timer
+    select both render this option set, and the saved value is the seconds in
+    'value'. If the values drift from seconds (e.g. back to minutes) the board
+    would sleep after the wrong interval and the web select would save a bad key.
+
+    How a regression manifests: the (value, label) pairs change, so this exact
+    list no longer matches.
+    """
+    catalog = load_catalog()
+    options = [(o["value"], o["label"]) for o in catalog.option_set("sleep_timer")]
+    assert options == [
+        ("0", "Disabled"),
+        ("300", "5 min"),
+        ("600", "10 min"),
+        ("900", "15 min"),
+        ("1800", "30 min"),
+        ("3600", "1 hour"),
+    ]
 
 
 def test_option_sets_resolve_for_select_fields():

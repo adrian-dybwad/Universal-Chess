@@ -56,6 +56,11 @@ FEN_LOG = f"{TMP_DIR}/fen.log"
 EPAPER_STATIC_JPG = f"{WEB_STATIC_DIR}/epaper.jpg"
 DEFAULT_DB_FILE = f"{DB_DIR}/centaur.db"
 
+# Original DGT Centaur software executable. Shared so the board (which launches
+# it) and the web UI (which only offers the action when it exists) agree on the
+# path without the web process importing board/hardware modules.
+CENTAUR_SOFTWARE = "/home/pi/centaur/centaur"
+
 
 def get_resource_path(resource_file: str) -> str:
     """Return resource path from the resources folder or /home/pi/resources.

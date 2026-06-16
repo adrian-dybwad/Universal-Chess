@@ -59,6 +59,17 @@ const FALLBACK_UPDATE_CHANNEL_OPTIONS: MenuOption[] = [
   { value: 'nightly', label: 'Nightly (Development)' },
 ];
 
+// Mirrors the catalog 'sleep_timer' option set (seconds). Same choices the board
+// Sleep Timer menu offers; used only if the catalog fetch fails.
+const FALLBACK_SLEEP_TIMER_OPTIONS: MenuOption[] = [
+  { value: '0', label: 'Disabled' },
+  { value: '300', label: '5 min' },
+  { value: '600', label: '10 min' },
+  { value: '900', label: '15 min' },
+  { value: '1800', label: '30 min' },
+  { value: '3600', label: '1 hour' },
+];
+
 interface PlayerSettings {
   type: string;
   name: string;
@@ -95,6 +106,7 @@ interface FormSettings {
   system: {
     developer_mode: boolean;
     database_uri: string;
+    inactivity_timeout: string;
   };
 }
 
@@ -114,7 +126,7 @@ const defaultFormSettings: FormSettings = {
   },
   lichess: { api_token: '', range: '' },
   sound: { enabled: true, key_press: true, game_events: true, piece_events: true, errors: true },
-  system: { developer_mode: false, database_uri: '' },
+  system: { developer_mode: false, database_uri: '', inactivity_timeout: '900' },
 };
 
 /**
@@ -179,6 +191,10 @@ function parseRawSettings(data: SettingsData): FormSettings {
     system: {
       developer_mode: parseConfigBool(data.system?.developer, false),
       database_uri: data.DATABASE?.database_uri || '',
+      // Seconds; 0 = disabled. The board reads this exact key
+      // ([system] inactivity_timeout) live, so saving it here matches the
+      // on-board Sleep Timer menu. Default mirrors the board's 900s default.
+      inactivity_timeout: data.system?.inactivity_timeout || '900',
     },
   };
 }
@@ -323,7 +339,10 @@ export function Settings() {
           piece_event: formSettings.sound.piece_events ? 'on' : 'off',
           error: formSettings.sound.errors ? 'on' : 'off',
         },
-        system: { developer: formSettings.system.developer_mode },
+        system: {
+          developer: formSettings.system.developer_mode,
+          inactivity_timeout: parseInt(formSettings.system.inactivity_timeout),
+        },
         DATABASE: { database_uri: formSettings.system.database_uri },
       };
 
@@ -483,6 +502,7 @@ export function Settings() {
   const playerTypeOptions = optionSet('player_type', FALLBACK_PLAYER_TYPE_OPTIONS);
   const handBrainModeOptions = optionSet('hand_brain_mode', FALLBACK_HAND_BRAIN_MODE_OPTIONS);
   const timeControlOptions = optionSet('time_control', FALLBACK_TIME_CONTROL_OPTIONS);
+  const sleepTimerOptions = optionSet('sleep_timer', FALLBACK_SLEEP_TIMER_OPTIONS);
 
   // Field label/help lookups by catalog id, with explicit fallbacks. Rich help
   // that needs JSX (links, <code>) is rendered inline at the call site and not
@@ -883,6 +903,23 @@ export function Settings() {
               </FormRow>
             </Card>
 
+            {/* Sleep Timer writes [system] inactivity_timeout, the same key the
+                board's Sleep Timer menu sets and the board reads live, so this
+                applies on Save & Apply without a restart. */}
+            <Card className="mb-6">
+              <CardHeader title="Sleep Timer" />
+              <FormRow
+                label={fieldLabel('field.system.sleep_timer', 'Sleep Timer')}
+                help={fieldHelp('field.system.sleep_timer', 'Automatically put the board to sleep after a period of inactivity')}
+              >
+                <Select
+                  value={formSettings.system.inactivity_timeout}
+                  options={sleepTimerOptions}
+                  onChange={(e) => updateFormSettings('system', { inactivity_timeout: e.target.value })}
+                />
+              </FormRow>
+            </Card>
+
             <Card className="mb-6">
               <CardHeader title="Software Updates" />
               <UpdateManager catalog={catalog} />
@@ -925,6 +962,8 @@ export function Settings() {
                 </ul>
               </Card>
             </Card>
+
+            <SystemActions />
           </section>
         )}
       </main>
@@ -1325,6 +1364,185 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog | null }) {
           </Button>
         </div>
       </div>
+    </>
+  );
+}
+
+
+// ============================================================================
+// System Actions (Reset / Power / Original Centaur)
+// ============================================================================
+// These mirror the board's System Reset, Power (Shutdown/Reboot) and the main
+// menu's Original Centaur action. Each POSTs to /api/system/* which forwards the
+// command to the board over IPC, so the board runs the exact same code path as
+// the on-board menu. Shutdown, reboot and Original Centaur make the web UI
+// unavailable, so each is gated behind an explicit confirmation.
+
+function SystemActions() {
+  const [centaurAvailable, setCentaurAvailable] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [showLoginDialog, setShowLoginDialog] = useState(false);
+  const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
+
+  useEffect(() => {
+    fetch(buildApiUrl('/api/system/info'))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && typeof data.centaur_available === 'boolean') {
+          setCentaurAvailable(data.centaur_available);
+        }
+      })
+      .catch(() => {
+        // Capability probe is best-effort; default to hiding the Centaur action.
+      });
+  }, []);
+
+  const handleLoginSuccess = async () => {
+    setShowLoginDialog(false);
+    if (pendingActionRef.current) {
+      const action = pendingActionRef.current;
+      pendingActionRef.current = null;
+      await action();
+    }
+  };
+
+  // Run a system action: confirm, POST, and surface the outcome. On 401 the
+  // login dialog opens and the action is retried after a successful login.
+  const runAction = useCallback(
+    async (key: string, endpoint: string, confirmText: string, successText: string) => {
+      if (!confirm(confirmText)) return;
+      setBusy(key);
+      setError(null);
+      setMessage(null);
+      try {
+        const response = await apiFetch(`/api/system/${endpoint}`, { method: 'POST', requiresAuth: true });
+        if (response.status === 401) {
+          pendingActionRef.current = () => runAction(key, endpoint, confirmText, successText);
+          setShowLoginDialog(true);
+          return;
+        }
+        const data = await response.json().catch(() => ({}));
+        if (response.ok && data.success) {
+          setMessage(successText);
+        } else {
+          setError(data.error || 'Action failed');
+        }
+      } catch {
+        setError('Network error');
+      } finally {
+        setBusy(null);
+      }
+    },
+    []
+  );
+
+  return (
+    <>
+      <LoginDialog
+        isOpen={showLoginDialog}
+        onClose={() => {
+          setShowLoginDialog(false);
+          pendingActionRef.current = null;
+        }}
+        onSuccess={handleLoginSuccess}
+      />
+
+      {message && (
+        <Card variant="primary" className="mb-6">
+          {message}
+        </Card>
+      )}
+      {error && (
+        <Card variant="danger" className="mb-6">
+          <strong>Error:</strong> {error}
+        </Card>
+      )}
+
+      <Card className="mb-6">
+        <CardHeader title="Reset" />
+        <p className="text-muted mb-4">
+          Restore all player and game settings to their defaults. This cannot be undone.
+        </p>
+        <Button
+          variant="danger"
+          disabled={busy !== null}
+          onClick={() =>
+            runAction(
+              'reset',
+              'reset',
+              'Reset all settings to their defaults? This cannot be undone.',
+              'Settings reset to defaults.'
+            )
+          }
+        >
+          {busy === 'reset' ? 'Resetting...' : 'Reset Settings'}
+        </Button>
+      </Card>
+
+      <Card className="mb-6">
+        <CardHeader title="Power" />
+        <p className="text-muted mb-4">
+          Shut down or reboot the board. The web interface will be unavailable
+          {' '}until the board is powered on again.
+        </p>
+        <div className="flex gap-4">
+          <Button
+            variant="secondary"
+            disabled={busy !== null}
+            onClick={() =>
+              runAction(
+                'shutdown',
+                'shutdown',
+                'Shut down the board? The web interface will become unavailable.',
+                'Shutting down. The web interface is now unavailable.'
+              )
+            }
+          >
+            {busy === 'shutdown' ? 'Shutting down...' : 'Shutdown'}
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={busy !== null}
+            onClick={() =>
+              runAction(
+                'reboot',
+                'reboot',
+                'Reboot the board? The web interface will be unavailable until it restarts.',
+                'Rebooting. The web interface will return shortly.'
+              )
+            }
+          >
+            {busy === 'reboot' ? 'Rebooting...' : 'Reboot'}
+          </Button>
+        </div>
+      </Card>
+
+      {centaurAvailable && (
+        <Card className="mb-6">
+          <CardHeader title="Original Centaur Software" />
+          <p className="text-muted mb-4">
+            Switch back to the original DGT Centaur software. This stops Universal
+            Chess and the web interface will become unavailable until you switch
+            back from the board.
+          </p>
+          <Button
+            variant="danger"
+            disabled={busy !== null}
+            onClick={() =>
+              runAction(
+                'centaur',
+                'run-centaur',
+                'Switch to the original DGT Centaur software? This stops Universal Chess and the web interface will become unavailable until you switch back from the board.',
+                'Launching the original Centaur software. The web interface is now unavailable.'
+              )
+            }
+          >
+            {busy === 'centaur' ? 'Switching...' : 'Switch to Original Centaur'}
+          </Button>
+        </Card>
+      )}
     </>
   );
 }

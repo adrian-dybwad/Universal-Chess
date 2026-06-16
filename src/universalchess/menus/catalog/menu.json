@@ -37,6 +37,14 @@
     "update_channel": [
       { "value": "stable", "label": "Stable (Recommended)" },
       { "value": "nightly", "label": "Nightly (Development)" }
+    ],
+    "sleep_timer": [
+      { "value": "0", "label": "Disabled" },
+      { "value": "300", "label": "5 min" },
+      { "value": "600", "label": "10 min" },
+      { "value": "900", "label": "15 min" },
+      { "value": "1800", "label": "30 min" },
+      { "value": "3600", "label": "1 hour" }
     ]
   },
 
@@ -77,7 +85,7 @@
       "label": "Original\nCentaur",
       "icon": "centaur",
       "help": "Switch back to the original DGT Centaur software.",
-      "platforms": ["board"],
+      "platforms": ["board", "web"],
       "epaper": { "height_ratio": 0.67, "icon_size": 28, "layout": "horizontal", "font_size": 14 }
     },
 
@@ -228,7 +236,7 @@
       "label": "Sleep Timer",
       "icon": "timer",
       "help": "Automatically put the board to sleep after a period of inactivity.",
-      "platforms": ["board"]
+      "platforms": ["board", "web"]
     },
     {
       "id": "system.reset",
@@ -237,7 +245,7 @@
       "label": "Reset\nSettings",
       "icon": "cancel",
       "help": "Restore all settings to their defaults.",
-      "platforms": ["board"]
+      "platforms": ["board", "web"]
     },
     {
       "id": "system.about",
@@ -256,14 +264,14 @@
       "icon": "shutdown",
       "help": "Shut down or reboot the board.",
       "target": "power",
-      "platforms": ["board"]
+      "platforms": ["board", "web"]
     },
 
     {
       "id": "power",
       "type": "menu",
       "label": "Power",
-      "platforms": ["board"],
+      "platforms": ["board", "web"],
       "children": ["power.shutdown", "power.reboot"]
     },
     {
@@ -273,7 +281,7 @@
       "label": "Shutdown",
       "icon": "shutdown",
       "help": "Power off the board.",
-      "platforms": ["board"]
+      "platforms": ["board", "web"]
     },
     {
       "id": "power.reboot",
@@ -282,7 +290,7 @@
       "label": "Reboot",
       "icon": "reboot",
       "help": "Restart the board.",
-      "platforms": ["board"]
+      "platforms": ["board", "web"]
     },
 
     {
@@ -438,6 +446,15 @@
       "label": "Rating Range",
       "help": "Preferred opponent rating range for matchmaking",
       "section": "accounts",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.system.sleep_timer",
+      "type": "select",
+      "label": "Sleep Timer",
+      "help": "Automatically put the board to sleep after a period of inactivity",
+      "optionSet": "sleep_timer",
+      "section": "system",
       "platforms": ["web"]
     },
     {

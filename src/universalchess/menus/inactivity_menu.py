@@ -4,6 +4,7 @@ from typing import List, Callable, Optional
 
 from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.managers.menu import MenuSelection, is_break_result
+from universalchess.menus.catalog.loader import get_catalog
 
 
 def handle_inactivity_timeout(
@@ -11,24 +12,21 @@ def handle_inactivity_timeout(
     log,
     menu_manager,
 ) -> Optional[MenuSelection]:
-    """Handle inactivity timeout setting submenu."""
-    timeout_options = [
-        (0, "Disabled"),
-        (5, "5 min"),
-        (10, "10 min"),
-        (15, "15 min"),
-        (30, "30 min"),
-        (60, "1 hour"),
-    ]
+    """Handle inactivity timeout setting submenu.
 
+    The selectable timeouts come from the shared catalog ``sleep_timer`` option
+    set (values are seconds), so the board and the web Sleep Timer offer the
+    identical choices from one source. Each entry's key is the seconds value, and
+    the currently configured timeout is marked with the checked icon.
+    """
     current_timeout = board.get_inactivity_timeout()
 
     entries: List[IconMenuEntry] = []
-    for minutes, label in timeout_options:
-        seconds = minutes * 60
+    for option in get_catalog().option_set("sleep_timer"):
+        seconds = int(option["value"])
         is_current = seconds == current_timeout
         icon = "timer_checked" if is_current else "timer"
-        entries.append(IconMenuEntry(key=str(seconds), label=label, icon_name=icon, enabled=True))
+        entries.append(IconMenuEntry(key=str(seconds), label=option["label"], icon_name=icon, enabled=True))
 
     result = menu_manager.show_menu(entries)
 

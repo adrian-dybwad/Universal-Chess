@@ -31,7 +31,7 @@ from werkzeug.utils import secure_filename
 from universalchess.db import models
 from universalchess.paths import get_current_fen, get_current_placement, get_resource_path
 from universalchess.services.game_broadcast import get_subscriber, GameState
-from universalchess.paths import EPAPER_STATIC_JPG
+from universalchess.paths import EPAPER_STATIC_JPG, CENTAUR_SOFTWARE
 from .chessboard import LiveBoard
 from . import centaurflask
 from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
@@ -2178,6 +2178,94 @@ def api_board_abort_game():
         return json.dumps({"success": False, "error": "Board not running"}), 503
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)}), 500
+
+
+# ============================================================================
+# System actions (reset / power / Original Centaur)
+# ============================================================================
+# These mirror the board's System and Power menus. Each privileged action is
+# routed to the main process over the board-command channel so it runs the exact
+# same board-side code path as the on-board menu (e.g. shutdown shows the board's
+# splash and cleans up hardware via cleanup_and_exit). The web process never
+# performs the shutdown/reboot itself, which avoids the historical divergence
+# where /shutdownboard powered off without the board's cleanup. Shutdown, reboot
+# and Original Centaur make the web UI unavailable; the UI confirms first.
+
+
+def _system_board_action(command: str, success_message: str):
+    """Forward a system action to the board and shape the JSON response.
+
+    Returns success when the board accepted the command, 503 when the board is
+    not running (so the UI can say the board is offline rather than report a
+    false success), and 500 on unexpected errors.
+    """
+    try:
+        from universalchess.services.game_broadcast import send_board_command
+
+        sent = send_board_command(command)
+        if sent:
+            return json.dumps({"success": True, "message": success_message})
+        return json.dumps({"success": False, "error": "Board not running"}), 503
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/system/info", methods=["GET"])
+def api_system_info():
+    """Return read-only system capabilities for the web UI.
+
+    ``centaur_available`` mirrors the board's own check (the on-board menu hides
+    the Original Centaur entry when the executable is absent), so the web UI can
+    do the same without importing board/hardware modules.
+    """
+    try:
+        return json.dumps({"centaur_available": os.path.exists(CENTAUR_SOFTWARE)})
+    except Exception as e:
+        return json.dumps({"error": str(e)}), 500
+
+
+@app.route("/api/system/reset", methods=["POST"])
+@requires_auth
+def api_system_reset():
+    """Reset all game/player settings to defaults. Requires authentication.
+
+    Runs the same reset as the board's Reset Settings menu (clear sections +
+    reload defaults). The web UI confirms before calling this.
+    """
+    return _system_board_action("reset_settings", "Settings reset to defaults")
+
+
+@app.route("/api/system/shutdown", methods=["POST"])
+@requires_auth
+def api_system_shutdown():
+    """Power off the board. Requires authentication.
+
+    Routes to the board's shutdown path (splash + hardware cleanup); the web UI
+    becomes unavailable. The UI confirms before calling this.
+    """
+    return _system_board_action("shutdown", "Shutting down")
+
+
+@app.route("/api/system/reboot", methods=["POST"])
+@requires_auth
+def api_system_reboot():
+    """Reboot the board. Requires authentication.
+
+    Routes to the board's reboot path (LED sweep + shutdown). The web UI becomes
+    unavailable until the board comes back. The UI confirms before calling this.
+    """
+    return _system_board_action("reboot", "Rebooting")
+
+
+@app.route("/api/system/run-centaur", methods=["POST"])
+@requires_auth
+def api_system_run_centaur():
+    """Hand control to the original DGT Centaur software. Requires authentication.
+
+    Runs the same handoff as the main menu's Original Centaur action, which stops
+    Universal Chess (and this web server). The UI warns before calling this.
+    """
+    return _system_board_action("run_centaur", "Launching original Centaur software")
 
 
 # ============================================================================

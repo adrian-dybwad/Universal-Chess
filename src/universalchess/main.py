@@ -468,8 +468,8 @@ class AppState(Enum):
 DISPLAY_WIDTH = 128
 DISPLAY_HEIGHT = 296
 
-# Path to original DGT Centaur software
-CENTAUR_SOFTWARE = "/home/pi/centaur/centaur"
+# Path to original DGT Centaur software (shared with the web UI via paths.py).
+from universalchess.paths import CENTAUR_SOFTWARE
 
 
 # Global state
@@ -2200,9 +2200,12 @@ def _on_board_command(parsed: dict) -> None:
 def _process_pending_board_command() -> None:
     """Apply a pending web board-control command on the main thread.
 
-    Handles 'setup_position' (abort any running game, then set up the position)
-    and 'abort_game' (abort and return to the menu). Runs only from the main
-    loop so display widgets and game managers are mutated on the main thread.
+    Handles 'setup_position' (abort any running game, then set up the position),
+    'abort_game' (abort and return to the menu), 'reset_settings', 'shutdown',
+    'reboot' and 'run_centaur'. Each runs the same board-side code path as the
+    corresponding e-paper menu action so the web and on-board behavior are
+    identical. Runs only from the main loop so display widgets, game managers and
+    in-memory settings are mutated on the main thread.
     """
     global _pending_board_command
     cmd = _pending_board_command
@@ -2227,6 +2230,32 @@ def _process_pending_board_command() -> None:
         if protocol_manager is not None:
             _abort_current_game()
             _return_to_menu("Web abort")
+    elif command == "reset_settings":
+        # Same reset path as the on-board Reset Settings menu (after its confirm);
+        # the web confirms in the browser. Clears the sections and reloads
+        # defaults in this process so the board reflects the reset without a
+        # restart.
+        log.info("[App] Web reset_settings")
+        from universalchess.menus.reset_menu import reset_all_settings
+        reset_all_settings(
+            _load_game_settings, log, board,
+            SETTINGS_SECTION, PLAYER1_SECTION, PLAYER2_SECTION,
+        )
+    elif command == "shutdown":
+        # Same shutdown path as the Power menu's Shutdown (splash + hardware
+        # cleanup via _shutdown -> cleanup_and_exit).
+        log.info("[App] Web shutdown")
+        from universalchess.menus.system_menu import perform_shutdown
+        perform_shutdown(_shutdown)
+    elif command == "reboot":
+        # Same reboot path as the Power menu's Reboot (LED sweep + _shutdown).
+        log.info("[App] Web reboot")
+        from universalchess.menus.system_menu import perform_reboot
+        perform_reboot(board, _shutdown)
+    elif command == "run_centaur":
+        # Same handoff as the main menu's Original Centaur action.
+        log.info("[App] Web run_centaur")
+        _run_centaur()
     else:
         log.warning(f"[App] Unknown board command: {command}")
 
