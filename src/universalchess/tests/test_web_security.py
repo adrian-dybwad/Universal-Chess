@@ -101,13 +101,13 @@ def test_resolve_engine_file_rejects_escape(filename):
     containment breaks, this returns a path whose parent is not the engines
     dir, so the assertion below fails.
     """
-    import pathlib
+    import os
 
     result = webapp.resolve_engine_file(filename)
     if result is not None:
-        base = pathlib.Path(webapp.get_engine_path()).resolve()
+        base = os.path.realpath(webapp.get_engine_path())
         # Must be a direct child of the engines directory.
-        assert result.parent == base
+        assert os.path.dirname(result) == base
 
 
 def test_resolve_engine_file_accepts_plain_name():
@@ -115,11 +115,11 @@ def test_resolve_engine_file_accepts_plain_name():
 
     Guards against an over-aggressive sanitizer that would reject all uploads.
     """
-    import pathlib
+    import os
 
-    base = pathlib.Path(webapp.get_engine_path()).resolve()
+    base = os.path.realpath(webapp.get_engine_path())
     result = webapp.resolve_engine_file("stockfish")
-    assert result == base / "stockfish"
+    assert result == os.path.join(base, "stockfish")
 
 
 # --- Authentication on destructive / state-changing endpoints -----------------
