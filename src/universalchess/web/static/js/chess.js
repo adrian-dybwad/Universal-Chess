@@ -1621,7 +1621,7 @@ var Chess = function (fen) {
           : false
 
       function mask(str) {
-        return str.replace(/\\/g, '\\')
+        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       }
 
       function has_keys(object) {
@@ -1737,7 +1737,7 @@ var Chess = function (fen) {
         .replace(header_string, '')
         .replace(
           /* encode comments so they don't get deleted below */
-          new RegExp(`(\{[^}]*\})+?|;([^${mask(newline_char)}]*)`, 'g'),
+          new RegExp(`({[^}]*})+?|;([^${mask(newline_char)}]*)`, 'g'),
           function (match, bracket, semicolon) {
             return bracket !== undefined
               ? encode_comment(bracket)
@@ -1935,7 +1935,7 @@ var Chess = function (fen) {
     },
 
     set_comment: function (comment) {
-      comments[generate_fen()] = comment.replace('{', '[').replace('}', ']')
+      comments[generate_fen()] = comment.replace(/\{/g, '[').replace(/\}/g, ']')
     },
 
     delete_comment: function () {
