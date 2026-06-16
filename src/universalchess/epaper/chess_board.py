@@ -101,18 +101,13 @@ class ChessBoardWidget(Widget):
         width, height = self._chess_font.size
         log.debug(f"[ChessBoardWidget] Chess sprites: {width}x{height}")
         
-        # Sprite sheet must be at least 32px height (2 rows) for light and dark squares
+        # Sprite sheet must be at least 32px tall (2 rows of 16px: light and dark squares)
         if height < 32:
             log.error(
                 f"Chesssprites image height {height}px is insufficient! "
                 f"Required: 32px (2 rows of 16px each)."
             )
             self._chess_font = None
-        elif height < 48:
-            log.warning(
-                f"Chesssprites image height {height}px is less than expected 48px. "
-                f"Expected 3 rows (48px) but minimum 2 rows (32px) is acceptable."
-            )
         
         if width < 208:
             log.warning(
