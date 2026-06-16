@@ -9,6 +9,7 @@ falls through into discovery, the two UIs drift.
 import sys
 import types
 from dataclasses import dataclass
+from typing import Optional
 from unittest.mock import MagicMock
 
 
@@ -20,12 +21,12 @@ class _StubIconMenuEntry:
     enabled: bool = True
     selectable: bool = True
     height_ratio: float = 1.0
-    max_height: int | None = None
-    icon_size: int | None = None
+    max_height: Optional[int] = None
+    icon_size: Optional[int] = None
     layout: str = "horizontal"
     font_size: int = 16
     bold: bool = False
-    help: str | None = None
+    help: Optional[str] = None
 
 
 epaper_module = types.ModuleType("universalchess.epaper")
