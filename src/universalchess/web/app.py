@@ -26,7 +26,7 @@
 # Bullseye). Matches the convention used across the rest of the package.
 from __future__ import annotations
 
-from flask import Flask, render_template, Response, request, redirect, send_file, send_from_directory, abort, stream_with_context, url_for
+from flask import Flask, render_template, Response, request, redirect, send_file, send_from_directory, abort, stream_with_context, url_for, jsonify
 from werkzeug.exceptions import NotFound
 from werkzeug.utils import secure_filename
 from universalchess.utils.safe_path import safe_under_base
@@ -268,7 +268,7 @@ def _internal_error(exception):
     ``except Exception`` handler should use this instead of ``str(e)``.
     """
     app.logger.exception("Internal error: %s", exception)
-    return json.dumps({"success": False, "error": "Internal server error"}), 500
+    return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 def is_rodentiv_installed() -> bool:
@@ -1679,7 +1679,7 @@ def getGames(page):
                     games[x] = gameitem
         except Exception:
             pass
-        return json.dumps(games)
+        return jsonify(games)
     finally:
         session.close()
 
@@ -1691,7 +1691,7 @@ def engines():
     enginefiles = os.listdir(enginepath)
     for x, f in enumerate(enginefiles):
         files[x] = str(f)
-    return json.dumps(files)
+    return jsonify(files)
 
 @app.route("/uploadengine", methods=['POST'])
 @requires_auth
@@ -2047,7 +2047,7 @@ def api_get_settings():
     """Get all settings from centaur.ini as JSON."""
     try:
         settings = get_all_settings()
-        return json.dumps(settings)
+        return jsonify(settings)
     except Exception as e:
         return _internal_error(e)
 
@@ -2059,10 +2059,10 @@ def api_save_settings():
     try:
         settings = request.get_json()
         if not settings:
-            return json.dumps({"success": False, "error": "No settings provided"}), 400
+            return jsonify({"success": False, "error": "No settings provided"}), 400
         
         save_all_settings(settings)
-        return json.dumps({"success": True})
+        return jsonify({"success": True})
     except Exception as e:
         return _internal_error(e)
 
@@ -2085,10 +2085,10 @@ def api_apply_settings():
         from universalchess.services.game_broadcast import notify_main_process_settings_changed
         notified = notify_main_process_settings_changed()
         if notified:
-            return json.dumps({"success": True, "message": "Settings reloaded"})
+            return jsonify({"success": True, "message": "Settings reloaded"})
         # The main process may not be running (e.g. board service stopped); the
         # settings are still persisted and will load on next start.
-        return json.dumps({
+        return jsonify({
             "success": True,
             "message": "Settings saved; board not running to reload",
         })
@@ -2113,10 +2113,10 @@ def api_get_sprites():
         sheets = loader.list_chess_sprite_sheets()
         if not sheets:
             sheets = [ResourceLoader.DEFAULT_SPRITE_SHEET]
-        return json.dumps(sheets)
+        return jsonify(sheets)
     except Exception as e:
         app.logger.warning(f"Failed to list sprite sheets: {e}")
-        return json.dumps(["default"])
+        return jsonify(["default"])
 
 
 @app.route("/api/menu-schema", methods=["GET"])
@@ -2130,7 +2130,7 @@ def api_get_menu_schema():
     try:
         from universalchess.menus.catalog import get_catalog
 
-        return json.dumps(get_catalog().raw_menu())
+        return jsonify(get_catalog().raw_menu())
     except Exception as e:
         app.logger.warning(f"Failed to load menu schema: {e}")
         return _internal_error(e)
@@ -2160,7 +2160,7 @@ def api_get_positions():
             }
             for category, entries in raw.items()
         ]
-        return json.dumps({"categories": categories})
+        return jsonify({"categories": categories})
     except Exception as e:
         app.logger.warning(f"Failed to load positions: {e}")
         return _internal_error(e)
@@ -2184,11 +2184,11 @@ def api_board_setup_position():
         body = request.get_json(silent=True) or {}
         fen = (body.get("fen") or "").strip()
         if not fen:
-            return json.dumps({"success": False, "error": "No FEN provided"}), 400
+            return jsonify({"success": False, "error": "No FEN provided"}), 400
         try:
             chess.Board(fen)
         except ValueError:
-            return json.dumps({"success": False, "error": "Invalid FEN"}), 400
+            return jsonify({"success": False, "error": "Invalid FEN"}), 400
 
         name = (body.get("name") or "Position").strip()
         hint = body.get("hint")
@@ -2200,8 +2200,8 @@ def api_board_setup_position():
 
         sent = send_board_command("setup_position", params)
         if sent:
-            return json.dumps({"success": True, "message": "Position setup started"})
-        return json.dumps({
+            return jsonify({"success": True, "message": f"Setting up {name}"})
+        return jsonify({
             "success": False,
             "error": "Board not running",
         }), 503
@@ -2223,8 +2223,8 @@ def api_board_abort_game():
 
         sent = send_board_command("abort_game")
         if sent:
-            return json.dumps({"success": True, "message": "Game aborted"})
-        return json.dumps({"success": False, "error": "Board not running"}), 503
+            return jsonify({"success": True, "message": "Game aborted"})
+        return jsonify({"success": False, "error": "Board not running"}), 503
     except Exception as e:
         return _internal_error(e)
 
@@ -2253,8 +2253,8 @@ def _system_board_action(command: str, success_message: str):
 
         sent = send_board_command(command)
         if sent:
-            return json.dumps({"success": True, "message": success_message})
-        return json.dumps({"success": False, "error": "Board not running"}), 503
+            return jsonify({"success": True, "message": success_message})
+        return jsonify({"success": False, "error": "Board not running"}), 503
     except Exception as e:
         return _internal_error(e)
 
@@ -2268,7 +2268,7 @@ def api_system_info():
     do the same without importing board/hardware modules.
     """
     try:
-        return json.dumps({"centaur_available": os.path.exists(CENTAUR_SOFTWARE)})
+        return jsonify({"centaur_available": os.path.exists(CENTAUR_SOFTWARE)})
     except Exception as e:
         return _internal_error(e)
 
@@ -2334,7 +2334,7 @@ def api_wifi_status():
     try:
         from universalchess.epaper.wifi_info import get_wifi_status
 
-        return json.dumps(get_wifi_status())
+        return jsonify(get_wifi_status())
     except Exception as e:
         app.logger.warning(f"Failed to get WiFi status: {e}")
         return _internal_error(e)
@@ -2347,7 +2347,7 @@ def api_wifi_scan():
     try:
         from universalchess.connectivity import wifi as wifi_core
 
-        return json.dumps({"networks": wifi_core.scan_networks(app.logger)})
+        return jsonify({"networks": wifi_core.scan_networks(app.logger)})
     except Exception as e:
         app.logger.warning(f"WiFi scan failed: {e}")
         return _internal_error(e)
@@ -2360,7 +2360,7 @@ def api_wifi_saved():
     try:
         from universalchess.connectivity import wifi as wifi_core
 
-        return json.dumps({"networks": wifi_core.list_saved_networks(app.logger)})
+        return jsonify({"networks": wifi_core.list_saved_networks(app.logger)})
     except Exception as e:
         app.logger.warning(f"Failed to list saved WiFi networks: {e}")
         return _internal_error(e)
@@ -2380,11 +2380,11 @@ def api_wifi_connect():
         body = request.get_json(silent=True) or {}
         ssid = (body.get("ssid") or "").strip()
         if not ssid:
-            return json.dumps({"success": False, "error": "No SSID provided"}), 400
+            return jsonify({"success": False, "error": "No SSID provided"}), 400
         password = body.get("password") or None
         success, message = wifi_core.connect_network(ssid, password, app.logger)
         status_code = 200 if success else 400
-        return json.dumps({"success": success, "message": message}), status_code
+        return jsonify({"success": success, "message": message}), status_code
     except Exception as e:
         return _internal_error(e)
 
@@ -2403,11 +2403,11 @@ def api_wifi_forget():
         body = request.get_json(silent=True) or {}
         ssid = (body.get("ssid") or "").strip()
         if not ssid:
-            return json.dumps({"success": False, "error": "No SSID provided"}), 400
+            return jsonify({"success": False, "error": "No SSID provided"}), 400
         removed = wifi_core.forget_network(ssid, app.logger)
         if removed:
-            return json.dumps({"success": True, "message": "Network removed"})
-        return json.dumps({"success": False, "error": "No saved network found"}), 404
+            return jsonify({"success": True, "message": f"Forgot {ssid}"})
+        return jsonify({"success": False, "error": "No saved network found"}), 404
     except Exception as e:
         return _internal_error(e)
 
@@ -2425,7 +2425,7 @@ def api_wifi_enable():
         body = request.get_json(silent=True) or {}
         enabled = bool(body.get("enabled"))
         ok = enable_wifi() if enabled else disable_wifi()
-        return json.dumps({"success": ok, "enabled": enabled})
+        return jsonify({"success": ok, "enabled": enabled})
     except Exception as e:
         return _internal_error(e)
 
@@ -2447,7 +2447,7 @@ def api_bt_status():
     try:
         from universalchess.connectivity import bluetooth as bt
 
-        return json.dumps(bt.get_status(log=app.logger))
+        return jsonify(bt.get_status(log=app.logger))
     except Exception as e:
         app.logger.warning(f"Failed to get Bluetooth status: {e}")
         return _internal_error(e)
@@ -2463,7 +2463,7 @@ def api_bt_enable():
         body = request.get_json(silent=True) or {}
         enabled = bool(body.get("enabled"))
         ok = bt.set_enabled(enabled, log=app.logger)
-        return json.dumps({"success": ok, "enabled": enabled})
+        return jsonify({"success": ok, "enabled": enabled})
     except Exception as e:
         return _internal_error(e)
 
@@ -2475,7 +2475,7 @@ def api_bt_scan():
     try:
         from universalchess.connectivity import bluetooth as bt
 
-        return json.dumps({"devices": bt.scan_keyboards(log=app.logger)})
+        return jsonify({"devices": bt.scan_keyboards(log=app.logger)})
     except Exception as e:
         app.logger.warning(f"Bluetooth scan failed: {e}")
         return _internal_error(e)
@@ -2493,12 +2493,12 @@ def _bt_device_action(action_name):
     body = request.get_json(silent=True) or {}
     address = (body.get("address") or "").strip()
     if not address:
-        return json.dumps({"success": False, "error": "No address provided"}), 400
+        return jsonify({"success": False, "error": "No address provided"}), 400
     try:
         ok = action_name(bt, address, app.logger)
     except ValueError:
-        return json.dumps({"success": False, "error": "Invalid address"}), 400
-    return json.dumps({"success": ok})
+        return jsonify({"success": False, "error": "Invalid address"}), 400
+    return jsonify({"success": ok})
 
 
 @app.route("/api/connectivity/bluetooth/connect", methods=["POST"])
@@ -2511,20 +2511,20 @@ def api_bt_connect():
         body = request.get_json(silent=True) or {}
         address = (body.get("address") or "").strip()
         if not address:
-            return json.dumps({"success": False, "error": "No address provided"}), 400
+            return jsonify({"success": False, "error": "No address provided"}), 400
         try:
             status = bt.connect_device_status(address, log=app.logger)
         except ValueError:
-            return json.dumps({"success": False, "error": "Invalid address"}), 400
+            return jsonify({"success": False, "error": "Invalid address"}), 400
         if status == "ok":
-            return json.dumps({"success": True})
+            return jsonify({"success": True})
         if status == "auth_failed":
-            return json.dumps({
+            return jsonify({
                 "success": False,
                 "stalePairing": True,
                 "error": "Saved pairing was rejected. Remove it and pair again?",
             })
-        return json.dumps({
+        return jsonify({
             "success": False,
             "error": "Could not connect. Make sure the device is on and nearby.",
         })
@@ -2568,11 +2568,11 @@ def api_bt_pair():
         body = request.get_json(silent=True) or {}
         address = (body.get("address") or "").strip()
         if not address:
-            return json.dumps({"success": False, "error": "No address provided"}), 400
+            return jsonify({"success": False, "error": "No address provided"}), 400
         sent = send_board_command("bt_pair", {"address": address})
         if sent:
-            return json.dumps({"success": True, "message": "Pairing started"})
-        return json.dumps({"success": False, "error": "Board not running"}), 503
+            return jsonify({"success": True, "message": "Pairing started"})
+        return jsonify({"success": False, "error": "Board not running"}), 503
     except Exception as e:
         return _internal_error(e)
 
@@ -2593,8 +2593,8 @@ def api_bt_pair_confirm():
         accept = bool(body.get("accept"))
         sent = send_board_command("bt_pair_confirm", {"accept": accept})
         if sent:
-            return json.dumps({"success": True})
-        return json.dumps({"success": False, "error": "Board not running"}), 503
+            return jsonify({"success": True})
+        return jsonify({"success": False, "error": "Board not running"}), 503
     except Exception as e:
         return _internal_error(e)
 
@@ -2616,7 +2616,7 @@ def api_cast_discover():
     try:
         from universalchess.connectivity import chromecast as cast
 
-        return json.dumps({"devices": cast.discover(log=app.logger)})
+        return jsonify({"devices": cast.discover(log=app.logger)})
     except Exception as e:
         app.logger.warning(f"Chromecast discovery failed: {e}")
         return _internal_error(e)
@@ -2632,15 +2632,15 @@ def api_cast_start():
         body = request.get_json(silent=True) or {}
         device = (body.get("device") or "").strip()
         if not device:
-            return json.dumps({"success": False, "error": "No device provided"}), 400
+            return jsonify({"success": False, "error": "No device provided"}), 400
         source = "live_board" if get_chromecast_use_live_board() else "classic"
         sent = send_board_command(
             "chromecast_start",
             {"device": device, "source": source},
         )
         if sent:
-            return json.dumps({"success": True, "message": "Streaming started"})
-        return json.dumps({"success": False, "error": "Board not running"}), 503
+            return jsonify({"success": True, "message": f"Streaming to {device}"})
+        return jsonify({"success": False, "error": "Board not running"}), 503
     except Exception as e:
         return _internal_error(e)
 
@@ -2648,7 +2648,7 @@ def api_cast_start():
 @app.route("/api/connectivity/chromecast/source", methods=["GET"])
 def api_cast_source_get():
     """Return the selected Chromecast display source."""
-    return json.dumps({"useLiveBoard": get_chromecast_use_live_board()})
+    return jsonify({"useLiveBoard": get_chromecast_use_live_board()})
 
 
 @app.route("/api/connectivity/chromecast/source", methods=["POST"])
@@ -2665,7 +2665,7 @@ def api_cast_source_set():
         )
         set_chromecast_use_live_board(use_live_board)
         broadcast_sse_event("settings_changed")
-        return json.dumps({"success": True, "useLiveBoard": get_chromecast_use_live_board()})
+        return jsonify({"success": True, "useLiveBoard": use_live_board})
     except Exception as e:
         return _internal_error(e)
 
@@ -2685,8 +2685,9 @@ def api_cast_stop():
         payload = {"device": device} if device else {}
         sent = send_board_command("chromecast_stop", payload)
         if sent:
-            return json.dumps({"success": True, "message": "Streaming stopped"})
-        return json.dumps({"success": False, "error": "Board not running"}), 503
+            msg = f"Stopped {device}" if device else "Streaming stopped"
+            return jsonify({"success": True, "message": msg})
+        return jsonify({"success": False, "error": "Board not running"}), 503
     except Exception as e:
         return _internal_error(e)
 
@@ -2704,7 +2705,7 @@ def api_cast_status():
         from universalchess.services.game_broadcast import send_board_command
 
         sent = send_board_command("chromecast_status")
-        return json.dumps({"success": bool(sent)})
+        return jsonify({"success": bool(sent)})
     except Exception as e:
         return _internal_error(e)
 
@@ -2769,10 +2770,10 @@ def api_get_engines():
                 "installed": is_installed
             })
         
-        return json.dumps(engines_list)
+        return jsonify(engines_list)
     except Exception as e:
         # Fallback if engine manager not available
-        return json.dumps([{"name": "stockfish", "display_name": "Stockfish", "installed": True}])
+        return jsonify([{"name": "stockfish", "display_name": "Stockfish", "installed": True}])
 
 
 @app.route("/api/engines/<engine_name>/levels", methods=["GET"])
@@ -2795,7 +2796,7 @@ def api_get_engine_levels(engine_name):
                 break
         
         if not uci_path:
-            return json.dumps(["Default"])
+            return jsonify(["Default"])
         
         config = configparser.ConfigParser()
         config.read(str(uci_path))
@@ -2809,9 +2810,9 @@ def api_get_engine_levels(engine_name):
         if "Default" not in levels:
             levels.insert(0, "Default")
         
-        return json.dumps(levels)
+        return jsonify(levels)
     except Exception as e:
-        return json.dumps(["Default"])
+        return jsonify(["Default"])
 
 
 @app.route("/api/engines/all", methods=["GET"])
@@ -2837,7 +2838,7 @@ def api_get_all_engines():
                 "has_prebuilt": engine_def.has_prebuilt,
             })
         
-        return json.dumps(engines_list)
+        return jsonify(engines_list)
     except Exception as e:
         return _internal_error(e)
 
@@ -2894,16 +2895,16 @@ def api_install_engine():
         engine_name = data.get("engine")
         
         if not engine_name:
-            return json.dumps({"success": False, "error": "No engine specified"}), 400
+            return jsonify({"success": False, "error": "No engine specified"}), 400
         
         from universalchess.managers.engine_manager import ENGINES
         if engine_name not in ENGINES:
-            return json.dumps({"success": False, "error": "Unknown engine"}), 400
+            return jsonify({"success": False, "error": f"Unknown engine: {engine_name}"}), 400
         
         if _engine_install_state["installing"]:
-            return json.dumps({
+            return jsonify({
                 "success": False, 
-                "error": "Another installation is in progress"
+                "error": f"Already installing {_engine_install_state['engine']}"
             }), 409
         
         # Start installation in background thread
@@ -2916,7 +2917,7 @@ def api_install_engine():
         thread = threading.Thread(target=_run_engine_install, args=(engine_name,), daemon=True)
         thread.start()
         
-        return json.dumps({"success": True, "message": "Installation started"})
+        return jsonify({"success": True, "message": f"Installing {engine_name}"})
     except Exception as e:
         return _internal_error(e)
 
@@ -2929,24 +2930,24 @@ def api_uninstall_engine():
         engine_name = data.get("engine")
         
         if not engine_name:
-            return json.dumps({"success": False, "error": "No engine specified"}), 400
+            return jsonify({"success": False, "error": "No engine specified"}), 400
         
         from universalchess.managers.engine_manager import EngineManager, ENGINES
         
         if engine_name not in ENGINES:
-            return json.dumps({"success": False, "error": "Unknown engine"}), 400
+            return jsonify({"success": False, "error": f"Unknown engine: {engine_name}"}), 400
         
         engine_def = ENGINES[engine_name]
         if not engine_def.can_uninstall:
-            return json.dumps({"success": False, "error": "This engine cannot be uninstalled"}), 400
+            return jsonify({"success": False, "error": "This engine cannot be uninstalled"}), 400
         
         engine_manager = EngineManager()
         success = engine_manager.uninstall_engine(engine_name)
         
         if success:
-            return json.dumps({"success": True})
+            return jsonify({"success": True})
         else:
-            return json.dumps({"success": False, "error": "Uninstall failed"})
+            return jsonify({"success": False, "error": "Uninstall failed"})
     except Exception as e:
         return _internal_error(e)
 
@@ -2955,7 +2956,7 @@ def api_uninstall_engine():
 def api_engine_status():
     """Get current engine installation status."""
     global _engine_install_state
-    return json.dumps({
+    return jsonify({
         "installing": _engine_install_state["installing"],
         "engine": _engine_install_state["engine"],
         "progress": _engine_install_state["progress"],
@@ -2977,7 +2978,7 @@ def api_update_status():
     try:
         from universalchess.services.update_service import get_update_service
         service = get_update_service()
-        return json.dumps(service.get_status_dict())
+        return jsonify(service.get_status_dict())
     except Exception as e:
         return _internal_error(e)
 
@@ -2996,7 +2997,7 @@ def api_update_check():
         release = service.check_for_updates()
         
         if release:
-            return json.dumps({
+            return jsonify({
                 "update_available": True,
                 "version": release.version,
                 "tag": release.tag,
@@ -3007,7 +3008,7 @@ def api_update_check():
                 "body": release.body,
             })
         else:
-            return json.dumps({
+            return jsonify({
                 "update_available": False,
                 "current_version": service.get_current_version(),
             })
@@ -3029,12 +3030,12 @@ def api_update_download():
         
         deb_path = service.download_update()
         if deb_path:
-            return json.dumps({
+            return jsonify({
                 "success": True,
                 "path": str(deb_path),
             })
         else:
-            return json.dumps({
+            return jsonify({
                 "success": False,
                 "error": "Download failed",
             }), 500
@@ -3055,12 +3056,12 @@ def api_update_install():
         service = get_update_service()
         
         if service.install_pending_update():
-            return json.dumps({
+            return jsonify({
                 "success": True,
                 "message": "Update installed. Service will restart.",
             })
         else:
-            return json.dumps({
+            return jsonify({
                 "success": False,
                 "error": "Installation failed",
             }), 500
@@ -3074,7 +3075,7 @@ def api_update_channel_get():
     try:
         from universalchess.services.update_service import get_update_service
         service = get_update_service()
-        return json.dumps({
+        return jsonify({
             "channel": service.get_channel().value,
         })
     except Exception as e:
@@ -3099,10 +3100,10 @@ def api_update_channel_set():
         try:
             channel = UpdateChannel(channel_str)
         except ValueError:
-            return json.dumps({"error": "Invalid channel"}), 400
+            return jsonify({"error": f"Invalid channel: {channel_str}"}), 400
         
         service.set_channel(channel)
-        return json.dumps({
+        return jsonify({
             "success": True,
             "channel": channel.value,
         })
@@ -3116,7 +3117,7 @@ def api_update_auto_get():
     try:
         from universalchess.services.update_service import get_update_service
         service = get_update_service()
-        return json.dumps({
+        return jsonify({
             "auto_update": service.is_auto_update_enabled(),
         })
     except Exception as e:
@@ -3139,7 +3140,7 @@ def api_update_auto_set():
         enabled = data.get("enabled", False)
         
         service.set_auto_update(bool(enabled))
-        return json.dumps({
+        return jsonify({
             "success": True,
             "auto_update": service.is_auto_update_enabled(),
         })
