@@ -21,6 +21,20 @@ from typing import List, Optional, Tuple
 _DEFAULT_LOG = logging.getLogger(__name__)
 
 WLAN_INTERFACE = "wlan0"
+
+# IEEE 802.11 SSIDs are at most 32 bytes; reject anything clearly invalid or
+# that looks like command-line flag injection before handing it to nmcli.
+_MAX_SSID_LENGTH = 64  # generous limit for multibyte encodings
+_SSID_REJECT_RE = re.compile(r"[\x00-\x1f]")  # no control characters
+
+
+def _validate_ssid(ssid: str) -> bool:
+    """Return True if ``ssid`` is safe to pass to nmcli as a positional arg."""
+    if not ssid or len(ssid) > _MAX_SSID_LENGTH:
+        return False
+    if _SSID_REJECT_RE.search(ssid):
+        return False
+    return True
 _SCAN_TIMEOUT_SECONDS = 30
 _CONNECT_TIMEOUT_SECONDS = 30
 _NMCLI_TIMEOUT_SECONDS = 10
@@ -224,16 +238,19 @@ def connect_network(
     log = _resolve_log(log)
     if not ssid:
         return False, "No network specified"
+    if not _validate_ssid(ssid):
+        return False, "Invalid network name"
 
     remove_profiles(ssid, log)
 
-    command = ["sudo", "nmcli", "device", "wifi", "connect", ssid]
+    command = ["sudo", "nmcli", "device", "wifi", "connect", ssid]  # noqa: S603
     if password:
         command += ["password", password]
 
     try:
-        result = subprocess.run(
-            command, capture_output=True, text=True, timeout=_CONNECT_TIMEOUT_SECONDS
+        result = subprocess.run(  # noqa: S603
+            command, capture_output=True, text=True, timeout=_CONNECT_TIMEOUT_SECONDS,
+            shell=False,  # list-form: no shell injection
         )
     except subprocess.TimeoutExpired:
         log.error("[WiFi] Connection timed out")

@@ -1066,8 +1066,8 @@ def main():
         log(f"Could not set Pairable: {e}")
     
     try:
-        mac_address = adapter_props.Get("org.bluez.Adapter1", "Address")
-        log(f"Adapter MAC address: {mac_address}")
+        adapter_props.Get("org.bluez.Adapter1", "Address")
+        log("Adapter MAC address acquired")
     except dbus.exceptions.DBusException as e:
         log(f"Could not get MAC address: {e}")
     

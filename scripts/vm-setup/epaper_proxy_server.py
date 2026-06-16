@@ -4,6 +4,7 @@ Epaper Proxy Server
 Runs on Raspberry Pi, receives display updates from VM and forwards to hardware.
 """
 
+import os
 import socket
 import sys
 import signal
@@ -20,6 +21,8 @@ except ImportError:
     service = None
 
 PROXY_PORT = 8889
+# Must bind to a routable address so VM guests on a virtual bridge can connect.
+BIND_ADDRESS = os.environ.get("PROXY_BIND_ADDRESS", "0.0.0.0")  # noqa: S104
 
 running = True
 client_socket = None
@@ -77,7 +80,7 @@ def main():
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     
     try:
-        server_socket.bind(('0.0.0.0', PROXY_PORT))
+        server_socket.bind((BIND_ADDRESS, PROXY_PORT))
         server_socket.listen(1)
         print(f"Epaper proxy server listening on port {PROXY_PORT}")
         print("Waiting for VM client to connect...")

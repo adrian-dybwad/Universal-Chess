@@ -4,6 +4,7 @@ Serial Port Relay Server
 Runs on Raspberry Pi, forwards serial data between hardware and VM client.
 """
 
+import os
 import serial
 import socket
 import threading
@@ -14,6 +15,8 @@ import signal
 # Configuration
 REAL_SERIAL_PORT = "/dev/ttyS0"
 RELAY_PORT = 8888
+# Must bind to a routable address so VM guests on a virtual bridge can connect.
+BIND_ADDRESS = os.environ.get("RELAY_BIND_ADDRESS", "0.0.0.0")  # noqa: S104
 BAUDRATE = 1000000
 
 running = True
@@ -90,7 +93,7 @@ def main():
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     
     try:
-        server_socket.bind(('0.0.0.0', RELAY_PORT))
+        server_socket.bind((BIND_ADDRESS, RELAY_PORT))
         server_socket.listen(1)
         print(f"Serial relay server listening on port {RELAY_PORT}")
         print("Waiting for VM client to connect...")
