@@ -26,6 +26,7 @@ For RFCOMM/SPP: Pairing is required and should persist across restarts
 
 import argparse
 import sys
+import logging
 import signal
 import time
 import subprocess
@@ -96,11 +97,7 @@ mainloop = None
 device_name = "MILLENNIUM CHESS"
 
 
-def log(msg):
-    """Simple timestamped logging"""
-    timestamp = time.strftime("%H:%M:%S")
-    print(f"[{timestamp}] {msg}", flush=True)
-
+logger = logging.getLogger(__name__)
 
 def find_adapter(bus):
     """Find the first Bluetooth adapter"""
@@ -138,20 +135,20 @@ def configure_adapter_security():
             if result.returncode == 0:
                 stdout = result.stdout.strip()
                 if stdout:
-                    log(f"btmgmt: {cmd_str} - {stdout}")
+                    logger.info(f"btmgmt: {cmd_str} - {stdout}")
                 else:
-                    log(f"btmgmt: {cmd_str} - OK")
+                    logger.info(f"btmgmt: {cmd_str} - OK")
             else:
                 stderr = result.stderr.strip() if result.stderr else "unknown error"
                 stdout = result.stdout.strip() if result.stdout else ""
-                log(f"btmgmt: {cmd_str} - {stderr or stdout or 'failed'}")
+                logger.error(f"btmgmt: {cmd_str} - {stderr or stdout or 'failed'}")
         except FileNotFoundError:
-            log(f"btmgmt not found - skipping security configuration")
+            logger.error(f"btmgmt not found - skipping security configuration")
             break
         except subprocess.TimeoutExpired:
-            log(f"btmgmt command timed out: {' '.join(cmd)}")
+            logger.error(f"btmgmt command timed out: {' '.join(cmd)}")
         except Exception as e:
-            log(f"btmgmt error: {e}")
+            logger.error(f"btmgmt error: {e}")
 
 
 # =============================================================================
@@ -179,7 +176,7 @@ class RFCOMMServer:
     def start(self):
         """Start the RFCOMM server in a background thread."""
         if not HAS_PYBLUEZ:
-            log("RFCOMM server requires PyBluez (pip install pybluez)")
+            logger.info("RFCOMM server requires PyBluez (pip install pybluez)")
             return False
         
         try:
@@ -204,18 +201,18 @@ class RFCOMMServer:
                     service_classes=[uuid, bluetooth.SERIAL_PORT_CLASS],
                     profiles=[bluetooth.SERIAL_PORT_PROFILE]
                 )
-                log(f"RFCOMM service '{self.service_name}' advertised via SDP")
+                logger.info(f"RFCOMM service '{self.service_name}' advertised via SDP")
             except Exception as e:
-                log(f"Warning: Could not advertise SDP service: {e}")
-                log("RFCOMM may still work but service discovery won't find it")
+                logger.error(f"Warning: Could not advertise SDP service: {e}")
+                logger.info("RFCOMM may still work but service discovery won't find it")
             
             self.thread = threading.Thread(target=self._accept_loop, daemon=True)
             self.thread.start()
             
-            log(f"RFCOMM server started on channel {self.actual_channel}")
+            logger.info(f"RFCOMM server started on channel {self.actual_channel}")
             return True
         except Exception as e:
-            log(f"Failed to start RFCOMM server: {e}")
+            logger.error(f"Failed to start RFCOMM server: {e}")
             import traceback
             traceback.print_exc()
             return False
@@ -236,14 +233,14 @@ class RFCOMMServer:
                 pass
         if self.thread:
             self.thread.join(timeout=2.0)
-        log("RFCOMM server stopped")
+        logger.info("RFCOMM server stopped")
     
     def _accept_loop(self):
         """Accept incoming RFCOMM connections."""
         while self.running:
             try:
                 client_socket, client_info = self.server_socket.accept()
-                log(f"RFCOMM connection from {client_info}")
+                logger.info(f"RFCOMM connection from {client_info}")
                 self.clients.append(client_socket)
                 
                 # Handle client in a new thread
@@ -257,14 +254,14 @@ class RFCOMMServer:
                 if "timed out" in str(e):
                     continue
                 if self.running:
-                    log(f"RFCOMM accept error: {e}")
+                    logger.error(f"RFCOMM accept error: {e}")
             except Exception as e:
                 if self.running:
-                    log(f"RFCOMM accept error: {e}")
+                    logger.error(f"RFCOMM accept error: {e}")
     
     def _handle_client(self, client_socket, client_info):
         """Handle a connected RFCOMM client."""
-        log(f"RFCOMM client handler started for {client_info}")
+        logger.info(f"RFCOMM client handler started for {client_info}")
         buffer = b""
         
         try:
@@ -279,9 +276,9 @@ class RFCOMMServer:
                     hex_str = ' '.join(f'{b:02x}' for b in data)
                     ascii_str = ''.join(chr(b & 127) if 32 <= (b & 127) < 127 else '.' for b in data)
                     
-                    log(f"RFCOMM RX: {len(data)} bytes")
-                    log(f"  Hex: {hex_str}")
-                    log(f"  ASCII: {ascii_str}")
+                    logger.info(f"RFCOMM RX: {len(data)} bytes")
+                    logger.debug(f"  Hex: {hex_str}")
+                    logger.info(f"  ASCII: {ascii_str}")
                     
                     # Process commands from buffer
                     while len(buffer) > 0:
@@ -289,7 +286,7 @@ class RFCOMMServer:
                         response = self._handle_command(cmd, buffer)
                         if response:
                             client_socket.send(response)
-                            log(f"RFCOMM TX: {response.hex()} ({response.decode('ascii', errors='replace')})")
+                            logger.error(f"RFCOMM TX: {response.hex()} ({response.decode('ascii', errors='replace')})")
                         
                         # For now, consume one byte at a time for simple commands
                         # Multi-byte commands like LED need special handling
@@ -310,13 +307,13 @@ class RFCOMMServer:
                     if "timed out" in str(e).lower():
                         continue
                     # Other Bluetooth errors - log and disconnect
-                    log(f"RFCOMM client error: {e}")
+                    logger.error(f"RFCOMM client error: {e}")
                     break
                 except Exception as e:
-                    log(f"RFCOMM client read error: {e}")
+                    logger.error(f"RFCOMM client read error: {e}")
                     break
         finally:
-            log(f"RFCOMM client disconnected: {client_info}")
+            logger.info(f"RFCOMM client disconnected: {client_info}")
             try:
                 client_socket.close()
             except Exception:
@@ -333,41 +330,41 @@ class RFCOMMServer:
         
         response_txt = None
         if cmd == 'M':
-            log("  RFCOMM -> Responding with board state (M command)")
+            logger.info("  RFCOMM -> Responding with board state (M command)")
             response_txt = board_state
         elif cmd in 'sS':
-            log("  RFCOMM -> Responding with board state (s/S command)")
+            logger.info("  RFCOMM -> Responding with board state (s/S command)")
             response_txt = board_state
         elif cmd == 'V':
-            log("  RFCOMM -> Responding with version: v3130")
+            logger.info("  RFCOMM -> Responding with version: v3130")
             response_txt = "v3130"
         elif cmd == 'I':
-            log("  RFCOMM -> Responding with identity: i0055mm")
+            logger.info("  RFCOMM -> Responding with identity: i0055mm")
             response_txt = "i0055mm\n"
         elif cmd == 'R':
             if len(data) >= 5:
                 h1, h2 = [data[i] & 127 for i in range(1, 3)]
                 addr = chr(h1) + chr(h2)
-                log(f"  RFCOMM -> Read E2ROM: addr={addr}")
+                logger.info(f"  RFCOMM -> Read E2ROM: addr={addr}")
                 response_txt = 'r' + addr + '00'
             else:
-                log("  RFCOMM -> Read E2ROM: insufficient data")
+                logger.info("  RFCOMM -> Read E2ROM: insufficient data")
         elif cmd == 'W':
             if len(data) >= 5:
                 h1, h2, h3, h4 = [data[i] & 127 for i in range(1, 5)]
-                log(f"  RFCOMM -> Write E2ROM: addr={chr(h1)}{chr(h2)} value={chr(h3)}{chr(h4)}")
+                logger.info(f"  RFCOMM -> Write E2ROM: addr={chr(h1)}{chr(h2)} value={chr(h3)}{chr(h4)}")
                 response_txt = 'w' + chr(h1) + chr(h2) + chr(h3) + chr(h4)
         elif cmd == 'L':
-            log(f"  RFCOMM -> LED pattern command")
+            logger.info(f"  RFCOMM -> LED pattern command")
             response_txt = "l"
         elif cmd == 'X':
-            log(f"  RFCOMM -> Extended LED command")
+            logger.info(f"  RFCOMM -> Extended LED command")
             response_txt = "x"
         elif cmd in '0123456789':
             # Continuation packet - no response
             pass
         else:
-            log(f"  RFCOMM -> Unknown command '{cmd}' (0x{ord(cmd):02x})")
+            logger.warning(f"  RFCOMM -> Unknown command '{cmd}' (0x{ord(cmd):02x})")
         
         if response_txt:
             # Add checksum
@@ -391,16 +388,16 @@ def register_sdp_service(bus, adapter_path):
             ['sudo', 'sdptool', 'add', '--channel', str(RFCOMM_CHANNEL), 'SP'],
             capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
-            log(f"SDP Serial Port service registered on channel {RFCOMM_CHANNEL}")
+            logger.info(f"SDP Serial Port service registered on channel {RFCOMM_CHANNEL}")
             return True
         else:
-            log(f"SDP registration failed: {result.stderr or result.stdout}")
+            logger.error(f"SDP registration failed: {result.stderr or result.stdout}")
             return False
     except FileNotFoundError:
-        log("sdptool not found - SDP registration skipped")
+        logger.error("sdptool not found - SDP registration skipped")
         return False
     except Exception as e:
-        log(f"SDP registration error: {e}")
+        logger.error(f"SDP registration error: {e}")
         return False
 
 
@@ -421,46 +418,46 @@ class NoInputNoOutputAgent(dbus.service.Object):
     
     @dbus.service.method(AGENT_IFACE, in_signature='', out_signature='')
     def Release(self):
-        log("Agent released")
+        logger.info("Agent released")
     
     @dbus.service.method(AGENT_IFACE, in_signature='os', out_signature='')
     def AuthorizeService(self, device, uuid):
         """Auto-authorize all service access requests."""
-        log(f"AuthorizeService: {device} -> {uuid} (auto-authorized)")
+        logger.info(f"AuthorizeService: {device} -> {uuid} (auto-authorized)")
     
     @dbus.service.method(AGENT_IFACE, in_signature='o', out_signature='s')
     def RequestPinCode(self, device):
         """Return empty PIN (no PIN required)."""
-        log(f"RequestPinCode: {device} (returning empty)")
+        logger.info(f"RequestPinCode: {device} (returning empty)")
         return ""
     
     @dbus.service.method(AGENT_IFACE, in_signature='o', out_signature='u')
     def RequestPasskey(self, device):
         """Return 0 passkey (no passkey required)."""
-        log(f"RequestPasskey: {device} (returning 0)")
+        logger.info(f"RequestPasskey: {device} (returning 0)")
         return dbus.UInt32(0)
     
     @dbus.service.method(AGENT_IFACE, in_signature='ouq', out_signature='')
     def DisplayPasskey(self, device, passkey, entered):
-        log(f"DisplayPasskey: {device} passkey={passkey}")
+        logger.info(f"DisplayPasskey: {device} passkey={passkey}")
     
     @dbus.service.method(AGENT_IFACE, in_signature='os', out_signature='')
     def DisplayPinCode(self, device, pincode):
-        log(f"DisplayPinCode: {device} pin={pincode}")
+        logger.info(f"DisplayPinCode: {device} pin={pincode}")
     
     @dbus.service.method(AGENT_IFACE, in_signature='ou', out_signature='')
     def RequestConfirmation(self, device, passkey):
         """Auto-confirm all pairing requests."""
-        log(f"RequestConfirmation: {device} passkey={passkey} (auto-confirmed)")
+        logger.info(f"RequestConfirmation: {device} passkey={passkey} (auto-confirmed)")
     
     @dbus.service.method(AGENT_IFACE, in_signature='o', out_signature='')
     def RequestAuthorization(self, device):
         """Auto-authorize all connection requests."""
-        log(f"RequestAuthorization: {device} (auto-authorized)")
+        logger.info(f"RequestAuthorization: {device} (auto-authorized)")
     
     @dbus.service.method(AGENT_IFACE, in_signature='', out_signature='')
     def Cancel(self):
-        log("Agent request cancelled")
+        logger.info("Agent request cancelled")
 
 
 class Advertisement(dbus.service.Object):
@@ -506,7 +503,7 @@ class Advertisement(dbus.service.Object):
 
     @dbus.service.method(LE_ADVERTISEMENT_IFACE, in_signature='', out_signature='')
     def Release(self):
-        log(f"Advertisement released: {self.path}")
+        logger.info(f"Advertisement released: {self.path}")
 
 
 class Application(dbus.service.Object):
@@ -604,20 +601,20 @@ class Characteristic(dbus.service.Object):
 
     @dbus.service.method(GATT_CHRC_IFACE, in_signature='a{sv}', out_signature='ay')
     def ReadValue(self, options):
-        log(f"ReadValue called on {self.uuid}")
+        logger.info(f"ReadValue called on {self.uuid}")
         return []
 
     @dbus.service.method(GATT_CHRC_IFACE, in_signature='aya{sv}')
     def WriteValue(self, value, options):
-        log(f"WriteValue called on {self.uuid}")
+        logger.info(f"WriteValue called on {self.uuid}")
 
     @dbus.service.method(GATT_CHRC_IFACE)
     def StartNotify(self):
-        log(f"StartNotify called on {self.uuid}")
+        logger.info(f"StartNotify called on {self.uuid}")
 
     @dbus.service.method(GATT_CHRC_IFACE)
     def StopNotify(self):
-        log(f"StopNotify called on {self.uuid}")
+        logger.info(f"StopNotify called on {self.uuid}")
 
     @dbus.service.signal(DBUS_PROP_IFACE, signature='sa{sv}as')
     def PropertiesChanged(self, interface, changed, invalidated):
@@ -680,7 +677,7 @@ class DeviceInfoService(Service):
         self.add_characteristic(ReadOnlyCharacteristic(
             bus, 8, PNP_ID_UUID, self, bytes([0x01, 0x0D, 0x00, 0x00, 0x00, 0x01, 0x00])))
         
-        log(f"Device Info Service created: {DEVICE_INFO_SERVICE_UUID}")
+        logger.info(f"Device Info Service created: {DEVICE_INFO_SERVICE_UUID}")
 
 
 # =============================================================================
@@ -694,15 +691,15 @@ class ConfigCharacteristic(Characteristic):
         Characteristic.__init__(self, bus, index, MILLENNIUM_CONFIG_UUID,
                                 ['read', 'write'], service)
         self.value = bytes.fromhex("00240024000000F401")
-        log(f"Config Characteristic created: {MILLENNIUM_CONFIG_UUID}")
+        logger.info(f"Config Characteristic created: {MILLENNIUM_CONFIG_UUID}")
 
     def ReadValue(self, options):
-        log(f"Config ReadValue: {self.value.hex()}")
+        logger.info(f"Config ReadValue: {self.value.hex()}")
         return dbus.Array([dbus.Byte(b) for b in self.value], signature='y')
 
     def WriteValue(self, value, options):
         self.value = bytes([int(b) for b in value])
-        log(f"Config WriteValue: {self.value.hex()}")
+        logger.info(f"Config WriteValue: {self.value.hex()}")
 
 
 class Notify1Characteristic(Characteristic):
@@ -712,18 +709,18 @@ class Notify1Characteristic(Characteristic):
         Characteristic.__init__(self, bus, index, MILLENNIUM_NOTIFY1_UUID,
                                 ['write', 'notify'], service)
         self.notifying = False
-        log(f"Notify1 Characteristic created: {MILLENNIUM_NOTIFY1_UUID}")
+        logger.info(f"Notify1 Characteristic created: {MILLENNIUM_NOTIFY1_UUID}")
 
     def WriteValue(self, value, options):
         data = bytes([int(b) for b in value])
-        log(f"Notify1 WriteValue: {data.hex()}")
+        logger.info(f"Notify1 WriteValue: {data.hex()}")
 
     def StartNotify(self):
-        log("Notify1 StartNotify")
+        logger.info("Notify1 StartNotify")
         self.notifying = True
 
     def StopNotify(self):
-        log("Notify1 StopNotify")
+        logger.info("Notify1 StopNotify")
         self.notifying = False
 
 
@@ -742,24 +739,24 @@ class TXCharacteristic(Characteristic):
         self.notifying = False
         self.value = bytes.fromhex("0000000000")
         TXCharacteristic.tx_instance = self
-        log(f"TX Characteristic created: {MILLENNIUM_TX_UUID}")
-        log(f"  Flags: ['read', 'write', 'write-without-response', 'notify']")
+        logger.info(f"TX Characteristic created: {MILLENNIUM_TX_UUID}")
+        logger.info(f"  Flags: ['read', 'write', 'write-without-response', 'notify']")
 
     def ReadValue(self, options):
-        log(f"TX ReadValue: {self.value.hex()}")
+        logger.info(f"TX ReadValue: {self.value.hex()}")
         return dbus.Array([dbus.Byte(b) for b in self.value], signature='y')
 
     def WriteValue(self, value, options):
         data = bytes([int(b) for b in value])
-        log(f"TX WriteValue: {data.hex()}")
+        logger.info(f"TX WriteValue: {data.hex()}")
 
     def StartNotify(self):
-        log("TX StartNotify: Client subscribing to notifications")
+        logger.info("TX StartNotify: Client subscribing to notifications")
         self.notifying = True
-        log("TX StartNotify: Notifications enabled")
+        logger.info("TX StartNotify: Notifications enabled")
 
     def StopNotify(self):
-        log("TX StopNotify: Client unsubscribed")
+        logger.info("TX StopNotify: Client unsubscribed")
         self.notifying = False
 
     def send_notification(self, data):
@@ -775,8 +772,8 @@ class RXCharacteristic(Characteristic):
     def __init__(self, bus, index, service):
         Characteristic.__init__(self, bus, index, MILLENNIUM_RX_UUID,
                                 ['write', 'write-without-response'], service)
-        log(f"RX Characteristic created: {MILLENNIUM_RX_UUID}")
-        log(f"  Flags: ['write', 'write-without-response']")
+        logger.info(f"RX Characteristic created: {MILLENNIUM_RX_UUID}")
+        logger.info(f"  Flags: ['write', 'write-without-response']")
 
     def WriteValue(self, value, options):
         try:
@@ -784,18 +781,18 @@ class RXCharacteristic(Characteristic):
             hex_str = ' '.join(f'{b:02x}' for b in bytes_data)
             ascii_str = ''.join(chr(b & 127) if 32 <= (b & 127) < 127 else '.' for b in bytes_data)
             
-            log(f"RX WriteValue: {len(bytes_data)} bytes")
-            log(f"  Hex: {hex_str}")
-            log(f"  ASCII (stripped parity): {ascii_str}")
+            logger.info(f"RX WriteValue: {len(bytes_data)} bytes")
+            logger.debug(f"  Hex: {hex_str}")
+            logger.info(f"  ASCII (stripped parity): {ascii_str}")
             
             if len(bytes_data) > 0:
                 cmd = chr(bytes_data[0] & 127)
-                log(f"  Command: '{cmd}' (0x{bytes_data[0]:02x})")
+                logger.info(f"  Command: '{cmd}' (0x{bytes_data[0]:02x})")
                 self._handle_command(cmd, bytes_data)
         except Exception as e:
-            log(f"Error in WriteValue: {e}")
+            logger.error(f"Error in WriteValue: {e}")
             import traceback
-            log(traceback.format_exc())
+            logger.info(traceback.format_exc())
 
     def _handle_command(self, cmd, data):
         """Handle Millennium protocol commands.
@@ -818,21 +815,21 @@ class RXCharacteristic(Characteristic):
         
         if cmd == 'M':
             # Real board responds with board state to 'M' command
-            log("  -> Responding with board state (M command)")
+            logger.info("  -> Responding with board state (M command)")
             self._send_response(board_state)
         elif cmd == 's':
             # Lowercase 's' also requests board state
-            log("  -> Responding with board state (s command)")
+            logger.info("  -> Responding with board state (s command)")
             self._send_response(board_state)
         elif cmd == 'S':
             # Uppercase 'S' also requests board state
-            log("  -> Responding with board state (S command)")
+            logger.info("  -> Responding with board state (S command)")
             self._send_response(board_state)
         elif cmd == 'V':
-            log("  -> Responding with version: v3130")
+            logger.info("  -> Responding with version: v3130")
             self._send_response("v3130")
         elif cmd == 'I':
-            log("  -> Responding with identity: i0055mm")
+            logger.info("  -> Responding with identity: i0055mm")
             self._send_response("i0055mm\n")
         elif cmd == 'R':
             # Read E2ROM - return stored value for address
@@ -840,26 +837,26 @@ class RXCharacteristic(Characteristic):
                 h1, h2, h3, h4 = [data[i] & 127 for i in range(1, 5)]
                 addr = chr(h1) + chr(h2)
                 # Return default value "00" for any address
-                log(f"  -> Read E2ROM: addr={addr}")
+                logger.info(f"  -> Read E2ROM: addr={addr}")
                 self._send_response('r' + addr + '00')
             else:
-                log(f"  -> Read E2ROM: insufficient data")
+                logger.info(f"  -> Read E2ROM: insufficient data")
         elif cmd == 'W':
             if len(data) >= 5:
                 h1, h2, h3, h4 = [data[i] & 127 for i in range(1, 5)]
-                log(f"  -> Write E2ROM: addr={chr(h1)}{chr(h2)} value={chr(h3)}{chr(h4)}")
+                logger.info(f"  -> Write E2ROM: addr={chr(h1)}{chr(h2)} value={chr(h3)}{chr(h4)}")
                 self._send_response('w' + chr(h1) + chr(h2) + chr(h3) + chr(h4))
         elif cmd == 'L':
-            log(f"  -> LED pattern command ({len(data)} bytes)")
+            logger.info(f"  -> LED pattern command ({len(data)} bytes)")
             self._send_response("l")
         elif cmd == 'X':
-            log(f"  -> Extended LED command ({len(data)} bytes)")
+            logger.info(f"  -> Extended LED command ({len(data)} bytes)")
             self._send_response("x")
         elif cmd in '0123456789':
             # Continuation packet from multi-packet command (like LED) - silently ignore
             pass
         else:
-            log(f"  -> Unknown command '{cmd}' (0x{ord(cmd):02x}), no response")
+            logger.warning(f"  -> Unknown command '{cmd}' (0x{ord(cmd):02x}), no response")
 
     def _send_response(self, txt):
         """Send response to client via TX characteristic notifications.
@@ -868,10 +865,10 @@ class RXCharacteristic(Characteristic):
         by a 2-character hex checksum. This matches the real board's format.
         """
         if TXCharacteristic.tx_instance is None:
-            log("  -> Cannot send: TX not initialized")
+            logger.error("  -> Cannot send: TX not initialized")
             return
         if not TXCharacteristic.tx_instance.notifying:
-            log("  -> Cannot send: notifications not enabled")
+            logger.error("  -> Cannot send: notifications not enabled")
             return
         
         # Build response with checksum (plain ASCII, no parity - matches real board)
@@ -883,7 +880,7 @@ class RXCharacteristic(Characteristic):
         response = txt + f"{cs:02x}"
         tosend = response.encode('ascii')
         
-        log(f"  -> Sending: {tosend.hex()} ({response})")
+        logger.info(f"  -> Sending: {tosend.hex()} ({response})")
         TXCharacteristic.tx_instance.send_notification(tosend)
 
 
@@ -894,18 +891,18 @@ class Notify2Characteristic(Characteristic):
         Characteristic.__init__(self, bus, index, MILLENNIUM_NOTIFY2_UUID,
                                 ['write', 'notify'], service)
         self.notifying = False
-        log(f"Notify2 Characteristic created: {MILLENNIUM_NOTIFY2_UUID}")
+        logger.info(f"Notify2 Characteristic created: {MILLENNIUM_NOTIFY2_UUID}")
 
     def WriteValue(self, value, options):
         data = bytes([int(b) for b in value])
-        log(f"Notify2 WriteValue: {data.hex()}")
+        logger.info(f"Notify2 WriteValue: {data.hex()}")
 
     def StartNotify(self):
-        log("Notify2 StartNotify")
+        logger.info("Notify2 StartNotify")
         self.notifying = True
 
     def StopNotify(self):
-        log("Notify2 StopNotify")
+        logger.info("Notify2 StopNotify")
         self.notifying = False
 
 
@@ -922,18 +919,23 @@ class MillenniumService(Service):
         self.add_characteristic(RXCharacteristic(bus, 3, self))
         self.add_characteristic(Notify2Characteristic(bus, 4, self))
         
-        log(f"Millennium Service created: {MILLENNIUM_SERVICE_UUID}")
+        logger.info(f"Millennium Service created: {MILLENNIUM_SERVICE_UUID}")
 
 
 def signal_handler(signum, frame):
     global mainloop
-    log(f"Received signal {signum}, exiting...")
+    logger.info(f"Received signal {signum}, exiting...")
     if mainloop:
         mainloop.quit()
     sys.exit(0)
 
 
 def main():
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
     global mainloop, device_name
     
     parser = argparse.ArgumentParser(description="Millennium Simulator - ChessLink emulator (BLE + RFCOMM)")
@@ -949,21 +951,21 @@ def main():
     args = parser.parse_args()
     device_name = args.name
     
-    log("=" * 60)
-    log("Millennium Simulator - ChessLink Emulator")
-    log(f"Device name: {device_name}")
-    log(f"BLE (GATT): {'Disabled' if args.no_ble else 'Enabled'}")
-    log(f"RFCOMM (SPP): {'Disabled' if args.no_rfcomm else f'Enabled (channel {args.rfcomm_channel})'}")
+    logger.info("=" * 60)
+    logger.info("Millennium Simulator - ChessLink Emulator")
+    logger.info(f"Device name: {device_name}")
+    logger.info(f"BLE (GATT): {'Disabled' if args.no_ble else 'Enabled'}")
+    logger.info(f"RFCOMM (SPP): {'Disabled' if args.no_rfcomm else f'Enabled (channel {args.rfcomm_channel})'}")
     if not args.no_ble:
-        log(f"Advertise service UUID: {args.advertise_uuid}")
-    log("=" * 60)
+        logger.info(f"Advertise service UUID: {args.advertise_uuid}")
+    logger.info("=" * 60)
     
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
     # Configure adapter security settings BEFORE D-Bus setup
     # This disables bonding and secure connections to prevent pairing prompts
-    log("Configuring adapter security (matching real Millennium board)...")
+    logger.info("Configuring adapter security (matching real Millennium board)...")
     configure_adapter_security()
     
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
@@ -972,20 +974,20 @@ def main():
     
     adapter = find_adapter(bus)
     if not adapter:
-        log("ERROR: No Bluetooth adapter found")
+        logger.error("ERROR: No Bluetooth adapter found")
         return
-    log(f"Found Bluetooth adapter: {adapter}")
+    logger.info(f"Found Bluetooth adapter: {adapter}")
     
     # Start RFCOMM server if enabled
     rfcomm_server = None
     if not args.no_rfcomm:
         if not HAS_PYBLUEZ:
-            log("WARNING: PyBluez not installed - RFCOMM support disabled")
-            log("  Install with: pip install pybluez")
+            logger.warning("WARNING: PyBluez not installed - RFCOMM support disabled")
+            logger.info("  Install with: pip install pybluez")
         else:
             # Stop any existing rfcomm service/process that might be using the channel
             # (same approach as main.py)
-            log("Stopping any existing rfcomm processes...")
+            logger.info("Stopping any existing rfcomm processes...")
             os.system('sudo service rfcomm stop 2>/dev/null')
             time.sleep(1)
             
@@ -995,7 +997,7 @@ def main():
                     if str(p.info["name"]) == "rfcomm":
                         try:
                             p.kill()
-                            log(f"  Killed rfcomm process (PID {p.info['pid']})")
+                            logger.info(f"  Killed rfcomm process (PID {p.info['pid']})")
                         except Exception:
                             pass
                 
@@ -1019,7 +1021,7 @@ def main():
                 # SDP service is now advertised by RFCOMMServer.start()
                 pass
             else:
-                log("WARNING: RFCOMM server failed to start")
+                logger.error("WARNING: RFCOMM server failed to start")
     
     # Configure adapter for iOS compatibility and proper device naming
     adapter_props = dbus.Interface(
@@ -1029,47 +1031,47 @@ def main():
     # Set the adapter Alias to the device name - this is what clients see as the device name
     try:
         adapter_props.Set("org.bluez.Adapter1", "Alias", dbus.String(device_name))
-        log(f"Adapter Alias set to '{device_name}'")
+        logger.info(f"Adapter Alias set to '{device_name}'")
     except dbus.exceptions.DBusException as e:
-        log(f"Could not set Alias: {e}")
+        logger.error(f"Could not set Alias: {e}")
     
     # Ensure adapter is powered on
     try:
         powered = adapter_props.Get("org.bluez.Adapter1", "Powered")
         if not powered:
             adapter_props.Set("org.bluez.Adapter1", "Powered", dbus.Boolean(True))
-            log("Adapter powered on")
+            logger.info("Adapter powered on")
         else:
-            log("Adapter already powered on")
+            logger.info("Adapter already powered on")
     except dbus.exceptions.DBusException as e:
-        log(f"Could not check/set Powered: {e}")
+        logger.error(f"Could not check/set Powered: {e}")
     
     # Make adapter discoverable
     try:
         adapter_props.Set("org.bluez.Adapter1", "Discoverable", dbus.Boolean(True))
-        log("Adapter Discoverable set to True")
+        logger.info("Adapter Discoverable set to True")
     except dbus.exceptions.DBusException as e:
-        log(f"Could not set Discoverable: {e}")
+        logger.error(f"Could not set Discoverable: {e}")
     
     try:
         adapter_props.Set("org.bluez.Adapter1", "DiscoverableTimeout", dbus.UInt32(0))
-        log("Adapter DiscoverableTimeout set to 0 (infinite)")
+        logger.error("Adapter DiscoverableTimeout set to 0 (infinite)")
     except dbus.exceptions.DBusException as e:
-        log(f"Could not set DiscoverableTimeout: {e}")
+        logger.error(f"Could not set DiscoverableTimeout: {e}")
     
     # Disable pairing requirement - real Millennium board doesn't require pairing
     # This prevents the "pair request" prompt on client devices
     try:
         adapter_props.Set("org.bluez.Adapter1", "Pairable", dbus.Boolean(False))
-        log("Adapter Pairable set to False (no pairing required, like real board)")
+        logger.info("Adapter Pairable set to False (no pairing required, like real board)")
     except dbus.exceptions.DBusException as e:
-        log(f"Could not set Pairable: {e}")
+        logger.error(f"Could not set Pairable: {e}")
     
     try:
         adapter_props.Get("org.bluez.Adapter1", "Address")
-        log("Adapter MAC address acquired")
+        logger.info("Adapter MAC address acquired")
     except dbus.exceptions.DBusException as e:
-        log(f"Could not get MAC address: {e}")
+        logger.error(f"Could not get MAC address: {e}")
     
     # Register a NoInputNoOutput agent to auto-accept connections without pairing
     # This matches the real Millennium board behavior (no pairing prompt)
@@ -1081,21 +1083,21 @@ def main():
     # First, try to unregister any existing agent to avoid conflicts
     try:
         agent_manager.UnregisterAgent(agent.AGENT_PATH)
-        log("Unregistered existing agent")
+        logger.info("Unregistered existing agent")
     except dbus.exceptions.DBusException:
         pass  # No existing agent, that's fine
     
     try:
         agent_manager.RegisterAgent(agent.AGENT_PATH, agent.CAPABILITY)
-        log(f"Agent registered with capability: {agent.CAPABILITY}")
+        logger.info(f"Agent registered with capability: {agent.CAPABILITY}")
     except dbus.exceptions.DBusException as e:
-        log(f"Could not register agent: {e}")
+        logger.error(f"Could not register agent: {e}")
     
     try:
         agent_manager.RequestDefaultAgent(agent.AGENT_PATH)
-        log("Agent set as default")
+        logger.info("Agent set as default")
     except dbus.exceptions.DBusException as e:
-        log(f"Could not set default agent: {e}")
+        logger.error(f"Could not set default agent: {e}")
     
     # Note: We do NOT remove paired devices here.
     # RFCOMM/SPP requires pairing to persist across restarts.
@@ -1118,22 +1120,22 @@ def main():
         registration_error = [None]
         
         def gatt_register_success():
-            log("GATT application registered successfully")
+            logger.info("GATT application registered successfully")
             gatt_registered[0] = True
         
         def gatt_register_error(error):
-            log(f"Failed to register GATT application: {error}")
+            logger.error(f"Failed to register GATT application: {error}")
             registration_error[0] = str(error)
         
         def adv_register_success():
-            log("Advertisement registered successfully")
+            logger.info("Advertisement registered successfully")
             adv_registered[0] = True
         
         def adv_register_error(error):
-            log(f"Failed to register advertisement: {error}")
+            logger.error(f"Failed to register advertisement: {error}")
             registration_error[0] = str(error)
         
-        log("Registering GATT application...")
+        logger.info("Registering GATT application...")
         gatt_manager.RegisterApplication(
             app.get_path(), {},
             reply_handler=gatt_register_success,
@@ -1146,7 +1148,7 @@ def main():
             bus.get_object(BLUEZ_SERVICE_NAME, adapter),
             LE_ADVERTISING_MANAGER_IFACE)
         
-        log("Registering advertisement...")
+        logger.info("Registering advertisement...")
         ad_manager.RegisterAdvertisement(
             adv.get_path(), {},
             reply_handler=adv_register_success,
@@ -1160,34 +1162,34 @@ def main():
         while context.pending():
             context.iteration(False)
         
-        log("")
+        logger.info("")
         if registration_error[0]:
-            log(f"WARNING: BLE registration failed: {registration_error[0]}")
-            log("BLE service may not work correctly!")
+            logger.error(f"WARNING: BLE registration failed: {registration_error[0]}")
+            logger.warning("BLE service may not work correctly!")
         else:
-            log("BLE GATT and Advertisement registration complete")
+            logger.info("BLE GATT and Advertisement registration complete")
     
-    log("")
-    log("Waiting for connections...")
-    log(f"Device name: {device_name}")
+    logger.info("")
+    logger.info("Waiting for connections...")
+    logger.info(f"Device name: {device_name}")
     if not args.no_ble:
-        log("  BLE: Ready for GATT connections")
+        logger.info("  BLE: Ready for GATT connections")
     if not args.no_rfcomm:
-        log(f"  RFCOMM: Listening on channel {args.rfcomm_channel}")
-    log("")
+        logger.info(f"  RFCOMM: Listening on channel {args.rfcomm_channel}")
+    logger.info("")
     
     try:
         mainloop.run()
     except Exception as e:
-        log(f"Error: {e}")
+        logger.error(f"Error: {e}")
         import traceback
-        log(traceback.format_exc())
+        logger.info(traceback.format_exc())
     finally:
         # Cleanup
         if rfcomm_server:
             rfcomm_server.stop()
     
-    log("Exiting")
+    logger.info("Exiting")
 
 
 if __name__ == "__main__":

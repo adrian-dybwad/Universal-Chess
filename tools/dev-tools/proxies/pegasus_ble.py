@@ -18,6 +18,7 @@ Usage:
 import asyncio
 import argparse
 import signal
+import logging
 import sys
 import threading
 import time
@@ -77,11 +78,7 @@ RESPONSE_NAMES = {
 }
 
 
-def log(msg: str):
-    """Log with timestamp."""
-    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-    print(f"[{ts}] {msg}")
-
+logger = logging.getLogger(__name__)
 
 def format_hex(data: bytes) -> str:
     """Format bytes as hex string."""
@@ -131,44 +128,44 @@ class PeripheralManagerDelegate(NSObject):
     def peripheralManagerDidUpdateState_(self, peripheral):
         """Called when peripheral manager state changes."""
         if peripheral.state() == CBManagerStatePoweredOn:
-            log("Peripheral manager powered on")
+            logger.info("Peripheral manager powered on")
             self.ready = True
         else:
-            log(f"Peripheral manager state: {peripheral.state()}")
+            logger.info(f"Peripheral manager state: {peripheral.state()}")
     
     def peripheralManager_didAddService_error_(self, peripheral, service, error):
         """Called when service is added."""
         if error:
-            log(f"Error adding service: {error}")
+            logger.error(f"Error adding service: {error}")
         else:
-            log(f"Service added: {service.UUID()}")
+            logger.info(f"Service added: {service.UUID()}")
             # List characteristics
             for char in service.characteristics():
-                log(f"  Characteristic: {char.UUID()}")
+                logger.info(f"  Characteristic: {char.UUID()}")
     
     def peripheralManagerDidStartAdvertising_error_(self, peripheral, error):
         """Called when advertising starts."""
         if error:
-            log(f"Error starting advertising: {error}")
+            logger.error(f"Error starting advertising: {error}")
         else:
-            log("Advertising started successfully")
+            logger.info("Advertising started successfully")
     
     def peripheralManager_central_didSubscribeToCharacteristic_(self, peripheral, central, characteristic):
         """Called when app subscribes to notifications."""
-        log(f"App subscribed to {characteristic.UUID()}")
+        logger.info(f"App subscribed to {characteristic.UUID()}")
         self.central = central
     
     def peripheralManager_central_didUnsubscribeFromCharacteristic_(self, peripheral, central, characteristic):
         """Called when app unsubscribes from notifications."""
-        log(f"App unsubscribed from {characteristic.UUID()}")
+        logger.info(f"App unsubscribed from {characteristic.UUID()}")
         self.central = None
     
     def peripheralManager_didReceiveWriteRequests_(self, peripheral, requests):
         """Called when app writes to a characteristic."""
         for request in requests:
             data = bytes(request.value())
-            log(f"APP -> PEGASUS: {decode_command(data)}")
-            log(f"  Raw: {format_hex(data)}")
+            logger.info(f"APP -> PEGASUS: {decode_command(data)}")
+            logger.info(f"  Raw: {format_hex(data)}")
             
             if self.write_callback:
                 self.write_callback(data)
@@ -196,10 +193,10 @@ class PegasusProxy:
         
     async def find_pegasus(self) -> Optional[str]:
         """Find the real Pegasus board."""
-        log("Scanning for Pegasus board...")
+        logger.info("Scanning for Pegasus board...")
         
         if self.target_address:
-            log(f"Using specified address: {self.target_address}")
+            logger.info(f"Using specified address: {self.target_address}")
             return self.target_address
         
         devices = await BleakScanner.discover(timeout=10.0)
@@ -207,20 +204,20 @@ class PegasusProxy:
         for device in devices:
             name = device.name or ""
             if self.target_name and self.target_name.upper() in name.upper():
-                log(f"Found Pegasus: {name} at {device.address}")
+                logger.info(f"Found Pegasus: {name} at {device.address}")
                 return device.address
             if "PEGASUS" in name.upper():
-                log(f"Found Pegasus: {name} at {device.address}")
+                logger.info(f"Found Pegasus: {name} at {device.address}")
                 return device.address
         
-        log("Pegasus board not found!")
+        logger.error("Pegasus board not found!")
         return None
     
     def on_pegasus_notification(self, sender, data: bytearray):
         """Handle notification from real Pegasus (response to forward to app)."""
         data_bytes = bytes(data)
-        log(f"PEGASUS -> APP: {decode_response(data_bytes)}")
-        log(f"  Raw: {format_hex(data_bytes)}")
+        logger.info(f"PEGASUS -> APP: {decode_response(data_bytes)}")
+        logger.info(f"  Raw: {format_hex(data_bytes)}")
         
         # Forward to app via CoreBluetooth
         self.send_to_app(data_bytes)
@@ -232,30 +229,30 @@ class PegasusProxy:
             self.peripheral_manager.updateValue_forCharacteristic_onSubscribedCentrals_(
                 ns_data, self.tx_characteristic, None
             )
-            log(f"Forwarded {len(data)} bytes to app")
+            logger.info(f"Forwarded {len(data)} bytes to app")
     
     async def connect_to_pegasus(self, address: str) -> bool:
         """Connect to the real Pegasus board."""
-        log(f"Connecting to Pegasus at {address}...")
+        logger.info(f"Connecting to Pegasus at {address}...")
         
         try:
             self.target_client = BleakClient(address, timeout=15.0)
             await self.target_client.connect()
             
             if not self.target_client.is_connected:
-                log("Failed to connect to Pegasus")
+                logger.error("Failed to connect to Pegasus")
                 return False
             
-            log("Connected to Pegasus!")
+            logger.info("Connected to Pegasus!")
             
             # Subscribe to notifications from Pegasus TX characteristic
             await self.target_client.start_notify(NORDIC_TX_UUID, self.on_pegasus_notification)
-            log("Subscribed to Pegasus notifications")
+            logger.info("Subscribed to Pegasus notifications")
             
             return True
             
         except Exception as e:
-            log(f"Error connecting to Pegasus: {e}")
+            logger.error(f"Error connecting to Pegasus: {e}")
             import traceback
             traceback.print_exc()
             return False
@@ -266,7 +263,7 @@ class PegasusProxy:
             try:
                 await self.target_client.write_gatt_char(NORDIC_RX_UUID, data, response=False)
             except Exception as e:
-                log(f"Error forwarding to Pegasus: {e}")
+                logger.error(f"Error forwarding to Pegasus: {e}")
     
     def on_app_write(self, data: bytes):
         """Callback when app writes a command."""
@@ -274,7 +271,7 @@ class PegasusProxy:
     
     def setup_peripheral(self):
         """Setup CoreBluetooth peripheral."""
-        log("Setting up BLE peripheral...")
+        logger.info("Setting up BLE peripheral...")
         
         # Create delegate
         self.delegate = PeripheralManagerDelegate.alloc().init()
@@ -286,7 +283,7 @@ class PegasusProxy:
         )
         
         # Wait for powered on - pump run loop to process callbacks
-        log("Waiting for Bluetooth to power on...")
+        logger.info("Waiting for Bluetooth to power on...")
         from Foundation import NSRunLoop, NSDate, NSDefaultRunLoopMode
         
         for _ in range(100):  # 10 second timeout
@@ -295,7 +292,7 @@ class PegasusProxy:
             # Also check state directly
             if self.peripheral_manager.state() == CBManagerStatePoweredOn:
                 self.delegate.ready = True
-                log("Peripheral manager powered on (direct check)")
+                logger.info("Peripheral manager powered on (direct check)")
                 break
             # Run the run loop briefly to process callbacks
             NSRunLoop.currentRunLoop().runMode_beforeDate_(
@@ -304,7 +301,7 @@ class PegasusProxy:
             )
         
         if not self.delegate.ready:
-            log(f"Bluetooth did not power on! State: {self.peripheral_manager.state()}")
+            logger.info(f"Bluetooth did not power on! State: {self.peripheral_manager.state()}")
             return False
         
         # Create service
@@ -359,10 +356,10 @@ class PegasusProxy:
                 NSDate.dateWithTimeIntervalSinceNow_(0.05)
             )
         
-        log("BLE peripheral ready - advertising as DGT_PEGASUS_PROXY")
-        log(f"  Service UUID: {NORDIC_SERVICE_UUID}")
-        log(f"  TX UUID: {NORDIC_TX_UUID}")
-        log(f"  RX UUID: {NORDIC_RX_UUID}")
+        logger.info("BLE peripheral ready - advertising as DGT_PEGASUS_PROXY")
+        logger.info(f"  Service UUID: {NORDIC_SERVICE_UUID}")
+        logger.info(f"  TX UUID: {NORDIC_TX_UUID}")
+        logger.info(f"  RX UUID: {NORDIC_RX_UUID}")
         return True
     
     async def process_commands(self):
@@ -384,7 +381,7 @@ class PegasusProxy:
                 else:
                     await asyncio.sleep(0.001)
             except Exception as e:
-                log(f"Error processing command: {e}")
+                logger.error(f"Error processing command: {e}")
                 import traceback
                 traceback.print_exc()
     
@@ -402,15 +399,15 @@ class PegasusProxy:
         if not self.setup_peripheral():
             return
         
-        log("")
-        log("=" * 60)
-        log("PROXY READY")
-        log("=" * 60)
-        log("Connect the DGT Pegasus app to 'DGT_PEGASUS_PROXY'")
-        log("All traffic will be logged and forwarded to real Pegasus")
-        log("Press Ctrl+C to stop")
-        log("=" * 60)
-        log("")
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("PROXY READY")
+        logger.info("=" * 60)
+        logger.info("Connect the DGT Pegasus app to 'DGT_PEGASUS_PROXY'")
+        logger.info("All traffic will be logged and forwarded to real Pegasus")
+        logger.info("Press Ctrl+C to stop")
+        logger.info("=" * 60)
+        logger.info("")
         
         try:
             await self.process_commands()
@@ -425,10 +422,15 @@ class PegasusProxy:
             if self.target_client and self.target_client.is_connected:
                 await self.target_client.disconnect()
             
-            log("Proxy stopped")
+            logger.info("Proxy stopped")
 
 
 async def main():
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
     parser = argparse.ArgumentParser(description="Pegasus BLE Proxy for protocol analysis")
     parser.add_argument("--target", type=str, default="PEGASUS",
                        help="Target device name to search for (default: PEGASUS)")
@@ -443,7 +445,7 @@ async def main():
     
     # Handle Ctrl+C
     def signal_handler(sig, frame):
-        log("Shutting down...")
+        logger.info("Shutting down...")
         proxy.running = False
         sys.exit(0)
     

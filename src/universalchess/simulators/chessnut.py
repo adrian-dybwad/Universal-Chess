@@ -33,6 +33,7 @@ https://github.com/chessnutech/Chessnut_eBoards
 
 import argparse
 import sys
+import logging
 import signal
 import time
 import subprocess
@@ -106,11 +107,7 @@ playback_delay = 0.05  # Delay between position updates during playback (seconds
 moves_replayed = False  # Track if we've already replayed the move history
 
 
-def log(msg):
-    """Simple timestamped logging."""
-    timestamp = time.strftime("%H:%M:%S.") + f"{int(time.time() * 1000) % 1000:03d}"
-    print(f"[{timestamp}] {msg}", flush=True)
-
+logger = logging.getLogger(__name__)
 
 def find_adapter(bus):
     """Find the first Bluetooth adapter."""
@@ -291,13 +288,13 @@ class FENCharacteristic(Characteristic):
 
     @dbus.service.method(GATT_CHRC_IFACE)
     def StartNotify(self):
-        log("FEN notifications enabled")
+        logger.info("FEN notifications enabled")
         self.notifying = True
 
     @dbus.service.method(GATT_CHRC_IFACE)
     def StopNotify(self):
         global moves_replayed
-        log("FEN notifications disabled")
+        logger.info("FEN notifications disabled")
         self.notifying = False
         self._reporting_enabled = False
         moves_replayed = False  # Reset so moves can be replayed on next connection
@@ -346,17 +343,17 @@ class FENCharacteristic(Characteristic):
         global move_history, playback_delay
         
         if not self.notifying:
-            log("Cannot replay - notifications not enabled")
+            logger.error("Cannot replay - notifications not enabled")
             return
         
-        log(f"Replaying {len(move_history)} moves to sync app state")
+        logger.info(f"Replaying {len(move_history)} moves to sync app state")
         
         # Create replay board starting from standard position
         replay_board = chess.Board()
         
         # Send starting position first
         starting_fen = replay_board.fen()
-        log(f"  Playback: starting position")
+        logger.info(f"  Playback: starting position")
         self._send_fen_direct(starting_fen)
         time.sleep(playback_delay)
         
@@ -365,12 +362,12 @@ class FENCharacteristic(Characteristic):
             replay_board.push(move)
             fen = replay_board.fen()
             turn = "white" if replay_board.turn == chess.WHITE else "black"
-            log(f"  Playback: move {i+1}/{len(move_history)} {move.uci()} -> next: {turn}")
+            logger.info(f"  Playback: move {i+1}/{len(move_history)} {move.uci()} -> next: {turn}")
             self._send_fen_direct(fen)
             time.sleep(playback_delay)
         
-        log(f"Move history replay complete - app should have correct game state")
-        log(f"  Final FEN: {replay_board.fen()}")
+        logger.info(f"Move history replay complete - app should have correct game state")
+        logger.info(f"  Final FEN: {replay_board.fen()}")
 
     def _send_starting_position(self):
         """Send the starting position notification.
@@ -382,7 +379,7 @@ class FENCharacteristic(Characteristic):
         
         starting_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
         self._send_fen_direct(starting_fen)
-        log("Sent starting position")
+        logger.info("Sent starting position")
     
     def _send_fen_direct(self, fen):
         """Send a FEN position notification.
@@ -405,8 +402,8 @@ class FENCharacteristic(Characteristic):
         
         # Log the FEN and bytes being sent
         piece_placement = fen.split()[0] if ' ' in fen else fen
-        log(f"TX [FEN] sending: {piece_placement}")
-        log(f"TX [FEN] bytes: {position_bytes.hex()}")
+        logger.info(f"TX [FEN] sending: {piece_placement}")
+        logger.debug(f"TX [FEN] bytes: {position_bytes.hex()}")
         
         self.send_notification(notification)
 
@@ -478,7 +475,7 @@ class FENCharacteristic(Characteristic):
         global move_history
         
         if not self.notifying:
-            log("Cannot send FEN - notifications not enabled")
+            logger.error("Cannot send FEN - notifications not enabled")
             return
         
         # Determine current position
@@ -505,8 +502,8 @@ class FENCharacteristic(Characteristic):
         notification.extend([uptime_lo, uptime_hi, 0x00, 0x00])  # Uptime + reserved
         
         hex_str = ' '.join(f'{b:02x}' for b in notification)
-        log(f"TX [FEN] ({len(notification)} bytes): {hex_str}")
-        log(f"  -> Position: {piece_placement}")
+        logger.info(f"TX [FEN] ({len(notification)} bytes): {hex_str}")
+        logger.info(f"  -> Position: {piece_placement}")
         
         self.send_notification(notification)
 
@@ -545,12 +542,12 @@ class OperationTXCharacteristic(Characteristic):
             hex_str = ' '.join(f'{b:02x}' for b in bytes_data)
             ascii_str = ''.join(chr(b) if 32 <= b < 127 else '.' for b in bytes_data)
             
-            log(f"RX [OP TX] ({len(bytes_data)} bytes): {hex_str}")
-            log(f"  ASCII: {ascii_str}")
+            logger.info(f"RX [OP TX] ({len(bytes_data)} bytes): {hex_str}")
+            logger.info(f"  ASCII: {ascii_str}")
             
             self._handle_command(bytes_data)
         except Exception as e:
-            log(f"Error handling write: {e}")
+            logger.error(f"Error handling write: {e}")
             import traceback
             traceback.print_exc()
 
@@ -561,7 +558,7 @@ class OperationTXCharacteristic(Characteristic):
             data: Command bytes [command, length, payload...]
         """
         if len(data) < 2:
-            log("  -> Invalid command (too short)")
+            logger.error("  -> Invalid command (too short)")
             return
         
         cmd = data[0]
@@ -569,31 +566,31 @@ class OperationTXCharacteristic(Characteristic):
         payload = data[2:2+length] if len(data) > 2 else []
         
         if cmd == CMD_INIT:
-            log(f"  -> Init/config command: {' '.join(f'{b:02x}' for b in payload)}")
+            logger.info(f"  -> Init/config command: {' '.join(f'{b:02x}' for b in payload)}")
         
         elif cmd == CMD_LED_CONTROL:
-            log(f"  -> LED control: {' '.join(f'{b:02x}' for b in payload)}")
+            logger.info(f"  -> LED control: {' '.join(f'{b:02x}' for b in payload)}")
         
         elif cmd == CMD_ENABLE_REPORTING:
-            log("  -> Enable reporting")
+            logger.debug("  -> Enable reporting")
             if self.fen_char:
                 self.fen_char.enable_reporting()
         
         elif cmd == CMD_HAPTIC:
             state = "on" if payload and payload[0] else "off"
-            log(f"  -> Haptic feedback: {state}")
+            logger.info(f"  -> Haptic feedback: {state}")
         
         elif cmd == CMD_BATTERY_REQUEST:
-            log("  -> Battery request")
+            logger.info("  -> Battery request")
             if self.op_rx_char:
                 self.op_rx_char.send_battery_response()
         
         elif cmd == CMD_SOUND:
             state = "on" if payload and payload[0] else "off"
-            log(f"  -> Sound control: {state}")
+            logger.info(f"  -> Sound control: {state}")
         
         else:
-            log(f"  -> Unknown command 0x{cmd:02x}: {' '.join(f'{b:02x}' for b in payload)}")
+            logger.warning(f"  -> Unknown command 0x{cmd:02x}: {' '.join(f'{b:02x}' for b in payload)}")
 
 
 class OperationRXCharacteristic(Characteristic):
@@ -615,18 +612,18 @@ class OperationRXCharacteristic(Characteristic):
 
     @dbus.service.method(GATT_CHRC_IFACE)
     def StartNotify(self):
-        log("Operation RX notifications enabled")
+        logger.info("Operation RX notifications enabled")
         self.notifying = True
 
     @dbus.service.method(GATT_CHRC_IFACE)
     def StopNotify(self):
-        log("Operation RX notifications disabled")
+        logger.info("Operation RX notifications disabled")
         self.notifying = False
 
     def send_battery_response(self):
         """Send battery level response."""
         if not self.notifying:
-            log("Cannot send battery - notifications not enabled")
+            logger.error("Cannot send battery - notifications not enabled")
             return
         
         # Battery response format: [0x2a, 0x02, battery_level, 0x00]
@@ -637,8 +634,8 @@ class OperationRXCharacteristic(Characteristic):
         response = bytes([RESP_BATTERY, 0x02, battery_byte, 0x00])
         
         hex_str = ' '.join(f'{b:02x}' for b in response)
-        log(f"TX [OP RX] ({len(response)} bytes): {hex_str}")
-        log(f"  -> Battery: {self._battery_level}% (not charging)")
+        logger.info(f"TX [OP RX] ({len(response)} bytes): {hex_str}")
+        logger.info(f"  -> Battery: {self._battery_level}% (not charging)")
         
         self.send_notification(response)
 
@@ -690,7 +687,7 @@ class UnknownTXCharacteristic(Characteristic):
     def WriteValue(self, value, options):
         bytes_data = bytearray([int(b) for b in value])
         hex_str = ' '.join(f'{b:02x}' for b in bytes_data)
-        log(f"RX [UNK TX] ({len(bytes_data)} bytes): {hex_str}")
+        logger.info(f"RX [UNK TX] ({len(bytes_data)} bytes): {hex_str}")
 
 
 class UnknownRXCharacteristic(Characteristic):
@@ -702,7 +699,7 @@ class UnknownRXCharacteristic(Characteristic):
 
     @dbus.service.method(GATT_CHRC_IFACE)
     def StartNotify(self):
-        log("Unknown RX notifications enabled")
+        logger.warning("Unknown RX notifications enabled")
         self.notifying = True
 
     @dbus.service.method(GATT_CHRC_IFACE)
@@ -730,7 +727,7 @@ class OTAChar1(Characteristic):
     def WriteValue(self, value, options):
         bytes_data = bytearray([int(b) for b in value])
         hex_str = ' '.join(f'{b:02x}' for b in bytes_data)
-        log(f"RX [OTA1] ({len(bytes_data)} bytes): {hex_str}")
+        logger.info(f"RX [OTA1] ({len(bytes_data)} bytes): {hex_str}")
 
     @dbus.service.method(GATT_CHRC_IFACE)
     def StartNotify(self):
@@ -752,7 +749,7 @@ class OTAChar2(Characteristic):
     def WriteValue(self, value, options):
         bytes_data = bytearray([int(b) for b in value])
         hex_str = ' '.join(f'{b:02x}' for b in bytes_data)
-        log(f"RX [OTA2] ({len(bytes_data)} bytes): {hex_str}")
+        logger.info(f"RX [OTA2] ({len(bytes_data)} bytes): {hex_str}")
 
 
 class OTAChar3(Characteristic):
@@ -764,7 +761,7 @@ class OTAChar3(Characteristic):
 
     @dbus.service.method(GATT_CHRC_IFACE, in_signature='a{sv}', out_signature='ay')
     def ReadValue(self, options):
-        log("RX [OTA3] Read request")
+        logger.info("RX [OTA3] Read request")
         return dbus.Array([0x00], signature='y')
 
 
@@ -822,7 +819,7 @@ class Advertisement(dbus.service.Object):
 
     @dbus.service.method(LE_ADVERTISEMENT_IFACE, in_signature='', out_signature='')
     def Release(self):
-        log("Advertisement released")
+        logger.info("Advertisement released")
 
 
 class NoInputNoOutputAgent(dbus.service.Object):
@@ -838,41 +835,41 @@ class NoInputNoOutputAgent(dbus.service.Object):
 
     @dbus.service.method(AGENT_IFACE, in_signature='', out_signature='')
     def Release(self):
-        log("Agent released")
+        logger.info("Agent released")
 
     @dbus.service.method(AGENT_IFACE, in_signature='os', out_signature='')
     def AuthorizeService(self, device, uuid):
-        log(f"AuthorizeService: {device} -> {uuid}")
+        logger.info(f"AuthorizeService: {device} -> {uuid}")
 
     @dbus.service.method(AGENT_IFACE, in_signature='o', out_signature='s')
     def RequestPinCode(self, device):
-        log(f"RequestPinCode: {device}")
+        logger.info(f"RequestPinCode: {device}")
         return ""
 
     @dbus.service.method(AGENT_IFACE, in_signature='o', out_signature='u')
     def RequestPasskey(self, device):
-        log(f"RequestPasskey: {device}")
+        logger.info(f"RequestPasskey: {device}")
         return dbus.UInt32(0)
 
     @dbus.service.method(AGENT_IFACE, in_signature='ouq', out_signature='')
     def DisplayPasskey(self, device, passkey, entered):
-        log(f"DisplayPasskey: {device} passkey={passkey}")
+        logger.info(f"DisplayPasskey: {device} passkey={passkey}")
 
     @dbus.service.method(AGENT_IFACE, in_signature='os', out_signature='')
     def DisplayPinCode(self, device, pincode):
-        log(f"DisplayPinCode: {device} pin={pincode}")
+        logger.info(f"DisplayPinCode: {device} pin={pincode}")
 
     @dbus.service.method(AGENT_IFACE, in_signature='ou', out_signature='')
     def RequestConfirmation(self, device, passkey):
-        log(f"RequestConfirmation: {device} passkey={passkey}")
+        logger.info(f"RequestConfirmation: {device} passkey={passkey}")
 
     @dbus.service.method(AGENT_IFACE, in_signature='o', out_signature='')
     def RequestAuthorization(self, device):
-        log(f"RequestAuthorization: {device}")
+        logger.info(f"RequestAuthorization: {device}")
 
     @dbus.service.method(AGENT_IFACE, in_signature='', out_signature='')
     def Cancel(self):
-        log("Agent cancelled")
+        logger.info("Agent cancelled")
 
 
 def register_agent(bus):
@@ -885,10 +882,10 @@ def register_agent(bus):
         agent = NoInputNoOutputAgent(bus)
         agent_manager.RegisterAgent(NoInputNoOutputAgent.AGENT_PATH, "NoInputNoOutput")
         agent_manager.RequestDefaultAgent(NoInputNoOutputAgent.AGENT_PATH)
-        log("Agent registered")
+        logger.info("Agent registered")
         return agent
     except Exception as e:
-        log(f"Warning: Could not register agent: {e}")
+        logger.error(f"Warning: Could not register agent: {e}")
         return None
 
 
@@ -906,12 +903,17 @@ def setup_adapter(bus, adapter_path, name):
         adapter_props.Set("org.bluez.Adapter1", "Discoverable", dbus.Boolean(True))
         adapter_props.Set("org.bluez.Adapter1", "Pairable", dbus.Boolean(True))
         
-        log(f"Adapter configured: {name}")
+        logger.info(f"Adapter configured: {name}")
     except Exception as e:
-        log(f"Warning: Could not configure adapter: {e}")
+        logger.error(f"Warning: Could not configure adapter: {e}")
 
 
 def main():
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
     global mainloop, device_name, move_history, playback_delay
     
     parser = argparse.ArgumentParser(
@@ -943,8 +945,8 @@ Examples:
     # Parse move history if provided
     if args.moves:
         if not chess:
-            log("ERROR: python-chess is required for --moves option")
-            log("Install with: pip install python-chess")
+            logger.error("ERROR: python-chess is required for --moves option")
+            logger.info("Install with: pip install python-chess")
             sys.exit(1)
         
         # Parse moves (space or comma separated)
@@ -956,31 +958,31 @@ Examples:
             try:
                 move = chess.Move.from_uci(uci_str)
                 if move not in board.legal_moves:
-                    log(f"ERROR: Illegal move '{uci_str}' in position {board.fen()}")
+                    logger.error(f"ERROR: Illegal move '{uci_str}' in position {board.fen()}")
                     sys.exit(1)
                 board.push(move)
                 move_history.append(move)
             except ValueError as e:
-                log(f"ERROR: Invalid UCI move '{uci_str}': {e}")
+                logger.error(f"ERROR: Invalid UCI move '{uci_str}': {e}")
                 sys.exit(1)
     
-    log("=" * 60)
-    log("Chessnut Air Simulator")
-    log("=" * 60)
-    log(f"Device name: {device_name}")
+    logger.info("=" * 60)
+    logger.info("Chessnut Air Simulator")
+    logger.info("=" * 60)
+    logger.info(f"Device name: {device_name}")
     
     if move_history:
-        log(f"Move history: {len(move_history)} moves")
+        logger.info(f"Move history: {len(move_history)} moves")
         board = chess.Board()
         for move in move_history:
             board.push(move)
-        log(f"Current position: {board.fen()}")
-        log(f"Turn: {'White' if board.turn == chess.WHITE else 'Black'}")
-        log(f"Playback delay: {playback_delay}s")
+        logger.info(f"Current position: {board.fen()}")
+        logger.info(f"Turn: {'White' if board.turn == chess.WHITE else 'Black'}")
+        logger.info(f"Playback delay: {playback_delay}s")
     else:
-        log("Starting position: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
+        logger.info("Starting position: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
     
-    log("")
+    logger.info("")
     
     # Set up D-Bus main loop
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
@@ -989,9 +991,9 @@ Examples:
     # Find adapter
     adapter_path = find_adapter(bus)
     if not adapter_path:
-        log("ERROR: No Bluetooth adapter found")
+        logger.error("ERROR: No Bluetooth adapter found")
         sys.exit(1)
-    log(f"Using adapter: {adapter_path}")
+    logger.info(f"Using adapter: {adapter_path}")
     
     # Configure adapter
     setup_adapter(bus, adapter_path, device_name)
@@ -1026,10 +1028,10 @@ Examples:
     )
     
     def register_app_cb():
-        log("GATT application registered")
+        logger.info("GATT application registered")
     
     def register_app_error_cb(error):
-        log(f"Failed to register GATT application: {error}")
+        logger.error(f"Failed to register GATT application: {error}")
         mainloop.quit()
     
     gatt_manager.RegisterApplication(
@@ -1047,21 +1049,21 @@ Examples:
     adv = Advertisement(bus, 0, device_name)
     
     def register_ad_cb():
-        log("Advertisement registered")
-        log("")
-        log("=" * 60)
-        log("SIMULATOR READY")
-        log("=" * 60)
-        log(f"Device name: {device_name}")
-        log(f"FEN Service: {CHESSNUT_FEN_SERVICE_UUID}")
-        log(f"OP Service: {CHESSNUT_OP_SERVICE_UUID}")
-        log("Connect with the Chessnut app or any BLE client")
-        log("Press Ctrl+C to stop")
-        log("=" * 60)
-        log("")
+        logger.info("Advertisement registered")
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("SIMULATOR READY")
+        logger.info("=" * 60)
+        logger.info(f"Device name: {device_name}")
+        logger.info(f"FEN Service: {CHESSNUT_FEN_SERVICE_UUID}")
+        logger.info(f"OP Service: {CHESSNUT_OP_SERVICE_UUID}")
+        logger.info("Connect with the Chessnut app or any BLE client")
+        logger.info("Press Ctrl+C to stop")
+        logger.info("=" * 60)
+        logger.info("")
     
     def register_ad_error_cb(error):
-        log(f"Failed to register advertisement: {error}")
+        logger.error(f"Failed to register advertisement: {error}")
         mainloop.quit()
     
     ad_manager.RegisterAdvertisement(
@@ -1072,7 +1074,7 @@ Examples:
     
     # Set up signal handlers
     def signal_handler(sig, frame):
-        log("Shutting down...")
+        logger.info("Shutting down...")
         mainloop.quit()
     
     signal.signal(signal.SIGINT, signal_handler)
@@ -1083,9 +1085,9 @@ Examples:
     try:
         mainloop.run()
     except Exception as e:
-        log(f"Error in main loop: {e}")
+        logger.error(f"Error in main loop: {e}")
     
-    log("Simulator stopped")
+    logger.info("Simulator stopped")
 
 
 if __name__ == "__main__":

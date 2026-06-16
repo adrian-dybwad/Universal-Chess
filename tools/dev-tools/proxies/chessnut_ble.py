@@ -17,6 +17,7 @@ Requirements:
 import asyncio
 import argparse
 import sys
+import logging
 import time
 from typing import Optional
 
@@ -62,11 +63,7 @@ COMMANDS = {
 }
 
 
-def log(msg: str):
-    """Timestamped logging."""
-    ts = time.strftime("%H:%M:%S.") + f"{int(time.time() * 1000) % 1000:03d}"
-    print(f"[{ts}] {msg}", flush=True)
-
+logger = logging.getLogger(__name__)
 
 def format_command(data: bytes) -> str:
     """Format command for logging."""
@@ -94,33 +91,33 @@ class PeripheralManagerDelegate(NSObject):
     def peripheralManagerDidUpdateState_(self, peripheral):
         state = peripheral.state()
         if state == CBManagerStatePoweredOn:
-            log("Peripheral manager powered on")
+            logger.info("Peripheral manager powered on")
             self.powered_on = True
         else:
-            log(f"Peripheral manager state: {state}")
+            logger.info(f"Peripheral manager state: {state}")
     
     def peripheralManager_didAddService_error_(self, peripheral, service, error):
         if error:
-            log(f"Error adding service: {error}")
+            logger.error(f"Error adding service: {error}")
         else:
-            log(f"Service added: {service.UUID()}")
+            logger.info(f"Service added: {service.UUID()}")
             self.service_added = True
     
     def peripheralManagerDidStartAdvertising_error_(self, peripheral, error):
         if error:
-            log(f"Error starting advertising: {error}")
+            logger.error(f"Error starting advertising: {error}")
         else:
-            log("Advertising started")
+            logger.info("Advertising started")
             self.advertising = True
     
     def peripheralManager_central_didSubscribeToCharacteristic_(self, peripheral, central, characteristic):
         uuid = str(characteristic.UUID()).upper()
-        log(f"App subscribed to {uuid}")
+        logger.info(f"App subscribed to {uuid}")
         self.subscribed_chars[uuid] = central
     
     def peripheralManager_central_didUnsubscribeFromCharacteristic_(self, peripheral, central, characteristic):
         uuid = str(characteristic.UUID()).upper()
-        log(f"App unsubscribed from {uuid}")
+        logger.info(f"App unsubscribed from {uuid}")
         self.subscribed_chars.pop(uuid, None)
     
     def peripheralManager_didReceiveWriteRequests_(self, peripheral, requests):
@@ -128,7 +125,7 @@ class PeripheralManagerDelegate(NSObject):
             char_uuid = str(request.characteristic().UUID()).upper()
             data = bytes(request.value())
             
-            log(f"APP -> CHESSNUT: {format_command(data)}")
+            logger.info(f"APP -> CHESSNUT: {format_command(data)}")
             
             # Forward to real Chessnut
             if self.proxy:
@@ -155,41 +152,41 @@ class ChessnutProxy:
     
     async def find_chessnut(self) -> Optional[str]:
         """Scan for Chessnut Air device."""
-        log("Scanning for Chessnut Air...")
+        logger.info("Scanning for Chessnut Air...")
         
         if self.target_address:
-            log(f"Using specified address: {self.target_address}")
+            logger.info(f"Using specified address: {self.target_address}")
             return self.target_address
         
         devices = await BleakScanner.discover(timeout=10.0)
         for d in devices:
             name = d.name or ""
             if "chessnut" in name.lower():
-                log(f"Found: {d.name} ({d.address})")
+                logger.info(f"Found: {d.name} ({d.address})")
                 return d.address
         
         return None
     
     async def connect_to_chessnut(self, address: str) -> bool:
         """Connect to real Chessnut Air."""
-        log(f"Connecting to Chessnut at {address}...")
+        logger.info(f"Connecting to Chessnut at {address}...")
         
         self.client = BleakClient(address, timeout=15.0)
         await self.client.connect()
         
         if not self.client.is_connected:
-            log("Failed to connect")
+            logger.error("Failed to connect")
             return False
         
-        log("Connected to Chessnut!")
+        logger.info("Connected to Chessnut!")
         
         # Subscribe to FEN notifications
         await self.client.start_notify(CHESSNUT_FEN_RX_UUID, self.on_fen_notification)
-        log("Subscribed to FEN notifications")
+        logger.info("Subscribed to FEN notifications")
         
         # Subscribe to OP RX notifications
         await self.client.start_notify(CHESSNUT_OP_RX_UUID, self.on_op_notification)
-        log("Subscribed to OP notifications")
+        logger.info("Subscribed to OP notifications")
         
         return True
     
@@ -197,7 +194,7 @@ class ChessnutProxy:
         """Handle FEN notification from real Chessnut."""
         data_bytes = bytes(data)
         hex_str = ' '.join(f'{b:02x}' for b in data_bytes)
-        log(f"CHESSNUT -> APP [FEN] ({len(data_bytes)} bytes): {hex_str}")
+        logger.info(f"CHESSNUT -> APP [FEN] ({len(data_bytes)} bytes): {hex_str}")
         
         # Forward to app
         self.forward_to_app(self.fen_char, data_bytes)
@@ -206,7 +203,7 @@ class ChessnutProxy:
         """Handle OP notification from real Chessnut."""
         data_bytes = bytes(data)
         hex_str = ' '.join(f'{b:02x}' for b in data_bytes)
-        log(f"CHESSNUT -> APP [OP] ({len(data_bytes)} bytes): {hex_str}")
+        logger.info(f"CHESSNUT -> APP [OP] ({len(data_bytes)} bytes): {hex_str}")
         
         # Forward to app
         self.forward_to_app(self.op_rx_char, data_bytes)
@@ -233,7 +230,7 @@ class ChessnutProxy:
     
     def setup_peripheral(self) -> bool:
         """Set up CoreBluetooth peripheral."""
-        log("Setting up BLE peripheral...")
+        logger.info("Setting up BLE peripheral...")
         
         self.delegate = PeripheralManagerDelegate.alloc().init()
         self.delegate.proxy = self
@@ -243,7 +240,7 @@ class ChessnutProxy:
         )
         
         # Wait for power on
-        log("Waiting for Bluetooth to power on...")
+        logger.info("Waiting for Bluetooth to power on...")
         for _ in range(50):
             NSRunLoop.currentRunLoop().runMode_beforeDate_(
                 NSDefaultRunLoopMode, NSDate.dateWithTimeIntervalSinceNow_(0.1)
@@ -252,7 +249,7 @@ class ChessnutProxy:
                 break
         
         if not self.delegate.powered_on:
-            log("Bluetooth did not power on!")
+            logger.info("Bluetooth did not power on!")
             return False
         
         # Create FEN service
@@ -314,14 +311,14 @@ class ChessnutProxy:
         }
         self.peripheral_manager.startAdvertising_(ad_data)
         
-        log("Started advertising as 'Chessnut Air' with FEN service UUID")
+        logger.info("Started advertising as 'Chessnut Air' with FEN service UUID")
         
         for _ in range(20):
             NSRunLoop.currentRunLoop().runMode_beforeDate_(
                 NSDefaultRunLoopMode, NSDate.dateWithTimeIntervalSinceNow_(0.05)
             )
         
-        log("BLE peripheral ready")
+        logger.info("BLE peripheral ready")
         return True
     
     async def run(self):
@@ -332,7 +329,7 @@ class ChessnutProxy:
         # Find and connect to real Chessnut
         address = await self.find_chessnut()
         if not address:
-            log("No Chessnut Air found!")
+            logger.info("No Chessnut Air found!")
             return
         
         if not await self.connect_to_chessnut(address):
@@ -342,15 +339,15 @@ class ChessnutProxy:
         if not self.setup_peripheral():
             return
         
-        log("")
-        log("=" * 60)
-        log("PROXY READY")
-        log("=" * 60)
-        log("Connect the Chessnut app to 'Chessnut Air'")
-        log("All traffic will be logged and forwarded")
-        log("Press Ctrl+C to stop")
-        log("=" * 60)
-        log("")
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("PROXY READY")
+        logger.info("=" * 60)
+        logger.info("Connect the Chessnut app to 'Chessnut Air'")
+        logger.info("All traffic will be logged and forwarded")
+        logger.info("Press Ctrl+C to stop")
+        logger.info("=" * 60)
+        logger.info("")
         
         # Main loop
         while self.running:
@@ -370,10 +367,15 @@ class ChessnutProxy:
         if self.client and self.client.is_connected:
             await self.client.disconnect()
         
-        log("Proxy stopped")
+        logger.info("Proxy stopped")
 
 
 async def main():
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
     parser = argparse.ArgumentParser(description='Chessnut Air BLE Proxy')
     parser.add_argument('--target-address', type=str, default=None,
                         help='Specific Chessnut Air address to connect to')
@@ -384,7 +386,7 @@ async def main():
     try:
         await proxy.run()
     except KeyboardInterrupt:
-        log("Shutting down...")
+        logger.info("Shutting down...")
         await proxy.stop()
 
 

@@ -31,6 +31,7 @@ Protocol:
 
 import argparse
 import sys
+import logging
 import signal
 import time
 import subprocess
@@ -93,11 +94,7 @@ device_name = "DGT_PEGASUS"
 serial_number = "P00000000X"  # Default serial, can be overridden
 
 
-def log(msg):
-    """Simple timestamped logging"""
-    timestamp = time.strftime("%H:%M:%S")
-    print(f"[{timestamp}] {msg}", flush=True)
-
+logger = logging.getLogger(__name__)
 
 def find_adapter(bus):
     """Find the first Bluetooth adapter"""
@@ -131,19 +128,19 @@ def configure_adapter_security():
             if result.returncode == 0:
                 stdout = result.stdout.strip()
                 if stdout:
-                    log(f"btmgmt: {cmd_str} - {stdout}")
+                    logger.info(f"btmgmt: {cmd_str} - {stdout}")
                 else:
-                    log(f"btmgmt: {cmd_str} - OK")
+                    logger.info(f"btmgmt: {cmd_str} - OK")
             else:
                 stderr = result.stderr.strip() if result.stderr else "unknown error"
-                log(f"btmgmt: {cmd_str} - {stderr or 'failed'}")
+                logger.error(f"btmgmt: {cmd_str} - {stderr or 'failed'}")
         except FileNotFoundError:
-            log(f"btmgmt not found - skipping security configuration")
+            logger.error(f"btmgmt not found - skipping security configuration")
             break
         except subprocess.TimeoutExpired:
-            log(f"btmgmt command timed out: {' '.join(cmd)}")
+            logger.error(f"btmgmt command timed out: {' '.join(cmd)}")
         except Exception as e:
-            log(f"btmgmt error: {e}")
+            logger.error(f"btmgmt error: {e}")
 
 
 class NoInputNoOutputAgent(dbus.service.Object):
@@ -158,41 +155,41 @@ class NoInputNoOutputAgent(dbus.service.Object):
     
     @dbus.service.method(AGENT_IFACE, in_signature='', out_signature='')
     def Release(self):
-        log("Agent released")
+        logger.info("Agent released")
     
     @dbus.service.method(AGENT_IFACE, in_signature='os', out_signature='')
     def AuthorizeService(self, device, uuid):
-        log(f"AuthorizeService: {device} -> {uuid} (auto-authorized)")
+        logger.info(f"AuthorizeService: {device} -> {uuid} (auto-authorized)")
     
     @dbus.service.method(AGENT_IFACE, in_signature='o', out_signature='s')
     def RequestPinCode(self, device):
-        log(f"RequestPinCode: {device} (returning empty)")
+        logger.info(f"RequestPinCode: {device} (returning empty)")
         return ""
     
     @dbus.service.method(AGENT_IFACE, in_signature='o', out_signature='u')
     def RequestPasskey(self, device):
-        log(f"RequestPasskey: {device} (returning 0)")
+        logger.info(f"RequestPasskey: {device} (returning 0)")
         return dbus.UInt32(0)
     
     @dbus.service.method(AGENT_IFACE, in_signature='ouq', out_signature='')
     def DisplayPasskey(self, device, passkey, entered):
-        log(f"DisplayPasskey: {device} passkey={passkey}")
+        logger.info(f"DisplayPasskey: {device} passkey={passkey}")
     
     @dbus.service.method(AGENT_IFACE, in_signature='os', out_signature='')
     def DisplayPinCode(self, device, pincode):
-        log(f"DisplayPinCode: {device} pin={pincode}")
+        logger.info(f"DisplayPinCode: {device} pin={pincode}")
     
     @dbus.service.method(AGENT_IFACE, in_signature='ou', out_signature='')
     def RequestConfirmation(self, device, passkey):
-        log(f"RequestConfirmation: {device} passkey={passkey} (auto-confirmed)")
+        logger.info(f"RequestConfirmation: {device} passkey={passkey} (auto-confirmed)")
     
     @dbus.service.method(AGENT_IFACE, in_signature='o', out_signature='')
     def RequestAuthorization(self, device):
-        log(f"RequestAuthorization: {device} (auto-authorized)")
+        logger.info(f"RequestAuthorization: {device} (auto-authorized)")
     
     @dbus.service.method(AGENT_IFACE, in_signature='', out_signature='')
     def Cancel(self):
-        log("Agent request cancelled")
+        logger.info("Agent request cancelled")
 
 
 class Advertisement(dbus.service.Object):
@@ -231,7 +228,7 @@ class Advertisement(dbus.service.Object):
 
     @dbus.service.method(LE_ADVERTISEMENT_IFACE, in_signature='', out_signature='')
     def Release(self):
-        log(f"Advertisement released: {self.path}")
+        logger.info(f"Advertisement released: {self.path}")
 
 
 class Application(dbus.service.Object):
@@ -329,20 +326,20 @@ class Characteristic(dbus.service.Object):
 
     @dbus.service.method(GATT_CHRC_IFACE, in_signature='a{sv}', out_signature='ay')
     def ReadValue(self, options):
-        log(f"ReadValue called on {self.uuid}")
+        logger.info(f"ReadValue called on {self.uuid}")
         return []
 
     @dbus.service.method(GATT_CHRC_IFACE, in_signature='aya{sv}')
     def WriteValue(self, value, options):
-        log(f"WriteValue called on {self.uuid}")
+        logger.info(f"WriteValue called on {self.uuid}")
 
     @dbus.service.method(GATT_CHRC_IFACE)
     def StartNotify(self):
-        log(f"StartNotify called on {self.uuid}")
+        logger.info(f"StartNotify called on {self.uuid}")
 
     @dbus.service.method(GATT_CHRC_IFACE)
     def StopNotify(self):
-        log(f"StopNotify called on {self.uuid}")
+        logger.info(f"StopNotify called on {self.uuid}")
 
     @dbus.service.signal(DBUS_PROP_IFACE, signature='sa{sv}as')
     def PropertiesChanged(self, interface, changed, invalidated):
@@ -369,29 +366,29 @@ class NordicTXCharacteristic(Characteristic):
         self.notifying = False
         self.value = bytes([0])
         NordicTXCharacteristic.tx_instance = self
-        log(f"Nordic TX Characteristic created: {NORDIC_TX_UUID}")
+        logger.info(f"Nordic TX Characteristic created: {NORDIC_TX_UUID}")
 
     def ReadValue(self, options):
-        log(f"TX ReadValue: {self.value.hex()}")
+        logger.info(f"TX ReadValue: {self.value.hex()}")
         return dbus.Array([dbus.Byte(b) for b in self.value], signature='y')
 
     def StartNotify(self):
-        log("TX StartNotify: Client subscribing to notifications")
+        logger.info("TX StartNotify: Client subscribing to notifications")
         self.notifying = True
-        log("TX StartNotify: Notifications enabled")
+        logger.info("TX StartNotify: Notifications enabled")
 
     def StopNotify(self):
-        log("TX StopNotify: Client unsubscribed")
+        logger.info("TX StopNotify: Client unsubscribed")
         self.notifying = False
 
     def send_notification(self, data):
         """Send data to client via notification."""
         if not self.notifying:
-            log("  -> Cannot send: notifications not enabled")
+            logger.error("  -> Cannot send: notifications not enabled")
             return
         value = dbus.Array([dbus.Byte(b) for b in data], signature='y')
         self.PropertiesChanged(GATT_CHRC_IFACE, {'Value': value}, [])
-        log(f"  -> TX notification sent: {data.hex()}")
+        logger.info(f"  -> TX notification sent: {data.hex()}")
 
 
 class NordicRXCharacteristic(Characteristic):
@@ -404,7 +401,7 @@ class NordicRXCharacteristic(Characteristic):
     def __init__(self, bus, index, service):
         Characteristic.__init__(self, bus, index, NORDIC_RX_UUID,
                                 ['write', 'write-without-response'], service)
-        log(f"Nordic RX Characteristic created: {NORDIC_RX_UUID}")
+        logger.info(f"Nordic RX Characteristic created: {NORDIC_RX_UUID}")
 
     def WriteValue(self, value, options):
         try:
@@ -412,18 +409,18 @@ class NordicRXCharacteristic(Characteristic):
             hex_str = ' '.join(f'{b:02x}' for b in bytes_data)
             ascii_str = ''.join(chr(b) if 32 <= b < 127 else '.' for b in bytes_data)
             
-            log(f"RX WriteValue: {len(bytes_data)} bytes")
-            log(f"  Hex: {hex_str}")
-            log(f"  ASCII: {ascii_str}")
+            logger.info(f"RX WriteValue: {len(bytes_data)} bytes")
+            logger.debug(f"  Hex: {hex_str}")
+            logger.info(f"  ASCII: {ascii_str}")
             
             # Process each byte
             for byte_val in bytes_data:
                 self._handle_command(byte_val, bytes_data)
                 
         except Exception as e:
-            log(f"Error in WriteValue: {e}")
+            logger.error(f"Error in WriteValue: {e}")
             import traceback
-            log(traceback.format_exc())
+            logger.info(traceback.format_exc())
 
     def _send_response(self, msg_type, payload):
         """Send a Pegasus protocol response.
@@ -432,10 +429,10 @@ class NordicRXCharacteristic(Characteristic):
         Length = len(payload) + 3 (includes type byte + 2 length bytes)
         """
         if NordicTXCharacteristic.tx_instance is None:
-            log("  -> Cannot send: TX not initialized")
+            logger.error("  -> Cannot send: TX not initialized")
             return
         if not NordicTXCharacteristic.tx_instance.notifying:
-            log("  -> Cannot send: notifications not enabled")
+            logger.error("  -> Cannot send: notifications not enabled")
             return
         
         tosend = bytearray([msg_type])
@@ -446,7 +443,7 @@ class NordicRXCharacteristic(Characteristic):
         tosend.append(lo)
         tosend.extend(payload)
         
-        log(f"  -> Sending response: type=0x{msg_type:02x} len={length} data={tosend.hex()}")
+        logger.info(f"  -> Sending response: type=0x{msg_type:02x} len={length} data={tosend.hex()}")
         NordicTXCharacteristic.tx_instance.send_notification(tosend)
 
     def _handle_command(self, cmd, data):
@@ -465,7 +462,7 @@ class NordicRXCharacteristic(Characteristic):
         """
         # Board dump - return 64 bytes representing piece positions
         if cmd == DGT_SEND_BRD or cmd == ord('B') or cmd == ord('b'):
-            log("  -> Board dump request")
+            logger.debug("  -> Board dump request")
             # Real Pegasus uses simple occupancy encoding:
             # 0x00 = empty square, 0x01 = occupied square
             # The DGT app only displays occupancy, not piece types.
@@ -492,26 +489,26 @@ class NordicRXCharacteristic(Characteristic):
         
         # Battery status request
         if cmd == DGT_SEND_BATTERY_STATUS or cmd == ord('L'):
-            log("  -> Battery status request")
+            logger.info("  -> Battery status request")
             # 0x58 = ~88 = 100% battery, last byte 2 = not charging
             self._send_response(DGT_MSG_BATTERY_STATUS, [0x58, 0, 0, 0, 0, 0, 0, 0, 2])
             return
         
         # Reset command - real board does NOT respond to this
         if cmd == DGT_SEND_RESET or cmd == ord('@'):
-            log("  -> Reset command (no response - matches real board)")
+            logger.info("  -> Reset command (no response - matches real board)")
             # Real Pegasus board does not respond to reset command
             return
         
         # Version request
         if cmd == DGT_SEND_VERSION or cmd == ord('M'):
-            log("  -> Version request")
+            logger.info("  -> Version request")
             self._send_response(DGT_MSG_VERSION, [1, 0])
             return
         
         # Trademark request
         if cmd == DGT_SEND_TRADEMARK or cmd == ord('G'):
-            log("  -> Trademark request")
+            logger.info("  -> Trademark request")
             # Match real board format exactly
             tm = f'Digital Game Technology\r\nCopyright (c) 2021 DGT\r\nsoftware version: 1.00, build: 210722\r\nhardware version: 1.00, serial no: {serial_number}'.encode('utf-8')
             self._send_response(DGT_MSG_TRADEMARK, tm)
@@ -519,13 +516,13 @@ class NordicRXCharacteristic(Characteristic):
         
         # Short serial number
         if cmd == DGT_RETURN_SERIALNR or cmd == ord('E'):
-            log("  -> Short serial number request")
+            logger.info("  -> Short serial number request")
             self._send_response(DGT_MSG_SERIALNR, [ord('A'), ord('B'), ord('C'), ord('D'), ord('E')])
             return
         
         # Long serial number
         if cmd == DGT_SEND_SERIALNR or cmd == ord('U'):
-            log("  -> Long serial number request")
+            logger.info("  -> Long serial number request")
             # Return the configured serial number
             serial = [ord(c) for c in serial_number]
             self._send_response(DGT_MSG_LONG_SERIALNR, serial)
@@ -533,62 +530,62 @@ class NordicRXCharacteristic(Characteristic):
         
         # Hardware version
         if cmd == ord('H'):
-            log("  -> Hardware version request")
+            logger.info("  -> Hardware version request")
             self._send_response(DGT_MSG_HARDWARE_VERSION, [1, 0])
             return
         
         # Unknown 143
         if cmd == ord('I'):
-            log("  -> Unknown 143 request")
+            logger.warning("  -> Unknown 143 request")
             self._send_response(DGT_MSG_UNKNOWN_143, [])
             return
         
         # Unknown 144
         if cmd == ord('F'):
-            log("  -> Unknown 144 request")
+            logger.warning("  -> Unknown 144 request")
             self._send_response(DGT_MSG_UNKNOWN_144, [0])
             return
         
         # Unknown 163
         if cmd == ord('V'):
-            log("  -> Unknown 163 request")
+            logger.warning("  -> Unknown 163 request")
             self._send_response(DGT_MSG_UNKNOWN_163, [0])
             return
         
         # Lock state
         if cmd == ord('Y'):
-            log("  -> Lock state request")
+            logger.info("  -> Lock state request")
             self._send_response(DGT_MSG_LOCK_STATE, [0])
             return
         
         # Developer key state
         if cmd == ord('Z'):
-            log("  -> Developer key state request")
+            logger.info("  -> Developer key state request")
             self._send_response(DGT_MSG_DEVKEY_STATE, [0])
             return
         
         # Developer key registration - real Pegasus does NOT respond
         if cmd == DGT_DEVELOPER_KEY:
-            log(f"  -> Developer key registration: {' '.join(f'{b:02x}' for b in data)}")
+            logger.info(f"  -> Developer key registration: {' '.join(f'{b:02x}' for b in data)}")
             return
         
         # LED control - multi-byte command starting with 0x60 (96)
         if cmd == DGT_LED_CONTROL:
-            log(f"  -> LED control command: {' '.join(f'{b:02x}' for b in data)}")
+            logger.info(f"  -> LED control command: {' '.join(f'{b:02x}' for b in data)}")
             # LED control doesn't send a response typically
             return
         
         # Update mode commands
         if cmd == DGT_SEND_UPDATE or cmd == ord('D'):
-            log("  -> Update mode request (ignored)")
+            logger.info("  -> Update mode request (ignored)")
             return
         
         if cmd == DGT_SEND_UPDATE_NICE:
-            log("  -> Update nice mode request (ignored)")
+            logger.info("  -> Update nice mode request (ignored)")
             return
         
         # Unknown command
-        log(f"  -> Unknown command 0x{cmd:02x} ('{chr(cmd) if 32 <= cmd < 127 else '.'}')")
+        logger.warning(f"  -> Unknown command 0x{cmd:02x} ('{chr(cmd) if 32 <= cmd < 127 else '.'}')")
 
 
 class NordicUARTService(Service):
@@ -602,18 +599,23 @@ class NordicUARTService(Service):
         # Add RX characteristic (write TO device)
         self.add_characteristic(NordicRXCharacteristic(bus, 1, self))
         
-        log(f"Nordic UART Service created: {NORDIC_SERVICE_UUID}")
+        logger.info(f"Nordic UART Service created: {NORDIC_SERVICE_UUID}")
 
 
 def signal_handler(signum, frame):
     global mainloop
-    log(f"Received signal {signum}, exiting...")
+    logger.info(f"Received signal {signum}, exiting...")
     if mainloop:
         mainloop.quit()
     sys.exit(0)
 
 
 def main():
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
     global mainloop, device_name, serial_number
     
     parser = argparse.ArgumentParser(description="Pegasus Simulator - DGT Pegasus BLE emulator")
@@ -625,17 +627,17 @@ def main():
     # Default name format matches real board: DGT_PEGASUS_<serial>
     device_name = args.name if args.name else f"DGT_PEGASUS_{serial_number}"
     
-    log("=" * 60)
-    log("Pegasus Simulator - DGT Pegasus BLE Emulator")
-    log(f"Device name: {device_name}")
-    log(f"Service UUID: {NORDIC_SERVICE_UUID}")
-    log("=" * 60)
+    logger.info("=" * 60)
+    logger.info("Pegasus Simulator - DGT Pegasus BLE Emulator")
+    logger.info(f"Device name: {device_name}")
+    logger.info(f"Service UUID: {NORDIC_SERVICE_UUID}")
+    logger.info("=" * 60)
     
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
     # Configure adapter security settings BEFORE D-Bus setup
-    log("Configuring adapter security (matching real Pegasus board)...")
+    logger.info("Configuring adapter security (matching real Pegasus board)...")
     configure_adapter_security()
     
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
@@ -644,9 +646,9 @@ def main():
     
     adapter = find_adapter(bus)
     if not adapter:
-        log("ERROR: No Bluetooth adapter found")
+        logger.error("ERROR: No Bluetooth adapter found")
         return
-    log(f"Found Bluetooth adapter: {adapter}")
+    logger.info(f"Found Bluetooth adapter: {adapter}")
     
     # Configure adapter properties
     adapter_props = dbus.Interface(
@@ -656,46 +658,46 @@ def main():
     # Set the adapter Alias to the device name
     try:
         adapter_props.Set("org.bluez.Adapter1", "Alias", dbus.String(device_name))
-        log(f"Adapter Alias set to '{device_name}'")
+        logger.info(f"Adapter Alias set to '{device_name}'")
     except dbus.exceptions.DBusException as e:
-        log(f"Could not set Alias: {e}")
+        logger.error(f"Could not set Alias: {e}")
     
     # Ensure adapter is powered on
     try:
         powered = adapter_props.Get("org.bluez.Adapter1", "Powered")
         if not powered:
             adapter_props.Set("org.bluez.Adapter1", "Powered", dbus.Boolean(True))
-            log("Adapter powered on")
+            logger.info("Adapter powered on")
         else:
-            log("Adapter already powered on")
+            logger.info("Adapter already powered on")
     except dbus.exceptions.DBusException as e:
-        log(f"Could not check/set Powered: {e}")
+        logger.error(f"Could not check/set Powered: {e}")
     
     # Make adapter discoverable
     try:
         adapter_props.Set("org.bluez.Adapter1", "Discoverable", dbus.Boolean(True))
-        log("Adapter Discoverable set to True")
+        logger.info("Adapter Discoverable set to True")
     except dbus.exceptions.DBusException as e:
-        log(f"Could not set Discoverable: {e}")
+        logger.error(f"Could not set Discoverable: {e}")
     
     try:
         adapter_props.Set("org.bluez.Adapter1", "DiscoverableTimeout", dbus.UInt32(0))
-        log("Adapter DiscoverableTimeout set to 0 (infinite)")
+        logger.error("Adapter DiscoverableTimeout set to 0 (infinite)")
     except dbus.exceptions.DBusException as e:
-        log(f"Could not set DiscoverableTimeout: {e}")
+        logger.error(f"Could not set DiscoverableTimeout: {e}")
     
     # Disable pairing requirement - real Pegasus doesn't require pairing
     try:
         adapter_props.Set("org.bluez.Adapter1", "Pairable", dbus.Boolean(False))
-        log("Adapter Pairable set to False (no pairing required, like real board)")
+        logger.info("Adapter Pairable set to False (no pairing required, like real board)")
     except dbus.exceptions.DBusException as e:
-        log(f"Could not set Pairable: {e}")
+        logger.error(f"Could not set Pairable: {e}")
     
     try:
         adapter_props.Get("org.bluez.Adapter1", "Address")
-        log("Adapter MAC address acquired")
+        logger.info("Adapter MAC address acquired")
     except dbus.exceptions.DBusException as e:
-        log(f"Could not get MAC address: {e}")
+        logger.error(f"Could not get MAC address: {e}")
     
     # Register a NoInputNoOutput agent
     agent = NoInputNoOutputAgent(bus)
@@ -705,21 +707,21 @@ def main():
     
     try:
         agent_manager.UnregisterAgent(agent.AGENT_PATH)
-        log("Unregistered existing agent")
+        logger.info("Unregistered existing agent")
     except dbus.exceptions.DBusException:
         pass
     
     try:
         agent_manager.RegisterAgent(agent.AGENT_PATH, agent.CAPABILITY)
-        log(f"Agent registered with capability: {agent.CAPABILITY}")
+        logger.info(f"Agent registered with capability: {agent.CAPABILITY}")
     except dbus.exceptions.DBusException as e:
-        log(f"Could not register agent: {e}")
+        logger.error(f"Could not register agent: {e}")
     
     try:
         agent_manager.RequestDefaultAgent(agent.AGENT_PATH)
-        log("Agent set as default")
+        logger.info("Agent set as default")
     except dbus.exceptions.DBusException as e:
-        log(f"Could not set default agent: {e}")
+        logger.error(f"Could not set default agent: {e}")
     
     # Create and register GATT application
     app = Application(bus)
@@ -735,22 +737,22 @@ def main():
     registration_error = [None]
     
     def gatt_register_success():
-        log("GATT application registered successfully")
+        logger.info("GATT application registered successfully")
         gatt_registered[0] = True
     
     def gatt_register_error(error):
-        log(f"Failed to register GATT application: {error}")
+        logger.error(f"Failed to register GATT application: {error}")
         registration_error[0] = str(error)
     
     def adv_register_success():
-        log("Advertisement registered successfully")
+        logger.info("Advertisement registered successfully")
         adv_registered[0] = True
     
     def adv_register_error(error):
-        log(f"Failed to register advertisement: {error}")
+        logger.error(f"Failed to register advertisement: {error}")
         registration_error[0] = str(error)
     
-    log("Registering GATT application...")
+    logger.info("Registering GATT application...")
     gatt_manager.RegisterApplication(
         app.get_path(), {},
         reply_handler=gatt_register_success,
@@ -763,7 +765,7 @@ def main():
         bus.get_object(BLUEZ_SERVICE_NAME, adapter),
         LE_ADVERTISING_MANAGER_IFACE)
     
-    log("Registering advertisement...")
+    logger.info("Registering advertisement...")
     ad_manager.RegisterAdvertisement(
         adv.get_path(), {},
         reply_handler=adv_register_success,
@@ -777,27 +779,27 @@ def main():
     while context.pending():
         context.iteration(False)
     
-    log("")
+    logger.info("")
     if registration_error[0]:
-        log(f"WARNING: Registration failed: {registration_error[0]}")
-        log("BLE service may not work correctly!")
+        logger.error(f"WARNING: Registration failed: {registration_error[0]}")
+        logger.warning("BLE service may not work correctly!")
     else:
-        log("BLE GATT and Advertisement registration complete")
+        logger.info("BLE GATT and Advertisement registration complete")
     
-    log("")
-    log("Waiting for BLE connections...")
-    log(f"Device name: {device_name}")
-    log(f"Service UUID: {NORDIC_SERVICE_UUID}")
-    log("")
+    logger.info("")
+    logger.info("Waiting for BLE connections...")
+    logger.info(f"Device name: {device_name}")
+    logger.info(f"Service UUID: {NORDIC_SERVICE_UUID}")
+    logger.info("")
     
     try:
         mainloop.run()
     except Exception as e:
-        log(f"Error: {e}")
+        logger.error(f"Error: {e}")
         import traceback
-        log(traceback.format_exc())
+        logger.info(traceback.format_exc())
     
-    log("Exiting")
+    logger.info("Exiting")
 
 
 if __name__ == "__main__":

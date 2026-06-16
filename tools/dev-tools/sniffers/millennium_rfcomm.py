@@ -23,6 +23,7 @@ Requirements:
 
 import argparse
 import socket
+import logging
 import subprocess
 import sys
 import time
@@ -80,15 +81,11 @@ class RFCOMMDeviceAnalysis:
         }
 
 
-def log(msg: str):
-    """Print with timestamp."""
-    timestamp = time.strftime("%H:%M:%S")
-    print(f"[{timestamp}] {msg}", flush=True)
-
+logger = logging.getLogger(__name__)
 
 def scan_bluetooth_devices(timeout: float = 10.0, name_filter: Optional[str] = None) -> list:
     """Scan for Classic Bluetooth devices using hcitool."""
-    log(f"Scanning for Classic Bluetooth devices ({timeout}s)...")
+    logger.error(f"Scanning for Classic Bluetooth devices ({timeout}s)...")
     
     devices = []
     try:
@@ -98,7 +95,7 @@ def scan_bluetooth_devices(timeout: float = 10.0, name_filter: Optional[str] = N
             capture_output=True, text=True, timeout=timeout + 5)
         
         if result.returncode != 0:
-            log(f"hcitool scan failed: {result.stderr}")
+            logger.error(f"hcitool scan failed: {result.stderr}")
             return devices
         
         # Parse output: "XX:XX:XX:XX:XX:XX    Device Name"
@@ -117,14 +114,14 @@ def scan_bluetooth_devices(timeout: float = 10.0, name_filter: Optional[str] = N
                     continue
                 
                 devices.append({'address': address, 'name': name})
-                log(f"  Found: {name} at {address}")
+                logger.info(f"  Found: {name} at {address}")
     
     except subprocess.TimeoutExpired:
-        log("Scan timed out")
+        logger.error("Scan timed out")
     except FileNotFoundError:
-        log("hcitool not found - is bluez-utils installed?")
+        logger.error("hcitool not found - is bluez-utils installed?")
     except Exception as e:
-        log(f"Scan error: {e}")
+        logger.error(f"Scan error: {e}")
     
     return devices
 
@@ -142,7 +139,7 @@ def find_rfcomm_channel(address: str) -> Optional[int]:
                     channel = int(line.split(':')[1].strip())
                     return channel
     except Exception as e:
-        log(f"SDP search error: {e}")
+        logger.error(f"SDP search error: {e}")
     
     return None
 
@@ -152,7 +149,7 @@ def connect_and_test(address: str, channel: int = DEFAULT_CHANNEL) -> RFCOMMDevi
     
     analysis = RFCOMMDeviceAnalysis(address=address, name="Unknown")
     
-    log(f"Connecting to {address} on channel {channel}...")
+    logger.info(f"Connecting to {address} on channel {channel}...")
     start_time = time.time()
     
     try:
@@ -163,86 +160,86 @@ def connect_and_test(address: str, channel: int = DEFAULT_CHANNEL) -> RFCOMMDevi
         analysis.connected = True
         analysis.channel_used = channel
         analysis.connect_time = time.time() - start_time
-        log(f"  Connected in {analysis.connect_time:.2f}s")
+        logger.info(f"  Connected in {analysis.connect_time:.2f}s")
         
         # Test protocol commands
         sock.settimeout(2.0)
         
         # Test M command (board state)
         try:
-            log("  Sending M command (0x4d00)...")
+            logger.info("  Sending M command (0x4d00)...")
             sock.send(CMD_GET_VERSION)
             time.sleep(0.1)
             response = sock.recv(1024)
             analysis.version_response = response
             ascii_resp = response.decode('ascii', errors='replace')
-            log(f"  Response: {response.hex()} ({ascii_resp[:60]}...)")
+            logger.info(f"  Response: {response.hex()} ({ascii_resp[:60]}...)")
         except socket.timeout:
-            log("  M command: timeout")
+            logger.error("  M command: timeout")
             analysis.protocol_errors.append("M command timeout")
         except Exception as e:
-            log(f"  M command error: {e}")
+            logger.error(f"  M command error: {e}")
             analysis.protocol_errors.append(f"M command error: {e}")
         
         # Test s command (board state)
         try:
-            log("  Sending s command (0x7300)...")
+            logger.info("  Sending s command (0x7300)...")
             sock.send(CMD_GET_BOARD)
             time.sleep(0.1)
             response = sock.recv(1024)
             analysis.board_response = response
             ascii_resp = response.decode('ascii', errors='replace')
-            log(f"  Response: {response.hex()} ({ascii_resp[:60]}...)")
+            logger.info(f"  Response: {response.hex()} ({ascii_resp[:60]}...)")
         except socket.timeout:
-            log("  s command: timeout")
+            logger.error("  s command: timeout")
             analysis.protocol_errors.append("s command timeout")
         except Exception as e:
-            log(f"  s command error: {e}")
+            logger.error(f"  s command error: {e}")
             analysis.protocol_errors.append(f"s command error: {e}")
         
         # Test V command (version)
         try:
-            log("  Sending V command (0x5600)...")
+            logger.info("  Sending V command (0x5600)...")
             sock.send(CMD_GET_VERSION_V)
             time.sleep(0.1)
             response = sock.recv(1024)
             analysis.version_v_response = response
             ascii_resp = response.decode('ascii', errors='replace')
-            log(f"  Response: {response.hex()} ({ascii_resp})")
+            logger.info(f"  Response: {response.hex()} ({ascii_resp})")
         except socket.timeout:
-            log("  V command: timeout")
+            logger.error("  V command: timeout")
             analysis.protocol_errors.append("V command timeout")
         except Exception as e:
-            log(f"  V command error: {e}")
+            logger.error(f"  V command error: {e}")
             analysis.protocol_errors.append(f"V command error: {e}")
         
         # Test I command (identity)
         try:
-            log("  Sending I command (0x4900)...")
+            logger.info("  Sending I command (0x4900)...")
             sock.send(CMD_GET_IDENTITY)
             time.sleep(0.1)
             response = sock.recv(1024)
             analysis.identity_response = response
             ascii_resp = response.decode('ascii', errors='replace')
-            log(f"  Response: {response.hex()} ({ascii_resp})")
+            logger.info(f"  Response: {response.hex()} ({ascii_resp})")
         except socket.timeout:
-            log("  I command: timeout")
+            logger.error("  I command: timeout")
             analysis.protocol_errors.append("I command timeout")
         except Exception as e:
-            log(f"  I command error: {e}")
+            logger.error(f"  I command error: {e}")
             analysis.protocol_errors.append(f"I command error: {e}")
         
         sock.close()
         
     except socket.timeout:
         analysis.connection_error = "Connection timeout"
-        log(f"  Connection timed out")
+        logger.error(f"  Connection timed out")
     except ConnectionRefusedError:
         analysis.connection_error = "Connection refused"
-        log(f"  Connection refused")
+        logger.error(f"  Connection refused")
     except Exception as e:
         analysis.connection_error = str(e)
-        log(f"  Connection error: {e}")
+        logger.error(f"  Connection error: {e}")
     
     return analysis
 
@@ -290,6 +287,11 @@ def print_comparison(analyses: list):
 
 
 def main():
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
     parser = argparse.ArgumentParser(
         description="RFCOMM Sniffer for Millennium Chess Devices")
     parser.add_argument("--scan-time", type=float, default=10.0,
@@ -344,10 +346,10 @@ def main():
         # Try to find the actual RFCOMM channel via SDP
         channel = find_rfcomm_channel(device['address'])
         if channel:
-            log(f"SDP reports channel {channel}")
+            logger.info(f"SDP reports channel {channel}")
         else:
             channel = args.channel
-            log(f"Using default channel {channel}")
+            logger.info(f"Using default channel {channel}")
         
         analysis = connect_and_test(device['address'], channel)
         analysis.name = device['name']
