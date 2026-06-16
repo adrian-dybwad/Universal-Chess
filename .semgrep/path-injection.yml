@@ -34,10 +34,12 @@ rules:
       # secure_filename neutralizes traversal in upload names.
       - pattern: werkzeug.utils.secure_filename(...)
       - pattern: secure_filename(...)
-      # An explicit containment check is treated as a sanitizer.
-      - pattern: $P.resolve()
-      # Project containment helpers: each resolves the final path and verifies
-      # it stays inside the intended base directory (see web/app.py).
+      # Flask's send_from_directory is an application-level sanitizer; it
+      # resolves the path within the directory and raises NotFound on escape.
+      - pattern: flask.send_from_directory(...)
+      - pattern: send_from_directory(...)
+      # Project containment helpers: each normalises with os.path.realpath +
+      # startswith, and returns a contained path or None.
       - pattern: safe_under_base(...)
       - pattern: resolve_engine_file(...)
     pattern-sinks:

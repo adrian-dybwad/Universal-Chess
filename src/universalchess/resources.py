@@ -22,6 +22,8 @@ from PIL import Image, ImageFont
 from typing import Dict, Optional, Tuple
 import os
 
+from universalchess.utils.safe_path import safe_under_base
+
 
 class ResourceLoader:
     """Loads and caches resources from the filesystem.
@@ -63,20 +65,22 @@ class ResourceLoader:
         Returns:
             Full path to the file, or None if not found
         """
-        if ".." in filename:
+        if not filename:
             return None
-        
-        # Check user directory first for overrides
+
+        # Check user directory first for overrides. safe_under_base contains the
+        # (potentially untrusted) filename within each resource directory,
+        # guarding against path traversal (CWE-22).
         if self.user_dir:
-            user_path = os.path.join(self.user_dir, filename)
-            if os.path.exists(user_path):
+            user_path = safe_under_base(self.user_dir, filename)
+            if user_path is not None and os.path.exists(user_path):
                 return user_path
-        
+
         # Fall back to system directory
-        system_path = os.path.join(self.system_dir, filename)
-        if os.path.exists(system_path):
+        system_path = safe_under_base(self.system_dir, filename)
+        if system_path is not None and os.path.exists(system_path):
             return system_path
-        
+
         return None
     
     def get_font(self, size: int, path: str = None) -> ImageFont.FreeTypeFont:

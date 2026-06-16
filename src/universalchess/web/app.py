@@ -26,8 +26,10 @@
 # Bullseye). Matches the convention used across the rest of the package.
 from __future__ import annotations
 
-from flask import Flask, render_template, Response, request, redirect, send_file, abort, stream_with_context, url_for
+from flask import Flask, render_template, Response, request, redirect, send_file, send_from_directory, abort, stream_with_context, url_for
+from werkzeug.exceptions import NotFound
 from werkzeug.utils import secure_filename
+from universalchess.utils.safe_path import safe_under_base
 from universalchess.db import models
 from universalchess.paths import get_current_fen, get_current_placement, get_resource_path
 from universalchess.services.game_broadcast import get_subscriber, GameState
@@ -522,29 +524,15 @@ def sanitize_path(request_path):
     if ".." in request_path or ".." in sanitized:
         return (False, None)
     
-    # Normalize the path (resolves ., and multiple slashes)
+    # Normalize and contain under the WebDAV base using the shared guard. This
+    # avoids pathlib.Path.resolve()/relative_to (not recognized as a path
+    # sanitizer by static analysis) in favour of os.path.realpath + startswith.
     try:
-        # Join with base path first, then normalize
-        base_path = pathlib.Path(WEBDAV_BASE_PATH).resolve()
-        # Remove leading slash for pathlib.joinpath
-        path_part = sanitized.lstrip("/")
-        if not path_part:
-            path_part = "."
-        
-        full_path = base_path / path_part
-        normalized = full_path.resolve()
-        
-        # Ensure the normalized path doesn't escape the base directory
-        try:
-            normalized.relative_to(base_path)
-        except ValueError:
-            # Path escapes the base directory
+        base_real = os.path.realpath(WEBDAV_BASE_PATH)
+        contained = safe_under_base(WEBDAV_BASE_PATH, sanitized.lstrip("/") or ".")
+        if contained is None:
             return (False, None)
-        
-        # Get relative path from base
-        relative_path = normalized.relative_to(base_path)
-        relative_str = str(relative_path)
-        
+        relative_str = os.path.relpath(contained, base_real)
         # Return as absolute path starting with /
         return (True, "/" + relative_str if relative_str != "." else "/")
     except Exception:
@@ -792,39 +780,6 @@ def get_engine_path():
     """
     return str(pathlib.Path(__file__).parent.resolve()) + "/../engines/"
 
-def safe_under_base(base, *user_parts):
-    """Resolve untrusted path parts under ``base``, enforcing containment.
-
-    Single defense against path traversal (CWE-22, "Uncontrolled data used in a
-    path expression"): joins ``base`` with the (untrusted) parts, resolves
-    ``..`` and symlinks, and verifies the result stays inside ``base``. Returns
-    the contained absolute ``pathlib.Path`` so callers can pass it straight to
-    ``open``/``os.*``/``send_file``, or ``None`` when a part is missing/empty or
-    the resolved path escapes ``base``.
-
-    Every leading ``/`` is stripped from each part before joining: pathlib
-    treats an absolute component as a reset (``Path("/home") / "/etc"`` ->
-    ``Path("/etc")``), so stripping is what stops an absolute-path payload from
-    escaping the base.
-
-    All filesystem paths built from request data MUST route through this helper
-    (or resolve_engine_file for engine names) rather than concatenating user
-    input into a path string.
-    """
-    if not user_parts or any(p is None or str(p) == "" for p in user_parts):
-        return None
-    base_resolved = pathlib.Path(base).resolve()
-    candidate = base_resolved
-    for part in user_parts:
-        candidate = candidate / str(part).lstrip("/")
-    candidate = candidate.resolve()
-    try:
-        candidate.relative_to(base_resolved)
-    except ValueError:
-        return None
-    return candidate
-
-
 def resolve_engine_file(filename):
     """Resolve an engine filename to a safe path inside the engines directory.
 
@@ -832,8 +787,8 @@ def resolve_engine_file(filename):
     run through secure_filename (which strips directory separators and parent
     references) and safe_under_base then verifies the result is contained in the
     engines directory. A direct-child check rejects any residual nesting.
-    Returns the resolved absolute Path, or None if the name is empty or would
-    escape the engines directory.
+    Returns the resolved absolute path string, or None if the name is empty or
+    would escape the engines directory.
     """
     if not filename:
         return None
@@ -841,7 +796,7 @@ def resolve_engine_file(filename):
     if not safe:
         return None
     target = safe_under_base(get_engine_path(), safe)
-    if target is None or target.parent != pathlib.Path(get_engine_path()).resolve():
+    if target is None or os.path.dirname(target) != os.path.realpath(get_engine_path()):
         return None
     return target
 
@@ -1435,9 +1390,10 @@ def react_assets(filename):
     """Serve React app static assets (JS, CSS, etc.)."""
     react_dir = get_react_app_dir()
     if react_dir:
-        asset_path = safe_under_base(react_dir / "assets", filename)
-        if asset_path is not None and asset_path.is_file():
-            return send_file(asset_path)
+        try:
+            return send_from_directory(react_dir / "assets", filename)
+        except NotFound:
+            pass
     abort(404)
 
 
@@ -1446,9 +1402,10 @@ def react_icons(filename):
     """Serve React app icons."""
     react_dir = get_react_app_dir()
     if react_dir:
-        icon_path = safe_under_base(react_dir / "icons", filename)
-        if icon_path is not None and icon_path.is_file():
-            return send_file(icon_path)
+        try:
+            return send_from_directory(react_dir / "icons", filename)
+        except NotFound:
+            pass
     abort(404)
 
 
@@ -1457,9 +1414,10 @@ def react_stockfish(filename):
     """Serve Stockfish WASM files for React app analysis."""
     react_dir = get_react_app_dir()
     if react_dir:
-        sf_path = safe_under_base(react_dir / "stockfish", filename)
-        if sf_path is not None and sf_path.is_file():
-            return send_file(sf_path)
+        try:
+            return send_from_directory(react_dir / "stockfish", filename)
+        except NotFound:
+            pass
     abort(404)
 
 
@@ -3336,10 +3294,12 @@ def react_catch_all(path):
     """
     react_dir = get_react_app_dir()
     if react_dir:
-        # Check if it's a file that exists in the React build
-        requested_file = safe_under_base(react_dir, path)
-        if requested_file is not None and requested_file.is_file():
-            return send_file(requested_file)
+        # Serve a real build file if the path maps to one; send_from_directory
+        # safely contains the user-supplied path within react_dir.
+        try:
+            return send_from_directory(react_dir, path)
+        except NotFound:
+            pass
         # Otherwise serve index.html for client-side routing
         return send_file(react_dir / "index.html")
     # No React app, 404
