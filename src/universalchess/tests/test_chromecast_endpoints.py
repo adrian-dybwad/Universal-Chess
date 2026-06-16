@@ -190,11 +190,15 @@ def test_chromecast_source_endpoint_persists_checkbox(client, monkeypatch):
     value and /video keeps rendering the previous layout.
     """
     saved = []
-    monkeypatch.setattr(
-        webapp,
-        "set_chromecast_use_live_board",
-        lambda value: saved.append(value),
-    )
+
+    def fake_set(value):
+        saved.append(value)
+
+    monkeypatch.setattr(webapp, "set_chromecast_use_live_board", fake_set)
+    # The endpoint now reads back via the getter after persisting rather than
+    # echoing the parsed input, so mock the getter to return what was set.
+    monkeypatch.setattr(webapp, "get_chromecast_use_live_board", lambda: saved[-1] if saved else True)
+
     resp = client.post(
         "/api/connectivity/chromecast/source",
         data=json.dumps({"useLiveBoard": False}),
