@@ -14,6 +14,8 @@ on:
         required: false
         default: 'all'
 
+permissions: {}
+
 env:
   # Engines that can be cross-compiled or built in QEMU
   # Excludes: stockfish (system package), maia (too complex for CI), zahak (needs Go cross-compile setup)

@@ -17,6 +17,8 @@ on:
     branches: [main, UniversalChess]
   workflow_dispatch:  # Allow manual trigger
 
+permissions: {}
+
 jobs:
   build:
     name: Build .deb Package

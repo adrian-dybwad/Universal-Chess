@@ -6,6 +6,8 @@ on:
     tags:
       - 'v*'
 
+permissions: {}
+
 jobs:
   build:
     name: Build Package

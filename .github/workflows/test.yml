@@ -7,6 +7,8 @@ on:
   pull_request:
     branches: [main, UniversalChess]
 
+permissions: {}
+
 jobs:
   test:
     name: Python ${{ matrix.python-version }}

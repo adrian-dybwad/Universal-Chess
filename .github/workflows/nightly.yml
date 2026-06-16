@@ -9,10 +9,14 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch:  # Allow manual trigger
 
+permissions: {}
+
 jobs:
   build:
     name: Build Nightly
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     
     steps:
       - name: Checkout code

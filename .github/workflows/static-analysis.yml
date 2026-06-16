@@ -9,6 +9,8 @@ on:
   pull_request:
     branches: [main, UniversalChess]
 
+permissions: {}
+
 jobs:
   analyze:
     name: ruff + bandit + semgrep
