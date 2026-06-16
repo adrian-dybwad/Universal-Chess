@@ -1,0 +1,32 @@
+# Static analysis: the same local toolchain (ruff, bandit, semgrep) run as a
+# PR/branch gate so security findings - especially path-injection ("Uncontrolled
+# data used in a path expression") - are caught before merge.
+name: Static Analysis
+
+on:
+  push:
+    branches: [main, UniversalChess]
+  pull_request:
+    branches: [main, UniversalChess]
+
+jobs:
+  analyze:
+    name: ruff + bandit + semgrep
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install analysis tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run static analysis (ruff, bandit, semgrep)
+        run: ./scripts/analyze.sh

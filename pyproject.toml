@@ -1,0 +1,66 @@
+# Static-analysis configuration for Universal-Chess.
+#
+# This file configures the local static-analysis toolchain (ruff, bandit). It
+# intentionally does NOT declare [build-system]/[project] tables so the repo is
+# not turned into an installable package (tox uses skipsdist=true and the app is
+# deployed as a source tree, not a wheel).
+#
+# Run everything with: ./scripts/analyze.sh
+
+# ---------------------------------------------------------------------------
+# Ruff: fast linter covering pyflakes, pycodestyle, bugbear, security
+# (flake8-bandit), comprehensions, imports, and many more.
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+# Analyse the application source; exclude generated/vendored trees.
+src = ["src"]
+extend-exclude = [
+    ".venv",
+    ".cache",
+    "**/web-app",
+    "**/node_modules",
+    "**/dist",
+    "**/build",
+    "**/engines",
+    "src/universalchess/web/react-app",
+]
+
+[tool.ruff.lint]
+# Maximum coverage: enable every rule ruff implements. The only entries in
+# `ignore` are rules that are mutually exclusive with another enabled rule (so
+# enabling both is contradictory) or that directly conflict with the formatter;
+# nothing is excluded to reduce volume.
+select = ["ALL"]
+ignore = [
+    # Mutually exclusive docstring conventions (cannot satisfy both halves of
+    # each pair). Keep the second of each pair enabled.
+    "D203",  # one-blank-line-before-class (conflicts with D211)
+    "D213",  # multi-line-summary-second-line (conflicts with D212)
+    # Formatter-conflict rules per ruff's own guidance (would fight the
+    # autoformatter and produce churn, not find bugs).
+    "COM812",  # missing-trailing-comma
+    "ISC001",  # single-line-implicit-string-concatenation
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately use assert, fixtures, and looser typing/docstrings.
+"**/tests/**" = ["S101", "ANN", "D", "PLR2004", "INP001"]
+
+[tool.ruff.lint.flake8-bandit]
+# Surface every security finding; do not suppress by check id.
+check-typed-exception = true
+
+# ---------------------------------------------------------------------------
+# Bandit: dedicated security linter. Run at all severities/confidences for
+# maximum coverage; only the test tree is excluded (it deliberately contains
+# assert/eval-like test fixtures).
+# ---------------------------------------------------------------------------
+[tool.bandit]
+exclude_dirs = [
+    "src/universalchess/tests",
+    ".venv",
+    ".cache",
+    "web-app",
+]

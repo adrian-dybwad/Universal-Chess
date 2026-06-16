@@ -1,0 +1,71 @@
+rules:
+  - id: flask-uncontrolled-path
+    languages: [python]
+    severity: ERROR
+    message: >
+      Uncontrolled data used in a path expression. User-controlled input (Flask
+      request data, route parameters, or an uploaded file's client-supplied
+      filename) flows into a filesystem path. An attacker can use '..' or an
+      absolute path to read, write, or delete files outside the intended
+      directory. Resolve the final path and verify it stays within the intended
+      base directory (e.g. Path(base).resolve() and check is_relative_to), or
+      use werkzeug.utils.secure_filename for upload names.
+    metadata:
+      category: security
+      cwe: "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      owasp: "A01:2021 - Broken Access Control"
+      references:
+        - https://cwe.mitre.org/data/definitions/22.html
+    mode: taint
+    pattern-sources:
+      # Flask request object and its members (args, form, values, json, view_args, path...)
+      - pattern: flask.request.$ANYTHING
+      - pattern: request.$ANYTHING
+      # Values passed into Flask view functions are route parameters (user input).
+      - patterns:
+          - pattern: $PARAM
+          - pattern-inside: |
+              @$APP.route(...)
+              def $VIEW(..., $PARAM, ...):
+                ...
+      # Uploaded file's client-supplied filename.
+      - pattern: $F.filename
+    pattern-sanitizers:
+      # secure_filename neutralizes traversal in upload names.
+      - pattern: werkzeug.utils.secure_filename(...)
+      - pattern: secure_filename(...)
+      # An explicit containment check is treated as a sanitizer.
+      - pattern: $P.resolve()
+    pattern-sinks:
+      - patterns:
+          - pattern: open($PATH, ...)
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: os.remove($PATH)
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: os.unlink($PATH)
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: os.makedirs($PATH, ...)
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: os.mkdir($PATH, ...)
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: os.rmdir($PATH)
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: os.path.join(...)
+      - patterns:
+          - pattern: $UPLOAD.save($PATH)
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: flask.send_file($PATH, ...)
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: send_file($PATH, ...)
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: shutil.$FN($PATH, ...)
+          - focus-metavariable: $PATH

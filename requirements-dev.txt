@@ -1,0 +1,24 @@
+# Local development / static-analysis toolchain.
+#
+# Install into the project venv:
+#   .venv/bin/python -m pip install -r requirements-dev.txt
+#
+# Then run the whole suite with:
+#   ./scripts/analyze.sh
+#
+# These tools are NOT needed at runtime on the board; they are development-only.
+
+# Fast, broad linter (pyflakes, pycodestyle, bugbear, flake8-bandit, imports,
+# comprehensions, and many more). Configured in pyproject.toml [tool.ruff].
+ruff>=0.15,<1.0
+
+# Dedicated Python security linter. Configured in pyproject.toml [tool.bandit].
+bandit>=1.9,<2.0
+
+# Taint-aware static analysis. Provides the path-injection ("Uncontrolled data
+# used in a path expression") detection plus broad security rule packs. Rules
+# live in .semgrep/ and the registry packs referenced by scripts/analyze.sh.
+semgrep>=1.166,<2.0
+
+# Optional: run the tools as git hooks (see .pre-commit-config.yaml).
+pre-commit>=3.5

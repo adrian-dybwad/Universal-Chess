@@ -2,6 +2,8 @@
 !.gitignore
 !.envrc
 !.github
+!.semgrep
+!.pre-commit-config.yaml
 __pycache__
 **/7-Zip
 **/*.msi
