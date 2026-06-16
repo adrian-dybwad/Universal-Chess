@@ -73,7 +73,14 @@ def test_start_requires_device(client, monkeypatch):
     Guards against telling the board to stream to an unspecified device.
     """
     called = []
-    monkeypatch.setattr(_broadcast_module(), "send_board_command", lambda *a, **k: called.append(a) or True)
+    monkeypatch.setattr(
+        _broadcast_module(),
+        "send_board_command",
+        lambda command, params=None: (
+            called.append((command, params)) if command != "reset_inactivity" else None
+        )
+        or True,
+    )
     resp = client.post(
         "/api/connectivity/chromecast/start",
         data=json.dumps({}),
@@ -94,7 +101,12 @@ def test_start_forwards_device(client, monkeypatch):
     monkeypatch.setattr(
         _broadcast_module(),
         "send_board_command",
-        lambda command, params=None: (sent.update({"command": command, "params": params}), True)[1],
+        lambda command, params=None: (
+            sent.update({"command": command, "params": params})
+            if command != "reset_inactivity"
+            else None,
+            True,
+        )[1],
     )
     resp = client.post(
         "/api/connectivity/chromecast/start",
@@ -127,7 +139,12 @@ def test_start_forwards_selected_live_board_source(client, monkeypatch):
     monkeypatch.setattr(
         _broadcast_module(),
         "send_board_command",
-        lambda command, params=None: (sent.update({"command": command, "params": params}), True)[1],
+        lambda command, params=None: (
+            sent.update({"command": command, "params": params})
+            if command != "reset_inactivity"
+            else None,
+            True,
+        )[1],
     )
     resp = client.post(
         "/api/connectivity/chromecast/start",
@@ -259,7 +276,12 @@ def test_stop_all_forwards_command_without_device(client, monkeypatch):
     monkeypatch.setattr(
         _broadcast_module(),
         "send_board_command",
-        lambda command, params=None: (sent.update({"command": command, "params": params}), True)[1],
+        lambda command, params=None: (
+            sent.update({"command": command, "params": params})
+            if command != "reset_inactivity"
+            else None,
+            True,
+        )[1],
     )
     resp = client.post("/api/connectivity/chromecast/stop")
     assert resp.status_code == 200
@@ -276,7 +298,12 @@ def test_stop_one_device_forwards_device(client, monkeypatch):
     monkeypatch.setattr(
         _broadcast_module(),
         "send_board_command",
-        lambda command, params=None: (sent.update({"command": command, "params": params}), True)[1],
+        lambda command, params=None: (
+            sent.update({"command": command, "params": params})
+            if command != "reset_inactivity"
+            else None,
+            True,
+        )[1],
     )
     resp = client.post(
         "/api/connectivity/chromecast/stop",

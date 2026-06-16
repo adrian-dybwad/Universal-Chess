@@ -137,6 +137,10 @@ def test_pair_forwards_address_as_board_command(client, monkeypatch):
     sent = {}
 
     def fake_send(command, params=None):
+        # Ignore the background reset_inactivity signal the after_request hook
+        # sends on every API request (covered by test_web_activity_inactivity).
+        if command == "reset_inactivity":
+            return True
         sent["command"] = command
         sent["params"] = params
         return True
@@ -157,7 +161,14 @@ def test_pair_without_address_is_400(client, monkeypatch):
     Guards against dispatching a pairing with no target to the board.
     """
     called = []
-    monkeypatch.setattr(_broadcast_module(), "send_board_command", lambda *a, **k: called.append(a) or True)
+    monkeypatch.setattr(
+        _broadcast_module(),
+        "send_board_command",
+        lambda command, params=None: (
+            called.append((command, params)) if command != "reset_inactivity" else None
+        )
+        or True,
+    )
     resp = client.post(
         "/api/connectivity/bluetooth/pair",
         data=json.dumps({}),
@@ -178,7 +189,10 @@ def test_pair_confirm_forwards_accept_flag(client, monkeypatch):
     monkeypatch.setattr(
         _broadcast_module(),
         "send_board_command",
-        lambda command, params=None: sent.append((command, params)) or True,
+        lambda command, params=None: (
+            sent.append((command, params)) if command != "reset_inactivity" else None
+        )
+        or True,
     )
     client.post("/api/connectivity/bluetooth/pair-confirm", data=json.dumps({"accept": True}), content_type="application/json")
     client.post("/api/connectivity/bluetooth/pair-confirm", data=json.dumps({"accept": False}), content_type="application/json")
@@ -196,11 +210,11 @@ def test_connect_forwards_address_and_result(client, monkeypatch):
     """
     seen = {}
 
-    def fake_connect(address, log=None):
+    def fake_connect_status(address, log=None):
         seen["address"] = address
-        return True
+        return "ok"
 
-    monkeypatch.setattr(_bt_module(), "connect_device", fake_connect)
+    monkeypatch.setattr(_bt_module(), "connect_device_status", fake_connect_status)
     resp = client.post(
         "/api/connectivity/bluetooth/connect",
         data=json.dumps({"address": "AA:BB:CC:DD:EE:FF"}),

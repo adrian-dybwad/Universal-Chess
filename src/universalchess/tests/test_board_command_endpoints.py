@@ -72,7 +72,10 @@ def test_setup_position_rejects_invalid_fen(client, monkeypatch):
     sent = []
     monkeypatch.setattr(
         "universalchess.services.game_broadcast.send_board_command",
-        lambda command, params=None: sent.append((command, params)) or True,
+        lambda command, params=None: (
+            sent.append((command, params)) if command != "reset_inactivity" else None
+        )
+        or True,
     )
 
     resp = client.post(
@@ -94,7 +97,10 @@ def test_setup_position_forwards_command_with_fen_and_name(client, monkeypatch):
     sent = []
     monkeypatch.setattr(
         "universalchess.services.game_broadcast.send_board_command",
-        lambda command, params=None: sent.append((command, params)) or True,
+        lambda command, params=None: (
+            sent.append((command, params)) if command != "reset_inactivity" else None
+        )
+        or True,
     )
 
     fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
@@ -134,7 +140,10 @@ def test_abort_game_forwards_command(client, monkeypatch):
     sent = []
     monkeypatch.setattr(
         "universalchess.services.game_broadcast.send_board_command",
-        lambda command, params=None: sent.append((command, params)) or True,
+        lambda command, params=None: (
+            sent.append((command, params)) if command != "reset_inactivity" else None
+        )
+        or True,
     )
 
     resp = client.post("/api/board/abort-game")
