@@ -36,6 +36,10 @@ rules:
       - pattern: secure_filename(...)
       # An explicit containment check is treated as a sanitizer.
       - pattern: $P.resolve()
+      # Project containment helpers: each resolves the final path and verifies
+      # it stays inside the intended base directory (see web/app.py).
+      - pattern: safe_under_base(...)
+      - pattern: resolve_engine_file(...)
     pattern-sinks:
       - patterns:
           - pattern: open($PATH, ...)

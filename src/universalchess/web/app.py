@@ -792,27 +792,56 @@ def get_engine_path():
     """
     return str(pathlib.Path(__file__).parent.resolve()) + "/../engines/"
 
+def safe_under_base(base, *user_parts):
+    """Resolve untrusted path parts under ``base``, enforcing containment.
+
+    Single defense against path traversal (CWE-22, "Uncontrolled data used in a
+    path expression"): joins ``base`` with the (untrusted) parts, resolves
+    ``..`` and symlinks, and verifies the result stays inside ``base``. Returns
+    the contained absolute ``pathlib.Path`` so callers can pass it straight to
+    ``open``/``os.*``/``send_file``, or ``None`` when a part is missing/empty or
+    the resolved path escapes ``base``.
+
+    Every leading ``/`` is stripped from each part before joining: pathlib
+    treats an absolute component as a reset (``Path("/home") / "/etc"`` ->
+    ``Path("/etc")``), so stripping is what stops an absolute-path payload from
+    escaping the base.
+
+    All filesystem paths built from request data MUST route through this helper
+    (or resolve_engine_file for engine names) rather than concatenating user
+    input into a path string.
+    """
+    if not user_parts or any(p is None or str(p) == "" for p in user_parts):
+        return None
+    base_resolved = pathlib.Path(base).resolve()
+    candidate = base_resolved
+    for part in user_parts:
+        candidate = candidate / str(part).lstrip("/")
+    candidate = candidate.resolve()
+    try:
+        candidate.relative_to(base_resolved)
+    except ValueError:
+        return None
+    return candidate
+
+
 def resolve_engine_file(filename):
     """Resolve an engine filename to a safe path inside the engines directory.
 
     Defends /uploadengine and /delengine against path traversal: the name is
     run through secure_filename (which strips directory separators and parent
-    references) and the result is verified to be a direct child of the engines
-    directory. Returns the resolved absolute Path, or None if the name is empty
-    or would escape the engines directory.
+    references) and safe_under_base then verifies the result is contained in the
+    engines directory. A direct-child check rejects any residual nesting.
+    Returns the resolved absolute Path, or None if the name is empty or would
+    escape the engines directory.
     """
     if not filename:
         return None
     safe = secure_filename(filename)
     if not safe:
         return None
-    base = pathlib.Path(get_engine_path()).resolve()
-    target = (base / safe).resolve()
-    try:
-        target.relative_to(base)
-    except ValueError:
-        return None
-    if target.parent != base:
+    target = safe_under_base(get_engine_path(), safe)
+    if target is None or target.parent != pathlib.Path(get_engine_path()).resolve():
         return None
     return target
 
@@ -1101,8 +1130,8 @@ def handle_preflight():
             
             # Depth 1: list contents
             if int(request.headers.get("Depth", 0)) == 1:
-                full_base_dir = WEBDAV_BASE_PATH + thispath
-                if os.path.isdir(full_base_dir):
+                full_base_dir = safe_under_base(WEBDAV_BASE_PATH, thispath)
+                if full_base_dir is not None and os.path.isdir(full_base_dir):
                     for fn in os.listdir(full_base_dir):
                         full_file_path = join_path(WEBDAV_BASE_PATH, fn)
                         href_path = join_path(thispath, fn)
@@ -1161,8 +1190,8 @@ def handle_preflight():
                 session.close()            
         else:
             # Regular file or directory
-            full_path = WEBDAV_BASE_PATH + thispath
-            if not os.path.exists(full_path):
+            full_path = safe_under_base(WEBDAV_BASE_PATH, thispath)
+            if full_path is None or not os.path.exists(full_path):
                 return Response('', mimetype='application/xml', status=404)
             
             responses = []
@@ -1183,7 +1212,9 @@ def handle_preflight():
         is_valid, sanitized_path = sanitize_path(request.path)
         if not is_valid or sanitized_path == "/":
             return Response('', mimetype='application/xml', status=403)
-        full_path = WEBDAV_BASE_PATH + sanitized_path
+        full_path = safe_under_base(WEBDAV_BASE_PATH, sanitized_path)
+        if full_path is None:
+            return Response('', mimetype='application/xml', status=403)
         try:
             if os.path.isfile(full_path):
                 os.remove(full_path)
@@ -1215,8 +1246,12 @@ def handle_preflight():
         if not is_valid_dst or sanitized_dst == "/":
             return Response('', mimetype='application/xml', status=403)
         
+        full_src = safe_under_base(WEBDAV_BASE_PATH, sanitized_src)
+        full_dst = safe_under_base(WEBDAV_BASE_PATH, sanitized_dst)
+        if full_src is None or full_dst is None:
+            return Response('', mimetype='application/xml', status=403)
         try:
-            os.rename(WEBDAV_BASE_PATH + sanitized_src, WEBDAV_BASE_PATH + sanitized_dst)
+            os.rename(full_src, full_dst)
         except Exception:
             pass
         res = Response(status = 200)
@@ -1231,7 +1266,9 @@ def handle_preflight():
         if sanitized_path.find("/PGNs/") >= 0:
             return Response('', mimetype='application/xml', status=404)
         
-        full_path = WEBDAV_BASE_PATH + sanitized_path
+        full_path = safe_under_base(WEBDAV_BASE_PATH, sanitized_path)
+        if full_path is None:
+            return Response('', mimetype='application/xml', status=403)
         try:
             # Create parent directories if needed
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
@@ -1248,8 +1285,9 @@ def handle_preflight():
                                 # Validate path in file before chmod
                                 path_line = x.strip()
                                 is_valid_chmod_path, chmod_path = sanitize_path(path_line)
-                                if is_valid_chmod_path and chmod_path != "/":
-                                    os.chmod(WEBDAV_BASE_PATH + chmod_path, 0o0777)
+                                chmod_target = safe_under_base(WEBDAV_BASE_PATH, chmod_path)
+                                if is_valid_chmod_path and chmod_path != "/" and chmod_target is not None:
+                                    os.chmod(chmod_target, 0o0777)
                             except Exception:
                                 pass
                 except Exception:
@@ -1265,7 +1303,9 @@ def handle_preflight():
         is_valid, sanitized_path = sanitize_path(request.path)
         if not is_valid or sanitized_path == "/":
             return Response('', mimetype='application/xml', status=403)
-        full_path = WEBDAV_BASE_PATH + sanitized_path
+        full_path = safe_under_base(WEBDAV_BASE_PATH, sanitized_path)
+        if full_path is None:
+            return Response('', mimetype='application/xml', status=403)
         try:
             os.makedirs(full_path, exist_ok=True)
         except Exception:
@@ -1365,7 +1405,9 @@ def handle_preflight():
         else:
             user_agent = request.headers.get("User-Agent", "").lower()
             if user_agent.find("webdav") >= 0 or user_agent.find("cyberduck") >= 0:
-                full_path = WEBDAV_BASE_PATH + sanitized_path
+                full_path = safe_under_base(WEBDAV_BASE_PATH, sanitized_path)
+                if full_path is None:
+                    return Response("", mimetype='text/plain', status=403)
                 try:
                     if os.path.isfile(full_path):
                         with open(full_path, "rb") as f:
@@ -1393,8 +1435,8 @@ def react_assets(filename):
     """Serve React app static assets (JS, CSS, etc.)."""
     react_dir = get_react_app_dir()
     if react_dir:
-        asset_path = react_dir / "assets" / filename
-        if asset_path.exists():
+        asset_path = safe_under_base(react_dir / "assets", filename)
+        if asset_path is not None and asset_path.is_file():
             return send_file(asset_path)
     abort(404)
 
@@ -1404,8 +1446,8 @@ def react_icons(filename):
     """Serve React app icons."""
     react_dir = get_react_app_dir()
     if react_dir:
-        icon_path = react_dir / "icons" / filename
-        if icon_path.exists():
+        icon_path = safe_under_base(react_dir / "icons", filename)
+        if icon_path is not None and icon_path.is_file():
             return send_file(icon_path)
     abort(404)
 
@@ -1415,8 +1457,8 @@ def react_stockfish(filename):
     """Serve Stockfish WASM files for React app analysis."""
     react_dir = get_react_app_dir()
     if react_dir:
-        sf_path = react_dir / "stockfish" / filename
-        if sf_path.exists():
+        sf_path = safe_under_base(react_dir / "stockfish", filename)
+        if sf_path is not None and sf_path.is_file():
             return send_file(sf_path)
     abort(404)
 
@@ -1504,11 +1546,18 @@ def tuner():
 def tuner_upload_file():
     uploaded_file = request.files['file']
     if uploaded_file.filename != '':
-        file_ext = os.path.splitext(uploaded_file.filename)[1]
-        file_name = os.path.splitext(uploaded_file.filename)[0]
+        safe_name = secure_filename(uploaded_file.filename)
+        if not safe_name:
+            abort(400)
+        file_ext = os.path.splitext(safe_name)[1]
+        file_name = os.path.splitext(safe_name)[0]
         if file_ext not in app.config['UCI_UPLOAD_EXTENSIONS']:
             abort(400)
-        uploaded_file.save(os.path.join(app.config['UCI_UPLOAD_PATH'] + "personalities/",uploaded_file.filename))
+        personalities_dir = os.path.join(app.config['UCI_UPLOAD_PATH'], "personalities")
+        save_path = safe_under_base(personalities_dir, safe_name)
+        if save_path is None:
+            abort(400)
+        uploaded_file.save(str(save_path))
         with open(app.config['UCI_UPLOAD_PATH'] + "personalities/basic.ini", "r+") as file:
             for line in file:
                 if file_name in line:
@@ -3288,8 +3337,8 @@ def react_catch_all(path):
     react_dir = get_react_app_dir()
     if react_dir:
         # Check if it's a file that exists in the React build
-        requested_file = react_dir / path
-        if requested_file.exists() and requested_file.is_file():
+        requested_file = safe_under_base(react_dir, path)
+        if requested_file is not None and requested_file.is_file():
             return send_file(requested_file)
         # Otherwise serve index.html for client-side routing
         return send_file(react_dir / "index.html")
