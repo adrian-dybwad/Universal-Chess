@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Universal Chess - Install Certificate</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --border: #475569;
+            --text: #e2e8f0;
+            --text-muted: #94a3b8;
+            --primary: #3b82f6;
+            --primary-hover: #2563eb;
+            --success: #22c55e;
+        }
+        @media (prefers-color-scheme: light) {
+            :root {
+                --bg: #f1f5f9;
+                --surface: #ffffff;
+                --border: #cbd5e1;
+                --text: #1e293b;
+                --text-muted: #64748b;
+                --primary: #2563eb;
+                --primary-hover: #1d4ed8;
+                --success: #16a34a;
+            }
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem 1rem;
+        }
+        .container {
+            max-width: 480px;
+            width: 100%;
+        }
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        .logo-icon {
+            width: 3.5rem;
+            height: 3.5rem;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+        }
+        .logo-text { flex: 1; min-width: 0; }
+        .logo h1 { font-size: 1.5rem; font-weight: 600; }
+        .logo p { color: var(--text-muted); font-size: 0.9rem; margin-top: 0.25rem; }
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        .card h2 { font-size: 1.1rem; margin-bottom: 1rem; text-align: center; }
+        .qr-container {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 1rem;
+        }
+        .qr-container img {
+            width: 220px;
+            height: 220px;
+            background: white;
+            padding: 0.5rem;
+            border-radius: 8px;
+        }
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 0.75rem 1rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+            text-decoration: none;
+            color: white;
+            text-align: center;
+            transition: background 0.15s;
+            margin-bottom: 0.5rem;
+        }
+        .btn-primary { background: var(--primary); }
+        .btn-primary:hover { background: var(--primary-hover); }
+        .btn-success { background: var(--success); }
+        .btn-success:hover { opacity: 0.9; }
+        .instructions {
+            margin-top: 1rem;
+        }
+        .instructions ol {
+            padding-left: 1.25rem;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            line-height: 1.7;
+        }
+        .platform-tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 1rem;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .platform-tab {
+            flex: 1;
+            padding: 0.5rem;
+            text-align: center;
+            font-size: 0.85rem;
+            cursor: pointer;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            border-right: 1px solid var(--border);
+        }
+        .platform-tab:last-child { border-right: none; }
+        .platform-tab.active {
+            background: var(--primary);
+            color: white;
+        }
+        .platform-content { display: none; }
+        .platform-content.active { display: block; }
+        .note {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            text-align: center;
+            margin-top: 1rem;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <div class="logo-icon">&#9816;</div>
+            <div class="logo-text">
+                <h1>Universal Chess - Install Certificate</h1>
+                <p>Secure setup requires a trusted certificate</p>
+            </div>
+        </div>
+
+        <a id="go-link" href="https://dgt.local" class="btn btn-success" style="margin-bottom: 1rem;">
+            I've installed it &mdash; go to Universal Chess
+        </a>
+
+        <div class="card">
+            <h2>Scan the QR code or pick your platform below</h2>
+            <p class="note" style="margin-top:0; margin-bottom:1rem;">
+                This certificate allows your device to trust the
+                connection to Universal Chess and only needs to be installed
+                once.
+            </p>
+            <div class="qr-container">
+                <img src="/ca.pem?qr=1" alt="Scan to download CA certificate">
+            </div>
+
+            <div class="instructions">
+                <div class="platform-tabs">
+                    <button class="platform-tab active" data-platform="ios" onclick="showPlatform('ios')">iOS</button>
+                    <button class="platform-tab" data-platform="android" onclick="showPlatform('android')">Android</button>
+                    <button class="platform-tab" data-platform="mac" onclick="showPlatform('mac')">macOS</button>
+                    <button class="platform-tab" data-platform="win" onclick="showPlatform('win')">Windows</button>
+                    <button class="platform-tab" data-platform="linux" onclick="showPlatform('linux')">Linux</button>
+                </div>
+
+                <div id="platform-ios" class="platform-content active">
+                    <a href="/ca.pem?format=mobileconfig" class="btn btn-primary">Download for iOS / iPadOS (.mobileconfig)</a>
+                    <ol>
+                        <li>Tap <strong>Download for iOS / iPadOS</strong> (opens in Safari)</li>
+                        <li>Tap <strong>Allow</strong> when prompted to download the profile</li>
+                        <li>Open <strong>Settings</strong> &rarr; <strong>General</strong> &rarr; <strong>VPN & Device Management</strong></li>
+                        <li>Tap the <strong>Universal Chess TLS Certificate</strong> profile &rarr; <strong>Install</strong></li>
+                        <li>Go to <strong>Settings</strong> &rarr; <strong>General</strong> &rarr; <strong>About</strong> &rarr; <strong>Certificate Trust Settings</strong></li>
+                        <li>Enable full trust for <strong>Universal Chess CA</strong></li>
+                    </ol>
+                </div>
+
+                <div id="platform-android" class="platform-content">
+                    <a href="/ca.pem?format=der" class="btn btn-primary" download="UniversalChess-CA.crt">Download for Android (.crt)</a>
+                    <ol>
+                        <li>Tap <strong>Download for Android</strong></li>
+                        <li>Open the downloaded <code>UniversalChess-CA.crt</code> file</li>
+                        <li>Give it a name (e.g., "Universal Chess") and tap <strong>OK</strong></li>
+                        <li>You may need to set a screen lock if you haven't already</li>
+                    </ol>
+                </div>
+
+                <div id="platform-mac" class="platform-content">
+                    <a href="/ca.pem" class="btn btn-primary" download="UniversalChess-CA.pem">Download Certificate (PEM)</a>
+                    <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">
+                        <strong>Option A &mdash; Keychain Access (GUI)</strong>
+                    </p>
+                    <ol>
+                        <li>Click <strong>Download Certificate</strong></li>
+                        <li>Open <strong>Keychain Access</strong> (Spotlight &rarr; "Keychain Access")</li>
+                        <li>Select the <strong>login</strong> keychain in the sidebar</li>
+                        <li>Go to <strong>File &rarr; Import Items</strong> and select the downloaded <code>UniversalChess-CA.pem</code></li>
+                        <li>Find the imported certificate, double-click it</li>
+                        <li>Expand <strong>Trust</strong>, change to <strong>Always Trust</strong>, close and enter your password</li>
+                    </ol>
+                    <p style="font-size:0.85rem; color:var(--text-muted); margin-top:0.75rem; margin-bottom:0.5rem;">
+                        <strong>Option B &mdash; Terminal (one command)</strong>
+                    </p>
+                    <pre style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:0.5rem; font-size:0.8rem; overflow-x:auto; color:var(--text);">security add-trusted-cert -r trustRoot \
+  -k ~/Library/Keychains/login.keychain-db \
+  ~/Downloads/UniversalChess-CA.pem</pre>
+                </div>
+
+                <div id="platform-win" class="platform-content">
+                    <a href="/ca.pem" class="btn btn-primary" download="UniversalChess-CA.pem">Download Certificate (PEM)</a>
+                    <ol>
+                        <li>Click <strong>Download Certificate</strong></li>
+                        <li>Double-click the downloaded file &rarr; <strong>Install Certificate</strong></li>
+                        <li>Select <strong>Local Machine</strong> &rarr; <strong>Place in: Trusted Root Certification Authorities</strong></li>
+                        <li>Click <strong>Finish</strong></li>
+                    </ol>
+                </div>
+
+                <div id="platform-linux" class="platform-content">
+                    <a href="/ca.pem" class="btn btn-primary" download="UniversalChess-CA.pem">Download Certificate (PEM)</a>
+                    <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">
+                        <strong>Debian / Ubuntu / Raspberry Pi OS</strong>
+                    </p>
+                    <pre style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:0.5rem; font-size:0.8rem; overflow-x:auto; color:var(--text);">sudo cp UniversalChess-CA.pem \
+  /usr/local/share/ca-certificates/UniversalChess-CA.crt
+sudo update-ca-certificates</pre>
+                    <p style="font-size:0.85rem; color:var(--text-muted); margin-top:0.75rem; margin-bottom:0.5rem;">
+                        <strong>Fedora / RHEL / CentOS</strong>
+                    </p>
+                    <pre style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:0.5rem; font-size:0.8rem; overflow-x:auto; color:var(--text);">sudo cp UniversalChess-CA.pem \
+  /etc/pki/ca-trust/source/anchors/
+sudo update-ca-trust</pre>
+                    <p class="note" style="text-align:left; margin-top:0.5rem;">
+                        Browsers using NSS (Firefox, Chromium on some
+                        distros) maintain a separate trust store and
+                        will need the cert imported via their settings
+                        UI as well.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    function showPlatform(id) {
+        document.querySelectorAll('.platform-tab').forEach(function(t) { t.classList.remove('active'); });
+        document.querySelectorAll('.platform-content').forEach(function(c) { c.classList.remove('active'); });
+        var tab = document.querySelector('.platform-tab[data-platform="' + id + '"]');
+        if (tab) tab.classList.add('active');
+        var content = document.getElementById('platform-' + id);
+        if (content) content.classList.add('active');
+    }
+
+    (function detectAndSelectPlatform() {
+        var ua = navigator.userAgent || '';
+        var platform = navigator.platform || '';
+        var id = null;
+        if (/iPad|iPhone|iPod/.test(ua) ||
+            (platform === 'MacIntel' && navigator.maxTouchPoints > 1)) {
+            id = 'ios';
+        } else if (/android/i.test(ua)) {
+            id = 'android';
+        } else if (/Mac/i.test(ua)) {
+            id = 'mac';
+        } else if (/Windows/i.test(ua)) {
+            id = 'win';
+        } else if (/Linux|X11|CrOS/i.test(ua)) {
+            id = 'linux';
+        }
+        if (id) showPlatform(id);
+    })();
+
+    (function setGoLinkHost() {
+        var link = document.getElementById('go-link');
+        if (link) link.href = 'https://' + window.location.hostname;
+    })();
+    </script>
+</body>
+</html>

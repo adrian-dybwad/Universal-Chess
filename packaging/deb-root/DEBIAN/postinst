@@ -234,8 +234,16 @@ echo -e "::: Setup services"
     systemctl enable var-run-sdp.service
     systemctl start var-run-sdp.path
 
-# Setup nginx proxy for web service
-echo -e "::: Setting up nginx proxy"
+# Allow the web service user to change passwords via chpasswd (used by
+# the /api/system/change-password endpoint). The sudoers drop-in grants
+# passwordless access to chpasswd only.
+echo -e "::: Configuring sudoers for password change"
+SUDOERS_FILE="/etc/sudoers.d/universal-chess-chpasswd"
+echo "$PRIMARY_USER ALL=(root) NOPASSWD: /usr/sbin/chpasswd" > "$SUDOERS_FILE"
+chmod 440 "$SUDOERS_FILE"
+
+# Setup nginx HTTPS proxy for web service
+echo -e "::: Setting up nginx proxy with TLS"
     if [ -f "${DGTCM_PATH}/scripts/enable-web-proxy.sh" ]; then
         chmod +x "${DGTCM_PATH}/scripts/enable-web-proxy.sh"
         "${DGTCM_PATH}/scripts/enable-web-proxy.sh"
@@ -456,17 +464,26 @@ case $1 in
     removeLegacyRcLocal
     setPermissions
     
-    # Guarded reboot (fresh installs and upgrades)
-    # if [ -z "${DGTCM_SKIP_REBOOT:-}" ]; then
-    #     echo "Rebooting to complete DGTCentaurMods installation..."
-    #     if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
-    #         nohup /bin/sh -c "sleep 3; systemctl reboot" >/dev/null 2>&1 &
-    #     else
-    #         nohup /bin/sh -c "sleep 3; /sbin/shutdown -r now" >/dev/null 2>&1 &
-    #     fi
-    # else
-    #     echo "DGTCM_SKIP_REBOOT set; skipping automatic reboot."
-    # fi
+    if [ -z "${2:-}" ]; then
+        # Fresh install: reboot to apply new group memberships and start
+        # services cleanly. Set DGTCM_SKIP_REBOOT=1 to suppress.
+        if [ -z "${DGTCM_SKIP_REBOOT:-}" ]; then
+            echo -e "::: Fresh install -- rebooting to complete setup..."
+            if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+                nohup /bin/sh -c "sleep 3; systemctl reboot" >/dev/null 2>&1 &
+            else
+                nohup /bin/sh -c "sleep 3; /sbin/shutdown -r now" >/dev/null 2>&1 &
+            fi
+        else
+            echo -e "::: DGTCM_SKIP_REBOOT set; skipping automatic reboot."
+            echo -e "::: A reboot is recommended to apply group and service changes."
+        fi
+    else
+        # Upgrade: reload and restart services without rebooting.
+        echo -e "::: Upgrade from $2 -- restarting services..."
+        systemctl daemon-reload
+        systemctl restart universal-chess.service universal-chess-web.service 2>/dev/null || true
+    fi
     ;;
 esac
 

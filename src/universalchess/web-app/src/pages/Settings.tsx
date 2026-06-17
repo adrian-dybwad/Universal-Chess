@@ -5,7 +5,7 @@ import { MenuIcon } from '../components/MenuIcon';
 import type { EngineDefinition } from '../types/game';
 import type { MenuCatalog, MenuOption } from '../types/menuCatalog';
 import { fieldById } from '../types/menuCatalog';
-import { apiFetch, buildApiUrl, getStoredCredentials } from '../utils/api';
+import { apiFetch, buildApiUrl, getStoredCredentials, encodeBasicAuth, storeCredentials } from '../utils/api';
 import './Settings.css';
 
 interface SettingsData {
@@ -963,6 +963,7 @@ export function Settings() {
               </Card>
             </Card>
 
+            <PasswordChange />
             <SystemActions />
           </section>
         )}
@@ -1377,6 +1378,168 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog | null }) {
 // command to the board over IPC, so the board runs the exact same code path as
 // the on-board menu. Shutdown, reboot and Original Centaur make the web UI
 // unavailable, so each is gated behind an explicit confirmation.
+
+function PasswordChange() {
+  const isHttps = window.location.protocol === 'https:';
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [showLoginDialog, setShowLoginDialog] = useState(false);
+  const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
+
+  const handleLoginSuccess = async () => {
+    setShowLoginDialog(false);
+    if (pendingActionRef.current) {
+      const action = pendingActionRef.current;
+      pendingActionRef.current = null;
+      await action();
+    }
+  };
+
+  const handleSubmit = async () => {
+    setError(null);
+    setSuccess(null);
+
+    if (!currentPassword) {
+      setError('Current password is required');
+      return;
+    }
+    if (!newPassword) {
+      setError('New password is required');
+      return;
+    }
+    if (newPassword.length < 4) {
+      setError('New password must be at least 4 characters');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const response = await apiFetch('/api/system/change-password', {
+        method: 'POST',
+        requiresAuth: true,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          current_password: currentPassword,
+          new_password: newPassword,
+        }),
+      });
+
+      if (response.status === 401) {
+        pendingActionRef.current = handleSubmit;
+        setShowLoginDialog(true);
+        return;
+      }
+
+      const data = await response.json().catch(() => ({}));
+
+      if (response.ok && data.success) {
+        const creds = getStoredCredentials();
+        if (creds) {
+          try {
+            const decoded = atob(creds);
+            const username = decoded.split(':', 1)[0];
+            const newCreds = encodeBasicAuth(username, newPassword);
+            storeCredentials(newCreds, true);
+          } catch {
+            // If we can't update stored creds, the user will be prompted next time
+          }
+        }
+        setSuccess('Password changed successfully');
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmPassword('');
+      } else if (response.status === 403) {
+        setError('Password change requires a secure (HTTPS) connection');
+      } else {
+        setError(data.error || 'Failed to change password');
+      }
+    } catch {
+      setError('Network error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <LoginDialog
+        isOpen={showLoginDialog}
+        onClose={() => {
+          setShowLoginDialog(false);
+          pendingActionRef.current = null;
+        }}
+        onSuccess={handleLoginSuccess}
+      />
+      <Card className="mb-6">
+        <CardHeader title="Change Password" />
+        {!isHttps ? (
+          <Card variant="muted">
+            <p className="text-muted">
+              Password change is only available over a secure (HTTPS) connection.
+              Visit <a href={`https://${window.location.hostname}`}>https://{window.location.hostname}</a> to use this feature.
+              If you haven't installed the certificate yet, visit{' '}
+              <a href={`http://${window.location.hostname}/ca-install`}>the certificate install page</a> first.
+            </p>
+          </Card>
+        ) : (
+          <>
+            <p className="text-muted mb-4">
+              Change the system password used for SSH, WebDAV, and this web interface.
+            </p>
+            {success && <Card variant="primary" className="mb-4">{success}</Card>}
+            {error && <Card variant="danger" className="mb-4">{error}</Card>}
+            <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+              <label>Current Password</label>
+              <input
+                type="password"
+                value={currentPassword}
+                onChange={(e) => { setCurrentPassword(e.target.value); setError(null); }}
+                placeholder="Enter current password"
+                autoComplete="current-password"
+              />
+            </div>
+            <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+              <label>New Password</label>
+              <input
+                type="password"
+                value={newPassword}
+                onChange={(e) => { setNewPassword(e.target.value); setError(null); }}
+                placeholder="Enter new password"
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="form-group" style={{ marginBottom: '1rem' }}>
+              <label>Confirm New Password</label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => { setConfirmPassword(e.target.value); setError(null); }}
+                placeholder="Confirm new password"
+                autoComplete="new-password"
+              />
+            </div>
+            <Button
+              variant="primary"
+              disabled={busy || !currentPassword || !newPassword || !confirmPassword}
+              onClick={handleSubmit}
+            >
+              {busy ? 'Changing...' : 'Change Password'}
+            </Button>
+          </>
+        )}
+      </Card>
+    </>
+  );
+}
+
 
 function SystemActions() {
   const [centaurAvailable, setCentaurAvailable] = useState(false);

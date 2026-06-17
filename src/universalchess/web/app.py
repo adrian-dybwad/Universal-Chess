@@ -33,7 +33,7 @@ from universalchess.utils.safe_path import safe_under_base
 from universalchess.db import models
 from universalchess.paths import get_current_fen, get_current_placement, get_resource_path
 from universalchess.services.game_broadcast import get_subscriber, GameState
-from universalchess.paths import EPAPER_STATIC_JPG, CENTAUR_SOFTWARE
+from universalchess.paths import EPAPER_STATIC_JPG, CENTAUR_SOFTWARE, CONFIG_DIR
 from .chessboard import LiveBoard
 from . import centaurflask
 from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
@@ -2268,7 +2268,11 @@ def api_system_info():
     do the same without importing board/hardware modules.
     """
     try:
-        return jsonify({"centaur_available": os.path.exists(CENTAUR_SOFTWARE)})
+        system_user = pwd.getpwuid(os.getuid()).pw_name
+        return jsonify({
+            "centaur_available": os.path.exists(CENTAUR_SOFTWARE),
+            "username": system_user,
+        })
     except Exception as e:
         return _internal_error(e)
 
@@ -3146,6 +3150,152 @@ def api_update_auto_set():
         })
     except Exception as e:
         return _internal_error(e)
+
+
+# -----------------------------------------------------------------------------
+# TLS CA certificate endpoints
+# -----------------------------------------------------------------------------
+
+@app.route("/ca-install")
+def ca_install_page():
+    """Serve the CA certificate installation page.
+
+    Served over HTTP so clients can bootstrap trust before HTTPS is available.
+    This is the only substantive page served on the HTTP listener; nginx
+    redirects all other HTTP paths to HTTPS.
+    """
+    return render_template("ca_install.html")
+
+
+@app.route("/ca.pem")
+def ca_download():
+    """Serve the CA root certificate in various formats.
+
+    Query parameters:
+        format=mobileconfig  Apple .mobileconfig profile (iOS/iPadOS)
+        format=der           DER-encoded .crt (Android)
+        qr=1                 SVG QR code pointing to the PEM download URL
+        (default)            PEM format
+
+    Served over HTTP (unauthenticated) so clients can install the CA before
+    they have access to the HTTPS app.
+    """
+    from universalchess.tls import get_ca_cert_path, generate_mobileconfig
+
+    ca_path = get_ca_cert_path(pathlib.Path(CONFIG_DIR))
+
+    if not ca_path.exists():
+        abort(404, description="CA certificate not found. TLS may not be configured.")
+
+    fmt = request.args.get("format", "")
+    qr = request.args.get("qr", "")
+
+    if qr == "1":
+        try:
+            import segno
+            download_url = f"http://{request.host}/ca.pem"
+            qr_code = segno.make(download_url)
+            buffer = io.BytesIO()
+            qr_code.save(buffer, kind="svg", scale=5, dark="#000000", light="#ffffff")
+            buffer.seek(0)
+            return Response(buffer.getvalue(), mimetype="image/svg+xml")
+        except ImportError:
+            abort(500, description="QR code generation requires the segno package.")
+
+    if fmt == "mobileconfig":
+        profile_data = generate_mobileconfig(ca_path)
+        return Response(
+            profile_data,
+            mimetype="application/x-apple-aspen-config",
+            headers={"Content-Disposition": "attachment; filename=UniversalChess-CA.mobileconfig"},
+        )
+
+    if fmt == "der":
+        from cryptography.x509 import load_pem_x509_certificate
+        from cryptography.hazmat.primitives.serialization import Encoding
+
+        cert_pem = ca_path.read_bytes()
+        cert = load_pem_x509_certificate(cert_pem)
+        cert_der = cert.public_bytes(Encoding.DER)
+        return Response(
+            cert_der,
+            mimetype="application/x-x509-ca-cert",
+            headers={"Content-Disposition": "attachment; filename=UniversalChess-CA.crt"},
+        )
+
+    return Response(
+        ca_path.read_bytes(),
+        mimetype="application/x-pem-file",
+        headers={"Content-Disposition": "attachment; filename=UniversalChess-CA.pem"},
+    )
+
+
+# -----------------------------------------------------------------------------
+# Password change endpoint
+# -----------------------------------------------------------------------------
+
+_MIN_PASSWORD_LENGTH = 4
+
+
+@app.route("/api/system/change-password", methods=["POST"])
+@requires_auth
+def api_change_password():
+    """Change the authenticated user's system password.
+
+    Requires HTTPS (checked via X-Forwarded-Proto from nginx) to prevent
+    credentials from being sent in cleartext. Accepts JSON body:
+
+        {"current_password": "...", "new_password": "..."}
+
+    Uses chpasswd(8) to update the Linux user password.
+    """
+    forwarded_proto = request.headers.get("X-Forwarded-Proto", "http")
+    if forwarded_proto != "https":
+        return jsonify({"error": "Password change requires HTTPS"}), 403
+
+    try:
+        data = request.get_json(force=True)
+    except Exception:
+        return jsonify({"error": "Invalid JSON body"}), 400
+
+    current_password = data.get("current_password", "")
+    new_password = data.get("new_password", "")
+
+    if not current_password:
+        return jsonify({"error": "Current password is required"}), 400
+    if not new_password:
+        return jsonify({"error": "New password is required"}), 400
+    if len(new_password) < _MIN_PASSWORD_LENGTH:
+        return jsonify({
+            "error": f"New password must be at least {_MIN_PASSWORD_LENGTH} characters"
+        }), 400
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Basic "):
+        return jsonify({"error": "Authentication required"}), 401
+
+    try:
+        decoded = base64.b64decode(auth_header[6:], validate=True).decode("utf-8")
+        username = decoded.split(":", 1)[0].strip()
+    except Exception:
+        return jsonify({"error": "Invalid credentials"}), 401
+
+    if not username:
+        return jsonify({"error": "Invalid credentials"}), 401
+
+    proc = subprocess.run(
+        ["sudo", "-n", "chpasswd"],
+        input=f"{username}:{new_password}",
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    if proc.returncode != 0:
+        app.logger.error("chpasswd failed for user %s: %s", username, proc.stderr.strip())
+        return jsonify({"error": "Failed to change password"}), 500
+
+    return jsonify({"success": True})
 
 
 # -----------------------------------------------------------------------------

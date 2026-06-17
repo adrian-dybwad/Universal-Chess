@@ -1,5 +1,5 @@
 import { useState, useEffect, type FormEvent } from 'react';
-import { encodeBasicAuth, storeCredentials, getStoredCredentials, clearCredentials } from '../utils/api';
+import { encodeBasicAuth, storeCredentials, getStoredCredentials, clearCredentials, buildApiUrl } from '../utils/api';
 import './ApiSettingsDialog.css'; // Reuse the same dialog styles
 
 interface LoginDialogProps {
@@ -18,10 +18,17 @@ export function LoginDialog({ isOpen, onClose, onSuccess, errorMessage }: LoginD
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState('');
+  const [systemUsername, setSystemUsername] = useState('');
+
+  useEffect(() => {
+    fetch(buildApiUrl('/api/system/info'))
+      .then(r => r.json())
+      .then(data => { if (data.username) setSystemUsername(data.username); })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
-      // Pre-fill username if we have stored credentials
       const stored = getStoredCredentials();
       if (stored) {
         try {
@@ -97,7 +104,7 @@ export function LoginDialog({ isOpen, onClose, onSuccess, errorMessage }: LoginD
                   setUsername(e.target.value);
                   setError('');
                 }}
-                placeholder="pi"
+                placeholder={systemUsername || 'username'}
                 autoComplete="username"
               />
             </div>
