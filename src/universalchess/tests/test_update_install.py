@@ -12,9 +12,16 @@ dependency-unaware and, on a missing dependency, leaves the package
 half-configured -- the failure mode that bricked an update when the mkcert /
 libnss3-tools dependencies were added.
 
+A third invariant guards privilege scoping: the service user cannot run apt or
+systemd-run as root directly (that would be unrestricted root). It escalates
+through a single pinned helper script that validates the .deb and runs the
+install in the transient unit. The Python side must invoke exactly that helper
+via sudo; the helper script itself must enforce the directory validation and
+carry the apt/systemd-run logic.
+
 Each test documents the specific regression it guards and how that regression
 would manifest if the install path reverted to running the installer inline,
-in a setsid child, or via bare dpkg.
+in a setsid child, via bare dpkg, or with a broad sudo grant.
 """
 
 from pathlib import Path
@@ -23,7 +30,16 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import universalchess.services.update_service as us
-from universalchess.services.update_service import UpdateService, INSTALL_UNIT
+from universalchess.services.update_service import (
+    UpdateService,
+    INSTALL_UNIT,
+    INSTALL_HELPER,
+)
+
+# The pinned root helper, located relative to the update_service module so the
+# test reads the same file that ships in the package
+# (src/universalchess/scripts/install-update -> /opt/.../scripts/install-update).
+HELPER_SCRIPT = Path(us.__file__).resolve().parent.parent / "scripts" / "install-update"
 
 
 @pytest.fixture
@@ -54,20 +70,23 @@ def _make_deb(tmp_path) -> Path:
     return deb
 
 
-class TestInstallLaunchesTransientUnit:
-    """install_update must launch dpkg via systemd-run, not inline."""
+class TestInstallLaunchesViaHelper:
+    """install_update must escalate through the pinned root helper, not by
+    running systemd-run/apt under a broad sudo grant."""
 
-    def test_launches_systemd_run_with_collect_and_unit(self, service, tmp_path):
-        """The install must be started with systemd-run, a fixed --unit name,
-        and --collect. Regression: if this reverts to inline `dpkg -i`, the
-        postinst's service restart kills dpkg mid-install and the package is
-        left half-configured (the exact "stuck on installing" bug).
+    def test_launches_pinned_helper_with_deb(self, service, tmp_path):
+        """The install must be launched as `sudo -n <helper> <deb>`. Regression:
+        if this reverts to `sudo systemd-run ...`, the deployment needs a
+        NOPASSWD grant on systemd-run (== unrestricted root) and the install
+        fails entirely on boards that only granted the pinned helper -- the
+        "cannot update" symptom. `-n` keeps a missing grant from hanging on a
+        password prompt.
         """
         deb = _make_deb(tmp_path)
 
         with patch.object(us.subprocess, "run") as mock_run:
             # is_installing() check (systemctl is-active) -> not active,
-            # then the systemd-run launch -> success.
+            # then the helper launch -> success.
             mock_run.side_effect = [
                 MagicMock(returncode=3, stdout="inactive", stderr=""),
                 MagicMock(returncode=0, stdout="", stderr=""),
@@ -76,66 +95,87 @@ class TestInstallLaunchesTransientUnit:
 
         assert ok is True
         launch_argv = mock_run.call_args_list[-1][0][0]
-        assert launch_argv[0] == "sudo"
-        assert "systemd-run" in launch_argv
-        assert "--collect" in launch_argv
-        assert f"--unit={INSTALL_UNIT}" in launch_argv
-        # The script path is the final argument and must be an existing file.
-        script_path = Path(launch_argv[-1])
-        assert script_path.exists()
+        assert launch_argv == ["sudo", "-n", INSTALL_HELPER, str(deb)]
 
-    def test_generated_script_installs_via_apt_with_dep_resolution(self, service, tmp_path):
-        """The install script must install the .deb through apt so the
-        package's dependencies are resolved in one transaction. Regression:
-        reverting to bare `dpkg -i` means a .deb whose deps changed (e.g. the
-        mkcert/libnss3-tools deps) unpacks but fails to configure, leaving the
-        package half-configured and the board bricked.
 
-        The forcing flags are asserted individually because each is load-
-        bearing: without -f apt refuses to proceed when a prior failed install
-        left the system with unmet dependencies; without --reinstall apt
-        no-ops (every nightly shares the dpkg version "2.0.0-nightly");
-        without --allow-downgrades a channel switch to a lower-sorting version
-        is refused.
+class TestHelperScriptContract:
+    """The shipped helper script carries the privileged install logic. These
+    read the actual file so the invariants cannot silently drift from the
+    Python that invokes it."""
+
+    @pytest.fixture(scope="class")
+    def helper_text(self):
+        """The helper must ship with the package; a missing file means the
+        sudoers grant points at nothing and self-update is impossible.
         """
-        deb = _make_deb(tmp_path)
-        script = service._build_install_script(deb)
+        assert HELPER_SCRIPT.exists(), f"helper script missing: {HELPER_SCRIPT}"
+        return HELPER_SCRIPT.read_text()
 
-        assert f'DEB="{deb}"' in script
-        assert "apt-get install" in script
-        assert "-f" in script.split("apt-get install", 1)[1].split("\n", 1)[0]
-        assert "--reinstall" in script
-        assert "--allow-downgrades" in script
-        # Bare dpkg -i is the dependency-unaware path that caused the bug.
-        assert "dpkg -i" not in script
-        # State must be cleared after a successful install so the board does
-        # not try to reinstall the same .deb on the next shutdown.
-        assert '"pending_deb"' in script
-        assert '"available_version"' in script
-
-    def test_script_does_not_prestop_or_restart_services(self, service, tmp_path):
-        """The script must NOT stop the board service before dpkg, and must
-        NOT restart services itself. Regression on pre-stop: stopping
-        universal-chess.service from inside it (the original bug) kills the
-        process before dpkg runs. Regression on manual restart: racing the
-        postinst restart causes double restarts / interrupted installs.
+    def test_runs_in_transient_unit(self, helper_text):
+        """The helper must launch the install in a transient systemd unit with
+        the fixed unit name and --collect. Regression: running the install in
+        the caller's cgroup lets the postinst's KillMode=control-group restart
+        kill it mid-install (the "stuck on installing" bug).
         """
-        deb = _make_deb(tmp_path)
-        script = service._build_install_script(deb)
+        assert "systemd-run" in helper_text
+        assert "--collect" in helper_text
+        assert "--unit=" in helper_text
+        # The unit name is bound to a shell variable; assert the value is
+        # present so it stays in lockstep with INSTALL_UNIT on the Python side.
+        assert INSTALL_UNIT in helper_text
 
-        assert "systemctl stop universal-chess.service" not in script
-        assert "systemctl restart" not in script
-
-    def test_script_does_not_use_sudo_internally(self, service, tmp_path):
-        """The unit runs as root, so the script must not call sudo. Regression:
-        sudo inside a non-interactive root unit can fail or hang waiting for a
-        tty, aborting the install.
+    def test_installs_via_apt_with_dep_resolution(self, helper_text):
+        """The helper must install through apt with the load-bearing forcing
+        flags. Regression: bare `dpkg -i` is dependency-unaware and leaves a
+        package whose deps changed (mkcert/libnss3-tools) half-configured;
+        without -f apt refuses after a prior failed install; without --reinstall
+        apt no-ops on the shared nightly version; without --allow-downgrades a
+        channel switch to a lower version is refused.
         """
-        deb = _make_deb(tmp_path)
-        script = service._build_install_script(deb)
-        # Check for sudo as an invoked command (start of a stripped line),
-        # not as a substring -- the temp deb path may itself contain "sudo".
-        assert not any(line.strip().startswith("sudo ") for line in script.splitlines())
+        assert "apt-get install" in helper_text
+        apt_line = helper_text.split("apt-get install", 1)[1].split("\n", 1)[0]
+        assert "-f" in apt_line
+        assert "--reinstall" in apt_line
+        assert "--allow-downgrades" in apt_line
+        assert "dpkg -i" not in helper_text
+
+    def test_validates_deb_lives_in_pending_dir(self, helper_text):
+        """The helper must refuse a .deb outside the managed pending-updates
+        directory. Regression: this directory check is the security boundary
+        for the NOPASSWD grant -- without it, the pinned sudo entry would let
+        the service user install an arbitrary file as root.
+        """
+        assert "/opt/universalchess/pending-updates" in helper_text
+        # Canonicalize before matching so a '..' traversal cannot escape.
+        assert "readlink -f" in helper_text
+        assert "refusing to install outside" in helper_text
+
+    def test_clears_pending_state_after_install(self, helper_text):
+        """The helper must clear the pending marker after a successful install.
+        Regression: leaving pending_deb set makes the board attempt to
+        reinstall the same .deb on the next boot/shutdown.
+        """
+        assert '"pending_deb"' in helper_text
+        assert '"available_version"' in helper_text
+
+    def test_does_not_prestop_or_restart_services(self, helper_text):
+        """The helper must NOT stop the board service before the install, and
+        must NOT restart services itself. Regression on pre-stop: stopping
+        universal-chess.service kills the caller before the install detaches.
+        Regression on manual restart: racing the postinst restart causes double
+        restarts / interrupted installs.
+        """
+        assert "systemctl stop universal-chess.service" not in helper_text
+        assert "systemctl restart" not in helper_text
+
+    def test_does_not_nest_sudo(self, helper_text):
+        """The helper already runs as root (invoked via sudo), so it must not
+        call sudo internally. Regression: sudo inside a non-interactive root
+        context can fail or hang waiting for a tty, aborting the install.
+        """
+        assert not any(
+            line.strip().startswith("sudo ") for line in helper_text.splitlines()
+        )
 
 
 class TestInstallGuards:
@@ -157,16 +197,17 @@ class TestInstallGuards:
         with patch.object(service, "is_installing", return_value=True):
             assert service.install_update(deb) is False
 
-    def test_returns_false_when_systemd_run_fails(self, service, tmp_path):
-        """If systemd-run itself fails (e.g. unit already exists), the launch
-        must report failure. Regression: returning success here makes the UI
-        claim an install started when nothing is running.
+    def test_returns_false_when_helper_fails(self, service, tmp_path):
+        """If the helper exits non-zero (e.g. missing sudo grant, unit already
+        exists, or validation rejected the .deb), the launch must report
+        failure. Regression: returning success here makes the UI claim an
+        install started when nothing is running.
         """
         deb = _make_deb(tmp_path)
         with patch.object(us.subprocess, "run") as mock_run:
             mock_run.side_effect = [
                 MagicMock(returncode=3, stdout="inactive", stderr=""),
-                MagicMock(returncode=1, stdout="", stderr="unit already exists"),
+                MagicMock(returncode=1, stdout="", stderr="sudo: a password is required"),
             ]
             assert service.install_update(deb) is False
 

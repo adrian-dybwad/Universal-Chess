@@ -16,9 +16,7 @@ The update state is stored in /opt/universalchess/update-state.json and includes
 """
 
 import json
-import os
 import subprocess
-import tempfile
 import threading
 import time
 from dataclasses import dataclass, field, asdict
@@ -53,6 +51,13 @@ VERSION_FILE = Path("/opt/universalchess/VERSION")
 # install while one is active.
 INSTALL_UNIT = "universal-chess-update"
 UPDATE_LOG = "/var/log/universal-chess-update.log"
+
+# Root helper that performs the privileged install. The service user is granted
+# passwordless sudo for exactly this path (sudoers drop-in installed by the
+# package postinst); it is the only command the service can run as root. The
+# helper validates the .deb, launches it into the transient unit named above,
+# and clears the pending state. See scripts/install-update for the rationale.
+INSTALL_HELPER = "/opt/universalchess/scripts/install-update"
 
 
 class UpdateChannel(Enum):
@@ -544,98 +549,34 @@ class UpdateService:
         self._notify(UpdateEvent.INSTALLING, "Installing update...")
         return self._launch_install(deb_path)
 
-    def _build_install_script(self, deb_path: Path) -> str:
-        """Build the shell script run by the transient install unit.
-
-        The script runs as root (the unit is started via sudo), so it does
-        not use sudo internally. It installs the .deb via apt -- which
-        resolves the package's dependencies in a single atomic transaction --
-        clears the pending state, and self-deletes. It does not restart
-        services; the package postinst does that as its final step, and the
-        script runs in a separate cgroup so that restart does not kill it
-        mid-install.
-
-        apt is used instead of `dpkg -i` so that a newly introduced
-        dependency (e.g. mkcert/libnss3-tools) is fetched and installed
-        automatically. `dpkg -i` is dependency-unaware: on a missing
-        dependency it unpacks the package but fails to configure it, leaving
-        it half-configured -- the failure mode that bricked an update.
-
-        Flags, with the reasons they are required (do not drop them):
-          -f/--fix-broken    repair a system left in a broken-dependency
-                             state by a previously interrupted/failed install
-                             (apt otherwise refuses to proceed with "unmet
-                             dependencies"); also pulls the package's missing
-                             dependencies in the same transaction.
-          --reinstall        every nightly build carries the same dpkg
-                             version ("2.0.0-nightly"), so without this apt
-                             sees the package as already installed and does
-                             nothing.
-          --allow-downgrades covers channel switches where the candidate
-                             version sorts lower than the installed one.
-        """
-        return f"""#!/bin/sh
-exec >>{UPDATE_LOG} 2>&1
-export DEBIAN_FRONTEND=noninteractive
-DEB="{deb_path}"
-echo "$(date): [update] install start: $DEB"
-
-# Refresh package lists so a newly added dependency can be resolved from the
-# repos. Tolerate failure (e.g. offline) and try with the cached lists.
-apt-get update || echo "$(date): [update] apt-get update failed (continuing)"
-
-if apt-get install -y -f --reinstall --allow-downgrades "$DEB"; then
-    echo "$(date): [update] install succeeded"
-else
-    echo "$(date): [update] install FAILED"
-    rm -f "$0"
-    exit 1
-fi
-
-python3 - <<'PYEOF' || true
-import json, pathlib
-p = pathlib.Path("{STATE_FILE}")
-try:
-    s = json.loads(p.read_text())
-    s["pending_deb"] = None
-    s["available_version"] = None
-    s["available_release_tag"] = None
-    p.write_text(json.dumps(s, indent=2))
-except Exception:
-    pass
-PYEOF
-
-echo "$(date): [update] complete"
-rm -f "$0"
-"""
-
     def _launch_install(self, deb_path: Path) -> bool:
-        """Launch the install in a transient systemd unit.
+        """Launch the install via the pinned root helper.
 
-        Returns True if the unit was started, False if systemd-run failed
-        (for example, because an install unit is already active).
+        The service user cannot run apt/systemd-run as root directly; it is
+        granted passwordless sudo for exactly one command -- the fixed helper
+        at ``INSTALL_HELPER`` -- which validates the .deb and runs the install
+        in the transient unit named ``INSTALL_UNIT``. Escalating through a
+        general-purpose tool would be equivalent to unrestricted root, so the
+        helper is the only thing the service may invoke privileged.
+
+        The helper returns as soon as the transient unit is launched, so this
+        call returns quickly and does NOT wait for the install to finish.
+
+        Returns True if the helper launched the unit, False otherwise (for
+        example, the sudo grant is missing or an install is already active).
         """
-        script = self._build_install_script(deb_path)
         try:
-            fd, script_name = tempfile.mkstemp(prefix="uc-update-", suffix=".sh")
-            os.close(fd)
-            script_path = Path(script_name)
-            script_path.write_text(script)
-            script_path.chmod(0o755)
-
-            log.info(f"[UpdateService] Launching install unit for {deb_path}")
+            log.info(f"[UpdateService] Launching install helper for {deb_path}")
             result = subprocess.run(
-                [
-                    "sudo", "systemd-run",
-                    "--collect",
-                    f"--unit={INSTALL_UNIT}",
-                    "/bin/sh", str(script_path),
-                ],
+                ["sudo", "-n", INSTALL_HELPER, str(deb_path)],
                 capture_output=True, text=True, timeout=30,
             )
 
             if result.returncode != 0:
-                log.error(f"[UpdateService] systemd-run failed: {result.stderr.strip()}")
+                log.error(
+                    f"[UpdateService] install helper failed (rc={result.returncode}): "
+                    f"{result.stderr.strip()}"
+                )
                 self._notify(UpdateEvent.INSTALL_FAILED, "Failed to launch installer")
                 return False
 

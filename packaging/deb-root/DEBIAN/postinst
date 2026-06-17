@@ -265,6 +265,22 @@ SUDOERS_FILE="/etc/sudoers.d/universal-chess-chpasswd"
 echo "$PRIMARY_USER ALL=(root) NOPASSWD: /usr/sbin/chpasswd" > "$SUDOERS_FILE"
 chmod 440 "$SUDOERS_FILE"
 
+# Allow the service user to self-update. The install needs root (apt +
+# systemd-run), but granting NOPASSWD on apt/systemd-run is equivalent to
+# unrestricted root. Instead, grant passwordless access to exactly one pinned
+# helper, which validates the .deb (must live in the managed pending-updates
+# directory) before installing. See scripts/install-update for details.
+echo -e "::: Configuring sudoers for self-update"
+INSTALL_HELPER="${DGTCM_PATH}/scripts/install-update"
+if [ -f "$INSTALL_HELPER" ]; then
+    chmod +x "$INSTALL_HELPER"
+    UPDATE_SUDOERS_FILE="/etc/sudoers.d/universal-chess-update"
+    echo "$PRIMARY_USER ALL=(root) NOPASSWD: $INSTALL_HELPER" > "$UPDATE_SUDOERS_FILE"
+    chmod 440 "$UPDATE_SUDOERS_FILE"
+else
+    echo -e "::: Warning: install-update helper not found at $INSTALL_HELPER"
+fi
+
 # Setup nginx HTTPS proxy for web service
 echo -e "::: Setting up nginx proxy with TLS"
     if [ -f "${DGTCM_PATH}/scripts/enable-web-proxy.sh" ]; then

@@ -1,0 +1,111 @@
+#!/bin/sh
+# Root helper that installs a Universal Chess update .deb.
+#
+# Invoked by the update service through a single pinned, passwordless sudo
+# grant installed by the package postinst:
+#
+#   <service-user> ALL=(root) NOPASSWD: /opt/universalchess/scripts/install-update
+#
+# Why a fixed helper instead of NOPASSWD on systemd-run/apt directly:
+# granting the service user passwordless sudo on a general-purpose tool
+# (systemd-run, apt) is equivalent to handing it unrestricted root. A pinned
+# helper narrows the privilege to exactly one operation -- "install a .deb that
+# we ourselves downloaded into the managed pending-updates directory" -- and
+# refuses anything else. The directory check below is the security boundary for
+# the grant; do not loosen it.
+#
+# Why the install runs in a transient systemd unit: the package postinst
+# restarts universal-chess.service and universal-chess-web.service, both of
+# which use KillMode=control-group. Anything left in the triggering service's
+# cgroup (even a setsid-detached child) is killed mid-install. systemd-run
+# places the work in its own cgroup owned by PID 1, so it survives the restart.
+# A fixed unit name also gives cross-process mutual exclusion: systemd-run
+# refuses to start a second install while one is active.
+set -eu
+
+PENDING_DIR="/opt/universalchess/pending-updates"
+STATE_FILE="/opt/universalchess/update-state.json"
+LOG="/var/log/universal-chess-update.log"
+UNIT="universal-chess-update"
+SELF="/opt/universalchess/scripts/install-update"
+
+# Parse mode. "--run" means we have already been re-exec'd inside the transient
+# unit (as root, by systemd) and should perform the actual install.
+if [ "${1:-}" = "--run" ]; then
+    MODE="run"
+    DEB="${2:-}"
+else
+    MODE="launch"
+    DEB="${1:-}"
+fi
+
+if [ -z "$DEB" ]; then
+    echo "usage: install-update [--run] <deb-path>" >&2
+    exit 2
+fi
+
+# Security boundary: canonicalize the path (resolving any '..') and require it
+# to live directly inside the managed pending-updates directory. Validated in
+# BOTH modes so a caller cannot pass "--run <arbitrary path>" to escape it.
+REAL_DEB="$(readlink -f -- "$DEB" 2>/dev/null || true)"
+case "$REAL_DEB" in
+    "$PENDING_DIR"/*.deb) : ;;
+    *)
+        echo "refusing to install outside $PENDING_DIR: $DEB" >&2
+        exit 2
+        ;;
+esac
+if [ ! -f "$REAL_DEB" ]; then
+    echo "deb not found: $REAL_DEB" >&2
+    exit 2
+fi
+
+if [ "$MODE" = "launch" ]; then
+    # Re-exec inside a transient unit so the install survives the service
+    # restart performed by the postinst. Already root here, so no nested sudo.
+    exec systemd-run --collect --unit="$UNIT" "$SELF" --run "$REAL_DEB"
+fi
+
+# --- MODE=run: the actual install, inside the transient unit, as root ---
+exec >>"$LOG" 2>&1
+export DEBIAN_FRONTEND=noninteractive
+echo "$(date): [update] install start: $REAL_DEB"
+
+# Refresh package lists so a newly added dependency can be resolved from the
+# repos. Tolerate failure (e.g. offline) and fall back to cached lists.
+apt-get update || echo "$(date): [update] apt-get update failed (continuing)"
+
+# apt resolves dependencies in a single atomic transaction. Flags (do not drop):
+#   -f/--fix-broken    repair a system left half-configured by a previously
+#                      interrupted install, and pull the package's missing
+#                      dependencies in the same transaction. A direct dpkg
+#                      install is dependency-unaware and leaves the package
+#                      half-configured on a missing dependency -- the failure
+#                      that bricked an earlier update.
+#   --reinstall        every nightly carries the same dpkg version
+#                      ("2.0.0-nightly"); without this apt sees it as already
+#                      installed and does nothing.
+#   --allow-downgrades covers channel switches where the candidate sorts lower
+#                      than the installed version.
+if apt-get install -y -f --reinstall --allow-downgrades "$REAL_DEB"; then
+    echo "$(date): [update] install succeeded"
+else
+    echo "$(date): [update] install FAILED"
+    exit 1
+fi
+
+# Clear the pending marker so the board does not attempt a reinstall on boot.
+python3 - "$STATE_FILE" <<'PYEOF' || true
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+try:
+    s = json.loads(p.read_text())
+    s["pending_deb"] = None
+    s["available_version"] = None
+    s["available_release_tag"] = None
+    p.write_text(json.dumps(s, indent=2))
+except Exception:
+    pass
+PYEOF
+
+echo "$(date): [update] complete"
