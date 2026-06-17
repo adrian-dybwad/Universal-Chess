@@ -103,7 +103,7 @@ class TestHelperScriptContract:
     read the actual file so the invariants cannot silently drift from the
     Python that invokes it."""
 
-    @pytest.fixture(scope="class")
+    @pytest.fixture
     def helper_text(self):
         """The helper must ship with the package; a missing file means the
         sudoers grant points at nothing and self-update is impossible.

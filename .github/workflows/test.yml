@@ -42,6 +42,9 @@ jobs:
           # Web-app deps so the Flask web-security tests run (otherwise they
           # importorskip and the regressions they guard go unchecked in CI).
           pip install flask werkzeug sqlalchemy Pillow
+          # TLS/CA endpoints use cryptography at runtime (PEM->DER for the iOS
+          # mobileconfig); install it so the tls and ca-endpoint tests run.
+          pip install cryptography
           # Install mock packages for RPi hardware (tests mock these anyway)
           pip install fake-rpi || true
       
