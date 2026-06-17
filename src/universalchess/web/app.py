@@ -3060,14 +3060,18 @@ def api_update_install():
         service = get_update_service()
         
         if service.install_pending_update():
+            # The install runs asynchronously in a transient systemd unit, so
+            # success here means it was *launched*, not completed. The board
+            # and web service are restarted by the package postinst when the
+            # install finishes; the client should expect a brief disconnect.
             return jsonify({
                 "success": True,
-                "message": "Update installed. Service will restart.",
+                "message": "Update installation started. The board will restart when it completes.",
             })
         else:
             return jsonify({
                 "success": False,
-                "error": "Installation failed",
+                "error": "Could not start the update installation",
             }), 500
     except Exception as e:
         return _internal_error(e)

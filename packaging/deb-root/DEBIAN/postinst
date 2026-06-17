@@ -225,6 +225,29 @@ echo -e "::: Setup services"
     # The main service disables this on startup and re-enables on non-shutdown exit
     systemctl enable universal-chess-stop-controller.service
 
+    # Clear any pending-update marker BEFORE starting services. This install
+    # is that pending update, so the freshly started web/board services must
+    # not load a stale "update pending" from update-state.json. Doing it here
+    # (rather than only in the updater's install script, which runs after this
+    # postinst completes) closes a race where the restarted web service caches
+    # the stale pending value in memory.
+    STATE_FILE="${DGTCM_PATH}/update-state.json"
+    if [ -f "$STATE_FILE" ]; then
+        echo -e "::: Clearing pending update state"
+        python3 - "$STATE_FILE" <<'PYEOF' || true
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1])
+try:
+    s = json.loads(p.read_text())
+    s["pending_deb"] = None
+    s["available_version"] = None
+    s["available_release_tag"] = None
+    p.write_text(json.dumps(s, indent=2))
+except Exception:
+    pass
+PYEOF
+    fi
+
     echo -e "::: Starting services"
     systemctl start universal-chess-web.service || true
     systemctl start universal-chess.service || true

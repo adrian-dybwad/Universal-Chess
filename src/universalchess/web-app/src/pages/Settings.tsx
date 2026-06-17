@@ -1125,6 +1125,10 @@ interface UpdateStatus {
 function UpdateManager({ catalog }: { catalog: MenuCatalog | null }) {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Informational (non-error) message, e.g. an async install that was started.
+  // Kept separate from `error` so it is not rendered as a failure and is not
+  // wiped by the periodic status poll.
+  const [notice, setNotice] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [installing, setInstalling] = useState(false);
@@ -1210,6 +1214,7 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog | null }) {
     
     setInstalling(true);
     setError(null);
+    setNotice(null);
     try {
       const response = await apiFetch('/api/updates/install', { method: 'POST', requiresAuth: true });
       if (response.status === 401) {
@@ -1220,8 +1225,10 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog | null }) {
         const data = await response.json();
         setError(data.error || 'Install failed');
       } else {
-        // Service will restart - show message
-        setError('Update installed. Service restarting...');
+        // The install runs asynchronously; the board and web interface
+        // restart when it finishes, so this page may briefly disconnect.
+        // This is informational, not an error.
+        setNotice('Update installation started. The board will restart when it completes; this page may briefly disconnect.');
       }
     } catch {
       setError('Network error');
@@ -1323,6 +1330,12 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog | null }) {
             >
               {downloading ? 'Downloading...' : 'Download Update'}
             </Button>
+          </Card>
+        )}
+
+        {notice && (
+          <Card variant="primary" className="mb-4">
+            {notice}
           </Card>
         )}
 

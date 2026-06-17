@@ -1,13 +1,20 @@
 """Tests for the update install architecture.
 
 These guard the install path that was the source of the "stuck on installing"
-bug. The core invariant: dpkg must run in a transient systemd unit, never
-inline in a service cgroup, because the package postinst restarts both
-services (KillMode=control-group) and would otherwise kill dpkg mid-install.
+bug. The core invariant: the install command must run in a transient systemd
+unit, never inline in a service cgroup, because the package postinst restarts
+both services (KillMode=control-group) and would otherwise kill the installer
+mid-install.
+
+A second invariant guards dependency handling: the install must go through
+apt (which resolves dependencies atomically), not `dpkg -i`. `dpkg -i` is
+dependency-unaware and, on a missing dependency, leaves the package
+half-configured -- the failure mode that bricked an update when the mkcert /
+libnss3-tools dependencies were added.
 
 Each test documents the specific regression it guards and how that regression
-would manifest if the install path reverted to running dpkg inline or in a
-setsid child.
+would manifest if the install path reverted to running the installer inline,
+in a setsid child, or via bare dpkg.
 """
 
 from pathlib import Path
@@ -77,18 +84,30 @@ class TestInstallLaunchesTransientUnit:
         script_path = Path(launch_argv[-1])
         assert script_path.exists()
 
-    def test_generated_script_runs_dpkg_and_repairs_deps(self, service, tmp_path):
-        """The install script must run dpkg -i and fall back to
-        `apt-get -f install` + retry on failure. Regression: dropping the
-        dependency-repair step means a .deb whose deps changed (e.g. the new
-        mkcert/libnss3-tools deps) fails to install with no recovery.
+    def test_generated_script_installs_via_apt_with_dep_resolution(self, service, tmp_path):
+        """The install script must install the .deb through apt so the
+        package's dependencies are resolved in one transaction. Regression:
+        reverting to bare `dpkg -i` means a .deb whose deps changed (e.g. the
+        mkcert/libnss3-tools deps) unpacks but fails to configure, leaving the
+        package half-configured and the board bricked.
+
+        The forcing flags are asserted individually because each is load-
+        bearing: without -f apt refuses to proceed when a prior failed install
+        left the system with unmet dependencies; without --reinstall apt
+        no-ops (every nightly shares the dpkg version "2.0.0-nightly");
+        without --allow-downgrades a channel switch to a lower-sorting version
+        is refused.
         """
         deb = _make_deb(tmp_path)
         script = service._build_install_script(deb)
 
         assert f'DEB="{deb}"' in script
-        assert "dpkg -i" in script
-        assert "apt-get install -f -y" in script
+        assert "apt-get install" in script
+        assert "-f" in script.split("apt-get install", 1)[1].split("\n", 1)[0]
+        assert "--reinstall" in script
+        assert "--allow-downgrades" in script
+        # Bare dpkg -i is the dependency-unaware path that caused the bug.
+        assert "dpkg -i" not in script
         # State must be cleared after a successful install so the board does
         # not try to reinstall the same .deb on the next shutdown.
         assert '"pending_deb"' in script

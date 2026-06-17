@@ -548,27 +548,48 @@ class UpdateService:
         """Build the shell script run by the transient install unit.
 
         The script runs as root (the unit is started via sudo), so it does
-        not use sudo internally. It installs the .deb, repairs dependencies
-        on failure, clears the pending state, and self-deletes. It does not
-        restart services -- the package postinst does that as its final
-        step, and the script runs in a separate cgroup so that restart does
-        not kill it mid-install.
+        not use sudo internally. It installs the .deb via apt -- which
+        resolves the package's dependencies in a single atomic transaction --
+        clears the pending state, and self-deletes. It does not restart
+        services; the package postinst does that as its final step, and the
+        script runs in a separate cgroup so that restart does not kill it
+        mid-install.
+
+        apt is used instead of `dpkg -i` so that a newly introduced
+        dependency (e.g. mkcert/libnss3-tools) is fetched and installed
+        automatically. `dpkg -i` is dependency-unaware: on a missing
+        dependency it unpacks the package but fails to configure it, leaving
+        it half-configured -- the failure mode that bricked an update.
+
+        Flags, with the reasons they are required (do not drop them):
+          -f/--fix-broken    repair a system left in a broken-dependency
+                             state by a previously interrupted/failed install
+                             (apt otherwise refuses to proceed with "unmet
+                             dependencies"); also pulls the package's missing
+                             dependencies in the same transaction.
+          --reinstall        every nightly build carries the same dpkg
+                             version ("2.0.0-nightly"), so without this apt
+                             sees the package as already installed and does
+                             nothing.
+          --allow-downgrades covers channel switches where the candidate
+                             version sorts lower than the installed one.
         """
         return f"""#!/bin/sh
 exec >>{UPDATE_LOG} 2>&1
+export DEBIAN_FRONTEND=noninteractive
 DEB="{deb_path}"
 echo "$(date): [update] install start: $DEB"
 
-if dpkg -i "$DEB"; then
-    echo "$(date): [update] dpkg succeeded"
+# Refresh package lists so a newly added dependency can be resolved from the
+# repos. Tolerate failure (e.g. offline) and try with the cached lists.
+apt-get update || echo "$(date): [update] apt-get update failed (continuing)"
+
+if apt-get install -y -f --reinstall --allow-downgrades "$DEB"; then
+    echo "$(date): [update] install succeeded"
 else
-    echo "$(date): [update] dpkg failed; running apt-get -f install"
-    apt-get install -f -y || true
-    if ! dpkg -i "$DEB"; then
-        echo "$(date): [update] install FAILED after retry"
-        rm -f "$0"
-        exit 1
-    fi
+    echo "$(date): [update] install FAILED"
+    rm -f "$0"
+    exit 1
 fi
 
 python3 - <<'PYEOF' || true

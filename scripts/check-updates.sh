@@ -166,16 +166,16 @@ main() {
         exit 0
     fi
     
-    # Install
+    # Install via apt so dependencies are resolved in one atomic transaction.
+    # -f repairs a broken-dependency state from a prior failed install;
+    # --reinstall forces the install even though every nightly shares the dpkg
+    # version "2.0.0-nightly"; --allow-downgrades covers channel switches.
     echo "Installing..."
-    if ! sudo dpkg -i "$deb_path"; then
-        echo "Fixing dependencies..."
-        sudo apt-get install -f -y
-        if ! sudo dpkg -i "$deb_path"; then
-            echo "ERROR: Installation failed" >&2
-            rm -rf "$tmp_dir"
-            exit 2
-        fi
+    sudo apt-get update || echo "apt-get update failed (continuing)"
+    if ! sudo apt-get install -y -f --reinstall --allow-downgrades "$deb_path"; then
+        echo "ERROR: Installation failed" >&2
+        rm -rf "$tmp_dir"
+        exit 2
     fi
     
     rm -rf "$tmp_dir"
