@@ -752,6 +752,7 @@ def eventsThread(keycallback, fieldcallback, tout):
     inactivity_countdown_shown = False  # Track if we're showing the countdown
     inactivity_countdown_splash = None
     inactivity_last_displayed_seconds = None  # Track last displayed value to avoid redundant updates
+    suppress_key_up = None  # After a long press, suppress the matching key-up value
     
     def get_current_timeout():
         """Get current timeout from settings, returning effective value.
@@ -882,6 +883,10 @@ def eventsThread(keycallback, fieldcallback, tout):
                         if not long_triggered and (time.monotonic() - long_press_start) >= 1.0:
                             beep(SOUND_GENERAL, event_type='key_press')
                             long_triggered = True
+                            # Mark the matching key-up for suppression so it can
+                            # never be dispatched as a short press, regardless of
+                            # where it gets dequeued.
+                            suppress_key_up = long_press_key.value - 0x80
                             if is_play:
                                 # PLAY long-press: run the shutdown countdown
                                 log.info('[board.events] Long press PLAY detected, starting shutdown countdown')
@@ -889,6 +894,11 @@ def eventsThread(keycallback, fieldcallback, tout):
                                     # Send LONG_PLAY to callback - main.py handles cleanup_and_exit
                                     log.info('[board.events] Countdown complete, sending LONG_PLAY to callback')
                                     keycallback(Key.LONG_PLAY)
+                                    # Exit the events thread immediately to prevent
+                                    # the queued PLAY key-up from being dispatched as
+                                    # a normal short-press (which would trigger
+                                    # _suspend_game and overwrite the shutdown splash).
+                                    return
                                 else:
                                     log.info('[board.events] Shutdown cancelled (button released)')
                                 key_pressed = None
@@ -931,31 +941,39 @@ def eventsThread(keycallback, fieldcallback, tout):
             time.sleep(0.05)
             
             if key_pressed is not None:
-                # Re-read timeout from settings in case it changed
-                tout, timeout_disabled = get_current_timeout()
-                to = time.monotonic() + tout
-                # Cancel inactivity countdown if shown - consume the key (don't pass to callback)
-                if inactivity_countdown_shown and inactivity_countdown_splash is not None:
-                    log.info('[board.events] Inactivity countdown cancelled by key press (key consumed)')
-                    try:
-                        future = display_manager.remove_widget(inactivity_countdown_splash)
-                        if future:
-                            future.result(timeout=5.0)
-                            log.info('[board.events] Inactivity countdown removed and display updated')
-                    except Exception as e:
-                        log.error(f'[board.events] Error removing inactivity countdown: {e}')
-                    inactivity_countdown_shown = False
-                    inactivity_countdown_splash = None
-                    inactivity_last_displayed_seconds = None
+                # Suppress stale key-up events from a completed long press.
+                # This prevents the physical release after any long-press
+                # gesture from being dispatched as a short press.
+                if suppress_key_up is not None and key_pressed.value == suppress_key_up:
+                    log.debug(f"[board.events] Suppressed stale key-up after long press: {key_pressed}")
+                    suppress_key_up = None
                 else:
-                    # Only forward key to callback if it wasn't used to cancel countdown
-                    log.info(f"[board.events] btn{key_pressed} pressed, sending to keycallback")
-                    try:
-                        keycallback(key_pressed)
-                    except Exception as e:
-                        log.error(f"[board.events] keycallback error: {sys.exc_info()[1]}")
-                        import traceback
-                        traceback.print_exc()
+                    suppress_key_up = None
+                    # Re-read timeout from settings in case it changed
+                    tout, timeout_disabled = get_current_timeout()
+                    to = time.monotonic() + tout
+                    # Cancel inactivity countdown if shown - consume the key (don't pass to callback)
+                    if inactivity_countdown_shown and inactivity_countdown_splash is not None:
+                        log.info('[board.events] Inactivity countdown cancelled by key press (key consumed)')
+                        try:
+                            future = display_manager.remove_widget(inactivity_countdown_splash)
+                            if future:
+                                future.result(timeout=5.0)
+                                log.info('[board.events] Inactivity countdown removed and display updated')
+                        except Exception as e:
+                            log.error(f'[board.events] Error removing inactivity countdown: {e}')
+                        inactivity_countdown_shown = False
+                        inactivity_countdown_splash = None
+                        inactivity_last_displayed_seconds = None
+                    else:
+                        # Only forward key to callback if it wasn't used to cancel countdown
+                        log.info(f"[board.events] btn{key_pressed} pressed, sending to keycallback")
+                        try:
+                            keycallback(key_pressed)
+                        except Exception as e:
+                            log.error(f"[board.events] keycallback error: {sys.exc_info()[1]}")
+                            import traceback
+                            traceback.print_exc()
             
             # Check if we should show/update inactivity countdown (skip if timeout disabled)
             time_remaining = to - time.monotonic()
