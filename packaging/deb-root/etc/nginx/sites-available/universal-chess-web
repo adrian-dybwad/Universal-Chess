@@ -38,10 +38,11 @@ server {
     listen 80;
     server_name _;
 
-    # CA certificate install page and download -- served over HTTP
-    # so clients can get the CA before trusting HTTPS.
+    # Root over HTTP serves the CA install page (not the app, whose JS/CSS
+    # bundle is HTTPS-only and would 301 to HTTPS and fail -- producing a
+    # blank screen). Clients land here to bootstrap trust before HTTPS.
     location = / {
-        proxy_pass http://127.0.0.1:5000;
+        proxy_pass http://127.0.0.1:5000/ca-install;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
