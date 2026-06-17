@@ -222,3 +222,41 @@ class TestInstallLocalDeb:
         passing a bad path to systemd-run fails silently in the background.
         """
         assert service.install_local_deb("/does/not/exist.deb") is False
+
+
+class TestNightlyVersionComparison:
+    """_is_newer must treat an installed nightly (recorded by its release tag)
+    as current, so "check for updates" does not perpetually report an update.
+
+    The bug these guard: the build wrote the dpkg version "2.0.0-nightly" into
+    the VERSION file instead of the release tag. Because that string is not a
+    "nightly-..." tag, every check reported an update available even when the
+    board was running the latest nightly. The fix records the release tag in
+    VERSION; these tests pin the comparison contract that fix depends on.
+    """
+
+    def test_same_nightly_tag_is_not_newer(self, service):
+        """Identical nightly tags must compare as not-newer, i.e. up to date.
+        Regression: if this returns True the UI always shows an update for the
+        build that is already installed.
+        """
+        tag = "nightly-2026-06-17-f0e809a"
+        assert service._is_newer(tag, tag) is False
+
+    def test_later_nightly_date_is_newer(self, service):
+        """A later-dated nightly tag must compare as newer. Regression: if this
+        returns False, real nightly updates are never offered.
+        """
+        assert service._is_newer(
+            "nightly-2026-06-18-aaaaaaa", "nightly-2026-06-17-f0e809a"
+        ) is True
+
+    def test_dpkg_version_string_breaks_nightly_comparison(self, service):
+        """Documents WHY VERSION must hold the release tag, not the dpkg
+        version: with the dpkg-style "2.0.0-nightly" as the current version,
+        any nightly tag is reported as newer (the symptom of the original
+        bug). This pins the rationale so the build-side fix is not reverted.
+        """
+        assert service._is_newer(
+            "nightly-2026-06-17-f0e809a", "2.0.0-nightly"
+        ) is True

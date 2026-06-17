@@ -179,9 +179,15 @@ function removeDev {
 }
 
 function createVersionFile {
-    # Create VERSION file for update checker to read
-    echo "::: Creating VERSION file"
-    echo "${VERSION}" > "${STAGE_DIR}${INSTALLDIR}/VERSION"
+    # Create VERSION file for the update checker to read. Prefer the release
+    # tag (e.g. "nightly-2026-06-17-abc1234") when the build provides one via
+    # RELEASE_TAG, because the checker compares the installed build against
+    # GitHub release tags. Without this, every nightly carries the dpkg
+    # version "2.0.0-nightly", which never matches a "nightly-..." tag, so the
+    # checker always reports an update as available even when up to date.
+    local version_string="${RELEASE_TAG:-${VERSION}}"
+    echo "::: Creating VERSION file (${version_string})"
+    echo "${version_string}" > "${STAGE_DIR}${INSTALLDIR}/VERSION"
 }
 
 function buildReactApp {
