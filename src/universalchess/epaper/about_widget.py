@@ -63,7 +63,8 @@ class AboutWidget(Widget):
         """Lazy-load the font loader."""
         if self._font_loader is None:
             from universalchess.resources import ResourceLoader
-            self._font_loader = ResourceLoader("/opt/universalchess/resources", "/home/pi/resources")
+            from universalchess.paths import RESOURCES_DIR, USER_RESOURCES_DIR
+            self._font_loader = ResourceLoader(RESOURCES_DIR, USER_RESOURCES_DIR)
         return self._font_loader
     
     def render(self, sprite: Image.Image) -> None:

@@ -79,7 +79,7 @@
 # ./run.sh universalchess.main --device-name "MILLENNIUM CHESS" --shadow-target "Chessnut Air" --relay
 # ./run.sh universalchess.main --device-name "MILLENNIUM CHESS" --shadow-target "MILLENNIUM CHESS" --relay
 
-# Always run relative to the repo (not ~ or /home/pi)
+# Always run relative to the repo (not ~ or a hardcoded home)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 

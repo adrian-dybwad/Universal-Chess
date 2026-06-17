@@ -6,17 +6,17 @@ This script sets up the required resource paths so that get_resource_path()
 can find the font files when running tests.
 
 USAGE:
-    # Navigate to opt folder
-    cd /home/pi/DGTCentaurMods/DGTCentaurMods/opt
+    # Navigate to the project source directory
+    cd /opt/universalchess
     
     # Activate virtual environment
-    source DGTCentaurMods/.venv/bin/activate
+    source .venv/bin/activate
     
     # Run this script to set up resources
-    python3 DGTCentaurMods/tests/setup_resources.py
+    python3 -m universalchess.tests.setup_resources
     
     # Then run your tests
-    python3 DGTCentaurMods/tests/test_promotion_hardware.py --hardware
+    python3 -m universalchess.tests.test_promotion_hardware --hardware
 """
 
 import os
@@ -27,7 +27,7 @@ def setup_resources():
     """Set up resource paths for get_resource_path()"""
     print("Setting up resource paths...")
     
-    # Current working directory should be /home/pi/DGTCentaurMods/DGTCentaurMods/opt
+    # Current working directory should be the project root
     current_dir = os.getcwd()
     print(f"Current directory: {current_dir}")
     
@@ -41,8 +41,9 @@ def setup_resources():
         return False
     
     # Target directories that get_resource_path() looks for
+    from pathlib import Path
     target_dirs = [
-        "/home/pi/resources",
+        os.path.join(str(Path.home()), "resources"),
         "/opt/universalchess/resources"
     ]
     
@@ -86,8 +87,9 @@ def verify_resources():
     print("\nVerifying resources...")
     
     required_files = ["Font.ttc"]
+    from pathlib import Path
     target_dirs = [
-        "/home/pi/resources",
+        os.path.join(str(Path.home()), "resources"),
         "/opt/universalchess/resources"
     ]
     
@@ -127,9 +129,10 @@ def main():
     else:
         print("\n✗ Some resources are missing")
         print("\nManual setup required:")
-        print("  sudo mkdir -p /home/pi/resources /opt/universalchess/resources")
-        print("  sudo cp -r DGTCentaurMods/resources/* /home/pi/resources/")
-        print("  sudo cp -r DGTCentaurMods/resources/* /opt/universalchess/resources/")
+        home = str(Path.home())
+        print(f"  sudo mkdir -p {home}/resources /opt/universalchess/resources")
+        print(f"  sudo cp -r resources/* {home}/resources/")
+        print("  sudo cp -r resources/* /opt/universalchess/resources/")
         return 1
 
 if __name__ == "__main__":

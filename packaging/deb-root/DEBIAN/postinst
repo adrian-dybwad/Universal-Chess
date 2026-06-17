@@ -2,6 +2,27 @@
 
 set -euo pipefail
 
+# Detect the primary non-root user. On Raspberry Pi OS this is the user
+# created during first-boot (historically "pi", but modern installs let
+# the user choose any name). We look for UID 1000 first; fall back to
+# SUDO_USER if available; last resort is "pi" for compatibility.
+detect_primary_user() {
+    local uid1000
+    uid1000=$(getent passwd 1000 2>/dev/null | cut -d: -f1)
+    if [ -n "${uid1000:-}" ]; then
+        echo "$uid1000"
+        return
+    fi
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+        echo "$SUDO_USER"
+        return
+    fi
+    echo "pi"
+}
+
+PRIMARY_USER=$(detect_primary_user)
+PRIMARY_HOME=$(eval echo "~$PRIMARY_USER")
+
 # Configure needrestart to suppress all blue screen prompts
 # This prevents interactive dialogs during package updates/kernel upgrades
 if [ -f /etc/needrestart/needrestart.conf ]; then
@@ -50,8 +71,8 @@ DATABASE="${DGTCM_PATH}/db/centaur.db"
 CONFIGINI="${DGTCM_PATH}/config/centaur.ini"
 BTMAIN="/etc/bluetooth/main.conf"
 DBUSSERVICE="/etc/systemd/system/dbus-org.bluez.service"
-CENTAUR="/home/pi/centaur/"
-CENTAUR_ENGINE="/home/pi/centaur/engines"
+CENTAUR="${PRIMARY_HOME}/centaur/"
+CENTAUR_ENGINE="${PRIMARY_HOME}/centaur/engines"
 STOCKFISH="stockfish"
 VENV_DIR="$DGTCM_PATH/.venv"
 REQ_VENV="$DGTCM_PATH/setup/requirements.txt"
@@ -91,7 +112,7 @@ then
     # raspi-config command removed to avoid re-enabling SPI0
   
     # Ensure the user has SPI permissions
-    adduser pi spi || true
+    adduser "$PRIMARY_USER" spi || true
 
     echo "::: Checking serial port. "
     # Enable UART (idempotent)
@@ -165,17 +186,25 @@ ln -sfnT "$DGTCM_PATH" "$TARGET_PATH"
 # sudo chmod 777 /etc/authbind/byport/80
 
 # Allow memory access for epaper driver
-sudo usermod -a -G gpio pi
-sudo usermod -a -G kmem pi
+sudo usermod -a -G gpio "$PRIMARY_USER"
+sudo usermod -a -G kmem "$PRIMARY_USER"
 
 # Allow Bluetooth service advertising (required for advertise_service)
-sudo usermod -a -G bluetooth pi
+sudo usermod -a -G bluetooth "$PRIMARY_USER"
 
 # Allow reading Bluetooth HID keyboard events from /dev/input/event* (the
 # devices BlueZ creates for a paired keyboard are owned root:input). The
-# service runs as 'pi', so it must be in the 'input' group to read them.
-sudo usermod -a -G input pi
+# service runs as the primary user, so it must be in the 'input' group.
+sudo usermod -a -G input "$PRIMARY_USER"
 
+
+##### Patch systemd services and tmpfiles to use the detected primary user.
+echo -e "::: Configuring services for user: $PRIMARY_USER"
+    sed -i "s/^User=pi$/User=$PRIMARY_USER/" /etc/systemd/system/universal-chess.service 2>/dev/null || true
+    sed -i "s/^User=pi$/User=$PRIMARY_USER/" /etc/systemd/system/universal-chess-web.service 2>/dev/null || true
+    if [ -f /usr/lib/tmpfiles.d/universal-chess.conf ]; then
+        sed -i "s/ pi pi / $PRIMARY_USER $PRIMARY_USER /" /usr/lib/tmpfiles.d/universal-chess.conf
+    fi
 
 ##### Enable systemd services.
 echo -e "::: Setup services"
@@ -268,7 +297,7 @@ echo -e "::: Creating required directories"
 mkdir -p "${DGTCM_PATH}/tmp"
 mkdir -p "${DGTCM_PATH}/db"
 mkdir -p "${DGTCM_PATH}/config"
-chown -R pi:pi "${DGTCM_PATH}" 2>/dev/null || true
+chown -R "$PRIMARY_USER:$PRIMARY_USER" "${DGTCM_PATH}" 2>/dev/null || true
 
 # This ensures we get the correct architecture binary automatically
 echo -e "::: Setting up Stockfish engine"
@@ -302,7 +331,7 @@ fi
 if [ -n "${STOCKFISH_PATH}" ]; then
     echo -e "::: Found system Stockfish at ${STOCKFISH_PATH}"
     ln -sfn "${STOCKFISH_PATH}" "${ENGINES_DIR}/${STOCKFISH}"
-    chown -h pi:pi "${ENGINES_DIR}/${STOCKFISH}" 2>/dev/null || true
+    chown -h "$PRIMARY_USER:$PRIMARY_USER" "${ENGINES_DIR}/${STOCKFISH}" 2>/dev/null || true
     echo -e "::: Created symlink ${ENGINES_DIR}/${STOCKFISH} -> ${STOCKFISH_PATH}"
 else
     echo -e "::: WARNING: Stockfish not found on PATH. Install it with: sudo apt-get install -y stockfish"
@@ -341,9 +370,9 @@ fi
 
 # Setting final permissions
 function setPermissions {
-    chown -R pi:pi ${DGTCM_PATH}
+    chown -R "$PRIMARY_USER:$PRIMARY_USER" ${DGTCM_PATH}
     if [[ -d "${CENTAUR}" ]]; then
-        chown -R pi:root ${CENTAUR}
+        chown -R "$PRIMARY_USER:root" ${CENTAUR}
         # Ensure centaur executable has execute permissions (Trixie compatibility)
         if [[ -f "${CENTAUR}centaur" ]]; then
             chmod +x "${CENTAUR}centaur"
@@ -361,7 +390,7 @@ update_hostname
 
 #Old versions special handling tasks
 function cleanOldBeta {
-    rm -rf /home/pi/DGTCentaurMods
+    rm -rf "${PRIMARY_HOME}/DGTCentaurMods"
 }
 
 

@@ -6,8 +6,8 @@ Tests verify that the compute_changed_region function correctly identifies
 the row range that changed between two display buffers.
 
 USAGE:
-  cd /home/pi/DGTCentaurMods/DGTCentaurMods/opt
-  python3 -m pytest DGTCentaurMods/tests/test_epaper_diff.py -v
+  cd /opt/universalchess
+  python3 -m pytest universalchess/tests/test_epaper_diff.py -v
 """
 
 import unittest

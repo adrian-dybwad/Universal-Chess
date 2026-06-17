@@ -59,7 +59,7 @@ Raspberry Pi                    Mac VM (Bullseye)
 
 ```bash
 # In VM, copy centaur directory from Pi or install from original source
-# Ensure /home/pi/centaur/centaur exists and is executable
+# Ensure ~/centaur/centaur exists and is executable
 ```
 
 ### 3. Setup Serial Relay and Epaper Proxy
@@ -95,13 +95,13 @@ cd ~/Universal-Chess/scripts/vm-setup
 python3 serial_relay_client.py --server-ip <PI_IP> &
 
 # Run centaur with epaper proxy wrapper
-python3 epaper_proxy_wrapper.py --server-ip <PI_IP> --centaur-path /home/pi/centaur/centaur
+python3 epaper_proxy_wrapper.py --server-ip <PI_IP> --centaur-path ~/centaur/centaur
 ```
 
 **Option 2: Manual setup (if wrapper doesn't work):**
 ```bash
 # In VM, ensure serial relay and epaper proxy clients are running
-cd /home/pi/centaur
+cd ~/centaur
 sudo ./centaur
 # Note: Epaper proxying may not work without the wrapper
 ```
@@ -122,7 +122,7 @@ Since we cannot modify the centaur software, we use a wrapper script that inject
 **For Python-based centaur:**
 ```bash
 # Use the wrapper script (automatically handles import injection)
-python3 epaper_proxy_wrapper.py --server-ip <PI_IP> --centaur-path /home/pi/centaur/centaur
+python3 epaper_proxy_wrapper.py --server-ip <PI_IP> --centaur-path ~/centaur/centaur
 ```
 
 **For binary centaur:**

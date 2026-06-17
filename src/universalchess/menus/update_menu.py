@@ -266,15 +266,18 @@ def handle_local_deb_install(
             time.sleep(2)
 
 
-def find_local_deb_files(search_dir: str = "/home/pi") -> List[str]:
+def find_local_deb_files(search_dir: str = None) -> List[str]:
     """Find .deb files in a directory.
     
     Args:
-        search_dir: Directory to search
+        search_dir: Directory to search (defaults to user's home directory)
         
     Returns:
         List of .deb file paths
     """
+    if search_dir is None:
+        from pathlib import Path
+        search_dir = str(Path.home())
     deb_files = []
     try:
         for f in os.listdir(search_dir):

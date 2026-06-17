@@ -254,10 +254,10 @@ def reset_board_inactivity(response):
 # System paths for conditional features
 ENGINES_DIR = "/opt/universalchess/engines"
 RODENTIV_PATH = os.path.join(ENGINES_DIR, "rodentIV")
-CENTAUR_SOFTWARE_PATH = "/home/pi/centaur/centaur"
+CENTAUR_SOFTWARE_PATH = os.path.join(str(pathlib.Path.home()), "centaur", "centaur")
 
 # WebDAV security constants
-WEBDAV_BASE_PATH = "/home/pi"
+WEBDAV_BASE_PATH = str(pathlib.Path.home())
 
 
 def _internal_error(exception):

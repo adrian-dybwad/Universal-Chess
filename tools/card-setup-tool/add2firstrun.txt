@@ -1,11 +1,15 @@
-echo $(date +"%T")  "copy centaur to /home/pi/" >/boot/centaur_install.log
-mv /boot/centaur /home/pi/ | awk '{ print strftime("%H:%M:%S: "), $0; fflush(); }'>>/boot/centaur_install.log
+PRIMARY_USER=$(getent passwd 1000 2>/dev/null | cut -d: -f1)
+PRIMARY_HOME=$(eval echo "~$PRIMARY_USER")
+echo $(date +"%T")  "Detected user: $PRIMARY_USER home: $PRIMARY_HOME" >/boot/centaur_install.log
+echo $(date +"%T")  "copy centaur to $PRIMARY_HOME/" >>/boot/centaur_install.log
+mv /boot/centaur "$PRIMARY_HOME/" | awk '{ print strftime("%H:%M:%S: "), $0; fflush(); }'>>/boot/centaur_install.log
 echo $(date +"%T")  "copy firstboot service" >>/boot/centaur_install.log
+sed -i "s|WorkingDirectory=.*|WorkingDirectory=$PRIMARY_HOME|" /boot/firstboot.service
 mv /boot/firstboot.service /etc/systemd/system/firstboot.service | awk '{ print strftime("%H:%M:%S: "), $0; fflush(); }'>>/boot/centaur_install.log
-echo $(date +"%T")  "copy firstboot.py to /home/pi" >>/boot/centaur_install.log
-mv /boot/firstboot.py /home/pi/firstboot.py | awk '{ print strftime("%H:%M:%S: "), $0; fflush(); }' >>/boot/centaur_install.log
-echo $(date +"%T")  "chmod +x firstboot.py in /home/pi" >>/boot/centaur_install.log
-chmod +x /home/pi/firstboot.py | awk '{ print strftime("%H:%M:%S: "), $0; fflush(); }'>>/boot/centaur_install.log
+echo $(date +"%T")  "copy firstboot.py to $PRIMARY_HOME" >>/boot/centaur_install.log
+mv /boot/firstboot.py "$PRIMARY_HOME/firstboot.py" | awk '{ print strftime("%H:%M:%S: "), $0; fflush(); }' >>/boot/centaur_install.log
+echo $(date +"%T")  "chmod +x firstboot.py in $PRIMARY_HOME" >>/boot/centaur_install.log
+chmod +x "$PRIMARY_HOME/firstboot.py" | awk '{ print strftime("%H:%M:%S: "), $0; fflush(); }'>>/boot/centaur_install.log
 echo $(date +"%T")  "enable firstboot.service" >>/boot/centaur_install.log
 systemctl enable firstboot.service | awk '{ print strftime("%H:%M:%S: "), $0; fflush(); }'>>/boot/centaur_install.log
 echo $(date +"%T")  "remove centaur.tar.gz from /boot/ " >>/boot/centaur_install.log

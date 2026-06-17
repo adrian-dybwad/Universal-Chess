@@ -32,6 +32,7 @@ E-paper image writing is in services/chromecast.py
 # distribution, modification, variant, or derivative of this software.
 
 import os
+from pathlib import Path
 
 # Base installation directory
 BASE_DIR = "/opt/universalchess"
@@ -48,8 +49,10 @@ WEB_STATIC_DIR = f"{WEB_DIR}/static"
 # This file is at: <base>/paths.py, so resources is at: <base>/resources
 RESOURCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources")
 
-# User-customizable resources (takes precedence over system resources)
-USER_RESOURCES_DIR = "/home/pi/resources"
+# User-customizable resources (takes precedence over system resources).
+# Resolved at import time from the running user's home directory.
+_HOME = str(Path.home())
+USER_RESOURCES_DIR = os.path.join(_HOME, "resources")
 
 # Specific files
 FEN_LOG = f"{TMP_DIR}/fen.log"
@@ -59,11 +62,11 @@ DEFAULT_DB_FILE = f"{DB_DIR}/centaur.db"
 # Original DGT Centaur software executable. Shared so the board (which launches
 # it) and the web UI (which only offers the action when it exists) agree on the
 # path without the web process importing board/hardware modules.
-CENTAUR_SOFTWARE = "/home/pi/centaur/centaur"
+CENTAUR_SOFTWARE = os.path.join(_HOME, "centaur", "centaur")
 
 
 def get_resource_path(resource_file: str) -> str:
-    """Return resource path from the resources folder or /home/pi/resources.
+    """Return resource path from the user resources folder or system resources.
     
     Checks user resources directory first, then falls back to system resources.
     Rejects paths containing '..' for security.

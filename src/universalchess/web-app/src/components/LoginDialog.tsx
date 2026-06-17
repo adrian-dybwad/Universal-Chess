@@ -27,12 +27,12 @@ export function LoginDialog({ isOpen, onClose, onSuccess, errorMessage }: LoginD
         try {
           const decoded = atob(stored);
           const [storedUsername] = decoded.split(':', 1);
-          setUsername(storedUsername || 'pi');
+          setUsername(storedUsername || '');
         } catch {
-          setUsername('pi');
+          setUsername('');
         }
       } else {
-        setUsername('pi');
+        setUsername('');
       }
       setPassword('');
       setError(errorMessage || '');

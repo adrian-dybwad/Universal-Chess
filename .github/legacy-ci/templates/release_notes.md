@@ -11,7 +11,7 @@ You own a first verion of the board if your board has visible black circles on t
 - Fix epaper update when playing engines with analysis off
 - Adds takebacks in UCI (engines) and 1v1Analysis
 - Adds ignore computer move (and choose your own) in UCI (engines) and 1v1Analysis
-- Logging to /home/pi/debug.log so available on network share
+- Logging to ~/debug.log so available on network share
 - Enable a shell on port 7777 from the menu (in case someone has ssh access problems)
 
 

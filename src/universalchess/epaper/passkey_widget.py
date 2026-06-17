@@ -43,8 +43,8 @@ class PasskeyWidget(Widget):
     def _get_font_loader(self):
         if self._font_loader is None:
             from universalchess.resources import ResourceLoader
-            self._font_loader = ResourceLoader(
-                "/opt/universalchess/resources", "/home/pi/resources")
+            from universalchess.paths import RESOURCES_DIR, USER_RESOURCES_DIR
+            self._font_loader = ResourceLoader(RESOURCES_DIR, USER_RESOURCES_DIR)
         return self._font_loader
 
     def set_passkey(self, passkey: str) -> None:

@@ -7,7 +7,7 @@ Usage:
     from universalchess.resources import ResourceLoader
     
     # Create loader with resource directories
-    loader = ResourceLoader("/opt/universalchess/resources", "/home/pi/resources")
+    loader = ResourceLoader("/opt/universalchess/resources", "~/resources")
     
     # Load resources
     font = loader.get_font(18)

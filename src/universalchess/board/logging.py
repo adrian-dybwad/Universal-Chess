@@ -64,11 +64,12 @@ class ColoredFormatter(logging.Formatter):
         return super().format(record)
 
 
-def setup_logging(log_file_path="/home/pi/debug.log", log_level=logging.DEBUG):
+def setup_logging(log_file_path=None, log_level=logging.DEBUG):
     """Configure logging with colored console output and file output.
     
     Args:
-        log_file_path: Path to the log file. If None, file logging is skipped.
+        log_file_path: Path to the log file. Defaults to ~/debug.log.
+                       If explicitly set to empty string, file logging is skipped.
         log_level: Logging level to set (default: logging.DEBUG).
     
     Returns:
@@ -77,6 +78,10 @@ def setup_logging(log_file_path="/home/pi/debug.log", log_level=logging.DEBUG):
     log = logging.getLogger()
     log.setLevel(log_level)
     log.handlers = []
+
+    if log_file_path is None:
+        from pathlib import Path
+        log_file_path = str(Path.home() / "debug.log")
     
     # File handler with plain formatter
     _fmt = logging.Formatter("%(asctime)s.%(msecs)03d %(levelname)-8s [%(filename)s:%(lineno)d] %(message)s", "%Y-%m-%d %H:%M:%S")

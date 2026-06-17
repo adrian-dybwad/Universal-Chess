@@ -2983,7 +2983,7 @@ def _run_centaur():
             log.warning(f"Could not set execute permissions on centaur: {e}")
         
         # Change to centaur directory and run
-        os.chdir("/home/pi/centaur")
+        os.chdir(os.path.dirname(CENTAUR_SOFTWARE))
         os.system("sudo ./centaur")
     else:
         log.error(f"Centaur executable not found at {CENTAUR_SOFTWARE}")

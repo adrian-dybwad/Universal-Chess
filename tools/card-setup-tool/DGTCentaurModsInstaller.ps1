@@ -89,7 +89,7 @@ function retrieveFiles($URL, $fileName, $OutPutFolder) {
 
 function ExtractCentaur {
     if (Test-Path -Path $PSScriptRoot\home) {
-        Write-host "Nothing to do folder /home/pi/centaur is already there`r`n"
+        Write-host "Nothing to do folder /home/<user>/centaur is already there`r`n"
     }
     else {
 
