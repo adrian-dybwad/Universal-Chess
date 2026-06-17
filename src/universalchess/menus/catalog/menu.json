@@ -491,14 +491,6 @@
       "platforms": ["web"]
     },
     {
-      "id": "field.system.developer_mode",
-      "type": "toggle",
-      "label": "Enable Developer Mode",
-      "help": "Enables verbose debug logging. View logs with: journalctl -u universal-chess -f",
-      "section": "system",
-      "platforms": ["web"]
-    },
-    {
       "id": "field.system.database_uri",
       "type": "text",
       "label": "Database URI",

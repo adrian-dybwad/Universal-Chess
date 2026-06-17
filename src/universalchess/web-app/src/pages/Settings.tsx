@@ -104,7 +104,6 @@ interface FormSettings {
     errors: boolean;
   };
   system: {
-    developer_mode: boolean;
     database_uri: string;
     inactivity_timeout: string;
   };
@@ -126,7 +125,7 @@ const defaultFormSettings: FormSettings = {
   },
   lichess: { api_token: '', range: '' },
   sound: { enabled: true, key_press: true, game_events: true, piece_events: true, errors: true },
-  system: { developer_mode: false, database_uri: '', inactivity_timeout: '900' },
+  system: { database_uri: '', inactivity_timeout: '900' },
 };
 
 /**
@@ -189,7 +188,6 @@ function parseRawSettings(data: SettingsData): FormSettings {
       errors: parseConfigBool(data.sound?.error, true),
     },
     system: {
-      developer_mode: parseConfigBool(data.system?.developer, false),
       database_uri: data.DATABASE?.database_uri || '',
       // Seconds; 0 = disabled. The board reads this exact key
       // ([system] inactivity_timeout) live, so saving it here matches the
@@ -340,7 +338,6 @@ export function Settings() {
           error: formSettings.sound.errors ? 'on' : 'off',
         },
         system: {
-          developer: formSettings.system.developer_mode,
           inactivity_timeout: parseInt(formSettings.system.inactivity_timeout),
         },
         DATABASE: { database_uri: formSettings.system.database_uri },
@@ -881,7 +878,7 @@ export function Settings() {
         {activeTab === 'system' && (
           <section>
             <h2 className="page-title">System Settings</h2>
-            <p className="text-muted mb-6">Advanced configuration for developers and power users</p>
+            <p className="text-muted mb-6">Device status, software updates, and system configuration</p>
 
             <SystemInfoCard />
 
@@ -925,21 +922,6 @@ export function Settings() {
             <Card className="mb-6">
               <CardHeader title="Software Updates" />
               <UpdateManager catalog={catalog} />
-            </Card>
-
-            <Card className="mb-6">
-              <CardHeader title="Developer Mode" />
-              <Toggle
-                label={fieldLabel('field.system.developer_mode', 'Enable Developer Mode')}
-                help={
-                  <>
-                    Enables verbose debug logging. View logs with:{' '}
-                    <code>journalctl -u universal-chess -f</code>
-                  </>
-                }
-                checked={formSettings.system.developer_mode}
-                onChange={(v) => updateFormSettings('system', { developer_mode: v })}
-              />
             </Card>
 
             <Card className="mb-6">

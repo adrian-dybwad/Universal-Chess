@@ -26,7 +26,7 @@ from universalchess.board.settings import Settings
 
 
 _VALID_DEFAULTS = (
-    "[system]\ndeveloper = False\n\n"
+    "[system]\ninactivity_timeout = 900\n\n"
     "[sound]\nsound = on\n\n"
     "[update]\nchannel = stable\n"
 )
@@ -76,7 +76,7 @@ class TestCorruptConfigRecovery:
         from the restored defaults rather than raising.
 
         Regression manifestation: a raised ParsingError here aborts whatever
-        feature called read() (e.g. board startup reading developer mode).
+        feature called read() (e.g. board startup reading a system setting).
         """
         live, _ = cfg_paths
         live.write_bytes(_NULL_CORRUPTION)
@@ -104,8 +104,8 @@ class TestCorruptConfigRecovery:
         reparsed = configparser.ConfigParser()
         reparsed.read(str(live))  # must not raise
         # ensure_key_exists can now rebuild a section from the (empty) defaults.
-        Settings.ensure_key_exists("system", "developer", "False")
-        assert Settings.read("system", "developer", "False") == "False"
+        Settings.ensure_key_exists("system", "inactivity_timeout", "900")
+        assert Settings.read("system", "inactivity_timeout", "900") == "900"
 
 
 class TestAtomicWrite:
