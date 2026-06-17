@@ -180,12 +180,16 @@ def handle_update_menu(
         
         if result_key == "InstallPending":
             show_splash("Installing\nupdate...")
-            
+
+            # The install runs in a transient systemd unit and the package
+            # postinst restarts this service onto the new version, so no
+            # manual restart here. install_pending_update returns once the
+            # install is launched; the board will restart shortly.
             if update_service.install_pending_update():
-                show_splash("Install complete\nRestarting...")
-                time.sleep(2)
-                # The service will restart, triggering the new version
-                os.system("sudo systemctl restart universal-chess.service")
+                show_splash("Installing...\nBoard will restart")
+                # Hold the splash; the postinst restart will terminate this
+                # process when the new version takes over.
+                time.sleep(30)
             else:
                 show_splash("Install\nfailed")
                 time.sleep(2)
@@ -256,11 +260,12 @@ def handle_local_deb_install(
     
     if confirm_result.key == "Install":
         show_splash("Installing...")
-        
+
+        # Detached install via transient unit; postinst restarts this
+        # service onto the new version. No manual restart needed.
         if update_service.install_local_deb(source_path):
-            show_splash("Install complete\nRestarting...")
-            time.sleep(2)
-            os.system("sudo systemctl restart universal-chess.service")
+            show_splash("Installing...\nBoard will restart")
+            time.sleep(30)
         else:
             show_splash("Install\nfailed")
             time.sleep(2)

@@ -3366,12 +3366,16 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
                 
                 import time
                 time.sleep(2)
-                
+
+                # The install runs in a transient systemd unit and the
+                # package postinst restarts this service onto the new
+                # version. install_pending_update returns once the install
+                # is launched; do not power the controller down here, or the
+                # in-progress install would be interrupted.
                 if update_service.install_pending_update():
-                    log.info("[Cleanup] Update installed - restarting service")
-                    os.system("sudo systemctl restart universal-chess.service")
+                    log.info("[Cleanup] Update launched - board will restart on new version")
                 else:
-                    log.error("[Cleanup] Update installation failed")
+                    log.error("[Cleanup] Update install failed to launch")
                 return
             
             # Display shutdown splash screen

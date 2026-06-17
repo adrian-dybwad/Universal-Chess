@@ -43,6 +43,17 @@ STATE_FILE = Path("/opt/universalchess/update-state.json")
 PENDING_DEB_DIR = Path("/opt/universalchess/pending-updates")
 VERSION_FILE = Path("/opt/universalchess/VERSION")
 
+# Name of the transient systemd unit used to run the install. Running dpkg
+# inside a transient unit (its own cgroup, managed by PID 1) is the only way
+# to survive the postinst restarting universal-chess.service and
+# universal-chess-web.service: both run with KillMode=control-group, so any
+# process inside their cgroup -- including a setsid-detached child -- is
+# killed when the service is restarted. A fixed unit name also gives
+# cross-process mutual exclusion: systemd-run refuses to start a second
+# install while one is active.
+INSTALL_UNIT = "universal-chess-update"
+UPDATE_LOG = "/var/log/universal-chess-update.log"
+
 
 class UpdateChannel(Enum):
     """Update channel selection."""
@@ -483,94 +494,138 @@ class UpdateService:
         self._save_state()
     
     def install_pending_update(self) -> bool:
-        """Install the pending update.
-        
+        """Install the pending (already downloaded) update.
+
         Returns:
-            True if installation succeeded
+            True if the install was launched, False if there is no pending
+            update or the launch failed. See ``install_update`` for the
+            meaning of "launched".
         """
         if not self.has_pending_update():
             log.error("[UpdateService] No pending update")
             return False
-        
+
         return self.install_update(Path(self._state.pending_deb))
-    
+
     def install_update(self, deb_path: Path) -> bool:
         """Install an update from a .deb file.
-        
+
+        The install always runs in a transient systemd unit
+        (``systemd-run``) rather than inline. This is mandatory, not an
+        optimization: the package's postinst restarts both
+        universal-chess.service and universal-chess-web.service, and both
+        run with KillMode=control-group. Any process in those cgroups --
+        including a plain background/``setsid`` child -- is killed when the
+        service restarts. Only a transient unit, which PID 1 places in its
+        own cgroup, survives long enough for dpkg + postinst to finish.
+
+        Because the install is detached, this method returns as soon as the
+        unit is launched. It does NOT wait for the install to complete; the
+        caller (web, e-paper, shutdown handler) should show an "installing,
+        the board will restart" state and let the postinst restart the
+        services onto the new version. Progress can be observed via
+        ``is_installing`` (which queries the transient unit) and the log at
+        ``UPDATE_LOG``.
+
         Args:
-            deb_path: Path to .deb file
-            
+            deb_path: Path to the .deb file to install.
+
         Returns:
-            True if installation succeeded
+            True if the install unit was launched, False otherwise.
         """
         if not deb_path.exists():
             log.error(f"[UpdateService] .deb not found: {deb_path}")
             return False
-        
-        if self._installing:
-            log.warning("[UpdateService] Already installing")
+
+        if self.is_installing():
+            log.warning("[UpdateService] Install already in progress")
             return False
-        
-        with self._lock:
-            self._installing = True
-        
+
         self._notify(UpdateEvent.INSTALLING, "Installing update...")
-        
+        return self._launch_install(deb_path)
+
+    def _build_install_script(self, deb_path: Path) -> str:
+        """Build the shell script run by the transient install unit.
+
+        The script runs as root (the unit is started via sudo), so it does
+        not use sudo internally. It installs the .deb, repairs dependencies
+        on failure, clears the pending state, and self-deletes. It does not
+        restart services -- the package postinst does that as its final
+        step, and the script runs in a separate cgroup so that restart does
+        not kill it mid-install.
+        """
+        return f"""#!/bin/sh
+exec >>{UPDATE_LOG} 2>&1
+DEB="{deb_path}"
+echo "$(date): [update] install start: $DEB"
+
+if dpkg -i "$DEB"; then
+    echo "$(date): [update] dpkg succeeded"
+else
+    echo "$(date): [update] dpkg failed; running apt-get -f install"
+    apt-get install -f -y || true
+    if ! dpkg -i "$DEB"; then
+        echo "$(date): [update] install FAILED after retry"
+        rm -f "$0"
+        exit 1
+    fi
+fi
+
+python3 - <<'PYEOF' || true
+import json, pathlib
+p = pathlib.Path("{STATE_FILE}")
+try:
+    s = json.loads(p.read_text())
+    s["pending_deb"] = None
+    s["available_version"] = None
+    s["available_release_tag"] = None
+    p.write_text(json.dumps(s, indent=2))
+except Exception:
+    pass
+PYEOF
+
+echo "$(date): [update] complete"
+rm -f "$0"
+"""
+
+    def _launch_install(self, deb_path: Path) -> bool:
+        """Launch the install in a transient systemd unit.
+
+        Returns True if the unit was started, False if systemd-run failed
+        (for example, because an install unit is already active).
+        """
+        script = self._build_install_script(deb_path)
         try:
-            log.info(f"[UpdateService] Installing {deb_path}")
-            
-            # Stop services before install
-            subprocess.run(
-                ["sudo", "systemctl", "stop", "universal-chess.service"],
-                capture_output=True, timeout=30
-            )
-            
-            # Install
+            fd, script_name = tempfile.mkstemp(prefix="uc-update-", suffix=".sh")
+            os.close(fd)
+            script_path = Path(script_name)
+            script_path.write_text(script)
+            script_path.chmod(0o755)
+
+            log.info(f"[UpdateService] Launching install unit for {deb_path}")
             result = subprocess.run(
-                ["sudo", "dpkg", "-i", str(deb_path)],
-                capture_output=True, text=True, timeout=300
+                [
+                    "sudo", "systemd-run",
+                    "--collect",
+                    f"--unit={INSTALL_UNIT}",
+                    "/bin/sh", str(script_path),
+                ],
+                capture_output=True, text=True, timeout=30,
             )
-            
+
             if result.returncode != 0:
-                # Try to fix dependencies
-                log.warning("[UpdateService] dpkg failed, trying apt-get -f install")
-                subprocess.run(
-                    ["sudo", "apt-get", "install", "-f", "-y"],
-                    capture_output=True, timeout=300
-                )
-                
-                # Retry
-                result = subprocess.run(
-                    ["sudo", "dpkg", "-i", str(deb_path)],
-                    capture_output=True, text=True, timeout=300
-                )
-                
-                if result.returncode != 0:
-                    log.error(f"[UpdateService] Install failed: {result.stderr}")
-                    self._notify(UpdateEvent.INSTALL_FAILED, "Installation failed")
-                    return False
-            
-            # Clear pending update
-            self._clear_pending_update()
-            
-            # Update version
-            self._state.current_version = self.get_current_version()
-            self._state.available_version = None
-            self._save_state()
-            
-            log.info("[UpdateService] Installation complete")
-            self._notify(UpdateEvent.INSTALL_COMPLETE, "Update installed - restarting...")
-            
+                log.error(f"[UpdateService] systemd-run failed: {result.stderr.strip()}")
+                self._notify(UpdateEvent.INSTALL_FAILED, "Failed to launch installer")
+                return False
+
+            log.info(f"[UpdateService] Install launched as transient unit {INSTALL_UNIT}")
             return True
-            
+
         except Exception as e:
-            log.error(f"[UpdateService] Install error: {e}")
+            log.error(f"[UpdateService] Failed to launch install: {e}")
             self._notify(UpdateEvent.INSTALL_FAILED, str(e))
             return False
-        finally:
-            with self._lock:
-                self._installing = False
-    
+
     def install_local_deb(self, deb_path: str) -> bool:
         """Install a local .deb file.
         
@@ -578,7 +633,7 @@ class UpdateService:
             deb_path: Path to local .deb file
             
         Returns:
-            True if installation succeeded
+            True if the install was launched, False otherwise.
         """
         path = Path(deb_path)
         if not path.exists():
@@ -631,7 +686,22 @@ class UpdateService:
         return self._downloading
     
     def is_installing(self) -> bool:
-        """Check if currently installing."""
+        """Check if an install is currently in progress.
+
+        Queries the transient install unit rather than an in-memory flag:
+        installs are launched by either the web service or the board
+        service (separate processes with separate UpdateService instances),
+        so the systemd unit is the only source of truth shared across both.
+        """
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", INSTALL_UNIT],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.stdout.strip() == "active":
+                return True
+        except Exception:
+            pass
         return self._installing
     
     def get_status_dict(self) -> dict:
@@ -662,17 +732,19 @@ def get_update_service() -> UpdateService:
 
 
 def install_pending_update_on_startup() -> bool:
-    """Check for and install pending update on startup.
-    
-    Call this early in main() before starting the menu system.
-    
+    """Check for and install a pending update.
+
+    The install runs in a transient systemd unit (see install_update), so
+    it is safe to call from any context -- it is not killed when the
+    services are restarted by the postinst.
+
     Returns:
-        True if an update was installed (caller should restart)
+        True if an install was launched, False otherwise.
     """
     service = get_update_service()
     
     if service.has_pending_update():
-        log.info("[UpdateService] Pending update found - installing on startup")
+        log.info("[UpdateService] Pending update found - installing")
         return service.install_pending_update()
     
     return False
