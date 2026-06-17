@@ -1134,6 +1134,10 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog | null }) {
   const [installing, setInstalling] = useState(false);
   const [showLoginDialog, setShowLoginDialog] = useState(false);
   const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
+  // Set when an install is launched from this session so the status poll can
+  // flip the notice to "complete" once the install finishes. The install runs
+  // asynchronously and restarts the web service; the poll auto-reconnects.
+  const awaitingInstallRef = useRef(false);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -1153,6 +1157,19 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog | null }) {
     const interval = setInterval(fetchStatus, 10000); // Poll every 10 seconds
     return () => clearInterval(interval);
   }, [fetchStatus]);
+
+  // Detect completion of an install started from this session. The install
+  // succeeded once it is no longer running (is_installing false) and the
+  // pending marker has been cleared (has_pending_update false) -- the install
+  // script clears pending only on success, so this distinguishes success from
+  // a still-pending failure.
+  useEffect(() => {
+    if (!status) return;
+    if (awaitingInstallRef.current && !status.is_installing && !status.has_pending_update) {
+      awaitingInstallRef.current = false;
+      setNotice(`Update complete. Now running ${status.current_version || 'the latest version'}.`);
+    }
+  }, [status]);
 
   const handleAuthRequired = (action: () => Promise<void>) => {
     pendingActionRef.current = action;
@@ -1227,7 +1244,9 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog | null }) {
       } else {
         // The install runs asynchronously; the board and web interface
         // restart when it finishes, so this page may briefly disconnect.
-        // This is informational, not an error.
+        // This is informational, not an error. The status poll flips this to
+        // a completion message once the install finishes (see effect above).
+        awaitingInstallRef.current = true;
         setNotice('Update installation started. The board will restart when it completes; this page may briefly disconnect.');
       }
     } catch {
