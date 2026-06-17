@@ -25,7 +25,11 @@ from unittest.mock import MagicMock
 # =============================================================================
 
 # Mock hardware and Linux-specific modules
-for mod in ['spidev', 'RPi', 'RPi.GPIO', 'gpiozero', 'smbus', 'smbus2', 'bluetooth', 'psutil']:
+# psutil is intentionally NOT stubbed: it is a real, required dependency
+# (universalchess.main imports it unconditionally). Replacing it with a MagicMock
+# here leaked globally via sys.modules and broke other tests that need the real
+# library (e.g. the system_info real-collection smoke test).
+for mod in ['spidev', 'RPi', 'RPi.GPIO', 'gpiozero', 'smbus', 'smbus2', 'bluetooth']:
     sys.modules[mod] = MagicMock()
 
 # Mock dbus with submodules

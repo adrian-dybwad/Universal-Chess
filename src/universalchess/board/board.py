@@ -407,8 +407,8 @@ def shutdown_countdown(countdown_seconds: int = 3) -> bool:
             if future:
                 try:
                     future.result(timeout=2.0)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug(f"[board.shutdown_countdown] Splash render wait failed: {e}")
     except Exception as e:
         log.debug(f"Failed to show countdown splash: {e}")
     
@@ -437,8 +437,8 @@ def shutdown_countdown(countdown_seconds: int = 3) -> bool:
                 try:
                     if display_manager is not None and countdown_splash is not None:
                         display_manager.remove_widget(countdown_splash)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug(f"[board.shutdown_countdown] Failed to remove countdown splash: {e}")
                 return False
     
     log.info("[board.shutdown_countdown] Countdown complete, proceeding with shutdown")
@@ -705,25 +705,8 @@ def dgt_to_chess(dgt_idx):
 # This section is the start of a new way of working with the board functions where those functions are
 # the board returning some kind of data
 import threading
-import subprocess
 eventsthreadpointer = ""
 eventsrunning = 1
-
-def temp():
-    '''
-    Get CPU temperature
-    '''
-    # Use subprocess.run for proper resource cleanup
-    result = subprocess.run(
-        ["vcgencmd", "measure_temp"],
-        capture_output=True,
-        text=True,
-        timeout=2
-    )
-    if result.returncode == 0 and result.stdout:
-        temp = result.stdout.split('=')[1].strip()
-        return temp
-    return ""
 
 def eventsThread(keycallback, fieldcallback, tout):
     """Monitor the board for keypresses and piece lift/place events.
@@ -999,8 +982,8 @@ def eventsThread(keycallback, fieldcallback, tout):
                         if future:
                             try:
                                 future.result(timeout=2.0)
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                log.debug(f"[board.events] Inactivity splash render wait failed: {e}")
                         inactivity_countdown_shown = True
                         inactivity_last_displayed_seconds = remaining_int
                     except Exception as e:
@@ -1013,8 +996,8 @@ def eventsThread(keycallback, fieldcallback, tout):
                                 f"Inactivity\nShutdown in\n{remaining_int} seconds..."
                             )
                             inactivity_last_displayed_seconds = remaining_int
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug(f"[board.events] Failed to update inactivity countdown: {e}")
         else:
             # If pauseEvents() hold timeout in the thread
             to = time.monotonic() + 100000

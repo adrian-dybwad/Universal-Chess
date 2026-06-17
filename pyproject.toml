@@ -31,7 +31,9 @@ extend-exclude = [
 # Maximum coverage: enable every rule ruff implements. The only entries in
 # `ignore` are rules that are mutually exclusive with another enabled rule (so
 # enabling both is contradictory) or that directly conflict with the formatter;
-# nothing is excluded to reduce volume.
+# nothing is excluded to reduce volume. Security findings are never disabled
+# globally -- false positives are suppressed per-line with a justified
+# `# noqa: <code>` so each new occurrence is consciously re-reviewed.
 select = ["ALL"]
 ignore = [
     # Mutually exclusive docstring conventions (cannot satisfy both halves of
@@ -55,7 +57,10 @@ check-typed-exception = true
 # ---------------------------------------------------------------------------
 # Bandit: dedicated security linter. Run at all severities/confidences for
 # maximum coverage; only the test tree is excluded (it deliberately contains
-# assert/eval-like test fixtures).
+# assert/eval-like test fixtures). No checks are skipped globally -- false
+# positives are suppressed per-line with a scoped, justified `# nosec <code>`
+# so each new occurrence is consciously re-reviewed and other findings on the
+# same line still surface.
 # ---------------------------------------------------------------------------
 [tool.bandit]
 exclude_dirs = [

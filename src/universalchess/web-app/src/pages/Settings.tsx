@@ -883,6 +883,8 @@ export function Settings() {
             <h2 className="page-title">System Settings</h2>
             <p className="text-muted mb-6">Advanced configuration for developers and power users</p>
 
+            <SystemInfoCard />
+
             {/* Analysis lives under System (not Game): the board groups the
                 Analysis Engine selector here because changing the engine
                 mid-game would require re-running the move history through it. */}
@@ -1739,5 +1741,129 @@ function SystemActions() {
         </Card>
       )}
     </>
+  );
+}
+
+
+// Live system telemetry from GET /api/system/stats. Read-only and
+// unauthenticated, so no login flow is needed. Values match the e-paper About
+// screen because both read the same universalchess.board.system_info source.
+interface SystemStats {
+  hostname: string;
+  cpu_percent: number;
+  cpu_temperature_celsius: number | null;
+  memory_used_bytes: number;
+  memory_total_bytes: number;
+  memory_percent: number;
+  disk_used_bytes: number;
+  disk_total_bytes: number;
+  disk_percent: number;
+  uptime_seconds: number;
+  load_average_1m: number | null;
+}
+
+const SYSTEM_STATS_POLL_MS = 5000;
+const EM_DASH = '\u2014';
+
+function formatStatPercent(value: number | null): string {
+  return value == null ? EM_DASH : `${Math.round(value)}%`;
+}
+
+function formatStatTemperature(celsius: number | null): string {
+  return celsius == null ? EM_DASH : `${Math.round(celsius)}\u00b0C`;
+}
+
+function formatStatGiB(bytes: number): string {
+  return `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
+}
+
+// Mirrors board.system_info.format_uptime: floor to whole units, switch to
+// day/hour granularity at the day boundary so the value stays compact.
+function formatStatUptime(seconds: number): string {
+  const totalMinutes = Math.floor(seconds / 60);
+  const minutes = totalMinutes % 60;
+  const totalHours = Math.floor(totalMinutes / 60);
+  const hours = totalHours % 24;
+  const days = Math.floor(totalHours / 24);
+  if (days >= 1) return `${days}d ${hours}h`;
+  if (totalHours >= 1) return `${totalHours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
+function SystemInfoCard() {
+  const [stats, setStats] = useState<SystemStats | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        const response = await fetch(buildApiUrl('/api/system/stats'));
+        if (!response.ok) throw new Error(`status ${response.status}`);
+        const data = (await response.json()) as SystemStats;
+        if (active) {
+          setStats(data);
+          setError(false);
+        }
+      } catch {
+        if (active) setError(true);
+      }
+    };
+    load();
+    const intervalId = setInterval(load, SYSTEM_STATS_POLL_MS);
+    return () => {
+      active = false;
+      clearInterval(intervalId);
+    };
+  }, []);
+
+  const rows: { label: string; value: string }[] = stats
+    ? [
+        { label: 'Hostname', value: stats.hostname },
+        {
+          label: 'CPU',
+          value: `${formatStatPercent(stats.cpu_percent)} / ${formatStatTemperature(stats.cpu_temperature_celsius)}`,
+        },
+        {
+          label: 'Memory',
+          value: `${formatStatPercent(stats.memory_percent)} (${formatStatGiB(stats.memory_used_bytes)} / ${formatStatGiB(stats.memory_total_bytes)})`,
+        },
+        {
+          label: 'Storage',
+          value: `${formatStatPercent(stats.disk_percent)} (${formatStatGiB(stats.disk_used_bytes)} / ${formatStatGiB(stats.disk_total_bytes)})`,
+        },
+        { label: 'Uptime', value: formatStatUptime(stats.uptime_seconds) },
+        {
+          label: 'Load (1m)',
+          value: stats.load_average_1m == null ? EM_DASH : stats.load_average_1m.toFixed(2),
+        },
+      ]
+    : [];
+
+  return (
+    <Card className="mb-6">
+      <CardHeader title="System Information" />
+      {error && !stats && (
+        <p className="text-muted">System information is currently unavailable.</p>
+      )}
+      {!error && !stats && <p className="text-muted">Loading system information...</p>}
+      {stats && (
+        <dl
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'max-content 1fr',
+            gap: 'var(--space-2) var(--space-6)',
+            margin: 0,
+          }}
+        >
+          {rows.map((row) => (
+            <div key={row.label} style={{ display: 'contents' }}>
+              <dt className="text-muted">{row.label}</dt>
+              <dd style={{ margin: 0, fontVariantNumeric: 'tabular-nums' }}>{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </Card>
   );
 }

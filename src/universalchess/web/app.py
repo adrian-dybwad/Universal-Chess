@@ -2277,6 +2277,25 @@ def api_system_info():
         return _internal_error(e)
 
 
+@app.route("/api/system/stats", methods=["GET"])
+def api_system_stats():
+    """Return live system telemetry (CPU temp/usage, memory, disk, uptime, load).
+
+    Read-only and unauthenticated like the other GET probes. Values are sampled
+    on each request via the shared ``universalchess.board.system_info`` reader,
+    so the web "System" card and the e-paper About screen report identical
+    numbers. The reader takes a short CPU sampling window (see system_info), so
+    this endpoint blocks briefly; the UI polls it on an interval rather than per
+    keystroke.
+    """
+    try:
+        from universalchess.board.system_info import get_system_info
+
+        return jsonify(get_system_info().to_dict())
+    except Exception as e:
+        return _internal_error(e)
+
+
 @app.route("/api/system/reset", methods=["POST"])
 @requires_auth
 def api_system_reset():

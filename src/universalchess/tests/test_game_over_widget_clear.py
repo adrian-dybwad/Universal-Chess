@@ -28,8 +28,11 @@ import importlib.util
 # Mock all hardware-specific and Linux-specific modules BEFORE any imports
 # =============================================================================
 
-# Mock hardware and Linux-specific modules
-for mod in ['spidev', 'RPi', 'RPi.GPIO', 'gpiozero', 'smbus', 'smbus2', 'bluetooth', 'psutil']:
+# Mock hardware and Linux-specific modules. psutil is intentionally NOT stubbed:
+# it is a real, required dependency (universalchess.main imports it
+# unconditionally), and replacing it with a MagicMock here leaked globally via
+# sys.modules and broke tests that need the real library.
+for mod in ['spidev', 'RPi', 'RPi.GPIO', 'gpiozero', 'smbus', 'smbus2', 'bluetooth']:
     sys.modules[mod] = MagicMock()
 
 # Mock dbus with submodules (dbus is a package, not just a module)
