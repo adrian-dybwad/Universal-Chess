@@ -1,82 +1,15 @@
-"""Analysis mode menu helpers."""
+"""Analysis engine selection helper.
 
-from typing import Callable, Dict, List, Optional
+The Analysis Engine menu (the Enabled toggle and the Engine row) is data-driven
+(the ``analysis`` catalog container rendered through the engine). This module
+keeps only the imperative engine-selection sub-flow it invokes as an action,
+because the installed-engine list is dynamic and marks the current choice.
+"""
+
+from typing import Callable, Dict, Optional
 
 from universalchess.epaper.icon_menu import IconMenuEntry
-from universalchess.managers.menu import MenuSelection, is_break_result
-
-
-def handle_analysis_mode_menu(
-    game_settings: Dict,
-    menu_manager,
-    save_game_setting: Callable[[str, bool], None],
-    handle_analysis_engine_selection: Callable,
-    log,
-    board,
-) -> Optional[MenuSelection]:
-    """Handle analysis mode settings submenu.
-
-    Shows:
-    - Enabled checkbox (toggle analysis on/off)
-    - Engine selector (which engine to use for analysis)
-
-    Args:
-        game_settings: Dict with current game settings
-        menu_manager: Menu manager instance
-        save_game_setting: Callback to save game setting
-        handle_analysis_engine_selection: Callback to handle engine selection
-        log: Logger instance
-        board: Board module
-
-    Returns:
-        Break result if interrupted, None otherwise
-    """
-
-    def build_entries():
-        entries = [
-            IconMenuEntry(
-                key="enabled",
-                label="Analysis Enabled",
-                icon_name="timer_checked" if game_settings["analysis_mode"] else "timer",
-                enabled=True,
-                selectable=True,
-                height_ratio=0.8,
-                layout="horizontal",
-                font_size=14,
-                bold=True,
-            ),
-        ]
-
-        if game_settings["analysis_mode"]:
-            current_engine = game_settings["analysis_engine"]
-            entries.append(
-                IconMenuEntry(
-                    key="engine",
-                    label=f"Engine: {current_engine}",
-                    icon_name="engine",
-                    enabled=True,
-                    selectable=True,
-                    height_ratio=0.8,
-                    layout="horizontal",
-                    font_size=14,
-                )
-            )
-
-        return entries
-
-    def handle_selection(result: MenuSelection):
-        if result.key == "enabled":
-            game_settings["analysis_mode"] = not game_settings["analysis_mode"]
-            save_game_setting("analysis_mode", game_settings["analysis_mode"])
-            log.info(f"[Settings] Analysis mode set to {game_settings['analysis_mode']}")
-            return None
-        elif result.key == "engine":
-            engine_result = handle_analysis_engine_selection()
-            if is_break_result(engine_result):
-                return engine_result
-        return None
-
-    return menu_manager.run_menu_loop(build_entries, handle_selection, initial_index=0)
+from universalchess.managers.menu import is_break_result
 
 
 def handle_analysis_engine_selection(

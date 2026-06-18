@@ -24,7 +24,7 @@ from .engine_manager_menu import (
     show_engine_install_progress,
 )
 from .reset_menu import reset_all_settings
-from .analysis_menu import handle_analysis_mode_menu, handle_analysis_engine_selection
+from .analysis_menu import handle_analysis_engine_selection
 from .update_menu import (
     handle_local_deb_install,
     find_local_deb_files,
@@ -80,7 +80,6 @@ __all__ = [
     "handle_engine_detail_menu",
     "show_engine_install_progress",
     "reset_all_settings",
-    "handle_analysis_mode_menu",
     "handle_analysis_engine_selection",
 ]
 

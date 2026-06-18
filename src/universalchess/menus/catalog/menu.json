@@ -405,6 +405,40 @@
     },
 
     {
+      "id": "analysis",
+      "type": "menu",
+      "label": "Analysis Engine",
+      "help": "Enable position analysis and choose the analysis engine.",
+      "platforms": ["board"],
+      "children": ["analysis.enabled", "analysis.engine"]
+    },
+    {
+      "id": "analysis.enabled",
+      "key": "enabled",
+      "type": "toggle",
+      "label": "Analysis Enabled",
+      "help": "Show engine analysis of the current position.",
+      "bind": { "store": "analysis", "key": "mode" },
+      "icon": { "true": "timer_checked", "false": "timer" },
+      "platforms": ["board"],
+      "epaper": { "font_size": 14, "height_ratio": 0.8, "layout": "horizontal", "bold": true }
+    },
+    {
+      "id": "analysis.engine",
+      "key": "engine",
+      "type": "action",
+      "action": "select_analysis_engine",
+      "label": "Engine",
+      "boardLabel": "Engine\n{value}",
+      "bind": { "store": "analysis", "key": "engine" },
+      "icon": "engine",
+      "help": "Choose which engine analyses the position.",
+      "visibleWhen": { "store": "analysis", "key": "mode", "equals": true },
+      "platforms": ["board"],
+      "epaper": { "font_size": 14, "height_ratio": 0.8, "layout": "horizontal" }
+    },
+
+    {
       "id": "power",
       "type": "menu",
       "label": "Power",

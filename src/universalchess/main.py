@@ -62,7 +62,6 @@ from universalchess.menus import (
     handle_engine_detail_menu,
     show_engine_install_progress,
     reset_all_settings,
-    handle_analysis_mode_menu,
     handle_analysis_engine_selection,
     get_lichess_client,
     ensure_token,
@@ -2916,23 +2915,56 @@ def _run_engine_manager_menu():
     )
 
 
-def _run_analysis_mode_menu():
-    """Run the (dynamic) Analysis Engine menu; return its break/None result."""
-    return handle_analysis_mode_menu(
-        game_settings=_game_settings_dict(),
-        menu_manager=_menu_manager,
-        save_game_setting=_save_game_setting,
-        handle_analysis_engine_selection=lambda: handle_analysis_engine_selection(
+def _build_analysis_context():
+    """Build the BoardMenuContext for the data-driven Analysis Engine menu.
+
+    The ``analysis`` store reads/writes the two game settings the menu exposes:
+    ``mode`` (the Analysis Enabled toggle, persisted on change) and ``engine``
+    (read-only here -- the displayed label; the actual pick happens in the engine
+    selection sub-flow). The Engine row is gated on ``mode`` via the catalog's
+    ``visibleWhen`` so it only appears when analysis is enabled, matching the old
+    builder that appended it conditionally.
+    """
+    from universalchess.menus.board_context import BoardMenuContext
+
+    def analysis_get(key):
+        settings = _game_settings_dict()
+        if key == "mode":
+            return bool(settings["analysis_mode"])
+        if key == "engine":
+            return settings["analysis_engine"]
+        raise KeyError(f"unknown analysis store key: {key!r}")
+
+    def analysis_set(key, value):
+        if key == "mode":
+            _save_game_setting("analysis_mode", bool(value))
+            log.info(f"[Settings] Analysis mode set to {bool(value)}")
+            return
+        raise NotImplementedError(f"analysis store key is read-only: {key!r}")
+
+    def do_select_engine():
+        # The installed-engine list is dynamic, so engine selection stays an
+        # imperative sub-flow invoked as an action (like the player engine pick).
+        return _signal_from(handle_analysis_engine_selection(
             game_settings=_game_settings_dict(),
             show_menu=_show_menu,
             get_installed_engines=_get_installed_engines,
             save_game_setting=_save_game_setting,
             log=log,
             board=board,
-        ),
-        log=log,
-        board=board,
-    )
+        ))
+
+    ctx = BoardMenuContext()
+    ctx.register_store("analysis", analysis_get, analysis_set)
+    ctx.register_action("select_analysis_engine", do_select_engine)
+    return ctx
+
+
+def _run_analysis_mode_menu():
+    """Run the data-driven Analysis Engine menu; return its break/None result."""
+    from universalchess.menus.board_context import run_engine_menu
+
+    return run_engine_menu("analysis", _build_analysis_context(), _menu_manager)
 
 
 def _run_inactivity_menu():
