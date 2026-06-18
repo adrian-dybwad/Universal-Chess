@@ -67,6 +67,7 @@
       "type": "action",
       "label": "PLAY",
       "label_in_progress": "RESUME",
+      "boardLabel": "{fn:play_label}",
       "icon": "universal_logo",
       "help": "Start a new game. When a game is suspended this reads RESUME and continues it.",
       "platforms": ["board"],
@@ -90,6 +91,7 @@
       "label": "Original\nCentaur",
       "icon": "centaur",
       "help": "Switch back to the original DGT Centaur software.",
+      "visibleWhen": { "store": "main", "key": "centaur_available", "equals": true },
       "platforms": ["board", "web"],
       "epaper": { "height_ratio": 0.67, "icon_size": 28, "layout": "horizontal", "font_size": 14 }
     },

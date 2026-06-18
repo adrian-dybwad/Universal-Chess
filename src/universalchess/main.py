@@ -45,7 +45,6 @@ from universalchess.board.logging import log
 from universalchess.epaper import Manager, SplashScreen, IconMenuWidget, IconMenuEntry, KeyboardWidget, show_fullscreen_splash
 from universalchess.epaper.status_bar import STATUS_BAR_HEIGHT
 from universalchess.menus import (
-    create_main_menu_entries,
     _get_player_type_label,
     _get_players_summary,
     handle_positions_menu,
@@ -2801,6 +2800,50 @@ def _build_settings_context():
     return ctx
 
 
+def _build_main_menu_context():
+    """Build the BoardMenuContext for rendering the root Main menu.
+
+    Supplies the two runtime variations the catalog cannot express on its own:
+    the ``main`` store's ``centaur_available`` flag (gates the Original Centaur
+    row via the node's ``visibleWhen``) and the ``play_label`` compute (the top
+    row reads RESUME while a game is suspended, else PLAY). Rendering only -- the
+    root loop owns dispatch -- so no actions are registered.
+    """
+    from universalchess.menus.board_context import BoardMenuContext
+
+    def main_get(key):
+        if key == "centaur_available":
+            return os.path.exists(CENTAUR_SOFTWARE)
+        raise KeyError(f"unknown main store key: {key!r}")
+
+    def main_set(key, value):
+        raise NotImplementedError(f"main store is read-only (key={key!r})")
+
+    def play_label(node):
+        # Keep the PLAY/RESUME strings in the catalog; choose by suspended-game
+        # state so the row tells the user whether selecting it resumes or starts.
+        return node["label_in_progress"] if _has_suspended_game() else node["label"]
+
+    ctx = BoardMenuContext()
+    ctx.register_store("main", main_get, main_set)
+    ctx.register_value("play_label", play_label)
+    return ctx
+
+
+def _build_main_menu_entries():
+    """Render the root Main menu through the menu engine.
+
+    Structure, labels, and icons come from the shared ``main`` catalog container:
+    the top row's PLAY/RESUME label is a computed token and the Original Centaur
+    row is gated by ``visibleWhen`` on the ``main`` store, replacing the bespoke
+    create_main_menu_entries override/skip logic. The root loop still dispatches
+    by entry key (Universal, Settings, Centaur).
+    """
+    from universalchess.menus.board_context import render_container
+
+    return render_container("main", _build_main_menu_context())
+
+
 def _build_settings_entries():
     """Render the top-level Settings list through the menu engine.
 
@@ -4684,9 +4727,6 @@ def main():
             time.sleep(0.3)
         app_state = AppState.MENU
     
-    # Check if Centaur software is available
-    centaur_available = os.path.exists(CENTAUR_SOFTWARE)
-    
     # Load saved menu state for restoration (only if not resuming a game)
     # MenuContext tracks full navigation path with indices at each level
     ctx = _get_menu_context()
@@ -4757,11 +4797,10 @@ def main():
                     # fall through to show the main menu normally.
                 
                 # Show main menu. The top entry relabels to RESUME when a game
-                # is suspended (managers alive) so PLAY resumes it.
-                entries = create_main_menu_entries(
-                    centaur_available=centaur_available,
-                    game_in_progress=_has_suspended_game(),
-                )
+                # is suspended (managers alive) so PLAY resumes it, and Original
+                # Centaur is hidden when the Centaur software is absent -- both
+                # resolved by the engine from the shared catalog.
+                entries = _build_main_menu_entries()
                 
                 # Get initial index from context if at root, else use 0
                 main_menu_index = ctx.current_index() if ctx.depth() == 0 else 0
