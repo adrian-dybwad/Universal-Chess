@@ -673,7 +673,7 @@ export function Settings() {
 
             <Card className="mb-6">
               <CardHeader title="Time Control" />
-              <FormRow label={fieldLabel('field.game.time_control')} help={fieldHelp('field.game.time_control')}>
+              <FormRow label={fieldLabel('settings.timecontrol')} help={fieldHelp('settings.timecontrol')}>
                 <Select
                   value={formSettings.game.time_control}
                   options={timeControlOptions}
@@ -685,12 +685,12 @@ export function Settings() {
             <Card className="mb-6">
               <CardHeader title="Analysis" />
               <Toggle
-                label={fieldLabel('field.system.analysis_mode')}
-                help={fieldHelp('field.system.analysis_mode')}
+                label={fieldLabel('analysis.enabled')}
+                help={fieldHelp('analysis.enabled')}
                 checked={formSettings.game.analysis_mode}
                 onChange={(v) => updateFormSettings('game', { analysis_mode: v })}
               />
-              <FormRow label={fieldLabel('field.game.analysis_engine')} help={fieldHelp('field.game.analysis_engine')}>
+              <FormRow label={fieldLabel('analysis.engine')} help={fieldHelp('analysis.engine')}>
                 <Select
                   value={formSettings.game.analysis_engine}
                   options={engineOptions}

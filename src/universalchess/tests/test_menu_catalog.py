@@ -100,7 +100,7 @@ def test_settings_order_matches_board_layout():
     """
     catalog = load_catalog()
     keys = [c["key"] for c in catalog.children("settings")]
-    assert keys == ["Players", "TimeControl", "Display", "Sound", "Positions", "Connectivity", "System"]
+    assert keys == ["Players", "Game", "Display", "Sound", "Positions", "Connectivity", "System"]
 
 
 def test_display_and_sound_are_separate_settings_nodes():
@@ -172,7 +172,6 @@ def test_web_implemented_submenus_are_enabled_for_web():
         "connectivity.chromecast",
         "connectivity.accounts",
         "system.engines",
-        "system.analysis",
         "system.about",
         # System/power actions now have web controls (Settings -> System).
         "system.inactivity",
@@ -247,9 +246,9 @@ def test_web_settings_field_ids_resolve_with_labels():
         "field.player.engine",
         "field.player.elo",
         "field.player.hand_brain_mode",
-        "field.game.time_control",
-        "field.game.analysis_engine",
-        "field.system.analysis_mode",
+        "settings.timecontrol",
+        "analysis.enabled",
+        "analysis.engine",
         "field.display.show_board",
         "field.display.show_clock",
         "field.display.show_analysis",

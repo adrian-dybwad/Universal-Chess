@@ -46,20 +46,19 @@ class _FakeMenuManager:
                 return result
 
 
-def _system_ctx(*, analysis_mode=False, timeout_seconds=0, calls=None):
+def _system_ctx(*, timeout_seconds=0, calls=None):
     """Board context for the System subtree, mirroring main._build_system_context.
 
-    The read-only ``system`` store reports analysis-mode and whether the sleep
-    timer is enabled; ``sleep_timer`` computes the timer label; every action is
-    recorded (and returns None unless noted) so dispatch effects are observable
-    without a display. ``reset_confirm`` and ``cancel`` return "BACK" exactly as
-    the board does, so the confirm submenu closes after either choice.
+    The read-only ``system`` store reports whether the sleep timer is enabled;
+    ``sleep_timer`` computes the timer label; every action is recorded (and
+    returns None unless noted) so dispatch effects are observable without a
+    display. ``reset_confirm`` and ``cancel`` return "BACK" exactly as the board
+    does, so the confirm submenu closes after either choice. (Live Analysis moved
+    to the Game submenu, so it is no longer part of the System context.)
     """
     calls = calls if calls is not None else []
 
     def system_get(key):
-        if key == "analysis_mode":
-            return analysis_mode
         if key == "sleep_enabled":
             return timeout_seconds != 0
         raise KeyError(key)
@@ -77,7 +76,6 @@ def _system_ctx(*, analysis_mode=False, timeout_seconds=0, calls=None):
     ctx.register_store("system", system_get, lambda k, v: (_ for _ in ()).throw(NotImplementedError(k)))
     ctx.register_value("sleep_timer", sleep_timer_label)
     ctx.register_action("engine_manager", record("engine_manager"))
-    ctx.register_action("analysis_mode", record("analysis_mode"))
     ctx.register_action("inactivity", record("inactivity"))
     ctx.register_action("about", record("about"))
     ctx.register_action("reset_confirm", record("reset_confirm", "BACK"))
@@ -104,22 +102,7 @@ def test_system_menu_lists_all_rows_in_order():
     or a new child leaks in, changing this key list.
     """
     keys = [r.key for r in _system_rows()]
-    assert keys == ["Engines", "AnalysisMode", "Inactivity", "ResetSettings", "About", "Power"]
-
-
-def test_analysis_row_labelled_engine_not_mode():
-    """The analysis row is labelled 'Analysis Engine', not 'Analysis Mode'.
-
-    Why this test exists: 'Analysis Mode' was ambiguous against the in-game
-    'Show Analysis' view toggle; the System row selects the *engine* (not safely
-    changeable mid-game), so it is disambiguated to 'Analysis Engine' while the
-    dispatch key stays 'AnalysisMode'. How a regression manifests: the label
-    reverts to containing 'Mode', so the user again sees two confusingly-named
-    'Analysis' controls.
-    """
-    analysis = {r.key: r for r in _system_rows()}["AnalysisMode"]
-    assert analysis.label == "Analysis\nEngine"
-    assert "Mode" not in analysis.label
+    assert keys == ["Engines", "Inactivity", "ResetSettings", "About", "Power"]
 
 
 def test_power_submenu_contains_only_shutdown_and_reboot():
@@ -131,20 +114,6 @@ def test_power_submenu_contains_only_shutdown_and_reboot():
     """
     rows = build_rows("power", _system_ctx(), platform="board", catalog=load_catalog())
     assert [r.key for r in rows] == ["Shutdown", "Reboot"]
-
-
-def test_analysis_row_icon_tracks_analysis_mode():
-    """The Analysis Engine row shows a checked box only when analysis is on.
-
-    Why this test exists: the row's icon is a state map bound to
-    ``system.analysis_mode`` (replacing the old per-entry icon override). How a
-    regression manifests: the icon stops tracking the bound value, so the box is
-    always checked/empty regardless of the setting.
-    """
-    by_key = {r.key: r for r in _system_rows(analysis_mode=True)}
-    assert by_key["AnalysisMode"].icon == "checkbox_checked"
-    by_key_off = {r.key: r for r in _system_rows(analysis_mode=False)}
-    assert by_key_off["AnalysisMode"].icon == "checkbox_empty"
 
 
 def test_sleep_timer_row_label_and_icon_reflect_timeout():
@@ -166,7 +135,7 @@ def test_sleep_timer_row_label_and_icon_reflect_timeout():
 
 
 def test_reset_is_submenu_and_about_is_action_and_power_is_submenu():
-    """Reset/Power open submenus; About/Engines/Analysis/Sleep are actions.
+    """Reset/Power open submenus; About/Engines/Sleep are actions.
 
     Why this test exists: the dispatch kind per row determines what selecting it
     does -- Reset and Power recurse into nested containers while the dynamic

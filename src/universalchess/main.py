@@ -2330,18 +2330,14 @@ def _handle_settings(initial_selection: str = None):
                 app_state = AppState.MENU
                 return sound_result
         
-        elif result == "TimeControl":
-            from universalchess.menus.board_context import run_node
-            from universalchess.menus.catalog.loader import get_catalog
-            time_result = run_node(
-                get_catalog().get_node("settings.timecontrol"),
-                _build_game_context(),
-                _menu_manager,
-            )
-            if is_break_result(time_result):
+        elif result == "Game":
+            ctx.enter_menu("Game", 0)
+            game_result = _handle_game_menu()
+            ctx.leave_menu()  # Pop Game, restore to Settings level
+            if is_break_result(game_result):
                 ctx.clear()
                 app_state = AppState.MENU
-                return time_result
+                return game_result
         
         elif result == "Positions":
             ctx.enter_menu("Positions", 0)
@@ -2785,18 +2781,18 @@ def _time_control_label() -> str:
 def _build_settings_context():
     """Build the BoardMenuContext for rendering the top-level Settings list.
 
-    Extends the shared game context (so the Time Control row's value-dependent
-    icon resolves from game.time_control) with the two computed labels the list
-    shows: the Players summary (P1 vs P2) and the concise Time Control label.
-    Rendering only -- the surrounding loop owns dispatch/app-state -- so no
-    actions are registered here.
+    Supplies the one computed label the list shows: the Players summary
+    (P1 vs P2) on the Players row. The other rows (Game, Display, Sound,
+    Positions, Connectivity, System) are static submenu labels. Rendering only --
+    the surrounding loop owns dispatch/app-state -- so no actions are registered.
     """
-    ctx = _build_game_context()
+    from universalchess.menus.board_context import BoardMenuContext
+
+    ctx = BoardMenuContext()
     ctx.register_value(
         "players_summary",
         lambda node: _get_players_summary(_player1_settings_dict(), _player2_settings_dict()),
     )
-    ctx.register_value("time_control", lambda node: _time_control_label())
     return ctx
 
 
@@ -3002,17 +2998,19 @@ def _run_engine_manager_menu():
     )
 
 
-def _build_analysis_context():
-    """Build the BoardMenuContext for the data-driven Analysis Engine menu.
+def _build_game_menu_context():
+    """Build the BoardMenuContext for the data-driven Game submenu.
 
-    The ``analysis`` store reads/writes the two game settings the menu exposes:
-    ``mode`` (the Analysis Enabled toggle, persisted on change) and ``engine``
-    (read-only here -- the displayed label; the actual pick happens in the engine
-    selection sub-flow). The Engine row is gated on ``mode`` via the catalog's
-    ``visibleWhen`` so it only appears when analysis is enabled, matching the old
-    builder that appended it conditionally.
+    Combines the shared ``game`` store (Time Control, read/write) with the
+    ``analysis`` store (``mode`` read/write, persisted on toggle; ``engine``
+    read-only -- the displayed label) plus the dynamic engine-pick action and the
+    concise Time Control label compute. This single context backs the
+    ``settings.game`` container, which groups exactly the settings the web shows
+    under its Game tab (Time Control, Live Analysis, Analysis Engine). The
+    Analysis Engine row is gated on ``mode`` via the catalog's ``visibleWhen`` so
+    it only appears when Live Analysis is enabled.
     """
-    from universalchess.menus.board_context import BoardMenuContext
+    ctx = _build_game_context()
 
     def analysis_get(key):
         settings = _game_settings_dict()
@@ -3041,17 +3039,24 @@ def _build_analysis_context():
             board=board,
         ))
 
-    ctx = BoardMenuContext()
     ctx.register_store("analysis", analysis_get, analysis_set)
     ctx.register_action("select_analysis_engine", do_select_engine)
+    ctx.register_value("time_control", lambda node: _time_control_label())
     return ctx
 
 
-def _run_analysis_mode_menu():
-    """Run the data-driven Analysis Engine menu; return its break/None result."""
+def _handle_game_menu():
+    """Handle the Game submenu (Time Control + Live Analysis), engine-driven.
+
+    Structure, labels, icons, and the Analysis-Engine visibility gate come from
+    the ``settings.game`` catalog container; the board adapter supplies the
+    game/analysis value stores, the dynamic engine-pick action, and the Time
+    Control label. Mirrors the web Game tab, which renders the same catalog
+    nodes -- the single source of truth for both platforms.
+    """
     from universalchess.menus.board_context import run_engine_menu
 
-    return run_engine_menu("analysis", _build_analysis_context(), _menu_manager)
+    return run_engine_menu("settings.game", _build_game_menu_context(), _menu_manager)
 
 
 def _run_inactivity_menu():
@@ -3229,19 +3234,17 @@ def _reset_settings_confirmed() -> str:
 def _build_system_context():
     """Build the BoardMenuContext for the System / Power / Reset subtree.
 
-    The read-only ``system`` store exposes the two pieces of live state the
-    System rows render: ``analysis_mode`` (the Analysis Engine row's checkbox
-    icon) and ``sleep_enabled`` (the Sleep Timer row's timer icon). It is
-    read-only because none of these rows mutate state via the engine -- each
-    opens a dynamic sub-menu or performs an effect through an action -- so the
-    setter fails loudly if a future bound writer is added by mistake.
+    The read-only ``system`` store exposes the live state the System rows render:
+    ``sleep_enabled`` (the Sleep Timer row's timer icon). It is read-only because
+    none of these rows mutate state via the engine -- each opens a dynamic
+    sub-menu or performs an effect through an action -- so the setter fails
+    loudly if a future bound writer is added by mistake. (Live Analysis moved to
+    the Game submenu, matching the web.)
     """
     from universalchess.menus.board_context import BoardMenuContext
     from universalchess.services.power import perform_shutdown, perform_reboot
 
     def system_get(key):
-        if key == "analysis_mode":
-            return bool(_game_settings_dict()["analysis_mode"])
         if key == "sleep_enabled":
             return board.get_inactivity_timeout() != 0
         raise KeyError(f"unknown system store key: {key!r}")
@@ -3270,7 +3273,6 @@ def _build_system_context():
     ctx.register_store("system", system_get, system_set)
     ctx.register_value("sleep_timer", sleep_timer_label)
     ctx.register_action("engine_manager", lambda: _signal_from(_run_engine_manager_menu()))
-    ctx.register_action("analysis_mode", lambda: _signal_from(_run_analysis_mode_menu()))
     ctx.register_action("inactivity", lambda: _signal_from(_run_inactivity_menu()))
     ctx.register_action("about", lambda: _signal_from(_run_about_menu()))
     ctx.register_action("reset_confirm", _reset_settings_confirmed)

@@ -100,7 +100,7 @@
       "id": "settings",
       "type": "menu",
       "label": "Settings",
-      "children": ["settings.players", "settings.timecontrol", "settings.display", "settings.sound", "settings.positions", "settings.connectivity", "settings.system"]
+      "children": ["settings.players", "settings.game", "settings.display", "settings.sound", "settings.positions", "settings.connectivity", "settings.system"]
     },
     {
       "id": "settings.players",
@@ -163,6 +163,18 @@
       ]
     },
     {
+      "id": "settings.game",
+      "key": "Game",
+      "type": "submenu",
+      "target": "settings.game",
+      "label": "Game",
+      "icon": "timer_checked",
+      "help": "Time control and live position analysis.",
+      "section": "game",
+      "epaper": { "font_size": 12, "height_ratio": 0.8 },
+      "children": ["settings.timecontrol", "analysis.enabled", "analysis.engine"]
+    },
+    {
       "id": "settings.timecontrol",
       "key": "TimeControl",
       "type": "select",
@@ -175,6 +187,7 @@
       "optionSet": "time_control",
       "selectedIcon": "timer_checked",
       "unselectedIcon": "timer",
+      "platforms": ["board", "web"],
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },
     {
@@ -312,7 +325,7 @@
       "type": "menu",
       "label": "System",
       "platforms": ["board"],
-      "children": ["system.engines", "system.analysis", "system.inactivity", "system.reset", "system.about", "system.power"]
+      "children": ["system.engines", "system.inactivity", "system.reset", "system.about", "system.power"]
     },
     {
       "id": "system.engines",
@@ -323,17 +336,6 @@
       "icon": "engine",
       "help": "Install and manage chess engines for play and analysis.",
       "section": "engines",
-      "platforms": ["board", "web"]
-    },
-    {
-      "id": "system.analysis",
-      "key": "AnalysisMode",
-      "type": "action",
-      "action": "analysis_mode",
-      "label": "Analysis\nEngine",
-      "help": "Choose the engine used for position analysis (best changed between games).",
-      "bind": { "store": "system", "key": "analysis_mode" },
-      "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
       "platforms": ["board", "web"]
     },
     {
@@ -409,22 +411,15 @@
     },
 
     {
-      "id": "analysis",
-      "type": "menu",
-      "label": "Analysis Engine",
-      "help": "Enable position analysis and choose the analysis engine.",
-      "platforms": ["board"],
-      "children": ["analysis.enabled", "analysis.engine"]
-    },
-    {
       "id": "analysis.enabled",
       "key": "enabled",
       "type": "toggle",
-      "label": "Analysis Enabled",
-      "help": "Show engine analysis of the current position.",
+      "label": "Live Analysis",
+      "help": "Show engine evaluation of the current position during play.",
+      "section": "game",
       "bind": { "store": "analysis", "key": "mode" },
       "icon": { "true": "timer_checked", "false": "timer" },
-      "platforms": ["board"],
+      "platforms": ["board", "web"],
       "epaper": { "font_size": 14, "height_ratio": 0.8, "layout": "horizontal", "bold": true }
     },
     {
@@ -432,13 +427,14 @@
       "key": "engine",
       "type": "action",
       "action": "select_analysis_engine",
-      "label": "Engine",
+      "label": "Analysis Engine",
       "boardLabel": "Engine\n{value}",
       "bind": { "store": "analysis", "key": "engine" },
       "icon": "engine",
-      "help": "Choose which engine analyses the position.",
+      "help": "Engine used for position analysis (best changed between games).",
+      "section": "game",
       "visibleWhen": { "store": "analysis", "key": "mode", "equals": true },
-      "platforms": ["board"],
+      "platforms": ["board", "web"],
       "epaper": { "font_size": 14, "height_ratio": 0.8, "layout": "horizontal" }
     },
 
@@ -685,15 +681,6 @@
       "platforms": ["board"]
     },
     {
-      "id": "field.game.time_control",
-      "type": "select",
-      "label": "Time per Player",
-      "help": "Minutes per player (0 = untimed)",
-      "optionSet": "time_control",
-      "section": "game",
-      "platforms": ["web"]
-    },
-    {
       "id": "field.display.show_board",
       "type": "toggle",
       "label": "Show Board",
@@ -831,22 +818,6 @@
       "help": "Automatically put the board to sleep after a period of inactivity",
       "optionSet": "sleep_timer",
       "section": "system",
-      "platforms": ["web"]
-    },
-    {
-      "id": "field.system.analysis_mode",
-      "type": "toggle",
-      "label": "Live Analysis",
-      "help": "Show engine evaluation during play",
-      "section": "game",
-      "platforms": ["web"]
-    },
-    {
-      "id": "field.game.analysis_engine",
-      "type": "select",
-      "label": "Analysis Engine",
-      "help": "Engine used for position analysis (best changed between games)",
-      "section": "game",
       "platforms": ["web"]
     },
     {
