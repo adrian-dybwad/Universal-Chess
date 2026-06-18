@@ -160,6 +160,27 @@ def _run_select(outcome, ctx, menu_manager) -> Optional[MenuSelection]:
     return menu_manager.run_menu_loop(build_entries, handle_selection, initial_index=0)
 
 
+def render_container(
+    container_id: str,
+    ctx: BoardMenuContext,
+    *,
+    platform: str = "board",
+    catalog=None,
+) -> List[IconMenuEntry]:
+    """Build a container's child rows as e-paper entries, without a dispatch loop.
+
+    For callers that render data-driven entries through the engine but keep their
+    own bespoke dispatch (e.g. the board Settings list, whose surrounding loop
+    owns app-state/navigation-stack semantics that do not belong in the catalog).
+    The entry keys are the catalog node keys, so the caller's key-based dispatch
+    keeps working unchanged. Use :func:`run_engine_menu` instead when the engine
+    can own the whole show/dispatch loop.
+    """
+    catalog = catalog or get_catalog()
+    rows = build_rows(container_id, ctx, platform=platform, catalog=catalog)
+    return [_row_to_entry(row) for row in rows]
+
+
 def run_engine_menu(
     container_id: str,
     ctx: BoardMenuContext,

@@ -1,15 +1,14 @@
 """Settings menu helpers.
 
-Entry structure, labels, icons, and e-paper styling for the top-level Settings
-menu live in the shared catalog under the ``settings`` container. This builder
-reads it and overrides the two entries whose label/icon depend on current
-settings: the Players summary and the Time Control state.
+The top-level Settings list is rendered through the shared menu engine from the
+``settings`` catalog container (see ``main._build_settings_entries``), so the
+board and web draw the same rows from one source. This module keeps only the
+pure label helpers that container's computed tokens reuse: the player-type label
+and the Players summary shown under the Players row.
 """
 
-from typing import List, Dict
+from typing import Dict
 
-from universalchess.epaper.icon_menu import IconMenuEntry
-from universalchess.menus.catalog.entry_builder import build_menu_entries
 from universalchess.menus.catalog.loader import get_catalog
 
 
@@ -41,35 +40,7 @@ def _get_players_summary(player1_settings: Dict[str, str], player2_settings: Dic
     return f"{p1_type}\nvs {p2_type}"
 
 
-def create_settings_entries(
-    game_settings: Dict[str, object],
-    player1_settings: Dict[str, str],
-    player2_settings: Dict[str, str],
-) -> List[IconMenuEntry]:
-    """Create entries for the settings submenu."""
-    players_label = _get_players_summary(player1_settings, player2_settings)
-
-    time_control = game_settings["time_control"]
-    if time_control == 0:
-        time_label = "Time\nDisabled"
-        time_icon = "timer"
-    else:
-        time_label = f"Time\n{time_control} min"
-        time_icon = "timer_checked"
-
-    # Order and chrome come from the catalog's "settings" container. Only the
-    # Players summary and Time Control state are computed at runtime.
-    return build_menu_entries(
-        "settings",
-        overrides={
-            "Players": {"label": players_label},
-            "TimeControl": {"label": time_label, "icon": time_icon},
-        },
-    )
-
-
 __all__ = [
-    "create_settings_entries",
     "_get_player_type_label",
     "_get_players_summary",
 ]

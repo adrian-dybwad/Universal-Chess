@@ -1,8 +1,7 @@
 """Menu helper exports."""
 
 from .main_menu import create_main_menu_entries
-from .settings_menu import create_settings_entries
-from .settings_menu import _get_player_type_label
+from .settings_menu import _get_player_type_label, _get_players_summary
 from .positions_menu import handle_positions_menu
 from .engine_menu import (
     handle_engine_selection,
@@ -47,7 +46,7 @@ from universalchess.services.lichess_service import (
 
 __all__ = [
     "create_main_menu_entries",
-    "create_settings_entries",
+    "_get_players_summary",
     "handle_positions_menu",
     "handle_chromecast_menu",
     "handle_inactivity_timeout",

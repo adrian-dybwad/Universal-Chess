@@ -46,8 +46,8 @@ from universalchess.epaper import Manager, SplashScreen, IconMenuWidget, IconMen
 from universalchess.epaper.status_bar import STATUS_BAR_HEIGHT
 from universalchess.menus import (
     create_main_menu_entries,
-    create_settings_entries,
     _get_player_type_label,
+    _get_players_summary,
     handle_positions_menu,
     handle_chromecast_menu,
     handle_inactivity_timeout,
@@ -2263,7 +2263,7 @@ def _handle_settings(initial_selection: str = None):
     pending_selection = initial_selection
     
     while app_state == AppState.SETTINGS:
-        entries = create_settings_entries(_game_settings_dict(), _player1_settings_dict(), _player2_settings_dict())
+        entries = _build_settings_entries()
         
         # If we have a pending selection from state restoration, use it
         if pending_selection:
@@ -2770,6 +2770,50 @@ def _build_game_context():
     ctx = BoardMenuContext()
     ctx.register_store("game", game_get, game_set)
     return ctx
+
+
+def _time_control_label() -> str:
+    """Concise Time Control label for the Settings list: 'Disabled' or 'N min'.
+
+    Kept concise for the e-paper row (the catalog's time_control option labels --
+    e.g. "5 min (Blitz)" -- are the verbose web/select form); mirrors the prior
+    board override and the Sleep Timer label style.
+    """
+    minutes = _game_settings_dict()["time_control"]
+    return "Disabled" if minutes == 0 else f"{minutes} min"
+
+
+def _build_settings_context():
+    """Build the BoardMenuContext for rendering the top-level Settings list.
+
+    Extends the shared game context (so the Time Control row's value-dependent
+    icon resolves from game.time_control) with the two computed labels the list
+    shows: the Players summary (P1 vs P2) and the concise Time Control label.
+    Rendering only -- the surrounding loop owns dispatch/app-state -- so no
+    actions are registered here.
+    """
+    ctx = _build_game_context()
+    ctx.register_value(
+        "players_summary",
+        lambda node: _get_players_summary(_player1_settings_dict(), _player2_settings_dict()),
+    )
+    ctx.register_value("time_control", lambda node: _time_control_label())
+    return ctx
+
+
+def _build_settings_entries():
+    """Render the top-level Settings list through the menu engine.
+
+    Structure, labels, and icons come from the shared ``settings`` catalog
+    container (Players summary and Time Control state resolved via the settings
+    context), so the board and web render the same rows from one source. The
+    surrounding loop still maps the selected entry key (Players, TimeControl,
+    Display, ...) to its handler, because that navigation/app-state glue does not
+    belong in the catalog.
+    """
+    from universalchess.menus.board_context import render_container
+
+    return render_container("settings", _build_settings_context())
 
 
 def _build_display_context():
