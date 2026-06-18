@@ -15,9 +15,11 @@ Separation of concerns:
 
 Node behavior schema (fields read here; all optional unless noted):
 - ``type`` (required): ``submenu`` | ``select`` | ``toggle`` | ``cycle`` |
-  ``range`` | ``set_value`` | ``dynamic`` | ``action`` | ``text`` (plus container
-  types the renderer walks). ``text`` is a free-string field edited via its
-  ``action`` on the board and rendered as an input on the web.
+  ``range`` | ``set_value`` | ``dynamic`` | ``action`` | ``text`` | ``info``
+  (plus container types the renderer walks). ``text`` is a free-string field
+  edited via its ``action`` on the board and rendered as an input on the web.
+  ``info`` is a display-only readout (typically with ``epaper.selectable`` false)
+  whose label may carry ``{value}``/``{fn:NAME}`` tokens.
 - ``bind``: ``{"store": <name>, "key": <name>}`` -- the value the row reads/writes.
 - ``label`` (required for rendered rows): default/web label; may contain the
   ``{value}`` placeholder.
@@ -66,6 +68,10 @@ class MenuRow:
     enabled: bool = True
     help: Optional[str] = None
     node: dict = field(default_factory=dict)
+    # Whether the row can be focused/selected. False for display-only rows
+    # (e.g. About's Version and telemetry readouts), which the cursor skips and
+    # which therefore are never dispatched.
+    selectable: bool = True
     # Optional board-only image glyph and trailing icon, used by dynamic provider
     # rows (e.g. sprite-sheet previews with a trailing radio marker). Left None
     # for ordinary catalog rows whose icon is resolved from the node.
@@ -280,6 +286,7 @@ def build_rows(container_id: str, ctx: MenuContext, *, platform: str, catalog) -
                 enabled=is_enabled(child, ctx),
                 help=child.get("help"),
                 node=child,
+                selectable=child.get("epaper", {}).get("selectable", True),
             )
         )
     return rows
@@ -351,6 +358,12 @@ def dispatch(node: dict, ctx: MenuContext) -> DispatchOutcome:
             selected_icon=node.get("selectedIcon"),
             unselected_icon=node.get("unselectedIcon"),
         )
+
+    if node_type == "info":
+        # Display-only row (e.g. About's Version/telemetry). It renders
+        # non-selectable, so this is reached only if a caller dispatches it
+        # directly; treat it as a no-op rather than raising.
+        return DispatchOutcome(kind="stay")
 
     if node_type == "dynamic":
         return DispatchOutcome(kind="dynamic", provider=node["provider"])

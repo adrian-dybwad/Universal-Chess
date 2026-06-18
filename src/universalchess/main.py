@@ -60,7 +60,6 @@ from universalchess.menus import (
     handle_paired_devices_menu,
     handle_accounts_menu,
     mask_token,
-    handle_about_menu,
     handle_engine_manager_menu,
     handle_engine_detail_menu,
     show_engine_install_progress,
@@ -2946,18 +2945,92 @@ def _run_inactivity_menu():
     return handle_inactivity_timeout(board=board, log=log, menu_manager=_menu_manager)
 
 
-def _run_about_menu():
-    """Run the (dynamic) About menu; return its break/None result."""
-    return handle_about_menu(
-        ctx=_get_menu_context(),
-        menu_manager=_menu_manager,
-        board=board,
-        log=log,
-        get_installed_version=_get_installed_version,
-        handle_update_menu=handle_update_menu,
+def _update_status_state_and_label():
+    """Return the (icon-state, summary label) pair for the Updates row.
+
+    Both derive from the one update-service status so the row's state-mapped icon
+    and its computed label cannot disagree: a pending update reads "ready", an
+    available (not-yet-downloaded) version reads "available", otherwise the
+    auto-update setting decides "auto"/"manual".
+    """
+    from universalchess.services.update_service import get_update_service
+
+    status = get_update_service().get_status_dict()
+    if status["has_pending_update"]:
+        return "ready", "Ready!"
+    if status["available_version"]:
+        return "available", f"v{status['available_version']}"
+    if status["auto_update"]:
+        return "auto", "Auto"
+    return "manual", "Manual"
+
+
+def _system_telemetry_rows():
+    """Build the About telemetry rows (CPU/Memory/Storage/Uptime) as engine rows.
+
+    Reuses the tested ``build_system_info_entries`` formatters and the safe
+    telemetry read (which degrades to no rows when a sensor read fails), then
+    wraps each entry as a non-selectable MenuRow so the cursor skips the readouts.
+    Re-read on each rebuild so the values stay current.
+    """
+    from universalchess.menus.about_menu import build_system_info_entries, read_system_info_safely
+    from universalchess.menus.engine import MenuRow
+
+    entries = build_system_info_entries(read_system_info_safely(log))
+    return [
+        MenuRow(key=e.key, label=e.label, icon=e.icon_name, enabled=e.enabled, selectable=False)
+        for e in entries
+    ]
+
+
+def _build_about_context():
+    """Build the BoardMenuContext for the data-driven About menu.
+
+    The read-only ``about`` store exposes the Version text and the Updates
+    icon-state; the ``updates_status`` compute supplies the Updates summary label;
+    the ``system_telemetry`` provider yields the live (non-selectable) readouts;
+    and ``open_updates`` opens the Updates menu.
+    """
+    from universalchess.menus.board_context import BoardMenuContext
+
+    def about_get(key):
+        if key == "version":
+            return _get_installed_version()
+        if key == "update_state":
+            return _update_status_state_and_label()[0]
+        raise KeyError(f"unknown about store key: {key!r}")
+
+    def about_set(key, value):
+        raise NotImplementedError(f"about store is read-only (key={key!r})")
+
+    ctx = BoardMenuContext()
+    ctx.register_store("about", about_get, about_set)
+    ctx.register_value("updates_status", lambda node: _update_status_state_and_label()[1])
+    ctx.register_provider("system_telemetry", _system_telemetry_rows)
+    ctx.register_action("open_updates", lambda: _signal_from(_run_update_menu()))
+    return ctx
+
+
+def _run_update_menu():
+    """Run the (dynamic) Updates menu; return its break/None result.
+
+    Still code-driven (splash-screen check/download/install flows); invoked as an
+    action from the data-driven About menu.
+    """
+    return handle_update_menu(
         show_menu=_show_menu,
         find_entry_index=find_entry_index,
+        board=board,
+        log=log,
+        initial_index=0,
     )
+
+
+def _run_about_menu():
+    """Run the data-driven About menu; return its break/None result."""
+    from universalchess.menus.board_context import run_engine_menu
+
+    return run_engine_menu("about", _build_about_context(), _menu_manager)
 
 
 def _reset_settings_confirmed() -> str:

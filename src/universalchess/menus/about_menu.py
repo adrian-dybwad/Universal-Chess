@@ -1,6 +1,13 @@
-"""About menu helpers."""
+"""About menu telemetry helpers.
 
-from typing import Callable, Optional, List
+The About screen itself is data-driven (the ``about`` catalog container rendered
+through the menu engine); this module holds only the pure, well-tested telemetry
+formatting it reuses. The board's ``system_telemetry`` provider turns
+:func:`build_system_info_entries` into engine rows, and :func:`read_system_info_safely`
+degrades a failed sensor read to "no telemetry rows" so the menu never crashes.
+"""
+
+from typing import Optional, List
 
 from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.board.system_info import (
@@ -10,8 +17,6 @@ from universalchess.board.system_info import (
     format_temperature_celsius,
     format_uptime,
 )
-from universalchess.managers.menu import MenuSelection, is_break_result
-from universalchess.services.update_service import get_update_service
 
 
 def build_system_info_entries(system_info: Optional[SystemInfo]) -> List[IconMenuEntry]:
@@ -68,60 +73,6 @@ def build_system_info_entries(system_info: Optional[SystemInfo]) -> List[IconMen
     ]
 
 
-def build_about_entries(
-    get_installed_version: Callable[[], str],
-    system_info: Optional[SystemInfo] = None,
-) -> List[IconMenuEntry]:
-    """Build about menu entries: version, update status, and system telemetry.
-
-    Args:
-        get_installed_version: Function returning installed version string
-        system_info: Current system telemetry, or ``None`` to omit the telemetry
-            rows (e.g. when it could not be read). Passed in (rather than read
-            here) so this builder stays pure and the hardware/OS read happens at
-            the call site.
-
-    Returns:
-        List of menu entries
-    """
-    version = get_installed_version()
-    version_label = f"Version\n{version}" if version else "Version\nUnknown"
-    
-    update_service = get_update_service()
-    status = update_service.get_status_dict()
-    
-    # Determine update status label
-    if status["has_pending_update"]:
-        update_label = "Updates\nReady!"
-        update_icon = "update"
-    elif status["available_version"]:
-        update_label = f"Updates\nv{status['available_version']}"
-        update_icon = "update"
-    elif status["auto_update"]:
-        update_label = "Updates\nAuto"
-        update_icon = "checkbox_checked"
-    else:
-        update_label = "Updates\nManual"
-        update_icon = "checkbox_empty"
-
-    return [
-        IconMenuEntry(
-            key="Version",
-            label=version_label,
-            icon_name="info",
-            enabled=True,
-            selectable=False,
-        ),
-        IconMenuEntry(
-            key="Updates",
-            label=update_label,
-            icon_name=update_icon,
-            enabled=True,
-        ),
-        *build_system_info_entries(system_info),
-    ]
-
-
 def read_system_info_safely(log=None) -> Optional[SystemInfo]:
     """Collect telemetry, returning ``None`` on any failure.
 
@@ -137,58 +88,3 @@ def read_system_info_safely(log=None) -> Optional[SystemInfo]:
         if log is not None:
             log.debug(f"System telemetry unavailable: {e}")
         return None
-
-
-def handle_about_menu(
-    ctx,
-    menu_manager,
-    board,
-    log,
-    get_installed_version: Callable[[], str],
-    handle_update_menu: Callable,
-    show_menu: Callable,
-    find_entry_index: Callable,
-    get_system_info: Optional[Callable[[], Optional[SystemInfo]]] = None,
-) -> Optional[MenuSelection]:
-    """Handle About menu - show version info, system telemetry, and updates.
-    
-    Args:
-        ctx: Menu context
-        menu_manager: Menu manager instance
-        board: Board instance
-        log: Logger instance
-        get_installed_version: Function returning installed version
-        handle_update_menu: Function to handle update submenu
-        show_menu: Function to display menu
-        find_entry_index: Function to find entry index
-        get_system_info: Optional telemetry provider; defaults to a safe psutil
-            reader that returns ``None`` when telemetry cannot be read. Re-read on
-            each menu rebuild so the displayed values stay current.
-        
-    Returns:
-        MenuSelection if breaking out, None otherwise
-    """
-    read_telemetry = get_system_info or (lambda: read_system_info_safely(log))
-
-    def build_entries():
-        return build_about_entries(get_installed_version, system_info=read_telemetry())
-
-    def handle_selection(result: MenuSelection):
-        if result.key == "Version":
-            # Version is display-only, not selectable
-            return None
-        elif result.key == "Updates":
-            ctx.enter_menu("Updates", 0)
-            sub_result = handle_update_menu(
-                show_menu=show_menu,
-                find_entry_index=find_entry_index,
-                board=board,
-                log=log,
-                initial_index=ctx.current_index(),
-            )
-            ctx.leave_menu()
-            if is_break_result(sub_result):
-                return sub_result
-        return None
-
-    return menu_manager.run_menu_loop(build_entries, handle_selection, initial_index=ctx.current_index())

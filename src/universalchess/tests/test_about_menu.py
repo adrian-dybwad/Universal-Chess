@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
-"""Tests for the About menu entry builder, including system telemetry rows.
+"""Tests for the About telemetry formatters.
 
 Why these tests exist:
-  The About screen now surfaces live system telemetry beneath Version/Updates.
-  These tests pin (a) that telemetry rows are appended in a stable order with the
-  expected non-selectable info rows, (b) that the labels are formatted from the
-  shared system_info formatters, and (c) that missing telemetry degrades to just
-  Version/Updates rather than raising -- the on-board menu must never crash
-  because a sensor read failed.
-
-  ``get_update_service`` is patched so the Version/Updates rows are deterministic
-  and the test does not depend on real update state on disk.
+  The About screen is now data-driven (the ``about`` catalog container rendered
+  through the engine); this module keeps only the pure telemetry helpers it
+  reuses. These tests pin (a) that telemetry rows render in a stable order with
+  the expected non-selectable info rows and labels formatted by the shared
+  system_info formatters, and (b) that missing telemetry degrades to no rows
+  rather than raising -- the on-board menu must never crash because a sensor read
+  failed. The Version/Updates composition now lives in the catalog container and
+  is covered by test_about_menu_engine.
 """
-
-import pytest
 
 from universalchess.board.system_info import (
     DiskSnapshot,
@@ -34,22 +31,6 @@ _SAMPLE_INFO = SystemInfo(
     uptime_seconds=90061.0,
     load_average_1m=0.42,
 )
-
-
-class _FakeUpdateService:
-    """Minimal stand-in: no pending update, manual channel."""
-
-    def get_status_dict(self):
-        return {
-            "has_pending_update": False,
-            "available_version": None,
-            "auto_update": False,
-        }
-
-
-@pytest.fixture
-def manual_update_status(monkeypatch):
-    monkeypatch.setattr(about_menu, "get_update_service", lambda: _FakeUpdateService())
 
 
 class TestBuildSystemInfoEntries:
@@ -82,38 +63,6 @@ class TestBuildSystemInfoEntries:
             "Memory\n38% (3.0 GiB)",
             "Storage\n31% (10.0 GiB)",
             "Uptime\n1d 1h",
-        ]
-
-
-class TestBuildAboutEntries:
-
-    def test_without_telemetry_is_version_and_updates_only(self, manual_update_status):
-        """With no telemetry the screen is exactly Version + Updates.
-
-        Regression manifestation: if telemetry rows were appended unconditionally
-        (e.g. with placeholder None values), this count/shape would change.
-        """
-        entries = about_menu.build_about_entries(lambda: "1.2.3", system_info=None)
-
-        assert [e.key for e in entries] == ["Version", "Updates"]
-        assert entries[0].label == "Version\n1.2.3"
-
-    def test_with_telemetry_appends_system_rows_after_updates(self, manual_update_status):
-        """Telemetry rows must follow Version/Updates, preserving the original
-        two rows and their order.
-
-        Regression manifestation: prepending the telemetry rows, or replacing the
-        Version/Updates rows, would reorder this list.
-        """
-        entries = about_menu.build_about_entries(lambda: "1.2.3", system_info=_SAMPLE_INFO)
-
-        assert [e.key for e in entries] == [
-            "Version",
-            "Updates",
-            "SysCpu",
-            "SysMemory",
-            "SysDisk",
-            "SysUptime",
         ]
 
 

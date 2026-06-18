@@ -19,7 +19,6 @@ from .bluetooth_menu import (
     handle_paired_devices_menu,
 )
 from .accounts_menu import handle_accounts_menu, mask_token
-from .about_menu import handle_about_menu
 from .engine_manager_menu import (
     handle_engine_manager_menu,
     handle_engine_detail_menu,
@@ -74,7 +73,6 @@ __all__ = [
     "_get_player_type_label",
     "handle_engine_selection",
     "handle_elo_selection",
-    "handle_about_menu",
     "handle_engine_manager_menu",
     "handle_engine_detail_menu",
     "show_engine_install_progress",

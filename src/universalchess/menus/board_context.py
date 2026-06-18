@@ -110,6 +110,7 @@ def _row_to_entry(row: MenuRow) -> IconMenuEntry:
         icon_mask=row.icon_mask,
         trailing_icon_name=row.trailing_icon,
         enabled=row.enabled,
+        selectable=row.selectable,
         help=row.help,
     )
 

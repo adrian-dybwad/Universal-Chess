@@ -429,6 +429,47 @@
     },
 
     {
+      "id": "about",
+      "type": "menu",
+      "label": "About",
+      "help": "Version, update status, and live system telemetry.",
+      "platforms": ["board"],
+      "children": ["about.version", "about.updates", "about.telemetry"]
+    },
+    {
+      "id": "about.version",
+      "key": "Version",
+      "type": "info",
+      "label": "Version",
+      "boardLabel": "Version\n{value}",
+      "bind": { "store": "about", "key": "version" },
+      "valueDefault": "Unknown",
+      "icon": "info",
+      "help": "Installed software version.",
+      "platforms": ["board"],
+      "epaper": { "selectable": false }
+    },
+    {
+      "id": "about.updates",
+      "key": "Updates",
+      "type": "action",
+      "action": "open_updates",
+      "label": "Updates",
+      "boardLabel": "Updates\n{fn:updates_status}",
+      "bind": { "store": "about", "key": "update_state" },
+      "icon": { "ready": "update", "available": "update", "auto": "checkbox_checked", "manual": "checkbox_empty" },
+      "help": "Check for and install software updates.",
+      "platforms": ["board"]
+    },
+    {
+      "id": "about.telemetry",
+      "type": "dynamic",
+      "provider": "system_telemetry",
+      "help": "Live system telemetry (CPU, memory, storage, uptime).",
+      "platforms": ["board"]
+    },
+
+    {
       "id": "field.player.color",
       "type": "select",
       "label": "Color",
