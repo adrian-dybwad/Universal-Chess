@@ -76,20 +76,10 @@ from universalchess.menus import (
     ensure_token,
     start_lichess_game_service,
 )
-from universalchess.menus.players_menu import (
-    handle_players_menu,
-    handle_player1_menu,
-    handle_player2_menu,
-    handle_color_selection,
-    handle_type_selection,
-    handle_hand_brain_mode_selection,
-    handle_name_input,
-)
 from universalchess.menus.engine_menu import (
     handle_engine_selection,
     handle_elo_selection,
 )
-from universalchess.menus.hand_brain_menu import toggle_hand_brain_mode
 from universalchess.utils.wifi import (
     scan_wifi_networks,
     connect_to_wifi,
@@ -2410,98 +2400,189 @@ def _handle_settings(initial_selection: str = None):
 
 # ============================================================================
 # Player Menu Handlers
-# These wrap the extracted handlers with the global dependencies.
+# ----------------------------------------------------------------------------
+# The Players menus are data-driven by the shared catalog (settings.players ->
+# settings.player_detail) and run through the engine. main.py supplies only the
+# board glue: value stores (per-player settings), computed summary labels, and
+# the actions for the genuinely board-specific interactions (keyboard name
+# entry, dynamic engine/ELO lists, Lichess). Player 1 and Player 2 share the one
+# field.player.* node set; each detail menu binds the engine's "player" store to
+# that player and flags has_color so the Color row shows only for Player 1.
 # ============================================================================
 
+def _player_summary(player_settings: Dict[str, Any], *, with_color: bool) -> str:
+    """Compose the one-line summary shown under a player on the Players menu.
+
+    Mirrors the prior board summary: engine players show the engine name,
+    Hand+Brain shows ``H+B N``/``H+B R``, and everything else shows the catalog
+    player-type label. Player 1 appends its color in parentheses; Player 2 does
+    not (it always plays the opposite color).
+    """
+    player_type = player_settings["type"]
+    summary = _get_player_type_label(player_type)
+    if player_type == "engine":
+        summary = player_settings["engine"]
+    elif player_type == "hand_brain":
+        mode = "N" if player_settings["hand_brain_mode"] == "normal" else "R"
+        summary = f"H+B {mode}"
+    if with_color:
+        return f"{summary} ({player_settings['color'].capitalize()})"
+    return summary
+
+
+def _signal_from(result) -> Optional[str]:
+    """Map a board sub-handler result to a menu-engine action signal.
+
+    Sub-handlers (engine/ELO lists, Lichess) return None on normal completion or
+    a break result (MenuSelection or token string) when a game-start/connection
+    event must unwind every menu. The engine's action loop exits on any non-None
+    signal, so only break results are forwarded (as their key); normal
+    completion returns None to stay in the player menu and redraw.
+    """
+    if result is None:
+        return None
+    if isinstance(result, MenuSelection):
+        return result.key if result.is_break else None
+    if is_break_result(result):
+        return result
+    return None
+
+
+def _prompt_player_name(player_num: int) -> None:
+    """Open the on-board keyboard to edit a player's name, then persist it.
+
+    Board-specific interaction backing the ``edit_name`` action of the
+    data-driven player menu (the web edits the same ``field.player.name`` node
+    via a text input). Saving an empty string clears the name; the menu then
+    shows the default ("Human") via the player store's display fallback.
+    """
+    label = f"Player {player_num}"
+    save_setting = _save_player1_setting if player_num == 1 else _save_player2_setting
+    settings_dict = _player1_settings_dict if player_num == 1 else _player2_settings_dict
+
+    log.info(f"[Settings] Opening keyboard for {label} name entry")
+    board.display_manager.clear_widgets(addStatusBar=False)
+
+    current_name = settings_dict().get("name", "")
+    keyboard = KeyboardWidget(board.display_manager.update, title=f"{label} Name", max_length=20)
+    keyboard.text = current_name if current_name else ""
+    _set_active_keyboard_widget(keyboard)
+
+    promise = board.display_manager.add_widget(keyboard)
+    if promise:
+        try:
+            promise.result(timeout=2.0)
+        except Exception:
+            pass
+
+    try:
+        result = keyboard.wait_for_input(timeout=300.0)
+        if result is not None:
+            save_setting("name", result)
+            log.info(f"[Settings] {label} name saved: '{result or '(default)'}'")
+            board.beep(board.SOUND_GENERAL)
+        else:
+            log.info(f"[Settings] {label} name entry cancelled")
+    finally:
+        _set_active_keyboard_widget(None)
+    return None
+
+
+def _build_players_context():
+    """Build the context for the top-level Players menu (settings.players).
+
+    Exposes both players' settings (for the per-player summary labels and the
+    Player 1 color icon) and the three row actions: opening each player's detail
+    menu and starting the game. ``open_player*`` forwards only a break result up
+    (so a game started from a sub-menu unwinds); ``start_game`` returns the
+    START_GAME token the Settings handler turns into a new game.
+    """
+    from universalchess.menus.board_context import BoardMenuContext
+
+    ctx = BoardMenuContext()
+    ctx.register_store("player1", lambda key: _player1_settings_dict()[key], _save_player1_setting)
+    ctx.register_store("player2", lambda key: _player2_settings_dict()[key], _save_player2_setting)
+    ctx.register_value("player1_summary", lambda node: _player_summary(_player1_settings_dict(), with_color=True))
+    ctx.register_value("player2_summary", lambda node: _player_summary(_player2_settings_dict(), with_color=False))
+    ctx.register_action("open_player1", lambda: _open_player_detail(1))
+    ctx.register_action("open_player2", lambda: _open_player_detail(2))
+    ctx.register_action("start_game", lambda: "START_GAME")
+    return ctx
+
+
+def _build_player_detail_context(player_num: int):
+    """Build the context for one player's detail menu (settings.player_detail).
+
+    Binds the engine's generic "player" store to the chosen player's settings
+    and registers the board interactions the detail rows invoke. The virtual
+    ``has_color`` key drives the Color row's visibility (Player 1 only). The
+    store returns the real stored values (an unset name reads as ""); the "Human"
+    placeholder for the Name row is supplied declaratively by the node's
+    ``valueDefault`` so the store, the keyboard prefill, and the game's PGN name
+    all see the same truthful value.
+    """
+    from universalchess.menus.board_context import BoardMenuContext
+
+    if player_num == 1:
+        settings_dict = _player1_settings_dict
+        save_setting = _save_player1_setting
+        has_color = True
+        select_engine = _handle_player1_engine_selection
+        select_elo = _handle_player1_elo_selection
+    else:
+        settings_dict = _player2_settings_dict
+        save_setting = _save_player2_setting
+        has_color = False
+        select_engine = _handle_player2_engine_selection
+        select_elo = _handle_player2_elo_selection
+
+    def player_get(key):
+        if key == "has_color":
+            return has_color
+        return settings_dict()[key]
+
+    def player_set(key, value):
+        save_setting(key, value)
+        log.info(f"[Settings] Player{player_num} {key} changed to {value}")
+
+    ctx = BoardMenuContext()
+    ctx.register_store("player", player_get, player_set)
+    ctx.register_action("edit_name", lambda: _prompt_player_name(player_num))
+    ctx.register_action("select_engine", lambda: _signal_from(select_engine()))
+    ctx.register_action("select_elo", lambda: _signal_from(select_elo()))
+    ctx.register_action("lichess", lambda: _signal_from(_handle_lichess_menu()))
+    return ctx
+
+
+def _open_player_detail(player_num: int) -> Optional[str]:
+    """Run one player's detail menu; forward only a break result to the caller."""
+    from universalchess.menus.board_context import run_engine_menu
+
+    result = run_engine_menu(
+        "settings.player_detail", _build_player_detail_context(player_num), _menu_manager
+    )
+    if result is not None and result.is_break:
+        return result.key
+    return None
+
+
 def _handle_players_menu():
-    """Handle the Players submenu."""
-    return handle_players_menu(
-        get_menu_context=_get_menu_context,
-        get_player1_settings=_player1_settings_dict,
-        get_player2_settings=_player2_settings_dict,
-        show_menu=_show_menu,
-        find_entry_index=find_entry_index,
-        handle_player1_menu=_handle_player1_menu,
-        handle_player2_menu=_handle_player2_menu,
-        board=board,
-        log=log,
-    )
+    """Handle the Players submenu via the shared menu engine.
 
+    Returns "START_GAME" when the user chooses Start Game, a break MenuSelection
+    when a game/connection event unwinds all menus, or None on BACK -- matching
+    the contract the Settings handler expects.
+    """
+    from universalchess.menus.board_context import run_engine_menu
 
-def _handle_player1_menu():
-    """Handle Player 1 configuration submenu."""
-    return handle_player1_menu(
-        ctx=_get_menu_context(),
-        get_player1_settings=_player1_settings_dict,
-        show_menu=_show_menu,
-        find_entry_index=find_entry_index,
-        is_break_result=is_break_result,
-        board=board,
-        log=log,
-        save_player1_setting=_save_player1_setting,
-        handle_color_selection=_handle_player1_color_selection,
-        handle_type_selection=_handle_player1_type_selection,
-        handle_name_input=_handle_player1_name_input,
-        handle_engine_selection=_handle_player1_engine_selection,
-        handle_elo_selection=_handle_player1_elo_selection,
-        handle_lichess_menu=_handle_lichess_menu,
-        toggle_hand_brain_mode_fn=toggle_hand_brain_mode,
-    )
-
-
-def _handle_player2_menu():
-    """Handle Player 2 configuration submenu."""
-    return handle_player2_menu(
-        ctx=_get_menu_context(),
-        get_player2_settings=_player2_settings_dict,
-        show_menu=_show_menu,
-        find_entry_index=find_entry_index,
-        is_break_result=is_break_result,
-        board=board,
-        log=log,
-        save_player2_setting=_save_player2_setting,
-        handle_type_selection=_handle_player2_type_selection,
-        handle_name_input=_handle_player2_name_input,
-        handle_engine_selection=_handle_player2_engine_selection,
-        handle_elo_selection=_handle_player2_elo_selection,
-        handle_lichess_menu=_handle_lichess_menu,
-        toggle_hand_brain_mode_fn=toggle_hand_brain_mode,
-    )
-
-
-def _handle_player1_color_selection():
-    """Handle color selection for Player 1."""
-    return handle_color_selection(
-        player_settings=_player1_settings_dict(),
-        show_menu=_show_menu,
-        save_player_setting=_save_player1_setting,
-        log=log,
-        board=board,
-    )
-
-
-def _handle_player1_type_selection():
-    """Handle type selection for Player 1."""
-    return handle_type_selection(
-        player_settings=_player1_settings_dict(),
-        show_menu=_show_menu,
-        save_player_setting=_save_player1_setting,
-        log=log,
-        board=board,
-        player_label="Player1",
-    )
-
-
-def _handle_player2_type_selection():
-    """Handle type selection for Player 2."""
-    return handle_type_selection(
-        player_settings=_player2_settings_dict(),
-        show_menu=_show_menu,
-        save_player_setting=_save_player2_setting,
-        log=log,
-        board=board,
-        player_label="Player2",
-    )
+    result = run_engine_menu("settings.players", _build_players_context(), _menu_manager)
+    if result is None:
+        return None
+    if result.key == "START_GAME":
+        return "START_GAME"
+    if result.is_break:
+        return result
+    return None
 
 
 def _handle_player1_engine_selection():
@@ -2555,34 +2636,6 @@ def _handle_player2_elo_selection():
         save_player_setting=_save_player2_setting,
         log=log,
         board=board,
-    )
-
-
-def _handle_player1_name_input():
-    """Handle name input for Player 1."""
-    return handle_name_input(
-        player_settings=_player1_settings_dict(),
-        show_menu=_show_menu,
-        save_player_setting=_save_player1_setting,
-        log=log,
-        board=board,
-        keyboard_widget_class=KeyboardWidget,
-        player_label="Player 1",
-        set_active_keyboard_widget=_set_active_keyboard_widget,
-    )
-
-
-def _handle_player2_name_input():
-    """Handle name input for Player 2."""
-    return handle_name_input(
-        player_settings=_player2_settings_dict(),
-        show_menu=_show_menu,
-        save_player_setting=_save_player2_setting,
-        log=log,
-        board=board,
-        keyboard_widget_class=KeyboardWidget,
-        player_label="Player 2",
-        set_active_keyboard_widget=_set_active_keyboard_widget,
     )
 
 

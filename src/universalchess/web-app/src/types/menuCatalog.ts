@@ -9,6 +9,30 @@
 export interface MenuOption {
   value: string;
   label: string;
+  /** Optional per-option icon (used by the board's option lists). */
+  icon?: string;
+}
+
+/** A data-binding reference: which store/key a node reads and writes. */
+export interface MenuBind {
+  store: string;
+  key: string;
+}
+
+/** A condition over a bound value gating visibility/enablement of a node. */
+export interface MenuCondition {
+  store: string;
+  key: string;
+  in?: string[];
+  equals?: string | number | boolean;
+}
+
+/** Numeric range spec for `range` cyclers. */
+export interface MenuRange {
+  min: number;
+  max: number;
+  step?: number;
+  wrap?: boolean;
 }
 
 export interface MenuSection {
@@ -20,17 +44,50 @@ export interface MenuSection {
 /** A single catalog node. Containers use `children`; leaf fields use the rest. */
 export interface MenuNode {
   id: string;
-  type: 'menu' | 'submenu' | 'action' | 'toggle' | 'select' | 'text' | 'range' | 'info';
+  type:
+    | 'menu'
+    | 'submenu'
+    | 'action'
+    | 'toggle'
+    | 'cycle'
+    | 'select'
+    | 'set_value'
+    | 'dynamic'
+    | 'text'
+    | 'range'
+    | 'info';
   label?: string;
   label_in_progress?: string;
-  icon?: string;
+  /** Optional board-only label override (e-paper abbreviation/template). */
+  boardLabel?: string;
+  /** Static icon id, or a state map `{ stateValue: icon }` keyed by the bound value. */
+  icon?: string | Record<string, string>;
   help?: string;
   /** Platforms this node applies to. Absent means both board and web. */
   platforms?: ('board' | 'web')[];
   /** Web tab (section) this field belongs to. */
   section?: string;
-  /** Named option set for select fields. */
+  /** Named option set for select/cycle fields. */
   optionSet?: string;
+  /** Value store/key this node reads and writes. */
+  bind?: MenuBind;
+  /** Gate the row's visibility on a bound value. */
+  visibleWhen?: MenuCondition;
+  /** Gate the row's enabled flag on a bound value. */
+  enabledWhen?: MenuCondition;
+  /** Numeric range spec for `range` cyclers. */
+  range?: MenuRange;
+  /** Fixed value written by a `set_value` row. */
+  value?: string | number | boolean;
+  /** Placeholder text for a `{value}` token when the bound value is unset. */
+  valueDefault?: string;
+  /** Action name for `action`/`text` nodes. */
+  action?: string;
+  /** Dynamic-list provider name for `dynamic` nodes. */
+  provider?: string;
+  /** Per-row icons for the option list a `select` opens. */
+  selectedIcon?: string;
+  unselectedIcon?: string;
   /** Board selection key (e-paper renderer). */
   key?: string;
   /** Container child ids. */

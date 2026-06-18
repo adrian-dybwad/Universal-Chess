@@ -1,22 +1,57 @@
-"""Tests for the Player menu entry composition.
+"""Tests for the Players menus, now driven by the shared menu engine.
 
 Background / why these tests exist
 ----------------------------------
-Player-type display text was migrated off a private value->label map onto the
-shared catalog ``player_type`` option set, so the board and the web render the
-same labels from one source. These tests pin that the board entries pick up the
-catalog labels (notably the longer "Hand + Brain" form) and that an unknown
-type still degrades to legible text rather than blank.
+The Players top-level menu (settings.players) and the per-player detail menu
+(settings.player_detail) were migrated off bespoke builders onto the data-driven
+engine. Player 1 and Player 2 share one ``field.player.*`` node set; each detail
+menu binds the engine's generic "player" store to that player and flags
+``has_color`` so the Color row shows only for Player 1. Type-conditional rows
+(name/engine/elo/hand-brain/lichess), the color/type radio lists with per-option
+icons, the Hand+Brain cycle, the computed player summaries, and the Start Game
+token all come from the catalog through the engine. These tests build from the
+*real* catalog with dict-backed stores and recorded actions, pinning the same
+guarantees the deleted ``players_menu``/``hand_brain_menu`` modules enforced.
 """
 
-from universalchess.menus.players_menu import _player_type_label, build_player1_menu_entries
+from universalchess.managers.menu import MenuResult, MenuSelection
+from universalchess.menus.board_context import BoardMenuContext, run_engine_menu
+from universalchess.menus.catalog.loader import load_catalog
+from universalchess.menus.engine import build_rows
+
+_EXIT_RESULTS = {MenuResult.BACK, MenuResult.SHUTDOWN, MenuResult.HELP}
 
 
-def _player(**overrides):
+class _FakeMenuManager:
+    """Drives run_menu_loop from a scripted list of selection keys.
+
+    Mirrors MenuManager.run_menu_loop (break/exit short-circuit, then handler)
+    so the adapter is tested without a display. Records the entries shown on each
+    iteration (including inner option lists) for assertions.
+    """
+
+    def __init__(self, script):
+        self._script = list(script)
+        self.shown = []
+
+    def run_menu_loop(self, build_entries, handle_selection, initial_index=0, track_selection=True):
+        while True:
+            self.shown.append(build_entries())
+            selection = MenuSelection.from_key(self._script.pop(0))
+            if selection.key == "REFRESH":
+                continue
+            if selection.is_break or selection.result_type in _EXIT_RESULTS:
+                return selection
+            result = handle_selection(selection)
+            if result is not None:
+                return result
+
+
+def _player_state(**overrides):
     base = {
         "color": "white",
         "type": "human",
-        "name": "",
+        "name": "Alice",
         "engine": "stockfish",
         "elo": "1500",
         "hand_brain_mode": "normal",
@@ -25,41 +60,373 @@ def _player(**overrides):
     return base
 
 
-def test_player_type_label_comes_from_catalog():
-    """_player_type_label must return the catalog labels, not a local map.
+def _detail_ctx(state, *, has_color=True, calls=None):
+    """Board context for one player's detail menu (store "player").
 
-    How a regression manifests: if the function reverts to a hardcoded map, the
-    Hand+Brain label returns the old abbreviated "H+B" instead of the catalog's
-    "Hand + Brain", so this assertion fails. Human/Engine/Lichess are pinned too
-    because they share the same lookup path.
+    Mirrors main._build_player_detail_context: a dict-backed player store plus
+    the virtual ``has_color`` key, with the board interactions (keyboard name,
+    engine/ELO lists, Lichess) recorded so their invocation can be asserted
+    without a real display.
     """
-    assert _player_type_label("human") == "Human"
-    assert _player_type_label("engine") == "Engine"
-    assert _player_type_label("lichess") == "Lichess"
-    assert _player_type_label("hand_brain") == "Hand + Brain"
+    calls = calls if calls is not None else []
+
+    def player_get(key):
+        if key == "has_color":
+            return has_color
+        return state[key]
+
+    ctx = BoardMenuContext()
+    ctx.register_store("player", player_get, lambda k, v: state.__setitem__(k, v))
+    ctx.register_action("edit_name", lambda: calls.append("edit_name") or None)
+    ctx.register_action("select_engine", lambda: calls.append("select_engine") or None)
+    ctx.register_action("select_elo", lambda: calls.append("select_elo") or None)
+    ctx.register_action("lichess", lambda: calls.append("lichess") or None)
+    ctx._recorded_calls = calls
+    return ctx
 
 
-def test_player_type_label_unknown_falls_back_to_capitalized():
-    """An unrecognised type must degrade to a capitalised form, never blank.
+def _detail_rows(state, *, has_color=True):
+    return build_rows(
+        "settings.player_detail",
+        _detail_ctx(state, has_color=has_color),
+        platform="board",
+        catalog=load_catalog(),
+    )
 
-    How a regression manifests: a missing default would return an empty string
-    (blank board row) for a type absent from the catalog; this guards that the
-    value stays visible.
+
+# -- detail menu: type-conditional row sets ------------------------------------
+
+
+def test_human_shows_color_type_name_engine_elo():
+    """A human player exposes Color, Type, Name, Engine, and ELO (no H+B/Lichess).
+
+    Why this test exists: row visibility is gated by ``visibleWhen`` on the player
+    type; a human keeps Name and (per the prior board) the Engine/ELO rows. How a
+    regression manifests: the Name row disappears, or the Hand+Brain/Lichess row
+    leaks in for a human, changing this exact id list.
     """
-    assert _player_type_label("martian") == "Martian"
+    ids = [r.node["id"] for r in _detail_rows(_player_state(type="human"))]
+    assert ids == [
+        "field.player.color",
+        "field.player.type",
+        "field.player.name",
+        "field.player.engine",
+        "field.player.elo",
+    ]
 
 
-def test_player1_type_row_uses_catalog_label():
-    """The Player 1 Type row renders the catalog player-type label.
+def test_engine_hides_name_and_hand_brain_rows():
+    """An engine player drops Name and Hand+Brain, keeping Engine and ELO.
 
-    Why this test exists: the entry label is built as "Type\\n<label>" where the
-    label now comes from the catalog. This enters through the public builder (not
-    the private helper) so it guards the rendered row, which is what the user
-    sees on the board.
-
-    How a regression manifests: a re-hardcoded map would render "Type\\nH+B"
-    instead of "Type\\nHand + Brain", failing this assertion.
+    How a regression manifests: the Name row (human-only) or the Hand+Brain mode
+    row (hand_brain-only) reappears for an engine player.
     """
-    entries = build_player1_menu_entries(_player(type="hand_brain"))
-    type_entry = next(e for e in entries if e.key == "Type")
-    assert type_entry.label == "Type\nHand + Brain"
+    ids = [r.node["id"] for r in _detail_rows(_player_state(type="engine"))]
+    assert ids == [
+        "field.player.color",
+        "field.player.type",
+        "field.player.engine",
+        "field.player.elo",
+    ]
+
+
+def test_hand_brain_shows_mode_row_with_checkbox_icon():
+    """Hand+Brain adds the mode row (cycle) marked by its checkbox state icon.
+
+    Why: Reverse mode is toggled in place; the row's icon reflects the current
+    mode (checked when reverse). How a regression manifests: the mode row is
+    missing for hand_brain, or its icon does not track the reverse/normal state.
+    """
+    by_id = {r.node["id"]: r for r in _detail_rows(_player_state(type="hand_brain", hand_brain_mode="reverse"))}
+    assert "field.player.hand_brain_mode" in by_id
+    mode_row = by_id["field.player.hand_brain_mode"]
+    assert mode_row.label == "Reverse"
+    assert mode_row.icon == "checkbox_checked"
+
+    normal = {r.node["id"]: r for r in _detail_rows(_player_state(type="hand_brain", hand_brain_mode="normal"))}
+    assert normal["field.player.hand_brain_mode"].icon == "checkbox_empty"
+
+
+def test_lichess_shows_only_color_type_and_lichess():
+    """A Lichess player exposes just Color, Type, and the Lichess Settings row.
+
+    How a regression manifests: the engine/ELO/name rows (non-Lichess) leak in,
+    or the Lichess row is hidden, for a Lichess player.
+    """
+    ids = [r.node["id"] for r in _detail_rows(_player_state(type="lichess"))]
+    assert ids == ["field.player.color", "field.player.type", "field.player.lichess"]
+
+
+def test_player2_detail_hides_color_row():
+    """Player 2's detail omits the Color row (has_color is False).
+
+    Why this test exists: Player 1 picks a color and Player 2 always takes the
+    opposite, so only Player 1 shows the Color row -- driven by the virtual
+    ``has_color`` flag the per-player context sets. How a regression manifests:
+    the Color row appears for Player 2, implying both could pick the same color.
+    """
+    ids = [r.node["id"] for r in _detail_rows(_player_state(type="human"), has_color=False)]
+    assert "field.player.color" not in ids
+    assert ids[0] == "field.player.type"
+
+
+# -- detail menu: board labels -------------------------------------------------
+
+
+def test_detail_rows_use_board_abbreviations_and_bound_values():
+    """Detail rows render e-paper labels with the bound value substituted.
+
+    Why: the board uses the optional boardLabel templates ("Type\\n{value}",
+    "Color\\n{value}", "Engine\\n{value}", "ELO\\n{value}", "Name\\n{value}"),
+    where {value} resolves through the option set (Type/Color) or the raw value
+    (Engine/ELO/Name). How a regression manifests: a row shows the long web label
+    or loses its current value.
+    """
+    by_id = {
+        r.node["id"]: r
+        for r in _detail_rows(_player_state(type="engine", color="black", engine="maia", elo="1900"))
+    }
+    assert by_id["field.player.type"].label == "Type\nEngine"
+    assert by_id["field.player.color"].label == "Color\nBlack"
+    assert by_id["field.player.engine"].label == "Engine\nmaia"
+    assert by_id["field.player.elo"].label == "ELO\n1900"
+
+
+def test_name_row_shows_entered_name_via_value_token():
+    """The Name row renders the stored name through the {value} template.
+
+    How a regression manifests: the boardLabel stops substituting the bound name,
+    so the row shows a literal '{value}' or a blank name.
+    """
+    by_id = {r.node["id"]: r for r in _detail_rows(_player_state(type="human", name="Bobby"))}
+    assert by_id["field.player.name"].label == "Name\nBobby"
+
+
+def test_unset_name_shows_human_default_without_fabricating_in_store():
+    """An empty name renders "Name\\nHuman" via the node's valueDefault.
+
+    Why this test exists: the "Human" placeholder is supplied declaratively by
+    the catalog (``valueDefault``), not by faking it in the value store -- so the
+    store (and thus the keyboard prefill and the game's PGN name) keep seeing the
+    real empty value. The test ctx store returns the raw "" here; the rendered
+    label must still read "Name\\nHuman". How a regression manifests: the store
+    is back to returning "Human" (the prefill/PGN would then wrongly show
+    "Human"), or the default is dropped and the row shows a blank "Name\\n".
+    """
+    state = _player_state(type="human", name="")
+    by_id = {r.node["id"]: r for r in _detail_rows(state)}
+    assert by_id["field.player.name"].label == "Name\nHuman"
+    # The store itself stays truthful: the underlying value is still empty.
+    assert state["name"] == ""
+
+
+# -- detail menu: dispatch / persistence ---------------------------------------
+
+
+def test_color_list_marks_active_with_star_and_keeps_piece_icons():
+    """The Color list keeps per-option piece icons and stars the active color.
+
+    Why this test exists: option sets that carry their own icon (color -> white/
+    black piece) are rendered with that icon and the active row is marked with a
+    leading "* " (not a radio glyph). How a regression manifests: the radio glyph
+    overrides the piece icon, or the active color is unmarked/mismarked.
+    """
+    state = _player_state(color="white")
+    # Open Color, then exit the inner list via BACK, then exit the detail menu.
+    mm = _FakeMenuManager(["field.player.color", "BACK", "BACK"])
+    run_engine_menu("settings.player_detail", _detail_ctx(state), mm, catalog=load_catalog())
+
+    # shown[0] is the detail rows; shown[1] is the opened color option list.
+    color_list = {e.key: e for e in mm.shown[1]}
+    assert color_list["white"].label == "* White"
+    assert color_list["white"].icon_name == "white_piece"
+    assert color_list["black"].label == "Black"
+    assert color_list["black"].icon_name == "black_piece"
+
+
+def test_selecting_color_persists_choice():
+    """Picking a color in the list writes it to the player store.
+
+    How a regression manifests: the select does not persist (color unchanged) so
+    the board cannot change a player's color.
+    """
+    state = _player_state(color="white")
+    mm = _FakeMenuManager(["field.player.color", "black", "BACK"])
+    run_engine_menu("settings.player_detail", _detail_ctx(state), mm, catalog=load_catalog())
+    assert state["color"] == "black"
+
+
+def test_selecting_type_persists_choice():
+    """Picking a player type in the list writes it to the player store.
+
+    How a regression manifests: the type select is inert, so a player cannot be
+    switched between human/engine/hand_brain/lichess from the board.
+    """
+    state = _player_state(type="human")
+    mm = _FakeMenuManager(["field.player.type", "engine", "BACK"])
+    run_engine_menu("settings.player_detail", _detail_ctx(state), mm, catalog=load_catalog())
+    assert state["type"] == "engine"
+
+
+def test_hand_brain_mode_cycles_between_normal_and_reverse():
+    """Selecting the Hand+Brain row cycles the mode in place (normal <-> reverse).
+
+    Why: the mode row is a cycle, not a sub-list; one press flips it. How a
+    regression manifests: the mode never changes, or advances to an unexpected
+    value instead of toggling.
+    """
+    state = _player_state(type="hand_brain", hand_brain_mode="normal")
+    # Cycle once (normal -> reverse), again (reverse -> normal), then exit.
+    mm = _FakeMenuManager(
+        ["field.player.hand_brain_mode", "field.player.hand_brain_mode", "BACK"]
+    )
+    run_engine_menu("settings.player_detail", _detail_ctx(state), mm, catalog=load_catalog())
+    assert state["hand_brain_mode"] == "normal"
+
+    state2 = _player_state(type="hand_brain", hand_brain_mode="normal")
+    mm2 = _FakeMenuManager(["field.player.hand_brain_mode", "BACK"])
+    run_engine_menu("settings.player_detail", _detail_ctx(state2), mm2, catalog=load_catalog())
+    assert state2["hand_brain_mode"] == "reverse"
+
+
+def test_name_row_invokes_edit_name_action():
+    """Selecting the Name row runs the board ``edit_name`` action (keyboard).
+
+    Why this test exists: ``field.player.name`` is a ``text`` node edited on the
+    board via its named action. How a regression manifests: the text dispatch
+    stops routing to the action, so the keyboard never opens.
+    """
+    state = _player_state(type="human")
+    calls = []
+    ctx = _detail_ctx(state, calls=calls)
+    mm = _FakeMenuManager(["field.player.name", "BACK"])
+    run_engine_menu("settings.player_detail", ctx, mm, catalog=load_catalog())
+    assert calls == ["edit_name"]
+
+
+def test_engine_and_elo_rows_invoke_their_actions():
+    """The Engine and ELO rows run their board list actions.
+
+    How a regression manifests: selecting Engine or ELO no longer opens the
+    dynamic selection list (the action is not invoked).
+    """
+    state = _player_state(type="engine")
+    calls = []
+    ctx = _detail_ctx(state, calls=calls)
+    mm = _FakeMenuManager(["field.player.engine", "field.player.elo", "BACK"])
+    run_engine_menu("settings.player_detail", ctx, mm, catalog=load_catalog())
+    assert calls == ["select_engine", "select_elo"]
+
+
+# -- top-level Players menu ----------------------------------------------------
+
+
+def _players_ctx(p1, p2, *, calls=None, p1_summary="P1", p2_summary="P2"):
+    """Top-level Players context (stores player1/player2 + summaries + actions)."""
+    calls = calls if calls is not None else []
+    ctx = BoardMenuContext()
+    ctx.register_store("player1", lambda k: p1[k], lambda k, v: p1.__setitem__(k, v))
+    ctx.register_store("player2", lambda k: p2[k], lambda k, v: p2.__setitem__(k, v))
+    ctx.register_value("player1_summary", lambda node: p1_summary)
+    ctx.register_value("player2_summary", lambda node: p2_summary)
+    ctx.register_action("open_player1", lambda: calls.append("open_player1") or None)
+    ctx.register_action("open_player2", lambda: calls.append("open_player2") or None)
+    ctx.register_action("start_game", lambda: "START_GAME")
+    ctx._recorded_calls = calls
+    return ctx
+
+
+def _players_rows(p1, p2, **kwargs):
+    return build_rows("settings.players", _players_ctx(p1, p2, **kwargs), platform="board", catalog=load_catalog())
+
+
+def test_top_level_lists_two_players_then_start():
+    """The Players menu lists Player 1, Player 2, then Start Game, in order.
+
+    How a regression manifests: a player row is dropped/reordered, or Start Game
+    moves out of last position -- changing this exact id list.
+    """
+    ids = [r.node["id"] for r in _players_rows(_player_state(), _player_state())]
+    assert ids == ["players.player1", "players.player2", "players.start"]
+
+
+def test_player_rows_render_computed_summaries():
+    """Player rows embed their computed summary via the {fn:...} label token.
+
+    Why this test exists: the summary (engine name, "H+B N (White)", etc.) is
+    composed per platform and injected through ``ctx.compute``; the catalog label
+    supplies only the surrounding "Player N\\n{fn:...}" template. How a regression
+    manifests: the {fn:...} token is left literal or not substituted.
+    """
+    rows = {
+        r.node["id"]: r
+        for r in _players_rows(
+            _player_state(), _player_state(), p1_summary="Stockfish (White)", p2_summary="Human"
+        )
+    }
+    assert rows["players.player1"].label == "Player 1\nStockfish (White)"
+    assert rows["players.player2"].label == "Player 2\nHuman"
+
+
+def test_player1_icon_tracks_its_color():
+    """Player 1's row icon is the white/black piece matching its color.
+
+    Why: the icon is a state map bound to player1.color. How a regression
+    manifests: the icon stops tracking color (always one piece), so the row no
+    longer signals which color Player 1 has.
+    """
+    white = {r.node["id"]: r for r in _players_rows(_player_state(color="white"), _player_state())}
+    black = {r.node["id"]: r for r in _players_rows(_player_state(color="black"), _player_state())}
+    assert white["players.player1"].icon == "white_piece"
+    assert black["players.player1"].icon == "black_piece"
+
+
+def test_selecting_player_opens_its_detail_action():
+    """Selecting a player row runs that player's open action and stays in the menu.
+
+    How a regression manifests: the open action is not invoked (detail never
+    opens), or returns a signal that wrongly exits the Players menu.
+    """
+    calls = []
+    ctx = _players_ctx(_player_state(), _player_state(), calls=calls)
+    mm = _FakeMenuManager(["players.player1", "players.player2", "BACK"])
+    result = run_engine_menu("settings.players", ctx, mm, catalog=load_catalog())
+    assert calls == ["open_player1", "open_player2"]
+    assert result.is_back()
+
+
+def test_start_game_row_returns_start_token():
+    """Selecting Start Game exits the Players menu with the START_GAME token.
+
+    Why this test exists: the Settings handler turns this token into a new game.
+    How a regression manifests: the action's signal is swallowed (menu just
+    redraws) so Start Game never launches a game.
+    """
+    ctx = _players_ctx(_player_state(), _player_state())
+    mm = _FakeMenuManager(["players.start"])
+    result = run_engine_menu("settings.players", ctx, mm, catalog=load_catalog())
+    assert result is not None
+    assert result.key == "START_GAME"
+
+
+def test_break_from_open_action_unwinds_players_menu():
+    """A break result from opening a player detail propagates out of the menu.
+
+    Why: a game started from a player's sub-menu must unwind every menu. The open
+    action forwards a break token, which the engine's action loop turns back into
+    a break MenuSelection. How a regression manifests: the break is dropped, so
+    the board stays in the Players menu instead of entering the game.
+    """
+    ctx = BoardMenuContext()
+    ctx.register_store("player1", lambda k: _player_state()[k], lambda k, v: None)
+    ctx.register_store("player2", lambda k: _player_state()[k], lambda k, v: None)
+    ctx.register_value("player1_summary", lambda node: "P1")
+    ctx.register_value("player2_summary", lambda node: "P2")
+    ctx.register_action("open_player1", lambda: "PLAY")  # a break token
+    ctx.register_action("open_player2", lambda: None)
+    ctx.register_action("start_game", lambda: "START_GAME")
+
+    mm = _FakeMenuManager(["players.player1"])
+    result = run_engine_menu("settings.players", ctx, mm, catalog=load_catalog())
+    assert result is not None
+    assert result.is_break

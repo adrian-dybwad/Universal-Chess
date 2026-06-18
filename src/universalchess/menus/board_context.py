@@ -18,7 +18,7 @@ shared catalog.
 from typing import Any, Callable, Dict, List, Optional
 
 from universalchess.epaper.icon_menu import IconMenuEntry
-from universalchess.managers.menu import MenuSelection, is_break_result
+from universalchess.managers.menu import MenuSelection
 from universalchess.menus.catalog.entry_builder import node_to_entry
 from universalchess.menus.catalog.loader import get_catalog
 from universalchess.menus.engine import MenuRow, build_rows, dispatch
@@ -115,11 +115,16 @@ def _row_to_entry(row: MenuRow) -> IconMenuEntry:
 
 
 def _run_select(outcome, ctx, menu_manager) -> Optional[MenuSelection]:
-    """Show a radio list for a ``select`` outcome; persist the chosen value.
+    """Show an option list for a ``select`` outcome; persist the chosen value.
 
     The active value is marked, and picking a row writes that value to the
     bound store and exits the list (returning to the parent, which redraws with
     the new value). Break results propagate.
+
+    Marking style depends on the option set: when options carry their own
+    ``icon`` (e.g. color -> white/black piece, player type -> per-type glyph)
+    the option icon is kept and the active row is marked with a leading ``"* "``;
+    otherwise a radio glyph (``selected``/``unselected`` icon) marks the choice.
     """
     selected_icon = outcome.selected_icon or "radio_checked"
     unselected_icon = outcome.unselected_icon or "radio_empty"
@@ -130,11 +135,18 @@ def _run_select(outcome, ctx, menu_manager) -> Optional[MenuSelection]:
         for option in ctx.options(outcome.option_set):
             value = option["value"]
             selected = str(value) == current
+            option_icon = option.get("icon")
+            if option_icon:
+                icon_name = option_icon
+                label = f"* {option['label']}" if selected else option["label"]
+            else:
+                icon_name = selected_icon if selected else unselected_icon
+                label = option["label"]
             entries.append(
                 IconMenuEntry(
                     key=str(value),
-                    label=option["label"],
-                    icon_name=selected_icon if selected else unselected_icon,
+                    label=label,
+                    icon_name=icon_name,
                     enabled=True,
                 )
             )
@@ -195,7 +207,11 @@ def run_engine_menu(
             sub = _run_select(outcome, ctx, menu_manager)
             return sub if (sub is not None and sub.is_break) else None
         if outcome.kind == "action":
-            if outcome.signal and is_break_result(outcome.signal):
+            # An action that returns a signal exits this loop and propagates it
+            # (a break token unwinds all menus; a navigation token like
+            # START_GAME is handled by the caller). Returning None keeps the
+            # menu open and redraws with any state the action changed.
+            if outcome.signal is not None:
                 return MenuSelection.from_key(outcome.signal)
             return None
         return None
@@ -225,7 +241,7 @@ def run_node(
     if outcome.kind == "submenu":
         return run_engine_menu(outcome.target, ctx, menu_manager, platform=platform, catalog=catalog)
     if outcome.kind == "action":
-        if outcome.signal and is_break_result(outcome.signal):
+        if outcome.signal is not None:
             return MenuSelection.from_key(outcome.signal)
         return None
     return None

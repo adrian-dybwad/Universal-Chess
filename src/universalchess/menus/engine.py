@@ -15,7 +15,9 @@ Separation of concerns:
 
 Node behavior schema (fields read here; all optional unless noted):
 - ``type`` (required): ``submenu`` | ``select`` | ``toggle`` | ``cycle`` |
-  ``dynamic`` | ``action`` (plus container types the renderer walks).
+  ``range`` | ``set_value`` | ``dynamic`` | ``action`` | ``text`` (plus container
+  types the renderer walks). ``text`` is a free-string field edited via its
+  ``action`` on the board and rendered as an input on the web.
 - ``bind``: ``{"store": <name>, "key": <name>}`` -- the value the row reads/writes.
 - ``label`` (required for rendered rows): default/web label; may contain the
   ``{value}`` placeholder.
@@ -30,6 +32,9 @@ Node behavior schema (fields read here; all optional unless noted):
   (the row stays visible but is non-selectable when unmet).
 - ``range``: ``{"min", "max", "step"?, "wrap"?}`` for ``range`` cyclers.
 - ``value``: the fixed value a ``set_value`` (radio) row writes.
+- ``valueDefault``: text shown for a ``{value}`` token when the bound value is
+  unset (``None``/empty), e.g. an unnamed human renders as "Human". Keeps the
+  placeholder declarative instead of faking it in the value store.
 - ``action``: action name for ``action`` nodes.
 - ``target``: child container id a ``submenu`` opens.
 """
@@ -132,11 +137,22 @@ def _display_value(node: dict, ctx: MenuContext) -> str:
     shows as ``"5 min (Blitz)"``); otherwise the raw value as text. Returns an
     empty string when the node has no binding, so a stray placeholder collapses
     rather than raising.
+
+    When the bound value is unset (``None`` or empty string) and the node
+    declares ``valueDefault``, that default is shown instead. This keeps the
+    placeholder text declarative in the catalog (e.g. an unnamed human shows
+    "Human") rather than fabricating it in the value store -- the store stays
+    truthful and returns the real empty value, which other consumers (the
+    keyboard prefill, the game's PGN name) rely on.
     """
     bind = node.get("bind")
     if not bind:
         return ""
     value = ctx.get(bind["store"], bind["key"])
+    if value is None or value == "":
+        default = node.get("valueDefault")
+        if default is not None:
+            return default
     option_set = node.get("optionSet")
     if option_set:
         target = str(value)
@@ -339,7 +355,12 @@ def dispatch(node: dict, ctx: MenuContext) -> DispatchOutcome:
     if node_type == "dynamic":
         return DispatchOutcome(kind="dynamic", provider=node["provider"])
 
-    if node_type == "action":
+    if node_type in ("action", "text"):
+        # ``text`` is a free-string field: the web renders an input, while the
+        # board edits it through a named action (a keyboard widget). Both share
+        # one catalog node; selecting it on the board runs that action. The
+        # action name is required here because a board-dispatched text node must
+        # declare how it is edited (web-only text fields are never dispatched).
         name = node["action"]
         signal = ctx.run_action(name)
         return DispatchOutcome(kind="action", action=name, signal=signal)

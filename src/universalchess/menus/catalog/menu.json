@@ -14,11 +14,15 @@
   ],
 
   "optionSets": {
+    "color": [
+      { "value": "white", "label": "White", "icon": "white_piece" },
+      { "value": "black", "label": "Black", "icon": "black_piece" }
+    ],
     "player_type": [
-      { "value": "human", "label": "Human" },
-      { "value": "engine", "label": "Engine" },
-      { "value": "hand_brain", "label": "Hand + Brain" },
-      { "value": "lichess", "label": "Lichess" }
+      { "value": "human", "label": "Human", "icon": "universal_logo" },
+      { "value": "engine", "label": "Engine", "icon": "engine" },
+      { "value": "hand_brain", "label": "Hand + Brain", "icon": "engine" },
+      { "value": "lichess", "label": "Lichess", "icon": "lichess" }
     ],
     "hand_brain_mode": [
       { "value": "normal", "label": "Normal (Engine = Brain)" },
@@ -100,11 +104,60 @@
       "id": "settings.players",
       "key": "Players",
       "type": "submenu",
+      "target": "settings.players",
       "label": "Players",
       "icon": "players",
       "help": "Configure player names, types, and engine preferences.",
       "section": "players",
+      "epaper": { "font_size": 12, "height_ratio": 0.8 },
+      "children": ["players.player1", "players.player2", "players.start"]
+    },
+    {
+      "id": "players.player1",
+      "type": "action",
+      "action": "open_player1",
+      "label": "Player 1\n{fn:player1_summary}",
+      "icon": { "white": "white_piece", "black": "black_piece" },
+      "bind": { "store": "player1", "key": "color" },
+      "help": "Configure Player 1 (the player who controls the chosen color).",
+      "platforms": ["board"],
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
+    },
+    {
+      "id": "players.player2",
+      "type": "action",
+      "action": "open_player2",
+      "label": "Player 2\n{fn:player2_summary}",
+      "icon": "universal_logo",
+      "help": "Configure Player 2.",
+      "platforms": ["board"],
+      "epaper": { "font_size": 12, "height_ratio": 0.8 }
+    },
+    {
+      "id": "players.start",
+      "type": "action",
+      "action": "start_game",
+      "label": "Start\nGame",
+      "icon": "play",
+      "help": "Start a game with the current player configuration.",
+      "platforms": ["board"],
+      "epaper": { "font_size": 12, "height_ratio": 0.8 }
+    },
+    {
+      "id": "settings.player_detail",
+      "type": "menu",
+      "label": "Player",
+      "help": "Configure a single player.",
+      "platforms": ["board"],
+      "children": [
+        "field.player.color",
+        "field.player.type",
+        "field.player.name",
+        "field.player.hand_brain_mode",
+        "field.player.engine",
+        "field.player.elo",
+        "field.player.lichess"
+      ]
     },
     {
       "id": "settings.timecontrol",
@@ -337,46 +390,92 @@
     },
 
     {
+      "id": "field.player.color",
+      "type": "select",
+      "label": "Color",
+      "boardLabel": "Color\n{value}",
+      "help": "Which color this player controls",
+      "optionSet": "color",
+      "bind": { "store": "player", "key": "color" },
+      "icon": { "white": "white_piece", "black": "black_piece" },
+      "visibleWhen": { "store": "player", "key": "has_color", "equals": true },
+      "platforms": ["board"]
+    },
+    {
       "id": "field.player.type",
       "type": "select",
       "label": "Player Type",
+      "boardLabel": "Type\n{value}",
       "help": "Human, Engine, Hand+Brain, or Lichess",
       "optionSet": "player_type",
+      "bind": { "store": "player", "key": "type" },
+      "icon": "universal_logo",
       "section": "players",
-      "platforms": ["web"]
+      "platforms": ["board", "web"]
     },
     {
       "id": "field.player.name",
       "type": "text",
       "label": "Player Name",
+      "boardLabel": "Name\n{value}",
       "help": "Optional name for PGN headers",
+      "action": "edit_name",
+      "bind": { "store": "player", "key": "name" },
+      "valueDefault": "Human",
+      "icon": "universal_logo",
+      "visibleWhen": { "store": "player", "key": "type", "equals": "human" },
       "section": "players",
-      "platforms": ["web"]
-    },
-    {
-      "id": "field.player.engine",
-      "type": "select",
-      "label": "Engine",
-      "help": "Chess engine to use",
-      "section": "players",
-      "platforms": ["web"]
-    },
-    {
-      "id": "field.player.elo",
-      "type": "select",
-      "label": "ELO / Style",
-      "help": "Engine strength or personality",
-      "section": "players",
-      "platforms": ["web"]
+      "platforms": ["board", "web"]
     },
     {
       "id": "field.player.hand_brain_mode",
-      "type": "select",
+      "type": "cycle",
       "label": "Hand+Brain Mode",
+      "boardLabel": "Reverse",
       "help": "How the human and engine collaborate",
       "optionSet": "hand_brain_mode",
+      "bind": { "store": "player", "key": "hand_brain_mode" },
+      "icon": { "reverse": "checkbox_checked", "normal": "checkbox_empty" },
+      "visibleWhen": { "store": "player", "key": "type", "equals": "hand_brain" },
       "section": "players",
-      "platforms": ["web"]
+      "platforms": ["board", "web"]
+    },
+    {
+      "id": "field.player.engine",
+      "type": "action",
+      "label": "Engine",
+      "boardLabel": "Engine\n{value}",
+      "help": "Chess engine to use",
+      "action": "select_engine",
+      "bind": { "store": "player", "key": "engine" },
+      "icon": "engine",
+      "visibleWhen": { "store": "player", "key": "type", "in": ["human", "engine", "hand_brain"] },
+      "section": "players",
+      "platforms": ["board", "web"]
+    },
+    {
+      "id": "field.player.elo",
+      "type": "action",
+      "label": "ELO / Style",
+      "boardLabel": "ELO\n{value}",
+      "help": "Engine strength or personality",
+      "action": "select_elo",
+      "bind": { "store": "player", "key": "elo" },
+      "icon": "elo",
+      "visibleWhen": { "store": "player", "key": "type", "in": ["human", "engine", "hand_brain"] },
+      "section": "players",
+      "platforms": ["board", "web"]
+    },
+    {
+      "id": "field.player.lichess",
+      "type": "action",
+      "label": "Lichess Settings",
+      "boardLabel": "Lichess\nSettings",
+      "help": "Configure Lichess account and matchmaking for this player",
+      "action": "lichess",
+      "icon": "lichess",
+      "visibleWhen": { "store": "player", "key": "type", "equals": "lichess" },
+      "platforms": ["board"]
     },
     {
       "id": "field.game.time_control",

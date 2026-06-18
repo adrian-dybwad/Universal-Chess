@@ -169,6 +169,28 @@ def test_resolve_label_value_placeholder_without_option_set_uses_raw_value():
     assert resolve_label(node, ctx, platform="board") == "Name\nAlice"
 
 
+def test_resolve_label_uses_value_default_only_when_value_unset():
+    """An empty/None bound value falls back to the node's valueDefault.
+
+    Why this test exists: the empty-state placeholder (e.g. an unnamed human ->
+    "Human") is declared on the node so the value store stays truthful (it still
+    holds ""), keeping the keyboard prefill and the game's PGN name correct. How
+    a regression manifests: an empty value renders blank ("Name\\n"), or the
+    default wrongly overrides a real value.
+    """
+    node = {
+        "id": "field.player.name",
+        "type": "text",
+        "label": "Name",
+        "boardLabel": "Name\n{value}",
+        "bind": {"store": "player", "key": "name"},
+        "valueDefault": "Human",
+    }
+    # Empty string -> default; a real value is untouched by the default.
+    assert resolve_label(node, _ctx(player={"name": ""}), platform="board") == "Name\nHuman"
+    assert resolve_label(node, _ctx(player={"name": "Alice"}), platform="board") == "Name\nAlice"
+
+
 # -- icon resolution --------------------------------------------------------
 
 def test_resolve_icon_static_string():
@@ -421,6 +443,27 @@ def test_dispatch_action_runs_named_action():
     outcome = dispatch(node, ctx)
     assert ctx.actions_run == ["reboot"]
     assert outcome == DispatchOutcome(kind="action", action="reboot")
+
+
+def test_dispatch_text_routes_to_its_action():
+    """A text node dispatches to its named action (the board's editor).
+
+    Why this test exists: ``text`` is a free-string field rendered as an input on
+    the web but edited on the board through a named action (a keyboard widget),
+    so selecting one on the board must invoke that action. How a regression
+    manifests: text dispatch no longer routes to run_action, so the board's name
+    keyboard never opens (or dispatch raises on an unhandled type).
+    """
+    node = {
+        "id": "field.player.name",
+        "type": "text",
+        "action": "edit_name",
+        "bind": {"store": "player", "key": "name"},
+    }
+    ctx = _ctx()
+    outcome = dispatch(node, ctx)
+    assert ctx.actions_run == ["edit_name"]
+    assert outcome == DispatchOutcome(kind="action", action="edit_name")
 
 
 def test_dispatch_unknown_type_raises():

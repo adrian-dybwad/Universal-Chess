@@ -10,17 +10,18 @@ from typing import List, Dict
 
 from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.menus.catalog.entry_builder import build_menu_entries
-from universalchess.menus.players_menu import _player_type_label
+from universalchess.menus.catalog.loader import get_catalog
 
 
 def _get_player_type_label(player_type: str) -> str:
-    """Map player type to display label via the shared catalog.
+    """Map a player type to its display label via the shared catalog.
 
-    Delegates to :func:`players_menu._player_type_label` so the Players summary
-    and the Player menus resolve types through the single catalog source rather
-    than duplicating a value->label map.
+    Resolved from the catalog ``player_type`` option set so the board and the
+    web show identical text from one source (no private value->label map). An
+    unrecognised type falls back to a capitalised form so an unexpected value is
+    still legible rather than blank.
     """
-    return _player_type_label(player_type)
+    return get_catalog().option_label("player_type", player_type, default=player_type.capitalize())
 
 
 def _get_players_summary(player1_settings: Dict[str, str], player2_settings: Dict[str, str]) -> str:
