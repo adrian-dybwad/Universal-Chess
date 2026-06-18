@@ -295,6 +295,35 @@ def test_web_settings_option_sets_present_and_non_empty():
     assert not empty, f"web Settings selects reference empty/missing option sets: {empty}"
 
 
+def test_web_control_hint_fields_render_as_selects():
+    """Engine/ELO/analysis-engine nodes must carry a web select hint + provider.
+
+    Why this test exists: these nodes are ``type: "action"`` because the board
+    opens a chained engine -> ELO picker, but the web renders each as a plain
+    dropdown. The web's generic field renderer (CatalogField) keys off
+    ``webType`` (falling back to ``type``); without ``webType: "select"`` it
+    would render nothing for an action node, and without a ``provider`` the web
+    has no named runtime source for the options.
+
+    How a regression manifests: a node loses ``webType``/``provider`` (e.g. an
+    edit reverts it to a bare action), so the web Settings page shows a blank gap
+    where the Engine/ELO/Analysis-Engine select should be. Pins both the hint and
+    the provider name the web resolves, while asserting the board ``type`` stays
+    an action so the e-paper chained picker is unaffected.
+    """
+    catalog = load_catalog()
+    expected_providers = {
+        "field.player.engine": "installed_engines",
+        "field.player.elo": "engine_levels",
+        "analysis.engine": "installed_engines",
+    }
+    for node_id, provider in expected_providers.items():
+        node = catalog.get_node(node_id)
+        assert node["type"] == "action", f"{node_id} must stay an action for the board flow"
+        assert node.get("webType") == "select", f"{node_id} missing webType 'select' for the web"
+        assert node.get("provider") == provider, f"{node_id} missing provider '{provider}'"
+
+
 def test_option_label_resolves_value_to_catalog_label():
     """option_label must map a stored value to its catalog label from one source.
 
@@ -348,6 +377,20 @@ def test_unknown_icon_raises(tmp_path):
     menu = {"roots": ["a"], "nodes": [{"id": "a", "type": "action", "icon": "nope"}]}
     menu_path, icons_path = _write(tmp_path, menu)
     with pytest.raises(CatalogError, match="unknown icon 'nope'"):
+        load_catalog(menu_path, icons_path)
+
+
+def test_unknown_web_type_raises(tmp_path):
+    """An unrecognised webType must be rejected.
+
+    webType selects the web control for a node whose board ``type`` differs (e.g.
+    an action rendered as a select on the web). A typo would make the web's
+    CatalogField fall through to rendering nothing, leaving a blank row. Validation
+    must name the bad value rather than ship an invisible control.
+    """
+    menu = {"roots": ["a"], "nodes": [{"id": "a", "type": "action", "webType": "selct"}]}
+    menu_path, icons_path = _write(tmp_path, menu)
+    with pytest.raises(CatalogError, match="unknown webType 'selct'"):
         load_catalog(menu_path, icons_path)
 
 

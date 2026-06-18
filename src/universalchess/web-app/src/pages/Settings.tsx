@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Button, Card, CardHeader, Input, Select, Toggle, Badge } from '../components/ui';
+import { Button, Card, CardHeader, FormRow, Input, Select, Toggle, Badge } from '../components/ui';
+import { CatalogField } from '../components/CatalogField';
+import type { FieldValue } from '../components/CatalogField';
 import { LoginDialog } from '../components/LoginDialog';
 import { MenuIcon } from '../components/MenuIcon';
 import type { EngineDefinition } from '../types/game';
-import type { MenuCatalog, MenuOption } from '../types/menuCatalog';
-import { fieldById } from '../types/menuCatalog';
+import type { MenuCatalog, MenuOption, MenuCondition, MenuNode } from '../types/menuCatalog';
+import { fieldById, fieldsForSection } from '../types/menuCatalog';
 import { apiFetch, buildApiUrl, getStoredCredentials, encodeBasicAuth, storeCredentials } from '../utils/api';
 import './Settings.css';
 
@@ -478,6 +480,43 @@ export function Settings() {
   const fieldLabel = (id: string): string => fieldById(catalog, id)?.label ?? id;
   const fieldHelp = (id: string): string => fieldById(catalog, id)?.help ?? '';
 
+  // Evaluate a catalog visibleWhen/enabledWhen condition against the current form
+  // state. The condition's store maps to a FormSettings section (e.g. "game"),
+  // so row gating is driven by the same catalog nodes the board engine uses
+  // rather than hand-coded per control.
+  const boundValue = (store: string, key: string): FieldValue | undefined => {
+    const section = (formSettings as unknown as Record<string, Record<string, FieldValue>>)[store];
+    return section ? section[key] : undefined;
+  };
+  const conditionMet = (cond?: MenuCondition): boolean => {
+    if (!cond) return true;
+    const current = boundValue(cond.store, cond.key);
+    if (cond.equals !== undefined) return current === cond.equals;
+    if (cond.in) return cond.in.includes(String(current));
+    return true;
+  };
+
+  // Nodes that are imperative `action`s on the board (chained engine -> ELO
+  // picker) but render as plain selects on the web via their catalog webType.
+  const playerEngineNode = fieldById(catalog, 'field.player.engine')!;
+  const playerEloNode = fieldById(catalog, 'field.player.elo')!;
+  const analysisEngineNode = fieldById(catalog, 'analysis.engine')!;
+
+  // Resolve the runtime option list a provider-backed select renders. The
+  // catalog names the provider; the data is runtime and read from the same
+  // backend the board uses (installed engines / per-engine levels). `engine`
+  // scopes the per-engine level list -- the only context a provider needs here.
+  const providerOptions = (node: MenuNode, engine?: string): MenuOption[] => {
+    switch (node.provider) {
+      case 'installed_engines':
+        return engineOptions;
+      case 'engine_levels':
+        return (engineLevels[engine ?? ''] || ['Default']).map((l) => ({ value: l, label: l }));
+      default:
+        return [];
+    }
+  };
+
   return (
     <>
       <LoginDialog
@@ -516,13 +555,12 @@ export function Settings() {
             <Card className="mb-6">
               <CardHeader title="Player 1 (White by default)" />
                 
-                <FormRow label={fieldLabel('field.player.type')} help={fieldHelp('field.player.type')}>
-                  <Select
-                    value={formSettings.player1.type}
-                    options={playerTypeOptions}
-                    onChange={(e) => updateFormSettings('player1', { type: e.target.value })}
-                  />
-                </FormRow>
+                <CatalogField
+                  node={fieldById(catalog, 'field.player.type')!}
+                  value={formSettings.player1.type}
+                  options={playerTypeOptions}
+                  onChange={(v) => updateFormSettings('player1', { type: String(v) })}
+                />
 
                 <FormRow label={fieldLabel('field.player.name')} help={fieldHelp('field.player.name')}>
                   <Input
@@ -538,32 +576,28 @@ export function Settings() {
 
                 {(formSettings.player1.type === 'engine' || formSettings.player1.type === 'hand_brain') && (
                   <>
-                    <FormRow label={fieldLabel('field.player.engine')} help={fieldHelp('field.player.engine')}>
-                      <Select
-                        value={formSettings.player1.engine}
-                        options={engineOptions}
-                        onChange={(e) => updateFormSettings('player1', { engine: e.target.value, elo: 'Default' })}
-                      />
-                    </FormRow>
-
-                    <FormRow label={fieldLabel('field.player.elo')} help={fieldHelp('field.player.elo')}>
-                      <Select
-                        value={formSettings.player1.elo}
-                        options={(engineLevels[formSettings.player1.engine] || ['Default']).map((l) => ({ value: l, label: l }))}
-                        onChange={(e) => updateFormSettings('player1', { elo: e.target.value })}
-                      />
-                    </FormRow>
+                    <CatalogField
+                      node={playerEngineNode}
+                      value={formSettings.player1.engine}
+                      options={providerOptions(playerEngineNode)}
+                      onChange={(v) => updateFormSettings('player1', { engine: String(v), elo: 'Default' })}
+                    />
+                    <CatalogField
+                      node={playerEloNode}
+                      value={formSettings.player1.elo}
+                      options={providerOptions(playerEloNode, formSettings.player1.engine)}
+                      onChange={(v) => updateFormSettings('player1', { elo: String(v) })}
+                    />
                   </>
                 )}
 
                 {formSettings.player1.type === 'hand_brain' && (
-                  <FormRow label={fieldLabel('field.player.hand_brain_mode')} help={fieldHelp('field.player.hand_brain_mode')}>
-                    <Select
-                      value={formSettings.player1.hand_brain_mode}
-                      options={handBrainModeOptions}
-                      onChange={(e) => updateFormSettings('player1', { hand_brain_mode: e.target.value })}
-                    />
-                  </FormRow>
+                  <CatalogField
+                    node={fieldById(catalog, 'field.player.hand_brain_mode')!}
+                    value={formSettings.player1.hand_brain_mode}
+                    options={handBrainModeOptions}
+                    onChange={(v) => updateFormSettings('player1', { hand_brain_mode: String(v) })}
+                  />
                 )}
 
                 {formSettings.player1.type === 'human' && (
@@ -577,13 +611,12 @@ export function Settings() {
             <Card className="mb-6">
               <CardHeader title="Player 2 (Black by default)" />
                 
-                <FormRow label={fieldLabel('field.player.type')} help={fieldHelp('field.player.type')}>
-                  <Select
-                    value={formSettings.player2.type}
-                    options={playerTypeOptions}
-                    onChange={(e) => updateFormSettings('player2', { type: e.target.value })}
-                  />
-                </FormRow>
+                <CatalogField
+                  node={fieldById(catalog, 'field.player.type')!}
+                  value={formSettings.player2.type}
+                  options={playerTypeOptions}
+                  onChange={(v) => updateFormSettings('player2', { type: String(v) })}
+                />
 
                 <FormRow label={fieldLabel('field.player.name')} help={fieldHelp('field.player.name')}>
                   <Input
@@ -599,32 +632,28 @@ export function Settings() {
 
                 {(formSettings.player2.type === 'engine' || formSettings.player2.type === 'hand_brain') && (
                   <>
-                    <FormRow label={fieldLabel('field.player.engine')} help={fieldHelp('field.player.engine')}>
-                      <Select
-                        value={formSettings.player2.engine}
-                        options={engineOptions}
-                        onChange={(e) => updateFormSettings('player2', { engine: e.target.value, elo: 'Default' })}
-                      />
-                    </FormRow>
-
-                    <FormRow label={fieldLabel('field.player.elo')} help={fieldHelp('field.player.elo')}>
-                      <Select
-                        value={formSettings.player2.elo}
-                        options={(engineLevels[formSettings.player2.engine] || ['Default']).map((l) => ({ value: l, label: l }))}
-                        onChange={(e) => updateFormSettings('player2', { elo: e.target.value })}
-                      />
-                    </FormRow>
+                    <CatalogField
+                      node={playerEngineNode}
+                      value={formSettings.player2.engine}
+                      options={providerOptions(playerEngineNode)}
+                      onChange={(v) => updateFormSettings('player2', { engine: String(v), elo: 'Default' })}
+                    />
+                    <CatalogField
+                      node={playerEloNode}
+                      value={formSettings.player2.elo}
+                      options={providerOptions(playerEloNode, formSettings.player2.engine)}
+                      onChange={(v) => updateFormSettings('player2', { elo: String(v) })}
+                    />
                   </>
                 )}
 
                 {formSettings.player2.type === 'hand_brain' && (
-                  <FormRow label={fieldLabel('field.player.hand_brain_mode')} help={fieldHelp('field.player.hand_brain_mode')}>
-                    <Select
-                      value={formSettings.player2.hand_brain_mode}
-                      options={handBrainModeOptions}
-                      onChange={(e) => updateFormSettings('player2', { hand_brain_mode: e.target.value })}
-                    />
-                  </FormRow>
+                  <CatalogField
+                    node={fieldById(catalog, 'field.player.hand_brain_mode')!}
+                    value={formSettings.player2.hand_brain_mode}
+                    options={handBrainModeOptions}
+                    onChange={(v) => updateFormSettings('player2', { hand_brain_mode: String(v) })}
+                  />
                 )}
 
                 {formSettings.player2.type === 'human' && (
@@ -671,32 +700,34 @@ export function Settings() {
             <h2 className="page-title">Game Settings</h2>
             <p className="text-muted mb-6">Time controls and game behavior</p>
 
+            {/* Time Control, Live Analysis, and Analysis Engine all render from
+                the shared catalog nodes (the same ones the board's Game submenu
+                uses). Analysis Engine is an `action` on the board but renders as a
+                select on the web via the node's webType, with options resolved
+                from the `installed_engines` provider. */}
             <Card className="mb-6">
               <CardHeader title="Time Control" />
-              <FormRow label={fieldLabel('settings.timecontrol')} help={fieldHelp('settings.timecontrol')}>
-                <Select
-                  value={formSettings.game.time_control}
-                  options={timeControlOptions}
-                  onChange={(e) => updateFormSettings('game', { time_control: e.target.value })}
-                />
-              </FormRow>
+              <CatalogField
+                node={fieldById(catalog, 'settings.timecontrol')!}
+                value={formSettings.game.time_control}
+                options={timeControlOptions}
+                onChange={(v) => updateFormSettings('game', { time_control: String(v) })}
+              />
             </Card>
 
             <Card className="mb-6">
               <CardHeader title="Analysis" />
-              <Toggle
-                label={fieldLabel('analysis.enabled')}
-                help={fieldHelp('analysis.enabled')}
-                checked={formSettings.game.analysis_mode}
-                onChange={(v) => updateFormSettings('game', { analysis_mode: v })}
+              <CatalogField
+                node={fieldById(catalog, 'analysis.enabled')!}
+                value={formSettings.game.analysis_mode}
+                onChange={(v) => updateFormSettings('game', { analysis_mode: Boolean(v) })}
               />
-              <FormRow label={fieldLabel('analysis.engine')} help={fieldHelp('analysis.engine')}>
-                <Select
-                  value={formSettings.game.analysis_engine}
-                  options={engineOptions}
-                  onChange={(e) => updateFormSettings('game', { analysis_engine: e.target.value })}
-                />
-              </FormRow>
+              <CatalogField
+                node={analysisEngineNode}
+                value={formSettings.game.analysis_engine}
+                options={providerOptions(analysisEngineNode)}
+                onChange={(v) => updateFormSettings('game', { analysis_engine: String(v) })}
+              />
             </Card>
           </section>
         )}
@@ -707,36 +738,29 @@ export function Settings() {
             <h2 className="page-title">Display</h2>
             <p className="text-muted mb-6">Control what appears on the e-paper display and the LEDs</p>
 
+            {/* The visibility toggles render from the catalog's display section
+                (the same nodes as the board's Display menu). Show Graph nests
+                under Show Analysis via the node's enabledWhen, so it disables
+                while analysis is hidden -- gating driven by the catalog, not
+                hand-coded here. */}
             <Card className="mb-6">
               <CardHeader title="E-Paper Display" />
-              <Toggle
-                label={fieldLabel('field.display.show_board')}
-                help={fieldHelp('field.display.show_board')}
-                checked={formSettings.game.show_board}
-                onChange={(v) => updateFormSettings('game', { show_board: v })}
-              />
-              <Toggle
-                label={fieldLabel('field.display.show_clock')}
-                help={fieldHelp('field.display.show_clock')}
-                checked={formSettings.game.show_clock}
-                onChange={(v) => updateFormSettings('game', { show_clock: v })}
-              />
-              <Toggle
-                label={fieldLabel('field.display.show_analysis')}
-                help={fieldHelp('field.display.show_analysis')}
-                checked={formSettings.game.show_analysis}
-                onChange={(v) => updateFormSettings('game', { show_analysis: v })}
-              />
-              {/* Show Graph nests under Show Analysis: the graph overlays the
-                  analysis widget, so it is disabled while analysis is hidden
-                  (mirrors the board's Display menu). */}
-              <Toggle
-                label={fieldLabel('field.display.show_graph')}
-                help={fieldHelp('field.display.show_graph')}
-                checked={formSettings.game.show_graph}
-                disabled={!formSettings.game.show_analysis}
-                onChange={(v) => updateFormSettings('game', { show_graph: v })}
-              />
+              {fieldsForSection(catalog, 'display')
+                .filter((node) => node.type === 'toggle')
+                .map((node) => {
+                  const key = node.bind?.key as keyof FormSettings['game'];
+                  return (
+                    <CatalogField
+                      key={node.id}
+                      node={node}
+                      value={formSettings.game[key]}
+                      disabled={!conditionMet(node.enabledWhen)}
+                      onChange={(v) =>
+                        updateFormSettings('game', { [key]: v } as Partial<FormSettings['game']>)
+                      }
+                    />
+                  );
+                })}
             </Card>
 
             {/* Sprite sheet selects the piece artwork drawn on the board widget.
@@ -782,16 +806,12 @@ export function Settings() {
 
             <Card className="mb-6">
               <CardHeader title="LEDs" />
-              <FormRow label={fieldLabel('field.display.led_brightness')} help={`Level: ${formSettings.game.led_brightness}`}>
-                <input
-                  type="range"
-                  className="range-slider"
-                  min="1"
-                  max="10"
-                  value={formSettings.game.led_brightness}
-                  onChange={(e) => updateFormSettings('game', { led_brightness: parseInt(e.target.value) })}
-                />
-              </FormRow>
+              <CatalogField
+                node={fieldById(catalog, 'field.display.led_brightness')!}
+                value={formSettings.game.led_brightness}
+                help={`Level: ${formSettings.game.led_brightness}`}
+                onChange={(v) => updateFormSettings('game', { led_brightness: Number(v) })}
+              />
             </Card>
           </section>
         )}
@@ -802,44 +822,28 @@ export function Settings() {
             <h2 className="page-title">Sound</h2>
             <p className="text-muted mb-6">Control audio feedback and beeps</p>
 
-            {/* Row order matches the board's Sound submenu: master switch first,
-                then per-category toggles. */}
+            {/* Rendered from the catalog's sound section: row order, labels, and
+                help all come from menu.json (matching the board's Sound submenu --
+                master switch first, then per-category toggles). The master switch
+                gates the rest on the web only, so the board's behavior is
+                unchanged. */}
             <Card className="mb-6">
               <CardHeader title="Sound" />
-              <Toggle
-                label={fieldLabel('field.sound.enabled')}
-                help={fieldHelp('field.sound.enabled')}
-                checked={formSettings.sound.enabled}
-                onChange={(v) => updateFormSettings('sound', { enabled: v })}
-              />
-              <Toggle
-                label={fieldLabel('field.sound.piece_events')}
-                help={fieldHelp('field.sound.piece_events')}
-                checked={formSettings.sound.piece_events}
-                disabled={!formSettings.sound.enabled}
-                onChange={(v) => updateFormSettings('sound', { piece_events: v })}
-              />
-              <Toggle
-                label={fieldLabel('field.sound.game_events')}
-                help={fieldHelp('field.sound.game_events')}
-                checked={formSettings.sound.game_events}
-                disabled={!formSettings.sound.enabled}
-                onChange={(v) => updateFormSettings('sound', { game_events: v })}
-              />
-              <Toggle
-                label={fieldLabel('field.sound.errors')}
-                help={fieldHelp('field.sound.errors')}
-                checked={formSettings.sound.errors}
-                disabled={!formSettings.sound.enabled}
-                onChange={(v) => updateFormSettings('sound', { errors: v })}
-              />
-              <Toggle
-                label={fieldLabel('field.sound.key_press')}
-                help={fieldHelp('field.sound.key_press')}
-                checked={formSettings.sound.key_press}
-                disabled={!formSettings.sound.enabled}
-                onChange={(v) => updateFormSettings('sound', { key_press: v })}
-              />
+              {fieldsForSection(catalog, 'sound').map((node) => {
+                const key = node.bind?.key as keyof FormSettings['sound'];
+                const isMaster = key === 'enabled';
+                return (
+                  <CatalogField
+                    key={node.id}
+                    node={node}
+                    value={formSettings.sound[key]}
+                    disabled={!isMaster && !formSettings.sound.enabled}
+                    onChange={(v) =>
+                      updateFormSettings('sound', { [key]: v } as Partial<FormSettings['sound']>)
+                    }
+                  />
+                );
+              })}
             </Card>
           </section>
         )}
@@ -944,26 +948,6 @@ export function Settings() {
 }
 
 // Helper Components
-
-function FormRow({ 
-  label, 
-  help, 
-  children 
-}: { 
-  label: string; 
-  help?: React.ReactNode; 
-  children: React.ReactNode 
-}) {
-  return (
-    <div className="form-row">
-      <div className="form-row-info">
-        <label className="form-label">{label}</label>
-        {help && <div className="form-help">{help}</div>}
-      </div>
-      <div className="form-row-control">{children}</div>
-    </div>
-  );
-}
 
 function EnginesList({
   engines,

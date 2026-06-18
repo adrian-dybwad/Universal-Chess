@@ -20,6 +20,13 @@ _CATALOG_DIR = Path(__file__).parent
 _MENU_FILE = _CATALOG_DIR / "menu.json"
 _ICONS_FILE = _CATALOG_DIR / "icons.json"
 
+# Web control types a node's optional ``webType`` may name. ``webType`` overrides
+# the board ``type`` for the web renderer only -- used where the same node is an
+# imperative ``action`` on the board (e.g. the chained engine -> ELO picker) but a
+# plain control on the web. Restricting the set turns a typo into a load-time
+# error instead of a silently blank web row.
+_WEB_CONTROL_TYPES = frozenset({"toggle", "select", "cycle", "range", "text"})
+
 
 class CatalogError(ValueError):
     """Raised when the menu catalog or icon registry is structurally invalid.
@@ -203,6 +210,13 @@ def _validate(menu_data: dict, icons_data: dict) -> None:
         option_set = node.get("optionSet")
         if option_set is not None and option_set not in option_set_names:
             raise CatalogError(f"node '{node_id}' references unknown optionSet '{option_set}'")
+
+        web_type = node.get("webType")
+        if web_type is not None and web_type not in _WEB_CONTROL_TYPES:
+            raise CatalogError(
+                f"node '{node_id}' has unknown webType '{web_type}' "
+                f"(expected one of {sorted(_WEB_CONTROL_TYPES)})"
+            )
 
         section = node.get("section")
         if section is not None and section not in section_ids:

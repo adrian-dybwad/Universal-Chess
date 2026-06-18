@@ -426,6 +426,8 @@
       "id": "analysis.engine",
       "key": "engine",
       "type": "action",
+      "webType": "select",
+      "provider": "installed_engines",
       "action": "select_analysis_engine",
       "label": "Analysis Engine",
       "boardLabel": "Engine\n{value}",
@@ -646,6 +648,8 @@
     {
       "id": "field.player.engine",
       "type": "action",
+      "webType": "select",
+      "provider": "installed_engines",
       "label": "Engine",
       "boardLabel": "Engine\n{value}",
       "help": "Chess engine to use",
@@ -659,6 +663,8 @@
     {
       "id": "field.player.elo",
       "type": "action",
+      "webType": "select",
+      "provider": "engine_levels",
       "label": "ELO / Style",
       "boardLabel": "ELO\n{value}",
       "help": "Engine strength or personality",

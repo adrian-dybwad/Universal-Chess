@@ -58,6 +58,13 @@ export interface MenuNode {
     | 'info';
   label?: string;
   label_in_progress?: string;
+  /**
+   * Optional web-only control override. When set, the web renders this control
+   * instead of `type` -- used where the board `type` is an imperative `action`
+   * (e.g. the chained engine -> ELO picker) but the web wants a plain control.
+   * The board ignores it.
+   */
+  webType?: MenuNode['type'];
   /** Optional board-only label override (e-paper abbreviation/template). */
   boardLabel?: string;
   /** Static icon id, or a state map `{ stateValue: icon }` keyed by the bound value. */
