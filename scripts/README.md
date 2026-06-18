@@ -11,6 +11,7 @@ Build, development, and utility scripts for Universal-Chess.
 | **Bump version** | `./bump-version.sh patch` |
 | **Check for updates** | `./check-updates.sh` |
 | **Run the app** | `./run.sh` |
+| **Deploy to a Pi (dev)** | `./deploy-to-pi.sh --host pi@<ip> --web` |
 
 ## Release & Versioning
 
@@ -73,6 +74,34 @@ chmod +x rebuild.sh  # first time only
 ./rebuild.sh               # builds from UniversalChess branch
 ./rebuild.sh my-feature    # builds from branch/tag my-feature
 ```
+
+## Deploying to the Pi (dev sync)
+
+`deploy-to-pi.sh` rsyncs the local `src/universalchess/` tree to a running Pi
+and restarts the `universal-chess` and `universal-chess-web` services. It is a
+runtime-only deploy (tests, the React source in `web-app/`, the venv, and
+engines are excluded).
+
+```bash
+./scripts/deploy-to-pi.sh                     # sync + restart (default host pi@dgt.local)
+./scripts/deploy-to-pi.sh --host pi@<ip>      # target a specific board IP
+./scripts/deploy-to-pi.sh --web               # also build + ship the web bundle
+./scripts/deploy-to-pi.sh --dry-run           # preview by size/time, no transfer
+./scripts/deploy-to-pi.sh --check             # content (checksum) diff preview
+```
+
+**The `--web` flag (and why it's needed):** Vite builds the React app into
+`web-app/dist/`, but Flask serves — and this script ships — the gitignored
+`web/react-app/` artifact. Nothing else keeps them in sync, so a plain deploy
+ships whatever bundle was last staged there. `--web` builds the app
+(`tsc + vite`), stages `dist/` into `web/react-app/` with `sw.js` cache-version
+stamping, and mirrors that directory to the Pi with `--delete` (pruning the
+previous build's orphaned hashed assets). Use it whenever the web app **or**
+the shared `menu.json` catalog changed (the web reads the catalog via
+`/api/menu-schema`). Requires `npm` locally.
+
+> Run the test suite before deploying:
+> `PYTHONPATH=src .venv/bin/python -m pytest src/universalchess/tests -q`
 
 ## Subdirectories
 
