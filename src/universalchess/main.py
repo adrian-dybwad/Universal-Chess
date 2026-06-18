@@ -3037,21 +3037,15 @@ def _update_status_state_and_label():
 
 
 def _system_telemetry_rows():
-    """Build the About telemetry rows (CPU/Memory/Storage/Uptime) as engine rows.
+    """Provide the About telemetry rows (CPU/Memory/Storage/Uptime) as engine rows.
 
     Reuses the tested ``build_system_info_entries`` formatters and the safe
-    telemetry read (which degrades to no rows when a sensor read fails), then
-    wraps each entry as a non-selectable MenuRow so the cursor skips the readouts.
-    Re-read on each rebuild so the values stay current.
+    telemetry read, which degrades to no rows when a sensor read fails. Re-read on
+    each rebuild so the values stay current.
     """
     from universalchess.menus.about_menu import build_system_info_entries, read_system_info_safely
-    from universalchess.menus.engine import MenuRow
 
-    entries = build_system_info_entries(read_system_info_safely(log))
-    return [
-        MenuRow(key=e.key, label=e.label, icon=e.icon_name, enabled=e.enabled, selectable=False)
-        for e in entries
-    ]
+    return build_system_info_entries(read_system_info_safely(log))
 
 
 def _build_about_context():

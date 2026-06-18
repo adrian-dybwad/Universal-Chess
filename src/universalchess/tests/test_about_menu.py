@@ -56,7 +56,7 @@ class TestBuildSystemInfoEntries:
         rows = about_menu.build_system_info_entries(_SAMPLE_INFO)
 
         assert [r.key for r in rows] == ["SysCpu", "SysMemory", "SysDisk", "SysUptime"]
-        assert [r.icon_name for r in rows] == ["engine", "system", "info", "timer"]
+        assert [r.icon for r in rows] == ["engine", "system", "info", "timer"]
         assert all(r.selectable is False for r in rows)
         assert [r.label for r in rows] == [
             "CPU\n38% / 48\u00b0C",

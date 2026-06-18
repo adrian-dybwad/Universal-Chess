@@ -2,14 +2,15 @@
 
 The About screen itself is data-driven (the ``about`` catalog container rendered
 through the menu engine); this module holds only the pure, well-tested telemetry
-formatting it reuses. The board's ``system_telemetry`` provider turns
-:func:`build_system_info_entries` into engine rows, and :func:`read_system_info_safely`
-degrades a failed sensor read to "no telemetry rows" so the menu never crashes.
+formatting it reuses. The board's ``system_telemetry`` provider returns
+:func:`build_system_info_entries` directly as engine rows, and
+:func:`read_system_info_safely` degrades a failed sensor read to "no telemetry
+rows" so the menu never crashes.
 """
 
 from typing import Optional, List
 
-from universalchess.epaper.icon_menu import IconMenuEntry
+from universalchess.menus.engine import MenuRow
 from universalchess.board.system_info import (
     SystemInfo,
     format_gibibytes,
@@ -19,13 +20,14 @@ from universalchess.board.system_info import (
 )
 
 
-def build_system_info_entries(system_info: Optional[SystemInfo]) -> List[IconMenuEntry]:
+def build_system_info_entries(system_info: Optional[SystemInfo]) -> List[MenuRow]:
     """Build the read-only telemetry rows shown beneath Version/Updates.
 
-    Returns an empty list when ``system_info`` is ``None`` (telemetry could not
-    be read, e.g. psutil missing on a dev host), so the About screen still shows
-    Version and Updates rather than failing. All rows are non-selectable: they
-    are informational, mirroring the existing Version row.
+    Returns engine ``MenuRow``s (the menu engine's row type, consumed directly by
+    the ``system_telemetry`` provider). Returns an empty list when ``system_info``
+    is ``None`` (telemetry could not be read, e.g. psutil missing on a dev host),
+    so the About screen still shows Version and Updates rather than failing. All
+    rows are non-selectable: they are informational, mirroring the Version row.
     """
     if system_info is None:
         return []
@@ -42,34 +44,10 @@ def build_system_info_entries(system_info: Optional[SystemInfo]) -> List[IconMen
     )
 
     return [
-        IconMenuEntry(
-            key="SysCpu",
-            label=f"CPU\n{cpu_value} / {temp_value}",
-            icon_name="engine",
-            enabled=True,
-            selectable=False,
-        ),
-        IconMenuEntry(
-            key="SysMemory",
-            label=f"Memory\n{memory_value}",
-            icon_name="system",
-            enabled=True,
-            selectable=False,
-        ),
-        IconMenuEntry(
-            key="SysDisk",
-            label=f"Storage\n{disk_value}",
-            icon_name="info",
-            enabled=True,
-            selectable=False,
-        ),
-        IconMenuEntry(
-            key="SysUptime",
-            label=f"Uptime\n{format_uptime(system_info.uptime_seconds)}",
-            icon_name="timer",
-            enabled=True,
-            selectable=False,
-        ),
+        MenuRow(key="SysCpu", label=f"CPU\n{cpu_value} / {temp_value}", icon="engine", selectable=False),
+        MenuRow(key="SysMemory", label=f"Memory\n{memory_value}", icon="system", selectable=False),
+        MenuRow(key="SysDisk", label=f"Storage\n{disk_value}", icon="info", selectable=False),
+        MenuRow(key="SysUptime", label=f"Uptime\n{format_uptime(system_info.uptime_seconds)}", icon="timer", selectable=False),
     ]
 
 
