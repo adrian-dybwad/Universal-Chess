@@ -34,11 +34,15 @@ Node behavior schema (fields read here; all optional unless noted):
 - ``target``: child container id a ``submenu`` opens.
 """
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, List, Optional, Protocol
 
-# Placeholder substituted in a label/boardLabel with the bound value's display.
-_VALUE_PLACEHOLDER = "{value}"
+# Label tokens of the form ``{token}``. ``{value}`` resolves to the node's bound
+# value; ``{fn:NAME}`` resolves to the context's named compute helper. Anything
+# else is left intact so a literal brace is not mangled.
+_TOKEN_PATTERN = re.compile(r"\{([^{}]+)\}")
+_COMPUTE_PREFIX = "fn:"
 
 
 @dataclass
@@ -106,6 +110,7 @@ class MenuContext(Protocol):
     def options(self, name: str) -> List[dict]: ...
     def provide(self, provider: str) -> List["MenuRow"]: ...
     def run_action(self, name: str) -> Optional[str]: ...
+    def compute(self, name: str, node: dict) -> str: ...
 
 
 def _icon_state_key(value: Any) -> str:
@@ -146,15 +151,29 @@ def resolve_label(node: dict, ctx: MenuContext, *, platform: str) -> str:
     """Resolve a node's display label for the given platform.
 
     ``boardLabel`` overrides only on the board and only when present (optional
-    e-paper abbreviation/template); the web always uses ``label``. A ``{value}``
-    placeholder is substituted with the bound value's display text.
+    e-paper abbreviation/template); the web always uses ``label``. Tokens in the
+    chosen template are substituted:
+    - ``{value}`` -> the node's bound value display (option-set label or raw);
+    - ``{fn:NAME}`` -> ``ctx.compute(NAME, node)`` for genuinely computed text
+      (composed summaries) that no single bound value can express.
+
+    Keeping the surrounding template in the catalog while delegating only the
+    computed token to an injected helper avoids both a bespoke per-label function
+    and a label mini-language. An unrecognized token is left intact.
     """
     template = node.get("label", "")
     if platform == "board" and node.get("boardLabel") is not None:
         template = node["boardLabel"]
-    if _VALUE_PLACEHOLDER in template:
-        template = template.replace(_VALUE_PLACEHOLDER, _display_value(node, ctx))
-    return template
+
+    def _replace(match: "re.Match") -> str:
+        token = match.group(1)
+        if token == "value":
+            return _display_value(node, ctx)
+        if token.startswith(_COMPUTE_PREFIX):
+            return ctx.compute(token[len(_COMPUTE_PREFIX):], node)
+        return match.group(0)
+
+    return _TOKEN_PATTERN.sub(_replace, template)
 
 
 def resolve_icon(node: dict, ctx: MenuContext) -> str:

@@ -32,10 +32,11 @@ class _FakeContext:
     board or web adapters.
     """
 
-    def __init__(self, state=None, option_sets=None, providers=None):
+    def __init__(self, state=None, option_sets=None, providers=None, computes=None):
         self._state = state or {}
         self._option_sets = option_sets or {}
         self._providers = providers or {}
+        self._computes = computes or {}
         self.actions_run = []
 
     def get(self, store, key):
@@ -53,6 +54,9 @@ class _FakeContext:
     def run_action(self, name):
         self.actions_run.append(name)
         return None
+
+    def compute(self, name, node):
+        return self._computes[name](node)
 
 
 def _ctx(**state):
@@ -114,6 +118,38 @@ def test_resolve_label_value_placeholder_uses_option_label():
     }
     ctx = _ctx(game={"time_control": 5})
     assert resolve_label(node, ctx, platform="board") == "Time\n5 min (Blitz)"
+
+
+def test_resolve_label_computed_token_calls_context_helper():
+    """A {fn:NAME} token is replaced by the context's named compute helper.
+
+    Why this test exists: composed summaries (e.g. the Players rows -- engine
+    name for engine players, 'H+B N (White)' for hand-brain) are not a single
+    bound value, so the template delegates that token to an injected helper while
+    keeping the surrounding text declarative in JSON. How a regression manifests:
+    the literal '{fn:player1_summary}' renders, or the helper isn't invoked, so
+    the summary text is wrong/missing.
+    """
+    node = {"id": "settings.player1", "type": "submenu", "label": "Player 1\n{fn:player1_summary}"}
+    ctx = _FakeContext(computes={"player1_summary": lambda n: "H+B N (White)"})
+    assert resolve_label(node, ctx, platform="board") == "Player 1\nH+B N (White)"
+
+
+def test_resolve_label_mixes_value_and_computed_tokens():
+    """A label may combine the bound {value} with a {fn:NAME} computed token.
+
+    Why this test exists: the two substitution sources are independent and must
+    both resolve in one template. How a regression manifests: one token survives
+    unreplaced because the substitution short-circuits after the first match.
+    """
+    node = {
+        "id": "x",
+        "type": "select",
+        "label": "{value} / {fn:tag}",
+        "bind": {"store": "p", "key": "type"},
+    }
+    ctx = _FakeContext(state={"p": {"type": "human"}}, computes={"tag": lambda n: n["id"].upper()})
+    assert resolve_label(node, ctx, platform="board") == "human / X"
 
 
 def test_resolve_label_value_placeholder_without_option_set_uses_raw_value():

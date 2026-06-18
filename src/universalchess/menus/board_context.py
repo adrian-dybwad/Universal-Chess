@@ -45,6 +45,7 @@ class BoardMenuContext:
         self._stores: Dict[str, _Store] = {}
         self._providers: Dict[str, Callable[[], List[MenuRow]]] = {}
         self._actions: Dict[str, Callable[[], Optional[str]]] = {}
+        self._values: Dict[str, Callable[[dict], str]] = {}
         self._option_set_fn = option_set_fn or (lambda name: get_catalog().option_set(name))
 
     def register_store(self, name: str, getter: Callable[[str], Any], setter: Callable[[str, Any], None]) -> None:
@@ -63,6 +64,15 @@ class BoardMenuContext:
         """
         self._actions[name] = fn
 
+    def register_value(self, name: str, fn: Callable[[dict], str]) -> None:
+        """Register a computed-label helper invoked for a ``{fn:NAME}`` token.
+
+        The helper receives the node being rendered and returns the substituted
+        text (e.g. a composed player summary). Injected per platform so the
+        catalog stays free of computed-label logic.
+        """
+        self._values[name] = fn
+
     # -- MenuContext protocol --------------------------------------------
 
     def get(self, store: str, key: str) -> Any:
@@ -79,6 +89,9 @@ class BoardMenuContext:
 
     def run_action(self, name: str) -> Optional[str]:
         return self._actions[name]()
+
+    def compute(self, name: str, node: dict) -> str:
+        return self._values[name](node)
 
 
 def _row_to_entry(row: MenuRow) -> IconMenuEntry:
