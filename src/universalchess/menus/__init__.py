@@ -3,7 +3,6 @@
 from .main_menu import create_main_menu_entries
 from .settings_menu import create_settings_entries
 from .settings_menu import _get_player_type_label
-from .system_menu import create_system_entries, handle_system_menu
 from .positions_menu import handle_positions_menu
 from .engine_menu import (
     handle_engine_selection,
@@ -26,7 +25,7 @@ from .engine_manager_menu import (
     handle_engine_detail_menu,
     show_engine_install_progress,
 )
-from .reset_menu import handle_reset_settings
+from .reset_menu import reset_all_settings
 from .analysis_menu import handle_analysis_mode_menu, handle_analysis_engine_selection
 from .update_menu import (
     handle_update_menu,
@@ -48,8 +47,6 @@ from universalchess.services.lichess_service import (
 __all__ = [
     "create_main_menu_entries",
     "create_settings_entries",
-    "create_system_entries",
-    "handle_system_menu",
     "handle_positions_menu",
     "handle_chromecast_menu",
     "create_connectivity_entries",
@@ -81,7 +78,7 @@ __all__ = [
     "handle_engine_manager_menu",
     "handle_engine_detail_menu",
     "show_engine_install_progress",
-    "handle_reset_settings",
+    "reset_all_settings",
     "handle_analysis_mode_menu",
     "handle_analysis_engine_selection",
 ]

@@ -309,7 +309,8 @@
     {
       "id": "system.engines",
       "key": "Engines",
-      "type": "submenu",
+      "type": "action",
+      "action": "engine_manager",
       "label": "Engine\nManager",
       "icon": "engine",
       "help": "Install and manage chess engines for play and analysis.",
@@ -319,25 +320,31 @@
     {
       "id": "system.analysis",
       "key": "AnalysisMode",
-      "type": "submenu",
+      "type": "action",
+      "action": "analysis_mode",
       "label": "Analysis\nEngine",
-      "icon": "checkbox_empty",
       "help": "Choose the engine used for position analysis (best changed between games).",
+      "bind": { "store": "system", "key": "analysis_mode" },
+      "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
       "platforms": ["board", "web"]
     },
     {
       "id": "system.inactivity",
       "key": "Inactivity",
-      "type": "submenu",
+      "type": "action",
+      "action": "inactivity",
       "label": "Sleep Timer",
-      "icon": "timer",
+      "boardLabel": "Sleep Timer\n{fn:sleep_timer}",
       "help": "Automatically put the board to sleep after a period of inactivity.",
+      "bind": { "store": "system", "key": "sleep_enabled" },
+      "icon": { "true": "timer_checked", "false": "timer" },
       "platforms": ["board", "web"]
     },
     {
       "id": "system.reset",
       "key": "ResetSettings",
-      "type": "action",
+      "type": "submenu",
+      "target": "system.reset.confirm",
       "label": "Reset\nSettings",
       "icon": "cancel",
       "help": "Restore all settings to their defaults.",
@@ -346,7 +353,8 @@
     {
       "id": "system.about",
       "key": "About",
-      "type": "submenu",
+      "type": "action",
+      "action": "about",
       "label": "About",
       "icon": "info",
       "help": "Version and support information.",
@@ -364,6 +372,35 @@
     },
 
     {
+      "id": "system.reset.confirm",
+      "type": "menu",
+      "label": "Reset Settings",
+      "help": "Confirm restoring all settings to their defaults.",
+      "platforms": ["board"],
+      "children": ["system.reset.confirm.yes", "system.reset.confirm.no"]
+    },
+    {
+      "id": "system.reset.confirm.yes",
+      "key": "confirm",
+      "type": "action",
+      "action": "reset_confirm",
+      "label": "Reset All\nSettings?",
+      "icon": "cancel",
+      "help": "Clear all game and player settings and restore defaults.",
+      "platforms": ["board"]
+    },
+    {
+      "id": "system.reset.confirm.no",
+      "key": "cancel",
+      "type": "action",
+      "action": "cancel",
+      "label": "Cancel",
+      "icon": "cancel",
+      "help": "Return without changing settings.",
+      "platforms": ["board"]
+    },
+
+    {
       "id": "power",
       "type": "menu",
       "label": "Power",
@@ -374,6 +411,7 @@
       "id": "power.shutdown",
       "key": "Shutdown",
       "type": "action",
+      "action": "shutdown",
       "label": "Shutdown",
       "icon": "shutdown",
       "help": "Power off the board.",
@@ -383,6 +421,7 @@
       "id": "power.reboot",
       "key": "Reboot",
       "type": "action",
+      "action": "reboot",
       "label": "Reboot",
       "icon": "reboot",
       "help": "Restart the board.",

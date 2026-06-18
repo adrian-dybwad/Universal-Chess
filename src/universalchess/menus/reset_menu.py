@@ -1,9 +1,14 @@
-"""Reset settings menu helpers."""
+"""Shared settings-reset behavior.
 
-from typing import Callable, Dict, List, Optional
+The on-board Reset Settings menu (after its confirmation, now a data-driven
+``system.reset.confirm`` container) and the web Reset control both call
+``reset_all_settings``. Keeping it here as one function ensures the two surfaces
+reset identically; the confirmation UI itself lives in the catalog/engine, not
+in this module.
+"""
 
-from universalchess.epaper.icon_menu import IconMenuEntry
-from universalchess.managers.menu import is_break_result
+from typing import Callable
+
 from universalchess.utils.settings_persistence import clear_section
 
 
@@ -36,52 +41,3 @@ def reset_all_settings(
     except Exception as e:
         log.error(f"[Settings] Error resetting settings: {e}")
         board.beep(board.SOUND_WRONG_MOVE, event_type="error")
-
-
-def handle_reset_settings(
-    show_menu: Callable[[List[IconMenuEntry]], str],
-    load_game_settings: Callable[[], None],
-    log,
-    board,
-    settings_section: str,
-    player1_section: str,
-    player2_section: str,
-) -> Optional[str]:
-    """Handle reset all settings to defaults.
-
-    Shows a confirmation dialog, then clears all entries in the settings sections
-    and reloads settings with defaults.
-
-    Args:
-        show_menu: Callback to show menu and get result
-        load_game_settings: Callback to reload game settings (also resets in-memory)
-        log: Logger instance
-        board: Board module
-        settings_section: Name of game settings section in config
-        player1_section: Name of player 1 section in config
-        player2_section: Name of player 2 section in config
-
-    Returns:
-        Break result if user triggered a break action, None otherwise
-    """
-    entries = [
-        IconMenuEntry(key="confirm", label="Reset All\nSettings?", icon_name="cancel", enabled=True),
-        IconMenuEntry(key="cancel", label="Cancel", icon_name="cancel", enabled=True),
-    ]
-
-    result = show_menu(entries)
-
-    if is_break_result(result):
-        return result
-
-    if result == "confirm":
-        reset_all_settings(
-            load_game_settings,
-            log,
-            board,
-            settings_section,
-            player1_section,
-            player2_section,
-        )
-
-    return None

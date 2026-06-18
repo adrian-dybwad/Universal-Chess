@@ -47,9 +47,7 @@ from universalchess.epaper.status_bar import STATUS_BAR_HEIGHT
 from universalchess.menus import (
     create_main_menu_entries,
     create_settings_entries,
-    create_system_entries,
     _get_player_type_label,
-    handle_system_menu,
     handle_positions_menu,
     handle_chromecast_menu,
     create_connectivity_entries,
@@ -66,7 +64,7 @@ from universalchess.menus import (
     handle_engine_manager_menu,
     handle_engine_detail_menu,
     show_engine_install_progress,
-    handle_reset_settings,
+    reset_all_settings,
     handle_analysis_mode_menu,
     handle_analysis_engine_selection,
     handle_update_menu,
@@ -2223,7 +2221,6 @@ def _process_pending_board_command() -> None:
         # defaults in this process so the board reflects the reset without a
         # restart.
         log.info("[App] Web reset_settings")
-        from universalchess.menus.reset_menu import reset_all_settings
         reset_all_settings(
             _load_game_settings, log, board,
             SETTINGS_SECTION, PLAYER1_SECTION, PLAYER2_SECTION,
@@ -2232,12 +2229,12 @@ def _process_pending_board_command() -> None:
         # Same shutdown path as the Power menu's Shutdown (splash + hardware
         # cleanup via _shutdown -> cleanup_and_exit).
         log.info("[App] Web shutdown")
-        from universalchess.menus.system_menu import perform_shutdown
+        from universalchess.services.power import perform_shutdown
         perform_shutdown(_shutdown)
     elif command == "reboot":
         # Same reboot path as the Power menu's Reboot (LED sweep + _shutdown).
         log.info("[App] Web reboot")
-        from universalchess.menus.system_menu import perform_reboot
+        from universalchess.services.power import perform_reboot
         perform_reboot(board, _shutdown)
     elif command == "run_centaur":
         # Same handoff as the main menu's Original Centaur action.
@@ -2887,81 +2884,165 @@ def _handle_sound_menu():
     return run_engine_menu("settings.sound", _build_sound_context(), _menu_manager)
 
 
-def _handle_system_menu():
-    """Handle system submenu (engines, sleep timer, reset, about, power).
+# ============================================================================
+# System Menu (data-driven)
+# ----------------------------------------------------------------------------
+# The System subtree (engines, analysis engine, sleep timer, reset, about,
+# power) and its nested Power and Reset-confirm menus are defined by the shared
+# catalog (``system`` / ``power`` / ``system.reset.confirm`` containers) and run
+# through the engine. main.py supplies only the board glue: a read-only
+# ``system`` store (analysis-mode and sleep-timer state used for the row icon
+# and label), the computed Sleep Timer label, and the actions that open the
+# still-dynamic sub-menus (engine manager, analysis, sleep timer, about) or
+# perform an effect (reset, shutdown, reboot, cancel). Engine/analysis/about
+# stay code-driven because they are inherently dynamic (device/engine lists,
+# live telemetry); the engine simply invokes them as actions.
+# ============================================================================
 
-    Connectivity (WiFi/Bluetooth/Chromecast/Accounts) now lives in its own
-    Connectivity submenu (see _handle_connectivity_menu). Uses MenuContext for
-    tracking selection state.
-    """
-    ctx = _get_menu_context()
-    return handle_system_menu(
-        ctx=ctx,
+def _run_engine_manager_menu():
+    """Run the (dynamic) Engine Manager menu; return its break/None result."""
+    return handle_engine_manager_menu(
+        menu_manager=_menu_manager,
         board=board,
+        log=log,
+        handle_detail_menu=lambda engine_info: handle_engine_detail_menu(
+            engine_info=engine_info,
+            menu_manager=_menu_manager,
+            board=board,
+            log=log,
+            show_install_progress=lambda em, en, dn, mins: show_engine_install_progress(
+                engine_manager=em,
+                engine_name=en,
+                display_name=dn,
+                estimated_minutes=mins,
+                board=board,
+                log=log,
+            ),
+        ),
+    )
+
+
+def _run_analysis_mode_menu():
+    """Run the (dynamic) Analysis Engine menu; return its break/None result."""
+    return handle_analysis_mode_menu(
         game_settings=_game_settings_dict(),
         menu_manager=_menu_manager,
-        create_entries=lambda: create_system_entries(board, _game_settings_dict()),
-        handle_analysis_mode_menu=lambda: handle_analysis_mode_menu(
+        save_game_setting=_save_game_setting,
+        handle_analysis_engine_selection=lambda: handle_analysis_engine_selection(
             game_settings=_game_settings_dict(),
-            menu_manager=_menu_manager,
+            show_menu=_show_menu,
+            get_installed_engines=_get_installed_engines,
             save_game_setting=_save_game_setting,
-            handle_analysis_engine_selection=lambda: handle_analysis_engine_selection(
-                game_settings=_game_settings_dict(),
-                show_menu=_show_menu,
-                get_installed_engines=_get_installed_engines,
-                save_game_setting=_save_game_setting,
-                log=log,
-                board=board,
-            ),
             log=log,
             board=board,
         ),
-        handle_engine_manager_menu=lambda: handle_engine_manager_menu(
-            menu_manager=_menu_manager,
-            board=board,
-            log=log,
-            handle_detail_menu=lambda engine_info: handle_engine_detail_menu(
-                engine_info=engine_info,
-                menu_manager=_menu_manager,
-                board=board,
-                log=log,
-                show_install_progress=lambda em, en, dn, mins: show_engine_install_progress(
-                    engine_manager=em,
-                    engine_name=en,
-                    display_name=dn,
-                    estimated_minutes=mins,
-                    board=board,
-                    log=log,
-                ),
-            ),
-        ),
-        handle_inactivity_timeout=lambda: handle_inactivity_timeout(
-            board=board,
-            log=log,
-            menu_manager=_menu_manager,
-        ),
-        handle_reset_settings=lambda: handle_reset_settings(
-            show_menu=_show_menu,
-            load_game_settings=_load_game_settings,
-            log=log,
-            board=board,
-            settings_section=SETTINGS_SECTION,
-            player1_section=PLAYER1_SECTION,
-            player2_section=PLAYER2_SECTION,
-        ),
-        handle_about=lambda: handle_about_menu(
-            ctx=_get_menu_context(),
-            menu_manager=_menu_manager,
-            board=board,
-            log=log,
-            get_installed_version=_get_installed_version,
-            handle_update_menu=handle_update_menu,
-            show_menu=_show_menu,
-            find_entry_index=find_entry_index,
-        ),
-        shutdown_fn=lambda reason, reboot=False: _shutdown(reason, reboot=reboot),
         log=log,
+        board=board,
     )
+
+
+def _run_inactivity_menu():
+    """Run the (dynamic) Sleep Timer menu; return its break/None result."""
+    return handle_inactivity_timeout(board=board, log=log, menu_manager=_menu_manager)
+
+
+def _run_about_menu():
+    """Run the (dynamic) About menu; return its break/None result."""
+    return handle_about_menu(
+        ctx=_get_menu_context(),
+        menu_manager=_menu_manager,
+        board=board,
+        log=log,
+        get_installed_version=_get_installed_version,
+        handle_update_menu=handle_update_menu,
+        show_menu=_show_menu,
+        find_entry_index=find_entry_index,
+    )
+
+
+def _reset_settings_confirmed() -> str:
+    """Reset all settings then close the confirmation menu.
+
+    Backs the Reset-confirm "Reset All Settings?" action. Runs the shared
+    ``reset_all_settings`` (also used by the web Reset control) and returns BACK
+    so the confirmation submenu closes and the System menu redraws.
+    """
+    reset_all_settings(
+        _load_game_settings, log, board,
+        SETTINGS_SECTION, PLAYER1_SECTION, PLAYER2_SECTION,
+    )
+    board.beep(board.SOUND_GENERAL)
+    return "BACK"
+
+
+def _build_system_context():
+    """Build the BoardMenuContext for the System / Power / Reset subtree.
+
+    The read-only ``system`` store exposes the two pieces of live state the
+    System rows render: ``analysis_mode`` (the Analysis Engine row's checkbox
+    icon) and ``sleep_enabled`` (the Sleep Timer row's timer icon). It is
+    read-only because none of these rows mutate state via the engine -- each
+    opens a dynamic sub-menu or performs an effect through an action -- so the
+    setter fails loudly if a future bound writer is added by mistake.
+    """
+    from universalchess.menus.board_context import BoardMenuContext
+    from universalchess.services.power import perform_shutdown, perform_reboot
+
+    def system_get(key):
+        if key == "analysis_mode":
+            return bool(_game_settings_dict()["analysis_mode"])
+        if key == "sleep_enabled":
+            return board.get_inactivity_timeout() != 0
+        raise KeyError(f"unknown system store key: {key!r}")
+
+    def system_set(key, value):
+        raise NotImplementedError(f"system store is read-only (key={key!r})")
+
+    def sleep_timer_label(node):
+        timeout = board.get_inactivity_timeout()
+        return "Disabled" if timeout == 0 else f"{timeout // 60} min"
+
+    def do_shutdown():
+        # Clear menu state first so no stale menu survives the shutdown, then
+        # hand off to the shared power helper (also used by the web Power
+        # control). Control does not return: _shutdown tears the process down.
+        _get_menu_context().clear()
+        perform_shutdown(_shutdown)
+        return None
+
+    def do_reboot():
+        _get_menu_context().clear()
+        perform_reboot(board, _shutdown)
+        return None
+
+    ctx = BoardMenuContext()
+    ctx.register_store("system", system_get, system_set)
+    ctx.register_value("sleep_timer", sleep_timer_label)
+    ctx.register_action("engine_manager", lambda: _signal_from(_run_engine_manager_menu()))
+    ctx.register_action("analysis_mode", lambda: _signal_from(_run_analysis_mode_menu()))
+    ctx.register_action("inactivity", lambda: _signal_from(_run_inactivity_menu()))
+    ctx.register_action("about", lambda: _signal_from(_run_about_menu()))
+    ctx.register_action("reset_confirm", _reset_settings_confirmed)
+    ctx.register_action("cancel", lambda: "BACK")
+    ctx.register_action("shutdown", do_shutdown)
+    ctx.register_action("reboot", do_reboot)
+    return ctx
+
+
+def _handle_system_menu():
+    """Handle the System submenu (engines, sleep timer, reset, about, power).
+
+    Driven by the shared menu engine: structure, labels, icons, the Power and
+    Reset-confirm subtrees, and the dynamic Sleep Timer label/Analysis icon all
+    come from the ``system`` catalog container; the board adapter supplies the
+    read-only system store, the Sleep Timer label, and the row actions. Break
+    results from any dynamic sub-menu (e.g. PLAY/piece-moved) propagate so the
+    whole menu stack unwinds. Connectivity lives in its own submenu (see
+    _handle_connectivity_menu).
+    """
+    from universalchess.menus.board_context import run_engine_menu
+
+    return run_engine_menu("system", _build_system_context(), _menu_manager)
 
 
 def _handle_connectivity_menu():

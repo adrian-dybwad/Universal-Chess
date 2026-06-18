@@ -1,13 +1,15 @@
 """Tests for the shared settings-reset behavior.
 
-The e-paper Reset Settings menu (after its confirmation) and the web Reset
-control (/api/system/reset -> board IPC) both run reset_all_settings. These tests
-pin that one shared function so the two surfaces reset identically: the three
-config sections are cleared and the in-memory settings are reloaded.
+The e-paper Reset Settings menu (after its data-driven ``system.reset.confirm``
+confirmation) and the web Reset control (/api/system/reset -> board IPC) both run
+reset_all_settings. These tests pin that one shared function so the two surfaces
+reset identically: the three config sections are cleared and the in-memory
+settings are reloaded. The confirmation gate itself now lives in the catalog/
+engine and is covered by test_system_menu.
 """
 
 import universalchess.menus.reset_menu as reset_menu
-from universalchess.menus.reset_menu import reset_all_settings, handle_reset_settings
+from universalchess.menus.reset_menu import reset_all_settings
 
 
 class _Log:
@@ -88,33 +90,3 @@ def test_reset_all_settings_beeps_error_and_does_not_raise(monkeypatch):
     )
 
     assert board.beeps == [("wrong", "error")]
-
-
-def test_handle_reset_settings_resets_only_on_confirm(monkeypatch):
-    """The menu must run the reset only when the user confirms.
-
-    Why this test exists: handle_reset_settings now delegates to
-    reset_all_settings; this guards that the confirmation gate is preserved so a
-    cancel does not wipe settings.
-
-    How a regression manifests: choosing 'cancel' still clears sections (reset
-    fires unconditionally), or 'confirm' no longer triggers the reset.
-    """
-    cleared = []
-    monkeypatch.setattr(reset_menu, "clear_section", lambda section: cleared.append(section))
-
-    def _run(result_key):
-        cleared.clear()
-        handle_reset_settings(
-            show_menu=lambda entries: result_key,
-            load_game_settings=lambda: None,
-            log=_Log(),
-            board=_Board(),
-            settings_section="game",
-            player1_section="PlayerOne",
-            player2_section="PlayerTwo",
-        )
-        return list(cleared)
-
-    assert _run("cancel") == []
-    assert _run("confirm") == ["game", "PlayerOne", "PlayerTwo"]
