@@ -66,9 +66,6 @@ from universalchess.menus import (
     reset_all_settings,
     handle_analysis_mode_menu,
     handle_analysis_engine_selection,
-    handle_update_menu,
-    handle_local_deb_install,
-    find_local_deb_files,
     get_lichess_client,
     ensure_token,
     start_lichess_game_service,
@@ -3011,19 +3008,89 @@ def _build_about_context():
     return ctx
 
 
-def _run_update_menu():
-    """Run the (dynamic) Updates menu; return its break/None result.
+def _build_updates_context():
+    """Build the BoardMenuContext for the data-driven Updates menu.
 
-    Still code-driven (splash-screen check/download/install flows); invoked as an
-    action from the data-driven About menu.
+    The ``update`` store reads/writes the live update-service state: the
+    auto-update toggle, the release channel (a select over the catalog's
+    update_channel option set), and the read-only flags that drive row
+    visibility (``has_pending`` for Install Pending, ``has_download`` for
+    Download, plus ``available`` for the Download label). The ``auto_update_state``
+    compute supplies the toggle's Enabled/Disabled label, and the actions invoke
+    the imperative, splash-driven update flows.
     """
-    return handle_update_menu(
-        show_menu=_show_menu,
-        find_entry_index=find_entry_index,
-        board=board,
-        log=log,
-        initial_index=0,
+    from universalchess.menus.board_context import BoardMenuContext
+    from universalchess.services.update_service import get_update_service, UpdateChannel
+    from universalchess.menus.update_menu import (
+        check_for_updates_interactive,
+        download_update_interactive,
+        install_pending_interactive,
+        install_local_interactive,
     )
+
+    svc = get_update_service()
+
+    def update_get(key):
+        status = svc.get_status_dict()
+        if key == "auto_update":
+            return bool(status["auto_update"])
+        if key == "channel":
+            return svc.get_channel().value
+        if key == "has_pending":
+            return bool(status["has_pending_update"])
+        if key == "available":
+            return status["available_version"] or ""
+        if key == "has_download":
+            # Download is offered only when an update is available but not yet
+            # downloaded; once pending, the Install Pending row replaces it.
+            return (not status["has_pending_update"]) and bool(status["available_version"])
+        raise KeyError(f"unknown update store key: {key!r}")
+
+    def update_set(key, value):
+        if key == "auto_update":
+            svc.set_auto_update(bool(value))
+            log.info(f"[Update] Auto-update {'enabled' if value else 'disabled'}")
+            return
+        if key == "channel":
+            svc.set_channel(UpdateChannel(value))
+            log.info(f"[Update] Channel set to {value}")
+            return
+        raise NotImplementedError(f"update store key is read-only: {key!r}")
+
+    def do_check():
+        check_for_updates_interactive(board, log)
+        return None
+
+    def do_download():
+        download_update_interactive(board, log)
+        return None
+
+    def do_install_pending():
+        install_pending_interactive(board, log)
+        return None
+
+    def do_install_local():
+        install_local_interactive(board, log, _menu_manager)
+        return None
+
+    ctx = BoardMenuContext()
+    ctx.register_store("update", update_get, update_set)
+    ctx.register_value(
+        "auto_update_state",
+        lambda node: "Enabled" if update_get("auto_update") else "Disabled",
+    )
+    ctx.register_action("check_updates", do_check)
+    ctx.register_action("download_update", do_download)
+    ctx.register_action("install_pending", do_install_pending)
+    ctx.register_action("install_local", do_install_local)
+    return ctx
+
+
+def _run_update_menu():
+    """Run the data-driven Updates menu; return its break/None result."""
+    from universalchess.menus.board_context import run_engine_menu
+
+    return run_engine_menu("updates", _build_updates_context(), _menu_manager)
 
 
 def _run_about_menu():

@@ -1,226 +1,118 @@
-"""Update menu for e-paper display.
+"""Interactive software-update flows for the e-paper board.
 
-Uses the unified UpdateService for all update operations.
+The Updates menu structure (auto-update toggle, channel select, and the
+check/download/install rows) is data-driven (the ``updates`` catalog container
+rendered through the engine). This module holds only the imperative,
+splash-screen-driven operations those rows invoke as actions -- checking,
+downloading, installing a pending update, and installing a local .deb -- plus the
+local .deb discovery helper. All update state goes through the unified
+UpdateService.
 """
 
 import os
 import time
-from typing import Callable, List, Optional
+from typing import List
 
 from universalchess.epaper.icon_menu import IconMenuEntry
-from universalchess.managers.menu import MenuSelection, is_break_result
 from universalchess.epaper import SplashScreen
-from universalchess.menus.catalog.loader import get_catalog
-from universalchess.services.update_service import (
-    get_update_service,
-    UpdateService,
-    UpdateChannel,
-    UpdateEvent,
-)
+from universalchess.services.update_service import get_update_service
 
 
-def handle_update_menu(
-    show_menu: Callable[[List[IconMenuEntry], int], str],
-    find_entry_index: Callable[[List[IconMenuEntry], str], int],
-    board,
-    log,
-    initial_index: int = 0,
-) -> Optional[MenuSelection]:
-    """Handle update settings menu.
-    
-    Args:
-        show_menu: Function to display menu and return selection key
-        find_entry_index: Function to find index of entry by key
-        board: Board instance for display
-        log: Logger instance
-        initial_index: Initial menu index
-        
-    Returns:
-        MenuSelection if breaking out of menu, None otherwise
+def _show_update_splash(board, message: str, timeout: float = 2.0) -> None:
+    """Show a transient splash message during an update operation."""
+    board.display_manager.clear_widgets(addStatusBar=False)
+    promise = board.display_manager.add_widget(
+        SplashScreen(
+            board.display_manager.update,
+            message=message,
+            leave_room_for_status_bar=False,
+        )
+    )
+    if promise:
+        try:
+            promise.result(timeout=timeout)
+        except Exception:
+            pass
+
+
+def check_for_updates_interactive(board, log) -> None:
+    """Check the update server and report the result via splash screens.
+
+    Backs the Updates menu's "Check for Updates" action. Network/parse failures
+    are caught and surfaced as a splash rather than crashing the menu loop.
     """
     update_service = get_update_service()
-    
-    def build_entries():
-        status = update_service.get_status_dict()
-        channel = status["channel"]
-        auto_update = status["auto_update"]
-        has_pending = status["has_pending_update"]
-        available = status["available_version"]
-        
-        auto_icon = "checkbox_checked" if auto_update else "checkbox_empty"
-        
-        entries = [
-            IconMenuEntry(
-                key="AutoUpdate",
-                label=f"Auto-Update\n{'Enabled' if auto_update else 'Disabled'}",
-                icon_name=auto_icon,
-                enabled=True,
-            ),
-            IconMenuEntry(
-                key="Channel",
-                label=f"Channel\n{channel.capitalize()}",
-                icon_name="settings",
-                enabled=True,
-            ),
-            IconMenuEntry(
-                key="CheckNow",
-                label="Check for\nUpdates",
-                icon_name="update",
-                enabled=True,
-            ),
-        ]
-        
-        # Show install option if update is available or pending
-        if has_pending:
-            entries.append(
-                IconMenuEntry(
-                    key="InstallPending",
-                    label="Install\nPending Update",
-                    icon_name="play",
-                    enabled=True,
-                )
-            )
-        elif available:
-            entries.append(
-                IconMenuEntry(
-                    key="DownloadUpdate",
-                    label=f"Download\nv{available}",
-                    icon_name="update",
-                    enabled=True,
-                )
-            )
-        
-        # Option to install local .deb
-        entries.append(
-            IconMenuEntry(
-                key="InstallLocal",
-                label="Install\nLocal .deb",
-                icon_name="update",
-                enabled=True,
-            )
-        )
-        
-        return entries
-    
-    def show_splash(message: str, timeout: float = 2.0):
-        """Show a splash screen message."""
-        board.display_manager.clear_widgets(addStatusBar=False)
-        promise = board.display_manager.add_widget(
-            SplashScreen(
-                board.display_manager.update,
-                message=message,
-                leave_room_for_status_bar=False
-            )
-        )
-        if promise:
-            try:
-                promise.result(timeout=timeout)
-            except Exception:
-                pass
-    
-    def handle_selection(result_key: str):
-        if result_key == "AutoUpdate":
-            current = update_service.is_auto_update_enabled()
-            update_service.set_auto_update(not current)
-            log.info(f"[Update] Auto-update {'disabled' if current else 'enabled'}")
-            return None
-        
-        if result_key == "Channel":
-            current = update_service.get_channel()
-            # Channels and labels come from the shared catalog update_channel
-            # option set (one source shared with the web); the active channel is
-            # marked with a leading "* " and the checked icon.
-            channel_options = get_catalog().option_set("update_channel")
-            entries = [
-                IconMenuEntry(
-                    key=option["value"],
-                    label=f"* {option['label']}" if UpdateChannel(option["value"]) == current else option["label"],
-                    icon_name="checkbox_checked" if UpdateChannel(option["value"]) == current else "checkbox_empty",
-                    enabled=True,
-                )
-                for option in channel_options
-            ]
-            idx = next(
-                (i for i, option in enumerate(channel_options) if UpdateChannel(option["value"]) == current),
-                0,
-            )
-            channel_result = show_menu(entries, initial_index=idx)
-            if channel_result not in ["BACK", "SHUTDOWN", "HELP"]:
-                update_service.set_channel(UpdateChannel(channel_result))
-                log.info(f"[Update] Channel set to {channel_result}")
-            return None
-        
-        if result_key == "CheckNow":
-            show_splash("Checking\nfor updates...")
-            
-            try:
-                release = update_service.check_for_updates()
-                if release:
-                    show_splash(f"Update available\nv{release.version}")
-                    time.sleep(2)
-                else:
-                    current = update_service.get_current_version()
-                    show_splash(f"Up to date\nv{current}")
-                    time.sleep(2)
-            except Exception as e:
-                log.error(f"[Update] Check failed: {e}")
-                show_splash("Check failed\n\nNo network?")
-                time.sleep(2)
-            return None
-        
-        if result_key == "DownloadUpdate":
-            show_splash("Downloading\nupdate...")
-            
-            try:
-                deb_path = update_service.download_update()
-                if deb_path:
-                    show_splash("Download\ncomplete!")
-                    time.sleep(1)
-                else:
-                    show_splash("Download\nfailed")
-                    time.sleep(2)
-            except Exception as e:
-                log.error(f"[Update] Download failed: {e}")
-                show_splash("Download\nfailed")
-                time.sleep(2)
-            return None
-        
-        if result_key == "InstallPending":
-            show_splash("Installing\nupdate...")
+    _show_update_splash(board, "Checking\nfor updates...")
+    try:
+        release = update_service.check_for_updates()
+        if release:
+            _show_update_splash(board, f"Update available\nv{release.version}")
+            time.sleep(2)
+        else:
+            current = update_service.get_current_version()
+            _show_update_splash(board, f"Up to date\nv{current}")
+            time.sleep(2)
+    except Exception as e:
+        log.error(f"[Update] Check failed: {e}")
+        _show_update_splash(board, "Check failed\n\nNo network?")
+        time.sleep(2)
 
-            # The install runs in a transient systemd unit and the package
-            # postinst restarts this service onto the new version, so no
-            # manual restart here. install_pending_update returns once the
-            # install is launched; the board will restart shortly.
-            if update_service.install_pending_update():
-                show_splash("Installing...\nBoard will restart")
-                # Hold the splash; the postinst restart will terminate this
-                # process when the new version takes over.
-                time.sleep(30)
-            else:
-                show_splash("Install\nfailed")
-                time.sleep(2)
-            return None
-        
-        if result_key == "InstallLocal":
-            return "InstallLocal"
-        
-        return None
-    
-    idx = initial_index
-    while True:
-        entries = build_entries()
-        result = show_menu(entries, initial_index=idx)
-        idx = find_entry_index(entries, result)
-        
-        if is_break_result(result):
-            return result
-        if result in ["BACK", "SHUTDOWN", "HELP"]:
-            return result
-        
-        selection_result = handle_selection(result)
-        if selection_result == "InstallLocal":
-            return selection_result
+
+def download_update_interactive(board, log) -> None:
+    """Download the available update, reporting progress via splash screens.
+
+    Backs the Updates menu's "Download" action. Failures are caught and shown so
+    a download error does not take down the menu.
+    """
+    update_service = get_update_service()
+    _show_update_splash(board, "Downloading\nupdate...")
+    try:
+        deb_path = update_service.download_update()
+        if deb_path:
+            _show_update_splash(board, "Download\ncomplete!")
+            time.sleep(1)
+        else:
+            _show_update_splash(board, "Download\nfailed")
+            time.sleep(2)
+    except Exception as e:
+        log.error(f"[Update] Download failed: {e}")
+        _show_update_splash(board, "Download\nfailed")
+        time.sleep(2)
+
+
+def install_pending_interactive(board, log) -> None:
+    """Install the downloaded (pending) update.
+
+    Backs the Updates menu's "Install Pending Update" action. The install runs in
+    a transient systemd unit and the package postinst restarts this service onto
+    the new version, so there is no manual restart here; the splash is held while
+    the restart takes over.
+    """
+    _show_update_splash(board, "Installing\nupdate...")
+    if get_update_service().install_pending_update():
+        _show_update_splash(board, "Installing...\nBoard will restart")
+        # Hold the splash; the postinst restart terminates this process when the
+        # new version takes over.
+        time.sleep(30)
+    else:
+        _show_update_splash(board, "Install\nfailed")
+        time.sleep(2)
+
+
+def install_local_interactive(board, log, menu_manager) -> None:
+    """Find a local .deb in the home directory and install it after confirming.
+
+    Backs the Updates menu's "Install Local .deb" action. Installs the first
+    .deb found (after the confirmation dialog in ``handle_local_deb_install``);
+    shows a splash when none is present so the action gives clear feedback rather
+    than silently doing nothing.
+    """
+    deb_files = find_local_deb_files()
+    if not deb_files:
+        _show_update_splash(board, "No .deb\nfound")
+        time.sleep(2)
+        return
+    handle_local_deb_install(deb_files[0], board, log, menu_manager)
 
 
 def handle_local_deb_install(

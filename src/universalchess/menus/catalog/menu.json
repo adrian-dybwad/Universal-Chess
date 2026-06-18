@@ -470,6 +470,91 @@
     },
 
     {
+      "id": "updates",
+      "type": "menu",
+      "label": "Updates",
+      "help": "Auto-update, release channel, and update installation.",
+      "platforms": ["board"],
+      "children": [
+        "updates.auto",
+        "updates.channel",
+        "updates.check",
+        "updates.install_pending",
+        "updates.download",
+        "updates.install_local"
+      ]
+    },
+    {
+      "id": "updates.auto",
+      "key": "AutoUpdate",
+      "type": "toggle",
+      "label": "Auto-Update",
+      "boardLabel": "Auto-Update\n{fn:auto_update_state}",
+      "help": "Automatically download updates when available.",
+      "bind": { "store": "update", "key": "auto_update" },
+      "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
+      "platforms": ["board"]
+    },
+    {
+      "id": "updates.channel",
+      "key": "Channel",
+      "type": "select",
+      "label": "Channel",
+      "boardLabel": "Channel\n{value}",
+      "help": "Stable releases are recommended. Nightly builds may contain bugs.",
+      "optionSet": "update_channel",
+      "bind": { "store": "update", "key": "channel" },
+      "icon": "settings",
+      "selectedIcon": "checkbox_checked",
+      "unselectedIcon": "checkbox_empty",
+      "platforms": ["board"]
+    },
+    {
+      "id": "updates.check",
+      "key": "CheckNow",
+      "type": "action",
+      "action": "check_updates",
+      "label": "Check for\nUpdates",
+      "icon": "update",
+      "help": "Check the update server for a newer version now.",
+      "platforms": ["board"]
+    },
+    {
+      "id": "updates.install_pending",
+      "key": "InstallPending",
+      "type": "action",
+      "action": "install_pending",
+      "label": "Install\nPending Update",
+      "icon": "play",
+      "help": "Install the downloaded update; the board restarts onto the new version.",
+      "visibleWhen": { "store": "update", "key": "has_pending", "equals": true },
+      "platforms": ["board"]
+    },
+    {
+      "id": "updates.download",
+      "key": "DownloadUpdate",
+      "type": "action",
+      "action": "download_update",
+      "label": "Download Update",
+      "boardLabel": "Download\nv{value}",
+      "bind": { "store": "update", "key": "available" },
+      "icon": "update",
+      "help": "Download the available update.",
+      "visibleWhen": { "store": "update", "key": "has_download", "equals": true },
+      "platforms": ["board"]
+    },
+    {
+      "id": "updates.install_local",
+      "key": "InstallLocal",
+      "type": "action",
+      "action": "install_local",
+      "label": "Install\nLocal .deb",
+      "icon": "update",
+      "help": "Install a .deb package found in the home directory.",
+      "platforms": ["board"]
+    },
+
+    {
       "id": "field.player.color",
       "type": "select",
       "label": "Color",

@@ -27,9 +27,12 @@ from .engine_manager_menu import (
 from .reset_menu import reset_all_settings
 from .analysis_menu import handle_analysis_mode_menu, handle_analysis_engine_selection
 from .update_menu import (
-    handle_update_menu,
     handle_local_deb_install,
     find_local_deb_files,
+    check_for_updates_interactive,
+    download_update_interactive,
+    install_pending_interactive,
+    install_local_interactive,
 )
 from universalchess.services.lichess_service import (
     get_lichess_client,
@@ -58,9 +61,12 @@ __all__ = [
     "handle_paired_devices_menu",
     "handle_accounts_menu",
     "mask_token",
-    "handle_update_menu",
     "handle_local_deb_install",
     "find_local_deb_files",
+    "check_for_updates_interactive",
+    "download_update_interactive",
+    "install_pending_interactive",
+    "install_local_interactive",
     "get_lichess_client",
     "build_lichess_menu_entries",
     "show_lichess_error",
