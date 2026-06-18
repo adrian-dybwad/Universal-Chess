@@ -50,8 +50,6 @@ from universalchess.menus import (
     _get_player_type_label,
     handle_positions_menu,
     handle_chromecast_menu,
-    create_connectivity_entries,
-    handle_connectivity_menu,
     handle_inactivity_timeout,
     handle_wifi_settings_menu,
     handle_wifi_scan_menu,
@@ -3185,53 +3183,93 @@ def _handle_system_menu():
     return run_engine_menu("system", _build_system_context(), _menu_manager)
 
 
-def _handle_connectivity_menu():
-    """Handle the Connectivity submenu (WiFi, Bluetooth, Chromecast, Accounts).
+def _run_wifi_settings_menu():
+    """Run the (imperative) WiFi status/scan/enable menu; return break/None.
 
-    Groups the outward-facing features that previously lived split between the
-    top-level Settings list (Chromecast) and System (WiFi/Bluetooth/Accounts).
-    Uses MenuContext for tracking selection state.
+    Kept code-driven (live status subscription, scan/connect, keyboard password
+    entry); invoked as the ``open_wifi`` action of the data-driven Connectivity
+    menu.
     """
-    ctx = _get_menu_context()
-    return handle_connectivity_menu(
-        ctx=ctx,
+    return handle_wifi_settings_menu(
         menu_manager=_menu_manager,
-        create_entries=create_connectivity_entries,
-        handle_wifi_settings=lambda: handle_wifi_settings_menu(
-            menu_manager=_menu_manager,
-            wifi_info_module=__import__("DGTCentaurMods.epaper.wifi_info", fromlist=["get_wifi_status"]),
-            show_menu=_show_menu,
-            find_entry_index=find_entry_index,
-            on_scan=_handle_wifi_scan,
-            on_toggle_enable=lambda is_enabled: (
-                __import__("DGTCentaurMods.epaper.wifi_info", fromlist=["disable_wifi"]).disable_wifi()
-                if is_enabled
-                else __import__("DGTCentaurMods.epaper.wifi_info", fromlist=["enable_wifi"]).enable_wifi()
-            ),
-            board=board,
-            log=log,
+        wifi_info_module=__import__("DGTCentaurMods.epaper.wifi_info", fromlist=["get_wifi_status"]),
+        show_menu=_show_menu,
+        find_entry_index=find_entry_index,
+        on_scan=_handle_wifi_scan,
+        on_toggle_enable=lambda is_enabled: (
+            __import__("DGTCentaurMods.epaper.wifi_info", fromlist=["disable_wifi"]).disable_wifi()
+            if is_enabled
+            else __import__("DGTCentaurMods.epaper.wifi_info", fromlist=["enable_wifi"]).enable_wifi()
         ),
-        handle_bluetooth_settings=lambda: handle_bluetooth_menu(
-            menu_manager=_menu_manager,
-            bluetooth_status_module=__import__("DGTCentaurMods.epaper.bluetooth_status", fromlist=["get_bluetooth_status"]),
-            show_menu=_show_menu,
-            find_entry_index=find_entry_index,
-            args_device_name=_args.device_name if _args else "DGT PEGASUS",
-            ble_manager=ble_manager,
-            rfcomm_connected=(rfcomm_server.connected if rfcomm_server else False),
-            board=board,
-            log=log,
-            on_pair_keyboard=_handle_pair_keyboard if rfcomm_manager else None,
-            on_manage_devices=_handle_manage_devices,
-        ),
-        handle_chromecast_menu=lambda: handle_chromecast_menu(
-            show_menu=_show_menu,
-            board=board,
-            log=log,
-            get_chromecast_service=lambda: __import__("universalchess.services", fromlist=["get_chromecast_service"]).get_chromecast_service(),
-        ),
-        handle_accounts_menu=_handle_accounts_menu,
+        board=board,
+        log=log,
     )
+
+
+def _run_bluetooth_settings_menu():
+    """Run the (imperative) Bluetooth pairing menu; return break/None.
+
+    Kept code-driven (live BT status, BLE/RFCOMM managers, pairing flows);
+    invoked as the ``open_bluetooth`` action of the data-driven Connectivity menu.
+    """
+    return handle_bluetooth_menu(
+        menu_manager=_menu_manager,
+        bluetooth_status_module=__import__("DGTCentaurMods.epaper.bluetooth_status", fromlist=["get_bluetooth_status"]),
+        show_menu=_show_menu,
+        find_entry_index=find_entry_index,
+        args_device_name=_args.device_name if _args else "DGT PEGASUS",
+        ble_manager=ble_manager,
+        rfcomm_connected=(rfcomm_server.connected if rfcomm_server else False),
+        board=board,
+        log=log,
+        on_pair_keyboard=_handle_pair_keyboard if rfcomm_manager else None,
+        on_manage_devices=_handle_manage_devices,
+    )
+
+
+def _run_chromecast_menu():
+    """Run the (imperative) Chromecast menu; return break/None.
+
+    Invoked as the ``open_chromecast`` action of the data-driven Connectivity
+    menu.
+    """
+    return handle_chromecast_menu(
+        show_menu=_show_menu,
+        board=board,
+        log=log,
+        get_chromecast_service=lambda: __import__("universalchess.services", fromlist=["get_chromecast_service"]).get_chromecast_service(),
+    )
+
+
+def _build_connectivity_context():
+    """Build the BoardMenuContext for the data-driven Connectivity menu.
+
+    Connectivity is a pure router: every row opens a still-imperative sub-flow
+    (WiFi, Bluetooth, Chromecast, Accounts), so there is no store -- only the four
+    actions, each forwarding any break result (e.g. a game-start/connection
+    event) up through ``_signal_from`` so the whole menu stack can unwind.
+    """
+    from universalchess.menus.board_context import BoardMenuContext
+
+    ctx = BoardMenuContext()
+    ctx.register_action("open_wifi", lambda: _signal_from(_run_wifi_settings_menu()))
+    ctx.register_action("open_bluetooth", lambda: _signal_from(_run_bluetooth_settings_menu()))
+    ctx.register_action("open_chromecast", lambda: _signal_from(_run_chromecast_menu()))
+    ctx.register_action("open_accounts", lambda: _signal_from(_handle_accounts_menu()))
+    return ctx
+
+
+def _handle_connectivity_menu():
+    """Run the data-driven Connectivity menu (WiFi, Bluetooth, Chromecast, Accounts).
+
+    Driven by the shared engine over the ``connectivity`` catalog container; the
+    board adapter supplies the four actions that open the still-imperative
+    sub-flows. Groups the outward-facing features that previously lived split
+    between the top-level Settings list (Chromecast) and System.
+    """
+    from universalchess.menus.board_context import run_engine_menu
+
+    return run_engine_menu("connectivity", _build_connectivity_context(), _menu_manager)
 
 
 # =============================================================================

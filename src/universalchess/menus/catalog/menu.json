@@ -264,7 +264,8 @@
     {
       "id": "connectivity.wifi",
       "key": "WiFi",
-      "type": "submenu",
+      "type": "action",
+      "action": "open_wifi",
       "label": "WiFi",
       "icon": "wifi",
       "help": "Connect the board to a wireless network.",
@@ -273,7 +274,8 @@
     {
       "id": "connectivity.bluetooth",
       "key": "Bluetooth",
-      "type": "submenu",
+      "type": "action",
+      "action": "open_bluetooth",
       "label": "Bluetooth",
       "icon": "bluetooth",
       "help": "Pair a Bluetooth keyboard with the board.",
@@ -282,7 +284,8 @@
     {
       "id": "connectivity.chromecast",
       "key": "Chromecast",
-      "type": "submenu",
+      "type": "action",
+      "action": "open_chromecast",
       "label": "Chromecast",
       "icon": "cast",
       "help": "Mirror the board to a Chromecast device.",
@@ -291,7 +294,8 @@
     {
       "id": "connectivity.accounts",
       "key": "Accounts",
-      "type": "submenu",
+      "type": "action",
+      "action": "open_accounts",
       "label": "Accounts",
       "icon": "account",
       "help": "Connect external services such as Lichess.",
