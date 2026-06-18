@@ -4,17 +4,19 @@ from typing import Callable, Dict, List, Optional
 
 from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.managers.menu import is_break_result, is_refresh_result
+from universalchess.menus.catalog.loader import get_catalog
 from universalchess.menus.hand_brain_menu import build_hand_brain_mode_toggle_entry, build_hand_brain_mode_entries
 
 
 def _player_type_label(player_type: str) -> str:
-    labels = {
-        "human": "Human",
-        "engine": "Engine",
-        "lichess": "Lichess",
-        "hand_brain": "H+B",
-    }
-    return labels.get(player_type, player_type.capitalize())
+    """Return the display label for a player type from the shared catalog.
+
+    Sourced from the catalog ``player_type`` option set so the board and the web
+    show identical text from one source (no private value->label map). An
+    unrecognised type falls back to a capitalised form so an unexpected value is
+    still legible rather than blank.
+    """
+    return get_catalog().option_label("player_type", player_type, default=player_type.capitalize())
 
 
 def build_player1_menu_entries(player1_settings: Dict[str, str]) -> List[IconMenuEntry]:
@@ -406,32 +408,27 @@ def handle_type_selection(
     """
     current_type = player_settings["type"]
 
-    entries = [
-        IconMenuEntry(
-            key="human",
-            label="* Human" if current_type == "human" else "Human",
-            icon_name="universal_logo",
+    # Choice text comes from the catalog player_type option set (one source
+    # shared with the web); the per-type icon stays board-side because the
+    # catalog option entries carry no icon. The active type is marked with a
+    # leading "* ". Order is fixed here to keep the board layout stable.
+    type_icons = {
+        "human": "universal_logo",
+        "engine": "engine",
+        "lichess": "lichess",
+        "hand_brain": "engine",
+    }
+
+    def _type_entry(player_type: str) -> IconMenuEntry:
+        label = _player_type_label(player_type)
+        return IconMenuEntry(
+            key=player_type,
+            label=f"* {label}" if current_type == player_type else label,
+            icon_name=type_icons[player_type],
             enabled=True,
-        ),
-        IconMenuEntry(
-            key="engine",
-            label="* Engine" if current_type == "engine" else "Engine",
-            icon_name="engine",
-            enabled=True,
-        ),
-        IconMenuEntry(
-            key="lichess",
-            label="* Lichess" if current_type == "lichess" else "Lichess",
-            icon_name="lichess",
-            enabled=True,
-        ),
-        IconMenuEntry(
-            key="hand_brain",
-            label="* Hand+Brain" if current_type == "hand_brain" else "Hand+Brain",
-            icon_name="engine",
-            enabled=True,
-        ),
-    ]
+        )
+
+    entries = [_type_entry(pt) for pt in ("human", "engine", "lichess", "hand_brain")]
 
     result = show_menu(entries)
 

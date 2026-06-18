@@ -2,15 +2,16 @@
 
 Background / why these tests exist
 ----------------------------------
-The combined "Display & Sound" menu is promoted to the top-level Settings list
-so it sits one tap away and shares its definition with the in-game long-press.
-These tests pin that the entry exists with the agreed key/label/icon and that
-the rest of the Settings list is preserved.
+Display and Sound are independent top-level Settings entries (split out of the
+former combined "Display & Sound" item), placed right after Time Control. These
+tests pin that both entries exist with the agreed key/label/icon and that the
+rest of the Settings list is preserved.
 """
 
 from universalchess.menus.settings_menu import create_settings_entries
 
-DISPLAY_SOUND_KEY = "DisplaySound"
+DISPLAY_KEY = "Display"
+SOUND_KEY = "Sound"
 
 
 def _player(player_type="human", **overrides):
@@ -25,44 +26,55 @@ def _game_settings(**overrides):
     return base
 
 
-def test_settings_includes_display_sound_entry():
-    """Settings exposes the combined Display & Sound menu entry.
+def test_settings_includes_separate_display_and_sound_entries():
+    """Settings exposes Display and Sound as two independent menu entries.
 
-    Why: the merged menu must be reachable directly from Settings (not buried in
-    System). The key is the contract the main-loop dispatch keys off of.
+    Why: Display and Sound were split into separate sibling entries (no longer a
+    combined "Display & Sound" item, not buried in System). The keys are the
+    contract the main-loop dispatch keys off of.
 
-    How the regression manifests: the DisplaySound key is missing, so selecting
-    it from Settings does nothing and the only access is the in-game long-press.
+    How the regression manifests: a Display or Sound key is missing (or the old
+    'DisplaySound' key reappears), so selecting it from Settings does nothing or
+    routes to a removed handler.
     """
     entries = create_settings_entries(_game_settings(), _player(), _player())
     by_key = {e.key: e for e in entries}
 
-    assert DISPLAY_SOUND_KEY in by_key, "Settings must offer the Display & Sound menu"
-    entry = by_key[DISPLAY_SOUND_KEY]
-    assert entry.label == "Display\n& Sound"
-    assert entry.icon_name == "display"
+    assert DISPLAY_KEY in by_key, "Settings must offer the Display menu"
+    assert SOUND_KEY in by_key, "Settings must offer the Sound menu"
+    assert "DisplaySound" not in by_key, "the combined entry was split into Display + Sound"
+
+    display_entry = by_key[DISPLAY_KEY]
+    assert display_entry.label == "Display"
+    assert display_entry.icon_name == "display"
+
+    sound_entry = by_key[SOUND_KEY]
+    assert sound_entry.label == "Sound"
+    assert sound_entry.icon_name == "sound"
 
 
 def test_settings_full_entry_order():
     """Settings groups game setup first, then appearance, then device groups.
 
-    Why: the regrouping pass makes the three pre-game setup items contiguous
-    (Players, Time Control, Positions), then Display & Sound, then the two device
-    groups (Connectivity, System). Chromecast moved into Connectivity and About
-    moved into System, so neither appears at this level. Asserting the full
-    ordered key list guards against accidental removal/reordering of a sibling.
+    Why: the regrouping pass keeps the pre-game setup items first (Players, Time
+    Control), then the appearance pair Display and Sound, then Positions, then the
+    two device groups (Connectivity, System). Chromecast moved into Connectivity
+    and About moved into System, so neither appears at this level. Asserting the
+    full ordered key list guards against accidental removal/reordering of a
+    sibling.
 
-    How the regression manifests: Chromecast or About reappears here, Connectivity
-    is missing, or an item lands in an unexpected position - changing this exact
-    list.
+    How the regression manifests: Display/Sound land out of order, Chromecast or
+    About reappears here, Connectivity is missing, or an item lands in an
+    unexpected position - changing this exact list.
     """
     keys = [e.key for e in create_settings_entries(_game_settings(), _player(), _player())]
 
     assert keys == [
         "Players",
         "TimeControl",
+        DISPLAY_KEY,
+        SOUND_KEY,
         "Positions",
-        DISPLAY_SOUND_KEY,
         "Connectivity",
         "System",
     ]

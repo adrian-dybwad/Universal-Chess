@@ -1,55 +1,51 @@
-"""Tests for the Display settings menu structure and the Board submenu.
+"""Tests for the Display menu, now driven by the shared menu engine.
 
 Background / why these tests exist
 ----------------------------------
-The Display menu exposes a "Board" submenu. The submenu is a list: a "Show
-Board" checkbox at the top, then one radio row per installed chesssprites_
-sheet. Each sprite row shows that sheet's black king as its icon, and the
-currently selected sheet is marked with a filled radio (the others empty).
-Selecting a sprite row sets that sheet (radio behaviour: exactly one active).
-These tests pin:
-
-1. The top-level Display menu offers a Board *submenu* entry (not a direct
-   show_board checkbox), while keeping Clock/Analysis/Graph/LED.
-2. The Board submenu builds a "Show Board" checkbox first, then a radio row per
-   sheet keyed sprite:<id>, with the current sheet marked radio_checked and the
-   black-king preview attached as the row icon image.
-3. handle_board_settings selects a sheet on press (radio), toggles Show Board,
-   and keeps the cursor on the acted-on row.
+The Display menu was migrated off bespoke builders onto the data-driven engine.
+Its structure, labels (including board-only abbreviations), the LED range
+cycler, the Show-Graph-requires-Show-Analysis gating, and the Board submenu
+(Show Board checkbox + a radio row per installed sprite sheet, each with a
+preview glyph) all come from the ``settings.display`` catalog node. These tests
+build the menu from the *real* catalog through the engine with a dict-backed
+game store and a fake sprite provider, pinning the same guarantees the deleted
+``display_menu`` module used to enforce.
 """
 
-import pytest
+from universalchess.managers.menu import MenuResult, MenuSelection
+from universalchess.menus.board_context import BoardMenuContext, _row_to_entry, run_engine_menu
+from universalchess.menus.catalog.loader import load_catalog
+from universalchess.menus.engine import MenuRow, build_rows
 
-from universalchess.menus.display_menu import (
-    build_display_entries,
-    build_board_entries,
-    handle_board_settings,
-    handle_display_settings,
-)
-
-
-class _FakeBoard:
-    SOUND_GENERAL = "general"
-
-    def __init__(self):
-        self.beeps = 0
-
-    def beep(self, sound, event_type=None):
-        self.beeps += 1
+_EXIT_RESULTS = {MenuResult.BACK, MenuResult.SHUTDOWN, MenuResult.HELP}
+_SHEETS = ["default", "fen", "retro"]
 
 
-class _NullLog:
-    def info(self, *a, **k):
-        pass
+class _FakeMenuManager:
+    """Drives run_menu_loop from a scripted list of selection keys.
 
-    def warning(self, *a, **k):
-        pass
+    Mirrors MenuManager.run_menu_loop (break/exit short-circuit, then handler)
+    so the adapter is tested without a display.
+    """
 
-    def debug(self, *a, **k):
-        pass
+    def __init__(self, script):
+        self._script = list(script)
+        self.shown = []
+
+    def run_menu_loop(self, build_entries, handle_selection, initial_index=0, track_selection=True):
+        while True:
+            self.shown.append(build_entries())
+            selection = MenuSelection.from_key(self._script.pop(0))
+            if selection.key == "REFRESH":
+                continue
+            if selection.is_break or selection.result_type in _EXIT_RESULTS:
+                return selection
+            result = handle_selection(selection)
+            if result is not None:
+                return result
 
 
-def _settings(**overrides):
+def _state(**overrides):
     base = {
         "show_board": True,
         "show_clock": True,
@@ -62,195 +58,117 @@ def _settings(**overrides):
     return base
 
 
-def test_top_level_includes_sound_submenu_entry():
-    """The combined Display & Sound menu offers Sound as its last entry.
+def _ctx(state, sheets=_SHEETS):
+    """Board context with a dict-backed game store and a fake sprite provider."""
+    ctx = BoardMenuContext()
+    ctx.register_store("game", lambda k: state[k], lambda k, v: state.__setitem__(k, v))
 
-    Why this test exists: Sound was promoted out of Settings > System into the
-    same menu that the in-game long-press opens, so sound is reachable during a
-    game. Sound is a submenu entry (mirrors Board), keyed 'sound'.
+    def sprite_sheets():
+        current = state["chess_sprites"]
+        return [
+            MenuRow(
+                key=f"sprite:{sheet}",
+                label=sheet,
+                icon="positions",
+                icon_image=f"img:{sheet}",
+                icon_mask=f"mask:{sheet}",
+                trailing_icon="radio_checked" if sheet == current else "radio_empty",
+                node={
+                    "id": f"sprite:{sheet}",
+                    "key": f"sprite:{sheet}",
+                    "type": "set_value",
+                    "bind": {"store": "game", "key": "chess_sprites"},
+                    "value": sheet,
+                },
+            )
+            for sheet in sheets
+        ]
 
-    How the regression manifests: if the merge is lost, the 'sound' key is absent
-    and the in-game menu again exposes only display controls (Sound unreachable
-    mid-game).
+    ctx.register_provider("sprite_sheets", sprite_sheets)
+    return ctx
+
+
+def _display_rows(state):
+    return build_rows("settings.display", _ctx(state), platform="board", catalog=load_catalog())
+
+
+def _board_rows(state):
+    return build_rows("settings.display.board", _ctx(state), platform="board", catalog=load_catalog())
+
+
+def test_top_level_lists_display_controls_without_sound():
+    """The Display menu lists Board + display toggles + LED, and no Sound row.
+
+    Why this test exists: Display and Sound are separate Settings submenus, and
+    the board toggle moved into a Board submenu. How the regression manifests: a
+    sound/show_board row leaks in at the top level, or the control set/order in
+    the catalog children changes.
     """
-    keys = [e.key for e in build_display_entries(_settings())]
+    ids = [r.node["id"] for r in _display_rows(_state())]
+    assert ids == [
+        "settings.display.board",
+        "field.display.show_clock",
+        "field.display.show_analysis",
+        "field.display.show_graph",
+        "field.display.led_brightness",
+    ]
+    assert "field.display.show_board" not in ids  # lives inside the Board submenu
 
-    assert keys == [
-        "board",
-        "show_clock",
-        "show_analysis",
-        "show_graph",
-        "led_brightness",
-        "sound",
-    ], "combined menu must list display controls then a Sound submenu entry"
 
+def test_board_labels_use_abbreviations_and_led_shows_value():
+    """Board-only labels apply, and LED shows its current value via {value}.
 
-def test_selecting_sound_invokes_injected_sound_handler():
-    """Choosing the Sound row calls the injected sound handler exactly once.
-
-    Why this test exists: display_menu must stay decoupled from the sound
-    implementation and the menu_manager (Modularity rule); it dispatches into an
-    injected handle_sound callback. This pins that the 'sound' key routes there.
-
-    How the regression manifests: handle_sound is never called (count 0) if the
-    dispatch branch is missing, so the Sound submenu would never open.
+    Why this test exists: the e-paper screen uses the optional boardLabel
+    abbreviations ('Clock', 'Show Graph') while the web keeps the full labels,
+    and LED renders 'LED: <n>' from the bound value. How the regression
+    manifests: the long web label renders on the board, or LED loses its value.
     """
-    settings = _settings()
-    calls = []
-
-    def handle_sound():
-        calls.append("sound")
-        return None
-
-    script = iter(["sound", "BACK"])
-
-    def show_menu(entries, initial_index=0):
-        return next(script)
-
-    handle_display_settings(
-        get_game_settings=lambda: settings,
-        show_menu=show_menu,
-        save_game_setting=lambda k, v: settings.__setitem__(k, v),
-        list_sprite_sheets=lambda: ["default"],
-        log=_NullLog(),
-        board=_FakeBoard(),
-        get_sprite_preview=_fake_preview,
-        handle_sound=handle_sound,
-    )
-
-    assert calls == ["sound"]
-
-
-def test_sound_handler_break_result_propagates():
-    """A break result from the sound handler breaks out of the display menu too.
-
-    Why this test exists: break results (PIECE_MOVED / CLIENT_CONNECTED) must
-    unwind every nested menu so play/connection resumes immediately. If the
-    display menu swallowed the sound submenu's break, the user would be stranded
-    in the menu after a piece move.
-
-    How the regression manifests: handle_display_settings returns None (or loops)
-    instead of returning the break result; here show_menu would be asked for a
-    second value and raise StopIteration.
-    """
-    settings = _settings()
-
-    def handle_sound():
-        return "PIECE_MOVED"
-
-    # Only one menu selection is scripted: if the break is not propagated, the
-    # loop asks for another and StopIteration fails the test.
-    script = iter(["sound"])
-
-    def show_menu(entries, initial_index=0):
-        return next(script)
-
-    result = handle_display_settings(
-        get_game_settings=lambda: settings,
-        show_menu=show_menu,
-        save_game_setting=lambda k, v: settings.__setitem__(k, v),
-        list_sprite_sheets=lambda: ["default"],
-        log=_NullLog(),
-        board=_FakeBoard(),
-        get_sprite_preview=_fake_preview,
-        handle_sound=handle_sound,
-    )
-
-    assert result == "PIECE_MOVED"
-
-
-def test_analysis_and_graph_rows_relabelled_show_prefixed():
-    """The analysis view toggles read 'Show Analysis' and 'Show Graph'.
-
-    Why this test exists: 'Analysis'/'Graph' were ambiguous against the System
-    'Analysis Engine' item. These rows toggle *visibility* of the on-screen
-    analysis and graph, so they are disambiguated with a 'Show ' prefix. Keys are
-    unchanged so persistence/dispatch are unaffected.
-
-    How the regression manifests: a label reverts to the bare 'Analysis'/'Graph',
-    reintroducing the naming clash with the engine selector.
-    """
-    by_key = {e.key: e for e in build_display_entries(_settings())}
-
-    assert by_key["show_analysis"].label == "Show Analysis"
-    assert by_key["show_graph"].label == "Show Graph"
+    by_id = {r.node["id"]: r for r in _display_rows(_state(led_brightness=7))}
+    assert by_id["field.display.show_clock"].label == "Clock"
+    assert by_id["field.display.show_analysis"].label == "Show Analysis"
+    assert by_id["field.display.show_graph"].label == "Show Graph"
+    assert by_id["field.display.led_brightness"].label == "LED: 7"
 
 
 def test_graph_row_disabled_when_analysis_off():
-    """Show Graph is gated on Show Analysis (it nests under it).
+    """Show Graph is selectable only while Show Analysis is on (enabledWhen).
 
     Why this test exists: the graph overlays the analysis, so it is meaningless
-    with analysis hidden. The dependency is expressed by disabling the Show Graph
-    row when show_analysis is False, which is the structural 'grouping' of graph
-    under analysis in a flat icon list.
-
-    How the regression manifests: Show Graph stays enabled with analysis off,
-    letting the user toggle a setting that has no visible effect.
+    with analysis hidden. How the regression manifests: Show Graph stays enabled
+    with analysis off, letting the user toggle a no-op setting.
     """
-    by_key_on = {e.key: e for e in build_display_entries(_settings(show_analysis=True))}
-    by_key_off = {e.key: e for e in build_display_entries(_settings(show_analysis=False))}
-
-    assert by_key_on["show_graph"].enabled is True
-    assert by_key_off["show_graph"].enabled is False
-
-
-def test_top_level_has_board_submenu_not_direct_checkbox():
-    """Display menu must offer a Board submenu entry, not a flat show_board toggle.
-
-    Why: the spec moves the board toggle into a submenu. If a top-level entry
-    still keyed 'show_board' existed, selecting Board would toggle visibility
-    instead of opening the submenu.
-
-    How the regression manifests: the 'board' submenu key would be missing, or a
-    'show_board' key would still appear at the top level.
-    """
-    keys = [e.key for e in build_display_entries(_settings())]
-
-    assert "board" in keys, "top-level Board submenu entry missing"
-    assert "show_board" not in keys, "show_board must live inside the Board submenu"
-    # The other display toggles remain at the top level.
-    for expected in ("show_clock", "show_analysis", "show_graph", "led_brightness"):
-        assert expected in keys
-
-
-def _fake_preview(sheet):
-    """Stand-in preview provider returning a per-sheet (image, mask) sentinel.
-
-    The menu only stores and forwards the pair; rendering is tested elsewhere,
-    so opaque sentinels suffice and avoid pulling PIL into menu-logic tests.
-    """
-    return (f"img:{sheet}", f"mask:{sheet}")
+    on = {r.node["id"]: r for r in _display_rows(_state(show_analysis=True))}
+    off = {r.node["id"]: r for r in _display_rows(_state(show_analysis=False))}
+    assert on["field.display.show_graph"].enabled is True
+    assert off["field.display.show_graph"].enabled is False
 
 
 def test_board_submenu_show_board_first_then_radio_rows_per_sheet():
-    """Submenu is Show Board (checkbox) followed by one radio row per sheet.
+    """Board submenu is Show Board (checkbox) then one radio row per sheet.
 
     Why: the redesign is a list with the toggle on top and a radio selection of
-    sprite sheets, each row keyed sprite:<id> and showing that sheet's black king
-    preview as its icon image.
-
+    sprite sheets, each keyed sprite:<id> with the sheet's preview as its glyph.
     How the regression manifests: a missing/duplicated sprite row, wrong key
-    scheme, or a row whose icon image was not populated from the provider.
+    scheme, or a row whose preview image was dropped between provider and entry.
     """
-    sheets = ["default", "fen", "retro"]
+    rows = _board_rows(_state(show_board=True, chess_sprites="fen"))
+    assert [r.key for r in rows] == [
+        "field.display.show_board",
+        "sprite:default",
+        "sprite:fen",
+        "sprite:retro",
+    ]
 
-    entries = build_board_entries(
-        _settings(show_board=True, chess_sprites="fen"), sheets, _fake_preview
-    )
-
-    keys = [e.key for e in entries]
-    assert keys == ["show_board", "sprite:default", "sprite:fen", "sprite:retro"]
-
-    by_key = {e.key: e for e in entries}
-    assert by_key["show_board"].label == "Show Board"
-    assert by_key["show_board"].icon_name == "checkbox_checked"
-
-    # Each sprite row carries the per-sheet preview image+mask from the provider.
-    for sheet in sheets:
+    by_key = {r.key: r for r in rows}
+    assert by_key["field.display.show_board"].label == "Show Board"
+    assert by_key["field.display.show_board"].icon == "checkbox_checked"
+    for sheet in _SHEETS:
         row = by_key[f"sprite:{sheet}"]
         assert row.label == sheet
-        assert row.icon_image == f"img:{sheet}"
-        assert row.icon_mask == f"mask:{sheet}"
+        # Preview image+mask survive into the rendered e-paper entry.
+        entry = _row_to_entry(row)
+        assert entry.icon_image == f"img:{sheet}"
+        assert entry.icon_mask == f"mask:{sheet}"
 
 
 def test_board_submenu_marks_current_sheet_with_filled_radio():
@@ -259,98 +177,52 @@ def test_board_submenu_marks_current_sheet_with_filled_radio():
     Why: the radio indicator tells the user which sheet is selected. If more than
     one (or none) were filled, the selection would be ambiguous.
     """
-    sheets = ["default", "fen", "retro"]
-
-    entries = build_board_entries(
-        _settings(chess_sprites="fen"), sheets, _fake_preview
-    )
-    by_key = {e.key: e for e in entries}
-
-    assert by_key["sprite:fen"].trailing_icon_name == "radio_checked"
-    assert by_key["sprite:default"].trailing_icon_name == "radio_empty"
-    assert by_key["sprite:retro"].trailing_icon_name == "radio_empty"
+    by_key = {r.key: r for r in _board_rows(_state(chess_sprites="fen"))}
+    assert by_key["sprite:fen"].trailing_icon == "radio_checked"
+    assert by_key["sprite:default"].trailing_icon == "radio_empty"
+    assert by_key["sprite:retro"].trailing_icon == "radio_empty"
 
 
-def test_board_submenu_show_board_unchecked_icon():
-    """Show Board checkbox renders empty when show_board is False.
+def test_selecting_sprite_sets_that_sheet_as_radio():
+    """Pressing a sprite row selects exactly that sheet (radio, not cycle).
 
-    Why: guards the icon mapping so the toggle visibly reflects the off state.
+    Why this test exists: the selector is a radio list; selecting sprite:retro
+    must store 'retro' regardless of the previously active sheet. How the
+    regression manifests: a cycle would store the wrong neighbour, or set_value
+    not persisting would leave the old sheet.
     """
-    entries = build_board_entries(_settings(show_board=False), ["default"], _fake_preview)
-    show_board = next(e for e in entries if e.key == "show_board")
-    assert show_board.icon_name == "checkbox_empty"
+    state = _state(chess_sprites="default")
+    mm = _FakeMenuManager(["sprite:retro", "BACK"])
+
+    run_engine_menu("settings.display.board", _ctx(state), mm, catalog=load_catalog())
+
+    assert state["chess_sprites"] == "retro"
 
 
-def test_board_submenu_selecting_sprite_sets_that_sheet_as_radio():
-    """Pressing a sprite row selects exactly that sheet (radio behaviour).
+def test_selecting_show_board_toggles_it():
+    """Selecting Show Board flips and persists the bound value.
 
-    Why this test exists: the selector is a radio list, not a cycle. Selecting
-    sprite:retro must store "retro" regardless of the previously active sheet,
-    and the menu reopens with the cursor on that same row so the now-filled radio
-    is visible.
-
-    How the regression manifests: if selection cycled instead of setting, the
-    stored sheet would be the wrong neighbour; if the cursor reset to the top,
-    the user would land on Show Board after choosing a sprite.
+    How the regression manifests: the toggle is inert (value unchanged) because
+    the bind or dispatch broke.
     """
-    settings = _settings(chess_sprites="default")
-    sheets = ["default", "fen", "retro"]
+    state = _state(show_board=True)
+    mm = _FakeMenuManager(["field.display.show_board", "BACK"])
 
-    def save(key, value):
-        settings[key] = value
+    run_engine_menu("settings.display.board", _ctx(state), mm, catalog=load_catalog())
 
-    recorded_indices = []
-    # Pick the third sheet (sprite:retro -> index 3), then leave.
-    script = iter(["sprite:retro", "BACK"])
-
-    def show_menu(entries, initial_index=0):
-        recorded_indices.append(initial_index)
-        return next(script)
-
-    handle_board_settings(
-        get_game_settings=lambda: settings,
-        show_menu=show_menu,
-        save_game_setting=save,
-        list_sprite_sheets=lambda: sheets,
-        get_sprite_preview=_fake_preview,
-        log=_NullLog(),
-        board=_FakeBoard(),
-    )
-
-    assert settings["chess_sprites"] == "retro"
-    # First open at top (0); after selecting sprite:retro (index 3) the cursor
-    # stays on that row.
-    assert recorded_indices == [0, 3]
+    assert state["show_board"] is False
 
 
-def test_board_submenu_toggles_show_board_and_keeps_cursor():
-    """Selecting Show Board toggles it and reopens with the cursor on row 0.
+def test_selecting_led_advances_brightness_within_range():
+    """Selecting LED advances brightness by one step, staying in the menu.
 
-    Why: the toggle must flip the stored value, and the cursor must remain on the
-    Show Board row (index 0) so repeated presses keep toggling it.
+    Why this test exists: LED is a range cycler (1..10, wrap). How the regression
+    manifests: brightness does not change, or jumps/wraps incorrectly.
     """
-    settings = _settings(show_board=True)
-    sheets = ["default", "fen"]
+    state = _state(led_brightness=9)
+    # Advance once (9 -> 10), advance again (10 -> wraps to 1), then exit.
+    mm = _FakeMenuManager(["field.display.led_brightness", "field.display.led_brightness", "BACK"])
 
-    def save(key, value):
-        settings[key] = value
+    run_engine_menu("settings.display", _ctx(state), mm, catalog=load_catalog())
 
-    recorded_indices = []
-    script = iter(["show_board", "BACK"])
-
-    def show_menu(entries, initial_index=0):
-        recorded_indices.append(initial_index)
-        return next(script)
-
-    handle_board_settings(
-        get_game_settings=lambda: settings,
-        show_menu=show_menu,
-        save_game_setting=save,
-        list_sprite_sheets=lambda: sheets,
-        get_sprite_preview=_fake_preview,
-        log=_NullLog(),
-        board=_FakeBoard(),
-    )
-
-    assert settings["show_board"] is False
-    assert recorded_indices == [0, 0]
+    assert state["led_brightness"] == 1

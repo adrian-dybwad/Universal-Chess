@@ -91,6 +91,29 @@ class MenuCatalog:
         """Return the option list for an option set name."""
         return list(self._menu.get("optionSets", {}).get(name, []))
 
+    def option_label(self, name: str, value: object, default: Optional[str] = None) -> str:
+        """Return the label for ``value`` within the named option set.
+
+        The board and web render the same choices, so both resolve a stored
+        value (e.g. a player type or update channel) to its display label
+        through this one source rather than each keeping a private value->label
+        map. Comparison is by string form because option values are authored as
+        strings while some callers hold the value as an int (e.g. time control
+        minutes).
+
+        Args:
+            name: Option set name (e.g. ``"player_type"``).
+            value: Stored value to look up; compared by ``str(value)``.
+            default: Returned when the value is absent from the set. When
+                ``None`` the stringified value itself is returned, so an
+                unexpected value stays visible instead of rendering blank.
+        """
+        target = str(value)
+        for option in self._menu.get("optionSets", {}).get(name, []):
+            if str(option.get("value")) == target:
+                return option["label"]
+        return default if default is not None else target
+
     def fields_for_section(self, section_id: str) -> List[dict]:
         """Return field nodes tagged with ``section`` equal to ``section_id``.
 
@@ -109,10 +132,17 @@ def _validate(menu_data: dict, icons_data: dict) -> None:
 
     Checks performed (each guards a distinct authoring mistake):
     - node ids present and unique (duplicate ids would silently shadow);
-    - every ``icon`` is registered (typo -> board renders a blank placeholder);
+    - every ``icon`` is registered -- a string icon, or each value of a
+      state-map icon ``{state: icon}`` (typo -> board renders a blank placeholder);
     - every ``children``/``target``/``roots`` id resolves (dangling navigation);
     - every ``optionSet`` reference resolves (empty select on the web);
-    - every ``section`` reference resolves (field rendered under no tab).
+    - every ``section`` reference resolves (field rendered under no tab);
+    - ``bind``/``visibleWhen`` (when present) carry the required ``store``/``key``
+      (a typo here would otherwise surface only as a dead control at runtime).
+
+    These checks fire only for fields that are present, so nodes not yet migrated
+    to the behavior schema remain valid; strict per-type requirements are
+    tightened in a later migration stage.
     """
     icon_ids = set(icons_data.get("icons", {}).keys())
     if not icon_ids:
@@ -140,8 +170,27 @@ def _validate(menu_data: dict, icons_data: dict) -> None:
         node_id = node["id"]
 
         icon = node.get("icon")
-        if icon is not None and icon not in icon_ids:
+        if isinstance(icon, dict):
+            for state, icon_name in icon.items():
+                if icon_name and icon_name not in icon_ids:
+                    raise CatalogError(
+                        f"node '{node_id}' state-map icon references unknown icon "
+                        f"'{icon_name}' (state '{state}')"
+                    )
+        elif icon is not None and icon not in icon_ids:
             raise CatalogError(f"node '{node_id}' references unknown icon '{icon}'")
+
+        bind = node.get("bind")
+        if bind is not None and not (isinstance(bind, dict) and "store" in bind and "key" in bind):
+            raise CatalogError(f"node '{node_id}' has malformed 'bind' (need store and key): {bind!r}")
+
+        visible_when = node.get("visibleWhen")
+        if visible_when is not None and not (
+            isinstance(visible_when, dict) and "store" in visible_when and "key" in visible_when
+        ):
+            raise CatalogError(
+                f"node '{node_id}' has malformed 'visibleWhen' (need store and key): {visible_when!r}"
+            )
 
         for child_id in node.get("children", []):
             if child_id not in ids:

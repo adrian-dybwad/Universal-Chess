@@ -14,14 +14,61 @@ interface SettingsData {
   };
 }
 
-type SettingsTab = 'players' | 'game' | 'display' | 'sound' | 'engines' | 'system';
+type SettingsTab = 'players' | 'display' | 'game' | 'engines' | 'system';
 
-// Section ids this page renders, in display order. Labels and icons are sourced
-// from the catalog (menu.json) at runtime; this list only declares which
-// sections belong to the Settings page and their order. Display and Sound are
-// separate sibling sections (right after Game), mirroring the board menu.
-// 'accounts' is intentionally excluded -- it lives on the Connectivity page.
-const SETTINGS_TAB_IDS: SettingsTab[] = ['players', 'game', 'display', 'sound', 'engines', 'system'];
+// Fallbacks used only when the catalog (GET /api/menu-schema) is unavailable.
+// The catalog is the source of truth for tab order/labels/icons and option sets
+// (shared with the e-paper board); these mirror it so the page still renders if
+// the fetch fails. Tab order mirrors the board's Settings nav: Players, then the
+// combined Display & Sound menu, then Game, then engine/system. Accounts
+// (Lichess) lives on the Connectivity page, not here.
+const FALLBACK_TABS: { id: SettingsTab; label: string; icon: string }[] = [
+  { id: 'players', label: 'Players', icon: 'players' },
+  { id: 'display', label: 'Display & Sound', icon: 'display' },
+  { id: 'game', label: 'Game', icon: 'timer_checked' },
+  { id: 'engines', label: 'Engines', icon: 'engine' },
+  { id: 'system', label: 'System', icon: 'system' },
+];
+
+const FALLBACK_PLAYER_TYPE_OPTIONS: MenuOption[] = [
+  { value: 'human', label: 'Human' },
+  { value: 'engine', label: 'Engine' },
+  { value: 'hand_brain', label: 'Hand + Brain' },
+  { value: 'lichess', label: 'Lichess' },
+];
+
+const FALLBACK_HAND_BRAIN_MODE_OPTIONS: MenuOption[] = [
+  { value: 'normal', label: 'Normal (Engine = Brain)' },
+  { value: 'reverse', label: 'Reverse (Human = Brain)' },
+];
+
+const FALLBACK_TIME_CONTROL_OPTIONS: MenuOption[] = [
+  { value: '0', label: 'Untimed' },
+  { value: '1', label: '1 min (Bullet)' },
+  { value: '3', label: '3 min (Blitz)' },
+  { value: '5', label: '5 min (Blitz)' },
+  { value: '10', label: '10 min (Rapid)' },
+  { value: '15', label: '15 min (Rapid)' },
+  { value: '30', label: '30 min (Classical)' },
+  { value: '60', label: '60 min (Classical)' },
+  { value: '90', label: '90 min (Classical)' },
+];
+
+const FALLBACK_UPDATE_CHANNEL_OPTIONS: MenuOption[] = [
+  { value: 'stable', label: 'Stable (Recommended)' },
+  { value: 'nightly', label: 'Nightly (Development)' },
+];
+
+// Mirrors the catalog 'sleep_timer' option set (seconds). Same choices the board
+// Sleep Timer menu offers; used only if the catalog fetch fails.
+const FALLBACK_SLEEP_TIMER_OPTIONS: MenuOption[] = [
+  { value: '0', label: 'Disabled' },
+  { value: '300', label: '5 min' },
+  { value: '600', label: '10 min' },
+  { value: '900', label: '15 min' },
+  { value: '1800', label: '30 min' },
+  { value: '3600', label: '1 hour' },
+];
 
 interface PlayerSettings {
   type: string;
@@ -178,33 +225,22 @@ export function Settings() {
     hasChangesRef.current = hasChanges;
   }, [hasChanges]);
 
-  // Load the shared menu catalog. It is immutable for the lifetime of the
-  // running backend version (a static menu.json read server-side), so it is
-  // fetched exactly once on mount -- not on every settings refresh. Treated as a
-  // required dependency: a failure surfaces via the load error path rather than
-  // silently rendering hardcoded labels that may have drifted from the catalog.
-  const loadCatalog = useCallback(async () => {
-    const data = await apiFetch('/api/menu-schema').then((r) => r.json());
-    if (!data || data.error) {
-      throw new Error('Menu catalog (GET /api/menu-schema) is unavailable');
-    }
-    setCatalog(data as MenuCatalog);
-  }, []);
-
-  // Fetch the mutable settings state. Reused for the initial load and the SSE
-  // refresh, so it must only fetch things that actually change at runtime
-  // (settings values, engine install state, sprite sheets) -- never the catalog.
+  // Fetch settings function (reusable for initial load and SSE refresh)
   const fetchSettings = useCallback(async () => {
-    const [settingsData, enginesData, spritesData] = await Promise.all([
+    const [settingsData, enginesData, spritesData, catalogData] = await Promise.all([
       apiFetch('/api/settings').then((r) => r.json()),
       apiFetch('/api/engines/all').then((r) => r.json()),
       apiFetch('/api/sprites').then((r) => r.json()).catch(() => ['default']),
+      // Catalog is metadata only; a failure must not block settings rendering
+      // (the FALLBACK_* constants cover the labels/icons/options it provides).
+      apiFetch('/api/menu-schema').then((r) => r.json()).catch(() => null),
     ]);
     setRawSettings(settingsData);
     setEngines(enginesData);
     setInstalledEngines(enginesData.filter((e: EngineDefinition) => e.installed));
     setSpriteSheets(Array.isArray(spritesData) && spritesData.length > 0 ? spritesData : ['default']);
-
+    if (catalogData && !catalogData.error) setCatalog(catalogData as MenuCatalog);
+    
     const parsed = parseRawSettings(settingsData);
     setFormSettings(parsed);
     setOriginalSettings(parsed);
@@ -238,10 +274,9 @@ export function Settings() {
     };
   }, [fetchSettings]);
 
-  // Load the catalog (once) and the settings on mount. Both are required for the
-  // page to render correctly, so either failing shows the load error.
+  // Load settings and engines on mount
   useEffect(() => {
-    Promise.all([loadCatalog(), fetchSettings()])
+    fetchSettings()
       .then(() => {
         setLoading(false);
       })
@@ -250,7 +285,7 @@ export function Settings() {
         setLoadError('Could not connect to the Universal Chess backend. Make sure the board is running and accessible.');
         setLoading(false);
       });
-  }, [fetchSettings, loadCatalog]);
+  }, [fetchSettings]);
 
   // Load engine levels when engine changes
   const loadEngineLevels = useCallback(async (engineName: string) => {
@@ -440,11 +475,6 @@ export function Settings() {
     );
   }
 
-  // The catalog is loaded once on mount and is required to render this page; the
-  // loading/error gates above guarantee it is present here. This guard narrows
-  // the type for the catalog-driven derivations below.
-  if (!catalog) return null;
-
   const showHandBrainExplanation = 
     formSettings.player1.type === 'hand_brain' || 
     formSettings.player2.type === 'hand_brain';
@@ -457,26 +487,27 @@ export function Settings() {
     return engine?.display_name || engineName;
   };
 
-  // Tabs are the catalog sections this page owns, rendered in the page's declared
-  // order. Labels and icons come from the catalog; SETTINGS_TAB_IDS only selects
-  // which sections belong here and their order.
-  const tabs = SETTINGS_TAB_IDS.flatMap((id) => {
-    const section = catalog.sections.find((s) => s.id === id);
-    return section ? [{ id, label: section.label, icon: section.icon }] : [];
-  });
+  // Catalog-driven metadata (tabs, option sets, field label/help). Each falls
+  // back to a local constant when the catalog is absent so the page renders
+  // identically offline. Value plumbing and save/apply are unaffected.
+  const tabs = (catalog?.sections?.filter((s) =>
+    FALLBACK_TABS.some((t) => t.id === s.id)
+  ) as { id: SettingsTab; label: string; icon: string }[] | undefined) ?? FALLBACK_TABS;
 
-  const optionSet = (name: string): MenuOption[] => catalog.optionSets[name] ?? [];
-  const playerTypeOptions = optionSet('player_type');
-  const handBrainModeOptions = optionSet('hand_brain_mode');
-  const timeControlOptions = optionSet('time_control');
-  const sleepTimerOptions = optionSet('sleep_timer');
+  const optionSet = (name: string, fallback: MenuOption[]): MenuOption[] =>
+    catalog?.optionSets?.[name] ?? fallback;
+  const playerTypeOptions = optionSet('player_type', FALLBACK_PLAYER_TYPE_OPTIONS);
+  const handBrainModeOptions = optionSet('hand_brain_mode', FALLBACK_HAND_BRAIN_MODE_OPTIONS);
+  const timeControlOptions = optionSet('time_control', FALLBACK_TIME_CONTROL_OPTIONS);
+  const sleepTimerOptions = optionSet('sleep_timer', FALLBACK_SLEEP_TIMER_OPTIONS);
 
-  // Field label/help come from the catalog (the single source of truth). Rich
-  // help that needs JSX (links, <code>) is rendered inline at the call site; the
-  // catalog only carries plain text. A missing id falls back to the id itself so
-  // a catalog gap is visible rather than silently blank (guarded by a test).
-  const fieldLabel = (id: string): string => fieldById(catalog, id)?.label ?? id;
-  const fieldHelp = (id: string): string => fieldById(catalog, id)?.help ?? '';
+  // Field label/help lookups by catalog id, with explicit fallbacks. Rich help
+  // that needs JSX (links, <code>) is rendered inline at the call site and not
+  // sourced from the catalog (which only carries plain text).
+  const fieldLabel = (id: string, fallback: string): string =>
+    (catalog ? fieldById(catalog, id)?.label : undefined) ?? fallback;
+  const fieldHelp = (id: string, fallback: string): string =>
+    (catalog ? fieldById(catalog, id)?.help : undefined) ?? fallback;
 
   return (
     <>
@@ -516,7 +547,7 @@ export function Settings() {
             <Card className="mb-6">
               <CardHeader title="Player 1 (White by default)" />
                 
-                <FormRow label={fieldLabel('field.player.type')} help={fieldHelp('field.player.type')}>
+                <FormRow label={fieldLabel('field.player.type', 'Player Type')} help={fieldHelp('field.player.type', 'Human, Engine, Hand+Brain, or Lichess')}>
                   <Select
                     value={formSettings.player1.type}
                     options={playerTypeOptions}
@@ -524,7 +555,7 @@ export function Settings() {
                   />
                 </FormRow>
 
-                <FormRow label={fieldLabel('field.player.name')} help={fieldHelp('field.player.name')}>
+                <FormRow label={fieldLabel('field.player.name', 'Player Name')} help={fieldHelp('field.player.name', 'Optional name for PGN headers')}>
                   <Input
                     value={formSettings.player1.name}
                     placeholder={
@@ -538,7 +569,7 @@ export function Settings() {
 
                 {(formSettings.player1.type === 'engine' || formSettings.player1.type === 'hand_brain') && (
                   <>
-                    <FormRow label={fieldLabel('field.player.engine')} help={fieldHelp('field.player.engine')}>
+                    <FormRow label={fieldLabel('field.player.engine', 'Engine')} help={fieldHelp('field.player.engine', 'Chess engine to use')}>
                       <Select
                         value={formSettings.player1.engine}
                         options={engineOptions}
@@ -546,7 +577,7 @@ export function Settings() {
                       />
                     </FormRow>
 
-                    <FormRow label={fieldLabel('field.player.elo')} help={fieldHelp('field.player.elo')}>
+                    <FormRow label={fieldLabel('field.player.elo', 'ELO / Style')} help={fieldHelp('field.player.elo', 'Engine strength or personality')}>
                       <Select
                         value={formSettings.player1.elo}
                         options={(engineLevels[formSettings.player1.engine] || ['Default']).map((l) => ({ value: l, label: l }))}
@@ -557,7 +588,7 @@ export function Settings() {
                 )}
 
                 {formSettings.player1.type === 'hand_brain' && (
-                  <FormRow label={fieldLabel('field.player.hand_brain_mode')} help={fieldHelp('field.player.hand_brain_mode')}>
+                  <FormRow label={fieldLabel('field.player.hand_brain_mode', 'Hand+Brain Mode')} help={fieldHelp('field.player.hand_brain_mode', 'How the human and engine collaborate')}>
                     <Select
                       value={formSettings.player1.hand_brain_mode}
                       options={handBrainModeOptions}
@@ -577,7 +608,7 @@ export function Settings() {
             <Card className="mb-6">
               <CardHeader title="Player 2 (Black by default)" />
                 
-                <FormRow label={fieldLabel('field.player.type')} help={fieldHelp('field.player.type')}>
+                <FormRow label={fieldLabel('field.player.type', 'Player Type')} help={fieldHelp('field.player.type', 'Human, Engine, Hand+Brain, or Lichess')}>
                   <Select
                     value={formSettings.player2.type}
                     options={playerTypeOptions}
@@ -585,7 +616,7 @@ export function Settings() {
                   />
                 </FormRow>
 
-                <FormRow label={fieldLabel('field.player.name')} help={fieldHelp('field.player.name')}>
+                <FormRow label={fieldLabel('field.player.name', 'Player Name')} help={fieldHelp('field.player.name', 'Optional name for PGN headers')}>
                   <Input
                     value={formSettings.player2.name}
                     placeholder={
@@ -599,7 +630,7 @@ export function Settings() {
 
                 {(formSettings.player2.type === 'engine' || formSettings.player2.type === 'hand_brain') && (
                   <>
-                    <FormRow label={fieldLabel('field.player.engine')} help={fieldHelp('field.player.engine')}>
+                    <FormRow label={fieldLabel('field.player.engine', 'Engine')} help={fieldHelp('field.player.engine', 'Chess engine to use')}>
                       <Select
                         value={formSettings.player2.engine}
                         options={engineOptions}
@@ -607,7 +638,7 @@ export function Settings() {
                       />
                     </FormRow>
 
-                    <FormRow label={fieldLabel('field.player.elo')} help={fieldHelp('field.player.elo')}>
+                    <FormRow label={fieldLabel('field.player.elo', 'ELO / Style')} help={fieldHelp('field.player.elo', 'Engine strength or personality')}>
                       <Select
                         value={formSettings.player2.elo}
                         options={(engineLevels[formSettings.player2.engine] || ['Default']).map((l) => ({ value: l, label: l }))}
@@ -618,7 +649,7 @@ export function Settings() {
                 )}
 
                 {formSettings.player2.type === 'hand_brain' && (
-                  <FormRow label={fieldLabel('field.player.hand_brain_mode')} help={fieldHelp('field.player.hand_brain_mode')}>
+                  <FormRow label={fieldLabel('field.player.hand_brain_mode', 'Hand+Brain Mode')} help={fieldHelp('field.player.hand_brain_mode', 'How the human and engine collaborate')}>
                     <Select
                       value={formSettings.player2.hand_brain_mode}
                       options={handBrainModeOptions}
@@ -673,7 +704,7 @@ export function Settings() {
 
             <Card className="mb-6">
               <CardHeader title="Time Control" />
-              <FormRow label={fieldLabel('field.game.time_control')} help={fieldHelp('field.game.time_control')}>
+              <FormRow label={fieldLabel('field.game.time_control', 'Time per Player')} help={fieldHelp('field.game.time_control', 'Minutes per player (0 = untimed)')}>
                 <Select
                   value={formSettings.game.time_control}
                   options={timeControlOptions}
@@ -681,58 +712,41 @@ export function Settings() {
                 />
               </FormRow>
             </Card>
-
-            <Card className="mb-6">
-              <CardHeader title="Analysis" />
-              <Toggle
-                label={fieldLabel('field.system.analysis_mode')}
-                help={fieldHelp('field.system.analysis_mode')}
-                checked={formSettings.game.analysis_mode}
-                onChange={(v) => updateFormSettings('game', { analysis_mode: v })}
-              />
-              <FormRow label={fieldLabel('field.game.analysis_engine')} help={fieldHelp('field.game.analysis_engine')}>
-                <Select
-                  value={formSettings.game.analysis_engine}
-                  options={engineOptions}
-                  onChange={(e) => updateFormSettings('game', { analysis_engine: e.target.value })}
-                />
-              </FormRow>
-            </Card>
           </section>
         )}
 
-        {/* DISPLAY TAB */}
+        {/* DISPLAY & SOUND TAB */}
         {activeTab === 'display' && (
           <section>
-            <h2 className="page-title">Display</h2>
-            <p className="text-muted mb-6">Control what appears on the e-paper display and the LEDs</p>
+            <h2 className="page-title">Display &amp; Sound</h2>
+            <p className="text-muted mb-6">Control what appears on the e-paper display, the LEDs, and audio feedback</p>
 
             <Card className="mb-6">
               <CardHeader title="E-Paper Display" />
               <Toggle
-                label={fieldLabel('field.display.show_board')}
-                help={fieldHelp('field.display.show_board')}
+                label={fieldLabel('field.display.show_board', 'Show Board')}
+                help={fieldHelp('field.display.show_board', 'Display chess board on screen')}
                 checked={formSettings.game.show_board}
                 onChange={(v) => updateFormSettings('game', { show_board: v })}
               />
               <Toggle
-                label={fieldLabel('field.display.show_clock')}
-                help={fieldHelp('field.display.show_clock')}
+                label={fieldLabel('field.display.show_clock', 'Show Clock')}
+                help={fieldHelp('field.display.show_clock', 'Display game clock and turn indicator')}
                 checked={formSettings.game.show_clock}
                 onChange={(v) => updateFormSettings('game', { show_clock: v })}
               />
               <Toggle
-                label={fieldLabel('field.display.show_analysis')}
-                help={fieldHelp('field.display.show_analysis')}
+                label={fieldLabel('field.display.show_analysis', 'Show Analysis')}
+                help={fieldHelp('field.display.show_analysis', 'Display engine analysis widget')}
                 checked={formSettings.game.show_analysis}
                 onChange={(v) => updateFormSettings('game', { show_analysis: v })}
               />
               {/* Show Graph nests under Show Analysis: the graph overlays the
                   analysis widget, so it is disabled while analysis is hidden
-                  (mirrors the board's Display menu). */}
+                  (mirrors the board's Display & Sound menu). */}
               <Toggle
-                label={fieldLabel('field.display.show_graph')}
-                help={fieldHelp('field.display.show_graph')}
+                label={fieldLabel('field.display.show_graph', 'Show Evaluation Graph')}
+                help={fieldHelp('field.display.show_graph', 'Display evaluation history graph')}
                 checked={formSettings.game.show_graph}
                 disabled={!formSettings.game.show_analysis}
                 onChange={(v) => updateFormSettings('game', { show_graph: v })}
@@ -740,13 +754,13 @@ export function Settings() {
             </Card>
 
             {/* Sprite sheet selects the piece artwork drawn on the board widget.
-                Mirrors the board's Display -> Board -> Sprites list; each option
+                Mirrors the board's Display & Sound -> Sprites list; each option
                 renders the full sheet (every piece, both square rows) served by
                 /api/sprites/<id>/image so the choice is visual. */}
             <Card className="mb-6">
-              <CardHeader title={fieldLabel('field.display.chess_sprites')} />
+              <CardHeader title={fieldLabel('field.display.chess_sprites', 'Piece Sprites')} />
               <p className="text-muted mb-4" style={{ fontSize: '0.875rem' }}>
-                {fieldHelp('field.display.chess_sprites')}
+                {fieldHelp('field.display.chess_sprites', 'Sprite sheet used to draw pieces on the e-paper board')}
               </p>
               <div className="sprite-options" role="radiogroup" aria-label="Piece sprites">
                 {spriteSheets.map((id) => {
@@ -782,7 +796,7 @@ export function Settings() {
 
             <Card className="mb-6">
               <CardHeader title="LEDs" />
-              <FormRow label={fieldLabel('field.display.led_brightness')} help={`Level: ${formSettings.game.led_brightness}`}>
+              <FormRow label={fieldLabel('field.display.led_brightness', 'LED Brightness')} help={`Level: ${formSettings.game.led_brightness}`}>
                 <input
                   type="range"
                   className="range-slider"
@@ -793,49 +807,42 @@ export function Settings() {
                 />
               </FormRow>
             </Card>
-          </section>
-        )}
 
-        {/* SOUND TAB */}
-        {activeTab === 'sound' && (
-          <section>
-            <h2 className="page-title">Sound</h2>
-            <p className="text-muted mb-6">Control audio feedback and beeps</p>
-
-            {/* Row order matches the board's Sound submenu: master switch first,
-                then per-category toggles. */}
+            {/* Sound is nested in the board's Display & Sound menu; mirror that
+                here. Row order matches the board's Sound submenu: master switch
+                first, then per-category toggles. */}
             <Card className="mb-6">
               <CardHeader title="Sound" />
               <Toggle
-                label={fieldLabel('field.sound.enabled')}
-                help={fieldHelp('field.sound.enabled')}
+                label={fieldLabel('field.sound.enabled', 'Sound Enabled')}
+                help={fieldHelp('field.sound.enabled', 'Master switch for all sound effects')}
                 checked={formSettings.sound.enabled}
                 onChange={(v) => updateFormSettings('sound', { enabled: v })}
               />
               <Toggle
-                label={fieldLabel('field.sound.piece_events')}
-                help={fieldHelp('field.sound.piece_events')}
+                label={fieldLabel('field.sound.piece_events', 'Piece Events')}
+                help={fieldHelp('field.sound.piece_events', 'Beep when pieces are lifted or placed')}
                 checked={formSettings.sound.piece_events}
                 disabled={!formSettings.sound.enabled}
                 onChange={(v) => updateFormSettings('sound', { piece_events: v })}
               />
               <Toggle
-                label={fieldLabel('field.sound.game_events')}
-                help={fieldHelp('field.sound.game_events')}
+                label={fieldLabel('field.sound.game_events', 'Game Events')}
+                help={fieldHelp('field.sound.game_events', 'Beep for check, checkmate, and other game events')}
                 checked={formSettings.sound.game_events}
                 disabled={!formSettings.sound.enabled}
                 onChange={(v) => updateFormSettings('sound', { game_events: v })}
               />
               <Toggle
-                label={fieldLabel('field.sound.errors')}
-                help={fieldHelp('field.sound.errors')}
+                label={fieldLabel('field.sound.errors', 'Errors')}
+                help={fieldHelp('field.sound.errors', 'Beep on error conditions')}
                 checked={formSettings.sound.errors}
                 disabled={!formSettings.sound.enabled}
                 onChange={(v) => updateFormSettings('sound', { errors: v })}
               />
               <Toggle
-                label={fieldLabel('field.sound.key_press')}
-                help={fieldHelp('field.sound.key_press')}
+                label={fieldLabel('field.sound.key_press', 'Key Press')}
+                help={fieldHelp('field.sound.key_press', 'Beep when buttons are pressed')}
                 checked={formSettings.sound.key_press}
                 disabled={!formSettings.sound.enabled}
                 onChange={(v) => updateFormSettings('sound', { key_press: v })}
@@ -875,14 +882,34 @@ export function Settings() {
 
             <SystemInfoCard />
 
+            {/* Analysis lives under System (not Game): the board groups the
+                Analysis Engine selector here because changing the engine
+                mid-game would require re-running the move history through it. */}
+            <Card className="mb-6">
+              <CardHeader title="Analysis" />
+              <Toggle
+                label={fieldLabel('field.system.analysis_mode', 'Live Analysis')}
+                help={fieldHelp('field.system.analysis_mode', 'Show engine evaluation during play')}
+                checked={formSettings.game.analysis_mode}
+                onChange={(v) => updateFormSettings('game', { analysis_mode: v })}
+              />
+              <FormRow label={fieldLabel('field.game.analysis_engine', 'Analysis Engine')} help={fieldHelp('field.game.analysis_engine', 'Engine used for position analysis (best changed between games)')}>
+                <Select
+                  value={formSettings.game.analysis_engine}
+                  options={engineOptions}
+                  onChange={(e) => updateFormSettings('game', { analysis_engine: e.target.value })}
+                />
+              </FormRow>
+            </Card>
+
             {/* Sleep Timer writes [system] inactivity_timeout, the same key the
                 board's Sleep Timer menu sets and the board reads live, so this
                 applies on Save & Apply without a restart. */}
             <Card className="mb-6">
               <CardHeader title="Sleep Timer" />
               <FormRow
-                label={fieldLabel('field.system.sleep_timer')}
-                help={fieldHelp('field.system.sleep_timer')}
+                label={fieldLabel('field.system.sleep_timer', 'Sleep Timer')}
+                help={fieldHelp('field.system.sleep_timer', 'Automatically put the board to sleep after a period of inactivity')}
               >
                 <Select
                   value={formSettings.system.inactivity_timeout}
@@ -903,7 +930,7 @@ export function Settings() {
                 Universal Chess stores all your games in a database. By default, it uses SQLite at{' '}
                 <code>/opt/universalchess/db/centaur.db</code>.
               </p>
-              <FormRow label={fieldLabel('field.system.database_uri')} help={fieldHelp('field.system.database_uri')}>
+              <FormRow label={fieldLabel('field.system.database_uri', 'Database URI')} help={fieldHelp('field.system.database_uri', 'Leave empty for default SQLite. Supports any SQLAlchemy-compatible URI.')}>
                 <Input
                   value={formSettings.system.database_uri}
                   placeholder="(default SQLite)"
@@ -1079,7 +1106,7 @@ interface UpdateStatus {
   is_installing: boolean;
 }
 
-function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
+function UpdateManager({ catalog }: { catalog: MenuCatalog | null }) {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Informational (non-error) message, e.g. an async install that was started.
@@ -1323,21 +1350,21 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
 
         {/* Channel Selection */}
         <FormRow
-          label={fieldById(catalog, 'field.system.update_channel')?.label ?? 'field.system.update_channel'}
-          help={fieldById(catalog, 'field.system.update_channel')?.help ?? ''}
+          label={(catalog && fieldById(catalog, 'field.system.update_channel')?.label) || 'Update Channel'}
+          help={(catalog && fieldById(catalog, 'field.system.update_channel')?.help) || 'Stable releases are recommended. Nightly builds may contain bugs.'}
         >
           <Select
             value={status.channel}
             onChange={(e) => setChannel(e.target.value)}
             disabled={isLoading}
-            options={catalog.optionSets.update_channel ?? []}
+            options={catalog?.optionSets?.update_channel ?? FALLBACK_UPDATE_CHANNEL_OPTIONS}
           />
         </FormRow>
 
         {/* Auto Update Toggle */}
         <Toggle
-          label={fieldById(catalog, 'field.system.auto_update')?.label ?? 'field.system.auto_update'}
-          help={fieldById(catalog, 'field.system.auto_update')?.help ?? ''}
+          label={(catalog && fieldById(catalog, 'field.system.auto_update')?.label) || 'Auto-Update'}
+          help={(catalog && fieldById(catalog, 'field.system.auto_update')?.help) || 'Automatically download updates when available'}
           checked={status.auto_update}
           onChange={(v) => setAutoUpdate(v)}
           disabled={isLoading}

@@ -5,8 +5,9 @@
 
   "sections": [
     { "id": "players", "label": "Players", "icon": "players" },
-    { "id": "display", "label": "Display & Sound", "icon": "display" },
     { "id": "game", "label": "Game", "icon": "timer_checked" },
+    { "id": "display", "label": "Display", "icon": "display" },
+    { "id": "sound", "label": "Sound", "icon": "sound" },
     { "id": "accounts", "label": "Accounts", "icon": "account" },
     { "id": "engines", "label": "Engines", "icon": "engine" },
     { "id": "system", "label": "System", "icon": "system" }
@@ -93,7 +94,7 @@
       "id": "settings",
       "type": "menu",
       "label": "Settings",
-      "children": ["settings.players", "settings.timecontrol", "settings.positions", "settings.displaysound", "settings.connectivity", "settings.system"]
+      "children": ["settings.players", "settings.timecontrol", "settings.display", "settings.sound", "settings.positions", "settings.connectivity", "settings.system"]
     },
     {
       "id": "settings.players",
@@ -108,11 +109,15 @@
     {
       "id": "settings.timecontrol",
       "key": "TimeControl",
-      "type": "submenu",
+      "type": "select",
       "label": "Time Control",
       "icon": "timer_checked",
       "help": "Minutes per player for the game clock (0 = untimed).",
       "section": "game",
+      "bind": { "store": "game", "key": "time_control" },
+      "optionSet": "time_control",
+      "selectedIcon": "timer_checked",
+      "unselectedIcon": "timer",
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },
     {
@@ -126,14 +131,52 @@
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },
     {
-      "id": "settings.displaysound",
-      "key": "DisplaySound",
+      "id": "settings.display",
+      "key": "Display",
       "type": "submenu",
-      "label": "Display\n& Sound",
+      "target": "settings.display",
+      "label": "Display",
       "icon": "display",
-      "help": "Control what appears on the e-paper display, the LEDs, and audio feedback.",
+      "help": "Control what appears on the e-paper display and the LEDs.",
       "section": "display",
-      "epaper": { "font_size": 12, "height_ratio": 0.8 }
+      "epaper": { "font_size": 12, "height_ratio": 0.8 },
+      "children": [
+        "settings.display.board",
+        "field.display.show_clock",
+        "field.display.show_analysis",
+        "field.display.show_graph",
+        "field.display.led_brightness"
+      ]
+    },
+    {
+      "id": "settings.display.board",
+      "key": "board",
+      "type": "submenu",
+      "target": "settings.display.board",
+      "label": "Board",
+      "icon": "display",
+      "help": "Board visibility and the sprite sheet used to draw pieces.",
+      "platforms": ["board"],
+      "epaper": { "font_size": 14, "height_ratio": 0.8 },
+      "children": ["field.display.show_board", "field.display.sprites"]
+    },
+    {
+      "id": "settings.sound",
+      "key": "Sound",
+      "type": "submenu",
+      "target": "settings.sound",
+      "label": "Sound",
+      "icon": "sound",
+      "help": "Control audio feedback and beeps.",
+      "section": "sound",
+      "epaper": { "font_size": 12, "height_ratio": 0.8 },
+      "children": [
+        "field.sound.enabled",
+        "field.sound.piece_events",
+        "field.sound.game_events",
+        "field.sound.errors",
+        "field.sound.key_press"
+      ]
     },
     {
       "id": "settings.connectivity",
@@ -350,15 +393,25 @@
       "label": "Show Board",
       "help": "Display chess board on screen",
       "section": "display",
-      "platforms": ["web"]
+      "bind": { "store": "game", "key": "show_board" },
+      "icon": { "true": "checkbox_checked", "false": "checkbox_empty" }
+    },
+    {
+      "id": "field.display.sprites",
+      "type": "dynamic",
+      "provider": "sprite_sheets",
+      "help": "Sprite sheet used to draw pieces on the e-paper board",
+      "platforms": ["board"]
     },
     {
       "id": "field.display.show_clock",
       "type": "toggle",
       "label": "Show Clock",
+      "boardLabel": "Clock",
       "help": "Display game clock and turn indicator",
       "section": "display",
-      "platforms": ["web"]
+      "bind": { "store": "game", "key": "show_clock" },
+      "icon": { "true": "checkbox_checked", "false": "checkbox_empty" }
     },
     {
       "id": "field.display.show_analysis",
@@ -366,15 +419,19 @@
       "label": "Show Analysis",
       "help": "Display engine analysis widget",
       "section": "display",
-      "platforms": ["web"]
+      "bind": { "store": "game", "key": "show_analysis" },
+      "icon": { "true": "checkbox_checked", "false": "checkbox_empty" }
     },
     {
       "id": "field.display.show_graph",
       "type": "toggle",
       "label": "Show Evaluation Graph",
+      "boardLabel": "Show Graph",
       "help": "Display evaluation history graph",
       "section": "display",
-      "platforms": ["web"]
+      "bind": { "store": "game", "key": "show_graph" },
+      "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
+      "enabledWhen": { "store": "game", "key": "show_analysis", "equals": true }
     },
     {
       "id": "field.display.chess_sprites",
@@ -388,49 +445,62 @@
       "id": "field.display.led_brightness",
       "type": "range",
       "label": "LED Brightness",
+      "boardLabel": "LED: {value}",
       "help": "Brightness level for the board LEDs",
       "section": "display",
-      "platforms": ["web"]
+      "bind": { "store": "game", "key": "led_brightness" },
+      "icon": "star",
+      "range": { "min": 1, "max": 10, "step": 1, "wrap": true }
     },
     {
       "id": "field.sound.enabled",
       "type": "toggle",
       "label": "Sound Enabled",
       "help": "Master switch for all sound effects",
-      "section": "display",
-      "platforms": ["web"]
+      "section": "sound",
+      "bind": { "store": "sound", "key": "enabled" },
+      "icon": { "true": "timer_checked", "false": "timer" },
+      "epaper": { "font_size": 14, "height_ratio": 0.8, "bold": true }
     },
     {
       "id": "field.sound.piece_events",
       "type": "toggle",
       "label": "Piece Events",
       "help": "Beep when pieces are lifted or placed",
-      "section": "display",
-      "platforms": ["web"]
+      "section": "sound",
+      "bind": { "store": "sound", "key": "piece_events" },
+      "icon": { "true": "timer_checked", "false": "timer" },
+      "epaper": { "font_size": 14, "height_ratio": 0.8 }
     },
     {
       "id": "field.sound.game_events",
       "type": "toggle",
       "label": "Game Events",
       "help": "Beep for check, checkmate, and other game events",
-      "section": "display",
-      "platforms": ["web"]
+      "section": "sound",
+      "bind": { "store": "sound", "key": "game_events" },
+      "icon": { "true": "timer_checked", "false": "timer" },
+      "epaper": { "font_size": 14, "height_ratio": 0.8 }
     },
     {
       "id": "field.sound.errors",
       "type": "toggle",
       "label": "Errors",
       "help": "Beep on error conditions",
-      "section": "display",
-      "platforms": ["web"]
+      "section": "sound",
+      "bind": { "store": "sound", "key": "errors" },
+      "icon": { "true": "timer_checked", "false": "timer" },
+      "epaper": { "font_size": 14, "height_ratio": 0.8 }
     },
     {
       "id": "field.sound.key_press",
       "type": "toggle",
       "label": "Key Press",
       "help": "Beep when buttons are pressed",
-      "section": "display",
-      "platforms": ["web"]
+      "section": "sound",
+      "bind": { "store": "sound", "key": "key_press" },
+      "icon": { "true": "timer_checked", "false": "timer" },
+      "epaper": { "font_size": 14, "height_ratio": 0.8 }
     },
     {
       "id": "field.lichess.api_token",
@@ -462,7 +532,7 @@
       "type": "toggle",
       "label": "Live Analysis",
       "help": "Show engine evaluation during play",
-      "section": "system",
+      "section": "game",
       "platforms": ["web"]
     },
     {
@@ -470,7 +540,7 @@
       "type": "select",
       "label": "Analysis Engine",
       "help": "Engine used for position analysis (best changed between games)",
-      "section": "system",
+      "section": "game",
       "platforms": ["web"]
     },
     {

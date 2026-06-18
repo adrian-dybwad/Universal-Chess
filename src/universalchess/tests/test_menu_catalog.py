@@ -48,13 +48,20 @@ def test_every_node_icon_is_registered():
 
     A typo'd icon id renders as a blank placeholder square on the board. This
     walks all nodes and asserts each icon resolves; a missing id fails here
-    instead of shipping an invisible menu entry.
+    instead of shipping an invisible menu entry. Icons may be a plain string or
+    a state map ``{state: icon}`` (e.g. a toggle's checked/unchecked glyphs);
+    every value of the latter must also be registered.
     """
     catalog = load_catalog()
     icon_ids = catalog.icon_ids()
     for node in catalog.raw_menu()["nodes"]:
         icon = node.get("icon")
-        if icon is not None:
+        if isinstance(icon, dict):
+            for state, icon_name in icon.items():
+                assert icon_name in icon_ids, (
+                    f"node {node['id']} state '{state}' uses unregistered icon {icon_name}"
+                )
+        elif icon is not None:
             assert icon in icon_ids, f"node {node['id']} uses unregistered icon {icon}"
 
 
@@ -93,7 +100,38 @@ def test_settings_order_matches_board_layout():
     """
     catalog = load_catalog()
     keys = [c["key"] for c in catalog.children("settings")]
-    assert keys == ["Players", "TimeControl", "Positions", "DisplaySound", "Connectivity", "System"]
+    assert keys == ["Players", "TimeControl", "Display", "Sound", "Positions", "Connectivity", "System"]
+
+
+def test_display_and_sound_are_separate_settings_nodes():
+    """Display and Sound must be two independent Settings submenu nodes.
+
+    Why this test exists: Display and Sound were split out of the former combined
+    'DisplaySound' entry into separate sibling entries (right after Game) on both
+    the board and the web. This pins the post-split structure so a regression that
+    re-merges them, drops one, or restores the old combined node fails here.
+
+    How a regression manifests: if the combined node is restored, 'settings.display'
+    or 'settings.sound' is absent (KeyError-style miss caught by has_node), or the
+    stale 'settings.displaysound' node reappears in the id index.
+    """
+    catalog = load_catalog()
+    assert catalog.has_node("settings.display")
+    assert catalog.has_node("settings.sound")
+    assert catalog.get_node("settings.display")["key"] == "Display"
+    assert catalog.get_node("settings.sound")["key"] == "Sound"
+    node_ids = {n["id"] for n in catalog.raw_menu()["nodes"]}
+    assert "settings.displaysound" not in node_ids
+    # The Sound effect toggles must be tagged to the new 'sound' section so the
+    # web Sound tab renders them (and they no longer leak into the Display tab).
+    for sound_field in (
+        "field.sound.enabled",
+        "field.sound.piece_events",
+        "field.sound.game_events",
+        "field.sound.errors",
+        "field.sound.key_press",
+    ):
+        assert catalog.get_node(sound_field)["section"] == "sound"
 
 
 def test_web_sections_present_in_expected_order():
@@ -104,7 +142,7 @@ def test_web_sections_present_in_expected_order():
     """
     catalog = load_catalog()
     section_ids = [s["id"] for s in catalog.sections()]
-    assert section_ids == ["players", "display", "game", "accounts", "engines", "system"]
+    assert section_ids == ["players", "game", "display", "sound", "accounts", "engines", "system"]
 
 
 def test_web_implemented_submenus_are_enabled_for_web():
@@ -181,6 +219,106 @@ def test_option_sets_resolve_for_select_fields():
         if name is not None:
             options = catalog.option_set(name)
             assert options, f"node {node['id']} -> empty optionSet {name}"
+
+
+def test_web_settings_field_ids_resolve_with_labels():
+    """Every field the web Settings page renders must exist with a label.
+
+    Why this test exists: the React Settings page (web-app/src/pages/Settings.tsx)
+    renders these field labels and help strings directly from the catalog with no
+    hardcoded fallback text. The fallback constants that previously mirrored
+    menu.json were removed to keep the catalog the single source of truth, so the
+    catalog is now a hard dependency for correct labels.
+
+    How a regression manifests: one of these ids is removed or renamed in
+    menu.json, so it is absent from the node index and this assertion fails naming
+    the id -- instead of the live page rendering the raw id string (e.g.
+    'field.player.type') as a label. The label presence check guards the same
+    contract for a field that exists but loses its label.
+    """
+    catalog = load_catalog()
+    nodes_by_id = {n["id"]: n for n in catalog.raw_menu()["nodes"]}
+    # The exact field ids Settings.tsx looks up via fieldLabel/fieldHelp. Kept in
+    # sync with that page; adding a catalog-driven field there means adding it
+    # here so its absence fails this test rather than the rendered UI.
+    required_field_ids = [
+        "field.player.type",
+        "field.player.name",
+        "field.player.engine",
+        "field.player.elo",
+        "field.player.hand_brain_mode",
+        "field.game.time_control",
+        "field.game.analysis_engine",
+        "field.system.analysis_mode",
+        "field.display.show_board",
+        "field.display.show_clock",
+        "field.display.show_analysis",
+        "field.display.show_graph",
+        "field.display.chess_sprites",
+        "field.display.led_brightness",
+        "field.sound.enabled",
+        "field.sound.piece_events",
+        "field.sound.game_events",
+        "field.sound.errors",
+        "field.sound.key_press",
+        "field.system.sleep_timer",
+        "field.system.update_channel",
+        "field.system.auto_update",
+        "field.system.database_uri",
+    ]
+    missing = [fid for fid in required_field_ids if fid not in nodes_by_id]
+    assert not missing, f"web Settings references field ids absent from catalog: {missing}"
+    unlabeled = [fid for fid in required_field_ids if not nodes_by_id[fid].get("label")]
+    assert not unlabeled, f"web Settings field ids missing a label: {unlabeled}"
+
+
+def test_web_settings_option_sets_present_and_non_empty():
+    """Option sets the web Settings selects render must exist and be non-empty.
+
+    Why this test exists: the player-type/hand-brain/time-control/sleep-timer/
+    update-channel selects render these option sets from the catalog with no
+    hardcoded fallback list (the FALLBACK_* arrays were removed). A missing or
+    empty set renders an empty dropdown on the web with no values to choose.
+
+    How a regression manifests: one of these names is removed from optionSets, so
+    option_set returns an empty list and this fails naming the set -- instead of
+    shipping an empty select.
+    """
+    catalog = load_catalog()
+    required_option_sets = [
+        "player_type",
+        "hand_brain_mode",
+        "time_control",
+        "sleep_timer",
+        "update_channel",
+    ]
+    empty = [name for name in required_option_sets if not catalog.option_set(name)]
+    assert not empty, f"web Settings selects reference empty/missing option sets: {empty}"
+
+
+def test_option_label_resolves_value_to_catalog_label():
+    """option_label must map a stored value to its catalog label from one source.
+
+    Why this test exists: the board menus were migrated to resolve choice text
+    (player type, time control, hand-brain mode, update channel) through this
+    helper instead of private value->label maps, so the board and web render
+    identical labels. This pins the contract those board builders depend on.
+
+    How a regression manifests: a label drifts in menu.json (or the lookup
+    breaks), so the wrong text is returned here -- which is exactly what would
+    appear on the board. Int-valued lookups (time control) must match the
+    string-authored values, the absent-value path must use the supplied default,
+    and with no default the value itself must come back (never blank).
+    """
+    catalog = load_catalog()
+    # Player type label is sourced here (board Players menu + summary).
+    assert catalog.option_label("player_type", "hand_brain") == "Hand + Brain"
+    # Time control values are held as ints by the board but authored as strings.
+    assert catalog.option_label("time_control", 5) == "5 min (Blitz)"
+    assert catalog.option_label("time_control", "0") == "Untimed"
+    # Absent value uses the explicit default; without one the value is echoed.
+    assert catalog.option_label("player_type", "android", default="Android") == "Android"
+    assert catalog.option_label("player_type", "android") == "android"
 
 
 def test_duplicate_node_id_raises(tmp_path):

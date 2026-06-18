@@ -10,17 +10,17 @@ from typing import List, Dict
 
 from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.menus.catalog.entry_builder import build_menu_entries
+from universalchess.menus.players_menu import _player_type_label
 
 
 def _get_player_type_label(player_type: str) -> str:
-    """Map player type to display label."""
-    type_labels = {
-        "human": "Human",
-        "engine": "Engine",
-        "lichess": "Lichess",
-        "hand_brain": "H+B",
-    }
-    return type_labels.get(player_type, player_type.capitalize())
+    """Map player type to display label via the shared catalog.
+
+    Delegates to :func:`players_menu._player_type_label` so the Players summary
+    and the Player menus resolve types through the single catalog source rather
+    than duplicating a value->label map.
+    """
+    return _player_type_label(player_type)
 
 
 def _get_players_summary(player1_settings: Dict[str, str], player2_settings: Dict[str, str]) -> str:

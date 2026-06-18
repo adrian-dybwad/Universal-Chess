@@ -51,7 +51,6 @@ from universalchess.menus import (
     _get_player_type_label,
     handle_system_menu,
     handle_positions_menu,
-    handle_time_control_menu,
     handle_chromecast_menu,
     create_connectivity_entries,
     handle_connectivity_menu,
@@ -67,8 +66,6 @@ from universalchess.menus import (
     handle_engine_manager_menu,
     handle_engine_detail_menu,
     show_engine_install_progress,
-    handle_display_settings,
-    handle_sound_settings,
     handle_reset_settings,
     handle_analysis_mode_menu,
     handle_analysis_engine_selection,
@@ -869,9 +866,6 @@ GAME_SETTINGS_DEFAULTS = {
 
 # Global settings instance (populated from centaur.ini on startup)
 _settings: Optional[AllSettings] = None
-
-# Available time control options (in minutes)
-TIME_CONTROL_OPTIONS = [0, 1, 3, 5, 10, 15, 30, 60, 90]
 
 # Cached engine data
 _available_engines: List[str] = []
@@ -2339,25 +2333,31 @@ def _handle_settings(initial_selection: str = None):
                 _start_game_mode()
                 return
         
-        elif result == "DisplaySound":
-            ctx.enter_menu("DisplaySound", 0)
-            display_sound_result = _handle_display_sound_menu()
-            ctx.leave_menu()  # Pop DisplaySound, restore to Settings level
-            if is_break_result(display_sound_result):
+        elif result == "Display":
+            ctx.enter_menu("Display", 0)
+            display_result = _handle_display_menu()
+            ctx.leave_menu()  # Pop Display, restore to Settings level
+            if is_break_result(display_result):
                 ctx.clear()
                 app_state = AppState.MENU
-                return display_sound_result
+                return display_result
+
+        elif result == "Sound":
+            ctx.enter_menu("Sound", 0)
+            sound_result = _handle_sound_menu()
+            ctx.leave_menu()  # Pop Sound, restore to Settings level
+            if is_break_result(sound_result):
+                ctx.clear()
+                app_state = AppState.MENU
+                return sound_result
         
         elif result == "TimeControl":
-            time_result = handle_time_control_menu(
-                ctx=ctx,
-                game_settings=_game_settings_dict(),
-                time_control_options=TIME_CONTROL_OPTIONS,
-                show_menu=_show_menu,
-                find_entry_index=find_entry_index,
-                save_game_setting=_save_game_setting,
-                board=board,
-                log=log,
+            from universalchess.menus.board_context import run_node
+            from universalchess.menus.catalog.loader import get_catalog
+            time_result = run_node(
+                get_catalog().get_node("settings.timecontrol"),
+                _build_game_context(),
+                _menu_manager,
             )
             if is_break_result(time_result):
                 ctx.clear()
@@ -2697,26 +2697,141 @@ def _get_installed_version() -> str:
     return ""
 
 
-def _handle_display_sound_menu():
-    """Handle the combined Display & Sound submenu.
+# Defaults for game settings the Display menu reads that may be absent from a
+# freshly initialized centaur.ini (mirrors the old menu's .get(...) fallbacks).
+_DISPLAY_GAME_DEFAULTS = {"led_brightness": 5, "chess_sprites": "default"}
 
-    Single definition shared by the top-level Settings list and the in-game
-    long-press, so sound is adjustable during play. The Sound submenu is injected
-    via handle_sound to keep menus/display_menu decoupled from the sound impl.
+# Prefix for per-sheet radio rows in the Board submenu (key = sprite:<id>).
+_SPRITE_KEY_PREFIX = "sprite:"
+
+
+def _build_game_context():
+    """Build a BoardMenuContext whose ``game`` store wraps centaur.ini settings.
+
+    Reads resolve through ``_game_settings_dict`` (with defaults for keys that may
+    be absent on a fresh config) and writes through ``_save_game_setting``. Shared
+    by every board menu bound to game settings (Display, Time Control, ...).
     """
-    return handle_display_settings(
-        get_game_settings=_game_settings_dict,
-        show_menu=_show_menu,
-        save_game_setting=_save_game_setting,
-        list_sprite_sheets=_list_chess_sprite_sheets,
-        get_sprite_preview=_chess_sprite_preview,
-        log=log,
-        board=board,
-        handle_sound=lambda: handle_sound_settings(
-            menu_manager=_menu_manager,
-            board=board,
-        ),
-    )
+    from universalchess.menus.board_context import BoardMenuContext
+
+    def game_get(key):
+        settings = _game_settings_dict()
+        if key in settings:
+            return settings[key]
+        return _DISPLAY_GAME_DEFAULTS[key]
+
+    def game_set(key, value):
+        _save_game_setting(key, value)
+        log.info(f"[Settings] game.{key} changed to {value}")
+
+    ctx = BoardMenuContext()
+    ctx.register_store("game", game_get, game_set)
+    return ctx
+
+
+def _build_display_context():
+    """Build a BoardMenuContext for the Display menu.
+
+    Extends the shared game context with the ``sprite_sheets`` dynamic provider
+    (one radio row per installed sheet, with its black-king preview as the row
+    glyph). The engine then drives the toggles, the LED range cycler, the
+    conditional Show Graph row, and sprite selection.
+    """
+    from universalchess.menus.engine import MenuRow
+
+    ctx = _build_game_context()
+
+    def sprite_sheets():
+        current = _game_settings_dict().get("chess_sprites", _DISPLAY_GAME_DEFAULTS["chess_sprites"])
+        rows = []
+        for sheet in _list_chess_sprite_sheets():
+            preview = _chess_sprite_preview(sheet)
+            image, mask = preview if preview is not None else (None, None)
+            rows.append(
+                MenuRow(
+                    key=f"{_SPRITE_KEY_PREFIX}{sheet}",
+                    label=sheet,
+                    icon="positions",
+                    icon_image=image,
+                    icon_mask=mask,
+                    trailing_icon="radio_checked" if sheet == current else "radio_empty",
+                    node={
+                        "id": f"{_SPRITE_KEY_PREFIX}{sheet}",
+                        "key": f"{_SPRITE_KEY_PREFIX}{sheet}",
+                        "type": "set_value",
+                        "bind": {"store": "game", "key": "chess_sprites"},
+                        "value": sheet,
+                    },
+                )
+            )
+        return rows
+
+    ctx.register_provider("sprite_sheets", sprite_sheets)
+    return ctx
+
+
+def _handle_display_menu():
+    """Handle the Display submenu (board visibility, sprite sheet, analysis/graph
+    visibility, LED brightness).
+
+    Driven by the shared menu engine: structure, labels, icons, the LED range
+    cycler, and the Show-Graph-requires-Show-Analysis gating all come from the
+    ``settings.display`` catalog node; the board adapter only supplies the game
+    value store and the sprite-sheet provider. Sound is a separate sibling
+    submenu (see _handle_sound_menu).
+    """
+    from universalchess.menus.board_context import run_engine_menu
+
+    return run_engine_menu("settings.display", _build_display_context(), _menu_manager)
+
+
+# Catalog ``bind.key`` (shared with the web) -> board sound_settings key. The
+# board historically uses singular keys (piece_event) while the catalog/web use
+# plural (piece_events); the adapter owns this translation so the shared catalog
+# stays platform-neutral and no persisted setting names change.
+_SOUND_BIND_TO_STORE_KEY = {
+    "enabled": "enabled",
+    "piece_events": "piece_event",
+    "game_events": "game_event",
+    "errors": "error",
+    "key_press": "key_press",
+}
+
+
+def _build_sound_context():
+    """Build a BoardMenuContext whose ``sound`` store wraps sound_settings.
+
+    Reads resolve through ``get_sound_settings`` and writes through
+    ``set_sound_setting``, translating catalog bind keys to the board's setting
+    keys. Enabling the master switch beeps, preserving the prior board behavior.
+    """
+    from universalchess.epaper import sound_settings
+    from universalchess.menus.board_context import BoardMenuContext
+
+    def sound_get(key):
+        return sound_settings.get_sound_settings()[_SOUND_BIND_TO_STORE_KEY[key]]
+
+    def sound_set(key, value):
+        store_key = _SOUND_BIND_TO_STORE_KEY[key]
+        sound_settings.set_sound_setting(store_key, bool(value))
+        if store_key == "enabled" and value:
+            board.beep(board.SOUND_GENERAL)
+
+    ctx = BoardMenuContext()
+    ctx.register_store("sound", sound_get, sound_set)
+    return ctx
+
+
+def _handle_sound_menu():
+    """Handle the Sound submenu (per-category sound effect toggles).
+
+    Driven by the shared menu engine: rows, labels, icons, and the master-first
+    order come from the ``settings.sound`` catalog node; the board adapter only
+    supplies the sound value store.
+    """
+    from universalchess.menus.board_context import run_engine_menu
+
+    return run_engine_menu("settings.sound", _build_sound_context(), _menu_manager)
 
 
 def _handle_system_menu():

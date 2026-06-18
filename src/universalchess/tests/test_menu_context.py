@@ -35,11 +35,11 @@ def test_restore_from_path_round_trips_capture(ctx):
     restored menu path diverges from where the user suspended, so the wrong (or
     root) menu is shown.
     """
-    captured = [("Settings", 2), ("DisplaySound", 1)]
+    captured = [("Settings", 2), ("Display", 1)]
 
     ctx.restore_from_path(captured)
 
-    assert ctx.path_stack == ["Settings", "DisplaySound"]
+    assert ctx.path_stack == ["Settings", "Display"]
     assert ctx.index_stack == [2, 1]
     assert ctx.get_restore_path() == captured
 
@@ -52,7 +52,7 @@ def test_restore_from_path_rewinds_nav_depth(ctx):
     matching saved level. If depth is not reset to 0, the first enter_menu sees a
     mismatch and truncates the saved path, losing the deeper position.
 
-    Regression manifestation: deep submenu (e.g. DisplaySound) is dropped and the
+    Regression manifestation: deep submenu (e.g. Display) is dropped and the
     user lands in Settings root instead.
     """
     ctx._nav_depth = 5

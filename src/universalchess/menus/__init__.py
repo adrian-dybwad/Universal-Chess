@@ -4,7 +4,6 @@ from .main_menu import create_main_menu_entries
 from .settings_menu import create_settings_entries
 from .settings_menu import _get_player_type_label
 from .system_menu import create_system_entries, handle_system_menu
-from .time_control_menu import handle_time_control_menu
 from .positions_menu import handle_positions_menu
 from .players_menu import (
     build_player1_menu_entries,
@@ -43,8 +42,6 @@ from .engine_manager_menu import (
     handle_engine_detail_menu,
     show_engine_install_progress,
 )
-from .display_menu import handle_display_settings
-from .sound_menu import handle_sound_settings
 from .reset_menu import handle_reset_settings
 from .analysis_menu import handle_analysis_mode_menu, handle_analysis_engine_selection
 from .update_menu import (
@@ -69,7 +66,6 @@ __all__ = [
     "create_settings_entries",
     "create_system_entries",
     "handle_system_menu",
-    "handle_time_control_menu",
     "handle_positions_menu",
     "handle_chromecast_menu",
     "create_connectivity_entries",
@@ -113,8 +109,6 @@ __all__ = [
     "handle_engine_manager_menu",
     "handle_engine_detail_menu",
     "show_engine_install_progress",
-    "handle_display_settings",
-    "handle_sound_settings",
     "handle_reset_settings",
     "handle_analysis_mode_menu",
     "handle_analysis_engine_selection",

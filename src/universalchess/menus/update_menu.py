@@ -10,6 +10,7 @@ from typing import Callable, List, Optional
 from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.managers.menu import MenuSelection, is_break_result
 from universalchess.epaper import SplashScreen
+from universalchess.menus.catalog.loader import get_catalog
 from universalchess.services.update_service import (
     get_update_service,
     UpdateService,
@@ -126,17 +127,23 @@ def handle_update_menu(
         
         if result_key == "Channel":
             current = update_service.get_channel()
-            options = [UpdateChannel.STABLE, UpdateChannel.NIGHTLY]
+            # Channels and labels come from the shared catalog update_channel
+            # option set (one source shared with the web); the active channel is
+            # marked with a leading "* " and the checked icon.
+            channel_options = get_catalog().option_set("update_channel")
             entries = [
                 IconMenuEntry(
-                    key=ch.value,
-                    label=f"{'* ' if ch == current else ''}{ch.value.capitalize()}",
-                    icon_name="checkbox_checked" if ch == current else "checkbox_empty",
+                    key=option["value"],
+                    label=f"* {option['label']}" if UpdateChannel(option["value"]) == current else option["label"],
+                    icon_name="checkbox_checked" if UpdateChannel(option["value"]) == current else "checkbox_empty",
                     enabled=True,
                 )
-                for ch in options
+                for option in channel_options
             ]
-            idx = 0 if current == UpdateChannel.STABLE else 1
+            idx = next(
+                (i for i, option in enumerate(channel_options) if UpdateChannel(option["value"]) == current),
+                0,
+            )
             channel_result = show_menu(entries, initial_index=idx)
             if channel_result not in ["BACK", "SHUTDOWN", "HELP"]:
                 update_service.set_channel(UpdateChannel(channel_result))
