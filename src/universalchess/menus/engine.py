@@ -78,6 +78,12 @@ class MenuRow:
     icon_image: Any = None
     icon_mask: Any = None
     trailing_icon: Optional[str] = None
+    # Action to run when this row is selected, with the row's ``key`` passed as
+    # the argument. Set on ``dynamic`` provider rows whose container node declares
+    # an ``itemAction`` so a runtime-listed item (e.g. a scanned WiFi network) can
+    # act on its own identity. ``None`` for ordinary rows, which instead dispatch
+    # through their catalog ``node``.
+    action: Optional[str] = None
 
 
 @dataclass
@@ -120,7 +126,7 @@ class MenuContext(Protocol):
     def set(self, store: str, key: str, value: Any) -> None: ...
     def options(self, name: str) -> List[dict]: ...
     def provide(self, provider: str) -> List["MenuRow"]: ...
-    def run_action(self, name: str) -> Optional[str]: ...
+    def run_action(self, name: str, arg: Optional[str] = None) -> Optional[str]: ...
     def compute(self, name: str, node: dict) -> str: ...
 
 
@@ -276,7 +282,16 @@ def build_rows(container_id: str, ctx: MenuContext, *, platform: str, catalog) -
         if not is_visible(child, ctx):
             continue
         if child.get("type") == "dynamic":
-            rows.extend(ctx.provide(child["provider"]))
+            # A dynamic node may declare an ``itemAction`` run when one of its
+            # provider rows is selected, with the row's key as the argument (e.g.
+            # connecting to a scanned WiFi network). Tag each row that does not
+            # already carry its own action so selection routes there; rows without
+            # an item action (display-only readouts) stay inert.
+            item_action = child.get("itemAction")
+            for row in ctx.provide(child["provider"]):
+                if item_action and row.action is None:
+                    row.action = item_action
+                rows.append(row)
             continue
         rows.append(
             MenuRow(
@@ -379,3 +394,22 @@ def dispatch(node: dict, ctx: MenuContext) -> DispatchOutcome:
         return DispatchOutcome(kind="action", action=name, signal=signal)
 
     raise ValueError(f"unsupported menu node type: {node_type!r} (node {node.get('id')!r})")
+
+
+def dispatch_row(row: MenuRow, ctx: MenuContext) -> DispatchOutcome:
+    """Resolve selecting a built row, supporting actionable provider items.
+
+    A row that carries an ``action`` (set from its container's ``itemAction``) is
+    a runtime-listed item -- e.g. a scanned WiFi network. Selecting it runs that
+    action with the row's ``key`` as the argument (the item's identity) and
+    propagates any returned signal, so the engine can act on data that has no
+    static catalog node of its own. Every other row dispatches through its catalog
+    ``node`` exactly as :func:`dispatch` defines.
+
+    Callers must not pass display-only rows (no ``action`` and no ``node``); those
+    are non-selectable and have no behavior to resolve.
+    """
+    if row.action:
+        signal = ctx.run_action(row.action, row.key)
+        return DispatchOutcome(kind="action", action=row.action, signal=signal)
+    return dispatch(row.node, ctx)

@@ -12,6 +12,7 @@ e-paper display, while still exercising the real engine.
 
 from universalchess.managers.menu import MenuResult, MenuSelection
 from universalchess.menus.board_context import BoardMenuContext, run_engine_menu
+from universalchess.menus.engine import MenuRow
 
 _EXIT_RESULTS = {MenuResult.BACK, MenuResult.SHUTDOWN, MenuResult.HELP}
 
@@ -136,3 +137,36 @@ def test_select_node_opens_option_list_and_persists_choice():
     assert result.is_back()
     # The parent's first frame shows the original value via the {value} template.
     assert mm.shown[0][0].label == "Time\nUntimed"
+
+
+def test_dynamic_item_action_row_connects_with_its_key():
+    """Selecting a runtime-listed provider row runs its item action with its key.
+
+    Why this test exists: the WiFi scan list is a ``dynamic`` node with an
+    ``itemAction``; each provider row (a network) must, on selection, invoke that
+    action through the engine with the row's own key (the SSID). This is the
+    actionable-provider-row path end-to-end through the board adapter. How a
+    regression manifests: selecting a network calls nothing (inert list) or calls
+    the action without the SSID, so the wrong/zero network would be connected.
+    """
+    connected = []
+    ctx = BoardMenuContext(option_set_fn=lambda name: [])
+    ctx.register_provider(
+        "wifi_networks",
+        lambda: [
+            MenuRow(key="HomeNet", label="HomeNet", icon="wifi_strong"),
+            MenuRow(key="CafeWiFi", label="CafeWiFi", icon="wifi_weak"),
+        ],
+    )
+    ctx.register_action("wifi_connect", lambda ssid: connected.append(ssid) or None)
+    catalog = _FakeCatalog(
+        {"c": ["nets"]},
+        {"nets": {"id": "nets", "type": "dynamic", "provider": "wifi_networks", "itemAction": "wifi_connect"}},
+    )
+    # Pick the second network, then exit.
+    mm = _FakeMenuManager(["CafeWiFi", "BACK"])
+
+    result = run_engine_menu("c", ctx, mm, catalog=catalog)
+
+    assert connected == ["CafeWiFi"]
+    assert result.is_back()

@@ -50,8 +50,9 @@ from universalchess.menus import (
     handle_positions_menu,
     handle_chromecast_menu,
     handle_inactivity_timeout,
-    handle_wifi_settings_menu,
-    handle_wifi_scan_menu,
+    wifi_status_icon,
+    wifi_signal_icon,
+    wifi_network_rows,
     handle_bluetooth_menu,
     handle_keyboard_pairing_menu,
     handle_paired_devices_menu,
@@ -2638,19 +2639,6 @@ def _get_wifi_password_from_board(ssid: str) -> Optional[str]:
     )
 
 
-def _handle_wifi_scan():
-    """Handle WiFi network scanning and selection."""
-    return handle_wifi_scan_menu(
-        scan_networks=lambda: scan_wifi_networks(board, log),
-        show_menu=_show_menu,
-        is_break_result_fn=is_break_result,
-        get_password=_get_wifi_password_from_board,
-        connect_fn=lambda ssid, password=None: connect_to_wifi(board, log, ssid, password),
-        board=board,
-        log=log,
-    )
-
-
 def _handle_pair_keyboard():
     """Scan for and pair a Bluetooth keyboard (Settings > Bluetooth).
 
@@ -3298,27 +3286,145 @@ def _handle_system_menu():
     return run_engine_menu("system", _build_system_context(), _menu_manager)
 
 
-def _run_wifi_settings_menu():
-    """Run the (imperative) WiFi status/scan/enable menu; return break/None.
+def _wifi_status_rows():
+    """Provide the live WiFi status readout row for the data-driven WiFi menu.
 
-    Kept code-driven (live status subscription, scan/connect, keyboard password
-    entry); invoked as the ``open_wifi`` action of the data-driven Connectivity
-    menu.
+    The ``wifi.status`` catalog node owns the row's e-paper chrome (big vertical
+    signal icon, border); this provider supplies only the live status text and
+    signal-bucketed icon, re-read on each rebuild so the open menu reflects the
+    current connection. The row carries its catalog node so the board renderer
+    applies that chrome, and is non-selectable (a readout, like About's Version).
     """
-    return handle_wifi_settings_menu(
-        menu_manager=_menu_manager,
-        wifi_info_module=__import__("DGTCentaurMods.epaper.wifi_info", fromlist=["get_wifi_status"]),
-        show_menu=_show_menu,
-        find_entry_index=find_entry_index,
-        on_scan=_handle_wifi_scan,
-        on_toggle_enable=lambda is_enabled: (
-            __import__("DGTCentaurMods.epaper.wifi_info", fromlist=["disable_wifi"]).disable_wifi()
-            if is_enabled
-            else __import__("DGTCentaurMods.epaper.wifi_info", fromlist=["enable_wifi"]).enable_wifi()
-        ),
-        board=board,
-        log=log,
+    from universalchess.menus.engine import MenuRow
+    from universalchess.menus.catalog.loader import get_catalog
+
+    wifi_info = __import__("DGTCentaurMods.epaper.wifi_info", fromlist=["get_wifi_status"])
+    status = wifi_info.get_wifi_status()
+    return [
+        MenuRow(
+            key="Info",
+            label=wifi_info.format_status_label(status),
+            icon=wifi_status_icon(status),
+            node=get_catalog().get_node("wifi.status"),
+            selectable=False,
+        )
+    ]
+
+
+def _wifi_no_networks_splash():
+    """Show a brief 'No networks found' splash (matches the pre-engine scaffold)."""
+    board.display_manager.clear_widgets(addStatusBar=False)
+    promise = board.display_manager.add_widget(
+        SplashScreen(board.display_manager.update, message="No networks found", leave_room_for_status_bar=False)
     )
+    if promise:
+        try:
+            promise.result(timeout=2.0)
+        except Exception:
+            pass
+    time.sleep(2)
+
+
+def _build_wifi_context():
+    """Build the BoardMenuContext for the data-driven WiFi menu (``wifi`` container).
+
+    The ``wifi`` store exposes the radio's enabled flag (read from the live
+    status, written by enabling/disabling the radio); ``wifi_status`` yields the
+    live readout row; ``wifi_enable_state`` supplies the toggle's Enabled/Disabled
+    label. ``wifi_scan`` performs the one-off (slow) scan, caches the result, and
+    opens the data-driven ``wifi.networks`` list; each network row is an actionable
+    provider item whose ``wifi_connect`` action (looked up by SSID in the cache)
+    runs the password keyboard + connect. The scan stays imperative (a slow side
+    effect), but the network *list* and its per-item behavior are catalog-driven.
+    """
+    from universalchess.menus.board_context import BoardMenuContext, run_engine_menu
+
+    wifi_info = __import__("DGTCentaurMods.epaper.wifi_info", fromlist=["get_wifi_status"])
+
+    # Last scan result, keyed for the provider/connect action. Cached so the
+    # network list redraws (e.g. after a connect attempt) without re-scanning;
+    # only an explicit Scan refreshes it.
+    scan_cache = {"networks": []}
+
+    def wifi_get(key):
+        if key == "enabled":
+            return bool(wifi_info.get_wifi_status()["enabled"])
+        raise NotImplementedError(f"wifi store has no key {key!r}")
+
+    def wifi_set(key, value):
+        if key != "enabled":
+            raise NotImplementedError(f"wifi store has no key {key!r}")
+        if value:
+            wifi_info.enable_wifi()
+        else:
+            wifi_info.disable_wifi()
+
+    ctx = BoardMenuContext()
+
+    def wifi_scan():
+        """Scan once, cache the result, then open the catalog-driven network list."""
+        log.info("[WiFi] Starting network scan...")
+        networks = scan_wifi_networks(board, log)
+        log.info(f"[WiFi] Scan complete, found {len(networks)} networks")
+        scan_cache["networks"] = networks
+        if not networks:
+            _wifi_no_networks_splash()
+            return None
+        return _signal_from(run_engine_menu("wifi.networks", ctx, _menu_manager))
+
+    def wifi_connect(ssid):
+        """Connect to the selected SSID, prompting for a password if it is secured."""
+        net = next((n for n in scan_cache["networks"] if n["ssid"] == ssid), None)
+        if net is None:
+            return None
+        if net.get("security", "") != "":
+            password = _get_wifi_password_from_board(ssid)
+            if password is None:
+                return None
+            connect_to_wifi(board, log, ssid, password)
+        else:
+            connect_to_wifi(board, log, ssid, None)
+        return None
+
+    ctx.register_store("wifi", wifi_get, wifi_set)
+    ctx.register_provider("wifi_status", _wifi_status_rows)
+    ctx.register_provider("wifi_networks", lambda: wifi_network_rows(scan_cache["networks"]))
+    ctx.register_value("wifi_enable_state", lambda node: "Enabled" if wifi_get("enabled") else "Disabled")
+    ctx.register_action("wifi_scan", wifi_scan)
+    ctx.register_action("wifi_connect", wifi_connect)
+    return ctx
+
+
+def _run_wifi_settings_menu():
+    """Run the data-driven WiFi menu (status/scan/enable) via the shared engine.
+
+    The WiFi rows -- the status readout, Scan, the enable toggle, and the scanned
+    *network list* (with its per-network connect behavior) -- all live in the
+    catalog (``wifi`` and ``wifi.networks`` containers). The only code-driven
+    parts that remain are (1) the live-status *subscription* lifecycle wired here,
+    which refreshes the open menu when the radio's connection state changes, and
+    (2) the slow scan and the password keyboard, run inside the ``wifi_scan`` /
+    ``wifi_connect`` actions. Invoked as the ``open_wifi`` action of the
+    data-driven Connectivity menu.
+
+    The status callback injects a non-break ``WIFI_REFRESH`` selection; the engine
+    loop finds no row for it and redraws, rebuilding the rows from fresh status.
+    """
+    from universalchess.menus.board_context import run_engine_menu
+
+    wifi_info = __import__("DGTCentaurMods.epaper.wifi_info", fromlist=["get_wifi_status"])
+
+    def _on_wifi_status_change(status: dict):
+        if _menu_manager.active_widget is not None:
+            log.debug(f"[WiFi] Status changed, refreshing menu: connected={status.get('connected')}")
+            _menu_manager.cancel_selection("WIFI_REFRESH")
+
+    wifi_info.subscribe(_on_wifi_status_change)
+    try:
+        # Default focus on Scan (index 1); index 0 is the non-selectable readout.
+        return run_engine_menu("wifi", _build_wifi_context(), _menu_manager, initial_index=1)
+    finally:
+        wifi_info.unsubscribe(_on_wifi_status_change)
 
 
 def _run_bluetooth_settings_menu():

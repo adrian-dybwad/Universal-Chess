@@ -37,6 +37,10 @@ def node_to_entry(
         block, falling back to the IconMenuEntry defaults.
     """
     style = node.get("epaper", {})
+    # border_width is forwarded only when the node declares it, so entries that
+    # omit it are constructed exactly as before (IconMenuEntry's own default
+    # applies) rather than being pinned to a guessed value here.
+    extra = {"border_width": style["border_width"]} if "border_width" in style else {}
     return IconMenuEntry(
         key=node.get("key", node["id"]),
         label=label if label is not None else node.get("label", ""),
@@ -50,6 +54,7 @@ def node_to_entry(
         font_size=style.get("font_size", 16),
         bold=style.get("bold", False),
         help=node.get("help"),
+        **extra,
     )
 
 

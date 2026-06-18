@@ -21,6 +21,7 @@ from universalchess.menus.engine import (
     is_enabled,
     build_rows,
     dispatch,
+    dispatch_row,
 )
 
 
@@ -51,8 +52,11 @@ class _FakeContext:
     def provide(self, provider):
         return list(self._providers.get(provider, []))
 
-    def run_action(self, name):
-        self.actions_run.append(name)
+    def run_action(self, name, arg=None):
+        # Record (name, arg) only when an item arg is supplied (actionable
+        # provider rows); plain action nodes still record the bare name so the
+        # existing assertions hold.
+        self.actions_run.append((name, arg) if arg is not None else name)
         return None
 
     def compute(self, name, node):
@@ -325,6 +329,36 @@ def test_build_rows_expands_dynamic_provider():
     rows = build_rows("c", ctx, platform="board", catalog=_Catalog())
 
     assert rows == provided
+    # No itemAction declared -> provider rows stay non-actionable (dispatch via
+    # their node, which here is empty, i.e. display-only).
+    assert all(r.action is None for r in rows)
+
+
+def test_build_rows_tags_provider_rows_with_item_action():
+    """A dynamic node's ``itemAction`` is stamped onto each provider row.
+
+    Why this test exists: runtime-listed items (e.g. scanned WiFi networks) have
+    no static catalog node, so selecting one must route through the container's
+    declared item action carrying the row's own key. How a regression manifests:
+    the rows come back with ``action=None`` and selecting a network does nothing.
+    A row that already set its own action must be left untouched (the second row),
+    so a provider can override per item.
+    """
+    container = {"id": "c", "type": "menu", "children": ["d"]}
+    nodes = {"d": {"id": "d", "type": "dynamic", "provider": "nets", "itemAction": "wifi_connect"}}
+    provided = [
+        MenuRow(key="HomeNet", label="HomeNet", icon="wifi_strong"),
+        MenuRow(key="__none__", label="No networks", icon="wifi_disconnected", selectable=False, action="noop"),
+    ]
+
+    class _Catalog:
+        def children(self, cid):
+            return [nodes[c] for c in container["children"]]
+
+    rows = build_rows("c", _FakeContext(providers={"nets": provided}), platform="board", catalog=_Catalog())
+
+    assert rows[0].action == "wifi_connect"  # tagged from itemAction
+    assert rows[1].action == "noop"  # pre-set action preserved
 
 
 # -- dispatch ---------------------------------------------------------------
@@ -474,3 +508,37 @@ def test_dispatch_unknown_type_raises():
     """
     with pytest.raises(ValueError, match="unsupported menu node type"):
         dispatch({"id": "x", "type": "mystery"}, _ctx())
+
+
+# -- dispatch_row (actionable provider items) -------------------------------
+
+def test_dispatch_row_runs_item_action_with_row_key():
+    """An actionable provider row runs its action with its own key as the argument.
+
+    Why this test exists: a scanned network has no static catalog node; selecting
+    it must call the item action (``wifi_connect``) parameterized by the row's
+    identity (its SSID/key) so the right network is acted on. How a regression
+    manifests: the action is called without the key (wrong/zero network) or the
+    outcome does not report the action, so the connect never targets the choice.
+    """
+    ctx = _FakeContext()
+    row = MenuRow(key="HomeNet", label="HomeNet", icon="wifi_strong", action="wifi_connect")
+    outcome = dispatch_row(row, ctx)
+    assert outcome == DispatchOutcome(kind="action", action="wifi_connect")
+    assert ctx.actions_run == [("wifi_connect", "HomeNet")]
+
+
+def test_dispatch_row_without_action_falls_back_to_node_dispatch():
+    """A row with no item action dispatches through its catalog node as usual.
+
+    Why this test exists: tagging some rows with item actions must not change the
+    normal path -- a toggle row still flips its bound value. How a regression
+    manifests: dispatch_row ignores the node, so ordinary catalog rows become
+    inert.
+    """
+    node = {"id": "t", "type": "toggle", "bind": {"store": "sound", "key": "enabled"}}
+    ctx = _FakeContext(state={"sound": {"enabled": False}})
+    row = MenuRow(key="t", label="t", icon="", node=node)
+    outcome = dispatch_row(row, ctx)
+    assert outcome.kind == "stay"
+    assert ctx.get("sound", "enabled") is True

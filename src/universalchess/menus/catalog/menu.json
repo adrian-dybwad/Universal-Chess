@@ -321,6 +321,62 @@
     },
 
     {
+      "id": "wifi",
+      "type": "menu",
+      "label": "WiFi",
+      "help": "WiFi status, scan for networks, and enable or disable the radio.",
+      "platforms": ["board"],
+      "children": ["wifi.status", "wifi.scan", "wifi.enabled"]
+    },
+    {
+      "id": "wifi.status",
+      "key": "Info",
+      "type": "dynamic",
+      "provider": "wifi_status",
+      "help": "Current WiFi connection status and signal strength.",
+      "platforms": ["board"],
+      "epaper": { "selectable": false, "height_ratio": 1.8, "icon_size": 52, "layout": "vertical", "font_size": 12, "border_width": 1 }
+    },
+    {
+      "id": "wifi.scan",
+      "key": "Scan",
+      "type": "action",
+      "action": "wifi_scan",
+      "label": "Scan",
+      "icon": "wifi",
+      "help": "Scan for available wireless networks and connect.",
+      "platforms": ["board"],
+      "epaper": { "height_ratio": 0.9, "layout": "horizontal", "font_size": 14, "icon_size": 28 }
+    },
+    {
+      "id": "wifi.enabled",
+      "key": "Toggle",
+      "type": "toggle",
+      "bind": { "store": "wifi", "key": "enabled" },
+      "label": "{fn:wifi_enable_state}",
+      "icon": { "true": "timer_checked", "false": "timer" },
+      "help": "Enable or disable the WiFi radio.",
+      "platforms": ["board"],
+      "epaper": { "height_ratio": 0.7, "layout": "horizontal", "font_size": 14 }
+    },
+    {
+      "id": "wifi.networks",
+      "type": "menu",
+      "label": "Networks",
+      "help": "Wireless networks found by the last scan.",
+      "platforms": ["board"],
+      "children": ["wifi.networks.list"]
+    },
+    {
+      "id": "wifi.networks.list",
+      "type": "dynamic",
+      "provider": "wifi_networks",
+      "itemAction": "wifi_connect",
+      "help": "Select a network to connect; secured networks prompt for a password.",
+      "platforms": ["board"]
+    },
+
+    {
       "id": "system",
       "type": "menu",
       "label": "System",

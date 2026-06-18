@@ -21,7 +21,7 @@ from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.managers.menu import MenuSelection
 from universalchess.menus.catalog.entry_builder import node_to_entry
 from universalchess.menus.catalog.loader import get_catalog
-from universalchess.menus.engine import MenuRow, build_rows, dispatch
+from universalchess.menus.engine import MenuRow, build_rows, dispatch, dispatch_row
 
 
 class _Store:
@@ -87,8 +87,15 @@ class BoardMenuContext:
     def provide(self, provider: str) -> List[MenuRow]:
         return self._providers[provider]()
 
-    def run_action(self, name: str) -> Optional[str]:
-        return self._actions[name]()
+    def run_action(self, name: str, arg: Optional[str] = None) -> Optional[str]:
+        """Invoke a registered action, optionally with an item argument.
+
+        ``arg`` is supplied only for actionable provider rows (e.g. a scanned
+        SSID), where the handler is called with that key; ordinary action nodes
+        pass no argument, so their zero-arg handlers keep working unchanged.
+        """
+        handler = self._actions[name]
+        return handler(arg) if arg is not None else handler()
 
     def compute(self, name: str, node: dict) -> str:
         return self._values[name](node)
@@ -215,10 +222,12 @@ def run_engine_menu(
         return [_row_to_entry(row) for row in rows]
 
     def handle_selection(selection: MenuSelection) -> Optional[MenuSelection]:
-        node = next((row.node for row in state["rows"] if row.key == selection.key and row.node), None)
-        if node is None:
-            return None  # provider row without behavior, or unknown key -> redraw
-        outcome = dispatch(node, ctx)
+        row = next((r for r in state["rows"] if r.key == selection.key), None)
+        if row is None or (not row.action and not row.node):
+            # Unknown key (e.g. an injected WIFI_REFRESH) or a display-only
+            # provider row (a readout): nothing to dispatch, so redraw.
+            return None
+        outcome = dispatch_row(row, ctx)
 
         if outcome.kind == "stay":
             return None

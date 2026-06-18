@@ -8,8 +8,7 @@ from .engine_menu import (
 )
 from .chromecast_menu import handle_chromecast_menu
 from .inactivity_menu import handle_inactivity_timeout
-from .wifi_menu import handle_wifi_settings_menu
-from .wifi_menu import handle_wifi_scan_menu
+from .wifi_menu import wifi_status_icon, wifi_signal_icon, wifi_network_rows
 from .bluetooth_menu import (
     handle_bluetooth_menu,
     handle_keyboard_pairing_menu,
@@ -48,8 +47,9 @@ __all__ = [
     "handle_positions_menu",
     "handle_chromecast_menu",
     "handle_inactivity_timeout",
-    "handle_wifi_settings_menu",
-    "handle_wifi_scan_menu",
+    "wifi_status_icon",
+    "wifi_signal_icon",
+    "wifi_network_rows",
     "handle_bluetooth_menu",
     "handle_keyboard_pairing_menu",
     "handle_paired_devices_menu",
