@@ -667,7 +667,18 @@ class UpdateService:
         return self._installing
     
     def get_status_dict(self) -> dict:
-        """Get status as dictionary (for API/UI)."""
+        """Get status as dictionary (for API/UI).
+
+        ``is_installing`` is taken from :meth:`is_installing` (which queries the
+        transient install unit), NOT the in-memory ``self._installing`` flag.
+        The install runs detached in a systemd unit and may be launched by the
+        board process while the web process serves this status; the in-memory
+        flag is per-process and never reflects an install started elsewhere or
+        before a page refresh. Reading the unit makes the in-progress state
+        correct cross-process and after a reload, so the UI can show "installing"
+        instead of re-offering an Install button that collides with the running
+        install.
+        """
         return {
             "channel": self._state.channel,
             "auto_update": self._state.auto_update,
@@ -677,7 +688,7 @@ class UpdateService:
             "last_check": self._state.last_check,
             "is_checking": self._checking,
             "is_downloading": self._downloading,
-            "is_installing": self._installing,
+            "is_installing": self.is_installing(),
         }
 
 

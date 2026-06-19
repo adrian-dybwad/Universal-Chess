@@ -1261,8 +1261,23 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
           )}
         </div>
 
+        {/* An install is already running (possibly started before this page
+            loaded, or from the board). Show progress and suppress the Install /
+            Download actions below so a second press cannot collide with the
+            in-flight install. is_installing comes from the transient install
+            unit, so it is correct after a refresh and across processes. */}
+        {status.is_installing && (
+          <Card variant="primary" className="mb-4">
+            <strong>Update in progress…</strong>
+            <p className="text-muted mt-2">
+              An update is installing. The board will restart when it completes;
+              this page may briefly disconnect. Please don&apos;t start another install.
+            </p>
+          </Card>
+        )}
+
         {/* Update Status */}
-        {status.has_pending_update && (
+        {status.has_pending_update && !status.is_installing && (
           <Card variant="primary" className="mb-4">
             <strong>Update Ready to Install!</strong>
             <p className="text-muted mt-2">
@@ -1279,7 +1294,7 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
           </Card>
         )}
 
-        {status.available_version && !status.has_pending_update && (
+        {status.available_version && !status.has_pending_update && !status.is_installing && (
           <Card variant="muted" className="mb-4">
             <strong>Update Available: v{status.available_version}</strong>
             <Button

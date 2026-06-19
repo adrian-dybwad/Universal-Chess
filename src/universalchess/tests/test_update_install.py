@@ -234,6 +234,31 @@ class TestIsInstalling:
             assert service.is_installing() is False
 
 
+class TestStatusDict:
+    """get_status_dict must report install progress from the transient unit.
+
+    This is what the web/board poll reads. Reporting it from the systemd unit
+    (not an in-memory flag) is what makes an in-flight install survive a page
+    refresh and be visible in the web process, which did not launch the install.
+    """
+
+    def test_is_installing_true_when_unit_active(self, service):
+        # Regression (the reported bug): get_status_dict previously returned the
+        # in-memory _installing flag, which is never set True, so a refresh -- or
+        # the web process -- saw is_installing False and re-showed the Install
+        # button, and a second press collided with the still-running install.
+        with patch.object(us.subprocess, "run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="active\n", stderr="")
+            assert service.get_status_dict()["is_installing"] is True
+
+    def test_is_installing_false_when_unit_inactive(self, service):
+        # When no install unit is active the status must report not-installing so
+        # the UI leaves the in-progress state (and offers install again).
+        with patch.object(us.subprocess, "run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=3, stdout="inactive\n", stderr="")
+            assert service.get_status_dict()["is_installing"] is False
+
+
 class TestInstallPending:
     """install_pending_update routes through install_update."""
 
