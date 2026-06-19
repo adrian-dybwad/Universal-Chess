@@ -229,6 +229,39 @@ def test_release_drops_active_advertisement(engine, recorder):
     assert recorder.last_payload["adv_state"] == ADV_UNKNOWN
 
 
+def test_stack_defaults_to_unknown_and_is_in_snapshot(engine):
+    # The stack sub-block must always be present (the web/device read it
+    # unconditionally) and default to unknown=not-patched before the marker is
+    # read. Regression: a missing 'stack' key would KeyError the consumers, or a
+    # default of patched would nag every board.
+    snap = engine.to_dict()
+    assert snap["stack"]["active"] == "unknown"
+    assert snap["stack"]["patched"] is False
+
+
+def test_set_stack_status_broadcasts_once_and_dedupes(engine, recorder):
+    # Setting the patched stack must emit exactly one broadcast carrying the new
+    # value, and re-setting the identical value must NOT broadcast (no churn on
+    # the live web view). Failure: zero broadcasts (web never learns) or a
+    # second broadcast on the duplicate set.
+    patched = {
+        "active": "patched",
+        "patched": True,
+        "base_version": "5.82-1.1+rpt1",
+        "fix": "bluez 2a6968b",
+        "reason": "kernel ext-adv-data validation",
+        "applied_at": "2026-06-19T10:00:00Z",
+    }
+    before = len(recorder.calls)
+    engine.set_stack_status(patched)
+    assert len(recorder.calls) == before + 1
+    assert recorder.last_payload["stack"]["patched"] is True
+    assert recorder.last_payload["stack"]["base_version"] == "5.82-1.1+rpt1"
+
+    engine.set_stack_status(patched)
+    assert len(recorder.calls) == before + 1
+
+
 def test_no_broadcast_when_no_sink():
     # The engine must be usable without a broadcast sink (tools/tests); mutating
     # it then simply holds state with no IPC. Regression: a None sink raising

@@ -151,19 +151,46 @@ validation first, and no released BlueZ yet carries the corresponding fix.
   which pulled the newer kernel. That instruction is a contributing factor and
   should be revisited.
 
-## Candidate Solutions (not yet applied)
+## Resolution — implemented (BlueZ root-cause fix, self-healing)
 
-1. **Patch BlueZ (root-cause fix).** Backport the one-line upstream change
-   (`sizeof(*cp)`) onto `5.82-1.1+rpt1`, rebuild the package, install, and
-   `apt-mark hold bluez`. Keeps the kernel security patch. Cost: maintaining a
-   forked package until Raspberry Pi ships a BlueZ ≥ the fix.
-2. **Pin the kernel.** Hold a `6.12.x` image (proven working) and stop the
-   blanket `apt upgrade -y`. Simple and proven, but stays on an older kernel
-   without the validation patch and is brittle once the patch is backported to
-   6.12.x.
+Option 1 (patch BlueZ with upstream's own `sizeof(*cp)` change) was chosen and
+implemented as a **self-healing substitution** rather than a forked, held
+package, so the board keeps receiving OS/kernel security updates and the patch
+**auto-retires** once the distribution ships a fixed BlueZ. See
+[bluez-self-heal.md](./bluez-self-heal.md) for the full design and operations.
 
-Recommended: option 1 (matches upstream's own fix) for boards that must run the
-newer kernel; option 2 as an immediate stopgap.
+In short, on package install/upgrade (and after any apt run, via an APT hook),
+`scripts/bluez-selfheal`:
+
+1. probes whether the **stock** `bluetoothd` can register an LE advertisement;
+2. if it can, ensures stock is in place and records `stack=stock` (auto-retire);
+3. if it cannot, builds a `bluetoothd` from **this OS's own bluez source** with
+   the one-line `sizeof(*cp)` fix, `dpkg-divert`s the stock binary aside,
+   installs the patched one, re-probes, and records `stack=patched`.
+
+The patch state is surfaced to the operator: the web Bluetooth card and the
+device Bluetooth status screen warn when a patched (non-stock) stack is active
+(it forgoes distribution security updates until rebuilt/retired).
+
+Why not the alternatives: a forked **held** package (`apt-mark hold bluez`)
+freezes BlueZ and silently drops its security updates; **pinning the kernel** to
+`6.12.x` stays on an older kernel without the validation patch and is brittle
+once the patch is backported. The functional, version-agnostic self-heal avoids
+both traps.
+
+### Verified fixed (kernel 6.18.34)
+
+On a board running `6.18.34+rpt-rpi-v7` (the broken baseline), after the patched
+`bluetoothd` was installed, registering an LE advertisement succeeds and `btmon`
+shows the previously-failing command completing:
+
+```
+Add Extended Advertising Data (0x0055) plen 1
+    Status: Success (0x00)
+    Instance: 1
+```
+
+(Compare the stock binary on the same kernel: `Invalid Parameters (0x0d)`.)
 
 ## Reproduction
 

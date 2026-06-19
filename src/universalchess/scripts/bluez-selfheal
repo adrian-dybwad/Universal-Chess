@@ -1,0 +1,355 @@
+#!/bin/bash
+# bluez-selfheal -- keep BLE advertising working across OS/kernel updates by
+# substituting a minimally-patched bluetoothd ONLY when the stock one is broken,
+# and retiring that substitution automatically once the distribution ships the
+# fix. Runs at package install/upgrade (scheduled AFTER apt releases its lock),
+# never as part of normal boot. See docs/bluetooth/bluez-self-heal.md.
+#
+# THE PROBLEM
+#   Kernel 6.18 (commit d3f7d17960ed) added length validation for the
+#   "Add Extended Advertising Data" MGMT command. Released BlueZ 5.82 builds that
+#   command with the WRONG struct size (sizeof(struct mgmt_cp_add_advertising),
+#   11 bytes, instead of sizeof(struct mgmt_cp_add_ext_adv_data), 3 bytes), so it
+#   sends 8 trailing zero bytes. The new kernel rejects it (Invalid Parameters,
+#   0x0d) and the board becomes undiscoverable to phone chess apps. The one-line
+#   fix exists upstream (BlueZ 2a6968b4) but is not in any released version.
+#
+# THE STRATEGY (functional, not version-sniffing)
+#   Version strings differ across distros and the fix may be backported, so we do
+#   NOT match versions. We ask the only question that matters -- "does registering
+#   a BLE advert succeed on THIS kernel + bluetoothd?" -- via bluez-advertising-probe:
+#     1. With the stock bluetoothd in place, probe.
+#     2. PASS  -> the OS is fine (or already carries the fix); retire any prior
+#                 diversion and record stack=stock.  <-- AUTO-RETIRE
+#     3. FAIL  -> build a patched bluetoothd from THIS OS's OWN bluez source
+#                 (maximum ABI compatibility -- never a foreign prebuilt binary),
+#                 dpkg-divert the stock one aside, install the patched one,
+#                 re-probe; PASS -> record stack=patched, FAIL -> roll back to
+#                 stock and record stack=stock (degraded; the failure surfaces
+#                 separately as ADV_FAILED in the UI).
+#
+# WHY NOT EVERY BOOT
+#   A dpkg-divert + binary persist on disk across reboots, so re-applying per boot
+#   is wasted work. The board's BleManager already probes advertising at service
+#   start and shows ADV_FAILED, which is the per-boot safety net. This script only
+#   needs to run when the relevant inputs change: our package install/upgrade and
+#   any apt run that could touch bluez or the kernel. It is also a FAST no-op when
+#   the bluez version and kernel are unchanged since the last successful run.
+set -u
+
+PKG_NAME="bluez"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+PROBE="${SCRIPT_DIR}/bluez-advertising-probe"
+
+STATE_DIR="/var/lib/universalchess"
+MARKER="${STATE_DIR}/bluez-patch.json"
+CACHE_DIR="${STATE_DIR}/bluez"
+LOCK="${STATE_DIR}/bluez-selfheal.lock"
+LOG_TAG="bluez-selfheal"
+
+# Identify the fix so the UI/marker can show provenance.
+FIX_REF="bluez 2a6968b4: advertising: use sizeof(*cp) for Add Ext Adv Data"
+FIX_REASON="kernel 6.18 ext-adv-data length validation rejects stock BlueZ 5.82"
+
+# Logs go to stderr (and syslog). Critical: several functions "return" a value
+# by echoing it to stdout (e.g. build_patched echoes the binary path), so log
+# output must never land on stdout or it pollutes those captured values.
+log() { logger -t "$LOG_TAG" -- "$*" 2>/dev/null || true; echo "[$LOG_TAG] $*" >&2; }
+
+# ---------------------------------------------------------------------------
+# Environment discovery
+# ---------------------------------------------------------------------------
+
+# Resolve the bluetoothd path from the running unit, falling back to the two
+# common locations so this works regardless of how the distro lays it out.
+detect_bluetoothd() {
+    local path
+    path="$(systemctl show -p ExecStart --value bluetooth 2>/dev/null \
+        | sed -n 's/.*path=\([^ ;]*bluetoothd\).*/\1/p' | head -n1)"
+    if [ -n "$path" ] && [ -e "$path" ]; then echo "$path"; return; fi
+    for c in /usr/libexec/bluetooth/bluetoothd /usr/lib/bluetooth/bluetoothd; do
+        [ -e "$c" ] && { echo "$c"; return; }
+    done
+    echo "/usr/libexec/bluetooth/bluetoothd"
+}
+
+bluez_version() { dpkg-query -W -f='${Version}' "$PKG_NAME" 2>/dev/null || echo "unknown"; }
+arch()          { dpkg --print-architecture 2>/dev/null || uname -m; }
+kernel_release(){ uname -r; }
+
+# ---------------------------------------------------------------------------
+# Marker (the source of truth the board reads; see managers/bluez_patch_status)
+# ---------------------------------------------------------------------------
+
+write_marker() {
+    # write_marker <active> <healthy> [base_version]
+    #   healthy=true  -> advertising was CONFIRMED working at decision time
+    #                    (stock probed OK, or patch probed OK). Only a healthy
+    #                    result lets the next run fast-skip.
+    #   healthy=false -> degraded (stock broken and patch could not be built /
+    #                    applied). The next run must re-evaluate, not skip.
+    local active="$1" healthy="$2" base="${3:-$(bluez_version)}"
+    mkdir -p "$STATE_DIR"
+    python3 - "$MARKER" "$active" "$healthy" "$base" "$FIX_REF" "$FIX_REASON" \
+             "$(kernel_release)" "$(arch)" <<'PY'
+import json, sys, datetime
+path, active, healthy, base, fix, reason, kernel, march = sys.argv[1:9]
+doc = {
+    "active": active,                      # stock | patched
+    "patched": active == "patched",
+    "healthy": healthy == "true",
+    "base_version": base if base != "unknown" else None,
+    "fix": fix if active == "patched" else None,
+    "reason": reason if active == "patched" else None,
+    "applied_at": datetime.datetime.now(datetime.timezone.utc).replace(
+        microsecond=0, tzinfo=None).isoformat() + "Z",
+    # Inputs this decision was made against; used for the fast no-op guard.
+    "checked_bluez_version": base,
+    "checked_kernel": kernel,
+    "arch": march,
+}
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(doc, fh, indent=2)
+PY
+    chmod 0644 "$MARKER" 2>/dev/null || true
+    log "marker: active=$active healthy=$healthy base=$base kernel=$(kernel_release)"
+}
+
+marker_field() {
+    # marker_field <key> -> value or empty
+    [ -f "$MARKER" ] || return 0
+    python3 - "$MARKER" "$1" <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    with open(sys.argv[1]) as fh:
+        print(json.load(fh).get(sys.argv[2], "") or "")
+except Exception:
+    pass
+PY
+}
+
+# ---------------------------------------------------------------------------
+# Probe + diversion primitives
+# ---------------------------------------------------------------------------
+
+restart_bluetooth() {
+    systemctl restart bluetooth 2>/dev/null || true
+    # Give bluetoothd a moment to claim org.bluez before probing.
+    sleep 3
+}
+
+restart_board() {
+    # Restarting bluetoothd drops every advertisement the board service had
+    # registered over D-Bus, and BleManager does not re-register on a bluetoothd
+    # restart -- so after we change the stack the board would sit there NOT
+    # advertising until something restarts it. Restart it here so it re-registers
+    # against the now-current bluetoothd. try-restart only acts if it is running;
+    # --no-block so a heal triggered from an apt hook does not wait on it.
+    systemctl try-restart --no-block universal-chess.service 2>/dev/null || true
+}
+
+probe() {
+    # 0 if advertising registers, non-zero otherwise.
+    [ -x "$PROBE" ] || { log "probe helper missing at $PROBE"; return 2; }
+    python3 "$PROBE"
+}
+
+is_diverted() {
+    local bd="$1"
+    dpkg-divert --list "$bd" 2>/dev/null | grep -q "diversion of $bd"
+}
+
+retire_patch() {
+    # Restore the stock bluetoothd (remove our diversion + binary). Idempotent.
+    local bd="$1" stock="${1}.stock"
+    if is_diverted "$bd"; then
+        log "retiring patched bluetoothd; restoring stock"
+        # Remove our installed binary so --rename can move the stock back.
+        rm -f "$bd"
+        dpkg-divert --remove --rename --divert "$stock" "$bd" || \
+            log "WARNING: dpkg-divert --remove failed"
+    fi
+}
+
+apply_patch() {
+    # Divert stock aside and install the patched binary from $1. Idempotent, and
+    # atomic on failure: if the install fails after the diversion was added, the
+    # diversion is rolled back so the canonical path is never left without a
+    # binary (which would leave Bluetooth unable to start at all).
+    local patched="$1" bd="$2" stock="${2}.stock"
+    if ! is_diverted "$bd"; then
+        dpkg-divert --add --rename --divert "$stock" "$bd" || {
+            log "ERROR: dpkg-divert --add failed"; return 1; }
+    fi
+    if ! install -m 0755 "$patched" "$bd"; then
+        log "ERROR: install patched failed; rolling back diversion"
+        retire_patch "$bd"
+        return 1
+    fi
+    log "patched bluetoothd installed at $bd (stock at $stock)"
+}
+
+# ---------------------------------------------------------------------------
+# Build the patched bluetoothd from THIS OS's own bluez source
+# ---------------------------------------------------------------------------
+
+# Enable deb-src for whatever repos are configured (best-effort, idempotent) so
+# `apt-get source bluez` works. Mirrors deb822 .sources and classic .list lines.
+enable_deb_src() {
+    local out="/etc/apt/sources.list.d/uc-bluez-src.sources" had=0
+    : > "${out}.tmp"
+    local f
+    for f in /etc/apt/sources.list.d/*.sources; do
+        [ -e "$f" ] || continue
+        if grep -qi '^Types:.*deb-src' "$f"; then had=1; continue; fi
+        if grep -qi '^Types:.*deb' "$f"; then
+            sed 's/^\(Types:\).*/\1 deb-src/I' "$f" >> "${out}.tmp"
+            echo >> "${out}.tmp"
+        fi
+    done
+    if [ -s "${out}.tmp" ]; then mv "${out}.tmp" "$out"; else rm -f "${out}.tmp"; fi
+    # Classic single-line sources (older images).
+    if [ -f /etc/apt/sources.list ] && grep -q '^deb ' /etc/apt/sources.list \
+       && ! grep -q '^deb-src ' /etc/apt/sources.list; then
+        sed -n 's/^deb /deb-src /p' /etc/apt/sources.list \
+            > /etc/apt/sources.list.d/uc-bluez-src.list 2>/dev/null || true
+    fi
+    [ "$had" = 1 ] || log "enabled deb-src for bluez source"
+}
+
+build_patched() {
+    # Echo the path to a (cached or freshly built) patched bluetoothd, or fail.
+    local ver arch_ cached work src apt_lock
+    ver="$(bluez_version)"; arch_="$(arch)"
+    cached="${CACHE_DIR}/bluetoothd-${ver}-${arch_}"
+    if [ -x "$cached" ]; then log "using cached patched binary $cached"; echo "$cached"; return 0; fi
+
+    mkdir -p "$CACHE_DIR"
+    apt_lock="-o DPkg::Lock::Timeout=300"
+
+    log "building patched bluetoothd from distro source (bluez $ver / $arch_)"
+    enable_deb_src
+    apt-get $apt_lock update >/dev/null 2>&1 || log "WARNING: apt-get update failed"
+    if ! apt-get $apt_lock build-dep -y "$PKG_NAME" >/dev/null 2>&1; then
+        log "ERROR: build-dep failed (offline or deb-src unavailable)"; return 1
+    fi
+
+    work="$(mktemp -d /tmp/uc-bluez.XXXXXX)" || return 1
+    ( cd "$work" && apt-get $apt_lock source "$PKG_NAME" >/dev/null 2>&1 ) || {
+        log "ERROR: apt-get source bluez failed"; rm -rf "$work"; return 1; }
+    src="$(find "$work" -maxdepth 1 -type d -name 'bluez-*' | head -n1)"
+    [ -d "$src" ] || { log "ERROR: bluez source dir not found"; rm -rf "$work"; return 1; }
+
+    # The fix: both param_len lines read sizeof(struct mgmt_cp_add_advertising);
+    # replace with sizeof(*cp). In refresh_legacy_adv cp IS mgmt_cp_add_advertising
+    # (no-op, same size); in add_adv_params_callback cp is mgmt_cp_add_ext_adv_data
+    # (the fix). Content-based (not line-numbered) so it survives source revisions.
+    if ! grep -q 'sizeof(struct mgmt_cp_add_advertising) + adv_data_len' "$src/src/advertising.c"; then
+        log "ERROR: advertising.c does not contain the expected pattern; aborting"
+        rm -rf "$work"; return 1
+    fi
+    sed -i 's/sizeof(struct mgmt_cp_add_advertising) + adv_data_len/sizeof(*cp) + adv_data_len/g' \
+        "$src/src/advertising.c"
+
+    (
+        cd "$src" || exit 1
+        # BUILT_SOURCES (the lib/bluetooth header symlink + src/builtin.h) are only
+        # generated for the default target, so create/generate them before building
+        # the daemon target directly.
+        [ -e lib/bluetooth ] || ln -sf . lib/bluetooth
+        debian/rules override_dh_auto_configure >/dev/null 2>&1 || ./configure >/dev/null 2>&1 || exit 1
+        make src/builtin.h obexd/src/builtin.h >/dev/null 2>&1 || true
+        make -j"$(nproc)" src/bluetoothd >/dev/null 2>&1 || exit 1
+    ) || { log "ERROR: compile failed"; rm -rf "$work"; return 1; }
+
+    [ -x "$src/src/bluetoothd" ] || { log "ERROR: bluetoothd not produced"; rm -rf "$work"; return 1; }
+    install -m 0755 "$src/src/bluetoothd" "$cached"
+    rm -rf "$work"
+    log "built + cached patched binary at $cached"
+    echo "$cached"
+}
+
+# ---------------------------------------------------------------------------
+# Main decision
+# ---------------------------------------------------------------------------
+
+main() {
+    mkdir -p "$STATE_DIR"
+    # Serialize against concurrent apt-triggered runs; wait up to 10 min.
+    exec 9>"$LOCK"
+    flock -w 600 9 || { log "another self-heal run holds the lock; exiting"; exit 0; }
+
+    local bd ver kern active
+    bd="$(detect_bluetoothd)"
+    ver="$(bluez_version)"; kern="$(kernel_release)"
+
+    # Fast no-op: skip ONLY when the last decision was confirmed healthy AND the
+    # inputs (bluez version, kernel) are unchanged. A degraded marker
+    # (healthy=false, e.g. stock broken but patch could not be built) must NOT
+    # fast-skip -- it re-evaluates so a later online run can heal it.
+    if [ "$(marker_field healthy)" = "True" ] \
+       && [ "$(marker_field checked_bluez_version)" = "$ver" ] \
+       && [ "$(marker_field checked_kernel)" = "$kern" ]; then
+        active="$(marker_field active)"
+        if [ "$active" = "stock" ]; then
+            log "unchanged (bluez $ver, kernel $kern); stock healthy -- nothing to do"; exit 0
+        fi
+        if [ "$active" = "patched" ] && is_diverted "$bd"; then
+            log "unchanged (bluez $ver, kernel $kern); patch still applied -- nothing to do"; exit 0
+        fi
+        # active=patched but diversion gone (e.g. bluez reinstall): fall through.
+    fi
+
+    log "evaluating bluez $ver on kernel $kern (bluetoothd=$bd)"
+
+    # Always evaluate against STOCK first so the patch auto-retires when the
+    # distro catches up.
+    # From here on we restart bluetoothd at least once, dropping the board's
+    # advertisements; every terminal path therefore restarts the board service so
+    # it re-registers against the resulting bluetoothd.
+    retire_patch "$bd"
+    restart_bluetooth
+    if probe; then
+        log "stock bluetoothd advertises correctly -- no patch needed"
+        write_marker stock true "$ver"
+        restart_board
+        exit 0
+    fi
+    log "stock bluetoothd FAILS to advertise on this kernel -- patching"
+
+    local patched
+    patched="$(build_patched)" || {
+        log "ERROR: could not build patched bluetoothd; leaving stock in place"
+        write_marker stock false "$ver"
+        restart_board
+        exit 1
+    }
+
+    if ! apply_patch "$patched" "$bd"; then
+        write_marker stock false "$ver"
+        restart_board
+        exit 1
+    fi
+    restart_bluetooth
+    if probe; then
+        log "patched bluetoothd advertises correctly"
+        write_marker patched true "$ver"
+        restart_board
+        exit 0
+    fi
+
+    log "ERROR: patched bluetoothd still fails; rolling back to stock"
+    retire_patch "$bd"
+    restart_bluetooth
+    write_marker stock false "$ver"
+    restart_board
+    exit 1
+}
+
+case "${1:-run}" in
+    run)         main ;;
+    probe-only)  probe ;;                                  # diagnostics
+    retire)      retire_patch "$(detect_bluetoothd)"; restart_bluetooth; restart_board; write_marker stock false ;;
+    status)      cat "$MARKER" 2>/dev/null || echo "{}" ;;
+    *)           echo "usage: bluez-selfheal {run|probe-only|retire|status}" >&2; exit 2 ;;
+esac

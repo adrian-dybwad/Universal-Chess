@@ -29,6 +29,7 @@ import time
 from typing import Callable, Dict, List, Optional
 
 from universalchess.managers.ble_advertising_status import make_status
+from universalchess.managers.bluez_patch_status import unknown_status as stack_unknown_status
 
 # Event type used for the board -> web broadcast (over the game socket) and the
 # SSE message the web forwards. Kept here so the publisher and both consumers
@@ -105,6 +106,13 @@ class BluetoothStatusState:
         # OS-level connected devices, keyed by address so repeated signals
         # de-duplicate and a name that resolves later overwrites the address.
         self._devices: Dict[str, str] = {}
+
+        # Whether the board runs a patched (non-stock) bluetoothd. A static-ish
+        # system fact (set once at BLE bring-up from the self-heal marker), not
+        # an event stream, but carried in the same snapshot so the web and the
+        # device screen can warn about the deviation over the existing channel.
+        # Defaults to unknown (non-alarming) until the marker is read.
+        self._stack: dict = stack_unknown_status()
 
     # -- advertising registration ----------------------------------------
 
@@ -245,6 +253,21 @@ class BluetoothStatusState:
             }
         self._publish()
 
+    # -- bluetooth stack (patched vs stock) ------------------------------
+
+    def set_stack_status(self, status: dict) -> None:
+        """Record the active bluetoothd stack (patched vs stock).
+
+        Fed once at BLE bring-up from
+        :func:`universalchess.managers.bluez_patch_status.read_status`. Broadcasts
+        only on change so a re-set with the same value does not churn the web.
+        """
+        with self._lock:
+            changed = self._stack != status
+            self._stack = dict(status)
+        if changed:
+            self._publish()
+
     # -- derived state + serialization -----------------------------------
 
     def _derive_adv_state(self) -> str:
@@ -288,6 +311,7 @@ class BluetoothStatusState:
                     {"address": addr, "name": name}
                     for addr, name in self._devices.items()
                 ],
+                "stack": dict(self._stack),
             }
 
     def add_observer(self, callback: Callable[[], None]) -> None:

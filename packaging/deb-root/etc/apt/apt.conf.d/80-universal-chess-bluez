@@ -1,0 +1,13 @@
+// Universal Chess -- re-evaluate BLE advertising after any apt/dpkg run.
+//
+// A kernel or bluez update can break "Add Extended Advertising Data" (kernel
+// 6.18 length validation vs the released-BlueZ sizeof bug), or a later update
+// can ship the fix and make our patch unnecessary. After apt finishes, kick the
+// self-heal unit to re-check and apply/retire the patched bluetoothd as needed.
+//
+// --no-block returns immediately so this never deadlocks apt against itself; the
+// unit runs after apt exits, takes the dpkg lock with its own timeout, and is a
+// fast no-op when bluez + kernel are unchanged since the last successful run.
+DPkg::Post-Invoke {
+    "if [ -x /usr/bin/systemctl ]; then systemctl start --no-block universal-chess-bluez-selfheal.service || true; fi";
+};

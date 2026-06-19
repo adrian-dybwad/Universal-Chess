@@ -74,3 +74,37 @@ def test_pending_state_has_no_error_row():
 
     rows = _rows_by_key(engine.to_dict())
     assert "AdvertError" not in rows
+
+
+def test_patched_stack_adds_warning_row():
+    # When the board runs a substituted (non-stock) bluetoothd, a 'Stack' row
+    # must warn on the device (the operator can't see the web). Regression:
+    # dropping this row hides that the board forgoes distro security updates.
+    engine = BluetoothStatusState(broadcast=None)
+    engine.begin_advertising(1, ["DGT PEGASUS"])
+    engine.advertisement_registered()
+    engine.set_stack_status({
+        "active": "patched",
+        "patched": True,
+        "base_version": "5.82-1.1+rpt1",
+        "fix": "bluez 2a6968b",
+        "reason": "kernel ext-adv-data validation",
+        "applied_at": "2026-06-19T10:00:00Z",
+    })
+
+    rows = _rows_by_key(engine.to_dict())
+    assert "Stack" in rows
+    assert "5.82-1.1+rpt1" in rows["Stack"]["label"]
+    assert "security updates" in rows["Stack"]["label"]
+
+
+def test_stock_stack_has_no_warning_row():
+    # The complementary case: a stock (or unknown) stack must NOT add the warning
+    # row, so stock boards are not nagged. Manifests as a spurious 'Stack' row.
+    engine = BluetoothStatusState(broadcast=None)
+    engine.begin_advertising(1, ["DGT PEGASUS"])
+    engine.advertisement_registered()
+    engine.set_stack_status({"active": "stock", "patched": False})
+
+    rows = _rows_by_key(engine.to_dict())
+    assert "Stack" not in rows

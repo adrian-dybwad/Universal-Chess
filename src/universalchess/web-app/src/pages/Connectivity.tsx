@@ -59,6 +59,19 @@ interface BtLink {
   connected_since: number | null;
 }
 
+// Whether the board runs a patched (non-stock) bluetoothd. Mirrors the board's
+// managers/bluez_patch_status schema. Surfaced so the operator is warned that
+// the board is on a substituted binary that does not get distro security
+// updates until rebuilt/retired. patched=false (stock/unknown) shows nothing.
+interface BtStack {
+  active: 'stock' | 'patched' | 'unknown';
+  patched: boolean;
+  base_version: string | null;
+  fix: string | null;
+  reason: string | null;
+  applied_at: string | null;
+}
+
 interface BtStatus {
   enabled: boolean;
   paired: BtDevice[];
@@ -68,6 +81,7 @@ interface BtStatus {
   link?: BtLink;
   powered?: boolean;
   devices?: BtPeer[];
+  stack?: BtStack;
 }
 
 const EMULATOR_LABELS: Record<string, string> = {
@@ -515,6 +529,7 @@ function BluetoothCard() {
         peer?: BtPeer | null;
         connected_since?: number | null;
         devices?: BtPeer[];
+        stack?: BtStack;
       };
       try {
         data = JSON.parse(event.data);
@@ -540,6 +555,7 @@ function BluetoothCard() {
           },
           powered: data.powered,
           devices: data.devices,
+          stack: data.stack ?? prev?.stack,
         }));
         // A connect/disconnect changes the paired list's "connected" flags too;
         // refresh those (and the radio state) without waiting for the poll.
@@ -824,6 +840,20 @@ function BluetoothCard() {
             {status.advertising.error && (
               <div className="conn-status-detail text-muted">{status.advertising.error}</div>
             )}
+          </div>
+        )}
+
+        {status?.stack?.patched && (
+          <div className="conn-message conn-message--warn">
+            Running a patched (non-stock) Bluetooth stack
+            {status.stack.base_version ? ` based on BlueZ ${status.stack.base_version}` : ''}.
+            {status.stack.reason && (
+              <div className="conn-status-detail text-muted">{status.stack.reason}</div>
+            )}
+            <div className="conn-status-detail text-muted">
+              This binary does not receive distribution security updates until it is
+              rebuilt or retired by an app update.
+            </div>
           </div>
         )}
 

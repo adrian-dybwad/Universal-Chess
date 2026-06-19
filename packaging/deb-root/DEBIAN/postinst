@@ -309,6 +309,19 @@ else
     echo -e "::: Warning: bt-admin helper not found at $BT_ADMIN_HELPER"
 fi
 
+# BlueZ advertising self-heal: keep BLE advertising working across OS/kernel
+# updates by substituting a minimally-patched bluetoothd only when the stock one
+# is broken (kernel 6.18 ext-adv-data validation vs released-BlueZ sizeof bug),
+# and retiring it once the distro ships the fix. The heavy work (probe + build +
+# dpkg-divert) runs in a oneshot unit triggered AFTER apt releases its lock --
+# never inline here (apt/dpkg from a maintainer script would deadlock). See
+# scripts/bluez-selfheal and docs/bluetooth/bluez-self-heal.md.
+echo -e "::: Configuring BlueZ advertising self-heal"
+mkdir -p /var/lib/universalchess
+for s in bluez-selfheal bluez-advertising-probe; do
+    [ -f "${DGTCM_PATH}/scripts/$s" ] && chmod +x "${DGTCM_PATH}/scripts/$s"
+done
+
 # Setup nginx HTTPS proxy for web service
 echo -e "::: Setting up nginx proxy with TLS"
     if [ -f "${DGTCM_PATH}/scripts/enable-web-proxy.sh" ]; then
@@ -531,6 +544,16 @@ case $1 in
     removeLegacyRcLocal
     setPermissions
     
+    # Kick the BlueZ advertising self-heal (start --no-block returns immediately;
+    # the oneshot runs after this script exits and apt releases its lock). It is
+    # a fast no-op when bluez + kernel are unchanged, so this is cheap. On a fresh
+    # install the reboot below may interrupt a first-time build; the APT hook
+    # re-triggers it on the next apt run, and advertising failures surface as
+    # ADV_FAILED until then.
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl start --no-block universal-chess-bluez-selfheal.service 2>/dev/null || true
+    fi
+
     if [ -z "${2:-}" ]; then
         # Fresh install: reboot to apply new group memberships and start
         # services cleanly. Set DGTCM_SKIP_REBOOT=1 to suppress.

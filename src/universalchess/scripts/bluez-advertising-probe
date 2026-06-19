@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""Functional probe: can bluetoothd actually register a BLE advertisement?
+
+This is the signal the bluez self-heal decision is built on. Rather than sniff
+BlueZ/kernel *version strings* (which differ per distro and where the fix may be
+backported), we ask the only question that matters: does registering an LE
+advertisement over the BlueZ D-Bus API succeed on this exact kernel + bluetoothd?
+
+It registers one minimal ``LEAdvertisement1`` and reports the result:
+
+* exit 0  + ``PROBE_RESULT=PASS``  -> advertising works (phone apps can discover)
+* exit 1  + ``PROBE_RESULT=FAIL``  -> BlueZ rejected it (the regression: kernel
+                                      6.18 ext-adv-data length validation vs the
+                                      released-BlueZ sizeof bug)
+* exit 2  + ``PROBE_RESULT=ERROR`` -> could not run the probe (no adapter / bus)
+
+Kept dependency-light (python3-dbus + GLib, already on the board) and bounded by
+a hard timeout so a wedged controller cannot hang the self-heal.
+"""
+
+import sys
+
+import dbus
+import dbus.service
+import dbus.mainloop.glib
+from gi.repository import GLib
+
+_BLUEZ = "org.bluez"
+_ADV_IFACE = "org.bluez.LEAdvertisement1"
+_PROP_IFACE = "org.freedesktop.DBus.Properties"
+_MGR_IFACE = "org.bluez.LEAdvertisingManager1"
+_ADAPTER = "/org/bluez/hci0"
+_PATH = "/org/bluez/ucselfheal/probe"
+_TIMEOUT_SECONDS = 10
+
+
+class _Advertisement(dbus.service.Object):
+    """Minimal connectable LE peripheral advert (name only) for the probe."""
+
+    @dbus.service.method(_PROP_IFACE, in_signature="s", out_signature="a{sv}")
+    def GetAll(self, interface):
+        if interface != _ADV_IFACE:
+            raise dbus.exceptions.DBusException(
+                "org.bluez.Error.InvalidArguments", "unknown interface"
+            )
+        return {
+            "Type": dbus.String("peripheral"),
+            "LocalName": dbus.String("UC-SELFHEAL-PROBE"),
+        }
+
+    @dbus.service.method(_ADV_IFACE, in_signature="", out_signature="")
+    def Release(self):
+        pass
+
+
+def main() -> int:
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+    try:
+        bus = dbus.SystemBus()
+        manager = dbus.Interface(bus.get_object(_BLUEZ, _ADAPTER), _MGR_IFACE)
+    except dbus.exceptions.DBusException as exc:
+        print(f"PROBE_RESULT=ERROR {exc}")
+        return 2
+
+    advert = _Advertisement(bus, _PATH)
+    loop = GLib.MainLoop()
+    outcome = {"code": 2}
+
+    def on_registered():
+        print("PROBE_RESULT=PASS")
+        outcome["code"] = 0
+        # Release immediately so the probe leaves no advert behind.
+        try:
+            manager.UnregisterAdvertisement(_PATH)
+        except dbus.exceptions.DBusException:
+            pass
+        loop.quit()
+
+    def on_error(exc):
+        print(f"PROBE_RESULT=FAIL {exc}")
+        outcome["code"] = 1
+        loop.quit()
+
+    manager.RegisterAdvertisement(
+        _PATH, {}, reply_handler=on_registered, error_handler=on_error
+    )
+    # Hard ceiling: a wedged controller must not hang the self-heal.
+    GLib.timeout_add_seconds(_TIMEOUT_SECONDS, loop.quit)
+    loop.run()
+
+    if outcome["code"] == 2:
+        print("PROBE_RESULT=ERROR timed out with no reply")
+    try:
+        manager.UnregisterAdvertisement(_PATH)
+    except dbus.exceptions.DBusException:
+        pass
+    return outcome["code"]
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -373,7 +373,14 @@ class BleManager:
             mainloop: Optional GLib mainloop. If not provided, creates one.
         """
         log.info("[BleManager] Starting...")
-        
+
+        # Record whether this board runs a patched (non-stock) bluetoothd so the
+        # web card and device menu can warn about the deviation. Read once at
+        # bring-up from the self-heal marker (written at package install, not per
+        # boot); read_status never raises, so a missing/bad marker is harmless.
+        from universalchess.managers.bluez_patch_status import read_status
+        self._status_state.set_stack_status(read_status())
+
         try:
             # Configure adapter security
             log.info("[BleManager] Configuring adapter security...")

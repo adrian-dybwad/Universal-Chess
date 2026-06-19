@@ -65,6 +65,11 @@
   color: #dc2626;
 }
 
+.conn-message--warn {
+  background: rgba(217, 119, 6, 0.12);
+  color: #b45309;
+}
+
 .conn-list {
   margin-top: var(--space-3);
 }

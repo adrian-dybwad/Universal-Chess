@@ -1,0 +1,22 @@
+[Unit]
+# Keeps BLE advertising working across OS/kernel updates by substituting a
+# minimally-patched bluetoothd ONLY when the stock one is broken, and retiring
+# it once the distro ships the fix. See scripts/bluez-selfheal and
+# docs/bluetooth/bluez-self-heal.md. Triggered (start --no-block) by our package
+# postinst and by the APT hook 80-universal-chess-bluez after apt runs -- NOT a
+# boot-time job. The script is a fast no-op when bluez + kernel are unchanged.
+Description=Universal Chess BlueZ advertising self-heal (apply/retire pre-release fix)
+Documentation=file:///opt/universalchess/../docs/bluetooth/bluez-self-heal.md
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+Type=oneshot
+# A first-time build from distro source on a Pi Zero can take many minutes; do
+# not let systemd time it out mid-compile.
+TimeoutStartSec=2400
+ExecStart=/opt/universalchess/scripts/bluez-selfheal run
+# Best-effort: a self-heal failure must never block the rest of an apt run or
+# leave a failed unit nagging; the script rolls back to stock on any failure and
+# the breakage still surfaces in the UI as ADV_FAILED.
+SuccessExitStatus=0 1

@@ -12,6 +12,7 @@ from typing import List
 
 from universalchess.managers.ble_advertising_status import failure_label
 from universalchess.managers.bluetooth_status_state import ADV_FAILED
+from universalchess.managers.bluez_patch_status import warning_label as stack_warning_label
 
 
 def bluetooth_status_menu_rows(snapshot: dict, status_label: str) -> List[dict]:
@@ -24,7 +25,10 @@ def bluetooth_status_menu_rows(snapshot: dict, status_label: str) -> List[dict]:
     * the advertised-names row when names are known;
     * an advertising-error row only when ``adv_state`` is ``failed`` -- i.e. the
       board is invisible to BLE scans -- so the failure is shown but never
-      flashed while merely pending or paused.
+      flashed while merely pending or paused;
+    * a patched-stack warning row only when the board runs a substituted
+      (non-stock) ``bluetoothd`` -- so the operator can see the deviation (and
+      that it forgoes distro security updates) directly on the device.
 
     Args:
         snapshot: A :meth:`BluetoothStatusState.to_dict` payload.
@@ -54,6 +58,14 @@ def bluetooth_status_menu_rows(snapshot: dict, status_label: str) -> List[dict]:
             "key": "AdvertError",
             "label": f"Apps can't find board\n{detail}",
             "icon": "cancel",
+        })
+
+    stack_warning = stack_warning_label(snapshot.get("stack") or {})
+    if stack_warning:
+        rows.append({
+            "key": "Stack",
+            "label": f"{stack_warning}\nNo distro security updates",
+            "icon": "info",
         })
 
     return rows

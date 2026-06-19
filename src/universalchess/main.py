@@ -3452,7 +3452,9 @@ def _bluetooth_status_rows():
       chess app is connected (what the user asked to see live);
     * the advertised-names row (what apps should look for);
     * an advertising-error row when registration failed -- i.e. the board is
-      invisible to BLE scans -- explaining why apps "can't find" it.
+      invisible to BLE scans -- explaining why apps "can't find" it;
+    * a patched-stack warning row when the board runs a substituted (non-stock)
+      bluetoothd (see managers/bluez_patch_status).
 
     All rows carry the ``bluetooth.status`` catalog node so the board renderer
     applies its vertical chrome, and are non-selectable readouts.
