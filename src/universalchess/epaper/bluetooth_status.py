@@ -19,6 +19,7 @@ except ImportError:
 
 from universalchess.state import get_system
 from universalchess.state.system import BT_DISABLED, BT_DISCONNECTED, BT_CONNECTED
+from universalchess.paths import BT_ADMIN
 
 
 # Advertised service names for different protocols
@@ -49,6 +50,9 @@ def get_bluetooth_status(device_name: Optional[str] = None,
         - ble_client_type: str or None, type of connected BLE client
         - rfcomm_connected: bool, whether an RFCOMM client is connected
         - advertised_names: list of str, all names being advertised
+        - advertising: dict, BLE advertisement registration status (see
+          ble_advertising_status); 'ok' is False when BlueZ rejected the
+          advertisements, which hides the board from BLE scans
     """
     status = {
         'enabled': False,
@@ -59,6 +63,7 @@ def get_bluetooth_status(device_name: Optional[str] = None,
         'ble_client_type': None,
         'rfcomm_connected': rfcomm_connected,
         'advertised_names': list(ADVERTISED_NAMES.values()),
+        'advertising': None,
     }
     
     # Check rfkill status
@@ -91,7 +96,26 @@ def get_bluetooth_status(device_name: Optional[str] = None,
     if ble_manager is not None:
         status['ble_connected'] = ble_manager.connected
         status['ble_client_type'] = getattr(ble_manager, 'client_type', None)
-    
+
+    # BLE advertisement registration status from the live status engine (the
+    # board's in-process source of truth). Read it directly so the field is
+    # always populated with the same schema the web sees, even if no ble_manager
+    # was passed.
+    from universalchess.managers.bluetooth_status_state import (
+        get_bluetooth_status_state,
+    )
+    snapshot = get_bluetooth_status_state().to_dict()
+    status['advertising'] = snapshot['advertising']
+    status['adv_state'] = snapshot['adv_state']
+
+    # Fall back to the engine's link info for the connection readout when the
+    # manager was not supplied (the engine tracks BLE and RFCOMM alike).
+    if ble_manager is None and snapshot['connected']:
+        status['ble_connected'] = snapshot['transport'] == 'ble'
+        status['ble_client_type'] = snapshot['emulator']
+        if snapshot['transport'] == 'rfcomm':
+            status['rfcomm_connected'] = True
+
     return status
 
 
@@ -143,34 +167,39 @@ def get_advertised_names_label() -> str:
     return '\n'.join(ADVERTISED_NAMES.values())
 
 
-def enable_bluetooth() -> bool:
-    """Enable Bluetooth via rfkill.
-    
-    Returns:
-        True if command succeeded, False otherwise
+def _bt_admin(action: str) -> bool:
+    """Run the pinned ``bt-admin`` helper for a radio ``action`` (enable/disable).
+
+    Routes the radio toggle through the same passwordless helper the board's BLE
+    bring-up uses, so there is one privileged path and one NOPASSWD grant. Uses
+    ``sudo -n`` so a missing grant fails fast and is logged rather than hanging
+    on a password prompt, and checks the return code (the previous direct
+    ``sudo rfkill`` swallowed failures by returning True on any non-exception).
     """
     try:
-        subprocess.run(['sudo', 'rfkill', 'unblock', 'bluetooth'], timeout=5)
-        log.info("[Bluetooth] Enabled via rfkill")
+        result = subprocess.run(
+            ['sudo', '-n', BT_ADMIN, action],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or "").strip() or "unknown error"
+            log.error(f"[Bluetooth] bt-admin {action} failed: {err}")
+            return False
+        log.info(f"[Bluetooth] Radio {action}d via bt-admin")
         return True
     except Exception as e:
-        log.error(f"[Bluetooth] Failed to enable: {e}")
+        log.error(f"[Bluetooth] Failed to {action}: {e}")
         return False
+
+
+def enable_bluetooth() -> bool:
+    """Enable the Bluetooth radio. Returns command success."""
+    return _bt_admin("enable")
 
 
 def disable_bluetooth() -> bool:
-    """Disable Bluetooth via rfkill.
-    
-    Returns:
-        True if command succeeded, False otherwise
-    """
-    try:
-        subprocess.run(['sudo', 'rfkill', 'block', 'bluetooth'], timeout=5)
-        log.info("[Bluetooth] Disabled via rfkill")
-        return True
-    except Exception as e:
-        log.error(f"[Bluetooth] Failed to disable: {e}")
-        return False
+    """Disable the Bluetooth radio. Returns command success."""
+    return _bt_admin("disable")
 
 
 class BluetoothStatusWidget(Widget):

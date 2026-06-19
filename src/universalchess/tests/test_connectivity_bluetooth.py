@@ -57,6 +57,40 @@ class TestIsEnabled(unittest.TestCase):
         assert bt.is_enabled(MagicMock()) is False
 
 
+class TestSetEnabled(unittest.TestCase):
+    @patch("universalchess.connectivity.bluetooth.subprocess.run")
+    def test_enable_invokes_bt_admin_enable_passwordless(self, mock_run):
+        """Enabling the radio routes through `sudo -n bt-admin enable`.
+
+        Why: the web must use the same pinned helper the board uses (one
+        privileged path, one NOPASSWD grant) and `-n` so a missing grant fails
+        fast instead of hanging on a password prompt. Failure manifestation: a
+        regression back to `sudo rfkill unblock` (no helper, no -n) would either
+        need a second sudoers grant or block the request waiting for a password.
+        """
+        mock_run.return_value = _proc(returncode=0)
+        assert bt.set_enabled(True, MagicMock()) is True
+        argv = mock_run.call_args[0][0]
+        assert argv == ["sudo", "-n", bt.BT_ADMIN, "enable"]
+
+    @patch("universalchess.connectivity.bluetooth.subprocess.run")
+    def test_disable_invokes_bt_admin_disable(self, mock_run):
+        """Disabling routes through `sudo -n bt-admin disable`."""
+        mock_run.return_value = _proc(returncode=0)
+        assert bt.set_enabled(False, MagicMock()) is True
+        assert mock_run.call_args[0][0] == ["sudo", "-n", bt.BT_ADMIN, "disable"]
+
+    @patch("universalchess.connectivity.bluetooth.subprocess.run")
+    def test_nonzero_exit_reports_failure(self, mock_run):
+        """A non-zero helper exit (e.g. missing sudo grant) returns False.
+
+        Failure manifestation: returning True on a failed toggle would tell the
+        UI the radio changed state when it did not.
+        """
+        mock_run.return_value = _proc(returncode=1, stderr="sudo: a password is required")
+        assert bt.set_enabled(True, MagicMock()) is False
+
+
 class TestGetStatus(unittest.TestCase):
     @patch("universalchess.connectivity.bluetooth.is_enabled", return_value=True)
     def test_status_includes_paired_when_enabled(self, _enabled):
@@ -85,7 +119,13 @@ class TestGetStatus(unittest.TestCase):
         manager = MagicMock()
         manager.list_paired_devices.side_effect = RuntimeError("no dbus")
         status = bt.get_status(manager=manager, log=MagicMock())
-        assert status == {"enabled": True, "paired": []}
+        # The locally-read radio state survives; the paired list degrades to empty
+        # instead of raising. The advertising/link blocks come from the board's
+        # broadcast cache (absent here), so adv_state falls back to 'unknown'
+        # rather than a false failure.
+        assert status["enabled"] is True
+        assert status["paired"] == []
+        assert status["adv_state"] == "unknown"
 
     @patch("universalchess.connectivity.bluetooth.is_enabled", return_value=False)
     def test_status_skips_listing_when_disabled(self, _enabled):
@@ -96,7 +136,12 @@ class TestGetStatus(unittest.TestCase):
         """
         manager = MagicMock()
         status = bt.get_status(manager=manager, log=MagicMock())
-        assert status == {"enabled": False, "paired": []}
+        # Radio off: paired list stays empty and BlueZ is not queried. The
+        # advertising/link blocks still come from the (absent) board cache, so
+        # they read as 'unknown'/disconnected rather than being omitted.
+        assert status["enabled"] is False
+        assert status["paired"] == []
+        assert status["link"]["connected"] is False
         manager.list_paired_devices.assert_not_called()
 
 

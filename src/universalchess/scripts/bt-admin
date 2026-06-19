@@ -1,0 +1,54 @@
+#!/bin/sh
+# Root helper for the Bluetooth operations the service needs but cannot perform
+# unprivileged: configuring the controller for connectable LE advertising
+# (btmgmt) and toggling the radio (rfkill).
+#
+# Invoked by the board (BLE bring-up) and the web app (radio toggle) through a
+# single pinned, passwordless sudo grant installed by the package postinst:
+#
+#   <service-user> ALL=(root) NOPASSWD: /opt/universalchess/scripts/bt-admin
+#
+# Why a fixed helper instead of NOPASSWD on btmgmt/rfkill directly: btmgmt can
+# reconfigure the whole controller and rfkill can block any radio, and matching
+# their exact argument vectors in sudoers is brittle (the btmgmt calls are even
+# wrapped in `timeout`, so the sudo command is `timeout`, not `btmgmt`). A
+# pinned helper narrows the grant to exactly the operations below and refuses
+# anything else -- the `case` is the security boundary for the grant; do not
+# add a passthrough/escape branch.
+#
+# Callers use `sudo -n` so a missing grant fails fast ("a password is required")
+# and is logged, rather than hanging on a password prompt.
+set -u
+
+# btmgmt can hang against a wedged controller; bound each call so a stuck
+# command cannot block BLE bring-up. -k sends SIGKILL 1s after the 5s TERM.
+BTMGMT="timeout -k 1s 5s btmgmt"
+
+usage() {
+	echo "usage: bt-admin {configure|enable|disable}" >&2
+	exit 2
+}
+
+[ "$#" -eq 1 ] || usage
+
+case "$1" in
+	configure)
+		# Present the adapter as a connectable, non-bonding LE peripheral so
+		# phone chess apps can discover and connect to the board. Run all three
+		# even if one fails, but exit non-zero if any did so the caller logs it.
+		rc=0
+		$BTMGMT bondable off || rc=1
+		$BTMGMT le on || rc=1
+		$BTMGMT connectable on || rc=1
+		exit "$rc"
+		;;
+	enable)
+		exec rfkill unblock bluetooth
+		;;
+	disable)
+		exec rfkill block bluetooth
+		;;
+	*)
+		usage
+		;;
+esac

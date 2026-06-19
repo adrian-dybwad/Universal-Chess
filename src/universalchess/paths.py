@@ -44,6 +44,19 @@ ENGINES_DIR = f"{BASE_DIR}/engines"
 TMP_DIR = f"{BASE_DIR}/tmp"
 WEB_DIR = f"{BASE_DIR}/web"
 WEB_STATIC_DIR = f"{WEB_DIR}/static"
+SCRIPTS_DIR = f"{BASE_DIR}/scripts"
+
+# Pinned root helpers invoked via a single passwordless sudo grant each (the
+# postinst installs the matching /etc/sudoers.d drop-ins). Granting NOPASSWD on
+# one fixed helper -- which performs exactly the allowed operations and refuses
+# anything else -- is least-privilege compared with granting it on the
+# general-purpose tools (btmgmt/rfkill) the helper wraps. Shared here so the
+# callers and the sudoers entries reference one path.
+#
+# bt-admin: configures the controller for connectable LE advertising (btmgmt)
+# and toggles the radio (rfkill). Without its grant the controller is never
+# configured and phone chess apps cannot discover the board over BLE.
+BT_ADMIN = f"{SCRIPTS_DIR}/bt-admin"
 
 # Resources directory relative to this file (works in both installed and dev environments)
 # This file is at: <base>/paths.py, so resources is at: <base>/resources

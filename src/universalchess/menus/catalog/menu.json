@@ -377,6 +377,57 @@
     },
 
     {
+      "id": "bluetooth",
+      "type": "menu",
+      "label": "Bluetooth",
+      "help": "Bluetooth status, advertising, and paired devices.",
+      "platforms": ["board"],
+      "children": ["bluetooth.status", "bluetooth.enabled", "bluetooth.devices", "bluetooth.pair"]
+    },
+    {
+      "id": "bluetooth.status",
+      "key": "Info",
+      "type": "dynamic",
+      "provider": "bluetooth_status",
+      "help": "Current Bluetooth connection and BLE advertising status.",
+      "platforms": ["board"],
+      "epaper": { "selectable": false, "height_ratio": 1.5, "icon_size": 36, "layout": "vertical", "font_size": 11, "border_width": 1 }
+    },
+    {
+      "id": "bluetooth.enabled",
+      "key": "Toggle",
+      "type": "toggle",
+      "bind": { "store": "bluetooth", "key": "enabled" },
+      "label": "{fn:bluetooth_enable_state}",
+      "icon": { "true": "timer_checked", "false": "timer" },
+      "help": "Enable or disable the Bluetooth radio.",
+      "platforms": ["board"],
+      "epaper": { "height_ratio": 0.8, "layout": "horizontal", "font_size": 14 }
+    },
+    {
+      "id": "bluetooth.devices",
+      "key": "ManageDevices",
+      "type": "action",
+      "action": "bluetooth_devices",
+      "label": "Devices",
+      "icon": "bluetooth",
+      "help": "View and manage paired Bluetooth devices.",
+      "platforms": ["board"],
+      "epaper": { "height_ratio": 0.8, "layout": "horizontal", "font_size": 14 }
+    },
+    {
+      "id": "bluetooth.pair",
+      "key": "PairKeyboard",
+      "type": "action",
+      "action": "bluetooth_pair",
+      "label": "Pair Keyboard",
+      "icon": "bluetooth",
+      "help": "Scan for and pair a Bluetooth keyboard.",
+      "platforms": ["board"],
+      "epaper": { "height_ratio": 0.8, "layout": "horizontal", "font_size": 14 }
+    },
+
+    {
       "id": "system",
       "type": "menu",
       "label": "System",

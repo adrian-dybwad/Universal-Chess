@@ -127,14 +127,22 @@ def test_start_async_survives_start_exception():
 
 
 @patch("universalchess.managers.ble.subprocess.Popen")
-def test_configure_adapter_security_uses_noninteractive_sudo(mock_popen):
-    """Adapter setup must never block behind an invisible sudo password prompt.
+def test_configure_adapter_security_invokes_bt_admin_noninteractively(mock_popen):
+    """Adapter setup must run the pinned helper non-interactively.
 
-    Regression: using plain ``sudo btmgmt`` can hang the BLE startup thread on a
-    board without passwordless sudo or leave root btmgmt children alive.
-    ``sudo -n timeout ... btmgmt`` fails immediately on auth and lets root-owned
-    timeout kill root-owned btmgmt.
+    The three btmgmt calls (bondable off / le on / connectable on) now live
+    behind the pinned ``bt-admin`` helper, granted passwordless sudo by the
+    postinst. configure must invoke exactly ``sudo -n bt-admin configure`` (one
+    call) in a new session.
+
+    Regression: reverting to ``sudo btmgmt`` directly would (a) need broad
+    NOPASSWD on btmgmt, and (b) hang the BLE startup thread on an invisible
+    password prompt where the grant is missing. ``sudo -n`` fails immediately on
+    auth instead, and the new-session start lets the timeout-bounded helper be
+    killed as a group.
     """
+    from universalchess.paths import BT_ADMIN
+
     proc = MagicMock()
     proc.communicate.return_value = ("", "")
     proc.returncode = 0
@@ -143,11 +151,7 @@ def test_configure_adapter_security_uses_noninteractive_sudo(mock_popen):
     _make_manager().configure_adapter_security()
 
     commands = [call.args[0] for call in mock_popen.call_args_list]
-    assert commands == [
-        ["sudo", "-n", "timeout", "-k", "1s", "5s", "btmgmt", "bondable", "off"],
-        ["sudo", "-n", "timeout", "-k", "1s", "5s", "btmgmt", "le", "on"],
-        ["sudo", "-n", "timeout", "-k", "1s", "5s", "btmgmt", "connectable", "on"],
-    ]
+    assert commands == [["sudo", "-n", BT_ADMIN, "configure"]]
     assert all(call.kwargs["start_new_session"] is True for call in mock_popen.call_args_list)
 
 

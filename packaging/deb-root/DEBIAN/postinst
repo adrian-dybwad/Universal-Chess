@@ -281,6 +281,34 @@ else
     echo -e "::: Warning: install-update helper not found at $INSTALL_HELPER"
 fi
 
+# Allow the service user to configure the Bluetooth controller for LE
+# advertising and toggle the radio. The board's BLE bring-up runs btmgmt
+# (bondable off / le on / connectable on) and the board/web run rfkill, all of
+# which need root. Granting passwordless sudo on btmgmt/rfkill directly would
+# let the user reconfigure any controller or block any radio, and the btmgmt
+# calls are wrapped in `timeout` (so the sudo command is `timeout`, not
+# `btmgmt`, making an argument-vector sudoers match brittle). Instead, as with
+# the updater, grant passwordless sudo to exactly one pinned helper that
+# performs only those operations and refuses anything else. Without this grant
+# the controller is never configured and phone chess apps cannot discover the
+# board over BLE (the symptom this fixes).
+echo -e "::: Configuring sudoers for Bluetooth admin"
+BT_ADMIN_HELPER="${DGTCM_PATH}/scripts/bt-admin"
+if [ -f "$BT_ADMIN_HELPER" ]; then
+    chmod +x "$BT_ADMIN_HELPER"
+    BT_SUDOERS_FILE="/etc/sudoers.d/universal-chess-bluetooth"
+    echo "$PRIMARY_USER ALL=(root) NOPASSWD: $BT_ADMIN_HELPER" > "$BT_SUDOERS_FILE"
+    chmod 440 "$BT_SUDOERS_FILE"
+    # Validate the drop-in before it can take effect; a malformed sudoers file
+    # can lock out sudo, so remove it rather than leave it broken.
+    if ! visudo -cf "$BT_SUDOERS_FILE" >/dev/null 2>&1; then
+        echo -e "::: Warning: bt-admin sudoers entry invalid; removing"
+        rm -f "$BT_SUDOERS_FILE"
+    fi
+else
+    echo -e "::: Warning: bt-admin helper not found at $BT_ADMIN_HELPER"
+fi
+
 # Setup nginx HTTPS proxy for web service
 echo -e "::: Setting up nginx proxy with TLS"
     if [ -f "${DGTCM_PATH}/scripts/enable-web-proxy.sh" ]; then

@@ -251,6 +251,11 @@ class GameSubscriber:
         self._raw_callbacks: List[Callable[[dict], None]] = []
         self._lock = threading.Lock()
         self._last_state: Optional[GameState] = None
+        # Latest live Bluetooth status snapshot (type == 'bt_status'). Cached so
+        # the web /status endpoint and a freshly-connected SSE client can render
+        # immediately, mirroring _last_state for game state. The board owns the
+        # authoritative engine; this is the web process's most-recent copy.
+        self._last_bt_status: Optional[dict] = None
     
     def _ensure_socket(self) -> None:
         """Create and bind the Unix socket."""
@@ -312,6 +317,15 @@ class GameSubscriber:
             Last GameState or None if no state received yet.
         """
         return self._last_state
+
+    def get_last_bt_status(self) -> Optional[dict]:
+        """Get the most recent Bluetooth status snapshot received.
+
+        Returns:
+            Last ``bt_status`` payload dict, or None if none received yet (e.g.
+            after a web-service restart before the board re-broadcasts).
+        """
+        return self._last_bt_status
     
     def start(self) -> None:
         """Start the subscriber thread."""
@@ -362,6 +376,12 @@ class GameSubscriber:
                 message = data.decode("utf-8")
                 parsed = json.loads(message)
                 
+                # Cache the latest Bluetooth status so the web can render it
+                # immediately (HTTP /status, fresh SSE client) without waiting
+                # for the next board change.
+                if parsed.get("type") == "bt_status":
+                    self._last_bt_status = parsed
+
                 # Notify raw callbacks for all message types
                 with self._lock:
                     raw_callbacks = list(self._raw_callbacks)
@@ -638,7 +658,37 @@ class SettingsPublisher:
             log.debug(f"[SettingsPublisher] Send failed: {e}")
             self._connected = False
             return False
-    
+
+    def request_bt_status(self) -> bool:
+        """Ask the main process to re-broadcast the current Bluetooth status.
+
+        Sent when the web app needs the live Bluetooth status but has no cached
+        snapshot (e.g. after a web-service restart, or when the Connectivity page
+        mounts). The board -> web broadcast is one-way with no replay, so this
+        pull triggers an immediate re-broadcast of the engine state instead of
+        waiting for the next Bluetooth change.
+
+        Returns:
+            True if sent successfully, False otherwise.
+        """
+        if not self._connected:
+            if not self.connect():
+                return False
+
+        try:
+            socket_path = get_settings_socket_path()
+            message = json.dumps({"type": "request_bt_status"}).encode("utf-8")
+            self._socket.sendto(message, str(socket_path))
+            log.debug("[SettingsPublisher] Sent request_bt_status")
+            return True
+        except FileNotFoundError:
+            log.debug("[SettingsPublisher] Main process not listening")
+            return False
+        except Exception as e:
+            log.debug(f"[SettingsPublisher] Send failed: {e}")
+            self._connected = False
+            return False
+
     def close(self) -> None:
         """Close the socket."""
         with self._lock:
@@ -664,6 +714,7 @@ class SettingsSubscriber:
         self._thread: Optional[threading.Thread] = None
         self._callbacks: List[Callable[[], None]] = []
         self._request_callbacks: List[Callable[[], None]] = []
+        self._bt_status_request_callbacks: List[Callable[[], None]] = []
         self._command_callbacks: List[Callable[[dict], None]] = []
         self._lock = threading.Lock()
     
@@ -705,6 +756,19 @@ class SettingsSubscriber:
         """
         with self._lock:
             self._request_callbacks.append(callback)
+
+    def add_bt_status_request_callback(self, callback: Callable[[], None]) -> None:
+        """Register a callback for Bluetooth-status re-broadcast requests.
+
+        Invoked when the web app asks the main process to re-broadcast the
+        current live Bluetooth status (the web mounted/restarted with no cached
+        snapshot). The handler asks the status engine to broadcast now.
+
+        Args:
+            callback: Function to call on a bt-status request (no arguments).
+        """
+        with self._lock:
+            self._bt_status_request_callbacks.append(callback)
 
     def add_command_callback(self, callback: Callable[[dict], None]) -> None:
         """Register a callback for board-control commands.
@@ -789,6 +853,16 @@ class SettingsSubscriber:
                             callback()
                         except Exception as e:
                             log.error(f"[SettingsSubscriber] Request callback error: {e}")
+                elif msg_type == "request_bt_status":
+                    log.debug("[SettingsSubscriber] Received request_bt_status, notifying callbacks")
+                    with self._lock:
+                        bt_status_callbacks = list(self._bt_status_request_callbacks)
+
+                    for callback in bt_status_callbacks:
+                        try:
+                            callback()
+                        except Exception as e:
+                            log.error(f"[SettingsSubscriber] BT status request callback error: {e}")
                 elif msg_type == "board_command":
                     log.info(f"[SettingsSubscriber] Received board_command: {parsed.get('command')}")
                     with self._lock:
@@ -866,4 +940,17 @@ def request_game_state_broadcast() -> bool:
         True if the request was sent, False otherwise.
     """
     return get_settings_publisher().request_game_state()
+
+
+def request_bt_status_broadcast() -> bool:
+    """Ask the main process to re-broadcast the current Bluetooth status.
+
+    Called from the web app when the Connectivity page needs the live status but
+    has no cached snapshot, so the board re-broadcasts immediately rather than
+    the web waiting for the next Bluetooth change.
+
+    Returns:
+        True if the request was sent, False otherwise.
+    """
+    return get_settings_publisher().request_bt_status()
 

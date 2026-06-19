@@ -10,7 +10,6 @@ from .chromecast_menu import handle_chromecast_menu
 from .inactivity_menu import handle_inactivity_timeout
 from .wifi_menu import wifi_status_icon, wifi_signal_icon, wifi_network_rows
 from .bluetooth_menu import (
-    handle_bluetooth_menu,
     handle_keyboard_pairing_menu,
     handle_paired_devices_menu,
 )
@@ -50,7 +49,6 @@ __all__ = [
     "wifi_status_icon",
     "wifi_signal_icon",
     "wifi_network_rows",
-    "handle_bluetooth_menu",
     "handle_keyboard_pairing_menu",
     "handle_paired_devices_menu",
     "handle_accounts_menu",

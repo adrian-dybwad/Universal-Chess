@@ -1,4 +1,12 @@
-"""Bluetooth settings menu helper."""
+"""Bluetooth device-management and keyboard-pairing menu helpers.
+
+The top-level Bluetooth menu (status readout, advertised names, enable toggle)
+is data-driven from the shared catalog (``bluetooth`` container) and filled by
+the board's ``bluetooth_status`` provider. The multi-screen imperative flows --
+listing/connecting/forgetting paired devices and the continuous keyboard-pairing
+scan with on-board passkey display -- remain here and are invoked as the
+catalog's Devices/Pair actions.
+"""
 
 import threading
 import time
@@ -6,128 +14,6 @@ from typing import Callable, List, Optional
 
 from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.epaper import SplashScreen
-from universalchess.managers.menu import MenuSelection
-
-
-def handle_bluetooth_menu(
-    menu_manager,
-    bluetooth_status_module,
-    show_menu: Callable,
-    find_entry_index: Callable,
-    args_device_name: str,
-    ble_manager,
-    rfcomm_connected: bool,
-    board,
-    log,
-    on_pair_keyboard: Optional[Callable[[], None]] = None,
-    on_manage_devices: Optional[Callable[[], object]] = None,
-) -> MenuSelection:
-    """Handle Bluetooth settings submenu (status + enable/disable).
-
-    Args:
-        on_pair_keyboard: Optional callable that runs the keyboard pairing flow
-            (scan + select + pair). When provided, a "Pair Keyboard" entry is
-            shown.
-        on_manage_devices: Optional callable that opens the paired-device
-            management screen (list + connect/disconnect/forget). When provided,
-            a "Devices" entry is shown.
-    """
-
-    def build_entries():
-        bt_status = bluetooth_status_module.get_bluetooth_status(
-            device_name=args_device_name, ble_manager=ble_manager, rfcomm_connected=rfcomm_connected
-        )
-        status_label = bluetooth_status_module.format_status_label(bt_status)
-        advertised_label = bluetooth_status_module.get_advertised_names_label()
-        is_enabled = bt_status["enabled"]
-
-        entries = [
-            IconMenuEntry(
-                key="Info",
-                label=status_label,
-                icon_name="bluetooth",
-                enabled=True,
-                selectable=False,
-                height_ratio=1.5,
-                icon_size=36,
-                layout="vertical",
-                font_size=11,
-                border_width=1,
-            ),
-            IconMenuEntry(
-                key="Names",
-                label=advertised_label,
-                icon_name="bluetooth",
-                enabled=True,
-                selectable=False,
-                height_ratio=1.2,
-                icon_size=24,
-                layout="vertical",
-                font_size=10,
-                border_width=1,
-            ),
-            IconMenuEntry(
-                key="Toggle",
-                label="Enabled" if is_enabled else "Disabled",
-                icon_name="timer_checked" if is_enabled else "timer",
-                enabled=True,
-                selectable=True,
-                height_ratio=0.8,
-                layout="horizontal",
-                font_size=14,
-            ),
-        ]
-
-        if on_manage_devices is not None:
-            entries.append(
-                IconMenuEntry(
-                    key="ManageDevices",
-                    label="Devices",
-                    icon_name="bluetooth",
-                    enabled=is_enabled,
-                    selectable=is_enabled,
-                    height_ratio=0.8,
-                    layout="horizontal",
-                    font_size=14,
-                )
-            )
-
-        if on_pair_keyboard is not None:
-            entries.append(
-                IconMenuEntry(
-                    key="PairKeyboard",
-                    label="Pair Keyboard",
-                    icon_name="bluetooth",
-                    enabled=is_enabled,
-                    selectable=is_enabled,
-                    height_ratio=0.8,
-                    layout="horizontal",
-                    font_size=14,
-                )
-            )
-
-        return entries
-
-    def handle_selection(result: MenuSelection):
-        if result.key == "Toggle":
-            bt_status = bluetooth_status_module.get_bluetooth_status(
-                device_name=args_device_name, ble_manager=ble_manager, rfcomm_connected=rfcomm_connected
-            )
-            if bt_status["enabled"]:
-                bluetooth_status_module.disable_bluetooth()
-            else:
-                bluetooth_status_module.enable_bluetooth()
-        elif result.key == "ManageDevices" and on_manage_devices is not None:
-            manage_result = on_manage_devices()
-            # Propagate break/exit results (a client connecting, a piece moving)
-            # so the menu stack unwinds instead of trapping the user here.
-            if manage_result is not None:
-                return manage_result
-        elif result.key == "PairKeyboard" and on_pair_keyboard is not None:
-            on_pair_keyboard()
-        return None
-
-    return menu_manager.run_menu_loop(build_entries, handle_selection, initial_index=2)
 
 
 def _has_friendly_name(device: dict) -> bool:

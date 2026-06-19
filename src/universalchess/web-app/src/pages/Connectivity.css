@@ -23,6 +23,31 @@
   margin: var(--space-3) 0;
 }
 
+.conn-status-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 var(--space-3);
+  font-size: var(--text-sm, 0.875rem);
+  font-weight: 600;
+}
+
+.conn-status-line--ok {
+  color: var(--color-primary);
+}
+
+.conn-status-line--warn {
+  color: #d97706;
+}
+
+.conn-status-line--error {
+  color: #dc2626;
+}
+
+.conn-status-line--muted {
+  color: var(--color-text-muted, #6b7280);
+}
+
 .conn-message {
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);

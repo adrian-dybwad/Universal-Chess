@@ -33,10 +33,48 @@ interface BtDevice {
   connected: boolean;
 }
 
+interface BtAdvertisingStatus {
+  expected: number;
+  registered: number;
+  failed: number;
+  ok: boolean;
+  error: string | null;
+  names: string[];
+}
+
+// Closed set mirroring the board engine's BluetoothStatusState.adv_state.
+type BtAdvState = 'advertising' | 'paused_connected' | 'failed' | 'radio_off' | 'unknown';
+
+interface BtPeer {
+  address?: string;
+  name?: string;
+}
+
+// The live chess-app link: which emulator is in play, over which transport.
+interface BtLink {
+  connected: boolean;
+  transport: 'ble' | 'rfcomm' | null;
+  emulator: string | null;
+  peer: BtPeer | null;
+  connected_since: number | null;
+}
+
 interface BtStatus {
   enabled: boolean;
   paired: BtDevice[];
+  advertising?: BtAdvertisingStatus;
+  advertised_names?: string[];
+  adv_state?: BtAdvState;
+  link?: BtLink;
+  powered?: boolean;
+  devices?: BtPeer[];
 }
+
+const EMULATOR_LABELS: Record<string, string> = {
+  millennium: 'Millennium',
+  pegasus: 'Pegasus',
+  chessnut: 'Chessnut',
+};
 
 interface BtScanDevice {
   address: string;
@@ -403,6 +441,28 @@ function WifiCard() {
   );
 }
 
+// One-line, always-current summary of the BLE advertising state, driven by the
+// board engine's adv_state. Exhaustive over the closed BtAdvState union so a new
+// state cannot silently fall through to a stale/blank line.
+const ADV_STATE_LINE: Record<BtAdvState, { text: string; kind: 'ok' | 'warn' | 'error' | 'muted' }> = {
+  advertising: { text: 'Discoverable by phone apps', kind: 'ok' },
+  paused_connected: { text: 'Connected — advertising paused', kind: 'ok' },
+  failed: { text: 'Not discoverable — advertising failed', kind: 'error' },
+  radio_off: { text: 'Bluetooth radio off', kind: 'muted' },
+  unknown: { text: 'Checking Bluetooth status…', kind: 'muted' },
+};
+
+function BluetoothStatusLine({ status }: { status: BtStatus }) {
+  const state: BtAdvState = status.adv_state ?? 'unknown';
+  const line = ADV_STATE_LINE[state];
+  return (
+    <div className={`conn-status-line conn-status-line--${line.kind}`}>
+      <MenuIcon name={state === 'failed' ? 'cancel' : 'bluetooth'} size={16} />
+      <span>{line.text}</span>
+    </div>
+  );
+}
+
 function BluetoothCard() {
   const [status, setStatus] = useState<BtStatus | null>(null);
   const [scanResults, setScanResults] = useState<BtScanDevice[] | null>(null);
@@ -437,10 +497,53 @@ function BluetoothCard() {
   useEffect(() => {
     const es = new EventSource(buildApiUrl('/events'));
     es.onmessage = (event) => {
-      let data: { type?: string; passkey?: string | null; active?: boolean; success?: boolean; status?: string };
+      let data: {
+        type?: string;
+        passkey?: string | null;
+        active?: boolean;
+        success?: boolean;
+        status?: string;
+        // bt_status (live engine snapshot) fields, flat from the board engine.
+        enabled?: boolean;
+        powered?: boolean;
+        advertising?: BtAdvertisingStatus;
+        advertised_names?: string[];
+        adv_state?: BtAdvState;
+        connected?: boolean;
+        transport?: BtLink['transport'];
+        emulator?: string | null;
+        peer?: BtPeer | null;
+        connected_since?: number | null;
+        devices?: BtPeer[];
+      };
       try {
         data = JSON.parse(event.data);
       } catch {
+        return;
+      }
+      if (data.type === 'bt_status') {
+        // Live push from the board: merge the engine snapshot (advertising,
+        // adv_state, active link/emulator, devices) into the card, keeping the
+        // locally-read radio/paired list until the next poll refreshes them.
+        setStatus((prev) => ({
+          enabled: prev?.enabled ?? data.enabled ?? false,
+          paired: prev?.paired ?? [],
+          advertising: data.advertising,
+          advertised_names: data.advertised_names,
+          adv_state: data.adv_state,
+          link: {
+            connected: data.connected ?? false,
+            transport: data.transport ?? null,
+            emulator: data.emulator ?? null,
+            peer: data.peer ?? null,
+            connected_since: data.connected_since ?? null,
+          },
+          powered: data.powered,
+          devices: data.devices,
+        }));
+        // A connect/disconnect changes the paired list's "connected" flags too;
+        // refresh those (and the radio state) without waiting for the poll.
+        setTimeout(fetchStatus, 500);
         return;
       }
       if (data.type === 'bt_passkey') {
@@ -711,6 +814,55 @@ function BluetoothCard() {
         )}
 
         {message && <div className={`conn-message conn-message--${message.kind}`}>{message.text}</div>}
+
+        {status && <BluetoothStatusLine status={status} />}
+
+        {status?.adv_state === 'failed' && status.advertising && (
+          <div className="conn-message conn-message--error">
+            Phone apps can&apos;t discover the board over Bluetooth LE:{' '}
+            {status.advertising.failed} of {status.advertising.expected} BLE advertisements failed to register.
+            {status.advertising.error && (
+              <div className="conn-status-detail text-muted">{status.advertising.error}</div>
+            )}
+          </div>
+        )}
+
+        {status?.link?.connected && (
+          <div className="conn-list">
+            <h4 className="conn-list-title">Connected app</h4>
+            <div className="conn-list-item conn-list-item--static">
+              <span className="conn-list-name">
+                <MenuIcon name="bluetooth" size={16} />
+                {status.link.emulator
+                  ? `${EMULATOR_LABELS[status.link.emulator] ?? status.link.emulator} emulator`
+                  : status.link.transport === 'rfcomm'
+                    ? 'Classic Bluetooth (RFCOMM)'
+                    : 'Connected'}
+                {status.link.peer?.name && <span className="conn-active-badge">{status.link.peer.name}</span>}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {status && (status.advertised_names?.length ?? 0) > 0 && (
+          <div className="conn-list">
+            <h4 className="conn-list-title">
+              {status.adv_state === 'advertising'
+                ? 'Discoverable as'
+                : status.adv_state === 'paused_connected'
+                  ? 'Advertises as (paused while connected)'
+                  : 'Advertises as (not active)'}
+            </h4>
+            {status.advertised_names!.map((name) => (
+              <div key={name} className="conn-list-item conn-list-item--static">
+                <span className="conn-list-name">
+                  <MenuIcon name="bluetooth" size={16} />
+                  {name}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {status && status.paired.length > 0 && (
           <div className="conn-list">

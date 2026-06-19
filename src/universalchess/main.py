@@ -53,7 +53,6 @@ from universalchess.menus import (
     wifi_status_icon,
     wifi_signal_icon,
     wifi_network_rows,
-    handle_bluetooth_menu,
     handle_keyboard_pairing_menu,
     handle_paired_devices_menu,
     handle_accounts_menu,
@@ -3441,25 +3440,125 @@ def _run_wifi_settings_menu():
         wifi_info.unsubscribe(_on_wifi_status_change)
 
 
-def _run_bluetooth_settings_menu():
-    """Run the (imperative) Bluetooth pairing menu; return break/None.
+def _bluetooth_status_rows():
+    """Provide the live Bluetooth status rows for the data-driven BT menu.
 
-    Kept code-driven (live BT status, BLE/RFCOMM managers, pairing flows);
-    invoked as the ``open_bluetooth`` action of the data-driven Connectivity menu.
+    Built from the in-process :class:`BluetoothStatusState` snapshot (the board's
+    single source of truth, also broadcast to the web) so the board and web show
+    the same thing. Yields, re-read on each rebuild so the open menu stays live:
+
+    * a status readout (device name/address + radio/connection summary);
+    * a connected-client detail row naming the active emulator and peer when a
+      chess app is connected (what the user asked to see live);
+    * the advertised-names row (what apps should look for);
+    * an advertising-error row when registration failed -- i.e. the board is
+      invisible to BLE scans -- explaining why apps "can't find" it.
+
+    All rows carry the ``bluetooth.status`` catalog node so the board renderer
+    applies its vertical chrome, and are non-selectable readouts.
     """
-    return handle_bluetooth_menu(
-        menu_manager=_menu_manager,
-        bluetooth_status_module=__import__("DGTCentaurMods.epaper.bluetooth_status", fromlist=["get_bluetooth_status"]),
-        show_menu=_show_menu,
-        find_entry_index=find_entry_index,
-        args_device_name=_args.device_name if _args else "DGT PEGASUS",
+    from universalchess.menus.engine import MenuRow
+    from universalchess.menus.catalog.loader import get_catalog
+    from universalchess.menus.bluetooth_status_view import bluetooth_status_menu_rows
+    from universalchess.managers.bluetooth_status_state import (
+        get_bluetooth_status_state,
+    )
+
+    bt_status_mod = __import__(
+        "DGTCentaurMods.epaper.bluetooth_status",
+        fromlist=["get_bluetooth_status"],
+    )
+    device_name = _args.device_name if _args else "DGT PEGASUS"
+    bt = bt_status_mod.get_bluetooth_status(
+        device_name=device_name,
         ble_manager=ble_manager,
         rfcomm_connected=(rfcomm_server.connected if rfcomm_server else False),
-        board=board,
-        log=log,
-        on_pair_keyboard=_handle_pair_keyboard if rfcomm_manager else None,
-        on_manage_devices=_handle_manage_devices,
     )
+    snapshot = get_bluetooth_status_state().to_dict()
+    status_label = bt_status_mod.format_status_label(bt)
+    node = get_catalog().get_node("bluetooth.status")
+
+    return [
+        MenuRow(key=row["key"], label=row["label"], icon=row["icon"],
+                node=node, selectable=False)
+        for row in bluetooth_status_menu_rows(snapshot, status_label)
+    ]
+
+
+def _build_bluetooth_context():
+    """Build the BoardMenuContext for the data-driven Bluetooth menu (``bluetooth``).
+
+    The ``bluetooth`` store exposes the radio's enabled flag (rfkill); the
+    ``bluetooth_status`` provider yields the live readout rows; the
+    ``bluetooth_enable_state`` value supplies the toggle's Enabled/Disabled
+    label. Devices and Pair stay imperative (they own multi-screen flows with
+    live discovery and on-board passkey display), exposed as actions that forward
+    any break result up through ``_signal_from``.
+    """
+    from universalchess.menus.board_context import BoardMenuContext
+    from universalchess.connectivity import bluetooth as _bt_conn
+
+    bt_status_mod = __import__(
+        "DGTCentaurMods.epaper.bluetooth_status",
+        fromlist=["get_bluetooth_status"],
+    )
+
+    def bt_get(key):
+        if key == "enabled":
+            return bool(_bt_conn.is_enabled(log))
+        raise NotImplementedError(f"bluetooth store has no key {key!r}")
+
+    def bt_set(key, value):
+        if key != "enabled":
+            raise NotImplementedError(f"bluetooth store has no key {key!r}")
+        if value:
+            bt_status_mod.enable_bluetooth()
+        else:
+            bt_status_mod.disable_bluetooth()
+
+    ctx = BoardMenuContext()
+    ctx.register_store("bluetooth", bt_get, bt_set)
+    ctx.register_provider("bluetooth_status", _bluetooth_status_rows)
+    ctx.register_value(
+        "bluetooth_enable_state",
+        lambda node: "Enabled" if bt_get("enabled") else "Disabled",
+    )
+    ctx.register_action("bluetooth_devices", lambda: _signal_from(_handle_manage_devices()))
+    ctx.register_action("bluetooth_pair", lambda: _signal_from(_handle_pair_keyboard()))
+    return ctx
+
+
+def _run_bluetooth_settings_menu():
+    """Run the data-driven Bluetooth menu (status/enable/devices/pair).
+
+    The status readout, advertised names, the connected-emulator detail, the
+    advertising-failure row, and the enable toggle all live in the catalog
+    (``bluetooth`` container) and are filled by the ``bluetooth_status`` provider
+    from the live engine. The only code-driven parts are (1) the engine
+    *subscription* wired here, which refreshes the open menu the instant a
+    device/client connects or disconnects or advertising changes, and (2) the
+    Devices/Pair imperative sub-flows run by their actions. Invoked as the
+    ``open_bluetooth`` action of the data-driven Connectivity menu.
+
+    The observer injects a non-break ``BT_REFRESH`` selection; the engine loop
+    finds no row for it and redraws, rebuilding the rows from fresh status.
+    """
+    from universalchess.menus.board_context import run_engine_menu
+    from universalchess.managers.bluetooth_status_state import (
+        get_bluetooth_status_state,
+    )
+
+    state = get_bluetooth_status_state()
+
+    def _on_bt_status_change():
+        if _menu_manager.active_widget is not None:
+            _menu_manager.cancel_selection("BT_REFRESH")
+
+    state.add_observer(_on_bt_status_change)
+    try:
+        return run_engine_menu("bluetooth", _build_bluetooth_context(), _menu_manager)
+    finally:
+        state.remove_observer(_on_bt_status_change)
 
 
 def _run_chromecast_menu():
@@ -4547,11 +4646,27 @@ def main():
         except Exception as e:
             log.debug(f"[Main] Game-state request error: {e}")
 
+    # Re-broadcast the current Bluetooth status on demand. The web Connectivity
+    # page sends this when it mounts (or after a web-service restart) without a
+    # cached snapshot; the board -> web broadcast is one-way with no replay, so
+    # this pulls the live engine state immediately.
+    def _on_bt_status_requested():
+        """A web client asked for the current Bluetooth status."""
+        log.debug("[Main] Web requested current Bluetooth status, re-broadcasting")
+        try:
+            from universalchess.managers.bluetooth_status_state import (
+                get_bluetooth_status_state,
+            )
+            get_bluetooth_status_state().republish()
+        except Exception as e:
+            log.debug(f"[Main] BT-status request error: {e}")
+
     try:
         from universalchess.services.game_broadcast import get_settings_subscriber
         settings_subscriber = get_settings_subscriber()
         settings_subscriber.add_callback(_on_settings_changed)
         settings_subscriber.add_request_callback(_on_game_state_requested)
+        settings_subscriber.add_bt_status_request_callback(_on_bt_status_requested)
         settings_subscriber.add_command_callback(_on_board_command)
         settings_subscriber.start()
         log.info("[Main] Settings subscriber started (hot reload enabled)")
@@ -4699,7 +4814,17 @@ def main():
         def _on_rfcomm_connected():
             """Handle RFCOMM client connection."""
             global app_state, _pending_ble_client_type
-            
+
+            # Record the live link (classic RFCOMM, no BLE emulator) so the
+            # board/web show the active connection and its transport.
+            try:
+                from universalchess.managers.bluetooth_status_state import (
+                    get_bluetooth_status_state, TRANSPORT_RFCOMM,
+                )
+                get_bluetooth_status_state().client_connected(TRANSPORT_RFCOMM)
+            except Exception as e:  # noqa: BLE001
+                log.debug(f"[RFCOMM] Failed to record connect in BT status: {e}")
+
             if app_state == AppState.GAME and protocol_manager is not None:
                 log.info("[RFCOMM] Client connected while in game - showing confirmation dialog")
                 _show_ble_connection_confirm("rfcomm")
@@ -4714,6 +4839,13 @@ def main():
         
         def _on_rfcomm_disconnected():
             """Handle RFCOMM client disconnection."""
+            try:
+                from universalchess.managers.bluetooth_status_state import (
+                    get_bluetooth_status_state,
+                )
+                get_bluetooth_status_state().client_disconnected()
+            except Exception as e:  # noqa: BLE001
+                log.debug(f"[RFCOMM] Failed to record disconnect in BT status: {e}")
             if protocol_manager:
                 protocol_manager.on_app_disconnected()
         

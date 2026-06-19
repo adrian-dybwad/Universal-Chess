@@ -17,6 +17,7 @@ import subprocess
 from typing import List, Optional
 
 from universalchess.managers.bluez_pairing import BluezPairingManager
+from universalchess.paths import BT_ADMIN
 
 _DEFAULT_LOG = logging.getLogger(__name__)
 _RFKILL_TIMEOUT_SECONDS = 5
@@ -51,31 +52,84 @@ def is_enabled(log: Optional[logging.Logger] = None) -> bool:
 
 
 def set_enabled(enabled: bool, log: Optional[logging.Logger] = None) -> bool:
-    """Enable or disable the Bluetooth radio via rfkill. Returns command success."""
+    """Enable or disable the Bluetooth radio. Returns command success.
+
+    Goes through the pinned ``bt-admin`` helper (passwordless via the postinst
+    sudoers grant) rather than ``sudo rfkill`` directly, so the web and board
+    share one privileged path and the service needs only one NOPASSWD grant.
+    Uses ``sudo -n`` so a missing grant fails fast and is logged instead of
+    hanging on a password prompt.
+    """
     log = _resolve_log(log)
-    action = "unblock" if enabled else "block"
+    action = "enable" if enabled else "disable"
     try:
         result = subprocess.run(
-            ["sudo", "rfkill", action, "bluetooth"],
+            ["sudo", "-n", BT_ADMIN, action],
             capture_output=True,
             text=True,
             timeout=_RFKILL_TIMEOUT_SECONDS,
         )
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or "").strip() or "unknown error"
+            log.error(f"[BT] bt-admin {action} failed: {err}")
         return result.returncode == 0
     except Exception as e:  # noqa: BLE001
         log.error(f"[BT] Failed to {action} bluetooth: {e}")
         return False
 
 
+def _live_bt_status() -> dict:
+    """Return the latest board-broadcast Bluetooth status (engine snapshot).
+
+    The board process owns the live :class:`BluetoothStatusState` and broadcasts
+    every change over the game socket; the web subscriber caches the latest
+    snapshot (see ``GameSubscriber.get_last_bt_status``). When nothing is cached
+    yet (fresh web start, before the board re-broadcasts), ask the board to
+    re-broadcast so the next SSE push / poll has it, and return an empty dict for
+    now -- callers fall back to an ``unknown`` advertising block.
+    """
+    from universalchess.services.game_broadcast import (
+        get_subscriber,
+        request_bt_status_broadcast,
+    )
+
+    cached = get_subscriber().get_last_bt_status()
+    if cached is not None:
+        return cached
+    try:
+        request_bt_status_broadcast()
+    except Exception:  # noqa: BLE001 - best-effort resync
+        pass
+    return {}
+
+
 def get_status(
     manager: Optional[BluezPairingManager] = None, log: Optional[logging.Logger] = None
 ) -> dict:
-    """Return ``{"enabled", "paired": [...]}`` for the web Bluetooth card.
+    """Return Bluetooth status for the web Bluetooth card.
 
-    ``paired`` is the list of ``{address, name, connected}`` dicts from BlueZ.
-    Returns an empty paired list if BlueZ/D-Bus is unavailable rather than
-    raising, so the card can still show the radio state.
+    Keys:
+        * ``enabled``: radio not soft-blocked by rfkill (read locally here).
+        * ``paired``: list of ``{address, name, connected}`` dicts from BlueZ.
+        * ``advertising``: BLE advertisement registration status (the
+          ``expected``/``registered``/``failed``/``ok``/``error``/``names``
+          schema), from the board's live engine; ``ok`` is False when BlueZ
+          rejected the adverts and phone apps cannot discover the board.
+        * ``advertised_names``: the local names the board advertises.
+        * ``adv_state``: the board's unambiguous advertising state
+          (``advertising``/``paused_connected``/``failed``/``radio_off``/``unknown``).
+        * ``link``: the active chess-app link -- ``connected``, ``transport``
+          (``ble``/``rfcomm``), ``emulator`` (which emulator is in play), and the
+          connected ``peer`` -- so the card can show what is connected live.
+        * ``powered``: adapter power, and ``devices``: OS-level connected devices.
+
+    Advertising/link/devices come from the board (the only process that owns the
+    BLE/RFCOMM managers), delivered over the broadcast/SSE channel; ``enabled``
+    and ``paired`` are read here. Returns an empty paired list if BlueZ/D-Bus is
+    unavailable rather than raising, so the card can still show the rest.
     """
+    from universalchess.managers.ble_advertising_status import unknown_status
+
     log = _resolve_log(log)
     paired: List[dict] = []
     if is_enabled(log):
@@ -83,7 +137,25 @@ def get_status(
             paired = _get_manager(manager).list_paired_devices()
         except Exception as e:  # noqa: BLE001 - dbus may be absent/unreachable
             log.warning(f"[BT] Failed to list paired devices: {e}")
-    return {"enabled": is_enabled(log), "paired": paired}
+
+    bt = _live_bt_status()
+    advertising = bt.get("advertising") or unknown_status()
+    return {
+        "enabled": is_enabled(log),
+        "paired": paired,
+        "advertising": advertising,
+        "advertised_names": bt.get("advertised_names") or advertising.get("names", []),
+        "adv_state": bt.get("adv_state", "unknown"),
+        "link": {
+            "connected": bt.get("connected", False),
+            "transport": bt.get("transport"),
+            "emulator": bt.get("emulator"),
+            "peer": bt.get("peer"),
+            "connected_since": bt.get("connected_since"),
+        },
+        "powered": bt.get("powered"),
+        "devices": bt.get("devices", []),
+    }
 
 
 def scan_keyboards(

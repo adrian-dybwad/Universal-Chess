@@ -50,6 +50,7 @@ from gi.repository import GLib
 from typing import Optional, Callable
 
 from universalchess.board.logging import log
+from universalchess.paths import BT_ADMIN
 
 # ============================================================================
 # BlueZ D-Bus Constants
@@ -147,7 +148,8 @@ class BleManager:
                  relay_mode: bool = False,
                  on_relay_data: Callable[[bytes], None] = None,
                  on_display_passkey: Callable[[Optional[str]], None] = None,
-                 on_confirm_pairing: Callable[[Optional[str]], bool] = None):
+                 on_confirm_pairing: Callable[[Optional[str]], bool] = None,
+                 status_state=None):
         """Initialize the BLE manager.
         
         Args:
@@ -157,6 +159,11 @@ class BleManager:
             on_disconnected: Callback() when client disconnects
             relay_mode: If True, forward received data via on_relay_data
             on_relay_data: Callback(data: bytes) for relay mode data forwarding
+            status_state: Live :class:`BluetoothStatusState` fed with advertising
+                results, client connect/disconnect (with the active emulator),
+                adapter power, and OS-level device changes so the board menu and
+                web card show an always-current status. Defaults to the
+                process-wide singleton; injectable for tests.
             on_display_passkey: Callback(passkey: Optional[str]) invoked when the
                 pairing agent must display a passkey (e.g. for a Bluetooth
                 keyboard). Called with the 6-digit string to show, or None to
@@ -175,6 +182,15 @@ class BleManager:
         self._on_relay_data = on_relay_data
         self._on_display_passkey = on_display_passkey
         self._on_confirm_pairing = on_confirm_pairing
+
+        # Live Bluetooth status engine (advertising + link + devices). The board
+        # menu reads it in-process and it broadcasts every change to the web.
+        if status_state is None:
+            from universalchess.managers.bluetooth_status_state import (
+                get_bluetooth_status_state,
+            )
+            status_state = get_bluetooth_status_state()
+        self._status_state = status_state
         
         # Connection state
         self.connected = False
@@ -187,7 +203,7 @@ class BleManager:
         self._app = None
         self._agent = None
         self._advertisements = []
-        
+
         # Characteristic instances for sending notifications
         self._millennium_tx = None
         self._nordic_tx = None
@@ -216,7 +232,13 @@ class BleManager:
         self.client_type = client_type
         
         log.info(f"[BleManager] Client connected: {client_type}")
-        
+
+        # A connected BLE central pauses LE advertising; record the active
+        # emulator so the board/web show "paused_connected" with what is in play
+        # rather than a false advertising failure.
+        from universalchess.managers.bluetooth_status_state import TRANSPORT_BLE
+        self._status_state.client_connected(TRANSPORT_BLE, emulator=client_type)
+
         if self._on_connected:
             self._on_connected(client_type)
     
@@ -226,7 +248,9 @@ class BleManager:
         self.client_type = None
         
         log.info("[BleManager] Client disconnected")
-        
+
+        self._status_state.client_disconnected()
+
         if self._on_disconnected:
             self._on_disconnected()
     
@@ -312,39 +336,33 @@ class BleManager:
                 cmd, timeout_seconds, output=stdout, stderr=stderr)
 
     def configure_adapter_security(self):
-        """Configure Bluetooth adapter for BLE operation without pairing."""
-        commands = [
-            ['sudo', '-n', 'timeout', '-k', '1s', '5s',
-             'btmgmt', 'bondable', 'off'],
-            ['sudo', '-n', 'timeout', '-k', '1s', '5s',
-             'btmgmt', 'le', 'on'],
-            ['sudo', '-n', 'timeout', '-k', '1s', '5s',
-             'btmgmt', 'connectable', 'on'],
-        ]
-        
-        for cmd in commands:
-            try:
-                result = self._run_bluetooth_management_command(
-                    cmd, timeout_seconds=7.0)
-                btmgmt_index = cmd.index('btmgmt')
-                cmd_str = ' '.join(cmd[btmgmt_index:])
-                if result.returncode == 0:
-                    stdout = result.stdout.strip()
-                    if stdout:
-                        log.info(f"btmgmt: {cmd_str} - {stdout}")
-                    else:
-                        log.info(f"btmgmt: {cmd_str} - OK")
-                else:
-                    stderr = result.stderr.strip() if result.stderr else "unknown error"
-                    stdout = result.stdout.strip() if result.stdout else ""
-                    log.warning(f"btmgmt: {cmd_str} - {stderr or stdout or 'failed'}")
-            except FileNotFoundError:
-                log.warning("btmgmt not found - skipping security configuration")
-                break
-            except subprocess.TimeoutExpired:
-                log.warning(f"btmgmt command timed out: {' '.join(cmd)}")
-            except Exception as e:
-                log.warning(f"btmgmt error: {e}")
+        """Configure the controller for connectable LE advertising.
+
+        Runs the pinned ``bt-admin`` helper (``configure``), granted passwordless
+        sudo by the package postinst, which sets ``bondable off`` / ``le on`` /
+        ``connectable on`` via btmgmt. Without this the controller is not
+        configured for LE advertising and phone chess apps cannot discover the
+        board. Centralizing the three privileged btmgmt calls in one helper means
+        the service needs a single NOPASSWD grant; if that grant is missing,
+        ``sudo -n`` fails immediately with "a password is required" and this logs
+        the failure (which then surfaces as the advertising failed-state) instead
+        of hanging on a password prompt. The helper bounds each btmgmt call at 5s,
+        so allow the whole sequence up to 20s before the outer guard fires.
+        """
+        cmd = ['sudo', '-n', BT_ADMIN, 'configure']
+        try:
+            result = self._run_bluetooth_management_command(cmd, timeout_seconds=20.0)
+            if result.returncode == 0:
+                log.info("[BleManager] Adapter configured for LE advertising")
+            else:
+                detail = (result.stderr or result.stdout or "").strip() or "unknown error"
+                log.warning(f"[BleManager] bt-admin configure failed: {detail}")
+        except FileNotFoundError:
+            log.warning("[BleManager] bt-admin helper not found - skipping adapter configuration")
+        except subprocess.TimeoutExpired:
+            log.warning("[BleManager] bt-admin configure timed out")
+        except Exception as e:
+            log.warning(f"[BleManager] bt-admin configure error: {e}")
     
     def start(self, mainloop: GLib.MainLoop = None):
         """Start the BLE manager.
@@ -411,8 +429,10 @@ class BleManager:
                 if not powered:
                     adapter_props.Set("org.bluez.Adapter1", "Powered", dbus.Boolean(True))
                     log.info("[BleManager] Adapter powered on")
+                    powered = True
                 else:
                     log.info("[BleManager] Adapter already powered on")
+                self._status_state.set_powered(bool(powered))
             except dbus.exceptions.DBusException as e:
                 log.warning(f"[BleManager] Could not check/set Powered: {e}")
         except Exception as e:
@@ -445,9 +465,106 @@ class BleManager:
         except Exception as e:
             log.error(f"[BleManager] Failed to register advertisements: {e}", exc_info=True)
             return False
-        
+
+        # Track live, externally-driven Bluetooth changes (console btmgmt/rfkill,
+        # adapter power, device connect/disconnect). Best-effort: a missing
+        # signal subscription must not fail BLE bring-up.
+        try:
+            self._register_status_signal_receivers()
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"[BleManager] Could not register status signal receivers: {e}")
+
         log.info("[BleManager] Started successfully")
         return True
+
+    def _register_status_signal_receivers(self):
+        """Subscribe to BlueZ signals that change the live Bluetooth status.
+
+        Feeds :class:`BluetoothStatusState` from changes that originate outside
+        our own calls so the board/web stay accurate:
+
+        * ``Adapter1.Powered`` / ``LEAdvertisingManager1.ActiveInstances`` via
+          ``PropertiesChanged`` -- catches power-off, ``rfkill``, and adverts
+          pausing/resuming (including console ``btmgmt``/``bluetoothctl``).
+        * Device ``Connected`` via ``PropertiesChanged`` and object lifecycle via
+          ``InterfacesAdded``/``InterfacesRemoved`` -- catches phones/keyboards
+          connecting and disconnecting at the OS level.
+
+        Runs on the existing GLib mainloop (the bus is a ``SystemBus`` driven by
+        ``DBusGMainLoop``), so callbacks fire on the BLE thread.
+        """
+        def _on_properties_changed(interface, changed, invalidated, path=None):
+            if interface == "org.bluez.Adapter1" and "Powered" in changed:
+                self._status_state.set_powered(bool(changed["Powered"]))
+            elif interface == LE_ADVERTISING_MANAGER_IFACE and "ActiveInstances" in changed:
+                self._status_state.set_active_instances(int(changed["ActiveInstances"]))
+            elif interface == "org.bluez.Device1" and "Connected" in changed:
+                if bool(changed["Connected"]):
+                    self._status_state.device_connected(
+                        self._device_address_from_path(path),
+                        self._device_name_safe(path),
+                    )
+                else:
+                    self._status_state.device_disconnected(
+                        self._device_address_from_path(path))
+
+        def _on_interfaces_added(path, interfaces):
+            if "org.bluez.Device1" in interfaces:
+                props = interfaces["org.bluez.Device1"]
+                if props.get("Connected"):
+                    self._status_state.device_connected(
+                        self._device_address_from_path(path),
+                        str(props.get("Name") or props.get("Alias") or ""),
+                    )
+
+        def _on_interfaces_removed(path, interfaces):
+            if "org.bluez.Device1" in interfaces:
+                self._status_state.device_disconnected(
+                    self._device_address_from_path(path))
+
+        self._bus.add_signal_receiver(
+            _on_properties_changed,
+            dbus_interface=DBUS_PROP_IFACE,
+            signal_name="PropertiesChanged",
+            path_keyword="path",
+        )
+        self._bus.add_signal_receiver(
+            _on_interfaces_added,
+            dbus_interface=DBUS_OM_IFACE,
+            signal_name="InterfacesAdded",
+        )
+        self._bus.add_signal_receiver(
+            _on_interfaces_removed,
+            dbus_interface=DBUS_OM_IFACE,
+            signal_name="InterfacesRemoved",
+        )
+        log.info("[BleManager] Status signal receivers registered")
+
+    @staticmethod
+    def _device_address_from_path(path: Optional[str]) -> str:
+        """Derive a device MAC from its BlueZ object path.
+
+        ``/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF`` -> ``AA:BB:CC:DD:EE:FF``. Used
+        as the stable key for the connected-device set; returns ``""`` for a
+        non-device path so a stray signal is ignored.
+        """
+        if not path or "/dev_" not in path:
+            return ""
+        return path.rsplit("/dev_", 1)[1].replace("_", ":")
+
+    def _device_name_safe(self, path: Optional[str]) -> str:
+        """Best-effort friendly name for a connected device path.
+
+        Falls back to the address when the name cannot be read (e.g. the device
+        object is gone), so the device list always has a label.
+        """
+        try:
+            props = dbus.Interface(
+                self._bus.get_object(BLUEZ_SERVICE_NAME, path), DBUS_PROP_IFACE)
+            name = props.Get("org.bluez.Device1", "Name")
+            return str(name)
+        except Exception:  # noqa: BLE001
+            return self._device_address_from_path(path)
 
     def start_async(self, mainloop: GLib.MainLoop = None) -> threading.Thread:
         """Run start() and the GLib mainloop on a background daemon thread.
@@ -619,6 +736,30 @@ class BleManager:
             error_handler=lambda e: log.error(f"[BleManager] Failed to register GATT application: {e}")
         )
     
+    def get_advertisement_status(self) -> dict:
+        """Return the current BLE advertisement registration status.
+
+        Reads the live status engine so the board Bluetooth menu (in-process)
+        and the web Bluetooth card (over the broadcast/SSE channel) report the
+        same advertising sub-block schema.
+        """
+        return self._status_state.to_dict()["advertising"]
+
+    def _on_advertisement_registered(self, idx: int):
+        """D-Bus reply handler: one advertisement was accepted by BlueZ."""
+        log.info(f"[BleManager] Advertisement {idx} registered")
+        self._status_state.advertisement_registered()
+
+    def _on_advertisement_failed(self, idx: int, error):
+        """D-Bus error handler: BlueZ rejected one advertisement.
+
+        Records the error so the board/web can show *why* apps cannot discover
+        the board (the common cause is the service user lacking passwordless
+        ``btmgmt`` access, leaving the controller un-configured for LE adverts).
+        """
+        log.error(f"[BleManager] Failed to register advertisement {idx}: {error}")
+        self._status_state.advertisement_failed(error)
+
     def _register_advertisements(self):
         """Register BLE advertisements for all protocols."""
         le_adv_manager = dbus.Interface(
@@ -645,13 +786,20 @@ class BleManager:
             self._bus, 2, "MILLENNIUM CHESS"
         )
         self._advertisements.append(adv3)
-        
+
+        # Reset counters and publish a pending baseline (failed == 0 -> ok) so a
+        # reader during the brief async window does not see a stale prior result.
+        self._status_state.begin_advertising(
+            len(self._advertisements),
+            [adv.local_name for adv in self._advertisements],
+        )
+
         # Register all advertisements
         for i, adv in enumerate(self._advertisements, 1):
             le_adv_manager.RegisterAdvertisement(
                 adv.get_path(), {},
-                reply_handler=lambda idx=i: log.info(f"[BleManager] Advertisement {idx} registered"),
-                error_handler=lambda e, idx=i: log.error(f"[BleManager] Failed to register advertisement {idx}: {e}")
+                reply_handler=lambda idx=i: self._on_advertisement_registered(idx),
+                error_handler=lambda e, idx=i: self._on_advertisement_failed(idx, e)
             )
 
 
@@ -839,6 +987,15 @@ class _Advertisement(dbus.service.Object):
     @dbus.service.method(LE_ADVERTISEMENT_IFACE, in_signature='', out_signature='')
     def Release(self):
         log.info(f"[BleManager] Advertisement released: {self.path}")
+        # BlueZ dropped this advert (e.g. controller reset); reflect it live so
+        # the board/web leave the 'advertising' state without us re-registering.
+        try:
+            from universalchess.managers.bluetooth_status_state import (
+                get_bluetooth_status_state,
+            )
+            get_bluetooth_status_state().advertisement_released()
+        except Exception as e:  # noqa: BLE001 - status reporting must not break BLE
+            log.debug(f"[BleManager] Failed to record advert release: {e}")
 
 
 class _Application(dbus.service.Object):
