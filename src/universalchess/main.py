@@ -2165,6 +2165,20 @@ def _on_board_command(parsed: dict) -> None:
     if command == "reset_inactivity":
         board.signal_web_activity()
         return
+    # Web remote button press (interactive board control). Enqueuing onto the
+    # board's key queue is thread-safe and does no display/game work, so it is
+    # handled here off the main loop; board.eventsThread then dispatches it on
+    # its own thread exactly like a physical press. long_press holds the key past
+    # the events thread's threshold (e.g. PLAY long-press starts the shutdown
+    # countdown). Signal web activity so remote control keeps the board awake,
+    # mirroring how a physical press resets the inactivity timeout.
+    if command == "key_press":
+        try:
+            board.signal_web_activity()
+            board.inject_key(parsed.get("key"), long_press=bool(parsed.get("long_press")))
+        except (ValueError, RuntimeError) as e:
+            log.warning(f"[App] Ignoring web key_press: {e}")
+        return
 
     _pending_board_command = parsed
     if (

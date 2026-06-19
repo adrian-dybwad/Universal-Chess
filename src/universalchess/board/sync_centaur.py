@@ -106,6 +106,18 @@ from enum import IntEnum
 # This allows a single queue to carry both event types
 KEY_DOWN_OFFSET = 0x80
 
+# Buttons that may be synthesized by inject_key. LONG_PLAY (0x06) is a derived
+# event the events thread produces from a held PLAY; it is never a real
+# down/up code, so it is intentionally excluded.
+INJECTABLE_KEY_NAMES = ("BACK", "TICK", "UP", "DOWN", "HELP", "PLAY")
+
+# Delay before releasing a synthetic long-press. board.eventsThread treats a
+# key-down held 1.0s as a long press; this must exceed that threshold and leave
+# headroom for the events thread's dequeue latency (it polls in ~0.05s steps and
+# reads the key-down slightly after it is enqueued), so the down is observed held
+# past 1.0s before the up arrives.
+INJECTED_LONG_PRESS_RELEASE_SECONDS = 1.4
+
 KEY_NAME_BY_CODE = dict(DGT_BUTTON_CODES)
 KEY_CODE_BY_NAME = {v: k for k, v in KEY_NAME_BY_CODE.items()}
 
@@ -883,6 +895,53 @@ class SyncCentaur:
                 return self.key_up_queue.get(timeout=timeout)
         except queue.Empty:
             return None
+
+    def inject_key(self, key_name: str, long_press: bool = False) -> None:
+        """Inject a synthetic button gesture as if it came from the board.
+
+        Enqueues key-down (and key-up) events into the same ``key_up_queue`` the
+        physical board feeds and ``board.eventsThread`` consumes, so a
+        web-initiated press is indistinguishable from a real one and reuses the
+        exact menu/game dispatch path. Bypasses ``_discard_stale_keys`` (that
+        flag only gates events parsed from the serial stream during discovery).
+
+        Short press: key-down then key-up are queued back-to-back. The events
+        thread dequeues the down, then reads the up well within its 1.0s
+        threshold and delivers a short press.
+
+        Long press: only the key-down is queued now; the matching key-up is
+        released by a background timer after
+        ``INJECTED_LONG_PRESS_RELEASE_SECONDS`` (> the thread's 1.0s threshold),
+        so the gesture is recognized as a hold (e.g. PLAY starts the shutdown
+        countdown). A timer avoids blocking the caller for the hold duration.
+
+        Args:
+            key_name: Button name; one of ``INJECTABLE_KEY_NAMES``.
+            long_press: When True, delay the release past the long-press
+                threshold so the events thread detects a hold.
+
+        Raises:
+            ValueError: If ``key_name`` is not an injectable button.
+        """
+        normalized = key_name.upper() if isinstance(key_name, str) else key_name
+        if normalized not in INJECTABLE_KEY_NAMES:
+            raise ValueError(f"Cannot inject key: {key_name!r}")
+
+        base_code = KEY_CODE_BY_NAME[normalized]
+        down = Key(base_code + KEY_DOWN_OFFSET)
+        up = Key(base_code)
+
+        self.key_up_queue.put(down)
+        if long_press:
+            timer = threading.Timer(
+                INJECTED_LONG_PRESS_RELEASE_SECONDS,
+                self.key_up_queue.put,
+                args=(up,),
+            )
+            timer.daemon = True
+            timer.start()
+        else:
+            self.key_up_queue.put(up)
     
     def _send_command(self, command_name: str, data: Optional[bytes] = None):
         """

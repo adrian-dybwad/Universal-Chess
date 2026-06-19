@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from universalchess.epaper import Manager, SplashScreen
-from universalchess.board.sync_centaur import SyncCentaur, command, Key
+from universalchess.board.sync_centaur import SyncCentaur, command, Key, INJECTABLE_KEY_NAMES
 import sys
 import os
 from universalchess.board.settings import Settings
@@ -268,6 +268,40 @@ def cleanup(leds_off: bool = True):
 def wait_for_key_up(timeout=None, accept=None):
     """Wait for a key up event from the board"""
     return controller.wait_for_key_up(timeout=timeout, accept=accept)
+
+
+# Physical buttons the web remote (interactive board control) may press. These
+# are the six labelled keys on the board's control panel. LONG_PLAY is
+# deliberately excluded from the set: it is a derived hold gesture, not a real
+# button code. A PLAY long-press (which powers the board off) is still reachable,
+# but only via long_press=True so it stays a deliberate hold, never a single tap.
+INJECTABLE_KEYS = INJECTABLE_KEY_NAMES
+
+
+def inject_key(key_name: str, long_press: bool = False):
+    """Deliver a synthetic button gesture to the board's event consumer.
+
+    Enqueues the gesture on the controller so board.eventsThread dispatches it
+    exactly like a physical press. This backs the interactive board-control
+    remote, which mirrors the board's six physical buttons from the browser.
+
+    Args:
+        key_name: One of INJECTABLE_KEYS (case-insensitive).
+        long_press: When True, hold the key past the events thread's long-press
+            threshold (e.g. PLAY long-press starts the shutdown countdown).
+
+    Raises:
+        ValueError: If key_name is not an injectable button (unknown or
+            LONG_PLAY), so callers can reject bad input instead of silently
+            pressing the wrong key.
+        RuntimeError: If the board controller is not initialized yet.
+    """
+    name = (key_name or "").strip().upper()
+    if name not in INJECTABLE_KEYS:
+        raise ValueError(f"Unknown or non-injectable key: {key_name!r}")
+    if controller is None:
+        raise RuntimeError("Board controller not initialized")
+    controller.inject_key(name, long_press=long_press)
 
 
 def run_background(start_key_polling=False):
