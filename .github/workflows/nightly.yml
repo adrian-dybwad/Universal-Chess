@@ -33,17 +33,24 @@ jobs:
         id: version
         run: |
           BASE_VERSION=$(grep -E "^Version:" packaging/deb-root/DEBIAN/control | cut -d' ' -f2)
-          DATE_TAG=$(date +%Y-%m-%d)
+          # Build stamp carries date AND time so same-day rebuilds order
+          # chronologically by the tag itself (the update checker compares the
+          # tag's digits positionally). Captured in one call so the date and
+          # time cannot straddle midnight. GitHub runners are UTC.
+          BUILD_STAMP=$(date +%Y%m%d-%H%M%S)   # e.g. 20260619-031500
+          DATE_PREFIX=${BUILD_STAMP%-*}        # e.g. 20260619 (used to prune the day)
+          DATE_TAG=$(date +%Y-%m-%d)           # human-readable, release name only
           SHORT_SHA=${GITHUB_SHA::7}
           # Simple version for filename, full version for metadata
           NIGHTLY_VERSION="${BASE_VERSION}-nightly"
-          FULL_VERSION="${BASE_VERSION}-nightly.$(date +%Y%m%d).${SHORT_SHA}"
+          FULL_VERSION="${BASE_VERSION}-nightly.${DATE_PREFIX}.${SHORT_SHA}"
           echo "version=$NIGHTLY_VERSION" >> $GITHUB_OUTPUT
           echo "full_version=$FULL_VERSION" >> $GITHUB_OUTPUT
           echo "base_version=$BASE_VERSION" >> $GITHUB_OUTPUT
           echo "date_tag=$DATE_TAG" >> $GITHUB_OUTPUT
+          echo "date_prefix=$DATE_PREFIX" >> $GITHUB_OUTPUT
           echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
-          echo "tag_name=nightly-${DATE_TAG}-${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "tag_name=nightly-${BUILD_STAMP}-${SHORT_SHA}" >> $GITHUB_OUTPUT
           
           # Update control file with nightly version (simplified)
           sed -i "s/^Version: .*/Version: ${NIGHTLY_VERSION}/" packaging/deb-root/DEBIAN/control
@@ -67,7 +74,9 @@ jobs:
         uses: dev-drprasad/delete-older-releases@v0.3.4
         with:
           keep_latest: 0
-          delete_tag_pattern: nightly-${{ steps.version.outputs.date_tag }}
+          # Match the date portion of the timestamped tag (nightly-YYYYMMDD-...)
+          # so the day's prior release is pruned before the new one is published.
+          delete_tag_pattern: nightly-${{ steps.version.outputs.date_prefix }}
           delete_tags: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

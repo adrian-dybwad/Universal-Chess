@@ -317,6 +317,74 @@ class TestNightlyVersionComparison:
             "nightly-2026-06-18-aaaaaaa", "nightly-2026-06-17-f0e809a"
         ) is True
 
+    def test_same_date_different_sha_is_newer(self, service):
+        """A same-day rebuild (same date, different commit sha) must compare as
+        newer. The nightly pipeline keeps exactly one release per date -- it
+        deletes the day's prior release before publishing a rebuild -- so a
+        different sha for today's date is always the rebuilt latest, and the
+        installed same-date build has been replaced.
+
+        Regression (the observed "board does not think there is an update"):
+        the comparison did a lexicographic string compare that, after the equal
+        'nightly-2026-06-19-' prefix, compared the trailing short shas. The
+        short sha has no chronological meaning, so a newer build whose sha sorts
+        before the installed one ('0a6a09c' < '23a8f85') was judged OLDER and no
+        update was offered.
+        """
+        assert service._is_newer(
+            "nightly-2026-06-19-0a6a09c", "nightly-2026-06-19-23a8f85"
+        ) is True
+
+    def test_earlier_nightly_date_is_not_newer(self, service):
+        """An earlier-dated nightly must not be offered (it would downgrade the
+        board). Regression: a naive 'any different sha => newer' rule that
+        ignored the date would roll the board back to an older build.
+        """
+        assert service._is_newer(
+            "nightly-2026-06-18-aaaaaaa", "nightly-2026-06-19-23a8f85"
+        ) is False
+
+    def test_timestamped_same_day_later_time_is_newer(self, service):
+        """Current tag format embeds the build time (nightly-YYYYMMDD-HHMMSS-sha)
+        so two builds on the same day order by time. A later build time must be
+        newer. Regression: if only the date were compared, same-day rebuilds
+        would tie and fall back to the sha, which has no chronological order.
+        """
+        assert service._is_newer(
+            "nightly-20260619-031500-0a6a09c", "nightly-20260619-010000-23a8f85"
+        ) is True
+
+    def test_timestamped_same_day_earlier_time_is_not_newer(self, service):
+        """An earlier build time on the same day must not be offered. Regression:
+        a backwards time comparison would let the checker roll the board back to
+        an earlier same-day build.
+        """
+        assert service._is_newer(
+            "nightly-20260619-010000-23a8f85", "nightly-20260619-031500-0a6a09c"
+        ) is False
+
+    def test_new_timestamped_tag_beats_legacy_dated_tag_same_day(self, service):
+        """A current date+time tag must rank above a legacy date-only tag from
+        the same day. This is the real upgrade path: a field board installed
+        from a legacy 'nightly-2026-06-19-<sha>' build must accept the first
+        date+time release built later that same day. Regression: if the
+        date-only stamp were padded on the left or compared at unequal width,
+        the legacy build could read as newer and the board would never update.
+        """
+        assert service._is_newer(
+            "nightly-20260619-031500-0a6a09c", "nightly-2026-06-19-23a8f85"
+        ) is True
+
+    def test_legacy_dated_tag_does_not_downgrade_newer_timestamped_build(self, service):
+        """The inverse of the upgrade path: a legacy date-only tag must NOT be
+        offered to a board already running a later date+time build from the same
+        day. Regression: treating the padded date-only stamp as newer would
+        downgrade the board.
+        """
+        assert service._is_newer(
+            "nightly-2026-06-19-23a8f85", "nightly-20260619-031500-0a6a09c"
+        ) is False
+
     def test_dpkg_version_string_breaks_nightly_comparison(self, service):
         """Documents WHY VERSION must hold the release tag, not the dpkg
         version: with the dpkg-style "2.0.0-nightly" as the current version,

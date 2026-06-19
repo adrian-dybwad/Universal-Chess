@@ -363,21 +363,64 @@ class UpdateService:
             log.error(f"[UpdateService] Fetch error: {e}")
             return []
     
+    @staticmethod
+    def _parse_nightly_tag(tag: str) -> tuple:
+        """Split a nightly tag into (timestamp_digits, short_sha).
+
+        Two tag formats are supported so a board running an older build can be
+        compared against newer releases (see .github/workflows/nightly.yml):
+
+          - date only:   ``nightly-<YYYY-MM-DD>-<short_sha>``       (legacy)
+          - date + time: ``nightly-<YYYYMMDD>-<HHMMSS>-<short_sha>`` (current)
+
+        The last ``-`` segment is the git short sha; it has NO chronological
+        order, so it is returned separately and callers must only test it for
+        equality, never compare it with ``<``/``>``. Everything before the sha
+        is reduced to its digits, yielding a positionally-comparable timestamp
+        ("20260619" or "20260619031500"). A date-only tag is treated as the
+        start of that day when compared against a date+time tag (see
+        :meth:`_is_newer`, which right-pads the shorter stamp with zeros).
+        """
+        rest = tag[len("nightly-"):]
+        stamp_part, _, short_sha = rest.rpartition("-")
+        stamp_digits = "".join(ch for ch in stamp_part if ch.isdigit())
+        return stamp_digits, short_sha
+
     def _is_newer(self, new_version: str, current_version: str) -> bool:
         """Compare versions."""
         if current_version == "unknown":
             return True
         
         try:
-            # Handle nightly tags like "nightly-2024-12-29-abc1234"
+            # Handle nightly tags like "nightly-20260619-031500-0a6a09c"
+            # (and the legacy "nightly-2026-06-19-0a6a09c" form).
             if new_version.startswith("nightly-"):
-                # For nightlies, compare the date portion
                 if current_version.startswith("nightly-"):
-                    # Both nightly - compare date+hash
-                    return new_version > current_version
+                    new_stamp, new_sha = self._parse_nightly_tag(new_version)
+                    cur_stamp, cur_sha = self._parse_nightly_tag(current_version)
+                    # Align the numeric stamps so they compare positionally:
+                    # right-pad the shorter (a date-only stamp is the start of
+                    # that day) so a date+time build on the same day correctly
+                    # ranks above a legacy date-only build. The stamp is built
+                    # from date (and time, in current tags), both of which sort
+                    # chronologically.
+                    width = max(len(new_stamp), len(cur_stamp))
+                    new_stamp = new_stamp.ljust(width, "0")
+                    cur_stamp = cur_stamp.ljust(width, "0")
+                    if new_stamp != cur_stamp:
+                        return new_stamp > cur_stamp
+                    # Identical stamp: the trailing short sha has NO
+                    # chronological order, so it must never be compared with
+                    # </>. A different sha for the same stamp is a rebuild and
+                    # therefore newer; comparing the sha lexicographically (the
+                    # original bug) ordered builds at random, so a newer build
+                    # whose sha sorted earlier was judged older and no update
+                    # was offered.
+                    return new_sha != cur_sha
                 else:
-                    # Comparing nightly to stable - check if nightly is for newer base
-                    return True  # Nightlies are considered newer than any stable
+                    # Comparing nightly to stable - nightlies track main and are
+                    # considered newer than any stable for the nightly channel.
+                    return True
             
             # Handle stable versions
             def parse_version(v: str) -> tuple:
