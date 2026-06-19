@@ -1915,6 +1915,14 @@ def generateVideoFrame():
         if remaining > 0:
             time.sleep(remaining)
 
+# Buttons the interactive board-control page may press. Mirrors
+# board.INJECTABLE_KEYS but kept local so the web process validates names without
+# importing the board/hardware modules. LONG_PLAY is intentionally absent: it is
+# a derived hold gesture, not a real button; a PLAY long-press (shutdown) is
+# reached via long_press=True, never as a tap.
+_REMOTE_KEYS = frozenset({"BACK", "TICK", "UP", "DOWN", "HELP", "PLAY"})
+
+
 @app.route('/video')
 def video_feed():
     return Response(
@@ -1927,6 +1935,38 @@ def video_feed():
             'X-Accel-Buffering': 'no',
         },
     )
+
+
+@app.route("/api/board/key", methods=["POST"])
+@requires_auth
+def api_board_key():
+    """Press one of the board's physical buttons. Requires authentication.
+
+    Backs the interactive board-control page. Forwards a ``key_press`` command to
+    the main process, which injects it onto the board's key queue so it is
+    handled exactly like a physical press. ``long_press`` reproduces a held
+    button (e.g. PLAY long-press starts the shutdown countdown). Rejects unknown
+    buttons; a short tap can never trigger the shutdown gesture because that
+    requires an explicit long press of PLAY.
+
+    Body: {"key": "BACK"|"TICK"|"UP"|"DOWN"|"HELP"|"PLAY", "long_press": bool}
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        key = (body.get("key") or "").strip().upper()
+        if key not in _REMOTE_KEYS:
+            return jsonify({"success": False, "error": "Unknown key"}), 400
+        long_press = bool(body.get("long_press"))
+
+        from universalchess.services.game_broadcast import send_board_command
+
+        sent = send_board_command("key_press", {"key": key, "long_press": long_press})
+        if sent:
+            action = "Long-pressed" if long_press else "Pressed"
+            return jsonify({"success": True, "message": f"{action} {key}"})
+        return jsonify({"success": False, "error": "Board not running"}), 503
+    except Exception as e:
+        return _internal_error(e)
 
 def fenToImage(fen):
     global logo
