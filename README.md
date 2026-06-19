@@ -68,7 +68,27 @@ Universal-Chess can advertise as multiple e-board types and auto-detect which pr
 - WiFi configuration, Bluetooth pairing, sound control, Lichess API token, engine selection, and predefined position loading.
 
 ## Install procedure
-See the install procedure in the release page for the target device image/package.
+
+Start clean on a new SD card using the Raspberry Pi Imager. Do not reuse the
+original card from the Centaur -- keep it safe, you may want it later.
+
+1. In the Pi Imager, choose Raspberry Pi OS (32-bit) **Trixie**, with no apps or
+   desktop (Lite).
+2. In the Imager's advanced settings, configure the hostname, a user and password
+   (any username works, you are not limited to `pi` -- just remember the
+   password), Wi-Fi credentials, and enable SSH. Set any other options you like.
+3. Write the image, insert the card into the Pi, and power it on. With Wi-Fi
+   configured correctly the Pi usually joins your network within a minute or two.
+   No screen or keyboard required.
+4. SSH into the Pi and update the base system:
+   ```bash
+   sudo apt update && sudo apt upgrade -y
+   ```
+5. Run the install command for your choice of nightly or release build (see the
+   [Releases page](https://github.com/adrian-dybwad/Universal-Chess/releases) for
+   the exact command and `.deb` for the target version).
+6. Wait for the install to complete, reboot, and the board should come up running
+   Universal Chess.
 
 ## Local development setup (configs and database)
 
