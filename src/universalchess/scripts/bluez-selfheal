@@ -209,16 +209,26 @@ retire_patch() {
 
 apply_patch() {
     # Divert stock aside and install the patched binary from $1. Idempotent, and
-    # atomic on failure: if the install fails after the diversion was added, the
+    # atomic on failure: if a step fails after the diversion was added, the
     # diversion is rolled back so the canonical path is never left without a
     # binary (which would leave Bluetooth unable to start at all).
-    local patched="$1" bd="$2" stock="${2}.stock"
+    #
+    # Crash-safety: STAGE the patched binary in the target dir FIRST, then (after
+    # diverting stock aside) swap it into place with a single atomic rename. This
+    # shrinks the window in which the canonical path has no file -- a power cut in
+    # that window leaves Bluetooth unable to start until the boot safety net
+    # restores stock -- from a whole file copy down to one rename.
+    local patched="$1" bd="$2" stock="${2}.stock" staged="${2}.uc-new"
+    if ! install -m 0755 "$patched" "$staged"; then
+        log "ERROR: staging patched binary failed"; rm -f "$staged"; return 1
+    fi
     if ! is_diverted "$bd"; then
         dpkg-divert --add --rename --divert "$stock" "$bd" || {
-            log "ERROR: dpkg-divert --add failed"; return 1; }
+            log "ERROR: dpkg-divert --add failed"; rm -f "$staged"; return 1; }
     fi
-    if ! install -m 0755 "$patched" "$bd"; then
-        log "ERROR: install patched failed; rolling back diversion"
+    if ! mv -f "$staged" "$bd"; then
+        log "ERROR: swapping patched binary into place failed; rolling back diversion"
+        rm -f "$staged"
         retire_patch "$bd"
         return 1
     fi
@@ -258,7 +268,14 @@ build_patched() {
     local ver arch_ cached work src apt_lock
     ver="$(bluez_version)"; arch_="$(arch)"
     cached="${CACHE_DIR}/bluetoothd-${ver}-${arch_}"
-    if [ -x "$cached" ]; then log "using cached patched binary $cached"; echo "$cached"; return 0; fi
+    # Reuse the cache only if the binary is intact. A power cut mid-write can leave
+    # a truncated file that still has the exec bit (so a bare -x check would reuse
+    # a corrupt binary forever, looping the heal); a --version probe confirms it
+    # actually runs. Drop a failed-probe binary so the build below replaces it.
+    if [ -x "$cached" ] && timeout 5 "$cached" --version >/dev/null 2>&1; then
+        log "using cached patched binary $cached"; echo "$cached"; return 0
+    fi
+    [ -e "$cached" ] && { log "cached binary $cached failed integrity check; rebuilding"; rm -f "$cached"; }
 
     mkdir -p "$CACHE_DIR"
     apt_lock="-o DPkg::Lock::Timeout=300"
@@ -299,7 +316,13 @@ build_patched() {
     ) || { log "ERROR: compile failed"; rm -rf "$work"; return 1; }
 
     [ -x "$src/src/bluetoothd" ] || { log "ERROR: bluetoothd not produced"; rm -rf "$work"; return 1; }
-    install -m 0755 "$src/src/bluetoothd" "$cached"
+    # Write the cache atomically: install to a temp then rename, so a power cut
+    # mid-write can never leave a truncated binary at $cached (which the reuse
+    # check would otherwise have to catch). Rename is atomic within the same dir.
+    if ! install -m 0755 "$src/src/bluetoothd" "${cached}.tmp"; then
+        log "ERROR: caching built binary failed"; rm -f "${cached}.tmp"; rm -rf "$work"; return 1
+    fi
+    mv -f "${cached}.tmp" "$cached"
     rm -rf "$work"
     log "built + cached patched binary at $cached"
     echo "$cached"
@@ -316,8 +339,11 @@ main() {
     flock -w 600 9 || { log "another self-heal run holds the lock; exiting"; exit 0; }
 
     # Any exit from here on clears the progress file so the board's poll reverts
-    # to idle (also wipes a stale record left by a previously killed run).
+    # to idle. Also clear it on ENTRY: a record present now can only be stale
+    # (a prior run died without its trap firing -- e.g. a hard power cut), and a
+    # fast-skip exit below would otherwise leave it pinned on "Repairing...".
     trap clear_progress EXIT INT TERM
+    clear_progress
 
     local bd ver kern active
     bd="$(detect_bluetoothd)"
@@ -399,6 +425,11 @@ boot() {
     # healthy marker means a prior install/apt run already settled it (an input
     # change such as an OS upgrade goes through apt, which re-triggers via the APT
     # hook), so a healthy boot does ZERO probing or bluetoothd restarts here.
+    #
+    # First clear any progress record: at boot it is always stale (no heal can
+    # survive a reboot), so this guarantees the UI is not pinned on "Repairing..."
+    # even on the healthy-skip path below that never enters main().
+    clear_progress
     if [ "$(marker_field healthy)" = "True" ]; then
         log "boot: last self-heal was healthy -- nothing to do"
         exit 0

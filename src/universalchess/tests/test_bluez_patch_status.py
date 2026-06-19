@@ -22,6 +22,7 @@ import pytest
 from universalchess.managers.bluez_patch_status import (
     HEAL_APPLYING,
     HEAL_BUILDING,
+    HEAL_MAX_AGE_SECONDS,
     HEAL_PROBING_PATCH,
     HEAL_PROBING_STOCK,
     STACK_PATCHED,
@@ -271,13 +272,63 @@ def test_read_progress_malformed_is_idle(tmp_path):
 def test_read_progress_reads_running_record(tmp_path):
     # The happy path: a well-formed running record is read back with its phase so
     # the board can surface the in-progress label. Failure manifests as the board
-    # never showing "self-heal in progress" while the rebuild runs.
+    # never showing "self-heal in progress" while the rebuild runs. Pinned 'now'
+    # just after started_at so the freshness check does not interfere.
     path = tmp_path / "bluez-selfheal.progress"
     path.write_text(
         json.dumps({"running": True, "phase": HEAL_BUILDING, "started_at": "2026-06-19T17:00:00Z"}),
         encoding="utf-8",
     )
-    progress = read_progress(str(path))
+    now = _epoch("2026-06-19T17:01:00Z")  # 1 min in -> fresh
+    progress = read_progress(str(path), now=now)
     assert progress["running"] is True
     assert progress["phase"] == HEAL_BUILDING
     assert heal_label(progress) is not None
+
+
+def _epoch(iso_z: str) -> float:
+    from datetime import datetime, timezone
+    return datetime.fromisoformat(iso_z.rstrip("Z")).replace(tzinfo=timezone.utc).timestamp()
+
+
+def test_read_progress_stale_running_is_idle(tmp_path):
+    # A hard power cut kills the script before its trap clears the file, leaving a
+    # 'running' record forever. read_progress must treat a record older than the
+    # heal timeout as stale -> idle, so the UI is not pinned on "Repairing..."
+    # indefinitely. Manifests as running staying True long after the heal died.
+    path = tmp_path / "bluez-selfheal.progress"
+    path.write_text(
+        json.dumps({"running": True, "phase": HEAL_BUILDING, "started_at": "2026-06-19T17:00:00Z"}),
+        encoding="utf-8",
+    )
+    now = _epoch("2026-06-19T17:00:00Z") + HEAL_MAX_AGE_SECONDS + 1  # just past the limit
+    assert read_progress(str(path), now=now) == idle_progress()
+
+
+def test_read_progress_fresh_running_is_kept(tmp_path):
+    # The boundary on the other side: a record still within the max age is a real,
+    # active heal and must be reported running. Guards against the staleness check
+    # being too aggressive and hiding a legitimately long first build.
+    path = tmp_path / "bluez-selfheal.progress"
+    path.write_text(
+        json.dumps({"running": True, "phase": HEAL_BUILDING, "started_at": "2026-06-19T17:00:00Z"}),
+        encoding="utf-8",
+    )
+    now = _epoch("2026-06-19T17:00:00Z") + HEAL_MAX_AGE_SECONDS - 1  # just inside the limit
+    progress = read_progress(str(path), now=now)
+    assert progress["running"] is True
+    assert progress["phase"] == HEAL_BUILDING
+
+
+def test_read_progress_running_without_started_at_is_kept(tmp_path):
+    # A running record with no parseable started_at cannot be aged. Prefer showing
+    # an active heal over hiding one (the script's per-boot clear handles the
+    # power-cut path), so it stays running. Manifests as a real heal being hidden
+    # if an unparseable timestamp were treated as stale.
+    path = tmp_path / "bluez-selfheal.progress"
+    path.write_text(
+        json.dumps({"running": True, "phase": HEAL_BUILDING, "started_at": "not-a-date"}),
+        encoding="utf-8",
+    )
+    progress = read_progress(str(path), now=_epoch("2030-01-01T00:00:00Z"))
+    assert progress["running"] is True

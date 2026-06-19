@@ -33,6 +33,8 @@ raise.
 """
 
 import json
+import time
+from datetime import datetime, timezone
 from typing import Optional
 
 # Active-stack values (closed set). ``unknown`` is the honest default when no
@@ -73,6 +75,13 @@ _HEAL_PHASE_LABELS = {
     HEAL_PROBING_PATCH: "Verifying Bluetooth fix",
 }
 _HEAL_DEFAULT_LABEL = "Repairing Bluetooth advertising"
+
+# A heal cannot run longer than the unit's TimeoutStartSec (2400s); a "running"
+# record older than this is therefore stale -- e.g. a hard power cut killed the
+# script before its trap could clear the file, which would otherwise pin the UI
+# on "Repairing..." forever. Kept comfortably above the timeout so a legitimately
+# long first build is never mistaken for stale.
+HEAL_MAX_AGE_SECONDS = 2700
 
 
 def make_status(
@@ -216,12 +225,41 @@ def heal_label(progress: Optional[dict]) -> Optional[str]:
     return f"{base}..."
 
 
-def read_progress(path: str = DEFAULT_PROGRESS_PATH) -> dict:
+def _parse_iso_utc(value: Optional[str]) -> Optional[float]:
+    """Parse an ISO-8601 UTC timestamp (``...Z``) to epoch seconds, or ``None``.
+
+    The self-heal writes ``started_at`` as ``date -u +%Y-%m-%dT%H:%M:%SZ``. Any
+    value that does not parse yields ``None`` so callers degrade gracefully
+    instead of raising.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.rstrip("Z")).replace(
+            tzinfo=timezone.utc
+        ).timestamp()
+    except ValueError:
+        return None
+
+
+def read_progress(
+    path: str = DEFAULT_PROGRESS_PATH,
+    max_age_seconds: float = HEAL_MAX_AGE_SECONDS,
+    now: Optional[float] = None,
+) -> dict:
     """Read the self-heal progress file; never raises.
 
     A missing file is the normal case (no heal running) and reports idle. An
     unreadable or malformed file is treated the same way rather than propagating
     an error into the status snapshot the web/device depend on.
+
+    A ``running`` record whose ``started_at`` is older than ``max_age_seconds`` is
+    treated as **stale** and reported idle. A heal cannot outlive the unit's
+    start timeout, so a record older than that means the script died without its
+    trap clearing the file -- the classic case being a hard power cut mid-heal,
+    which would otherwise leave the UI stuck on "Repairing...". A ``running``
+    record with no parseable ``started_at`` is kept (better to show an active
+    heal than to hide one); the per-boot clear in the script covers that path.
     """
     try:
         with open(path, "r", encoding="utf-8") as handle:
@@ -230,4 +268,11 @@ def read_progress(path: str = DEFAULT_PROGRESS_PATH) -> dict:
         return idle_progress()
     except (OSError, ValueError):
         return idle_progress()
-    return derive_progress(raw)
+    progress = derive_progress(raw)
+    if progress["running"]:
+        started = _parse_iso_utc(progress["started_at"])
+        if started is not None:
+            current = time.time() if now is None else now
+            if current - started > max_age_seconds:
+                return idle_progress()
+    return progress

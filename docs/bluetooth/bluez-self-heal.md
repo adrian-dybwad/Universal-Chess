@@ -231,6 +231,19 @@ else (divert, marker, UI warning, triggers, no-op guard) is reusable.
   on the next boot and re-runs the heal. The APT hook also re-triggers it on the
   next apt run, and the failure is visible as `ADV_FAILED` (then "self-heal in
   progress") meanwhile.
+- **Hard power cut mid-heal.** Power loss is the one interruption the script's
+  `trap` cannot catch. It is handled defensively rather than prevented:
+  - *Applying the patch* stages the binary then swaps it in with a single atomic
+    rename, so the canonical `bluetoothd` path is file-less for ~one rename, not a
+    whole copy. If a cut still lands there, the next boot's safety net runs
+    `retire_patch`, which renames `bluetoothd.stock` back — Bluetooth is down for
+    that one boot, then recovers.
+  - *The build cache* is written atomically (temp + rename) and integrity-checked
+    (`--version`) before reuse, so a truncated binary can never be cached or
+    reused — which would otherwise loop the heal forever.
+  - *The progress file* is cleared on entry to `main`/`boot` and ignored once
+    older than the heal timeout (`HEAL_MAX_AGE_SECONDS`), so a stale `running`
+    record left by the cut cannot pin the UI on "Repairing…".
 - **Trust.** The patched binary is built locally from the distro's signed source;
   it is not signed by the distribution and does not receive its security updates
   while active — hence the prominent warnings and the auto-retire.
