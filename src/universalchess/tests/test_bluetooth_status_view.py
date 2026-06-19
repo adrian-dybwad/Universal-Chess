@@ -76,6 +76,24 @@ def test_pending_state_has_no_error_row():
     assert "AdvertError" not in rows
 
 
+def test_healing_shows_heal_row_not_error_row():
+    # While the self-heal runs, stock BlueZ rejects the adverts (failed > 0) but
+    # the device must show a "fixing" row instead of the alarming error row. The
+    # heal row carries the shared phase label; the AdvertError row must be absent.
+    # Regression: showing AdvertError during a legitimate heal alarms the user.
+    engine = BluetoothStatusState(broadcast=None)
+    engine.begin_advertising(3, ["DGT PEGASUS"])
+    for _ in range(3):
+        engine.advertisement_failed("org.bluez.Error.Failed")
+    engine.set_heal_status(True, phase="building")
+
+    rows = _rows_by_key(engine.to_dict())
+    assert "Heal" in rows
+    assert "AdvertError" not in rows
+    assert "Fixing Bluetooth" in rows["Heal"]["label"]
+    assert "Building" in rows["Heal"]["label"]
+
+
 def test_patched_stack_adds_warning_row():
     # When the board runs a substituted (non-stock) bluetoothd, a 'Stack' row
     # must warn on the device (the operator can't see the web). Regression:

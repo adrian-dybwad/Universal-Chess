@@ -99,21 +99,33 @@ the relevant inputs can have changed**:
   `/etc/apt/apt.conf.d/80-universal-chess-bluez` starts the oneshot **after** apt
   releases its lock.
 
-It is **not** a boot-time job. A `dpkg-divert` and the substituted binary persist
-on disk across reboots, so re-applying every boot would be wasted work. Two
-things make this safe:
+The state-changing apply/retire work is **not** an unconditional boot-time job. A
+`dpkg-divert` and the substituted binary persist on disk across reboots, so
+re-applying every boot would be wasted work. Three things make this safe:
 
 1. **Fast no-op guard.** The marker records the `bluez` version and kernel the
    decision was made against, plus a `healthy` flag. If both are unchanged since
    the last *confirmed-healthy* run, the script exits in ~1s without touching
    Bluetooth. (A *degraded* result — `healthy=false` — does not fast-skip, so a
    later online run can still heal it.)
-2. **Per-boot safety net already exists.** `BleManager` registers the adverts at
-   service start and sets `ADV_FAILED` if BlueZ rejects them, so a broken board
-   is visibly flagged every boot regardless of the self-heal.
+2. **Per-boot detection.** `BleManager` registers the adverts at service start
+   and sets `ADV_FAILED` if BlueZ rejects them, so a broken board is visibly
+   flagged every boot regardless of the self-heal.
+3. **Gated boot safety net.** `universal-chess-bluez-selfheal-boot.service` runs
+   `bluez-selfheal boot` on each boot, but that mode **re-runs the heal only when
+   the marker is absent or `healthy != true`**. A confirmed-healthy board does
+   nothing (no probe, no `bluetoothd` restart). This recovers the one case the
+   install/apt triggers miss: a reboot that **interrupts a first-time on-board
+   build** — notably the fresh-install reboot in `postinst`, which starts the
+   heal `--no-block` then reboots seconds later — would otherwise leave stock
+   BlueZ broken with nothing to re-trigger it. The *inputs-changed* case (OS
+   upgrade) is not the boot net's job: it flows through apt, which re-triggers
+   via the hook before the reboot, so the marker is already healthy by boot.
 
-So: **apply/retire is install-time; detection is continuous.** That is the answer
-to "this doesn't need to run on every boot, right?" — correct.
+So: **apply/retire is event-driven (install/apt), with a gated boot net for an
+interrupted first heal; detection is continuous.** "This doesn't need to run on
+*every* boot, right?" — correct: it only does real work at boot when the last
+attempt did not leave a healthy result.
 
 When a run actually changes the stack it restarts `bluetooth`, which drops every
 advertisement the board service had registered (and `BleManager` does not
@@ -144,10 +156,11 @@ The schema and warning wording live in one module
 | File | Role |
 | --- | --- |
 | `scripts/bluez-advertising-probe` | Functional probe: can BlueZ register an LE advert on this kernel? |
-| `scripts/bluez-selfheal` | Orchestrator: probe → build-from-source → `dpkg-divert` apply/retire → write marker. Subcommands: `run`, `probe-only`, `retire`, `status`. |
-| `packaging/.../universal-chess-bluez-selfheal.service` | `oneshot` that runs `bluez-selfheal run` (long `TimeoutStartSec` for a first build). |
-| `packaging/.../apt.conf.d/80-universal-chess-bluez` | `DPkg::Post-Invoke` hook that kicks the oneshot (`--no-block`) after apt. |
-| `DEBIAN/postinst` | Makes the scripts executable, creates the state dir, and triggers the oneshot on install/upgrade. |
+| `scripts/bluez-selfheal` | Orchestrator: probe → build-from-source → `dpkg-divert` apply/retire → write marker. Subcommands: `run`, `boot` (gated: only when marker absent/degraded), `probe-only`, `retire`, `status`. |
+| `packaging/.../universal-chess-bluez-selfheal.service` | Install/apt-triggered `oneshot` that runs `bluez-selfheal run` (long `TimeoutStartSec` for a first build). |
+| `packaging/.../universal-chess-bluez-selfheal-boot.service` | Boot `oneshot` (`WantedBy=multi-user.target`, `After=network-online.target`) that runs `bluez-selfheal boot` — the gated safety net for an interrupted first heal. |
+| `packaging/.../apt.conf.d/80-universal-chess-bluez` | `DPkg::Post-Invoke` hook that kicks the install/apt oneshot (`--no-block`) after apt. |
+| `DEBIAN/postinst` | Makes the scripts executable, creates the state dir, triggers the install/apt oneshot, and enables the boot safety-net unit. |
 | `managers/bluez_patch_status.py` | Marker schema + `read_status` + `warning_label` (shared by web + device). |
 | `managers/bluetooth_status_state.py` | Carries `stack` in the live snapshot. |
 
@@ -209,12 +222,15 @@ else (divert, marker, UI warning, triggers, no-op guard) is reusable.
 - **Offline first-heal.** Building needs `deb-src`, build-deps, and the source
   package. If the board is offline when stock is broken, the build fails, the
   script keeps stock and records `healthy=false`, and `ADV_FAILED` shows in the
-  UI; the next online apt run (or a manual `run`) heals it.
+  UI; the next online boot (the gated boot net re-runs on a degraded marker), apt
+  run, or a manual `run` heals it.
 - **Fresh install onto an already-broken kernel.** The `postinst` reboots on a
-  fresh install, which can interrupt a first-time build. The APT hook re-triggers
-  the heal on the next apt run, and the failure is visible as `ADV_FAILED`
-  meanwhile. (Normal regressions arrive via `apt upgrade`, which the hook covers
-  directly.)
+  fresh install, which can interrupt a first-time build (leaving no marker /
+  empty cache). This is now recovered automatically: the boot safety-net unit
+  (`universal-chess-bluez-selfheal-boot.service`) sees the absent/degraded marker
+  on the next boot and re-runs the heal. The APT hook also re-triggers it on the
+  next apt run, and the failure is visible as `ADV_FAILED` (then "self-heal in
+  progress") meanwhile.
 - **Trust.** The patched binary is built locally from the distro's signed source;
   it is not signed by the distribution and does not receive its security updates
   while active — hence the prominent warnings and the auto-retire.

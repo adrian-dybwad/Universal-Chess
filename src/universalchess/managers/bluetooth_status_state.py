@@ -29,7 +29,11 @@ import time
 from typing import Callable, Dict, List, Optional
 
 from universalchess.managers.ble_advertising_status import make_status
-from universalchess.managers.bluez_patch_status import unknown_status as stack_unknown_status
+from universalchess.managers.bluez_patch_status import (
+    heal_label,
+    make_progress,
+    unknown_status as stack_unknown_status,
+)
 
 # Event type used for the board -> web broadcast (over the game socket) and the
 # SSE message the web forwards. Kept here so the publisher and both consumers
@@ -41,6 +45,7 @@ EVENT_TYPE = "bt_status"
 # "paused because a central is connected").
 ADV_ADVERTISING = "advertising"        # all adverts registered, none paused
 ADV_PAUSED_CONNECTED = "paused_connected"  # a BLE central is connected (LE adverts pause)
+ADV_HEALING = "healing"                # self-heal running: advertising is being repaired
 ADV_FAILED = "failed"                  # BlueZ rejected one or more adverts
 ADV_RADIO_OFF = "radio_off"            # adapter unpowered or radio soft-blocked
 ADV_UNKNOWN = "unknown"                # nothing attempted yet / still pending
@@ -113,6 +118,14 @@ class BluetoothStatusState:
         # device screen can warn about the deviation over the existing channel.
         # Defaults to unknown (non-alarming) until the marker is read.
         self._stack: dict = stack_unknown_status()
+
+        # Whether the bluez self-heal is actively running (and which phase). Fed
+        # by a lightweight poll of the self-heal progress file. While true, the
+        # derived adv_state is ADV_HEALING so the UI shows "repairing advertising"
+        # instead of the bare ADV_FAILED that stock BlueZ produces during the
+        # multi-minute on-board rebuild.
+        self._healing = False
+        self._heal_phase: Optional[str] = None
 
     # -- advertising registration ----------------------------------------
 
@@ -268,25 +281,55 @@ class BluetoothStatusState:
         if changed:
             self._publish()
 
+    # -- self-heal progress ----------------------------------------------
+
+    def set_heal_status(self, running: bool, phase: Optional[str] = None) -> None:
+        """Record whether the bluez self-heal is running (and its phase).
+
+        Fed by a poll of the self-heal progress file. Broadcasts only on change
+        so the periodic poll does not churn the live web view when nothing moved.
+        While running, :meth:`_derive_adv_state` reports ``healing`` so the bare
+        advertising failure that stock BlueZ produces mid-rebuild is replaced by
+        a "repairing advertising" message.
+        """
+        running = bool(running)
+        phase = phase if running else None
+        with self._lock:
+            changed = self._healing != running or self._heal_phase != phase
+            self._healing = running
+            self._heal_phase = phase
+        if changed:
+            self._publish()
+
     # -- derived state + serialization -----------------------------------
 
     def _derive_adv_state(self) -> str:
-        """Fuse registration result, radio, and connection into one state.
+        """Fuse registration result, radio, connection, and self-heal into one state.
 
-        Order matters: a powered-off radio overrides everything; a connected BLE
-        central means LE advertising is paused (so 0 active instances is
-        expected, not a failure); a recorded rejection is the failure that hides
-        the board from scans; all-registered with none failed is healthy;
-        anything else (nothing attempted, still pending) is unknown.
+        Order matters:
+
+        * a powered-off radio overrides everything;
+        * a connected BLE central means LE advertising is paused (so 0 active
+          instances is expected, not a failure);
+        * a fully-registered, none-failed result is healthy -- reported even
+          while a heal happens to be running, so a working state is never hidden;
+        * an active self-heal reports ``healing`` -- it takes precedence over
+          ``failed``/``unknown`` because the bare failure stock BlueZ produces
+          during the on-board rebuild is exactly what the heal is repairing;
+        * a recorded rejection (no heal running) is the failure that hides the
+          board from scans;
+        * anything else (nothing attempted, still pending) is unknown.
         """
         if not self._powered or not self._enabled:
             return ADV_RADIO_OFF
         if self._connected and self._transport == TRANSPORT_BLE:
             return ADV_PAUSED_CONNECTED
-        if self._failed > 0:
-            return ADV_FAILED
         if self._expected > 0 and self._registered >= self._expected:
             return ADV_ADVERTISING
+        if self._healing:
+            return ADV_HEALING
+        if self._failed > 0:
+            return ADV_FAILED
         return ADV_UNKNOWN
 
     def to_dict(self) -> dict:
@@ -312,7 +355,22 @@ class BluetoothStatusState:
                     for addr, name in self._devices.items()
                 ],
                 "stack": dict(self._stack),
+                "heal": self._heal_block(),
             }
+
+    def _heal_block(self) -> dict:
+        """Build the self-heal sub-block (running/phase + shared label).
+
+        Carries the pre-formatted ``label`` so the web card and the device
+        screen render identical wording without each re-deriving it. Caller holds
+        the lock.
+        """
+        progress = make_progress(self._healing, self._heal_phase)
+        return {
+            "running": progress["running"],
+            "phase": progress["phase"],
+            "label": heal_label(progress),
+        }
 
     def add_observer(self, callback: Callable[[], None]) -> None:
         """Register an in-process observer notified on every state change.

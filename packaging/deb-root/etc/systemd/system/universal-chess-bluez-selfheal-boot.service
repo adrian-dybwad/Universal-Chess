@@ -1,0 +1,30 @@
+[Unit]
+# Boot-time companion to universal-chess-bluez-selfheal.service (which is
+# install/apt-triggered, NOT a boot job). A reboot can interrupt a first-time
+# on-board bluetoothd build -- notably the fresh-install reboot in our postinst,
+# which starts the heal --no-block and then reboots a few seconds later -- which
+# leaves stock BlueZ broken on a rejecting kernel with nothing to re-trigger the
+# heal. This unit closes that gap. The script's `boot` mode is a true no-op when
+# the last heal was confirmed healthy, so healthy boots cost nothing (no probe,
+# no bluetoothd restart). See scripts/bluez-selfheal and
+# docs/bluetooth/bluez-self-heal.md.
+Description=Universal Chess BlueZ advertising self-heal (boot-time safety net)
+Documentation=file:///opt/universalchess/../docs/bluetooth/bluez-self-heal.md
+# network-online so a needed (re)build can fetch the distro bluez source; offline
+# simply fails fast to a degraded marker that a later boot/apt run retries.
+After=bluetooth.service network-online.target
+Wants=bluetooth.service network-online.target
+
+[Service]
+Type=oneshot
+# A first-time build from distro source on a Pi Zero can take many minutes; do
+# not let systemd time it out mid-compile.
+TimeoutStartSec=2400
+ExecStart=/opt/universalchess/scripts/bluez-selfheal boot
+# Best-effort: a self-heal failure must never fail the boot transaction or leave
+# a failed unit nagging; the script rolls back to stock on any failure and the
+# breakage still surfaces in the UI as ADV_FAILED.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=multi-user.target

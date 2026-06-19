@@ -20,11 +20,20 @@ import json
 import pytest
 
 from universalchess.managers.bluez_patch_status import (
+    HEAL_APPLYING,
+    HEAL_BUILDING,
+    HEAL_PROBING_PATCH,
+    HEAL_PROBING_STOCK,
     STACK_PATCHED,
     STACK_STOCK,
     STACK_UNKNOWN,
+    derive_progress,
     derive_status,
+    heal_label,
+    idle_progress,
+    make_progress,
     make_status,
+    read_progress,
     read_status,
     stock_status,
     unknown_status,
@@ -174,3 +183,101 @@ def test_read_status_reads_stock_marker(tmp_path):
     assert status["active"] == STACK_STOCK
     assert status["patched"] is False
     assert warning_label(status) is None
+
+
+# --- self-heal progress -----------------------------------------------------
+# Guard the transient signal that drives the "self-heal in progress" status,
+# so the UI shows a reassuring heal message during the multi-minute on-board
+# rebuild instead of the bare ADV_FAILED that stock BlueZ produces meanwhile.
+
+
+def test_make_progress_not_running_clears_phase():
+    # An idle record must never carry a phase/started_at, even if passed: a stale
+    # phase left in a not-running record could otherwise make the UI claim a heal
+    # is underway. Manifests as phase leaking through when running is False.
+    p = make_progress(running=False, phase="building", started_at="2026-06-19T17:00:00Z")
+    assert p["running"] is False
+    assert p["phase"] is None
+    assert p["started_at"] is None
+
+
+def test_make_progress_running_keeps_phase():
+    # The happy path: a running record carries its phase + start time verbatim so
+    # the UI can show which step is underway. Failure manifests as a dropped phase.
+    p = make_progress(running=True, phase=HEAL_BUILDING, started_at="2026-06-19T17:00:00Z")
+    assert p["running"] is True
+    assert p["phase"] == HEAL_BUILDING
+    assert p["started_at"] == "2026-06-19T17:00:00Z"
+
+
+@pytest.mark.parametrize("bad", [None, [], "running", 7])
+def test_derive_progress_non_dict_is_idle(bad):
+    # read_progress feeds derive_progress whatever json.load returned; a non-dict
+    # must degrade to idle (running False) rather than raise, so a corrupt file
+    # cannot break the status snapshot or wedge the UI in a fake "healing" state.
+    assert derive_progress(bad) == idle_progress()
+
+
+def test_heal_label_none_when_idle():
+    # No heal running => no healing label on either surface. Regression: a label
+    # here would make the UI perpetually claim a self-heal is in progress.
+    assert heal_label(idle_progress()) is None
+    assert heal_label(None) is None
+    assert heal_label(make_progress(running=False, phase=HEAL_BUILDING)) is None
+
+
+@pytest.mark.parametrize(
+    "phase, fragment",
+    [
+        (HEAL_PROBING_STOCK, "Checking"),
+        (HEAL_BUILDING, "Building"),
+        (HEAL_APPLYING, "Applying"),
+        (HEAL_PROBING_PATCH, "Verifying"),
+    ],
+)
+def test_heal_label_phase_wording(phase, fragment):
+    # Each known phase maps to its own human wording so the user can see which
+    # step is running. Regression: a wrong/blank mapping would show a misleading
+    # or empty progress message.
+    label = heal_label(make_progress(running=True, phase=phase))
+    assert label is not None
+    assert fragment in label
+
+
+def test_heal_label_unknown_phase_uses_generic_label():
+    # A phase the board does not recognize (e.g. a newer installer) must still
+    # produce a sensible generic message, never expose the raw token. Manifests
+    # as the raw phase string leaking into the UI.
+    label = heal_label(make_progress(running=True, phase="some-future-phase"))
+    assert label is not None
+    assert "some-future-phase" not in label
+    assert "Repairing" in label
+
+
+def test_read_progress_missing_is_idle(tmp_path):
+    # No progress file is the normal case (no heal running) => idle, never an
+    # exception. Guards every board that is not mid-heal.
+    assert read_progress(str(tmp_path / "nope.progress")) == idle_progress()
+
+
+def test_read_progress_malformed_is_idle(tmp_path):
+    # A truncated/garbage progress file must degrade to idle, not raise, and not
+    # wedge the UI into a fake healing state.
+    bad = tmp_path / "bluez-selfheal.progress"
+    bad.write_text("{not json", encoding="utf-8")
+    assert read_progress(str(bad)) == idle_progress()
+
+
+def test_read_progress_reads_running_record(tmp_path):
+    # The happy path: a well-formed running record is read back with its phase so
+    # the board can surface the in-progress label. Failure manifests as the board
+    # never showing "self-heal in progress" while the rebuild runs.
+    path = tmp_path / "bluez-selfheal.progress"
+    path.write_text(
+        json.dumps({"running": True, "phase": HEAL_BUILDING, "started_at": "2026-06-19T17:00:00Z"}),
+        encoding="utf-8",
+    )
+    progress = read_progress(str(path))
+    assert progress["running"] is True
+    assert progress["phase"] == HEAL_BUILDING
+    assert heal_label(progress) is not None

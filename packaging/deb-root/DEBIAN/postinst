@@ -225,6 +225,15 @@ echo -e "::: Setup services"
     # The main service disables this on startup and re-enables on non-shutdown exit
     systemctl enable universal-chess-stop-controller.service
 
+    # Boot-time BlueZ self-heal safety net. The apply/retire heal is normally
+    # install/apt-triggered, but a reboot can interrupt a first-time on-board
+    # build (notably the fresh-install reboot at the end of this script), leaving
+    # stock BlueZ broken with nothing to re-trigger it. Enabling this unit re-runs
+    # the heal on the next boot ONLY when the last decision is missing or degraded
+    # (it is a true no-op on a healthy board). See scripts/bluez-selfheal.
+    echo -e "::: Enabling BlueZ self-heal boot safety net"
+    systemctl enable universal-chess-bluez-selfheal-boot.service 2>/dev/null || true
+
     # Clear any pending-update marker BEFORE starting services. This install
     # is that pending update, so the freshly started web/board services must
     # not load a stale "update pending" from update-state.json. Doing it here
@@ -547,9 +556,11 @@ case $1 in
     # Kick the BlueZ advertising self-heal (start --no-block returns immediately;
     # the oneshot runs after this script exits and apt releases its lock). It is
     # a fast no-op when bluez + kernel are unchanged, so this is cheap. On a fresh
-    # install the reboot below may interrupt a first-time build; the APT hook
-    # re-triggers it on the next apt run, and advertising failures surface as
-    # ADV_FAILED until then.
+    # install the reboot below may interrupt a first-time build; the boot safety
+    # net (universal-chess-bluez-selfheal-boot.service, enabled above) re-runs it
+    # on the next boot since the marker is still absent/degraded, and the APT hook
+    # re-triggers it on the next apt run. Advertising surfaces as ADV_FAILED (and
+    # now "self-heal in progress" once the heal restarts) until it completes.
     if command -v systemctl >/dev/null 2>&1; then
         systemctl start --no-block universal-chess-bluez-selfheal.service 2>/dev/null || true
     fi

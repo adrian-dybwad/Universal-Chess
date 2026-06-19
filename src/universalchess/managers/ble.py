@@ -212,6 +212,15 @@ class BleManager:
         
         # Shutdown flag
         self._stopping = False
+
+        # Self-heal progress poll. The bluez self-heal runs as a separate root
+        # process; the board learns it is active only by polling the progress
+        # file it writes. While a heal runs (a several-minute on-board rebuild),
+        # stock BlueZ rejects the adverts, so this lets the status show
+        # "repairing advertising" instead of a bare failure. Stopped on shutdown.
+        self._heal_monitor_stop = threading.Event()
+        self._heal_monitor_thread = None
+        self._heal_poll_interval_seconds = 5.0
     
     def _notify_connected(self, client_type: str):
         """Notify that a client connected."""
@@ -380,6 +389,10 @@ class BleManager:
         # boot); read_status never raises, so a missing/bad marker is harmless.
         from universalchess.managers.bluez_patch_status import read_status
         self._status_state.set_stack_status(read_status())
+
+        # Begin mirroring bluez self-heal progress into the status so the UI
+        # shows "repairing advertising" (not a bare failure) during a heal.
+        self._start_heal_monitor()
 
         try:
             # Configure adapter security
@@ -624,10 +637,41 @@ class BleManager:
         thread.start()
         return thread
 
+    def _start_heal_monitor(self):
+        """Start the background poll that mirrors self-heal progress into status.
+
+        The bluez self-heal is a separate root process, so the board learns it is
+        running only by reading the progress file it writes (see
+        ``managers/bluez_patch_status.read_progress``). Polls every few seconds
+        and feeds the status engine, which dedupes -- an unchanged poll does not
+        broadcast, so the live web view never churns. Idempotent; daemon thread;
+        exits promptly on :meth:`stop`.
+        """
+        if self._heal_monitor_thread and self._heal_monitor_thread.is_alive():
+            return
+        from universalchess.managers.bluez_patch_status import read_progress
+
+        def _loop():
+            while not self._heal_monitor_stop.is_set():
+                progress = read_progress()
+                self._status_state.set_heal_status(
+                    progress.get("running", False), progress.get("phase")
+                )
+                # wait() returns immediately when stop() sets the event.
+                self._heal_monitor_stop.wait(self._heal_poll_interval_seconds)
+
+        self._heal_monitor_stop.clear()
+        self._heal_monitor_thread = threading.Thread(
+            target=_loop, name="BleHealMonitor", daemon=True
+        )
+        self._heal_monitor_thread.start()
+
     def stop(self):
         """Stop the BLE manager."""
         log.info("[BleManager] Stopping...")
         self._stopping = True
+        # Stop the self-heal progress poll so it does not outlive the manager.
+        self._heal_monitor_stop.set()
         
         # Quit mainloop FIRST to stop processing events
         log.info("[BleManager] Quitting mainloop...")

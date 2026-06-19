@@ -3451,8 +3451,12 @@ def _bluetooth_status_rows():
     * a connected-client detail row naming the active emulator and peer when a
       chess app is connected (what the user asked to see live);
     * the advertised-names row (what apps should look for);
-    * an advertising-error row when registration failed -- i.e. the board is
-      invisible to BLE scans -- explaining why apps "can't find" it;
+    * a self-heal-in-progress row while the bluez self-heal is repairing
+      advertising (shown instead of the failure, so a mid-repair board reads as
+      "fixing" rather than broken);
+    * an advertising-error row when registration failed and no heal is running --
+      i.e. the board is invisible to BLE scans -- explaining why apps "can't
+      find" it;
     * a patched-stack warning row when the board runs a substituted (non-stock)
       bluetoothd (see managers/bluez_patch_status).
 

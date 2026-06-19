@@ -11,7 +11,7 @@ which-rows-to-show logic lives here once.
 from typing import List
 
 from universalchess.managers.ble_advertising_status import failure_label
-from universalchess.managers.bluetooth_status_state import ADV_FAILED
+from universalchess.managers.bluetooth_status_state import ADV_FAILED, ADV_HEALING
 from universalchess.managers.bluez_patch_status import warning_label as stack_warning_label
 
 
@@ -23,9 +23,13 @@ def bluetooth_status_menu_rows(snapshot: dict, status_label: str) -> List[dict]:
     * a connected-client detail row (the active emulator and peer) only while a
       chess app is connected -- this is the live "what's in play" readout;
     * the advertised-names row when names are known;
+    * a self-heal-in-progress row only when ``adv_state`` is ``healing`` -- the
+      bluez self-heal is actively repairing advertising (the multi-minute
+      on-board rebuild), shown instead of the failure so the user is reassured
+      rather than alarmed mid-repair;
     * an advertising-error row only when ``adv_state`` is ``failed`` -- i.e. the
       board is invisible to BLE scans -- so the failure is shown but never
-      flashed while merely pending or paused;
+      flashed while merely pending, paused, or healing;
     * a patched-stack warning row only when the board runs a substituted
       (non-stock) ``bluetoothd`` -- so the operator can see the deviation (and
       that it forgoes distro security updates) directly on the device.
@@ -52,7 +56,15 @@ def bluetooth_status_menu_rows(snapshot: dict, status_label: str) -> List[dict]:
     if names:
         rows.append({"key": "Names", "label": "\n".join(names), "icon": "bluetooth"})
 
-    if snapshot.get("adv_state") == ADV_FAILED:
+    if snapshot.get("adv_state") == ADV_HEALING:
+        heal = snapshot.get("heal") or {}
+        detail = heal.get("label") or "Repairing Bluetooth advertising..."
+        rows.append({
+            "key": "Heal",
+            "label": f"Fixing Bluetooth\n{detail}",
+            "icon": "bluetooth",
+        })
+    elif snapshot.get("adv_state") == ADV_FAILED:
         detail = failure_label(snapshot.get("advertising") or {}) or "BLE advertising failed"
         rows.append({
             "key": "AdvertError",

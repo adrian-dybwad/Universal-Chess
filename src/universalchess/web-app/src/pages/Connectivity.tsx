@@ -43,7 +43,7 @@ interface BtAdvertisingStatus {
 }
 
 // Closed set mirroring the board engine's BluetoothStatusState.adv_state.
-type BtAdvState = 'advertising' | 'paused_connected' | 'failed' | 'radio_off' | 'unknown';
+type BtAdvState = 'advertising' | 'paused_connected' | 'healing' | 'failed' | 'radio_off' | 'unknown';
 
 interface BtPeer {
   address?: string;
@@ -72,6 +72,16 @@ interface BtStack {
   applied_at: string | null;
 }
 
+// Whether the bluez self-heal is actively repairing advertising. Mirrors the
+// board's managers/bluez_patch_status progress record. While running, the board
+// reports adv_state 'healing' and the card shows the (pre-formatted) label so
+// the user sees a repair in progress instead of a bare advertising failure.
+interface BtHeal {
+  running: boolean;
+  phase: string | null;
+  label: string | null;
+}
+
 interface BtStatus {
   enabled: boolean;
   paired: BtDevice[];
@@ -82,6 +92,7 @@ interface BtStatus {
   powered?: boolean;
   devices?: BtPeer[];
   stack?: BtStack;
+  heal?: BtHeal;
 }
 
 const EMULATOR_LABELS: Record<string, string> = {
@@ -461,6 +472,7 @@ function WifiCard() {
 const ADV_STATE_LINE: Record<BtAdvState, { text: string; kind: 'ok' | 'warn' | 'error' | 'muted' }> = {
   advertising: { text: 'Discoverable by phone apps', kind: 'ok' },
   paused_connected: { text: 'Connected — advertising paused', kind: 'ok' },
+  healing: { text: 'Repairing Bluetooth advertising…', kind: 'warn' },
   failed: { text: 'Not discoverable — advertising failed', kind: 'error' },
   radio_off: { text: 'Bluetooth radio off', kind: 'muted' },
   unknown: { text: 'Checking Bluetooth status…', kind: 'muted' },
@@ -468,11 +480,14 @@ const ADV_STATE_LINE: Record<BtAdvState, { text: string; kind: 'ok' | 'warn' | '
 
 function BluetoothStatusLine({ status }: { status: BtStatus }) {
   const state: BtAdvState = status.adv_state ?? 'unknown';
+  // While healing, prefer the live phase label from the board over the generic
+  // one-liner so the user can see which step (building/applying/…) is underway.
   const line = ADV_STATE_LINE[state];
+  const text = state === 'healing' ? status.heal?.label ?? line.text : line.text;
   return (
     <div className={`conn-status-line conn-status-line--${line.kind}`}>
       <MenuIcon name={state === 'failed' ? 'cancel' : 'bluetooth'} size={16} />
-      <span>{line.text}</span>
+      <span>{text}</span>
     </div>
   );
 }
@@ -530,6 +545,7 @@ function BluetoothCard() {
         connected_since?: number | null;
         devices?: BtPeer[];
         stack?: BtStack;
+        heal?: BtHeal;
       };
       try {
         data = JSON.parse(event.data);
@@ -556,6 +572,7 @@ function BluetoothCard() {
           powered: data.powered,
           devices: data.devices,
           stack: data.stack ?? prev?.stack,
+          heal: data.heal ?? prev?.heal,
         }));
         // A connect/disconnect changes the paired list's "connected" flags too;
         // refresh those (and the radio state) without waiting for the poll.
@@ -832,6 +849,16 @@ function BluetoothCard() {
         {message && <div className={`conn-message conn-message--${message.kind}`}>{message.text}</div>}
 
         {status && <BluetoothStatusLine status={status} />}
+
+        {status?.adv_state === 'healing' && (
+          <div className="conn-message conn-message--warn">
+            {status.heal?.label ?? 'Repairing Bluetooth advertising…'}
+            <div className="conn-status-detail text-muted">
+              Restoring a working Bluetooth stack for phone apps. This runs once after an update
+              and can take a few minutes; the board becomes discoverable when it finishes.
+            </div>
+          </div>
+        )}
 
         {status?.adv_state === 'failed' && status.advertising && (
           <div className="conn-message conn-message--error">

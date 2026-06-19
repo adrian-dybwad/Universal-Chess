@@ -21,6 +21,7 @@ import pytest
 from universalchess.managers.bluetooth_status_state import (
     ADV_ADVERTISING,
     ADV_FAILED,
+    ADV_HEALING,
     ADV_PAUSED_CONNECTED,
     ADV_RADIO_OFF,
     ADV_UNKNOWN,
@@ -260,6 +261,80 @@ def test_set_stack_status_broadcasts_once_and_dedupes(engine, recorder):
 
     engine.set_stack_status(patched)
     assert len(recorder.calls) == before + 1
+
+
+def test_self_heal_running_reports_healing_instead_of_failed(engine, recorder):
+    # The point of the feature: while the self-heal runs, stock BlueZ rejects the
+    # adverts (failed > 0), but the user must see "repairing" rather than a bare
+    # failure. With a heal running, the derived state is 'healing', not 'failed',
+    # and the heal block carries a label for the UI. Regression: showing
+    # ADV_FAILED during a legitimate heal alarms the user mid-repair.
+    engine.begin_advertising(3, ["DGT PEGASUS"])
+    for _ in range(3):
+        engine.advertisement_failed("org.bluez.Error.Failed")
+    engine.set_heal_status(True, phase="building")
+
+    snap = recorder.last_payload
+    assert snap["adv_state"] == ADV_HEALING
+    assert snap["heal"]["running"] is True
+    assert snap["heal"]["phase"] == "building"
+    assert snap["heal"]["label"] is not None
+
+
+def test_self_heal_does_not_mask_working_advertising(engine):
+    # A working advertising state must win over a (stale) healing flag: if the
+    # adverts are all registered we report 'advertising', never hide it behind
+    # 'healing'. Regression: a heal flag left set would suppress a healthy state.
+    engine.begin_advertising(3, ["DGT PEGASUS"])
+    for _ in range(3):
+        engine.advertisement_registered()
+    engine.set_heal_status(True, phase="probing-patch")
+
+    assert engine.to_dict()["adv_state"] == ADV_ADVERTISING
+
+
+def test_heal_finishing_reverts_to_failed_when_still_broken(engine, recorder):
+    # When the heal ends (e.g. it could not build) and advertising is still
+    # broken, the state must fall back to 'failed' so the real problem is not
+    # hidden behind a stale 'healing'. Manifests as the UI stuck on "repairing".
+    engine.begin_advertising(3, ["DGT PEGASUS"])
+    for _ in range(3):
+        engine.advertisement_failed("org.bluez.Error.Failed")
+    engine.set_heal_status(True, phase="building")
+    assert recorder.last_payload["adv_state"] == ADV_HEALING
+
+    engine.set_heal_status(False)
+    snap = recorder.last_payload
+    assert snap["adv_state"] == ADV_FAILED
+    assert snap["heal"]["running"] is False
+    assert snap["heal"]["label"] is None
+
+
+def test_set_heal_status_broadcasts_once_and_dedupes(engine, recorder):
+    # Driven by a periodic poll: a real change (start, or a phase change) emits
+    # exactly one broadcast; re-setting the identical running+phase must NOT
+    # broadcast, so the poll does not churn the live web view every interval.
+    before = len(recorder.calls)
+    engine.set_heal_status(True, phase="building")
+    assert len(recorder.calls) == before + 1
+
+    engine.set_heal_status(True, phase="building")
+    assert len(recorder.calls) == before + 1
+
+    engine.set_heal_status(True, phase="applying")  # phase advanced -> one more
+    assert len(recorder.calls) == before + 2
+    assert recorder.last_payload["heal"]["phase"] == "applying"
+
+
+def test_heal_block_defaults_to_idle_in_snapshot(engine):
+    # The heal sub-block must always be present (the web/device read it
+    # unconditionally) and default to not-running with no label. Regression: a
+    # missing 'heal' key would KeyError the consumers; a default running=True
+    # would falsely show "repairing" on every healthy board.
+    heal = engine.to_dict()["heal"]
+    assert heal["running"] is False
+    assert heal["phase"] is None
+    assert heal["label"] is None
 
 
 def test_no_broadcast_when_no_sink():

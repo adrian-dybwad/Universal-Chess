@@ -28,13 +28,17 @@
 #                 stock and record stack=stock (degraded; the failure surfaces
 #                 separately as ADV_FAILED in the UI).
 #
-# WHY NOT EVERY BOOT
+# WHY NOT EVERY BOOT (mostly)
 #   A dpkg-divert + binary persist on disk across reboots, so re-applying per boot
-#   is wasted work. The board's BleManager already probes advertising at service
-#   start and shows ADV_FAILED, which is the per-boot safety net. This script only
-#   needs to run when the relevant inputs change: our package install/upgrade and
-#   any apt run that could touch bluez or the kernel. It is also a FAST no-op when
-#   the bluez version and kernel are unchanged since the last successful run.
+#   is wasted work. The apply/retire heal therefore runs on the inputs that matter:
+#   our package install/upgrade and any apt run that could touch bluez or the
+#   kernel. The ONE exception is the `boot` mode (universal-chess-bluez-selfheal-
+#   boot.service): a reboot can interrupt a first-time on-board build (notably the
+#   fresh-install reboot in our postinst), and since the heal is install/apt-driven
+#   nothing would otherwise re-trigger it. `boot` closes that gap but stays cheap:
+#   it runs the heal ONLY when the last decision is missing or degraded
+#   (healthy != True), so a confirmed-healthy board does nothing at boot. It is
+#   also a FAST no-op when the bluez version and kernel are unchanged.
 set -u
 
 PKG_NAME="bluez"
@@ -43,6 +47,7 @@ PROBE="${SCRIPT_DIR}/bluez-advertising-probe"
 
 STATE_DIR="/var/lib/universalchess"
 MARKER="${STATE_DIR}/bluez-patch.json"
+PROGRESS="${STATE_DIR}/bluez-selfheal.progress"
 CACHE_DIR="${STATE_DIR}/bluez"
 LOCK="${STATE_DIR}/bluez-selfheal.lock"
 LOG_TAG="bluez-selfheal"
@@ -126,6 +131,37 @@ try:
 except Exception:
     pass
 PY
+}
+
+# ---------------------------------------------------------------------------
+# Progress (transient signal the board polls; see managers/bluez_patch_status).
+# The marker above is the final outcome; this file says a heal is RUNNING right
+# now and which phase, so the UI shows "self-heal in progress" instead of the
+# bare ADV_FAILED stock BlueZ produces during the multi-minute rebuild.
+# ---------------------------------------------------------------------------
+
+HEAL_STARTED=""   # set on the first write_progress so started_at is the heal start
+
+write_progress() {
+    # write_progress <phase>  (phase must match managers/bluez_patch_status HEAL_*)
+    local phase="$1"
+    [ -n "$HEAL_STARTED" ] || HEAL_STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    mkdir -p "$STATE_DIR"
+    python3 - "$PROGRESS" "$phase" "$HEAL_STARTED" <<'PY' 2>/dev/null || true
+import json, sys
+path, phase, started = sys.argv[1:4]
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump({"running": True, "phase": phase, "started_at": started}, fh)
+PY
+    chmod 0644 "$PROGRESS" 2>/dev/null || true
+    log "progress: $phase"
+}
+
+clear_progress() {
+    # Remove the running record so the board's poll reverts to idle. Idempotent;
+    # wired to the EXIT/INT/TERM trap so any exit (including the systemd timeout's
+    # SIGTERM) cannot leave the UI stuck on a phantom "healing" state.
+    rm -f "$PROGRESS" 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------------------
@@ -279,6 +315,10 @@ main() {
     exec 9>"$LOCK"
     flock -w 600 9 || { log "another self-heal run holds the lock; exiting"; exit 0; }
 
+    # Any exit from here on clears the progress file so the board's poll reverts
+    # to idle (also wipes a stale record left by a previously killed run).
+    trap clear_progress EXIT INT TERM
+
     local bd ver kern active
     bd="$(detect_bluetoothd)"
     ver="$(bluez_version)"; kern="$(kernel_release)"
@@ -307,6 +347,7 @@ main() {
     # From here on we restart bluetoothd at least once, dropping the board's
     # advertisements; every terminal path therefore restarts the board service so
     # it re-registers against the resulting bluetoothd.
+    write_progress probing-stock
     retire_patch "$bd"
     restart_bluetooth
     if probe; then
@@ -318,6 +359,7 @@ main() {
     log "stock bluetoothd FAILS to advertise on this kernel -- patching"
 
     local patched
+    write_progress building
     patched="$(build_patched)" || {
         log "ERROR: could not build patched bluetoothd; leaving stock in place"
         write_marker stock false "$ver"
@@ -325,11 +367,13 @@ main() {
         exit 1
     }
 
+    write_progress applying
     if ! apply_patch "$patched" "$bd"; then
         write_marker stock false "$ver"
         restart_board
         exit 1
     fi
+    write_progress probing-patch
     restart_bluetooth
     if probe; then
         log "patched bluetoothd advertises correctly"
@@ -346,10 +390,28 @@ main() {
     exit 1
 }
 
+boot() {
+    # Boot-time safety net. The apply/retire heal is normally install/apt-driven,
+    # but a reboot BEFORE a first-time heal finishes -- notably the fresh-install
+    # reboot in our postinst interrupting the on-board bluetoothd build -- would
+    # otherwise leave stock BlueZ broken with nothing to re-trigger it. Re-run the
+    # heal at boot ONLY when the last decision is missing or degraded: a confirmed
+    # healthy marker means a prior install/apt run already settled it (an input
+    # change such as an OS upgrade goes through apt, which re-triggers via the APT
+    # hook), so a healthy boot does ZERO probing or bluetoothd restarts here.
+    if [ "$(marker_field healthy)" = "True" ]; then
+        log "boot: last self-heal was healthy -- nothing to do"
+        exit 0
+    fi
+    log "boot: marker absent or degraded -- running self-heal"
+    main
+}
+
 case "${1:-run}" in
     run)         main ;;
+    boot)        boot ;;                                    # boot-time safety net (gated)
     probe-only)  probe ;;                                  # diagnostics
     retire)      retire_patch "$(detect_bluetoothd)"; restart_bluetooth; restart_board; write_marker stock false ;;
     status)      cat "$MARKER" 2>/dev/null || echo "{}" ;;
-    *)           echo "usage: bluez-selfheal {run|probe-only|retire|status}" >&2; exit 2 ;;
+    *)           echo "usage: bluez-selfheal {run|boot|probe-only|retire|status}" >&2; exit 2 ;;
 esac

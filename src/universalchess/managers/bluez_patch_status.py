@@ -18,10 +18,18 @@ install, not every boot) is the source of truth: it writes a small marker file
 describing the active stack, and this module owns that marker's *shape* and the
 warning *wording* so the board menu and the web card cannot drift on either.
 
-This module is pure/IO-light on purpose: :func:`derive_status` and
-:func:`warning_label` are pure functions of their inputs (directly testable), and
-:func:`read_status` is the only function that touches the filesystem and never
-raises.
+While a heal is actively running (the on-board ``bluetoothd`` rebuild can take
+minutes, during which stock BlueZ produces ``ADV_FAILED``), the self-heal script
+also writes a transient *progress* file. The board polls it so the status can
+show "self-heal in progress" instead of a bare failure. This module owns that
+record's shape (:func:`make_progress`) and the shared wording
+(:func:`heal_label`) too.
+
+This module is pure/IO-light on purpose: :func:`derive_status`,
+:func:`warning_label`, :func:`derive_progress`, and :func:`heal_label` are pure
+functions of their inputs (directly testable), and :func:`read_status` /
+:func:`read_progress` are the only functions that touch the filesystem and never
+raise.
 """
 
 import json
@@ -40,6 +48,31 @@ _VALID_ACTIVE = (STACK_STOCK, STACK_PATCHED, STACK_UNKNOWN)
 # Read-only here. Kept under /var/lib (FHS state) rather than the app dir so it
 # survives app reinstalls and is clearly system state, not app config.
 DEFAULT_MARKER_PATH = "/var/lib/universalchess/bluez-patch.json"
+
+# Transient progress file written by the self-heal script WHILE it runs (the
+# marker above is only the final outcome). The board polls this so the status
+# can show "self-heal in progress" instead of the bare advertising failure that
+# stock BlueZ produces during the on-board rebuild. Cleared on every exit, so a
+# present "running" record means a heal is actively underway.
+DEFAULT_PROGRESS_PATH = "/var/lib/universalchess/bluez-selfheal.progress"
+
+# Self-heal phases (closed set), in run order. read_progress tolerates any
+# string, but these are the values the installer emits and the ones heal_label
+# has wording for; an unrecognized phase falls back to a generic label.
+HEAL_PROBING_STOCK = "probing-stock"   # checking whether stock bluetoothd advertises
+HEAL_BUILDING = "building"             # compiling patched bluetoothd from distro source
+HEAL_APPLYING = "applying"             # diverting stock aside, installing the patched binary
+HEAL_PROBING_PATCH = "probing-patch"   # re-checking advertising on the patched binary
+
+# Wording shared by the web card and the device screen so the two never drift.
+# ASCII only (no "…") so it renders on the e-paper font as well as the browser.
+_HEAL_PHASE_LABELS = {
+    HEAL_PROBING_STOCK: "Checking Bluetooth advertising",
+    HEAL_BUILDING: "Building Bluetooth fix (a few min)",
+    HEAL_APPLYING: "Applying Bluetooth fix",
+    HEAL_PROBING_PATCH: "Verifying Bluetooth fix",
+}
+_HEAL_DEFAULT_LABEL = "Repairing Bluetooth advertising"
 
 
 def make_status(
@@ -127,3 +160,74 @@ def read_status(path: str = DEFAULT_MARKER_PATH) -> dict:
     except (OSError, ValueError):
         return unknown_status()
     return derive_status(marker)
+
+
+# -----------------------------------------------------------------------------
+# Self-heal progress (transient, while a heal is actively running)
+# -----------------------------------------------------------------------------
+
+
+def make_progress(
+    running: bool = False,
+    phase: Optional[str] = None,
+    started_at: Optional[str] = None,
+) -> dict:
+    """Build a normalized self-heal progress dict.
+
+    ``phase``/``started_at`` are forced to ``None`` unless ``running`` is true so
+    a stale phase left in an idle record cannot make the UI claim a heal is
+    underway when it is not.
+    """
+    running = bool(running)
+    return {
+        "running": running,
+        "phase": phase if running else None,
+        "started_at": started_at if running else None,
+    }
+
+
+def idle_progress() -> dict:
+    """Progress record for "no self-heal running" (the common case)."""
+    return make_progress(False)
+
+
+def derive_progress(raw: Optional[dict]) -> dict:
+    """Normalize a raw progress dict; a non-dict degrades to idle (never raises)."""
+    if not isinstance(raw, dict):
+        return idle_progress()
+    return make_progress(
+        running=bool(raw.get("running")),
+        phase=raw.get("phase"),
+        started_at=raw.get("started_at"),
+    )
+
+
+def heal_label(progress: Optional[dict]) -> Optional[str]:
+    """Return a one-line "self-heal in progress" label, or ``None`` when idle.
+
+    Shared by the web card and the device screen so the wording stays identical.
+    An unrecognized phase falls back to a generic label rather than exposing the
+    raw phase token. Returns ``None`` when no heal is running so neither surface
+    shows a healing message outside the actual heal window.
+    """
+    if not progress or not progress.get("running"):
+        return None
+    base = _HEAL_PHASE_LABELS.get(progress.get("phase"), _HEAL_DEFAULT_LABEL)
+    return f"{base}..."
+
+
+def read_progress(path: str = DEFAULT_PROGRESS_PATH) -> dict:
+    """Read the self-heal progress file; never raises.
+
+    A missing file is the normal case (no heal running) and reports idle. An
+    unreadable or malformed file is treated the same way rather than propagating
+    an error into the status snapshot the web/device depend on.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except FileNotFoundError:
+        return idle_progress()
+    except (OSError, ValueError):
+        return idle_progress()
+    return derive_progress(raw)
