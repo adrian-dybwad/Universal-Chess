@@ -42,6 +42,13 @@ export default defineConfig(({ mode }) => {
           target: apiTarget,
           changeOrigin: true,
         },
+        // MJPEG board feed embedded by the Board Control page. Without this the
+        // dev server would answer /video with the SPA shell, leaving the feed
+        // blank; in production Flask serves it same-origin.
+        '/video': {
+          target: apiTarget,
+          changeOrigin: true,
+        },
         '/fen': {
           target: apiTarget,
           changeOrigin: true,

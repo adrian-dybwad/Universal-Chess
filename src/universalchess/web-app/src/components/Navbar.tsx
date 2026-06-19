@@ -50,6 +50,13 @@ export function Navbar() {
             Live Board
           </Link>
           <Link
+            to="/control"
+            className={`navbar-item ${isActive('/control') ? 'is-active' : ''}`}
+            onClick={() => setMenuOpen(false)}
+          >
+            Board Control
+          </Link>
+          <Link
             to="/games"
             className={`navbar-item ${isActive('/games') ? 'is-active' : ''}`}
             onClick={() => setMenuOpen(false)}

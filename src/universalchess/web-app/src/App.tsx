@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import { Navbar } from './components/Navbar';
 import { GameStateProvider } from './components/GameStateProvider';
 import { LiveBoard } from './pages/LiveBoard';
+import { BoardControl } from './pages/BoardControl';
 import { Games } from './pages/Games';
 import { Analyze } from './pages/Analyze';
 import { Positions } from './pages/Positions';
@@ -26,6 +27,7 @@ function App() {
           <div className="container">
             <Routes>
               <Route path="/" element={<LiveBoard />} />
+              <Route path="/control" element={<BoardControl />} />
               <Route path="/games" element={<Games />} />
               <Route path="/analyze/:gameId" element={<Analyze />} />
               <Route path="/positions" element={<Positions />} />
