@@ -345,14 +345,38 @@ class TestNightlyVersionComparison:
         ) is False
 
     def test_timestamped_same_day_later_time_is_newer(self, service):
-        """Current tag format embeds the build time (nightly-YYYYMMDD-HHMMSS-sha)
-        so two builds on the same day order by time. A later build time must be
-        newer. Regression: if only the date were compared, same-day rebuilds
-        would tie and fall back to the sha, which has no chronological order.
+        """The compact date+time format (nightly-YYYYMMDD-HHMMSS-sha) embeds the
+        build time so two builds on the same day order by time. A later build
+        time must be newer. Regression: if only the date were compared, same-day
+        rebuilds would tie and fall back to the sha, which has no chronological
+        order.
         """
         assert service._is_newer(
             "nightly-20260619-031500-0a6a09c", "nightly-20260619-010000-23a8f85"
         ) is True
+
+    def test_dashed_datetime_same_day_later_time_is_newer(self, service):
+        """The current tag format restores the dashed date but keeps the time
+        (nightly-YYYY-MM-DD-HHMMSS-sha). A later build time on the same day must
+        still be newer. Regression: if rpartition split the sha on the wrong dash
+        (the date now contains dashes), the stamp would be mangled and same-day
+        ordering would break.
+        """
+        assert service._is_newer(
+            "nightly-2026-06-19-031500-0a6a09c", "nightly-2026-06-19-010000-23a8f85"
+        ) is True
+
+    def test_dashed_and_compact_datetime_same_instant_same_sha_not_newer(self, service):
+        """Switching the workflow from the compact form (nightly-YYYYMMDD-...)
+        to the dashed form (nightly-YYYY-MM-DD-...) must be a no-op for the same
+        build: identical instant and sha differing only in date dashes parse to
+        the same digit stamp and equal sha, so it is NOT newer. Regression: if
+        the dashes leaked into the comparison, every field board would see a
+        phantom update the moment the tag format changed.
+        """
+        assert service._is_newer(
+            "nightly-2026-06-19-031500-0a6a09c", "nightly-20260619-031500-0a6a09c"
+        ) is False
 
     def test_timestamped_same_day_earlier_time_is_not_newer(self, service):
         """An earlier build time on the same day must not be offered. Regression:

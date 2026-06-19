@@ -367,19 +367,23 @@ class UpdateService:
     def _parse_nightly_tag(tag: str) -> tuple:
         """Split a nightly tag into (timestamp_digits, short_sha).
 
-        Two tag formats are supported so a board running an older build can be
+        Three tag formats are supported so a board running an older build can be
         compared against newer releases (see .github/workflows/nightly.yml):
 
-          - date only:   ``nightly-<YYYY-MM-DD>-<short_sha>``       (legacy)
-          - date + time: ``nightly-<YYYYMMDD>-<HHMMSS>-<short_sha>`` (current)
+          - date only:         ``nightly-<YYYY-MM-DD>-<short_sha>``          (legacy)
+          - compact date+time: ``nightly-<YYYYMMDD>-<HHMMSS>-<short_sha>``   (interim)
+          - dashed date+time:  ``nightly-<YYYY-MM-DD>-<HHMMSS>-<short_sha>`` (current)
 
         The last ``-`` segment is the git short sha; it has NO chronological
         order, so it is returned separately and callers must only test it for
         equality, never compare it with ``<``/``>``. Everything before the sha
         is reduced to its digits, yielding a positionally-comparable timestamp
-        ("20260619" or "20260619031500"). A date-only tag is treated as the
-        start of that day when compared against a date+time tag (see
-        :meth:`_is_newer`, which right-pads the shorter stamp with zeros).
+        ("20260619" or "20260619031500"). Because only the digits are kept, the
+        dashes are cosmetic: the compact and dashed date+time forms parse to the
+        same stamp, so switching the workflow between them is not seen as an
+        update or a downgrade. A date-only tag is treated as the start of that
+        day when compared against a date+time tag (see :meth:`_is_newer`, which
+        right-pads the shorter stamp with zeros).
         """
         rest = tag[len("nightly-"):]
         stamp_part, _, short_sha = rest.rpartition("-")
