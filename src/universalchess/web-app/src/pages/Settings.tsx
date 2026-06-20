@@ -241,23 +241,38 @@ export function Settings() {
   }, [fetchSettings]);
 
   // Load the catalog (once) and the settings on mount. Both are required for the
-  // page to render correctly, so either failing shows the load error.
+  // page to render correctly, so either failing shows the load error. The work is
+  // wrapped in an inline async function (effects cannot be async) so the state
+  // updates happen after the awaited fetches resolve, not synchronously within the
+  // effect body -- this is data fetching, not a synchronous render cascade.
   useEffect(() => {
-    Promise.all([loadCatalog(), fetchSettings()])
-      .then(() => {
+    void (async () => {
+      try {
+        await Promise.all([loadCatalog(), fetchSettings()]);
         setLoading(false);
-      })
-      .catch((e) => {
+      } catch (e) {
         console.error('Failed to load settings:', e);
         setLoadError('Could not connect to the Universal Chess backend. Make sure the board is running and accessible.');
         setLoading(false);
-      });
+      }
+    })();
   }, [fetchSettings, loadCatalog]);
+
+  // Mirror engineLevels into a ref so the cache check below can read the latest
+  // cache without making loadEngineLevels depend on engineLevels. Depending on the
+  // state directly made the callback identity change on every fetch, which re-ran
+  // the levels-loading effect repeatedly (only the cache guard stopped a fetch
+  // loop). Reading via the ref keeps loadEngineLevels stable so the effect runs
+  // only when a selected engine actually changes.
+  const engineLevelsRef = useRef(engineLevels);
+  useEffect(() => {
+    engineLevelsRef.current = engineLevels;
+  }, [engineLevels]);
 
   // Load engine levels when engine changes
   const loadEngineLevels = useCallback(async (engineName: string) => {
-    if (engineLevels[engineName]) return engineLevels[engineName];
-    
+    if (engineLevelsRef.current[engineName]) return engineLevelsRef.current[engineName];
+
     try {
       const response = await apiFetch(`/api/engines/${engineName}/levels`);
       const levels = await response.json();
@@ -266,13 +281,17 @@ export function Settings() {
     } catch {
       return ['Default'];
     }
-  }, [engineLevels]);
+  }, []);
 
-  // Load levels for selected engines
+  // Load levels for the selected engines. Wrapped in an inline async function so
+  // the state update inside loadEngineLevels happens after the awaited fetch, not
+  // synchronously within the effect body (data fetching, not a render cascade).
   useEffect(() => {
-    if (formSettings.player1.engine) loadEngineLevels(formSettings.player1.engine);
-    if (formSettings.player2.engine) loadEngineLevels(formSettings.player2.engine);
-    if (formSettings.game.analysis_engine) loadEngineLevels(formSettings.game.analysis_engine);
+    void (async () => {
+      if (formSettings.player1.engine) await loadEngineLevels(formSettings.player1.engine);
+      if (formSettings.player2.engine) await loadEngineLevels(formSettings.player2.engine);
+      if (formSettings.game.analysis_engine) await loadEngineLevels(formSettings.game.analysis_engine);
+    })();
   }, [formSettings.player1.engine, formSettings.player2.engine, formSettings.game.analysis_engine, loadEngineLevels]);
 
   const updateFormSettings = <T extends keyof FormSettings>(
@@ -602,7 +621,7 @@ export function Settings() {
 
                 {formSettings.player1.type === 'human' && (
                   <p className="text-muted" style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
-                    Hints will use <strong>{getEngineDisplayName(formSettings.game.analysis_engine || 'stockfish')}</strong> (configured in System Settings → Analysis Engine)
+                    Hints will use <strong>{getEngineDisplayName(formSettings.game.analysis_engine || 'stockfish')}</strong> (configured in Game Settings → Analysis Engine)
                   </p>
                 )}
             </Card>
@@ -658,7 +677,7 @@ export function Settings() {
 
                 {formSettings.player2.type === 'human' && (
                   <p className="text-muted" style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
-                    Hints will use <strong>{getEngineDisplayName(formSettings.game.analysis_engine || 'stockfish')}</strong> (configured in System Settings → Analysis Engine)
+                    Hints will use <strong>{getEngineDisplayName(formSettings.game.analysis_engine || 'stockfish')}</strong> (configured in Game Settings → Analysis Engine)
                   </p>
                 )}
             </Card>
@@ -1095,7 +1114,12 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
   }, []);
 
   useEffect(() => {
-    fetchStatus();
+    // Initial read wrapped in an inline async function so the state update inside
+    // fetchStatus happens after the awaited request, not synchronously within the
+    // effect body. The recurring poll is a subscription via setInterval.
+    void (async () => {
+      await fetchStatus();
+    })();
     const interval = setInterval(fetchStatus, 10000); // Poll every 10 seconds
     return () => clearInterval(interval);
   }, [fetchStatus]);
