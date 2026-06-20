@@ -924,6 +924,7 @@ export function Settings() {
               </Card>
             </Card>
 
+            <DebugCard />
             <PasswordChange />
             <SystemActions />
           </section>
@@ -1523,6 +1524,151 @@ function PasswordChange() {
             </Button>
           </>
         )}
+      </Card>
+    </>
+  );
+}
+
+
+// Debug card: a serial-capture switch plus a one-click debug-log download, used
+// for remote support (notably v1 boards whose LED startup circles never stop
+// because discovery never completes). Self-contained - it reads/writes the
+// [system] debug_serial flag through its own endpoints rather than the page's
+// Save & Apply flow, so toggling it never collides with unsaved settings.
+function DebugCard() {
+  const [enabled, setEnabled] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [showLoginDialog, setShowLoginDialog] = useState(false);
+  const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
+
+  useEffect(() => {
+    fetch(buildApiUrl('/api/system/debug-serial'))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && typeof data.enabled === 'boolean') setEnabled(data.enabled);
+      })
+      .catch(() => {
+        // Best-effort initial read; the switch defaults to off if unavailable.
+      });
+  }, []);
+
+  const handleLoginSuccess = async () => {
+    setShowLoginDialog(false);
+    if (pendingActionRef.current) {
+      const action = pendingActionRef.current;
+      pendingActionRef.current = null;
+      await action();
+    }
+  };
+
+  const setSerialDebug = async (next: boolean) => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await apiFetch('/api/system/debug-serial', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: next }),
+        requiresAuth: true,
+      });
+      if (response.status === 401) {
+        pendingActionRef.current = () => setSerialDebug(next);
+        setShowLoginDialog(true);
+        return;
+      }
+      if (!response.ok) {
+        setError('Failed to update the serial debug setting.');
+        return;
+      }
+      setEnabled(next);
+      setNotice(
+        next
+          ? 'Serial debug logging enabled. Reboot the board to capture the startup handshake, then download the log.'
+          : 'Serial debug logging disabled.'
+      );
+    } catch {
+      setError('Network error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const downloadLog = async () => {
+    setDownloading(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await apiFetch('/api/system/debug-log', { requiresAuth: true });
+      if (response.status === 401) {
+        pendingActionRef.current = downloadLog;
+        setShowLoginDialog(true);
+        return;
+      }
+      if (response.status === 404) {
+        setError('No debug log found yet. Reboot the board to generate one.');
+        return;
+      }
+      if (!response.ok) {
+        setError('Failed to download the debug log.');
+        return;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'debug.log';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError('Network error');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <>
+      <LoginDialog
+        isOpen={showLoginDialog}
+        onClose={() => {
+          setShowLoginDialog(false);
+          pendingActionRef.current = null;
+        }}
+        onSuccess={handleLoginSuccess}
+      />
+      <Card className="mb-6">
+        <CardHeader title="Debug" />
+        <p className="text-muted mb-4">
+          Serial debug logging records the raw communication between the Raspberry Pi and the
+          board controller during startup. Enable it, reboot the board to capture the startup
+          handshake, then download the log and send it to support. This helps diagnose boards
+          that never finish starting up &mdash; for example, a v1 board whose LED circles keep
+          spinning. Leaving it on makes the log grow quickly.
+        </p>
+        {notice && <Card variant="primary" className="mb-4">{notice}</Card>}
+        {error && (
+          <Card variant="danger" className="mb-4">
+            <strong>Error:</strong> {error}
+          </Card>
+        )}
+        <Toggle
+          label="Serial debug logging"
+          help="Takes effect after the next reboot."
+          checked={enabled}
+          onChange={(v) => setSerialDebug(v)}
+          disabled={busy}
+        />
+        <div className="mt-4">
+          <Button variant="secondary" onClick={downloadLog} disabled={downloading}>
+            {downloading ? 'Preparing...' : 'Download debug log'}
+          </Button>
+        </div>
       </Card>
     </>
   );

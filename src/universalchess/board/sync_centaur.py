@@ -211,6 +211,20 @@ class SyncCentaur:
         # Sleep state - when True, no more commands are accepted
         self._sleeping = False
         
+        # Serial debug capture. When enabled, every raw inbound byte and every
+        # outbound packet is logged in hex. This exists to diagnose boards whose
+        # discovery handshake never completes - e.g. a v1 board, whose firmware
+        # power-on LED animation (the spinning circles) is only cancelled once
+        # discovery sets self.ready and ledsOff() is sent. If the v1 controller
+        # speaks a different addressing/framing protocol, no packet ever
+        # validates, on_packet_complete never fires, and the framed-packet logs
+        # show nothing - so the raw byte stream is the only evidence of what the
+        # board actually sent. Read once here because the handshake this captures
+        # only happens at startup; toggling the setting takes effect on the next
+        # board start/reboot.
+        self.serial_debug = self._read_serial_debug_setting()
+        self._rx_debug_buffer = bytearray()
+        
         # Dedicated worker for piece event callbacks
         try:
             self._callback_queue = queue.Queue(maxsize=256)
@@ -285,6 +299,11 @@ class SyncCentaur:
                     break
                 byte = self.ser.read(1)
                 if not byte:
+                    # Read timed out (board idle): flush any buffered serial
+                    # debug bytes so a short, unframed burst (the typical v1
+                    # symptom) is logged instead of waiting for a full row.
+                    if self.serial_debug:
+                        self._serial_debug_flush_rx()
                     continue
                 self.processResponse(byte[0])
             except (OSError, TypeError, AttributeError):
@@ -294,6 +313,47 @@ class SyncCentaur:
                 if self.listener_running:
                     log.error(f"Listener error: {e}")
     
+    # Bytes accumulated per logged "[SERIAL RX]" hex row. A row is flushed when
+    # full or on an idle read timeout, whichever comes first.
+    SERIAL_DEBUG_RX_ROW = 16
+
+    @staticmethod
+    def _read_serial_debug_setting() -> bool:
+        """Read the [system] debug_serial flag from settings (default off).
+
+        Imported lazily and fully guarded: a missing or corrupt config must
+        never prevent the controller from initializing, because this is a
+        diagnostic aid and breaking boot to read it would be worse than the
+        problem it diagnoses.
+        """
+        try:
+            from universalchess.board.settings import Settings
+            value = Settings.read('system', 'debug_serial', 'False')
+            return str(value).strip().lower() in ('1', 'true', 'on', 'yes')
+        except Exception:
+            return False
+
+    def _serial_debug_rx(self, byte: int):
+        """Buffer one received byte, flushing a hex row once it is full.
+
+        Captures the raw inbound stream independent of packet framing so bytes
+        that never validate as a packet are still recorded.
+        """
+        self._rx_debug_buffer.append(byte)
+        if len(self._rx_debug_buffer) >= self.SERIAL_DEBUG_RX_ROW:
+            self._serial_debug_flush_rx()
+
+    def _serial_debug_flush_rx(self):
+        """Emit any buffered received bytes as a single hex line."""
+        if self._rx_debug_buffer:
+            log.info(f"[SERIAL RX] {' '.join(f'{b:02x}' for b in self._rx_debug_buffer)}")
+            self._rx_debug_buffer = bytearray()
+
+    def _serial_debug_tx(self, label: str, data: bytes):
+        """Log an outbound packet/byte sequence in hex when capture is enabled."""
+        if self.serial_debug:
+            log.info(f"[SERIAL TX] {label} {' '.join(f'{b:02x}' for b in data)}")
+
     def processResponse(self, byte):
         """
         Process incoming byte - detect packet boundaries
@@ -304,6 +364,8 @@ class SyncCentaur:
         
         Both have [addr1][addr2][checksum] pattern at the end.
         """
+        if self.serial_debug:
+            self._serial_debug_rx(byte)
         self._handle_orphaned_data_detection(byte)
         self.response_buffer.append(byte)
         
@@ -960,6 +1022,9 @@ class SyncCentaur:
         tosend = self.buildPacket(spec.cmd, eff_data)
         if command_name != command.DGT_BUS_SEND_CHANGES and command_name != command.DGT_BUS_POLL_KEYS:
             log.debug(f"_send_command: {command_name} ({spec.cmd:02x}) {' '.join(f'{b:02x}' for b in tosend[:16])}")
+        # Serial debug logs the full packet for every command (including the
+        # polls the line above skips) so the captured conversation is complete.
+        self._serial_debug_tx(command_name, tosend)
         
         # Thread-safe serial write
         with self._serial_write_lock:
@@ -1032,6 +1097,7 @@ class SyncCentaur:
         tosend = self.buildPacket(spec.cmd, eff_data)
         
         log.debug(f"_send_immediate: {command_name} ({spec.cmd:02x}) {' '.join(f'{b:02x}' for b in tosend[:16])}")
+        self._serial_debug_tx(command_name, tosend)
         
         with self._serial_write_lock:
             if self.ser is not None and self.ser.is_open:
@@ -1079,6 +1145,7 @@ class SyncCentaur:
         # Called from run_background() with no packet
         if packet is None:
             log.info("Discovery starting")
+            self._serial_debug_tx("discovery-init", bytes([0x4d, 0x4e]))
             self.ser.write(bytes([0x4d]))
             self.ser.write(bytes([0x4e]))
             self._send_command(command.DGT_BUS_SEND_87)

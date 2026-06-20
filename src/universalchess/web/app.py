@@ -2317,6 +2317,70 @@ def api_system_info():
         return _internal_error(e)
 
 
+def _read_debug_serial_enabled() -> bool:
+    """Return whether [system] debug_serial is enabled (tolerant of spellings)."""
+    from universalchess.board.settings import Settings
+    value = Settings.read('system', 'debug_serial', 'False')
+    return str(value).strip().lower() in ('1', 'true', 'on', 'yes')
+
+
+@app.route("/api/system/debug-serial", methods=["GET"])
+def api_get_debug_serial():
+    """Report whether serial debug logging is enabled.
+
+    Read-only and unauthenticated like the other GET probes; it exposes only a
+    single boolean flag, no secrets. The Debug card uses it to show the current
+    switch state on load.
+    """
+    try:
+        return jsonify({"enabled": _read_debug_serial_enabled()})
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/debug-serial", methods=["POST"])
+@requires_auth
+def api_set_debug_serial():
+    """Enable/disable raw serial debug logging. Requires authentication.
+
+    Persists [system] debug_serial via save_all_settings so SSE clients and the
+    main process are notified like any other settings change. The board reads
+    this flag only at startup (the discovery handshake it captures happens once
+    at boot), so the user enables it, reboots to capture the handshake, then
+    downloads the debug log. Body: {"enabled": bool}.
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        enabled = bool(body.get("enabled"))
+        save_all_settings({"system": {"debug_serial": enabled}})
+        return jsonify({"success": True, "enabled": enabled})
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/debug-log", methods=["GET"])
+@requires_auth
+def api_download_debug_log():
+    """Download the board debug log for support. Requires authentication.
+
+    Serves ~/debug.log (rewritten each boot by board.logging). Auth-gated
+    because a full debug log can contain diagnostic detail about the system.
+    Returns 404 when no log exists yet (board has not run since install).
+    """
+    try:
+        log_path = pathlib.Path.home() / "debug.log"
+        if not log_path.is_file():
+            return jsonify({"success": False, "error": "No debug log found"}), 404
+        return send_file(
+            str(log_path),
+            mimetype="text/plain",
+            as_attachment=True,
+            download_name="debug.log",
+        )
+    except Exception as e:
+        return _internal_error(e)
+
+
 @app.route("/api/system/stats", methods=["GET"])
 def api_system_stats():
     """Return live system telemetry (CPU temp/usage, memory, disk, uptime, load).
