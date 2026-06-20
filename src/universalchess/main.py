@@ -410,6 +410,7 @@ try:
         DisplayManager,
         MenuManager,
         MenuSelection,
+        WebCommandInterrupt,
         is_break_result,
         is_refresh_result,
         find_entry_index,
@@ -2135,10 +2136,12 @@ def _on_board_command(parsed: dict) -> None:
     """Receive a web board-control command (runs on the subscriber thread).
 
     Stores the command for the main thread to apply (display/game work must not
-    happen here) and, when the top-level main menu is showing, cancels its
-    selection so the main loop wakes and applies it promptly. A deep settings
-    submenu is left untouched; the command is applied when the board returns to
-    the main menu, so the on-board user's navigation is not interrupted.
+    happen here) and, whenever any menu is on screen, cancels its selection with
+    ``WEB_COMMAND``. The MenuManager latches that and raises ``WebCommandInterrupt``
+    from every nested ``show_menu``, so the command unwinds to the main loop from
+    any menu depth (root or a deep settings submenu) rather than being swallowed.
+    During a game no menu widget is active, so the command is instead picked up by
+    the main loop's per-iteration poll of ``_pending_board_command``.
     """
     global _pending_board_command
     command = parsed.get("command")
@@ -2174,11 +2177,12 @@ def _on_board_command(parsed: dict) -> None:
         return
 
     _pending_board_command = parsed
-    if (
-        app_state == AppState.MENU
-        and _menu_manager is not None
-        and _menu_manager.active_widget is not None
-    ):
+    # Cancel whenever a menu widget is active, regardless of MENU vs SETTINGS
+    # app_state: a settings submenu (app_state == SETTINGS) must also unwind, or
+    # the web command would block until the on-board user pressed a key. In GAME
+    # state no menu widget is active, so this is skipped and the main loop's poll
+    # applies the command.
+    if _menu_manager is not None and _menu_manager.active_widget is not None:
         _menu_manager.cancel_selection("WEB_COMMAND")
 
 
@@ -4958,178 +4962,191 @@ def main():
     
     try:
         while running and not kill:
-            if app_state == AppState.MENU:
-                # Apply a web board-control command (set up position / abort) that
-                # arrived while the menu was showing. Runs here on the main thread.
-                if _pending_board_command is not None:
-                    _process_pending_board_command()
-                    continue  # Re-check app_state (may now be GAME)
+            try:
+                if app_state == AppState.MENU:
+                    # Apply a web board-control command (set up position / abort) that
+                    # arrived while the menu was showing. Runs here on the main thread.
+                    if _pending_board_command is not None:
+                        _process_pending_board_command()
+                        continue  # Re-check app_state (may now be GAME)
 
-                # Check for pending BLE client connection (set when connection happens between menus)
-                global _pending_ble_client_type
-                if _pending_ble_client_type is not None:
-                    log.info(f"[App] Pending BLE client connection detected ({_pending_ble_client_type}) - entering game")
-                    _pending_ble_client_type = None
-                    _enter_game()
-                    continue  # Re-check app_state (now should be GAME)
-                
-                # Check for pending piece events before showing menu
-                # These may have been queued while in a submenu
-                if _pending_piece_events:
-                    log.info(f"[App] Pending piece events detected ({len(_pending_piece_events)}) - entering game")
-                    _enter_game()
-                    continue  # Re-check app_state (now should be GAME)
-                
-                # Check if we need to restore to Settings menu (on startup)
-                if restore_to_settings:
-                    restore_to_settings = False
-                    log.info(f"[App] Restoring to Settings menu (submenu={restore_settings_submenu})")
-                    settings_result = _handle_settings(initial_selection=restore_settings_submenu)
-                    restore_settings_submenu = None  # Clear after use
-                    if is_break_result(settings_result):
+                    # Check for pending BLE client connection (set when connection happens between menus)
+                    global _pending_ble_client_type
+                    if _pending_ble_client_type is not None:
+                        log.info(f"[App] Pending BLE client connection detected ({_pending_ble_client_type}) - entering game")
+                        _pending_ble_client_type = None
                         _enter_game()
-                    continue  # After settings, loop back to check state
-                
-                # Restore the submenu the user was in when they suspended the
-                # game (PLAY), so the full menu reopens at its last position.
-                # One-shot: consumed here so a normal BACK out of the submenu does
-                # not immediately re-enter it.
-                global _suspended_menu_restore_path
-                if _suspended_menu_restore_path is not None:
-                    resume_path = _suspended_menu_restore_path
-                    _suspended_menu_restore_path = None
-                    if resume_path and resume_path[0][0] == "Settings":
-                        ctx.restore_from_path(resume_path)
-                        resume_submenu = resume_path[1][0] if len(resume_path) > 1 else None
-                        log.info(f"[App] Restoring suspended menu position (submenu={resume_submenu})")
-                        settings_result = _handle_settings(initial_selection=resume_submenu)
+                        continue  # Re-check app_state (now should be GAME)
+
+                    # Check for pending piece events before showing menu
+                    # These may have been queued while in a submenu
+                    if _pending_piece_events:
+                        log.info(f"[App] Pending piece events detected ({len(_pending_piece_events)}) - entering game")
+                        _enter_game()
+                        continue  # Re-check app_state (now should be GAME)
+
+                    # Check if we need to restore to Settings menu (on startup)
+                    if restore_to_settings:
+                        restore_to_settings = False
+                        log.info(f"[App] Restoring to Settings menu (submenu={restore_settings_submenu})")
+                        settings_result = _handle_settings(initial_selection=restore_settings_submenu)
+                        restore_settings_submenu = None  # Clear after use
                         if is_break_result(settings_result):
                             _enter_game()
+                        continue  # After settings, loop back to check state
+
+                    # Restore the submenu the user was in when they suspended the
+                    # game (PLAY), so the full menu reopens at its last position.
+                    # One-shot: consumed here so a normal BACK out of the submenu does
+                    # not immediately re-enter it.
+                    global _suspended_menu_restore_path
+                    if _suspended_menu_restore_path is not None:
+                        resume_path = _suspended_menu_restore_path
+                        _suspended_menu_restore_path = None
+                        if resume_path and resume_path[0][0] == "Settings":
+                            ctx.restore_from_path(resume_path)
+                            resume_submenu = resume_path[1][0] if len(resume_path) > 1 else None
+                            log.info(f"[App] Restoring suspended menu position (submenu={resume_submenu})")
+                            settings_result = _handle_settings(initial_selection=resume_submenu)
+                            if is_break_result(settings_result):
+                                _enter_game()
+                            continue
+                        # A non-Settings (e.g. root) capture has nothing to restore;
+                        # fall through to show the main menu normally.
+
+                    # Show main menu. The top entry relabels to RESUME when a game
+                    # is suspended (managers alive) so PLAY resumes it, and Original
+                    # Centaur is hidden when the Centaur software is absent -- both
+                    # resolved by the engine from the shared catalog.
+                    entries = _build_main_menu_entries()
+
+                    # Get initial index from context if at root, else use 0
+                    main_menu_index = ctx.current_index() if ctx.depth() == 0 else 0
+                    result = _show_menu(entries, initial_index=main_menu_index)
+
+                    # Update context with current selection (at root level, we just track the index)
+                    selected_index = find_entry_index(entries, result)
+                    if ctx.depth() == 0:
+                        # At root level - save main menu selection directly
+                        # We don't push "Main" since it's the root
+                        from universalchess.board.settings import Settings
+                        Settings.write(MENU_STATE_SECTION, 'path', '')
+                        Settings.write(MENU_STATE_SECTION, 'indices', str(selected_index))
+
+                    log.info(f"[App] Main menu selection: {result}")
+
+                    if result == "BACK":
+                        # BACK at the root menu has nowhere to go - there is no parent
+                        # menu and no meaningful standby state - so it simply stays on
+                        # the menu (re-renders on the next loop iteration).
                         continue
-                    # A non-Settings (e.g. root) capture has nothing to restore;
-                    # fall through to show the main menu normally.
-                
-                # Show main menu. The top entry relabels to RESUME when a game
-                # is suspended (managers alive) so PLAY resumes it, and Original
-                # Centaur is hidden when the Centaur software is absent -- both
-                # resolved by the engine from the shared catalog.
-                entries = _build_main_menu_entries()
-                
-                # Get initial index from context if at root, else use 0
-                main_menu_index = ctx.current_index() if ctx.depth() == 0 else 0
-                result = _show_menu(entries, initial_index=main_menu_index)
 
-                # A web board-control command cancelled the menu; loop back so the
-                # top-of-branch handler applies it (avoids writing the sentinel as
-                # a menu index).
-                if result == "WEB_COMMAND":
-                    continue
+                    elif result == "SHUTDOWN":
+                        ctx.clear()
+                        _shutdown("Shutdown")
 
-                # Update context with current selection (at root level, we just track the index)
-                selected_index = find_entry_index(entries, result)
-                if ctx.depth() == 0:
-                    # At root level - save main menu selection directly
-                    # We don't push "Main" since it's the root
-                    from universalchess.board.settings import Settings
-                    Settings.write(MENU_STATE_SECTION, 'path', '')
-                    Settings.write(MENU_STATE_SECTION, 'indices', str(selected_index))
-                
-                log.info(f"[App] Main menu selection: {result}")
-                
-                if result == "BACK":
-                    # BACK at the root menu has nowhere to go - there is no parent
-                    # menu and no meaningful standby state - so it simply stays on
-                    # the menu (re-renders on the next loop iteration).
-                    continue
-                
-                elif result == "SHUTDOWN":
-                    ctx.clear()
-                    _shutdown("Shutdown")
-                
-                elif result == "Centaur":
-                    ctx.clear()
-                    _run_centaur()
-                    # Note: _run_centaur() exits the process
-                
-                elif result in ("Universal", "PLAY", "CLIENT_CONNECTED", "PIECE_MOVED"):
-                    # Start a new game or resume the suspended one. _enter_game()
-                    # decides which, forwards queued piece events, and wires up an
-                    # already-connected client.
-                    _enter_game()
-                
-                elif result == "Settings":
-                    settings_result = _handle_settings()
-                    # A board event or PLAY pressed inside Settings breaks out to
-                    # enter (start or resume) the game.
-                    if is_break_result(settings_result):
+                    elif result == "Centaur":
+                        ctx.clear()
+                        _run_centaur()
+                        # Note: _run_centaur() exits the process
+
+                    elif result in ("Universal", "PLAY", "CLIENT_CONNECTED", "PIECE_MOVED"):
+                        # Start a new game or resume the suspended one. _enter_game()
+                        # decides which, forwards queued piece events, and wires up an
+                        # already-connected client.
                         _enter_game()
-                    # After settings, continue to main menu
-                
-                elif result == "HELP":
-                    # Could show about/help screen here
-                    pass
-            
-            elif app_state == AppState.GAME:
-                # Check if we need to switch from position game to normal game
-                if _switch_to_normal_game:
-                    _switch_to_normal_game = False
-                    log.info("[App] Switching from position game to normal game")
-                    _cleanup_game()
-                    _start_game_mode(starting_fen=None, is_position_game=False)
-                # Apply a settings change pushed from the web app during a game so
-                # display/sprite toggles take effect live, matching the on-board
-                # display menu. Rebuilt here (main thread) - never from the
-                # subscriber thread that set the flag.
-                elif _pending_settings_reload:
-                    _pending_settings_reload = False
-                    log.info("[App] Applying web settings change to live display")
-                    if display_manager:
-                        display_manager._init_widgets()
-                elif _pending_board_command is not None:
-                    # Web set up a position / aborted while a game was running.
-                    # Applied here on the main thread (rebuilds the game display).
-                    _process_pending_board_command()
-                else:
-                    # Stay in game mode - key_callback handles exit via _return_to_menu
-                    time.sleep(0.5)
-            
-            elif app_state == AppState.SETTINGS:
-                # Check if we need to return to positions menu (from position game back)
-                if _return_to_positions_menu:
-                    _return_to_positions_menu = False
-                    # Return directly to the last selected position in the menu
-                    ctx = _get_menu_context()
-                    position_result = handle_positions_menu(
-                        ctx=ctx,
-                        load_positions_config=lambda: load_positions_config(log),
-                        start_from_position=_start_from_position,
-                        show_menu=_show_menu,
-                        find_entry_index=find_entry_index,
-                        board=board,
-                        log=log,
-                        last_position_category_index_ref=[_last_position_category_index],
-                        last_position_index_ref=[_last_position_index],
-                        last_position_category_ref=[_last_position_category],
-                        return_to_last_position=True,
-                        is_game_in_progress=_has_suspended_game,
-                        abort_game=_abort_current_game,
-                    )
-                    if is_break_result(position_result):
-                        # BLE client connected during positions menu
-                        _start_game_mode()
-                        if protocol_manager:
-                            protocol_manager.on_app_connected()
-                    elif not position_result:
-                        # User backed out of positions menu, show settings
+
+                    elif result == "Settings":
                         settings_result = _handle_settings()
+                        # A board event or PLAY pressed inside Settings breaks out to
+                        # enter (start or resume) the game.
                         if is_break_result(settings_result):
+                            _enter_game()
+                        # After settings, continue to main menu
+
+                    elif result == "HELP":
+                        # Could show about/help screen here
+                        pass
+
+                elif app_state == AppState.GAME:
+                    # Check if we need to switch from position game to normal game
+                    if _switch_to_normal_game:
+                        _switch_to_normal_game = False
+                        log.info("[App] Switching from position game to normal game")
+                        _cleanup_game()
+                        _start_game_mode(starting_fen=None, is_position_game=False)
+                    # Apply a settings change pushed from the web app during a game so
+                    # display/sprite toggles take effect live, matching the on-board
+                    # display menu. Rebuilt here (main thread) - never from the
+                    # subscriber thread that set the flag.
+                    elif _pending_settings_reload:
+                        _pending_settings_reload = False
+                        log.info("[App] Applying web settings change to live display")
+                        if display_manager:
+                            display_manager._init_widgets()
+                    elif _pending_board_command is not None:
+                        # Web set up a position / aborted while a game was running.
+                        # Applied here on the main thread (rebuilds the game display).
+                        _process_pending_board_command()
+                    else:
+                        # Stay in game mode - key_callback handles exit via _return_to_menu
+                        time.sleep(0.5)
+
+                elif app_state == AppState.SETTINGS:
+                    # Check if we need to return to positions menu (from position game back)
+                    if _return_to_positions_menu:
+                        _return_to_positions_menu = False
+                        # Return directly to the last selected position in the menu
+                        ctx = _get_menu_context()
+                        position_result = handle_positions_menu(
+                            ctx=ctx,
+                            load_positions_config=lambda: load_positions_config(log),
+                            start_from_position=_start_from_position,
+                            show_menu=_show_menu,
+                            find_entry_index=find_entry_index,
+                            board=board,
+                            log=log,
+                            last_position_category_index_ref=[_last_position_category_index],
+                            last_position_index_ref=[_last_position_index],
+                            last_position_category_ref=[_last_position_category],
+                            return_to_last_position=True,
+                            is_game_in_progress=_has_suspended_game,
+                            abort_game=_abort_current_game,
+                        )
+                        if is_break_result(position_result):
+                            # BLE client connected during positions menu
                             _start_game_mode()
                             if protocol_manager:
                                 protocol_manager.on_app_connected()
-                else:
-                    # Settings handled by _handle_settings loop
-                    time.sleep(0.1)
-                
+                        elif not position_result:
+                            # User backed out of positions menu, show settings
+                            settings_result = _handle_settings()
+                            if is_break_result(settings_result):
+                                _start_game_mode()
+                                if protocol_manager:
+                                    protocol_manager.on_app_connected()
+                    else:
+                        # Settings handled by _handle_settings loop
+                        time.sleep(0.1)
+
+            except WebCommandInterrupt:
+                # A web board command (shutdown/reboot/reset/setup/...) was latched
+                # and raised through the menu stack from whatever depth was on
+                # screen, unwinding every nested loop at once. Clear the latch and
+                # apply it here on the main thread. Shutdown/reboot/run_centaur tear
+                # the process down; setup_position transitions to GAME; the rest
+                # return to the main menu below. This is what makes web Shutdown/
+                # Reboot work from a settings submenu, not only at the root menu.
+                _menu_manager.clear_web_command()
+                _process_pending_board_command()
+                if app_state == AppState.SETTINGS:
+                    # The interrupt unwound out of the Settings submenu loop; drop
+                    # its navigation state and show the main menu so the board is
+                    # usable again for non-exiting commands.
+                    _get_menu_context().clear()
+                    app_state = AppState.MENU
+                continue
+
     except KeyboardInterrupt:
         log.info("[App] Interrupted by Ctrl+C")
     except Exception as e:

@@ -230,7 +230,7 @@ def add_cache_headers(response):
 _INACTIVITY_RESET_PREFIXES = ("/api/",)
 _INACTIVITY_RESET_EXACT = (
     "/configure", "/deletegame/", "/lichesskey/", "/lichessrange/",
-    "/menuoptions/", "/return2dgtcentaurmods", "/shutdownboard",
+    "/menuoptions/", "/return2dgtcentaurmods",
     "/uploadengine", "/delengine/", "/rodentivtuner",
 )
 
@@ -1608,13 +1608,6 @@ def return2dgtcentaurmods():
     os.system("pkill centaur")
     time.sleep(1)
     os.system("sudo systemctl restart universal-chess.service")
-    return "ok"
-
-@app.route("/shutdownboard", methods=["POST"])
-@requires_auth
-def shutdownboard():
-    os.system("pkill centaur")
-    os.system("systemctl poweroff")
     return "ok"
 
 @app.route("/lichesskey/<key>", methods=["POST"])

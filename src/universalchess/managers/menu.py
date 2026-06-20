@@ -19,6 +19,27 @@ from universalchess.epaper.icon_menu import IconMenuEntry, IconMenuWidget
 log = logging.getLogger(__name__)
 
 
+class WebCommandInterrupt(BaseException):
+    """Unwinds all nested menu loops to deliver a web-issued board command.
+
+    Raised by :meth:`MenuManager.show_menu` when a web command (shutdown, reboot,
+    reset, setup position, ...) is latched via ``cancel_selection("WEB_COMMAND")``
+    while a menu -- possibly a deeply nested submenu -- is on screen.
+
+    Why an exception rather than a result value: intermediate menu loops
+    (``run_menu_loop`` and the hand-written submenu loops) only propagate
+    break/BACK/SHUTDOWN results. A plain ``"WEB_COMMAND"`` selection looks like an
+    unknown selection, so each loop swallowed it and redrew -- the command was
+    never applied unless the board happened to be at the root main menu (the
+    observed "web Shutdown/Reboot does nothing" bug). Raising unwinds every nested
+    loop at once to the single handler in the main loop.
+
+    Why ``BaseException`` and not ``Exception``: the deep menu/board code wraps
+    work in broad ``except Exception`` handlers; extending ``BaseException`` keeps
+    those from swallowing the unwind so only the main loop catches it.
+    """
+
+
 class MenuResult(Enum):
     """Standard menu result types."""
     BACK = auto()           # User pressed back
@@ -120,6 +141,13 @@ class MenuManager:
         # Latched when a shutdown is requested (long-press PLAY) so that any
         # subsequent menu display unwinds immediately. See show_menu().
         self._shutdown_requested = False
+
+        # Latched when a web board command (shutdown/reboot/reset/setup/...)
+        # arrives while a menu is on screen, so every subsequent show_menu()
+        # raises WebCommandInterrupt and unwinds nested loops to the main loop.
+        # Unlike _shutdown_requested it is cleared (clear_web_command()) once the
+        # command is applied, because non-power commands return to a live menu.
+        self._web_command_pending = False
 
         # Optional presenter for the focused entry's help tip (HELP key). Set by
         # the application (which owns the modal widget + key routing) via
@@ -237,12 +265,31 @@ class MenuManager:
         if result == "SHUTDOWN":
             self._shutdown_requested = True
 
+        # Latch a web command the same way as shutdown so a request that lands
+        # while a nested submenu is on screen unwinds to the main loop instead of
+        # being swallowed by intermediate handlers. Set unconditionally (even with
+        # no active widget) to close the race where the request lands between menu
+        # displays. Cleared by the main loop once the command is applied.
+        if result == "WEB_COMMAND":
+            self._web_command_pending = True
+
         # Clear any queued keys when cancelling
         self._key_queue.clear()
         if self._active_widget is not None:
             log.info(f"[MenuManager] Cancelling menu with result: {result}")
             self._active_widget.cancel_selection(result)
     
+    def clear_web_command(self) -> None:
+        """Clear the latched web-command request.
+
+        Called by the main loop after it applies the pending web board command so
+        subsequent menus render normally again. The shutdown latch needs no such
+        reset because the process exits; a web reset/setup command instead returns
+        the board to a live menu, so without this the board would raise
+        WebCommandInterrupt on every following render.
+        """
+        self._web_command_pending = False
+
     def refresh_menu(self):
         """Signal the current menu to refresh (rebuild entries with updated settings).
         
@@ -291,6 +338,16 @@ class MenuManager:
         # shutdown-hang regression.
         if self._shutdown_requested:
             return MenuSelection.from_key("SHUTDOWN")
+
+        # A web board command was latched while a menu was on screen. Unwind every
+        # nested menu loop at once by raising, so the command is not swallowed by
+        # intermediate handlers that only propagate break/SHUTDOWN results (the
+        # same failure the shutdown latch above fixes, but web commands are not all
+        # "power off" so they cannot reuse SHUTDOWN). The main loop catches this,
+        # clears the latch, and applies the pending command. Raised before the
+        # board guard since the latch can be set as the display is torn down.
+        if self._web_command_pending:
+            raise WebCommandInterrupt()
 
         if self._board is None:
             raise RuntimeError("MenuManager.set_board() must be called before show_menu()")
@@ -354,6 +411,14 @@ class MenuManager:
                 self._key_queue.clear()
                 menu_widget.deactivate()
                 self._active_widget = None
+
+            # cancel_selection("WEB_COMMAND") woke this wait to deliver a web
+            # board command; unwind immediately rather than returning a result the
+            # caller would treat as an unknown selection and redraw (swallowing
+            # the command). The top-of-method check handles every subsequent
+            # show_menu while the latch stays set.
+            if self._web_command_pending:
+                raise WebCommandInterrupt()
 
             # HELP with a registered presenter: show the focused entry's tip and
             # re-display the menu at the same entry. Without a presenter, fall
