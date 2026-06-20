@@ -182,6 +182,11 @@ class BleManager:
         self._on_relay_data = on_relay_data
         self._on_display_passkey = on_display_passkey
         self._on_confirm_pairing = on_confirm_pairing
+        # Set while the board drives a user-initiated keyboard pairing. The
+        # pairing agent reads it to auto-accept that pairing's numeric-comparison
+        # /just-works confirmation (the user picked the keyboard and types the
+        # passkey on it) instead of raising a Pair/Reject modal to race.
+        self._keyboard_pairing_active = threading.Event()
 
         # Live Bluetooth status engine (advertising + link + devices). The board
         # menu reads it in-process and it broadcasts every change to the web.
@@ -709,6 +714,20 @@ class BleManager:
         
         log.info("[BleManager] Stopped")
     
+    def begin_keyboard_pairing(self):
+        """Mark a user-initiated keyboard pairing as active.
+
+        While active, the pairing agent auto-accepts the keyboard's
+        numeric-comparison/just-works confirmation rather than prompting on the
+        board. Call :meth:`end_keyboard_pairing` (in a finally) once the pairing
+        attempt completes so incoming pairings regain the confirmation gate.
+        """
+        self._keyboard_pairing_active.set()
+
+    def end_keyboard_pairing(self):
+        """Clear the user-initiated keyboard pairing flag (see begin)."""
+        self._keyboard_pairing_active.clear()
+
     def _register_agent(self):
         """Register the pairing agent (KeyboardDisplay capability).
 
@@ -716,12 +735,15 @@ class BleManager:
         when a Bluetooth keyboard pairs (the user then types it on the keyboard).
         Chess-app/phone pairings (numeric comparison / just-works) are gated by
         ``on_confirm_pairing``: the agent shows the code on the board and only
-        completes the bond after the user accepts on the board.
+        completes the bond after the user accepts on the board. A board-initiated
+        keyboard pairing (``_keyboard_pairing_active``) bypasses that prompt and
+        auto-accepts, since the user already chose the keyboard.
         """
         self._agent = _PairingAgent(
             self._bus,
             on_display_passkey=self._on_display_passkey,
             on_confirm_pairing=self._on_confirm_pairing,
+            is_keyboard_pairing_active=self._keyboard_pairing_active.is_set,
         )
         
         agent_manager = dbus.Interface(
@@ -886,20 +908,33 @@ class _PairingAgent(dbus.service.Object):
     AGENT_PATH = "/org/bluez/universal_agent"
     CAPABILITY = "KeyboardDisplay"
 
-    def __init__(self, bus, on_display_passkey=None, on_confirm_pairing=None):
+    def __init__(self, bus, on_display_passkey=None, on_confirm_pairing=None,
+                 is_keyboard_pairing_active=None):
         self.bus = bus
         self._on_display_passkey = on_display_passkey
         self._on_confirm_pairing = on_confirm_pairing
+        # Predicate returning True while the board is driving a keyboard pairing
+        # the user explicitly started; such pairings auto-accept (see
+        # _confirm_async). Defaults to "never" so incoming pairings always
+        # require the on-board confirmation gate.
+        self._is_keyboard_pairing_active = (
+            is_keyboard_pairing_active or (lambda: False))
         dbus.service.Object.__init__(self, bus, self.AGENT_PATH)
 
     def _confirm_async(self, passkey, reply, error):
-        """Run the on-board Pair/Reject prompt off the GLib loop, then reply.
+        """Resolve a pairing confirmation off the GLib loop, then reply.
 
-        The confirmation blocks until the user decides (or a timeout elapses),
-        so it must not run on the D-Bus dispatch thread. ``run_pairing_confirmation``
-        translates the user's choice into the async ``reply``/``error`` callbacks.
+        For an incoming phone/app pairing this runs the on-board Pair/Reject
+        prompt, which blocks until the user decides (or a timeout elapses), so it
+        must not run on the D-Bus dispatch thread. For a board-initiated keyboard
+        pairing it auto-accepts: the user already chose the keyboard and is busy
+        typing the passkey on it, so no on-board button is shown.
+        ``run_pairing_confirmation`` translates the outcome into the async
+        ``reply``/``error`` callbacks.
         """
         from universalchess.menus.pairing_confirm import run_pairing_confirmation
+
+        auto_accept = bool(self._is_keyboard_pairing_active())
 
         def worker():
             run_pairing_confirmation(
@@ -907,6 +942,7 @@ class _PairingAgent(dbus.service.Object):
                 accept=reply,
                 reject=lambda: error(_Rejected("Pairing rejected on board")),
                 log=log,
+                auto_accept=auto_accept,
             )
 
         threading.Thread(target=worker, daemon=True,

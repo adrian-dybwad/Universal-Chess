@@ -407,8 +407,8 @@
     {
       "id": "bluetooth.devices",
       "key": "ManageDevices",
-      "type": "action",
-      "action": "bluetooth_devices",
+      "type": "submenu",
+      "target": "bluetooth.devices.list",
       "label": "Devices",
       "icon": "bluetooth",
       "help": "View and manage paired Bluetooth devices.",
@@ -425,6 +425,124 @@
       "help": "Scan for and pair a Bluetooth keyboard.",
       "platforms": ["board"],
       "epaper": { "height_ratio": 0.8, "layout": "horizontal", "font_size": 14 }
+    },
+    {
+      "id": "bluetooth.devices.list",
+      "type": "menu",
+      "label": "Paired Devices",
+      "help": "Paired Bluetooth devices; select one to connect, disconnect, or forget.",
+      "platforms": ["board"],
+      "children": ["bluetooth.devices.list.items"]
+    },
+    {
+      "id": "bluetooth.devices.list.items",
+      "type": "dynamic",
+      "provider": "bluetooth_paired_devices",
+      "itemAction": "bluetooth_device_select",
+      "help": "Select a paired device to manage it.",
+      "platforms": ["board"]
+    },
+    {
+      "id": "bluetooth.device.detail",
+      "type": "menu",
+      "label": "Device",
+      "help": "Connect, disconnect, or forget the selected Bluetooth device.",
+      "platforms": ["board"],
+      "children": [
+        "bluetooth.device.info",
+        "bluetooth.device.connect",
+        "bluetooth.device.disconnect",
+        "bluetooth.device.forget"
+      ]
+    },
+    {
+      "id": "bluetooth.device.info",
+      "key": "Info",
+      "type": "info",
+      "label": "{fn:bt_device_status}",
+      "icon": "bluetooth",
+      "help": "The selected device and its connection status.",
+      "platforms": ["board"],
+      "epaper": { "selectable": false, "height_ratio": 1.5, "icon_size": 36, "layout": "vertical", "font_size": 11, "border_width": 1 }
+    },
+    {
+      "id": "bluetooth.device.connect",
+      "key": "Connect",
+      "type": "action",
+      "action": "bluetooth_connect",
+      "label": "Connect",
+      "icon": "bluetooth",
+      "help": "Connect to this device.",
+      "visibleWhen": { "store": "bt_device", "key": "connected", "equals": false },
+      "platforms": ["board"],
+      "epaper": { "height_ratio": 0.8, "layout": "horizontal", "font_size": 14 }
+    },
+    {
+      "id": "bluetooth.device.disconnect",
+      "key": "Disconnect",
+      "type": "action",
+      "action": "bluetooth_disconnect",
+      "label": "Disconnect",
+      "icon": "cancel",
+      "help": "Disconnect this device.",
+      "visibleWhen": { "store": "bt_device", "key": "connected", "equals": true },
+      "platforms": ["board"],
+      "epaper": { "height_ratio": 0.8, "layout": "horizontal", "font_size": 14 }
+    },
+    {
+      "id": "bluetooth.device.forget",
+      "key": "Forget",
+      "type": "action",
+      "action": "bluetooth_forget",
+      "label": "Forget",
+      "icon": "exit",
+      "help": "Remove this device's pairing.",
+      "platforms": ["board"],
+      "epaper": { "height_ratio": 0.8, "layout": "horizontal", "font_size": 14 }
+    },
+    {
+      "id": "bluetooth.device.stale",
+      "type": "menu",
+      "label": "Pairing Rejected",
+      "help": "The device rejected the saved pairing; remove it or keep it.",
+      "platforms": ["board"],
+      "children": ["bluetooth.device.stale.remove", "bluetooth.device.stale.keep"]
+    },
+    {
+      "id": "bluetooth.device.stale.remove",
+      "key": "RemovePairing",
+      "type": "action",
+      "action": "bluetooth_remove_pairing",
+      "label": "Remove\nPairing",
+      "icon": "exit",
+      "help": "Forget the rejected pairing so it can be re-paired.",
+      "platforms": ["board"]
+    },
+    {
+      "id": "bluetooth.device.stale.keep",
+      "key": "KeepPairing",
+      "type": "action",
+      "action": "cancel",
+      "label": "Keep\nPairing",
+      "icon": "cancel",
+      "help": "Keep the existing pairing and return.",
+      "platforms": ["board"]
+    },
+    {
+      "id": "bluetooth.keyboards",
+      "type": "menu",
+      "label": "Pair Keyboard",
+      "help": "Discovered Bluetooth keyboards; select one to pair.",
+      "platforms": ["board"],
+      "children": ["bluetooth.keyboards.list"]
+    },
+    {
+      "id": "bluetooth.keyboards.list",
+      "type": "dynamic",
+      "provider": "bluetooth_keyboards",
+      "itemAction": "bluetooth_pair_select",
+      "help": "Select a keyboard to pair; a passkey is shown if required.",
+      "platforms": ["board"]
     },
 
     {
@@ -696,6 +814,36 @@
       "label": "Install\nLocal .deb",
       "icon": "update",
       "help": "Install a .deb package found in the home directory.",
+      "platforms": ["board"]
+    },
+    {
+      "id": "updates.install_local.confirm",
+      "type": "menu",
+      "label": "Install Local .deb",
+      "help": "Confirm installing the discovered .deb package.",
+      "platforms": ["board"],
+      "children": ["updates.install_local.confirm.yes", "updates.install_local.confirm.no"]
+    },
+    {
+      "id": "updates.install_local.confirm.yes",
+      "key": "confirm",
+      "type": "action",
+      "action": "install_local_confirmed",
+      "label": "Install {value}?",
+      "boardLabel": "Install\n{value}?",
+      "bind": { "store": "update", "key": "local_deb_name" },
+      "icon": "play",
+      "help": "Install the discovered package; the board restarts onto the new version.",
+      "platforms": ["board"]
+    },
+    {
+      "id": "updates.install_local.confirm.no",
+      "key": "cancel",
+      "type": "action",
+      "action": "cancel",
+      "label": "Cancel",
+      "icon": "cancel",
+      "help": "Return without installing.",
       "platforms": ["board"]
     },
 

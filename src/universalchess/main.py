@@ -52,8 +52,6 @@ from universalchess.menus import (
     wifi_status_icon,
     wifi_signal_icon,
     wifi_network_rows,
-    handle_keyboard_pairing_menu,
-    handle_paired_devices_menu,
     handle_accounts_menu,
     mask_token,
     handle_engine_manager_menu,
@@ -694,27 +692,54 @@ def _broadcast_bt_event(event_type: str, data: dict = None) -> None:
         log.debug(f"[App] Failed to broadcast {event_type}: {e}")
 
 
-def _start_web_pairing(address: str) -> None:
-    """Pair a keyboard requested from the web UI, on a background thread.
+def _pair_keyboard_board_initiated(address: str) -> bool:
+    """Pair a keyboard the user explicitly chose, with the agent auto-accepting.
 
-    Runs the proven ``BluezPairingManager.pair_keyboard`` flow (the same one the
-    board menu uses) off the IPC subscriber thread because it blocks for the
-    duration of the BlueZ handshake. The board's KeyboardDisplay agent still
-    services any passkey; ``_on_display_passkey`` mirrors that passkey to the web.
-    The start and final result are broadcast so the web card can show progress.
+    Both keyboard-pairing entry points -- the board's Pair-Keyboard menu and the
+    web UI -- must route through here so they behave identically. The pairing is
+    flagged board-initiated, which makes the BlueZ agent auto-accept the
+    numeric-comparison/just-works confirmation rather than raising a Pair/Reject
+    prompt the user cannot satisfy: a real keyboard has no display to compare a
+    code against, so that prompt would only time out (the observed "check the
+    code" failure when pairing from the web UI, which previously skipped the
+    flag). The flag is always cleared so a later *incoming* pairing keeps its
+    on-board confirmation gate.
+
+    Centralising the flag here -- the single seam that owns both managers --
+    keeps ``bluez_pairing`` decoupled from the BLE agent and prevents any one
+    entry point from forgetting to set it.
     """
     global bluez_pairing_manager
-    if not address:
-        return
     if bluez_pairing_manager is None:
         from universalchess.managers import BluezPairingManager
         bluez_pairing_manager = BluezPairingManager()
+    if ble_manager is not None:
+        ble_manager.begin_keyboard_pairing()
+    try:
+        return bool(bluez_pairing_manager.pair_keyboard(address))
+    finally:
+        if ble_manager is not None:
+            ble_manager.end_keyboard_pairing()
+
+
+def _start_web_pairing(address: str) -> None:
+    """Pair a keyboard requested from the web UI, on a background thread.
+
+    Runs the shared board-initiated pairing flow (the same one the board menu
+    uses, so the auto-accept agent behaviour is identical) off the IPC subscriber
+    thread because it blocks for the duration of the BlueZ handshake. The board's
+    KeyboardDisplay agent still services any passkey; ``_on_display_passkey``
+    mirrors that passkey to the web. The start and final result are broadcast so
+    the web card can show progress.
+    """
+    if not address:
+        return
 
     def worker():
         _broadcast_bt_event("bt_pair_result", {"address": address, "status": "started"})
         success = False
         try:
-            success = bool(bluez_pairing_manager.pair_keyboard(address))
+            success = _pair_keyboard_board_initiated(address)
         except Exception as e:  # noqa: BLE001 - report failure, never crash
             log.warning(f"[App] Web pairing of {address} failed: {e}")
         # Clear any lingering passkey on both surfaces, then report the outcome.
@@ -2628,65 +2653,6 @@ def _get_wifi_password_from_board(ssid: str) -> Optional[str]:
     )
 
 
-def _handle_pair_keyboard():
-    """Scan for and pair a Bluetooth keyboard (Settings > Bluetooth).
-
-    Pairing requests are serviced by the application's KeyboardDisplay agent, so
-    a passkey (if the keyboard requires one) is shown on the board during the
-    pair step. After pairing the device is trusted and connected; BlueZ then
-    exposes it as an input device which the keyboard manager begins reading.
-    """
-    global bluez_pairing_manager
-    if bluez_pairing_manager is None:
-        from universalchess.managers import BluezPairingManager
-        bluez_pairing_manager = BluezPairingManager()
-
-    def pair_keyboard(address: str) -> bool:
-        return bluez_pairing_manager.pair_keyboard(address)
-
-    def scan_stream(on_found, stop_event):
-        # Continuous BlueZ discovery (BR/EDR inquiry + LE scan) reports each
-        # keyboard the moment it appears and keeps running until the pairing
-        # screen is dismissed, so an intermittently-discoverable keyboard is not
-        # missed by a fixed-length scan.
-        bluez_pairing_manager.discover_keyboards_stream(on_found, stop_event)
-
-    return handle_keyboard_pairing_menu(
-        scan_stream=scan_stream,
-        pair_keyboard=pair_keyboard,
-        show_menu=_show_menu,
-        is_break_result_fn=is_break_result,
-        board=board,
-        log=log,
-        refresh_menu=_menu_manager.refresh_menu if _menu_manager else None,
-    )
-
-
-def _handle_manage_devices():
-    """List paired Bluetooth devices and connect/disconnect/forget them.
-
-    Opens the management screen (Settings > Bluetooth > Devices). Paired devices
-    persist in the BlueZ object tree, so the list is read without an inquiry;
-    selecting a device shows its connection status and the relevant actions.
-    """
-    global bluez_pairing_manager
-    if bluez_pairing_manager is None:
-        from universalchess.managers import BluezPairingManager
-        bluez_pairing_manager = BluezPairingManager()
-
-    return handle_paired_devices_menu(
-        list_devices=bluez_pairing_manager.list_paired_devices,
-        connect_device=bluez_pairing_manager.connect_device,
-        disconnect_device=bluez_pairing_manager.disconnect_device,
-        forget_device=bluez_pairing_manager.forget_device,
-        show_menu=_show_menu,
-        is_break_result_fn=is_break_result,
-        board=board,
-        log=log,
-        connect_device_status=getattr(bluez_pairing_manager, "connect_device_status", None),
-    )
-
-
 def _get_installed_version() -> str:
     """Get the installed Universal Chess version from dpkg.
     
@@ -3095,16 +3061,22 @@ def _build_updates_context():
     compute supplies the toggle's Enabled/Disabled label, and the actions invoke
     the imperative, splash-driven update flows.
     """
-    from universalchess.menus.board_context import BoardMenuContext
+    from universalchess.menus.board_context import BoardMenuContext, run_engine_menu
     from universalchess.services.update_service import get_update_service, UpdateChannel
     from universalchess.menus.update_menu import (
         check_for_updates_interactive,
         download_update_interactive,
         install_pending_interactive,
-        install_local_interactive,
+        perform_local_deb_install,
+        find_local_deb_files,
+        _show_update_splash,
     )
 
     svc = get_update_service()
+    # Path of the .deb discovered by the Install-Local action, read back by the
+    # confirmation's filename label and its Yes handler. Held per menu session so
+    # the catalog confirm container stays a pure structure with no path of its own.
+    local_deb = {"path": None}
 
     def update_get(key):
         status = svc.get_status_dict()
@@ -3116,6 +3088,9 @@ def _build_updates_context():
             return bool(status["has_pending_update"])
         if key == "available":
             return status["available_version"] or ""
+        if key == "local_deb_name":
+            # Basename for the confirm label; empty until discovery sets a path.
+            return os.path.basename(local_deb["path"]) if local_deb["path"] else ""
         if key == "has_download":
             # Download is offered only when an update is available but not yet
             # downloaded; once pending, the Install Pending row replaces it.
@@ -3146,8 +3121,28 @@ def _build_updates_context():
         return None
 
     def do_install_local():
-        install_local_interactive(board, log, _menu_manager)
-        return None
+        """Discover a local .deb, then open the data-driven confirm container.
+
+        Discovery and the "no package" feedback are board side effects; the
+        Install/Cancel gate and its filename label live in the catalog
+        (``updates.install_local.confirm``). The discovered path is stashed for
+        the confirm's Yes handler. Returns the confirm loop's break signal so a
+        game/connection event still unwinds the menu stack.
+        """
+        deb_files = find_local_deb_files()
+        if not deb_files:
+            _show_update_splash(board, "No .deb\nfound")
+            time.sleep(2)
+            return None
+        local_deb["path"] = deb_files[0]
+        return _signal_from(
+            run_engine_menu("updates.install_local.confirm", ctx, _menu_manager)
+        )
+
+    def do_install_local_confirmed():
+        """Install the discovered .deb (the confirm's Yes), then return to Updates."""
+        perform_local_deb_install(board, log, local_deb["path"])
+        return "BACK"
 
     ctx = BoardMenuContext()
     ctx.register_store("update", update_get, update_set)
@@ -3159,6 +3154,8 @@ def _build_updates_context():
     ctx.register_action("download_update", do_download)
     ctx.register_action("install_pending", do_install_pending)
     ctx.register_action("install_local", do_install_local)
+    ctx.register_action("install_local_confirmed", do_install_local_confirmed)
+    ctx.register_action("cancel", lambda: "BACK")
     return ctx
 
 
@@ -3453,18 +3450,46 @@ def _build_bluetooth_context():
 
     The ``bluetooth`` store exposes the radio's enabled flag (rfkill); the
     ``bluetooth_status`` provider yields the live readout rows; the
-    ``bluetooth_enable_state`` value supplies the toggle's Enabled/Disabled
-    label. Devices and Pair stay imperative (they own multi-screen flows with
-    live discovery and on-board passkey display), exposed as actions that forward
-    any break result up through ``_signal_from``.
+    ``bluetooth_enable_state`` value supplies the toggle's Enabled/Disabled label.
+
+    Paired-device management is now data-driven too: the ``bt_device`` store holds
+    the selected device the detail container renders, the
+    ``bluetooth_paired_devices`` provider fills the list, ``bt_device_status``
+    labels the detail header, and the connect/disconnect/forget/remove actions
+    perform the BlueZ side effects (with splash feedback) -- returning ``"BACK"``
+    when the device is gone so the engine pops the detail back to the (re-queried)
+    list. Connect's auth-failure path opens the ``bluetooth.device.stale`` confirm
+    container; a removal there exits the detail to the list. Keyboard pairing
+    stays imperative (a continuous discovery scan with on-board passkey display),
+    exposed as the ``bluetooth_pair`` action.
     """
-    from universalchess.menus.board_context import BoardMenuContext
+    from universalchess.menus.board_context import BoardMenuContext, run_engine_menu
+    from universalchess.menus.bluetooth_menu import (
+        paired_device_rows,
+        keyboard_rows,
+        show_splash,
+        _has_friendly_name,
+    )
     from universalchess.connectivity import bluetooth as _bt_conn
 
     bt_status_mod = __import__(
         "DGTCentaurMods.epaper.bluetooth_status",
         fromlist=["get_bluetooth_status"],
     )
+
+    # The device the detail screen acts on, set when a list row is selected and
+    # mutated in place as connect/disconnect change its state (the loop redraws,
+    # so visibleWhen flips Connect<->Disconnect). ``pairing.removed`` lets the
+    # auth-failure confirm tell the connect action to exit the detail to the list.
+    device = {"address": None, "name": "", "connected": False}
+    pairing = {"removed": False}
+
+    def _bluez():
+        global bluez_pairing_manager
+        if bluez_pairing_manager is None:
+            from universalchess.managers import BluezPairingManager
+            bluez_pairing_manager = BluezPairingManager()
+        return bluez_pairing_manager
 
     def bt_get(key):
         if key == "enabled":
@@ -3479,15 +3504,209 @@ def _build_bluetooth_context():
         else:
             bt_status_mod.disable_bluetooth()
 
+    def bt_device_get(key):
+        return device[key]
+
+    def bt_device_set(key, value):
+        device[key] = value
+
+    def paired_provider():
+        return paired_device_rows(_bluez().list_paired_devices())
+
+    def device_select(address):
+        """Open the detail screen for the chosen paired device.
+
+        The list's non-selectable empty-state row is keyed ``__none__`` and never
+        dispatches; a stale address that vanished between list builds is ignored.
+        """
+        if address == "__none__":
+            return None
+        chosen = next(
+            (d for d in _bluez().list_paired_devices() if d["address"] == address),
+            None,
+        )
+        if chosen is None:
+            return None
+        device["address"] = chosen["address"]
+        device["name"] = str(chosen.get("name") or chosen["address"])
+        device["connected"] = bool(chosen.get("connected", False))
+        return _signal_from(
+            run_engine_menu("bluetooth.device.detail", ctx, _menu_manager)
+        )
+
+    def device_connect():
+        mgr = _bluez()
+        address, name = device["address"], device["name"]
+        show_splash(board, f"Connecting\n{name[:14]}...")
+        status_fn = getattr(mgr, "connect_device_status", None)
+        status = (status_fn(address) if status_fn is not None
+                  else ("ok" if mgr.connect_device(address) else "failed"))
+        if status == "ok":
+            show_splash(board, "Connected", hold_seconds=2.0)
+            device["connected"] = True
+            return None
+        if status == "auth_failed":
+            # The peer rejected the saved bond; ask whether to remove it. A
+            # removal forgets the device, so exit the detail back to the list.
+            pairing["removed"] = False
+            run_engine_menu("bluetooth.device.stale", ctx, _menu_manager)
+            if pairing["removed"]:
+                return "BACK"
+            device["connected"] = False
+            return None
+        show_splash(board, "Connect failed", hold_seconds=2.0)
+        device["connected"] = False
+        return None
+
+    def device_disconnect():
+        mgr = _bluez()
+        show_splash(board, f"Disconnecting\n{device['name'][:14]}...")
+        ok = mgr.disconnect_device(device["address"])
+        show_splash(board, "Disconnected" if ok else "Disconnect failed", hold_seconds=2.0)
+        # A successful disconnect clears the link; a failure leaves it up.
+        device["connected"] = not ok
+        return None
+
+    def device_forget():
+        mgr = _bluez()
+        show_splash(board, f"Forgetting\n{device['name'][:14]}...")
+        ok = mgr.forget_device(device["address"])
+        show_splash(board, "Forgotten" if ok else "Forget failed", hold_seconds=2.0)
+        return "BACK" if ok else None  # gone -> pop detail to the re-queried list
+
+    def device_remove_pairing():
+        mgr = _bluez()
+        show_splash(board, f"Forgetting\n{device['name'][:14]}...")
+        ok = mgr.forget_device(device["address"])
+        show_splash(board, "Pairing removed" if ok else "Forget failed", hold_seconds=2.0)
+        pairing["removed"] = ok
+        return "BACK"  # exit the stale-pairing confirm
+
+    # -- keyboard pairing (continuous discovery + on-board passkey) ----------
+    # Like the WiFi scan, the imperative parts (a background discovery thread and
+    # the refresh-on-found subscription) live here while the list screen is the
+    # data-driven ``bluetooth.keyboards`` container. ``kbd`` carries the running
+    # scan's handles to the provider and the pair action.
+    kbd = {}
+
+    def keyboards_provider():
+        current = kbd.get("current_named")
+        scanning = kbd.get("scanning")
+        return keyboard_rows(current() if current else [],
+                             scanning() if scanning else False)
+
+    def pair_select(address):
+        """Pair the chosen keyboard, winding down discovery first.
+
+        The provider's placeholder rows (``__scanning__``/``__none__``) are
+        non-selectable and never reach here; a vanished address is ignored. An
+        active inquiry keeps the controller busy and makes the pairing connect
+        time out, so the scan is stopped and joined before pairing.
+        """
+        if address in ("__scanning__", "__none__"):
+            return None
+        current = kbd.get("current_named")
+        selected = next(
+            (d for d in (current() if current else []) if d["address"] == address),
+            None,
+        )
+        if selected is None:
+            return None
+        stop = kbd.get("stop_scan")
+        thread = kbd.get("scan_thread")
+        if stop is not None:
+            stop.set()
+        if thread is not None:
+            thread.join(timeout=6.0)
+        show_splash(board, f"Pairing\n{selected['name'][:14]}...")
+        ok = _pair_keyboard_board_initiated(address)
+        show_splash(board, "Keyboard paired" if ok else "Pairing failed", hold_seconds=2.0)
+        return "BACK"
+
+    def pair_keyboard_flow():
+        """Start continuous keyboard discovery, then run the data-driven list.
+
+        Discovery runs for the lifetime of the screen (real keyboards answer a
+        BR/EDR inquiry on their own schedule; some advertise only intermittently),
+        repopulating the list as keyboards arrive. Only friendly-named devices are
+        surfaced -- a keyboard often appears mid-discovery with an address-only
+        name before BlueZ resolves it. Each discovery (and scan end) cancels the
+        open selection so the engine redraws the list from fresh results, the same
+        mechanism the live WiFi/Bluetooth-status menus use.
+        """
+        mgr = _bluez()
+        found = {}
+        found_lock = threading.Lock()
+        stop_scan = threading.Event()
+        scan_ended = threading.Event()
+
+        def current_named():
+            with found_lock:
+                return [d for d in found.values() if _has_friendly_name(d)]
+
+        def on_found(dev):
+            address = dev.get("address")
+            if not address or not _has_friendly_name(dev):
+                return
+            with found_lock:
+                existing = found.get(address)
+                if existing is not None:
+                    if existing.get("name") == dev.get("name"):
+                        return
+                    existing.update(dev)
+                else:
+                    found[address] = dev
+            if not stop_scan.is_set() and _menu_manager is not None:
+                _menu_manager.cancel_selection("BT_KBD_REFRESH")
+
+        def run_scan():
+            try:
+                mgr.discover_keyboards_stream(on_found, stop_scan)
+            except Exception as e:
+                log.error(f"[BTKeyboard] keyboard discovery failed: {e}")
+            finally:
+                scan_ended.set()
+                if not stop_scan.is_set() and _menu_manager is not None:
+                    _menu_manager.cancel_selection("BT_KBD_REFRESH")
+
+        scan_thread = threading.Thread(target=run_scan, daemon=True)
+        kbd["current_named"] = current_named
+        kbd["scanning"] = lambda: not scan_ended.is_set()
+        kbd["stop_scan"] = stop_scan
+        kbd["scan_thread"] = scan_thread
+        log.info("[BTKeyboard] starting continuous keyboard discovery...")
+        scan_thread.start()
+        try:
+            return _signal_from(
+                run_engine_menu("bluetooth.keyboards", ctx, _menu_manager)
+            )
+        finally:
+            stop_scan.set()
+            scan_thread.join(timeout=6.0)
+
     ctx = BoardMenuContext()
     ctx.register_store("bluetooth", bt_get, bt_set)
+    ctx.register_store("bt_device", bt_device_get, bt_device_set)
     ctx.register_provider("bluetooth_status", _bluetooth_status_rows)
+    ctx.register_provider("bluetooth_paired_devices", paired_provider)
+    ctx.register_provider("bluetooth_keyboards", keyboards_provider)
     ctx.register_value(
         "bluetooth_enable_state",
         lambda node: "Enabled" if bt_get("enabled") else "Disabled",
     )
-    ctx.register_action("bluetooth_devices", lambda: _signal_from(_handle_manage_devices()))
-    ctx.register_action("bluetooth_pair", lambda: _signal_from(_handle_pair_keyboard()))
+    ctx.register_value(
+        "bt_device_status",
+        lambda node: f"{device['name'][:18]}\n"
+        + ("Connected" if device["connected"] else "Not connected"),
+    )
+    ctx.register_action("bluetooth_device_select", device_select)
+    ctx.register_action("bluetooth_connect", device_connect)
+    ctx.register_action("bluetooth_disconnect", device_disconnect)
+    ctx.register_action("bluetooth_forget", device_forget)
+    ctx.register_action("bluetooth_remove_pairing", device_remove_pairing)
+    ctx.register_action("cancel", lambda: "BACK")
+    ctx.register_action("bluetooth_pair_select", pair_select)
+    ctx.register_action("bluetooth_pair", pair_keyboard_flow)
     return ctx
 
 

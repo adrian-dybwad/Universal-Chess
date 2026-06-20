@@ -5,8 +5,8 @@ from .positions_menu import handle_positions_menu
 from .chromecast_menu import handle_chromecast_menu
 from .wifi_menu import wifi_status_icon, wifi_signal_icon, wifi_network_rows
 from .bluetooth_menu import (
-    handle_keyboard_pairing_menu,
-    handle_paired_devices_menu,
+    keyboard_rows,
+    paired_device_rows,
 )
 from .accounts_menu import handle_accounts_menu, mask_token
 from .engine_manager_menu import (
@@ -16,12 +16,11 @@ from .engine_manager_menu import (
 )
 from .reset_menu import reset_all_settings
 from .update_menu import (
-    handle_local_deb_install,
+    perform_local_deb_install,
     find_local_deb_files,
     check_for_updates_interactive,
     download_update_interactive,
     install_pending_interactive,
-    install_local_interactive,
 )
 from universalchess.services.lichess_service import (
     get_lichess_client,
@@ -42,16 +41,15 @@ __all__ = [
     "wifi_status_icon",
     "wifi_signal_icon",
     "wifi_network_rows",
-    "handle_keyboard_pairing_menu",
-    "handle_paired_devices_menu",
+    "keyboard_rows",
+    "paired_device_rows",
     "handle_accounts_menu",
     "mask_token",
-    "handle_local_deb_install",
+    "perform_local_deb_install",
     "find_local_deb_files",
     "check_for_updates_interactive",
     "download_update_interactive",
     "install_pending_interactive",
-    "install_local_interactive",
     "get_lichess_client",
     "build_lichess_menu_entries",
     "show_lichess_error",

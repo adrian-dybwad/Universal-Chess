@@ -147,6 +147,46 @@ class TestRunPairingConfirmation(unittest.TestCase):
         reject.assert_called_once_with()
         accept.assert_not_called()
 
+    def test_auto_accept_pairs_without_prompting(self):
+        """A board-initiated keyboard pair auto-accepts without an on-board prompt.
+
+        When the user picks a keyboard from the board's Pair-Keyboard list the
+        intent is already established, so a numeric-comparison RequestConfirmation
+        must complete silently (the user is busy typing the passkey on the
+        keyboard) instead of raising a Pair/Reject modal to race.
+
+        Regression manifestation: if auto_accept were ignored, the modal would
+        reappear and on_confirm would be invoked, recreating the racey button
+        the user reported -- so on_confirm must NOT be called and accept() must
+        be the sole outcome.
+        """
+        on_confirm = MagicMock()
+        accept = MagicMock()
+        reject = MagicMock()
+
+        run_pairing_confirmation(
+            on_confirm, "001234", accept, reject, MagicMock(), auto_accept=True)
+
+        on_confirm.assert_not_called()
+        accept.assert_called_once_with()
+        reject.assert_not_called()
+
+    def test_auto_accept_only_applies_when_requested(self):
+        """Without auto_accept, an incoming pairing still requires confirmation.
+
+        Regression manifestation: if auto_accept defaulted to True (or leaked
+        across calls), a phone/app pairing would be authorized without the user
+        pressing Pair -- the exact security gate this module protects.
+        """
+        on_confirm = MagicMock(return_value=True)
+        accept = MagicMock()
+        reject = MagicMock()
+
+        run_pairing_confirmation(on_confirm, "001234", accept, reject, MagicMock())
+
+        on_confirm.assert_called_once_with("001234")
+        accept.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()

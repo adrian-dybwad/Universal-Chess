@@ -3,7 +3,8 @@
 
 These cover:
   * Keyboard classification from BlueZ ``Device1`` properties (Icon /
-    Appearance / Class of Device), including the real WiFi Key CoD ``0x2540``.
+    Appearance / HID service ``UUIDs`` / Class of Device), including the real
+    WiFi Key CoD ``0x2540``.
   * Discovery orchestration: it sets the discovery transport filter (the root
     cause fix -- discovery must be set explicitly so a BR/EDR inquiry runs and a
     Classic keyboard gets a Device1 object), enumerates ObjectManager, keeps only
@@ -23,9 +24,14 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from universalchess.managers.bluez_pairing import BluezPairingManager
+from universalchess.managers.bluez_pairing import (
+    BluezPairingManager,
+    _KEYBOARD_PAIR_TIMEOUT_SECONDS,
+)
 
 ADDRESS = "B8:27:EB:67:A8:0E"
+# Full 128-bit form of the Bluetooth HID service (assigned number 0x1812).
+_HID_UUID = "00001812-0000-1000-8000-00805f9b34fb"
 
 
 class TestIsKeyboard(unittest.TestCase):
@@ -52,6 +58,22 @@ class TestIsKeyboard(unittest.TestCase):
         assert BluezPairingManager.is_keyboard({"Class": 0x000540}) is True
         assert BluezPairingManager.is_keyboard({"Class": 0x000580}) is False
         assert BluezPairingManager.is_keyboard({"Class": 0x00010C}) is False
+
+    def test_hid_service_uuid_signal(self):
+        # Regression: BLE keyboards advertise the HID service UUID (0x1812) early,
+        # often before Appearance/Icon/Class resolve, so a keyboard would "appear
+        # but not reliably" without this signal. The match is case-insensitive
+        # (BlueZ may report upper or lower) and scans all advertised UUIDs, not
+        # just the first.
+        assert BluezPairingManager.is_keyboard({"UUIDs": [_HID_UUID]}) is True
+        assert BluezPairingManager.is_keyboard({"UUIDs": [_HID_UUID.upper()]}) is True
+        assert BluezPairingManager.is_keyboard({"UUIDs": [
+            "00001800-0000-1000-8000-00805f9b34fb",  # Generic Access
+            _HID_UUID,
+        ]}) is True
+        # A non-HID service (A2DP sink) must not be misclassified as a keyboard.
+        assert BluezPairingManager.is_keyboard(
+            {"UUIDs": ["0000110b-0000-1000-8000-00805f9b34fb"]}) is False
 
     def test_no_signal_is_not_keyboard(self):
         # Regression: a device with no type signal must not appear as a keyboard.
@@ -235,6 +257,24 @@ class TestPairKeyboard(unittest.TestCase):
         manager._connect.assert_called_once()
         # Nothing was paired before, so no fresh-remove was needed.
         manager._remove_device.assert_not_called()
+
+    def test_pair_uses_generous_keyboard_timeout_window(self):
+        """Pair() and Connect() get the 90s keyboard window, not the 30s default.
+
+        The user must find the keyboard and type a 6-digit passkey before the
+        D-Bus Pair() reply times out. Failure manifestation: reverting to the
+        30s default makes the bond return NoReply (the observed failure) for
+        anyone who is not extremely fast.
+        """
+        manager = self._manager(paired=False)
+        manager._pair = MagicMock(return_value="ok")
+
+        assert manager.pair_keyboard(ADDRESS) is True
+        manager._pair.assert_called_once_with(ADDRESS, _KEYBOARD_PAIR_TIMEOUT_SECONDS)
+        manager._connect.assert_called_once_with(
+            ADDRESS, _KEYBOARD_PAIR_TIMEOUT_SECONDS)
+        # Pinning the value documents intent and catches a drift back toward 30s.
+        assert _KEYBOARD_PAIR_TIMEOUT_SECONDS >= 90.0
 
     def test_existing_bond_is_cleared_before_fresh_pair(self):
         """A stale local bond is removed before pairing.
@@ -628,6 +668,51 @@ class TestPairedDeviceActions(unittest.TestCase):
 
         manager._remove_device = MagicMock(return_value=False)
         assert manager.forget_device(ADDRESS) is False
+
+
+class TestBusConnection(unittest.TestCase):
+    """The pairing manager must own a private D-Bus connection.
+
+    Root cause this guards: the BLE pairing agent (which services
+    RequestConfirmation) is registered on the process-wide shared SystemBus and
+    is dispatched by the GLib main loop on the BLE thread. pair_keyboard() runs
+    on a different thread and makes a synchronous, blocking Device.Pair() call.
+    If that blocking call used the same shared connection, dbus-python could not
+    deliver the incoming RequestConfirmation (raised by BlueZ to complete that
+    very Pair) until the blocking call timed out ~30s later -- so the keyboard
+    never received the confirmation and aborted with Authentication Failure
+    (0x05). A private connection isolates the blocking calls from the agent's
+    connection so the agent can be dispatched concurrently.
+    """
+
+    def test_uses_private_system_bus(self):
+        # Failure manifestation: if SystemBus() were called without private=True,
+        # the blocking Pair() would tie up the shared connection and the pairing
+        # agent's RequestConfirmation would be starved until Pair() timed out,
+        # reproducing the deadlock observed in btmon (no User Confirmation Reply).
+        system_bus = MagicMock()
+        fake_dbus = SimpleNamespace(SystemBus=MagicMock(return_value=system_bus))
+
+        manager = BluezPairingManager()
+        with patch.dict("sys.modules", {"dbus": fake_dbus}):
+            connection = manager._bus_connection()
+
+        fake_dbus.SystemBus.assert_called_once_with(private=True)
+        assert connection is system_bus
+
+    def test_private_connection_is_cached(self):
+        # Failure manifestation: creating a new private connection per call would
+        # leak D-Bus connections (file descriptors) on every pair/connect cycle.
+        system_bus = MagicMock()
+        fake_dbus = SimpleNamespace(SystemBus=MagicMock(return_value=system_bus))
+
+        manager = BluezPairingManager()
+        with patch.dict("sys.modules", {"dbus": fake_dbus}):
+            first = manager._bus_connection()
+            second = manager._bus_connection()
+
+        assert first is second
+        fake_dbus.SystemBus.assert_called_once_with(private=True)
 
 
 if __name__ == "__main__":
