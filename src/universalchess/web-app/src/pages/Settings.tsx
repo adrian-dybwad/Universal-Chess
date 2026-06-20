@@ -768,9 +768,9 @@ export function Settings() {
                 renders the full sheet (every piece, both square rows) served by
                 /api/sprites/<id>/image so the choice is visual. */}
             <Card className="mb-6">
-              <CardHeader title={fieldLabel('field.display.chess_sprites')} />
+              <CardHeader title={fieldLabel('field.display.sprites')} />
               <p className="text-muted mb-4" style={{ fontSize: '0.875rem' }}>
-                {fieldHelp('field.display.chess_sprites')}
+                {fieldHelp('field.display.sprites')}
               </p>
               <div className="sprite-options" role="radiogroup" aria-label="Piece sprites">
                 {spriteSheets.map((id) => {
@@ -1705,8 +1705,17 @@ function SystemActions() {
     }
   };
 
+  // Holds the latest runAction so the post-login retry can re-invoke it without
+  // the callback referencing its own binding before it is declared (which the
+  // recursive `() => runAction(...)` form does). The ref is kept current by the
+  // effect below.
+  const runActionRef = useRef<
+    ((key: string, endpoint: string, confirmText: string, successText: string) => Promise<void>) | null
+  >(null);
+
   // Run a system action: confirm, POST, and surface the outcome. On 401 the
-  // login dialog opens and the action is retried after a successful login.
+  // login dialog opens and the action is retried (via the ref) after a
+  // successful login.
   const runAction = useCallback(
     async (key: string, endpoint: string, confirmText: string, successText: string) => {
       if (!confirm(confirmText)) return;
@@ -1716,7 +1725,9 @@ function SystemActions() {
       try {
         const response = await apiFetch(`/api/system/${endpoint}`, { method: 'POST', requiresAuth: true });
         if (response.status === 401) {
-          pendingActionRef.current = () => runAction(key, endpoint, confirmText, successText);
+          pendingActionRef.current = async () => {
+            await runActionRef.current?.(key, endpoint, confirmText, successText);
+          };
           setShowLoginDialog(true);
           return;
         }
@@ -1734,6 +1745,10 @@ function SystemActions() {
     },
     []
   );
+
+  useEffect(() => {
+    runActionRef.current = runAction;
+  }, [runAction]);
 
   return (
     <>
