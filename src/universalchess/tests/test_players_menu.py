@@ -17,7 +17,7 @@ guarantees the deleted ``players_menu``/``hand_brain_menu`` modules enforced.
 from universalchess.managers.menu import MenuResult, MenuSelection
 from universalchess.menus.board_context import BoardMenuContext, run_engine_menu
 from universalchess.menus.catalog.loader import load_catalog
-from universalchess.menus.engine import build_rows
+from universalchess.menus.engine import MenuRow, build_rows
 
 _EXIT_RESULTS = {MenuResult.BACK, MenuResult.SHUTDOWN, MenuResult.HELP}
 
@@ -64,9 +64,13 @@ def _detail_ctx(state, *, has_color=True, calls=None):
     """Board context for one player's detail menu (store "player").
 
     Mirrors main._build_player_detail_context: a dict-backed player store plus
-    the virtual ``has_color`` key, with the board interactions (keyboard name,
-    engine/ELO lists, Lichess) recorded so their invocation can be asserted
-    without a real display.
+    the virtual ``has_color`` key, the installed-engine and per-engine ELO list
+    providers backing the Engine/ELO selects, and the keyboard-name/Lichess
+    actions recorded so their invocation can be asserted without a real display.
+
+    The store setter mirrors main's ELO-reset cascade: ELO levels are
+    engine-specific, so changing the engine resets ELO to Default (a prior
+    engine's level is meaningless for another engine).
     """
     calls = calls if calls is not None else []
 
@@ -75,11 +79,28 @@ def _detail_ctx(state, *, has_color=True, calls=None):
             return has_color
         return state[key]
 
+    def player_set(key, value):
+        state[key] = value
+        if key == "engine":
+            state["elo"] = "Default"
+
     ctx = BoardMenuContext()
-    ctx.register_store("player", player_get, lambda k, v: state.__setitem__(k, v))
+    ctx.register_store("player", player_get, player_set)
+    ctx.register_provider(
+        "installed_engines",
+        lambda: [
+            MenuRow(key="stockfish", label="stockfish", icon="engine"),
+            MenuRow(key="maia", label="maia", icon="engine"),
+        ],
+    )
+    ctx.register_provider(
+        "engine_levels",
+        lambda: [
+            MenuRow(key="Default", label="Default", icon="elo"),
+            MenuRow(key="1500", label="1500", icon="elo"),
+        ],
+    )
     ctx.register_action("edit_name", lambda: calls.append("edit_name") or None)
-    ctx.register_action("select_engine", lambda: calls.append("select_engine") or None)
-    ctx.register_action("select_elo", lambda: calls.append("select_elo") or None)
     ctx.register_action("lichess", lambda: calls.append("lichess") or None)
     ctx._recorded_calls = calls
     return ctx
@@ -304,18 +325,52 @@ def test_name_row_invokes_edit_name_action():
     assert calls == ["edit_name"]
 
 
-def test_engine_and_elo_rows_invoke_their_actions():
-    """The Engine and ELO rows run their board list actions.
+def test_engine_row_opens_provider_select_and_persists_choice():
+    """Selecting Engine opens the installed-engines list and writes the pick.
 
-    How a regression manifests: selecting Engine or ELO no longer opens the
-    dynamic selection list (the action is not invoked).
+    Why this test exists: the engine picker was migrated from an imperative
+    ``action`` sub-flow to a provider-backed ``select`` (options from the
+    ``installed_engines`` provider, written to player.engine). How a regression
+    manifests: Engine no longer opens the runtime list, or the chosen engine is
+    not persisted so the board can't change a player's engine.
     """
-    state = _player_state(type="engine")
-    calls = []
-    ctx = _detail_ctx(state, calls=calls)
-    mm = _FakeMenuManager(["field.player.engine", "field.player.elo", "BACK"])
+    state = _player_state(type="engine", engine="stockfish", elo="1500")
+    ctx = _detail_ctx(state)
+    mm = _FakeMenuManager(["field.player.engine", "maia", "BACK"])
     run_engine_menu("settings.player_detail", ctx, mm, catalog=load_catalog())
-    assert calls == ["select_engine", "select_elo"]
+    assert state["engine"] == "maia"
+
+
+def test_changing_engine_resets_elo_to_default():
+    """Picking a different engine resets ELO to Default via the store cascade.
+
+    Why this test exists: ELO levels are engine-specific (a maia level is invalid
+    for stockfish), so the player store resets ELO whenever the engine changes --
+    the same cascade the deleted handle_engine_selection performed inline. How a
+    regression manifests: a stale ELO from the previous engine survives, so the
+    new engine is asked for a level it does not define.
+    """
+    state = _player_state(type="engine", engine="stockfish", elo="1900")
+    ctx = _detail_ctx(state)
+    mm = _FakeMenuManager(["field.player.engine", "maia", "BACK"])
+    run_engine_menu("settings.player_detail", ctx, mm, catalog=load_catalog())
+    assert state["engine"] == "maia"
+    assert state["elo"] == "Default"
+
+
+def test_elo_row_opens_provider_select_and_persists_choice():
+    """Selecting ELO opens the per-engine levels list and writes the pick.
+
+    Why this test exists: the ELO picker was migrated to a provider-backed
+    ``select`` sourced from ``engine_levels`` (scoped to the current engine),
+    written to player.elo. How a regression manifests: ELO no longer opens the
+    runtime list, or the chosen level is not persisted.
+    """
+    state = _player_state(type="engine", engine="stockfish", elo="Default")
+    ctx = _detail_ctx(state)
+    mm = _FakeMenuManager(["field.player.elo", "1500", "BACK"])
+    run_engine_menu("settings.player_detail", ctx, mm, catalog=load_catalog())
+    assert state["elo"] == "1500"
 
 
 # -- top-level Players menu ----------------------------------------------------

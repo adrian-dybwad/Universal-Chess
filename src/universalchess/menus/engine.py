@@ -28,7 +28,10 @@ Node behavior schema (fields read here; all optional unless noted):
 - ``icon``: a static icon id, or a state map ``{str(value): icon}`` resolved
   against the bound value (e.g. ``{"true": ..., "false": ...}`` for toggles).
 - ``optionSet``: name of the option set backing ``select``/``cycle``.
-- ``provider``: name of the dynamic-list provider for ``dynamic`` nodes.
+- ``provider``: name of the dynamic-list provider. Used by ``dynamic`` nodes and
+  by provider-backed ``select`` nodes whose choices are a runtime list (installed
+  engines, per-engine ELO levels) rather than a static option set; a ``select``
+  carries either ``optionSet`` or ``provider``.
 - ``visibleWhen``: ``{"store", "key", "in": [...] | "equals": <v>}`` gating the row.
 - ``enabledWhen``: same shape as ``visibleWhen``; gates the row's *enabled* flag
   (the row stays visible but is non-selectable when unmet).
@@ -39,6 +42,14 @@ Node behavior schema (fields read here; all optional unless noted):
   placeholder declarative instead of faking it in the value store.
 - ``action``: action name for ``action`` nodes.
 - ``target``: child container id a ``submenu`` opens.
+- ``itemAction``: on a ``dynamic`` node, the action run when one of its provider
+  rows is selected (called with the row's key). Makes a runtime list actionable.
+- ``itemBind``: on a ``dynamic`` node, ``{"store", "key"}`` making its provider
+  rows a radio set -- selecting a row writes the row's key to that bound value and
+  the row matching the current value is radio-marked. Mutually used in place of
+  ``itemAction`` (set-a-value vs run-an-action); the provider stays pure data.
+- ``selectedIcon``/``unselectedIcon``: optional radio glyphs for an ``itemBind``
+  set (default ``radio_checked``/``radio_empty``).
 """
 
 import re
@@ -287,10 +298,27 @@ def build_rows(container_id: str, ctx: MenuContext, *, platform: str, catalog) -
             # connecting to a scanned WiFi network). Tag each row that does not
             # already carry its own action so selection routes there; rows without
             # an item action (display-only readouts) stay inert.
+            #
+            # Alternatively it may declare an ``itemBind`` (a {store,key}) to make
+            # the provider rows a radio set: selecting a row writes the row's key
+            # to that bound value, and the row matching the current value is
+            # radio-marked. The engine owns both the per-row ``set_value`` behavior
+            # and the marker so the provider stays a pure data source (it returns
+            # only the list + any preview glyphs, not dispatch/marking logic).
             item_action = child.get("itemAction")
+            item_bind = child.get("itemBind")
+            if item_bind is not None:
+                current = str(ctx.get(item_bind["store"], item_bind["key"]))
+                selected_icon = child.get("selectedIcon", "radio_checked")
+                unselected_icon = child.get("unselectedIcon", "radio_empty")
             for row in ctx.provide(child["provider"]):
                 if item_action and row.action is None:
                     row.action = item_action
+                if item_bind is not None:
+                    if not row.node:
+                        row.node = {"type": "set_value", "bind": item_bind, "value": row.key}
+                    if row.trailing_icon is None:
+                        row.trailing_icon = selected_icon if row.key == current else unselected_icon
                 rows.append(row)
             continue
         rows.append(
@@ -364,10 +392,15 @@ def dispatch(node: dict, ctx: MenuContext) -> DispatchOutcome:
         return DispatchOutcome(kind="submenu", target=node.get("target"))
 
     if node_type == "select":
+        # A select sources its choices from either a static ``optionSet`` or a
+        # runtime ``provider`` (e.g. installed engines / per-engine ELO levels).
+        # Both are carried on the outcome so the adapter knows where to read the
+        # list from; exactly one is set for a given node.
         bind = node["bind"]
         return DispatchOutcome(
             kind="select",
-            option_set=node["optionSet"],
+            option_set=node.get("optionSet"),
+            provider=node.get("provider"),
             store=bind["store"],
             key=bind["key"],
             selected_icon=node.get("selectedIcon"),

@@ -2,12 +2,7 @@
 
 from .settings_menu import _get_player_type_label, _get_players_summary
 from .positions_menu import handle_positions_menu
-from .engine_menu import (
-    handle_engine_selection,
-    handle_elo_selection,
-)
 from .chromecast_menu import handle_chromecast_menu
-from .inactivity_menu import handle_inactivity_timeout
 from .wifi_menu import wifi_status_icon, wifi_signal_icon, wifi_network_rows
 from .bluetooth_menu import (
     handle_keyboard_pairing_menu,
@@ -20,7 +15,6 @@ from .engine_manager_menu import (
     show_engine_install_progress,
 )
 from .reset_menu import reset_all_settings
-from .analysis_menu import handle_analysis_engine_selection
 from .update_menu import (
     handle_local_deb_install,
     find_local_deb_files,
@@ -45,7 +39,6 @@ __all__ = [
     "_get_players_summary",
     "handle_positions_menu",
     "handle_chromecast_menu",
-    "handle_inactivity_timeout",
     "wifi_status_icon",
     "wifi_signal_icon",
     "wifi_network_rows",
@@ -69,12 +62,9 @@ __all__ = [
     "start_lichess_game_service",
     "LichessStartResult",
     "_get_player_type_label",
-    "handle_engine_selection",
-    "handle_elo_selection",
     "handle_engine_manager_menu",
     "handle_engine_detail_menu",
     "show_engine_install_progress",
     "reset_all_settings",
-    "handle_analysis_engine_selection",
 ]
 

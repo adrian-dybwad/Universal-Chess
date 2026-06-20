@@ -129,27 +129,39 @@ def _run_select(outcome, ctx, menu_manager) -> Optional[MenuSelection]:
     bound store and exits the list (returning to the parent, which redraws with
     the new value). Break results propagate.
 
-    Marking style depends on the option set: when options carry their own
-    ``icon`` (e.g. color -> white/black piece, player type -> per-type glyph)
-    the option icon is kept and the active row is marked with a leading ``"* "``;
-    otherwise a radio glyph (``selected``/``unselected`` icon) marks the choice.
+    The choices come from a static option set (``outcome.option_set``) or, for a
+    provider-backed select (engine/ELO/analysis-engine), from a runtime provider
+    (``outcome.provider``) that yields :class:`MenuRow`s keyed by the value to
+    store. Marking style: when an option/row carries its own ``icon`` (color ->
+    piece glyph, engine -> ``engine`` icon) the icon is kept and the active row is
+    marked with a leading ``"* "``; otherwise a radio glyph
+    (``selected``/``unselected`` icon) marks the choice. Provider rows always have
+    an icon, so they are starred rather than radio-marked.
     """
     selected_icon = outcome.selected_icon or "radio_checked"
     unselected_icon = outcome.unselected_icon or "radio_empty"
 
+    def _choices() -> List[tuple]:
+        """Return ``(value, label, icon)`` choices from provider or option set.
+
+        Provider rows are keyed by the value to persist (``row.key``) and always
+        carry an icon; static option-set entries may omit an icon (radio-marked).
+        """
+        if outcome.provider:
+            return [(row.key, row.label, row.icon) for row in ctx.provide(outcome.provider)]
+        return [(opt["value"], opt["label"], opt.get("icon")) for opt in ctx.options(outcome.option_set)]
+
     def build_entries() -> List[IconMenuEntry]:
         current = str(ctx.get(outcome.store, outcome.key))
         entries: List[IconMenuEntry] = []
-        for option in ctx.options(outcome.option_set):
-            value = option["value"]
+        for value, option_label, option_icon in _choices():
             selected = str(value) == current
-            option_icon = option.get("icon")
             if option_icon:
                 icon_name = option_icon
-                label = f"* {option['label']}" if selected else option["label"]
+                label = f"* {option_label}" if selected else option_label
             else:
                 icon_name = selected_icon if selected else unselected_icon
-                label = option["label"]
+                label = option_label
             entries.append(
                 IconMenuEntry(
                     key=str(value),

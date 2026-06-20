@@ -139,6 +139,59 @@ def test_select_node_opens_option_list_and_persists_choice():
     assert mm.shown[0][0].label == "Time\nUntimed"
 
 
+def test_provider_backed_select_lists_runtime_options_marks_current_and_persists():
+    """A select sourced from a provider opens the runtime list, marks the current
+    value with a leading "* ", and writes the chosen key to the bound store.
+
+    Why this test exists: Engine/ELO/Analysis-Engine pickers are ``select`` nodes
+    whose options are a runtime list (installed engines, per-engine levels) named
+    by a provider rather than a static option set. Selecting the parent row must
+    open that provider's list, the active value must be starred (the board's
+    marking for option lists that carry their own icon), and picking a row must
+    persist it -- exactly the behaviour the deleted imperative engine/elo pickers
+    had. How a regression manifests: the list comes back empty (provider ignored),
+    the current engine is not starred (user can't tell what's selected), or the
+    pick is not written (engine can't be changed from the board).
+    """
+    state = {"player": {"engine": "stockfish"}}
+    ctx = BoardMenuContext(option_set_fn=lambda name: [])
+    ctx.register_store(
+        "player",
+        lambda k: state["player"][k],
+        lambda k, v: state["player"].__setitem__(k, v),
+    )
+    ctx.register_provider(
+        "installed_engines",
+        lambda: [
+            MenuRow(key="stockfish", label="stockfish", icon="engine"),
+            MenuRow(key="maia", label="maia", icon="engine"),
+        ],
+    )
+    select_node = {
+        "id": "field.player.engine",
+        "key": "field.player.engine",
+        "type": "select",
+        "label": "Engine",
+        "boardLabel": "Engine\n{value}",
+        "bind": {"store": "player", "key": "engine"},
+        "provider": "installed_engines",
+    }
+    catalog = _FakeCatalog({"c": ["eng"]}, {"eng": select_node})
+    # Open the select, pick "maia" from the runtime list, then exit the parent.
+    mm = _FakeMenuManager(["field.player.engine", "maia", "BACK"])
+
+    result = run_engine_menu("c", ctx, mm, catalog=catalog)
+
+    assert state["player"]["engine"] == "maia"
+    assert result.is_back()
+    # shown[1] is the opened provider list: the current engine is starred and the
+    # provider's own icon is kept (not replaced by a radio glyph).
+    engine_list = {e.key: e for e in mm.shown[1]}
+    assert engine_list["stockfish"].label == "* stockfish"
+    assert engine_list["stockfish"].icon_name == "engine"
+    assert engine_list["maia"].label == "maia"
+
+
 def test_dynamic_item_action_row_connects_with_its_key():
     """Selecting a runtime-listed provider row runs its item action with its key.
 

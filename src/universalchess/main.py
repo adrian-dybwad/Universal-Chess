@@ -49,7 +49,6 @@ from universalchess.menus import (
     _get_players_summary,
     handle_positions_menu,
     handle_chromecast_menu,
-    handle_inactivity_timeout,
     wifi_status_icon,
     wifi_signal_icon,
     wifi_network_rows,
@@ -61,14 +60,9 @@ from universalchess.menus import (
     handle_engine_detail_menu,
     show_engine_install_progress,
     reset_all_settings,
-    handle_analysis_engine_selection,
     get_lichess_client,
     ensure_token,
     start_lichess_game_service,
-)
-from universalchess.menus.engine_menu import (
-    handle_engine_selection,
-    handle_elo_selection,
 )
 from universalchess.utils.wifi import (
     scan_wifi_networks,
@@ -2512,13 +2506,16 @@ def _build_players_context():
 def _build_player_detail_context(player_num: int):
     """Build the context for one player's detail menu (settings.player_detail).
 
-    Binds the engine's generic "player" store to the chosen player's settings
-    and registers the board interactions the detail rows invoke. The virtual
-    ``has_color`` key drives the Color row's visibility (Player 1 only). The
-    store returns the real stored values (an unset name reads as ""); the "Human"
-    placeholder for the Name row is supplied declaratively by the node's
-    ``valueDefault`` so the store, the keyboard prefill, and the game's PGN name
-    all see the same truthful value.
+    Binds the engine's generic "player" store to the chosen player's settings,
+    registers the Engine/ELO list providers (installed engines, per-engine
+    levels) backing those provider-backed selects, and the board interactions the
+    detail rows invoke (name keyboard, Lichess). The virtual ``has_color`` key
+    drives the Color row's visibility (Player 1 only). The store returns the real
+    stored values (an unset name reads as ""); the "Human" placeholder for the
+    Name row is supplied declaratively by the node's ``valueDefault`` so the
+    store, the keyboard prefill, and the game's PGN name all see the same truthful
+    value. Changing the engine resets ELO to Default, since ELO levels are
+    engine-specific.
     """
     from universalchess.menus.board_context import BoardMenuContext
 
@@ -2526,14 +2523,10 @@ def _build_player_detail_context(player_num: int):
         settings_dict = _player1_settings_dict
         save_setting = _save_player1_setting
         has_color = True
-        select_engine = _handle_player1_engine_selection
-        select_elo = _handle_player1_elo_selection
     else:
         settings_dict = _player2_settings_dict
         save_setting = _save_player2_setting
         has_color = False
-        select_engine = _handle_player2_engine_selection
-        select_elo = _handle_player2_elo_selection
 
     def player_get(key):
         if key == "has_color":
@@ -2543,12 +2536,45 @@ def _build_player_detail_context(player_num: int):
     def player_set(key, value):
         save_setting(key, value)
         log.info(f"[Settings] Player{player_num} {key} changed to {value}")
+        if key == "engine":
+            # ELO levels are engine-specific (a level valid for one engine is
+            # meaningless for another), so changing the engine resets ELO to
+            # Default -- the cascade the imperative engine picker performed inline.
+            save_setting("elo", "Default")
+            log.info(f"[Settings] Player{player_num} elo reset to Default (engine changed)")
+
+    def installed_engines():
+        """Rows for the Engine select: installed engines, with reverse-H+B compat."""
+        from universalchess.menus.engine import MenuRow
+
+        settings = settings_dict()
+        is_reverse_hb = (
+            settings["type"] == "hand_brain"
+            and settings.get("hand_brain_mode") == "reverse"
+        )
+        return [
+            MenuRow(
+                key=engine,
+                label=_format_engine_label_with_compat(engine, is_selected=False, show_compat=is_reverse_hb),
+                icon="engine",
+            )
+            for engine in _get_installed_engines()
+        ]
+
+    def engine_levels():
+        """Rows for the ELO select: the levels the current engine defines."""
+        from universalchess.menus.engine import MenuRow
+
+        return [
+            MenuRow(key=level, label=level, icon="elo")
+            for level in _get_engine_elo_levels(settings_dict()["engine"])
+        ]
 
     ctx = BoardMenuContext()
     ctx.register_store("player", player_get, player_set)
+    ctx.register_provider("installed_engines", installed_engines)
+    ctx.register_provider("engine_levels", engine_levels)
     ctx.register_action("edit_name", lambda: _prompt_player_name(player_num))
-    ctx.register_action("select_engine", lambda: _signal_from(select_engine()))
-    ctx.register_action("select_elo", lambda: _signal_from(select_elo()))
     ctx.register_action("lichess", lambda: _signal_from(_handle_lichess_menu()))
     return ctx
 
@@ -2582,60 +2608,6 @@ def _handle_players_menu():
     if result.is_break:
         return result
     return None
-
-
-def _handle_player1_engine_selection():
-    """Handle engine selection for Player 1."""
-    return handle_engine_selection(
-        player_settings=_player1_settings_dict(),
-        show_menu=_show_menu,
-        is_break_result=is_break_result,
-        get_installed_engines=_get_installed_engines,
-        format_engine_label_with_compat=_format_engine_label_with_compat,
-        save_player_setting=_save_player1_setting,
-        log=log,
-        board=board,
-    )
-
-
-def _handle_player2_engine_selection():
-    """Handle engine selection for Player 2."""
-    return handle_engine_selection(
-        player_settings=_player2_settings_dict(),
-        show_menu=_show_menu,
-        is_break_result=is_break_result,
-        get_installed_engines=_get_installed_engines,
-        format_engine_label_with_compat=_format_engine_label_with_compat,
-        save_player_setting=_save_player2_setting,
-        log=log,
-        board=board,
-    )
-
-
-def _handle_player1_elo_selection():
-    """Handle ELO selection for Player 1."""
-    return handle_elo_selection(
-        player_settings=_player1_settings_dict(),
-        show_menu=_show_menu,
-        is_break_result=is_break_result,
-        get_engine_elo_levels=_get_engine_elo_levels,
-        save_player_setting=_save_player1_setting,
-        log=log,
-        board=board,
-    )
-
-
-def _handle_player2_elo_selection():
-    """Handle ELO selection for Player 2."""
-    return handle_elo_selection(
-        player_settings=_player2_settings_dict(),
-        show_menu=_show_menu,
-        is_break_result=is_break_result,
-        get_engine_elo_levels=_get_engine_elo_levels,
-        save_player_setting=_save_player2_setting,
-        log=log,
-        board=board,
-    )
 
 
 def _get_wifi_password_from_board(ssid: str) -> Optional[str]:
@@ -2739,9 +2711,6 @@ def _get_installed_version() -> str:
 # Defaults for game settings the Display menu reads that may be absent from a
 # freshly initialized centaur.ini (mirrors the old menu's .get(...) fallbacks).
 _DISPLAY_GAME_DEFAULTS = {"led_brightness": 5, "chess_sprites": "default"}
-
-# Prefix for per-sheet radio rows in the Board submenu (key = sprite:<id>).
-_SPRITE_KEY_PREFIX = "sprite:"
 
 
 def _build_game_context():
@@ -2859,37 +2828,31 @@ def _build_settings_entries():
 def _build_display_context():
     """Build a BoardMenuContext for the Display menu.
 
-    Extends the shared game context with the ``sprite_sheets`` dynamic provider
-    (one radio row per installed sheet, with its black-king preview as the row
-    glyph). The engine then drives the toggles, the LED range cycler, the
-    conditional Show Graph row, and sprite selection.
+    Extends the shared game context with the ``sprite_sheets`` dynamic provider,
+    a pure data source returning one row per installed sheet (with its black-king
+    preview as the row glyph). The engine then drives the toggles, the LED range
+    cycler, the conditional Show Graph row, and -- via the catalog node's
+    ``itemBind`` -- the inline sprite radio set (the engine attaches each row's
+    set_value behavior and the radio marker, so this provider carries no
+    dispatch/marking logic).
     """
     from universalchess.menus.engine import MenuRow
 
     ctx = _build_game_context()
 
     def sprite_sheets():
-        current = _game_settings_dict().get("chess_sprites", _DISPLAY_GAME_DEFAULTS["chess_sprites"])
+        """Pure data source: one row per installed sheet with its preview glyph.
+
+        The radio behavior (write chess_sprites on select) and the radio marker
+        are owned by the engine via the catalog node's ``itemBind`` -- this
+        provider returns only the list and each sheet's preview image/mask.
+        """
         rows = []
         for sheet in _list_chess_sprite_sheets():
             preview = _chess_sprite_preview(sheet)
             image, mask = preview if preview is not None else (None, None)
             rows.append(
-                MenuRow(
-                    key=f"{_SPRITE_KEY_PREFIX}{sheet}",
-                    label=sheet,
-                    icon="positions",
-                    icon_image=image,
-                    icon_mask=mask,
-                    trailing_icon="radio_checked" if sheet == current else "radio_empty",
-                    node={
-                        "id": f"{_SPRITE_KEY_PREFIX}{sheet}",
-                        "key": f"{_SPRITE_KEY_PREFIX}{sheet}",
-                        "type": "set_value",
-                        "bind": {"store": "game", "key": "chess_sprites"},
-                        "value": sheet,
-                    },
-                )
+                MenuRow(key=sheet, label=sheet, icon="positions", icon_image=image, icon_mask=mask)
             )
         return rows
 
@@ -2964,16 +2927,15 @@ def _handle_sound_menu():
 # ============================================================================
 # System Menu (data-driven)
 # ----------------------------------------------------------------------------
-# The System subtree (engines, analysis engine, sleep timer, reset, about,
-# power) and its nested Power and Reset-confirm menus are defined by the shared
-# catalog (``system`` / ``power`` / ``system.reset.confirm`` containers) and run
-# through the engine. main.py supplies only the board glue: a read-only
-# ``system`` store (analysis-mode and sleep-timer state used for the row icon
-# and label), the computed Sleep Timer label, and the actions that open the
-# still-dynamic sub-menus (engine manager, analysis, sleep timer, about) or
-# perform an effect (reset, shutdown, reboot, cancel). Engine/analysis/about
-# stay code-driven because they are inherently dynamic (device/engine lists,
-# live telemetry); the engine simply invokes them as actions.
+# The System subtree (engines, sleep timer, reset, about, power) and its nested
+# Power and Reset-confirm menus are defined by the shared catalog (``system`` /
+# ``power`` / ``system.reset.confirm`` containers) and run through the engine.
+# main.py supplies only the board glue: a ``system`` store backing the Sleep
+# Timer select (``sleep_seconds`` read/write), and the actions that open the
+# still-dynamic sub-menus (engine manager, about) or perform an effect (reset,
+# shutdown, reboot, cancel). Engine manager and about stay code-driven because
+# they are inherently dynamic (engine lists, live telemetry); the engine simply
+# invokes them as actions.
 # ============================================================================
 
 def _run_engine_manager_menu():
@@ -3003,13 +2965,13 @@ def _build_game_menu_context():
     """Build the BoardMenuContext for the data-driven Game submenu.
 
     Combines the shared ``game`` store (Time Control, read/write) with the
-    ``analysis`` store (``mode`` read/write, persisted on toggle; ``engine``
-    read-only -- the displayed label) plus the dynamic engine-pick action and the
-    concise Time Control label compute. This single context backs the
-    ``settings.game`` container, which groups exactly the settings the web shows
-    under its Game tab (Time Control, Live Analysis, Analysis Engine). The
-    Analysis Engine row is gated on ``mode`` via the catalog's ``visibleWhen`` so
-    it only appears when Live Analysis is enabled.
+    ``analysis`` store (``mode`` and ``engine`` read/write, persisted on
+    toggle/pick) plus the ``installed_engines`` provider backing the Analysis
+    Engine select and the concise Time Control label compute. This single context
+    backs the ``settings.game`` container, which groups exactly the settings the
+    web shows under its Game tab (Time Control, Live Analysis, Analysis Engine).
+    The Analysis Engine row is gated on ``mode`` via the catalog's ``visibleWhen``
+    so it only appears when Live Analysis is enabled.
     """
     ctx = _build_game_context()
 
@@ -3026,22 +2988,20 @@ def _build_game_menu_context():
             _save_game_setting("analysis_mode", bool(value))
             log.info(f"[Settings] Analysis mode set to {bool(value)}")
             return
-        raise NotImplementedError(f"analysis store key is read-only: {key!r}")
+        if key == "engine":
+            _save_game_setting("analysis_engine", value)
+            log.info(f"[Settings] Analysis engine changed to {value}")
+            return
+        raise NotImplementedError(f"unknown analysis store key: {key!r}")
 
-    def do_select_engine():
-        # The installed-engine list is dynamic, so engine selection stays an
-        # imperative sub-flow invoked as an action (like the player engine pick).
-        return _signal_from(handle_analysis_engine_selection(
-            game_settings=_game_settings_dict(),
-            show_menu=_show_menu,
-            get_installed_engines=_get_installed_engines,
-            save_game_setting=_save_game_setting,
-            log=log,
-            board=board,
-        ))
+    def installed_engines():
+        """Rows for the Analysis Engine select: the installed engines."""
+        from universalchess.menus.engine import MenuRow
+
+        return [MenuRow(key=engine, label=engine, icon="engine") for engine in _get_installed_engines()]
 
     ctx.register_store("analysis", analysis_get, analysis_set)
-    ctx.register_action("select_analysis_engine", do_select_engine)
+    ctx.register_provider("installed_engines", installed_engines)
     ctx.register_value("time_control", lambda node: _time_control_label())
     return ctx
 
@@ -3058,11 +3018,6 @@ def _handle_game_menu():
     from universalchess.menus.board_context import run_engine_menu
 
     return run_engine_menu("settings.game", _build_game_menu_context(), _menu_manager)
-
-
-def _run_inactivity_menu():
-    """Run the (dynamic) Sleep Timer menu; return its break/None result."""
-    return handle_inactivity_timeout(board=board, log=log, menu_manager=_menu_manager)
 
 
 def _update_status_state_and_label():
@@ -3235,27 +3190,27 @@ def _reset_settings_confirmed() -> str:
 def _build_system_context():
     """Build the BoardMenuContext for the System / Power / Reset subtree.
 
-    The read-only ``system`` store exposes the live state the System rows render:
-    ``sleep_enabled`` (the Sleep Timer row's timer icon). It is read-only because
-    none of these rows mutate state via the engine -- each opens a dynamic
-    sub-menu or performs an effect through an action -- so the setter fails
-    loudly if a future bound writer is added by mistake. (Live Analysis moved to
+    The ``system`` store backs the data-driven Sleep Timer select: ``sleep_seconds``
+    reads the current inactivity timeout (for the row's label/icon and the marked
+    option) and writes the chosen seconds back through the board. The remaining
+    System rows open a dynamic sub-menu (engine manager, about) or perform an
+    effect (reset, shutdown, reboot, cancel) via actions. (Live Analysis moved to
     the Game submenu, matching the web.)
     """
     from universalchess.menus.board_context import BoardMenuContext
     from universalchess.services.power import perform_shutdown, perform_reboot
 
     def system_get(key):
-        if key == "sleep_enabled":
-            return board.get_inactivity_timeout() != 0
+        if key == "sleep_seconds":
+            return board.get_inactivity_timeout()
         raise KeyError(f"unknown system store key: {key!r}")
 
     def system_set(key, value):
-        raise NotImplementedError(f"system store is read-only (key={key!r})")
-
-    def sleep_timer_label(node):
-        timeout = board.get_inactivity_timeout()
-        return "Disabled" if timeout == 0 else f"{timeout // 60} min"
+        if key == "sleep_seconds":
+            board.set_inactivity_timeout(int(value))
+            log.info(f"[Settings] Inactivity timeout set to {int(value)}s")
+            return
+        raise NotImplementedError(f"unknown system store key: {key!r}")
 
     def do_shutdown():
         # Clear menu state first so no stale menu survives the shutdown, then
@@ -3272,9 +3227,7 @@ def _build_system_context():
 
     ctx = BoardMenuContext()
     ctx.register_store("system", system_get, system_set)
-    ctx.register_value("sleep_timer", sleep_timer_label)
     ctx.register_action("engine_manager", lambda: _signal_from(_run_engine_manager_menu()))
-    ctx.register_action("inactivity", lambda: _signal_from(_run_inactivity_menu()))
     ctx.register_action("about", lambda: _signal_from(_run_about_menu()))
     ctx.register_action("reset_confirm", _reset_settings_confirmed)
     ctx.register_action("cancel", lambda: "BACK")

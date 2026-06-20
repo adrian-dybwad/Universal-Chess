@@ -361,6 +361,56 @@ def test_build_rows_tags_provider_rows_with_item_action():
     assert rows[1].action == "noop"  # pre-set action preserved
 
 
+def test_build_rows_item_bind_makes_provider_rows_a_radio_set():
+    """A dynamic node's ``itemBind`` turns provider rows into a radio set.
+
+    Why this test exists: the sprite picker is a runtime list (installed sheets)
+    rendered inline as a radio group -- selecting a row writes that row's key to
+    the bound value and the active row is radio-marked. Declaring this on the node
+    (``itemBind``) keeps the provider a pure data source: the engine, which knows
+    the bound value, attaches the per-row ``set_value`` behavior and the radio
+    glyph. How a regression manifests: rows come back with no node (selecting does
+    nothing), or with a missing/misplaced radio mark (the user cannot tell or set
+    which sheet is active), or the provider's preview image is clobbered.
+    """
+    container = {"id": "c", "type": "menu", "children": ["d"]}
+    nodes = {
+        "d": {
+            "id": "d",
+            "type": "dynamic",
+            "provider": "sheets",
+            "itemBind": {"store": "game", "key": "chess_sprites"},
+        }
+    }
+    provided = [
+        MenuRow(key="default", label="default", icon="positions", icon_image="img:default"),
+        MenuRow(key="retro", label="retro", icon="positions", icon_image="img:retro"),
+    ]
+
+    class _Catalog:
+        def children(self, cid):
+            return [nodes[c] for c in container["children"]]
+
+    ctx = _FakeContext(state={"game": {"chess_sprites": "retro"}}, providers={"sheets": provided})
+    rows = build_rows("c", ctx, platform="board", catalog=_Catalog())
+    by_key = {r.key: r for r in rows}
+
+    # The active sheet is radio-filled, the rest empty; the preview image survives.
+    assert by_key["retro"].trailing_icon == "radio_checked"
+    assert by_key["default"].trailing_icon == "radio_empty"
+    assert by_key["retro"].icon_image == "img:retro"
+
+    # Each row carries a set_value writing its own key, so selecting persists that
+    # sheet (a radio set, not an action and not a dead row).
+    assert by_key["default"].node == {
+        "type": "set_value",
+        "bind": {"store": "game", "key": "chess_sprites"},
+        "value": "default",
+    }
+    dispatch_row(by_key["default"], ctx)
+    assert ctx.get("game", "chess_sprites") == "default"
+
+
 # -- dispatch ---------------------------------------------------------------
 
 def test_dispatch_toggle_flips_and_saves_bound_value():
@@ -464,6 +514,32 @@ def test_dispatch_select_returns_select_descriptor():
     assert outcome == DispatchOutcome(
         kind="select", option_set="time_control", store="game", key="time_control"
     )
+
+
+def test_dispatch_select_with_provider_carries_provider_not_option_set():
+    """A select whose options come from a provider yields a provider-backed select.
+
+    Why this test exists: Engine/ELO/Analysis-Engine selection are runtime lists
+    (installed engines, per-engine levels) rather than static option sets, so the
+    same ``select`` mechanism must be able to source its choices from a named
+    provider and still write the chosen value to the bound store. The board
+    adapter routes on ``provider`` vs ``option_set`` to decide where the list
+    comes from. How a regression manifests: the outcome drops the provider (the
+    list never opens) or wrongly also reports an option_set, so the adapter reads
+    a non-existent static set and shows an empty picker.
+    """
+    node = {
+        "id": "field.player.engine",
+        "type": "select",
+        "bind": {"store": "player", "key": "engine"},
+        "provider": "installed_engines",
+    }
+    outcome = dispatch(node, _ctx(player={"engine": "stockfish"}))
+    assert outcome == DispatchOutcome(
+        kind="select", provider="installed_engines", store="player", key="engine"
+    )
+    # The static-set field stays None so the adapter does not try ctx.options().
+    assert outcome.option_set is None
 
 
 def test_dispatch_action_runs_named_action():

@@ -191,6 +191,14 @@ def _validate(menu_data: dict, icons_data: dict) -> None:
         if bind is not None and not (isinstance(bind, dict) and "store" in bind and "key" in bind):
             raise CatalogError(f"node '{node_id}' has malformed 'bind' (need store and key): {bind!r}")
 
+        item_bind = node.get("itemBind")
+        if item_bind is not None and not (
+            isinstance(item_bind, dict) and "store" in item_bind and "key" in item_bind
+        ):
+            raise CatalogError(
+                f"node '{node_id}' has malformed 'itemBind' (need store and key): {item_bind!r}"
+            )
+
         visible_when = node.get("visibleWhen")
         if visible_when is not None and not (
             isinstance(visible_when, dict) and "store" in visible_when and "key" in visible_when

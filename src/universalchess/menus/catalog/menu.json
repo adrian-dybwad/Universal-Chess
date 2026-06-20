@@ -448,13 +448,13 @@
     {
       "id": "system.inactivity",
       "key": "Inactivity",
-      "type": "action",
-      "action": "inactivity",
+      "type": "select",
+      "optionSet": "sleep_timer",
       "label": "Sleep Timer",
-      "boardLabel": "Sleep Timer\n{fn:sleep_timer}",
+      "boardLabel": "Sleep Timer\n{value}",
       "help": "Automatically put the board to sleep after a period of inactivity.",
-      "bind": { "store": "system", "key": "sleep_enabled" },
-      "icon": { "true": "timer_checked", "false": "timer" },
+      "bind": { "store": "system", "key": "sleep_seconds" },
+      "icon": { "0": "timer", "default": "timer_checked" },
       "platforms": ["board", "web"]
     },
     {
@@ -532,10 +532,8 @@
     {
       "id": "analysis.engine",
       "key": "engine",
-      "type": "action",
-      "webType": "select",
+      "type": "select",
       "provider": "installed_engines",
-      "action": "select_analysis_engine",
       "label": "Analysis Engine",
       "boardLabel": "Engine\n{value}",
       "bind": { "store": "analysis", "key": "engine" },
@@ -754,13 +752,11 @@
     },
     {
       "id": "field.player.engine",
-      "type": "action",
-      "webType": "select",
+      "type": "select",
       "provider": "installed_engines",
       "label": "Engine",
       "boardLabel": "Engine\n{value}",
       "help": "Chess engine to use",
-      "action": "select_engine",
       "bind": { "store": "player", "key": "engine" },
       "icon": "engine",
       "visibleWhen": { "store": "player", "key": "type", "in": ["human", "engine", "hand_brain"] },
@@ -769,13 +765,11 @@
     },
     {
       "id": "field.player.elo",
-      "type": "action",
-      "webType": "select",
+      "type": "select",
       "provider": "engine_levels",
       "label": "ELO / Style",
       "boardLabel": "ELO\n{value}",
       "help": "Engine strength or personality",
-      "action": "select_elo",
       "bind": { "store": "player", "key": "elo" },
       "icon": "elo",
       "visibleWhen": { "store": "player", "key": "type", "in": ["human", "engine", "hand_brain"] },
@@ -806,8 +800,11 @@
       "id": "field.display.sprites",
       "type": "dynamic",
       "provider": "sprite_sheets",
+      "itemBind": { "store": "game", "key": "chess_sprites" },
+      "label": "Piece Sprites",
       "help": "Sprite sheet used to draw pieces on the e-paper board",
-      "platforms": ["board"]
+      "section": "display",
+      "platforms": ["board", "web"]
     },
     {
       "id": "field.display.show_clock",
@@ -838,14 +835,6 @@
       "bind": { "store": "game", "key": "show_graph" },
       "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
       "enabledWhen": { "store": "game", "key": "show_analysis", "equals": true }
-    },
-    {
-      "id": "field.display.chess_sprites",
-      "type": "select",
-      "label": "Piece Sprites",
-      "help": "Sprite sheet used to draw pieces on the e-paper board",
-      "section": "display",
-      "platforms": ["web"]
     },
     {
       "id": "field.display.led_brightness",
