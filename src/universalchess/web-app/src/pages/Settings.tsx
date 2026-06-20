@@ -1588,6 +1588,24 @@ function DebugCard() {
     }
   };
 
+  // The flag is read only at board startup, so a toggle has no effect until the
+  // next reboot. This reboots via the same endpoint the Power card uses; a 401
+  // reuses the card's login-retry plumbing so the reboot resumes after login.
+  const reboot = async () => {
+    const response = await apiFetch('/api/system/reboot', { method: 'POST', requiresAuth: true });
+    if (response.status === 401) {
+      pendingActionRef.current = reboot;
+      setShowLoginDialog(true);
+      return;
+    }
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && data.success) {
+      setNotice('Rebooting. The web interface will return shortly.');
+    } else {
+      setError(data.error || 'Failed to reboot the board.');
+    }
+  };
+
   const setSerialDebug = async (next: boolean) => {
     setBusy(true);
     setError(null);
@@ -1609,11 +1627,19 @@ function DebugCard() {
         return;
       }
       setEnabled(next);
-      setNotice(
-        next
-          ? 'Serial debug logging enabled. Reboot the board to capture the startup handshake, then download the log.'
-          : 'Serial debug logging disabled.'
-      );
+      // The change only takes effect on the next boot, so offer to reboot now.
+      const rebootPrompt = next
+        ? 'Serial debug logging enabled. Reboot now to capture the startup handshake? You can download the log after the board restarts.'
+        : 'Serial debug logging disabled. Reboot now for the change to take effect?';
+      if (confirm(rebootPrompt)) {
+        await reboot();
+      } else {
+        setNotice(
+          next
+            ? 'Serial debug logging enabled. Reboot the board to capture the startup handshake, then download the log.'
+            : 'Serial debug logging disabled. Reboot the board for the change to take effect.'
+        );
+      }
     } catch {
       setError('Network error');
     } finally {
