@@ -294,28 +294,106 @@ def _on_display_refresh(image):
     except Exception as e:
         log.debug(f"Failed to write epaper.jpg: {e}")
 
-def _init_display_early():
-    """Initialize display and show splash screen before board initialization.
-    
-    Display operations are queued and monitored in background threads,
-    allowing the main thread to continue with other startup tasks while
-    the e-paper display catches up (the initial Clear() takes ~3 seconds).
+def _read_il3820_enabled() -> bool:
+    """Return whether the [display] il3820 opt-in is set (default off).
+
+    The opt-in does NOT gate the SSD1680 fallback -- that is automatic whenever
+    the UC8151D driver trips its BUSY timeout. It only enables the optional
+    IL3820-specific init additions inside the SSD1680 driver.
     """
-    global _early_display_manager, _startup_splash
+    from universalchess.board.settings import Settings
+    value = Settings.read('display', 'il3820', 'False')
+    return str(value).strip().lower() in ('1', 'true', 'on', 'yes')
+
+
+def _attempt_display_init(epd):
+    """Build a Manager around ``epd`` and run initialize(); never raises.
+
+    Returns ``(manager, DisplayAttempt)``. A failed init is reported as an
+    attempt rather than an exception so the selector can decide whether to fall
+    back. ``busy_timeout`` is read from the driver's flag so a BUSY-timeout
+    failure (the inverted-polarity V1 signature) is distinguished from any other
+    initialization error.
+    """
+    from universalchess.board.display_selection import DisplayAttempt
+    manager = Manager(on_refresh=_on_display_refresh, epd=epd)
     try:
-        _early_display_manager = Manager(on_refresh=_on_display_refresh)
-        promise = _early_display_manager.initialize()
+        promise = manager.initialize()
         # Don't block - monitor in background thread
         _wait_for_display_promise(promise, "initialize", timeout=10.0)
-        
+        return manager, DisplayAttempt(ok=True)
+    except Exception as e:
+        return manager, DisplayAttempt(
+            ok=False,
+            busy_timeout=getattr(epd, "busy_timeout_occurred", False),
+            error=str(e),
+        )
+
+
+def _init_display_early():
+    """Initialize display and show splash screen before board initialization.
+
+    Tries the UC8151D (V2) driver first. If it trips the BUSY timeout -- the
+    signature of an inverted-polarity V1 panel -- it automatically retries with
+    the SSD1680 (V1-family) driver; no opt-in is required for that fallback. The
+    [display] il3820 opt-in only toggles the optional IL3820 additions inside
+    the SSD1680 driver. The resolved outcome (controller + busy_timeout) is
+    published to the cross-process status file for the web System card.
+
+    Display operations are queued and monitored in background threads, allowing
+    the main thread to continue with other startup tasks while the e-paper
+    display catches up (the initial Clear() takes ~3 seconds).
+    """
+    global _early_display_manager, _startup_splash
+    from universalchess.board import hardware_info
+    from universalchess.board import display_selection as ds
+    from universalchess.epaper.framework.waveshare.epd2in9d import EPD as PrimaryEPD
+
+    il3820_enabled = _read_il3820_enabled()
+
+    manager, primary = _attempt_display_init(PrimaryEPD())
+    alt = None
+    if ds.should_attempt_alt(primary):
+        # UC8151D never saw idle -> automatically try the SSD1680 (V1) driver.
+        from universalchess.epaper.framework.waveshare.epd2in9_ssd1680 import (
+            EPD as AltEPD,
+        )
+        log.warning(
+            "UC8151D BUSY timeout at startup; trying SSD1680 fallback "
+            f"(il3820_additions={il3820_enabled})"
+        )
+        alt_manager, alt = _attempt_display_init(AltEPD(il3820_additions=il3820_enabled))
+        if alt.ok:
+            manager = alt_manager
+
+    outcome = ds.resolve_outcome(primary, alt)
+
+    if outcome.initialized:
+        _early_display_manager = manager
         # Show splash screen immediately (full screen, no status bar)
         _early_display_manager.clear_widgets(addStatusBar=False)
         _startup_splash = SplashScreen(_early_display_manager.update, message="Starting...", leave_room_for_status_bar=False)
         promise = _early_display_manager.add_widget(_startup_splash)
         # Don't block - monitor in background thread
         _wait_for_display_promise(promise, "add_splash", timeout=10.0)
-    except Exception as e:
-        log.warning(f"Early display initialization failed: {e}")
+        # Publish success so the web System card reflects the live panel state.
+        hardware_info.write_display_status(
+            initialized=True,
+            busy_timeout=outcome.busy_timeout,
+            controller=outcome.active_controller,
+        )
+    else:
+        log.warning(f"Early display initialization failed: {outcome.error}")
+        # Latch the failure for the (separate) web process: the panel never
+        # initialized (e.g. a V1 panel that trips the BUSY timeout), so the
+        # System card must show "Not responding" rather than the configured V2.
+        # busy_timeout still propagates so the UI reveals the IL3820 opt-in.
+        hardware_info.write_display_status(
+            initialized=False,
+            error=outcome.error,
+            busy_timeout=outcome.busy_timeout,
+            controller=None,
+        )
 
 # Initialize display before importing board
 _init_display_early()

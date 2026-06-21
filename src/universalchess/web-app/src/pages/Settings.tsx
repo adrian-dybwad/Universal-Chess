@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import type { ReactNode } from 'react';
 import { Button, Card, CardHeader, FormRow, Input, Select, Toggle, Badge } from '../components/ui';
 import { CatalogField } from '../components/CatalogField';
 import type { FieldValue } from '../components/CatalogField';
@@ -944,6 +945,7 @@ export function Settings() {
             </Card>
 
             <DebugCard />
+            <Il3820Card />
             <PasswordChange />
             <SystemActions />
           </section>
@@ -1725,6 +1727,140 @@ function DebugCard() {
 }
 
 
+// Optional IL3820 init additions for the SSD1680 (V1) fallback driver. The
+// SSD1680 fallback itself is automatic on a UC8151D BUSY timeout and needs no
+// opt-in; this toggle only layers the IL3820-specific init additions on top.
+// The whole card is hidden unless the board recorded a BUSY timeout
+// (available), since the option is meaningless on a healthy V2 panel.
+function Il3820Card() {
+  const [available, setAvailable] = useState(false);
+  const [enabled, setEnabled] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [showLoginDialog, setShowLoginDialog] = useState(false);
+  const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
+
+  useEffect(() => {
+    fetch(buildApiUrl('/api/system/il3820'))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data) return;
+        if (typeof data.available === 'boolean') setAvailable(data.available);
+        if (typeof data.enabled === 'boolean') setEnabled(data.enabled);
+      })
+      .catch(() => {
+        // Best-effort initial read; the card stays hidden if unavailable.
+      });
+  }, []);
+
+  const handleLoginSuccess = async () => {
+    setShowLoginDialog(false);
+    if (pendingActionRef.current) {
+      const action = pendingActionRef.current;
+      pendingActionRef.current = null;
+      await action();
+    }
+  };
+
+  // The flag is read only at board startup, so a toggle has no effect until the
+  // next reboot. Reuses the Power card's reboot endpoint and 401 login-retry.
+  const reboot = async () => {
+    const response = await apiFetch('/api/system/reboot', { method: 'POST', requiresAuth: true });
+    if (response.status === 401) {
+      pendingActionRef.current = reboot;
+      setShowLoginDialog(true);
+      return;
+    }
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && data.success) {
+      setNotice('Rebooting. The web interface will return shortly.');
+    } else {
+      setError(data.error || 'Failed to reboot the board.');
+    }
+  };
+
+  const setIl3820 = async (next: boolean) => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await apiFetch('/api/system/il3820', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: next }),
+        requiresAuth: true,
+      });
+      if (response.status === 401) {
+        pendingActionRef.current = () => setIl3820(next);
+        setShowLoginDialog(true);
+        return;
+      }
+      if (!response.ok) {
+        setError('Failed to update the IL3820 setting.');
+        return;
+      }
+      setEnabled(next);
+      const rebootPrompt = next
+        ? 'IL3820 additions enabled. Reboot now to apply them to the display driver?'
+        : 'IL3820 additions disabled. Reboot now for the change to take effect?';
+      if (confirm(rebootPrompt)) {
+        await reboot();
+      } else {
+        setNotice(
+          next
+            ? 'IL3820 additions enabled. Reboot the board to apply them.'
+            : 'IL3820 additions disabled. Reboot the board for the change to take effect.'
+        );
+      }
+    } catch {
+      setError('Network error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Hidden entirely on a healthy V2 panel: the option only makes sense after a
+  // UC8151D BUSY timeout, which the GET probe reports via `available`.
+  if (!available) return null;
+
+  return (
+    <>
+      <LoginDialog
+        isOpen={showLoginDialog}
+        onClose={() => {
+          setShowLoginDialog(false);
+          pendingActionRef.current = null;
+        }}
+        onSuccess={handleLoginSuccess}
+      />
+      <Card className="mb-6">
+        <CardHeader title="IL3820 display" />
+        <p className="text-muted mb-4">
+          The display did not respond to the standard (UC8151D) driver, so the board has
+          fallen back to the SSD1680 driver automatically. If the panel is a genuine IL3820
+          and still renders incorrectly, enable these IL3820-specific init additions and
+          reboot to test. Leave this off if the display already works.
+        </p>
+        {notice && <Card variant="primary" className="mb-4">{notice}</Card>}
+        {error && (
+          <Card variant="danger" className="mb-4">
+            <strong>Error:</strong> {error}
+          </Card>
+        )}
+        <Toggle
+          label="IL3820 additions"
+          help="Takes effect after the next reboot."
+          checked={enabled}
+          onChange={(v) => setIl3820(v)}
+          disabled={busy}
+        />
+      </Card>
+    </>
+  );
+}
+
+
 function SystemActions() {
   const [centaurAvailable, setCentaurAvailable] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -1927,8 +2063,51 @@ interface SystemStats {
   load_average_1m: number | null;
 }
 
+// Boot-stable hardware identity from GET /api/system/hardware. Fetched once
+// (these facts do not change while the board runs), unlike the polled stats.
+type HotspotHealth = 'ok' | 'affected' | 'unknown';
+type DisplayStatus = 'ok' | 'failed' | 'unknown';
+
+interface HardwareInfo {
+  pi_model: string | null;
+  kernel_release: string;
+  wireless_chip: string | null;
+  wifi_firmware_version: string | null;
+  bluez_version: string | null;
+  hotspot_health: HotspotHealth;
+  hotspot_summary: string;
+  display_model: string;
+  display_controller: string;
+  display_driver: string;
+  display_resolution: string;
+  display_status: DisplayStatus;
+  display_detail: string;
+}
+
+// Exhaustive mapping over the closed HotspotHealth union (no default branch, so
+// a new health state would fail to type-check here rather than render wrongly).
+const HOTSPOT_HEALTH_BADGE = {
+  ok: { variant: 'success', label: 'OK' },
+  affected: { variant: 'danger', label: 'Known issue' },
+  unknown: { variant: 'default', label: 'Unknown' },
+} satisfies Record<HotspotHealth, { variant: 'success' | 'danger' | 'default'; label: string }>;
+
+// Exhaustive mapping over the closed DisplayStatus union. The panel identity is
+// fixed, but whether it initialized is reported live by the board: a V1 /
+// unresponsive panel latches 'failed' so the card never falsely claims "OK".
+const DISPLAY_STATUS_BADGE = {
+  ok: { variant: 'success', label: 'Working' },
+  failed: { variant: 'danger', label: 'Not responding' },
+  unknown: { variant: 'default', label: 'Unknown' },
+} satisfies Record<DisplayStatus, { variant: 'success' | 'danger' | 'default'; label: string }>;
+
 const SYSTEM_STATS_POLL_MS = 5000;
 const EM_DASH = '\u2014';
+
+// Render a nullable string field as itself or an em dash, never an empty cell.
+function orDash(value: string | null): string {
+  return value && value.trim() ? value : EM_DASH;
+}
 
 function formatStatPercent(value: number | null): string {
   return value == null ? EM_DASH : `${Math.round(value)}%`;
@@ -1958,6 +2137,9 @@ function formatStatUptime(seconds: number): string {
 function SystemInfoCard() {
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [error, setError] = useState(false);
+  // Hardware identity is boot-stable, so it is fetched once on mount rather
+  // than polled. A failure here leaves the (polled) telemetry rows unaffected.
+  const [hardware, setHardware] = useState<HardwareInfo | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -1982,7 +2164,24 @@ function SystemInfoCard() {
     };
   }, []);
 
-  const rows: { label: string; value: string }[] = stats
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const response = await fetch(buildApiUrl('/api/system/hardware'));
+        if (!response.ok) throw new Error(`status ${response.status}`);
+        const data = (await response.json()) as HardwareInfo;
+        if (active) setHardware(data);
+      } catch {
+        // Non-fatal: telemetry rows still render without hardware identity.
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const telemetryRows: { label: string; value: ReactNode }[] = stats
     ? [
         { label: 'Hostname', value: stats.hostname },
         {
@@ -2005,6 +2204,47 @@ function SystemInfoCard() {
       ]
     : [];
 
+  const hardwareRows: { label: string; value: ReactNode }[] = hardware
+    ? [
+        { label: 'Device', value: orDash(hardware.pi_model) },
+        { label: 'Kernel', value: orDash(hardware.kernel_release) },
+        { label: 'Wi-Fi / BT chip', value: orDash(hardware.wireless_chip) },
+        { label: 'Wi-Fi firmware', value: orDash(hardware.wifi_firmware_version) },
+        { label: 'BlueZ', value: orDash(hardware.bluez_version) },
+        {
+          label: 'Wi-Fi hotspot',
+          value: (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+              <Badge variant={HOTSPOT_HEALTH_BADGE[hardware.hotspot_health].variant}>
+                {HOTSPOT_HEALTH_BADGE[hardware.hotspot_health].label}
+              </Badge>
+              <span className="text-muted" style={{ fontSize: 'var(--text-sm)' }}>
+                {hardware.hotspot_summary}
+              </span>
+            </div>
+          ),
+        },
+        { label: 'Display', value: hardware.display_model },
+        { label: 'Display driver', value: `${hardware.display_driver} (${hardware.display_controller})` },
+        { label: 'Resolution', value: `${hardware.display_resolution} px` },
+        {
+          label: 'Display status',
+          value: (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+              <Badge variant={DISPLAY_STATUS_BADGE[hardware.display_status].variant}>
+                {DISPLAY_STATUS_BADGE[hardware.display_status].label}
+              </Badge>
+              <span className="text-muted" style={{ fontSize: 'var(--text-sm)' }}>
+                {hardware.display_detail}
+              </span>
+            </div>
+          ),
+        },
+      ]
+    : [];
+
+  const rows = [...telemetryRows, ...hardwareRows];
+
   return (
     <Card className="mb-6">
       <CardHeader title="System Information" />
@@ -2019,6 +2259,7 @@ function SystemInfoCard() {
             gridTemplateColumns: 'max-content 1fr',
             gap: 'var(--space-2) var(--space-6)',
             margin: 0,
+            alignItems: 'baseline',
           }}
         >
           {rows.map((row) => (

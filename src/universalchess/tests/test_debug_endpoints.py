@@ -132,6 +132,119 @@ def test_set_debug_serial_requires_auth(monkeypatch):
     assert resp.status_code == 401
 
 
+def test_get_il3820_reports_enabled_and_availability(client, monkeypatch):
+    """GET must report both the opt-in state and whether to offer it.
+
+    Why this test exists: the IL3820 toggle is hidden entirely unless a UC8151D
+    BUSY timeout was recorded (available), and its switch initializes from the
+    persisted opt-in (enabled). Wrong values would either hide the toggle on a
+    real V1 panel or show it on a healthy V2 panel. Drives both flags.
+
+    How a regression manifests: enabled/available stop tracking their sources
+    (e.g. available ignores busy_timeout, so the toggle shows on every board).
+    """
+    monkeypatch.setattr(webapp, "_read_il3820_enabled", lambda: True)
+    monkeypatch.setattr(webapp, "_il3820_available", lambda: True)
+    resp = client.get("/api/system/il3820")
+    assert resp.status_code == 200
+    body = json.loads(resp.data)
+    assert body == {"enabled": True, "available": True}
+
+    monkeypatch.setattr(webapp, "_read_il3820_enabled", lambda: False)
+    monkeypatch.setattr(webapp, "_il3820_available", lambda: False)
+    resp = client.get("/api/system/il3820")
+    assert json.loads(resp.data) == {"enabled": False, "available": False}
+
+
+def test_il3820_available_only_on_busy_timeout(monkeypatch):
+    """availability must be True only when the status file records busy_timeout.
+
+    Why this test exists: this is the exact gate that hides the opt-in on a
+    healthy V2 panel. A V2 board (no timeout) must report unavailable; a V1 board
+    (timeout) must report available. Also covers the no-status-yet case.
+
+    How a regression manifests: _il3820_available returns True without a recorded
+    busy_timeout, leaking the V1-only opt-in onto every board.
+    """
+    from universalchess.board import hardware_info
+
+    monkeypatch.setattr(hardware_info, "read_display_status", lambda: None)
+    assert webapp._il3820_available() is False
+
+    monkeypatch.setattr(hardware_info, "read_display_status", lambda: {"busy_timeout": False})
+    assert webapp._il3820_available() is False
+
+    monkeypatch.setattr(hardware_info, "read_display_status", lambda: {"busy_timeout": True})
+    assert webapp._il3820_available() is True
+
+
+def test_set_il3820_persists_boolean(client, monkeypatch):
+    """POST must persist il3820 as a boolean under [display] and echo it.
+
+    Why this test exists: the board reads [display] il3820 at startup to decide
+    whether to apply the IL3820 additions; a wrong section/key or non-boolean
+    would leave the additions off after reboot despite a success response.
+    Asserts the precise payload handed to save_all_settings.
+
+    How a regression manifests: save_all_settings receives a different
+    section/key, or a truthy string instead of a bool.
+    """
+    saved = []
+    monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
+
+    resp = client.post(
+        "/api/system/il3820",
+        data=json.dumps({"enabled": True}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    body = json.loads(resp.data)
+    assert body["success"] is True and body["enabled"] is True
+    assert saved == [{"display": {"il3820": True}}]
+
+
+def test_set_il3820_defaults_missing_enabled_to_false(client, monkeypatch):
+    """A POST without "enabled" must persist False, not raise or enable.
+
+    Why this test exists: a malformed/empty body must fail safe to "off" so the
+    SSD1680 fallback runs without the unverified IL3820 additions. The bool()
+    coercion of a missing key is the guard. Sends an empty JSON object.
+
+    How a regression manifests: missing key yields an error response, or persists
+    a truthy value.
+    """
+    saved = []
+    monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
+
+    resp = client.post(
+        "/api/system/il3820", data=json.dumps({}), content_type="application/json"
+    )
+    assert resp.status_code == 200
+    assert saved == [{"display": {"il3820": False}}]
+
+
+def test_set_il3820_requires_auth(monkeypatch):
+    """Toggling the IL3820 additions must require authentication (401).
+
+    Why this test exists: it mutates persisted state and the board's startup
+    driver configuration, so like the other System mutations it must be
+    auth-gated; an unauthenticated caller must not flip it.
+
+    How a regression manifests: the endpoint writes the setting without
+    credentials (status is not 401).
+    """
+    webapp.app.config.update(TESTING=True)
+    monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
+    unauth = webapp.app.test_client()
+
+    resp = unauth.post(
+        "/api/system/il3820",
+        data=json.dumps({"enabled": True}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 401
+
+
 def test_download_debug_log_serves_file(client, monkeypatch, tmp_path):
     """The download must return the debug log contents as an attachment.
 

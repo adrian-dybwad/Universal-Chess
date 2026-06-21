@@ -25,8 +25,11 @@ class Manager:
                     after each successful display update. Used for web dashboard mirroring.
     """
     
-    def __init__(self, on_refresh=None):
-        self._epd = EPD()
+    def __init__(self, on_refresh=None, epd=None):
+        # epd defaults to the UC8151D (V2) driver. The startup selector may
+        # inject an alternate driver instance (e.g. the SSD1680 V1 fallback)
+        # without this coordinator needing to know which controller it drives.
+        self._epd = epd if epd is not None else EPD()
         self._framebuffer = FrameBuffer(self._epd.width, self._epd.height)
         self._scheduler = Scheduler(self._framebuffer, self._epd, on_display_updated=on_refresh)
         self._widgets: List[Widget] = []

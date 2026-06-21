@@ -2351,6 +2351,62 @@ def api_set_debug_serial():
         return _internal_error(e)
 
 
+def _read_il3820_enabled() -> bool:
+    """Return whether [display] il3820 is enabled (tolerant of spellings)."""
+    from universalchess.board.settings import Settings
+    value = Settings.read('display', 'il3820', 'False')
+    return str(value).strip().lower() in ('1', 'true', 'on', 'yes')
+
+
+def _il3820_available() -> bool:
+    """Whether to offer the IL3820 opt-in: only after a UC8151D BUSY timeout.
+
+    The opt-in is meaningless on a healthy V2 panel (no fallback occurred), so it
+    is surfaced only when the board recorded a BUSY timeout -- the V1-panel
+    signature -- in the cross-process display-status file.
+    """
+    from universalchess.board import hardware_info
+    status = hardware_info.read_display_status()
+    return bool(status and status.get("busy_timeout"))
+
+
+@app.route("/api/system/il3820", methods=["GET"])
+def api_get_il3820():
+    """Report the IL3820 opt-in state and whether it should be offered.
+
+    Read-only and unauthenticated like the other GET probes; exposes only two
+    booleans, no secrets. ``available`` is True only after a UC8151D BUSY
+    timeout, so the UI hides the toggle entirely on a healthy V2 panel.
+    """
+    try:
+        return jsonify({
+            "enabled": _read_il3820_enabled(),
+            "available": _il3820_available(),
+        })
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/il3820", methods=["POST"])
+@requires_auth
+def api_set_il3820():
+    """Enable/disable the optional IL3820 init additions. Requires authentication.
+
+    Persists [display] il3820 via save_all_settings. The setting does NOT gate
+    the SSD1680 fallback (automatic on a BUSY timeout); it only toggles the
+    IL3820-specific init additions inside that driver, read once at board
+    startup. The user enables it, reboots, and re-checks the panel. Body:
+    {"enabled": bool}.
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        enabled = bool(body.get("enabled"))
+        save_all_settings({"display": {"il3820": enabled}})
+        return jsonify({"success": True, "enabled": enabled})
+    except Exception as e:
+        return _internal_error(e)
+
+
 @app.route("/api/system/debug-log", methods=["GET"])
 @requires_auth
 def api_download_debug_log():
@@ -2389,6 +2445,24 @@ def api_system_stats():
         from universalchess.board.system_info import get_system_info
 
         return jsonify(get_system_info().to_dict())
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/hardware", methods=["GET"])
+def api_system_hardware():
+    """Return boot-stable hardware identity (wireless chip, versions, display).
+
+    Read-only and unauthenticated like the other GET probes. Unlike
+    ``/api/system/stats`` (per-second telemetry, polled), these facts are fixed
+    for the life of the boot, so ``get_hardware_info`` caches them and the UI
+    fetches this once. Includes the Broadcom wireless chip stepping and a
+    Wi-Fi-hotspot health verdict (see ``board.hardware_info``).
+    """
+    try:
+        from universalchess.board.hardware_info import get_hardware_info
+
+        return jsonify(get_hardware_info().to_dict())
     except Exception as e:
         return _internal_error(e)
 
