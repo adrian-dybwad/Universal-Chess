@@ -2212,7 +2212,7 @@ function SystemInfoCard() {
         { label: 'Wi-Fi firmware', value: orDash(hardware.wifi_firmware_version) },
         { label: 'BlueZ', value: orDash(hardware.bluez_version) },
         {
-          label: 'Wi-Fi hotspot',
+          label: 'Bluetooth advertising',
           value: (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
               <Badge variant={HOTSPOT_HEALTH_BADGE[hardware.hotspot_health].variant}>

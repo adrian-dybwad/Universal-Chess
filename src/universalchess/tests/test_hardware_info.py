@@ -1,11 +1,12 @@
 """Tests for board.hardware_info: chip parsing, version parsing, and the
-Wi-Fi hotspot health classifier.
+Bluetooth advertising health classifier.
 
 Why these tests exist:
-  The System card's "hotspot health" verdict is derived from the Broadcom chip
-  stepping plus the kernel version. The field investigation that motivated this
-  module proved exactly three data points (BCM43430B0 broken on 6.18, fine on
-  6.12; BCM43430A1 fine). These tests pin the parser to real kernel-log shapes
+  The System card's Bluetooth advertising verdict is derived from the Broadcom
+  chip stepping plus the kernel version. The field investigation that motivated
+  this module proved exactly three data points (BCM43430B0's BlueZ LE
+  advertising broken on 6.18, fine on 6.12; BCM43430A1 fine). These tests pin
+  the parser to real kernel-log shapes
   and pin the classifier to those proven points -- and, just as importantly, to
   return "unknown" (never a guess) for combinations that were never observed.
 
@@ -112,11 +113,16 @@ class WirelessHealthTests(unittest.TestCase):
     """Each case maps to a proven data point or an explicitly-unverified one."""
 
     def test_b0_on_618_is_affected(self):
-        # The proven failure: B0 + kernel 6.18 breaks Wi-Fi (incl. hotspot) + BLE.
+        # The proven failure: B0 + kernel 6.18 breaks BlueZ LE advertising
+        # (RegisterAdvertisement rejected). The summary must name the chip and
+        # the known-good remedy (6.12.x), and stay scoped to Bluetooth -- it must
+        # NOT claim a Wi-Fi hotspot failure, which was never observed.
         health, summary = hw.assess_wireless_health("BCM43430B0", "6.18.34+rpt-rpi-v7")
         self.assertEqual(health, hw.HEALTH_AFFECTED)
         self.assertIn("BCM43430B0", summary)
         self.assertIn("6.12", summary)  # names the known-good remedy
+        self.assertIn("Bluetooth", summary)
+        self.assertNotIn("Wi-Fi", summary)
 
     def test_b0_on_612_is_ok(self):
         # Same die, known-good kernel: this is the fix state, must read "ok".
