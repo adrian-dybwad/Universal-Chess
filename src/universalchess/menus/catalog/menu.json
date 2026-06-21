@@ -407,8 +407,8 @@
     {
       "id": "bluetooth.devices",
       "key": "ManageDevices",
-      "type": "action",
-      "action": "bluetooth_devices",
+      "type": "submenu",
+      "target": "bluetooth.devices.list",
       "label": "Devices",
       "icon": "bluetooth",
       "help": "View and manage paired Bluetooth devices.",
@@ -425,6 +425,124 @@
       "help": "Scan for and pair a Bluetooth keyboard.",
       "platforms": ["board"],
       "epaper": { "height_ratio": 0.8, "layout": "horizontal", "font_size": 14 }
+    },
+    {
+      "id": "bluetooth.devices.list",
+      "type": "menu",
+      "label": "Paired Devices",
+      "help": "Paired Bluetooth devices; select one to connect, disconnect, or forget.",
+      "platforms": ["board"],
+      "children": ["bluetooth.devices.list.items"]
+    },
+    {
+      "id": "bluetooth.devices.list.items",
+      "type": "dynamic",
+      "provider": "bluetooth_paired_devices",
+      "itemAction": "bluetooth_device_select",
+      "help": "Select a paired device to manage it.",
+      "platforms": ["board"]
+    },
+    {
+      "id": "bluetooth.device.detail",
+      "type": "menu",
+      "label": "Device",
+      "help": "Connect, disconnect, or forget the selected Bluetooth device.",
+      "platforms": ["board"],
+      "children": [
+        "bluetooth.device.info",
+        "bluetooth.device.connect",
+        "bluetooth.device.disconnect",
+        "bluetooth.device.forget"
+      ]
+    },
+    {
+      "id": "bluetooth.device.info",
+      "key": "Info",
+      "type": "info",
+      "label": "{fn:bt_device_status}",
+      "icon": "bluetooth",
+      "help": "The selected device and its connection status.",
+      "platforms": ["board"],
+      "epaper": { "selectable": false, "height_ratio": 1.5, "icon_size": 36, "layout": "vertical", "font_size": 11, "border_width": 1 }
+    },
+    {
+      "id": "bluetooth.device.connect",
+      "key": "Connect",
+      "type": "action",
+      "action": "bluetooth_connect",
+      "label": "Connect",
+      "icon": "bluetooth",
+      "help": "Connect to this device.",
+      "visibleWhen": { "store": "bt_device", "key": "connected", "equals": false },
+      "platforms": ["board"],
+      "epaper": { "height_ratio": 0.8, "layout": "horizontal", "font_size": 14 }
+    },
+    {
+      "id": "bluetooth.device.disconnect",
+      "key": "Disconnect",
+      "type": "action",
+      "action": "bluetooth_disconnect",
+      "label": "Disconnect",
+      "icon": "cancel",
+      "help": "Disconnect this device.",
+      "visibleWhen": { "store": "bt_device", "key": "connected", "equals": true },
+      "platforms": ["board"],
+      "epaper": { "height_ratio": 0.8, "layout": "horizontal", "font_size": 14 }
+    },
+    {
+      "id": "bluetooth.device.forget",
+      "key": "Forget",
+      "type": "action",
+      "action": "bluetooth_forget",
+      "label": "Forget",
+      "icon": "exit",
+      "help": "Remove this device's pairing.",
+      "platforms": ["board"],
+      "epaper": { "height_ratio": 0.8, "layout": "horizontal", "font_size": 14 }
+    },
+    {
+      "id": "bluetooth.device.stale",
+      "type": "menu",
+      "label": "Pairing Rejected",
+      "help": "The device rejected the saved pairing; remove it or keep it.",
+      "platforms": ["board"],
+      "children": ["bluetooth.device.stale.remove", "bluetooth.device.stale.keep"]
+    },
+    {
+      "id": "bluetooth.device.stale.remove",
+      "key": "RemovePairing",
+      "type": "action",
+      "action": "bluetooth_remove_pairing",
+      "label": "Remove\nPairing",
+      "icon": "exit",
+      "help": "Forget the rejected pairing so it can be re-paired.",
+      "platforms": ["board"]
+    },
+    {
+      "id": "bluetooth.device.stale.keep",
+      "key": "KeepPairing",
+      "type": "action",
+      "action": "cancel",
+      "label": "Keep\nPairing",
+      "icon": "cancel",
+      "help": "Keep the existing pairing and return.",
+      "platforms": ["board"]
+    },
+    {
+      "id": "bluetooth.keyboards",
+      "type": "menu",
+      "label": "Pair Keyboard",
+      "help": "Discovered Bluetooth keyboards; select one to pair.",
+      "platforms": ["board"],
+      "children": ["bluetooth.keyboards.list"]
+    },
+    {
+      "id": "bluetooth.keyboards.list",
+      "type": "dynamic",
+      "provider": "bluetooth_keyboards",
+      "itemAction": "bluetooth_pair_select",
+      "help": "Select a keyboard to pair; a passkey is shown if required.",
+      "platforms": ["board"]
     },
 
     {
@@ -448,13 +566,13 @@
     {
       "id": "system.inactivity",
       "key": "Inactivity",
-      "type": "action",
-      "action": "inactivity",
+      "type": "select",
+      "optionSet": "sleep_timer",
       "label": "Sleep Timer",
-      "boardLabel": "Sleep Timer\n{fn:sleep_timer}",
+      "boardLabel": "Sleep Timer\n{value}",
       "help": "Automatically put the board to sleep after a period of inactivity.",
-      "bind": { "store": "system", "key": "sleep_enabled" },
-      "icon": { "true": "timer_checked", "false": "timer" },
+      "bind": { "store": "system", "key": "sleep_seconds" },
+      "icon": { "0": "timer", "default": "timer_checked" },
       "platforms": ["board", "web"]
     },
     {
@@ -532,10 +650,8 @@
     {
       "id": "analysis.engine",
       "key": "engine",
-      "type": "action",
-      "webType": "select",
+      "type": "select",
       "provider": "installed_engines",
-      "action": "select_analysis_engine",
       "label": "Analysis Engine",
       "boardLabel": "Engine\n{value}",
       "bind": { "store": "analysis", "key": "engine" },
@@ -700,6 +816,36 @@
       "help": "Install a .deb package found in the home directory.",
       "platforms": ["board"]
     },
+    {
+      "id": "updates.install_local.confirm",
+      "type": "menu",
+      "label": "Install Local .deb",
+      "help": "Confirm installing the discovered .deb package.",
+      "platforms": ["board"],
+      "children": ["updates.install_local.confirm.yes", "updates.install_local.confirm.no"]
+    },
+    {
+      "id": "updates.install_local.confirm.yes",
+      "key": "confirm",
+      "type": "action",
+      "action": "install_local_confirmed",
+      "label": "Install {value}?",
+      "boardLabel": "Install\n{value}?",
+      "bind": { "store": "update", "key": "local_deb_name" },
+      "icon": "play",
+      "help": "Install the discovered package; the board restarts onto the new version.",
+      "platforms": ["board"]
+    },
+    {
+      "id": "updates.install_local.confirm.no",
+      "key": "cancel",
+      "type": "action",
+      "action": "cancel",
+      "label": "Cancel",
+      "icon": "cancel",
+      "help": "Return without installing.",
+      "platforms": ["board"]
+    },
 
     {
       "id": "field.player.color",
@@ -754,13 +900,11 @@
     },
     {
       "id": "field.player.engine",
-      "type": "action",
-      "webType": "select",
+      "type": "select",
       "provider": "installed_engines",
       "label": "Engine",
       "boardLabel": "Engine\n{value}",
       "help": "Chess engine to use",
-      "action": "select_engine",
       "bind": { "store": "player", "key": "engine" },
       "icon": "engine",
       "visibleWhen": { "store": "player", "key": "type", "in": ["human", "engine", "hand_brain"] },
@@ -769,13 +913,11 @@
     },
     {
       "id": "field.player.elo",
-      "type": "action",
-      "webType": "select",
+      "type": "select",
       "provider": "engine_levels",
       "label": "ELO / Style",
       "boardLabel": "ELO\n{value}",
       "help": "Engine strength or personality",
-      "action": "select_elo",
       "bind": { "store": "player", "key": "elo" },
       "icon": "elo",
       "visibleWhen": { "store": "player", "key": "type", "in": ["human", "engine", "hand_brain"] },
@@ -806,8 +948,11 @@
       "id": "field.display.sprites",
       "type": "dynamic",
       "provider": "sprite_sheets",
+      "itemBind": { "store": "game", "key": "chess_sprites" },
+      "label": "Piece Sprites",
       "help": "Sprite sheet used to draw pieces on the e-paper board",
-      "platforms": ["board"]
+      "section": "display",
+      "platforms": ["board", "web"]
     },
     {
       "id": "field.display.show_clock",
@@ -838,14 +983,6 @@
       "bind": { "store": "game", "key": "show_graph" },
       "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
       "enabledWhen": { "store": "game", "key": "show_analysis", "equals": true }
-    },
-    {
-      "id": "field.display.chess_sprites",
-      "type": "select",
-      "label": "Piece Sprites",
-      "help": "Sprite sheet used to draw pieces on the e-paper board",
-      "section": "display",
-      "platforms": ["web"]
     },
     {
       "id": "field.display.led_brightness",

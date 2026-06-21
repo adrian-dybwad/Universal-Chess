@@ -1,19 +1,19 @@
 """Interactive software-update flows for the e-paper board.
 
-The Updates menu structure (auto-update toggle, channel select, and the
-check/download/install rows) is data-driven (the ``updates`` catalog container
-rendered through the engine). This module holds only the imperative,
-splash-screen-driven operations those rows invoke as actions -- checking,
-downloading, installing a pending update, and installing a local .deb -- plus the
-local .deb discovery helper. All update state goes through the unified
-UpdateService.
+The Updates menu structure (auto-update toggle, channel select, the
+check/download/install rows, and the local-.deb install confirmation) is
+data-driven (the ``updates`` catalog container, including
+``updates.install_local.confirm``, rendered through the engine). This module
+holds only the imperative, splash-screen-driven operations those rows invoke as
+actions -- checking, downloading, installing a pending update, and performing a
+confirmed local-.deb install -- plus the local .deb discovery helper. All update
+state goes through the unified UpdateService.
 """
 
 import os
 import time
 from typing import List
 
-from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.epaper import SplashScreen
 from universalchess.services.update_service import get_update_service
 
@@ -99,75 +99,30 @@ def install_pending_interactive(board, log) -> None:
         time.sleep(2)
 
 
-def install_local_interactive(board, log, menu_manager) -> None:
-    """Find a local .deb in the home directory and install it after confirming.
+def perform_local_deb_install(board, log, source_path: str) -> None:
+    """Install a confirmed local .deb, reporting progress via splash screens.
 
-    Backs the Updates menu's "Install Local .deb" action. Installs the first
-    .deb found (after the confirmation dialog in ``handle_local_deb_install``);
-    shows a splash when none is present so the action gives clear feedback rather
-    than silently doing nothing.
+    Backs the data-driven ``updates.install_local.confirm`` Yes action (the
+    confirmation UI itself now lives in the catalog, not here). The discovery and
+    the Install/Cancel gate happen before this is called, so this only performs
+    the install side effect for an already-chosen path: a missing file degrades to
+    a "File not found" splash rather than raising, and the detached install runs
+    in a transient unit whose postinst restarts this service onto the new version
+    (no manual restart here -- the splash is held while the restart takes over).
     """
-    deb_files = find_local_deb_files()
-    if not deb_files:
-        _show_update_splash(board, "No .deb\nfound")
-        time.sleep(2)
-        return
-    handle_local_deb_install(deb_files[0], board, log, menu_manager)
-
-
-def handle_local_deb_install(
-    source_path: str,
-    board,
-    log,
-    menu_manager,
-) -> None:
-    """Handle installing a local .deb file.
-    
-    Args:
-        source_path: Path to .deb file
-        board: Board instance
-        log: Logger instance
-        menu_manager: Menu manager instance
-    """
-    update_service = get_update_service()
-    
-    def show_splash(message: str, timeout: float = 2.0):
-        board.display_manager.clear_widgets()
-        promise = board.display_manager.add_widget(
-            SplashScreen(board.display_manager.update, message=message)
-        )
-        if promise:
-            try:
-                promise.result(timeout=timeout)
-            except Exception:
-                pass
-    
     if not source_path or not os.path.exists(source_path):
         log.error(f"[Update] .deb file not found: {source_path}")
-        show_splash("File not\nfound")
+        _show_update_splash(board, "File not\nfound")
         time.sleep(2)
         return
-    
-    deb_file = os.path.basename(source_path)
-    show_splash(f"Install\n{deb_file[:20]}?")
-    
-    confirm_entries = [
-        IconMenuEntry(key="Install", label="Install\nNow", icon_name="play", enabled=True),
-        IconMenuEntry(key="Cancel", label="Cancel", icon_name="cancel", enabled=True),
-    ]
-    confirm_result = menu_manager.show_menu(confirm_entries)
-    
-    if confirm_result.key == "Install":
-        show_splash("Installing...")
 
-        # Detached install via transient unit; postinst restarts this
-        # service onto the new version. No manual restart needed.
-        if update_service.install_local_deb(source_path):
-            show_splash("Installing...\nBoard will restart")
-            time.sleep(30)
-        else:
-            show_splash("Install\nfailed")
-            time.sleep(2)
+    _show_update_splash(board, "Installing...")
+    if get_update_service().install_local_deb(source_path):
+        _show_update_splash(board, "Installing...\nBoard will restart")
+        time.sleep(30)
+    else:
+        _show_update_splash(board, "Install\nfailed")
+        time.sleep(2)
 
 
 def find_local_deb_files(search_dir: str = None) -> List[str]:

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import type { ReactNode } from 'react';
 import { Button, Card, CardHeader, FormRow, Input, Select, Toggle, Badge } from '../components/ui';
 import { CatalogField } from '../components/CatalogField';
 import type { FieldValue } from '../components/CatalogField';
@@ -241,23 +242,38 @@ export function Settings() {
   }, [fetchSettings]);
 
   // Load the catalog (once) and the settings on mount. Both are required for the
-  // page to render correctly, so either failing shows the load error.
+  // page to render correctly, so either failing shows the load error. The work is
+  // wrapped in an inline async function (effects cannot be async) so the state
+  // updates happen after the awaited fetches resolve, not synchronously within the
+  // effect body -- this is data fetching, not a synchronous render cascade.
   useEffect(() => {
-    Promise.all([loadCatalog(), fetchSettings()])
-      .then(() => {
+    void (async () => {
+      try {
+        await Promise.all([loadCatalog(), fetchSettings()]);
         setLoading(false);
-      })
-      .catch((e) => {
+      } catch (e) {
         console.error('Failed to load settings:', e);
         setLoadError('Could not connect to the Universal Chess backend. Make sure the board is running and accessible.');
         setLoading(false);
-      });
+      }
+    })();
   }, [fetchSettings, loadCatalog]);
+
+  // Mirror engineLevels into a ref so the cache check below can read the latest
+  // cache without making loadEngineLevels depend on engineLevels. Depending on the
+  // state directly made the callback identity change on every fetch, which re-ran
+  // the levels-loading effect repeatedly (only the cache guard stopped a fetch
+  // loop). Reading via the ref keeps loadEngineLevels stable so the effect runs
+  // only when a selected engine actually changes.
+  const engineLevelsRef = useRef(engineLevels);
+  useEffect(() => {
+    engineLevelsRef.current = engineLevels;
+  }, [engineLevels]);
 
   // Load engine levels when engine changes
   const loadEngineLevels = useCallback(async (engineName: string) => {
-    if (engineLevels[engineName]) return engineLevels[engineName];
-    
+    if (engineLevelsRef.current[engineName]) return engineLevelsRef.current[engineName];
+
     try {
       const response = await apiFetch(`/api/engines/${engineName}/levels`);
       const levels = await response.json();
@@ -266,13 +282,17 @@ export function Settings() {
     } catch {
       return ['Default'];
     }
-  }, [engineLevels]);
+  }, []);
 
-  // Load levels for selected engines
+  // Load levels for the selected engines. Wrapped in an inline async function so
+  // the state update inside loadEngineLevels happens after the awaited fetch, not
+  // synchronously within the effect body (data fetching, not a render cascade).
   useEffect(() => {
-    if (formSettings.player1.engine) loadEngineLevels(formSettings.player1.engine);
-    if (formSettings.player2.engine) loadEngineLevels(formSettings.player2.engine);
-    if (formSettings.game.analysis_engine) loadEngineLevels(formSettings.game.analysis_engine);
+    void (async () => {
+      if (formSettings.player1.engine) await loadEngineLevels(formSettings.player1.engine);
+      if (formSettings.player2.engine) await loadEngineLevels(formSettings.player2.engine);
+      if (formSettings.game.analysis_engine) await loadEngineLevels(formSettings.game.analysis_engine);
+    })();
   }, [formSettings.player1.engine, formSettings.player2.engine, formSettings.game.analysis_engine, loadEngineLevels]);
 
   const updateFormSettings = <T extends keyof FormSettings>(
@@ -602,7 +622,7 @@ export function Settings() {
 
                 {formSettings.player1.type === 'human' && (
                   <p className="text-muted" style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
-                    Hints will use <strong>{getEngineDisplayName(formSettings.game.analysis_engine || 'stockfish')}</strong> (configured in System Settings → Analysis Engine)
+                    Hints will use <strong>{getEngineDisplayName(formSettings.game.analysis_engine || 'stockfish')}</strong> (configured in Game Settings → Analysis Engine)
                   </p>
                 )}
             </Card>
@@ -658,7 +678,7 @@ export function Settings() {
 
                 {formSettings.player2.type === 'human' && (
                   <p className="text-muted" style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
-                    Hints will use <strong>{getEngineDisplayName(formSettings.game.analysis_engine || 'stockfish')}</strong> (configured in System Settings → Analysis Engine)
+                    Hints will use <strong>{getEngineDisplayName(formSettings.game.analysis_engine || 'stockfish')}</strong> (configured in Game Settings → Analysis Engine)
                   </p>
                 )}
             </Card>
@@ -768,9 +788,9 @@ export function Settings() {
                 renders the full sheet (every piece, both square rows) served by
                 /api/sprites/<id>/image so the choice is visual. */}
             <Card className="mb-6">
-              <CardHeader title={fieldLabel('field.display.chess_sprites')} />
+              <CardHeader title={fieldLabel('field.display.sprites')} />
               <p className="text-muted mb-4" style={{ fontSize: '0.875rem' }}>
-                {fieldHelp('field.display.chess_sprites')}
+                {fieldHelp('field.display.sprites')}
               </p>
               <div className="sprite-options" role="radiogroup" aria-label="Piece sprites">
                 {spriteSheets.map((id) => {
@@ -924,6 +944,8 @@ export function Settings() {
               </Card>
             </Card>
 
+            <DebugCard />
+            <Il3820Card />
             <PasswordChange />
             <SystemActions />
           </section>
@@ -1094,7 +1116,12 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
   }, []);
 
   useEffect(() => {
-    fetchStatus();
+    // Initial read wrapped in an inline async function so the state update inside
+    // fetchStatus happens after the awaited request, not synchronously within the
+    // effect body. The recurring poll is a subscription via setInterval.
+    void (async () => {
+      await fetchStatus();
+    })();
     const interval = setInterval(fetchStatus, 10000); // Poll every 10 seconds
     return () => clearInterval(interval);
   }, [fetchStatus]);
@@ -1529,6 +1556,311 @@ function PasswordChange() {
 }
 
 
+// Debug card: a serial-capture switch plus a one-click debug-log download, used
+// for remote support (notably v1 boards whose LED startup circles never stop
+// because discovery never completes). Self-contained - it reads/writes the
+// [system] debug_serial flag through its own endpoints rather than the page's
+// Save & Apply flow, so toggling it never collides with unsaved settings.
+function DebugCard() {
+  const [enabled, setEnabled] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [showLoginDialog, setShowLoginDialog] = useState(false);
+  const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
+
+  useEffect(() => {
+    fetch(buildApiUrl('/api/system/debug-serial'))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && typeof data.enabled === 'boolean') setEnabled(data.enabled);
+      })
+      .catch(() => {
+        // Best-effort initial read; the switch defaults to off if unavailable.
+      });
+  }, []);
+
+  const handleLoginSuccess = async () => {
+    setShowLoginDialog(false);
+    if (pendingActionRef.current) {
+      const action = pendingActionRef.current;
+      pendingActionRef.current = null;
+      await action();
+    }
+  };
+
+  // The flag is read only at board startup, so a toggle has no effect until the
+  // next reboot. This reboots via the same endpoint the Power card uses; a 401
+  // reuses the card's login-retry plumbing so the reboot resumes after login.
+  const reboot = async () => {
+    const response = await apiFetch('/api/system/reboot', { method: 'POST', requiresAuth: true });
+    if (response.status === 401) {
+      pendingActionRef.current = reboot;
+      setShowLoginDialog(true);
+      return;
+    }
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && data.success) {
+      setNotice('Rebooting. The web interface will return shortly.');
+    } else {
+      setError(data.error || 'Failed to reboot the board.');
+    }
+  };
+
+  const setSerialDebug = async (next: boolean) => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await apiFetch('/api/system/debug-serial', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: next }),
+        requiresAuth: true,
+      });
+      if (response.status === 401) {
+        pendingActionRef.current = () => setSerialDebug(next);
+        setShowLoginDialog(true);
+        return;
+      }
+      if (!response.ok) {
+        setError('Failed to update the serial debug setting.');
+        return;
+      }
+      setEnabled(next);
+      // The change only takes effect on the next boot, so offer to reboot now.
+      const rebootPrompt = next
+        ? 'Serial debug logging enabled. Reboot now to capture the startup handshake? You can download the log after the board restarts.'
+        : 'Serial debug logging disabled. Reboot now for the change to take effect?';
+      if (confirm(rebootPrompt)) {
+        await reboot();
+      } else {
+        setNotice(
+          next
+            ? 'Serial debug logging enabled. Reboot the board to capture the startup handshake, then download the log.'
+            : 'Serial debug logging disabled. Reboot the board for the change to take effect.'
+        );
+      }
+    } catch {
+      setError('Network error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const downloadLog = async () => {
+    setDownloading(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await apiFetch('/api/system/debug-log', { requiresAuth: true });
+      if (response.status === 401) {
+        pendingActionRef.current = downloadLog;
+        setShowLoginDialog(true);
+        return;
+      }
+      if (response.status === 404) {
+        setError('No debug log found yet. Reboot the board to generate one.');
+        return;
+      }
+      if (!response.ok) {
+        setError('Failed to download the debug log.');
+        return;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'debug.log';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError('Network error');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <>
+      <LoginDialog
+        isOpen={showLoginDialog}
+        onClose={() => {
+          setShowLoginDialog(false);
+          pendingActionRef.current = null;
+        }}
+        onSuccess={handleLoginSuccess}
+      />
+      <Card className="mb-6">
+        <CardHeader title="Debug" />
+        <p className="text-muted mb-4">
+          Serial debug logging records the raw communication between the Raspberry Pi and the
+          board controller during startup. Enable it, reboot the board to capture the startup
+          handshake, then download the log and send it to support. This helps diagnose boards
+          that never finish starting up &mdash; for example, a v1 board whose LED circles keep
+          spinning. Leaving it on makes the log grow quickly.
+        </p>
+        {notice && <Card variant="primary" className="mb-4">{notice}</Card>}
+        {error && (
+          <Card variant="danger" className="mb-4">
+            <strong>Error:</strong> {error}
+          </Card>
+        )}
+        <Toggle
+          label="Serial debug logging"
+          help="Takes effect after the next reboot."
+          checked={enabled}
+          onChange={(v) => setSerialDebug(v)}
+          disabled={busy}
+        />
+        <div className="mt-4">
+          <Button variant="secondary" onClick={downloadLog} disabled={downloading}>
+            {downloading ? 'Preparing...' : 'Download debug log'}
+          </Button>
+        </div>
+      </Card>
+    </>
+  );
+}
+
+
+// Optional IL3820 init additions for the SSD1680 (V1) fallback driver. The
+// SSD1680 fallback itself is automatic on a UC8151D BUSY timeout and needs no
+// opt-in; this toggle only layers the IL3820-specific init additions on top.
+// The whole card is hidden unless the board recorded a BUSY timeout
+// (available), since the option is meaningless on a healthy V2 panel.
+function Il3820Card() {
+  const [available, setAvailable] = useState(false);
+  const [enabled, setEnabled] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [showLoginDialog, setShowLoginDialog] = useState(false);
+  const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
+
+  useEffect(() => {
+    fetch(buildApiUrl('/api/system/il3820'))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data) return;
+        if (typeof data.available === 'boolean') setAvailable(data.available);
+        if (typeof data.enabled === 'boolean') setEnabled(data.enabled);
+      })
+      .catch(() => {
+        // Best-effort initial read; the card stays hidden if unavailable.
+      });
+  }, []);
+
+  const handleLoginSuccess = async () => {
+    setShowLoginDialog(false);
+    if (pendingActionRef.current) {
+      const action = pendingActionRef.current;
+      pendingActionRef.current = null;
+      await action();
+    }
+  };
+
+  // The flag is read only at board startup, so a toggle has no effect until the
+  // next reboot. Reuses the Power card's reboot endpoint and 401 login-retry.
+  const reboot = async () => {
+    const response = await apiFetch('/api/system/reboot', { method: 'POST', requiresAuth: true });
+    if (response.status === 401) {
+      pendingActionRef.current = reboot;
+      setShowLoginDialog(true);
+      return;
+    }
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && data.success) {
+      setNotice('Rebooting. The web interface will return shortly.');
+    } else {
+      setError(data.error || 'Failed to reboot the board.');
+    }
+  };
+
+  const setIl3820 = async (next: boolean) => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await apiFetch('/api/system/il3820', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: next }),
+        requiresAuth: true,
+      });
+      if (response.status === 401) {
+        pendingActionRef.current = () => setIl3820(next);
+        setShowLoginDialog(true);
+        return;
+      }
+      if (!response.ok) {
+        setError('Failed to update the IL3820 setting.');
+        return;
+      }
+      setEnabled(next);
+      const rebootPrompt = next
+        ? 'IL3820 additions enabled. Reboot now to apply them to the display driver?'
+        : 'IL3820 additions disabled. Reboot now for the change to take effect?';
+      if (confirm(rebootPrompt)) {
+        await reboot();
+      } else {
+        setNotice(
+          next
+            ? 'IL3820 additions enabled. Reboot the board to apply them.'
+            : 'IL3820 additions disabled. Reboot the board for the change to take effect.'
+        );
+      }
+    } catch {
+      setError('Network error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Hidden entirely on a healthy V2 panel: the option only makes sense after a
+  // UC8151D BUSY timeout, which the GET probe reports via `available`.
+  if (!available) return null;
+
+  return (
+    <>
+      <LoginDialog
+        isOpen={showLoginDialog}
+        onClose={() => {
+          setShowLoginDialog(false);
+          pendingActionRef.current = null;
+        }}
+        onSuccess={handleLoginSuccess}
+      />
+      <Card className="mb-6">
+        <CardHeader title="IL3820 display" />
+        <p className="text-muted mb-4">
+          The display did not respond to the standard (UC8151D) driver, so the board has
+          fallen back to the SSD1680 driver automatically. If the panel is a genuine IL3820
+          and still renders incorrectly, enable these IL3820-specific init additions and
+          reboot to test. Leave this off if the display already works.
+        </p>
+        {notice && <Card variant="primary" className="mb-4">{notice}</Card>}
+        {error && (
+          <Card variant="danger" className="mb-4">
+            <strong>Error:</strong> {error}
+          </Card>
+        )}
+        <Toggle
+          label="IL3820 additions"
+          help="Takes effect after the next reboot."
+          checked={enabled}
+          onChange={(v) => setIl3820(v)}
+          disabled={busy}
+        />
+      </Card>
+    </>
+  );
+}
+
+
 function SystemActions() {
   const [centaurAvailable, setCentaurAvailable] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -1559,8 +1891,17 @@ function SystemActions() {
     }
   };
 
+  // Holds the latest runAction so the post-login retry can re-invoke it without
+  // the callback referencing its own binding before it is declared (which the
+  // recursive `() => runAction(...)` form does). The ref is kept current by the
+  // effect below.
+  const runActionRef = useRef<
+    ((key: string, endpoint: string, confirmText: string, successText: string) => Promise<void>) | null
+  >(null);
+
   // Run a system action: confirm, POST, and surface the outcome. On 401 the
-  // login dialog opens and the action is retried after a successful login.
+  // login dialog opens and the action is retried (via the ref) after a
+  // successful login.
   const runAction = useCallback(
     async (key: string, endpoint: string, confirmText: string, successText: string) => {
       if (!confirm(confirmText)) return;
@@ -1570,7 +1911,9 @@ function SystemActions() {
       try {
         const response = await apiFetch(`/api/system/${endpoint}`, { method: 'POST', requiresAuth: true });
         if (response.status === 401) {
-          pendingActionRef.current = () => runAction(key, endpoint, confirmText, successText);
+          pendingActionRef.current = async () => {
+            await runActionRef.current?.(key, endpoint, confirmText, successText);
+          };
           setShowLoginDialog(true);
           return;
         }
@@ -1588,6 +1931,10 @@ function SystemActions() {
     },
     []
   );
+
+  useEffect(() => {
+    runActionRef.current = runAction;
+  }, [runAction]);
 
   return (
     <>
@@ -1716,8 +2063,51 @@ interface SystemStats {
   load_average_1m: number | null;
 }
 
+// Boot-stable hardware identity from GET /api/system/hardware. Fetched once
+// (these facts do not change while the board runs), unlike the polled stats.
+type HotspotHealth = 'ok' | 'affected' | 'unknown';
+type DisplayStatus = 'ok' | 'failed' | 'unknown';
+
+interface HardwareInfo {
+  pi_model: string | null;
+  kernel_release: string;
+  wireless_chip: string | null;
+  wifi_firmware_version: string | null;
+  bluez_version: string | null;
+  hotspot_health: HotspotHealth;
+  hotspot_summary: string;
+  display_model: string;
+  display_controller: string;
+  display_driver: string;
+  display_resolution: string;
+  display_status: DisplayStatus;
+  display_detail: string;
+}
+
+// Exhaustive mapping over the closed HotspotHealth union (no default branch, so
+// a new health state would fail to type-check here rather than render wrongly).
+const HOTSPOT_HEALTH_BADGE = {
+  ok: { variant: 'success', label: 'OK' },
+  affected: { variant: 'danger', label: 'Known issue' },
+  unknown: { variant: 'default', label: 'Unknown' },
+} satisfies Record<HotspotHealth, { variant: 'success' | 'danger' | 'default'; label: string }>;
+
+// Exhaustive mapping over the closed DisplayStatus union. The panel identity is
+// fixed, but whether it initialized is reported live by the board: a V1 /
+// unresponsive panel latches 'failed' so the card never falsely claims "OK".
+const DISPLAY_STATUS_BADGE = {
+  ok: { variant: 'success', label: 'Working' },
+  failed: { variant: 'danger', label: 'Not responding' },
+  unknown: { variant: 'default', label: 'Unknown' },
+} satisfies Record<DisplayStatus, { variant: 'success' | 'danger' | 'default'; label: string }>;
+
 const SYSTEM_STATS_POLL_MS = 5000;
 const EM_DASH = '\u2014';
+
+// Render a nullable string field as itself or an em dash, never an empty cell.
+function orDash(value: string | null): string {
+  return value && value.trim() ? value : EM_DASH;
+}
 
 function formatStatPercent(value: number | null): string {
   return value == null ? EM_DASH : `${Math.round(value)}%`;
@@ -1747,6 +2137,9 @@ function formatStatUptime(seconds: number): string {
 function SystemInfoCard() {
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [error, setError] = useState(false);
+  // Hardware identity is boot-stable, so it is fetched once on mount rather
+  // than polled. A failure here leaves the (polled) telemetry rows unaffected.
+  const [hardware, setHardware] = useState<HardwareInfo | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -1771,7 +2164,24 @@ function SystemInfoCard() {
     };
   }, []);
 
-  const rows: { label: string; value: string }[] = stats
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const response = await fetch(buildApiUrl('/api/system/hardware'));
+        if (!response.ok) throw new Error(`status ${response.status}`);
+        const data = (await response.json()) as HardwareInfo;
+        if (active) setHardware(data);
+      } catch {
+        // Non-fatal: telemetry rows still render without hardware identity.
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const telemetryRows: { label: string; value: ReactNode }[] = stats
     ? [
         { label: 'Hostname', value: stats.hostname },
         {
@@ -1794,6 +2204,47 @@ function SystemInfoCard() {
       ]
     : [];
 
+  const hardwareRows: { label: string; value: ReactNode }[] = hardware
+    ? [
+        { label: 'Device', value: orDash(hardware.pi_model) },
+        { label: 'Kernel', value: orDash(hardware.kernel_release) },
+        { label: 'Wi-Fi / BT chip', value: orDash(hardware.wireless_chip) },
+        { label: 'Wi-Fi firmware', value: orDash(hardware.wifi_firmware_version) },
+        { label: 'BlueZ', value: orDash(hardware.bluez_version) },
+        {
+          label: 'Wi-Fi hotspot',
+          value: (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+              <Badge variant={HOTSPOT_HEALTH_BADGE[hardware.hotspot_health].variant}>
+                {HOTSPOT_HEALTH_BADGE[hardware.hotspot_health].label}
+              </Badge>
+              <span className="text-muted" style={{ fontSize: 'var(--text-sm)' }}>
+                {hardware.hotspot_summary}
+              </span>
+            </div>
+          ),
+        },
+        { label: 'Display', value: hardware.display_model },
+        { label: 'Display driver', value: `${hardware.display_driver} (${hardware.display_controller})` },
+        { label: 'Resolution', value: `${hardware.display_resolution} px` },
+        {
+          label: 'Display status',
+          value: (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+              <Badge variant={DISPLAY_STATUS_BADGE[hardware.display_status].variant}>
+                {DISPLAY_STATUS_BADGE[hardware.display_status].label}
+              </Badge>
+              <span className="text-muted" style={{ fontSize: 'var(--text-sm)' }}>
+                {hardware.display_detail}
+              </span>
+            </div>
+          ),
+        },
+      ]
+    : [];
+
+  const rows = [...telemetryRows, ...hardwareRows];
+
   return (
     <Card className="mb-6">
       <CardHeader title="System Information" />
@@ -1808,6 +2259,7 @@ function SystemInfoCard() {
             gridTemplateColumns: 'max-content 1fr',
             gap: 'var(--space-2) var(--space-6)',
             margin: 0,
+            alignItems: 'baseline',
           }}
         >
           {rows.map((row) => (

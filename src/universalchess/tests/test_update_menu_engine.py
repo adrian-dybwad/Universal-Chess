@@ -18,15 +18,17 @@ from universalchess.menus.catalog.loader import load_catalog
 from universalchess.menus.engine import build_rows, dispatch, resolve_icon
 
 
-def _update_ctx(*, auto_update=False, channel="stable", available="", has_pending=False):
+def _update_ctx(*, auto_update=False, channel="stable", available="", has_pending=False,
+                local_deb_name=""):
     """Board context mirroring main._build_updates_context over a fake store.
 
     ``has_download`` is derived exactly as production does (available and not yet
     pending) so the visibility tests exercise the real gating rule. Actions are
     recorded so dispatch wiring can be asserted without running splash flows.
+    ``local_deb_name`` backs the Install-Local confirmation's filename label.
     """
     state = {"auto_update": auto_update, "channel": channel, "available": available,
-             "has_pending": has_pending}
+             "has_pending": has_pending, "local_deb_name": local_deb_name}
 
     def update_get(key):
         if key == "has_download":
@@ -41,7 +43,8 @@ def _update_ctx(*, auto_update=False, channel="stable", available="", has_pendin
     ctx.register_value("auto_update_state",
                        lambda node: "Enabled" if update_get("auto_update") else "Disabled")
     ctx.calls = []
-    for action in ("check_updates", "download_update", "install_pending", "install_local"):
+    for action in ("check_updates", "download_update", "install_pending", "install_local",
+                   "install_local_confirmed", "cancel"):
         ctx.register_action(action, (lambda a: (lambda: ctx.calls.append(a) or None))(action))
     ctx._state = state
     return ctx
@@ -140,6 +143,66 @@ def test_channel_row_is_a_select_over_update_channel_set():
     assert (outcome.store, outcome.key) == ("update", "channel")
     assert outcome.selected_icon == "checkbox_checked"
     assert outcome.unselected_icon == "checkbox_empty"
+
+
+def test_install_local_confirm_container_is_a_yes_no_gate():
+    """Install-Local opens a data-driven confirm container, not an inline dialog.
+
+    Why this test exists: the local .deb install used to build its Install/Cancel
+    confirmation as imperative IconMenuEntry rows inside update_menu.py. The
+    migration moves that gate into the catalog (mirroring system.reset.confirm) so
+    the structure is one source of truth. The Yes row must run the dedicated
+    ``install_local_confirmed`` action (which installs the discovered package) and
+    the No row the shared ``cancel`` (which backs out). How a regression manifests:
+    a missing/renamed child or a Yes wired to the wrong action would install on
+    cancel or fail to install on confirm.
+    """
+    catalog = load_catalog()
+    assert catalog.child_ids("updates.install_local.confirm") == [
+        "updates.install_local.confirm.yes",
+        "updates.install_local.confirm.no",
+    ]
+    yes = catalog.get_node("updates.install_local.confirm.yes")
+    no = catalog.get_node("updates.install_local.confirm.no")
+    assert yes["type"] == "action" and yes["action"] == "install_local_confirmed"
+    assert no["type"] == "action" and no["action"] == "cancel"
+
+
+def test_install_local_confirm_yes_row_shows_discovered_filename():
+    """The confirm's Yes row names the .deb that will be installed.
+
+    Why this test exists: the user must see which package they are about to
+    install before confirming a system-modifying action; the filename comes from
+    the ``update.local_deb_name`` the discovery step stores. How a regression
+    manifests: the label loses its ``{value}`` binding and shows a bare "Install?"
+    so the user confirms an unidentified package.
+    """
+    catalog = load_catalog()
+    ctx = _update_ctx(local_deb_name="universal-chess_2.5.0.deb")
+    rows = {r.key: r for r in build_rows("updates.install_local.confirm", ctx,
+                                         platform="board", catalog=catalog)}
+    assert rows["confirm"].label == "Install\nuniversal-chess_2.5.0.deb?"
+    assert rows["cancel"].label == "Cancel"
+
+
+def test_install_local_confirm_rows_dispatch_to_their_handlers():
+    """Selecting Yes installs the discovered package; No cancels.
+
+    Why this test exists: the confirm gate is only correct if Yes routes to the
+    install action and No to cancel; this pins that wiring through the engine so a
+    swap (which would install on cancel) is caught. How a regression manifests:
+    the recorded action list below changes.
+    """
+    catalog = load_catalog()
+    yes_ctx = _update_ctx(local_deb_name="x.deb")
+    yes_out = dispatch(catalog.get_node("updates.install_local.confirm.yes"), yes_ctx)
+    assert yes_out.kind == "action" and yes_out.action == "install_local_confirmed"
+    assert yes_ctx.calls == ["install_local_confirmed"]
+
+    no_ctx = _update_ctx(local_deb_name="x.deb")
+    no_out = dispatch(catalog.get_node("updates.install_local.confirm.no"), no_ctx)
+    assert no_out.kind == "action" and no_out.action == "cancel"
+    assert no_ctx.calls == ["cancel"]
 
 
 def test_action_rows_dispatch_to_their_handlers():

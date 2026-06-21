@@ -68,12 +68,23 @@ _COD_MAJOR_PERIPHERAL = 0x05          # major device class (bits 8-12) == periph
 _COD_KEYBOARD_BIT = 0x40              # peripheral minor bit indicating a keyboard
 # BLE GAP appearance value for a HID keyboard.
 _APPEARANCE_KEYBOARD = 0x03C1
+# Full 128-bit form of the Bluetooth HID service (assigned number 0x1812). BLE
+# keyboards advertise this in their advertisement before BlueZ resolves the
+# Appearance/Icon/Class properties, so it is the earliest reliable keyboard
+# signal during discovery.
+_HID_SERVICE_UUID = "00001812-0000-1000-8000-00805f9b34fb"
 
 _MAC_ADDRESS_RE = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
 
 # Seconds to wait after a failed (auth) pair before retrying, giving a
 # self-healing peer time to drop its stale link key after the dropped link.
 _PEER_SELF_HEAL_DELAY_SECONDS = 2.0
+
+# D-Bus Pair()/Connect() reply window for a user-initiated keyboard pairing.
+# The user must find the keyboard and type the 6-digit passkey on it before the
+# bond completes, so this is well above BlueZ's default; too short returns
+# NoReply and reports a false "Pairing failed".
+_KEYBOARD_PAIR_TIMEOUT_SECONDS = 90.0
 
 # Seconds between ObjectManager polls while discovery is running. Sets the upper
 # bound on both how quickly a newly-found keyboard is surfaced and how quickly a
@@ -101,8 +112,15 @@ class BluezPairingManager:
         """Classify a BlueZ ``Device1`` property map as a keyboard.
 
         Uses, in order, the most reliable signals BlueZ exposes: the ``Icon``
-        hint, the BLE ``Appearance`` value, then the Class of Device peripheral
-        keyboard bit. Any one match is sufficient.
+        hint, the BLE ``Appearance`` value, the HID service ``UUIDs`` entry, then
+        the Class of Device peripheral keyboard bit. Any one match is sufficient.
+
+        The HID service UUID (0x1812) is included because BLE keyboards advertise
+        it before BlueZ resolves Appearance/Icon/Class; without it a keyboard
+        "appears but not reliably", surfacing only once those late properties
+        arrive (sometimes never within the discovery window). The trade-off is
+        that it also matches other HID peripherals (e.g. a mouse), which is
+        acceptable on the keyboard-pair screen where the user picks the device.
         """
         icon = properties.get("Icon")
         if icon is not None and "keyboard" in str(icon).lower():
@@ -115,6 +133,12 @@ class BluezPairingManager:
                     return True
             except (TypeError, ValueError):
                 pass
+
+        uuids = properties.get("UUIDs")
+        if uuids:
+            for uuid in uuids:
+                if str(uuid).lower() == _HID_SERVICE_UUID:
+                    return True
 
         cod = properties.get("Class")
         if cod is not None:
@@ -140,9 +164,23 @@ class BluezPairingManager:
     # Thin D-Bus primitives (mocked in tests)
     # ------------------------------------------------------------------
     def _bus_connection(self):
+        """Return this manager's private system-bus connection, creating it once.
+
+        A PRIVATE connection (not the shared ``dbus.SystemBus()`` singleton) is
+        mandatory. The BLE pairing agent that services ``RequestConfirmation``
+        is registered on the shared connection and is dispatched by the GLib
+        main loop on the BLE thread. ``pair_keyboard()`` runs on a different
+        thread and issues a synchronous, blocking ``Device.Pair()``. On the
+        shared connection, dbus-python serializes delivery, so the incoming
+        ``RequestConfirmation`` (raised by BlueZ to complete that very ``Pair``)
+        cannot be dispatched until the blocking call returns -- the keyboard
+        then times out (~30s) and aborts with Authentication Failure (0x05). A
+        private connection isolates these blocking calls from the agent's
+        connection so the agent is dispatched while ``Pair()`` is in flight.
+        """
         import dbus
         if self._bus is None:
-            self._bus = dbus.SystemBus()
+            self._bus = dbus.SystemBus(private=True)
         return self._bus
 
     def _adapter(self):
@@ -438,9 +476,16 @@ class BluezPairingManager:
             self._stop_discovery()
         return path in self._managed_objects()
 
-    def _pair_trust_connect(self, address: str, pair_timeout: float = 30.0,
-                            connect_timeout: float = 30.0) -> str:
-        """One pair/trust/connect cycle. Returns the ``_pair`` status string."""
+    def _pair_trust_connect(
+            self, address: str,
+            pair_timeout: float = _KEYBOARD_PAIR_TIMEOUT_SECONDS,
+            connect_timeout: float = _KEYBOARD_PAIR_TIMEOUT_SECONDS) -> str:
+        """One pair/trust/connect cycle. Returns the ``_pair`` status string.
+
+        Defaults to the generous keyboard pairing window: the user must type the
+        passkey on the keyboard before ``Pair()`` replies, so a short reply
+        timeout returns NoReply and reports a false failure.
+        """
         status = self._pair(address, pair_timeout)
         if status != "ok":
             return status

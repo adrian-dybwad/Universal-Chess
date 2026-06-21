@@ -59,27 +59,26 @@ def _state(**overrides):
 
 
 def _ctx(state, sheets=_SHEETS):
-    """Board context with a dict-backed game store and a fake sprite provider."""
+    """Board context with a dict-backed game store and a fake sprite provider.
+
+    The provider is a *pure data source*: it returns one row per sheet (key =
+    sheet id, with the sheet's preview image/mask) and nothing else. The engine
+    owns the radio behavior -- the catalog's ``field.display.sprites`` node
+    declares ``itemBind: game.chess_sprites``, so build_rows attaches each row's
+    ``set_value`` behavior and the radio marking against the current value. This
+    mirrors main._build_display_context after the sprite migration.
+    """
     ctx = BoardMenuContext()
     ctx.register_store("game", lambda k: state[k], lambda k, v: state.__setitem__(k, v))
 
     def sprite_sheets():
-        current = state["chess_sprites"]
         return [
             MenuRow(
-                key=f"sprite:{sheet}",
+                key=sheet,
                 label=sheet,
                 icon="positions",
                 icon_image=f"img:{sheet}",
                 icon_mask=f"mask:{sheet}",
-                trailing_icon="radio_checked" if sheet == current else "radio_empty",
-                node={
-                    "id": f"sprite:{sheet}",
-                    "key": f"sprite:{sheet}",
-                    "type": "set_value",
-                    "bind": {"store": "game", "key": "chess_sprites"},
-                    "value": sheet,
-                },
             )
             for sheet in sheets
         ]
@@ -154,16 +153,16 @@ def test_board_submenu_show_board_first_then_radio_rows_per_sheet():
     rows = _board_rows(_state(show_board=True, chess_sprites="fen"))
     assert [r.key for r in rows] == [
         "field.display.show_board",
-        "sprite:default",
-        "sprite:fen",
-        "sprite:retro",
+        "default",
+        "fen",
+        "retro",
     ]
 
     by_key = {r.key: r for r in rows}
     assert by_key["field.display.show_board"].label == "Show Board"
     assert by_key["field.display.show_board"].icon == "checkbox_checked"
     for sheet in _SHEETS:
-        row = by_key[f"sprite:{sheet}"]
+        row = by_key[sheet]
         assert row.label == sheet
         # Preview image+mask survive into the rendered e-paper entry.
         entry = _row_to_entry(row)
@@ -178,9 +177,9 @@ def test_board_submenu_marks_current_sheet_with_filled_radio():
     one (or none) were filled, the selection would be ambiguous.
     """
     by_key = {r.key: r for r in _board_rows(_state(chess_sprites="fen"))}
-    assert by_key["sprite:fen"].trailing_icon == "radio_checked"
-    assert by_key["sprite:default"].trailing_icon == "radio_empty"
-    assert by_key["sprite:retro"].trailing_icon == "radio_empty"
+    assert by_key["fen"].trailing_icon == "radio_checked"
+    assert by_key["default"].trailing_icon == "radio_empty"
+    assert by_key["retro"].trailing_icon == "radio_empty"
 
 
 def test_selecting_sprite_sets_that_sheet_as_radio():
@@ -192,7 +191,7 @@ def test_selecting_sprite_sets_that_sheet_as_radio():
     not persisting would leave the old sheet.
     """
     state = _state(chess_sprites="default")
-    mm = _FakeMenuManager(["sprite:retro", "BACK"])
+    mm = _FakeMenuManager(["retro", "BACK"])
 
     run_engine_menu("settings.display.board", _ctx(state), mm, catalog=load_catalog())
 

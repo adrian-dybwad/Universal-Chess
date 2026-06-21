@@ -18,16 +18,17 @@ container used to provide before it was folded in.
 
 from universalchess.menus.board_context import BoardMenuContext
 from universalchess.menus.catalog.loader import load_catalog
-from universalchess.menus.engine import build_rows, dispatch, resolve_icon
+from universalchess.menus.engine import MenuRow, build_rows, dispatch, resolve_icon
 
 
 def _game_ctx(*, mode=False, engine="stockfish", time_control=0):
     """Board context mirroring main._build_game_menu_context over fake stores.
 
-    The ``analysis`` store's ``mode`` is read/written (the toggle persists it);
-    ``engine`` is read-only (the displayed label). The ``game`` store backs Time
-    Control, and ``time_control`` is its concise computed label. The engine-pick
-    action is recorded so dispatch wiring can be asserted without the real flow.
+    The ``analysis`` store's ``mode`` is read/written (the toggle persists it)
+    and ``engine`` is read/written (the analysis-engine select persists the
+    pick). The ``game`` store backs Time Control, and ``time_control`` is its
+    concise computed label. The ``installed_engines`` provider backs the
+    Analysis Engine select so its dispatch can be asserted without the real flow.
     """
     state = {"mode": mode, "engine": engine, "time_control": time_control}
 
@@ -38,8 +39,13 @@ def _game_ctx(*, mode=False, engine="stockfish", time_control=0):
         "time_control",
         lambda node: "Disabled" if state["time_control"] == 0 else f"{state['time_control']} min",
     )
-    ctx.calls = []
-    ctx.register_action("select_analysis_engine", lambda: ctx.calls.append("select_analysis_engine") or None)
+    ctx.register_provider(
+        "installed_engines",
+        lambda: [
+            MenuRow(key="stockfish", label="stockfish", icon="engine"),
+            MenuRow(key="lc0", label="lc0", icon="engine"),
+        ],
+    )
     ctx._state = state
     return ctx
 
@@ -115,15 +121,19 @@ def test_engine_row_label_shows_current_engine():
     assert engine_row.label == "Engine\nlc0"
 
 
-def test_selecting_engine_row_dispatches_selection_action():
-    """Selecting the Engine row invokes the engine-selection action.
+def test_analysis_engine_row_is_provider_backed_select():
+    """Selecting the Engine row opens a provider-backed select on analysis.engine.
 
-    Why this test exists: the engine pick is a dynamic list kept as an imperative
-    sub-flow; the row must reach it through the registered action. How a
-    regression manifests: selecting Engine does nothing or runs the wrong handler.
+    Why this test exists: the analysis engine pick was migrated from an imperative
+    action sub-flow to a ``select`` whose options come from the ``installed_engines``
+    provider and are written to analysis.engine -- the same provider/value pattern
+    as the player Engine/ELO pickers. How a regression manifests: the row reverts
+    to a (now-removed) action, or the outcome drops the provider/binding so the
+    analysis engine can't be chosen on the board.
     """
     ctx = _game_ctx(mode=True)
     node = load_catalog().get_node("analysis.engine")
     outcome = dispatch(node, ctx)
-    assert outcome.kind == "action" and outcome.action == "select_analysis_engine"
-    assert ctx.calls == ["select_analysis_engine"]
+    assert outcome.kind == "select"
+    assert outcome.provider == "installed_engines"
+    assert outcome.store == "analysis" and outcome.key == "engine"

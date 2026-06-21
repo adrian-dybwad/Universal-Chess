@@ -73,6 +73,7 @@ def run_pairing_confirmation(
     accept: Callable[[], None],
     reject: Callable[[], None],
     log=_default_log,
+    auto_accept: bool = False,
 ) -> None:
     """Resolve a pairing request into a single accept() or reject() action.
 
@@ -86,10 +87,21 @@ def run_pairing_confirmation(
             pairing (the D-Bus agent's empty method reply).
         reject: Side-effecting callback invoked exactly once to refuse it (the
             D-Bus agent's ``org.bluez.Error.Rejected`` reply).
+        auto_accept: When True the pairing is authorized without prompting. This
+            is reserved for a board-initiated keyboard pairing, where the user
+            already established intent by selecting the keyboard and is busy
+            typing the passkey on it -- a Pair/Reject modal would only add a
+            button to race. ``on_confirm`` is intentionally NOT consulted in
+            this path. Incoming phone/app pairings leave this False so the
+            explicit on-board confirmation gate always applies.
 
     A missing callback or any exception from ``on_confirm`` results in
     ``reject()`` so a UI failure can never silently authorize a pairing.
     """
+    if auto_accept:
+        log.info("[Pairing] Board-initiated keyboard pairing; auto-accepting")
+        accept()
+        return
     if on_confirm is None:
         log.warning("[Pairing] No confirmation UI available; rejecting pairing")
         reject()

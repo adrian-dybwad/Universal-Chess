@@ -1,19 +1,22 @@
 """Bluetooth device-management and keyboard-pairing menu helpers.
 
 The top-level Bluetooth menu (status readout, advertised names, enable toggle)
-is data-driven from the shared catalog (``bluetooth`` container) and filled by
-the board's ``bluetooth_status`` provider. The multi-screen imperative flows --
-listing/connecting/forgetting paired devices and the continuous keyboard-pairing
-scan with on-board passkey display -- remain here and are invoked as the
-catalog's Devices/Pair actions.
+and the paired-device management flow (list -> detail -> connect/disconnect/forget
+and the stale-pairing confirm) are data-driven from the shared catalog
+(``bluetooth`` container and its ``bluetooth.devices.list`` / ``bluetooth.device.*``
+sub-containers), filled by the board's ``bluetooth_status`` and
+``bluetooth_paired_devices`` providers and driven by the connect/disconnect/forget
+actions in main. This module keeps the pure ``paired_device_rows`` transform those
+providers reuse, plus the one remaining imperative flow -- the continuous
+keyboard-pairing scan with on-board passkey display -- invoked as the catalog's
+Pair action.
 """
 
-import threading
 import time
-from typing import Callable, List, Optional
+from typing import List
 
-from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.epaper import SplashScreen
+from universalchess.menus.engine import MenuRow
 
 
 def _has_friendly_name(device: dict) -> bool:
@@ -34,7 +37,7 @@ def _has_friendly_name(device: dict) -> bool:
     return upper != addr_upper and upper != addr_upper.replace(":", "-")
 
 
-def _show_splash(board, message: str, hold_seconds: float = 0.0) -> None:
+def show_splash(board, message: str, hold_seconds: float = 0.0) -> None:
     """Show a full-screen status message, optionally holding it briefly.
 
     Forces a full e-paper refresh: ``add_widget`` schedules a partial refresh,
@@ -58,337 +61,64 @@ def _show_splash(board, message: str, hold_seconds: float = 0.0) -> None:
         time.sleep(hold_seconds)
 
 
-_KEYBOARD_DEVICE_ENTRY_MAX_HEIGHT = 56
-_PAIRED_DEVICE_ENTRY_MAX_HEIGHT = 56
-# Cap on rows shown in the paired-device list; matches the keyboard list so the
-# two BT screens scroll/paginate identically.
+# Caps on rows shown in the device/keyboard lists; the two BT lists match so they
+# scroll/paginate identically.
 _PAIRED_DEVICE_LIST_LIMIT = 10
+_KEYBOARD_LIST_LIMIT = 10
 _DEVICE_LABEL_MAX_CHARS = 18
 
 
-def _build_paired_list_entries(devices: List[dict]) -> List[IconMenuEntry]:
-    """Build the paired-device list rows (one selectable row per device).
+def paired_device_rows(devices: List[dict]) -> List[MenuRow]:
+    """Build engine rows for the paired-device list (the provider's output).
 
-    Falls back to a single non-selectable 'No devices' row when nothing is
-    paired, so the screen is never blank and the user can still back out.
+    Pure transform from BlueZ paired devices to platform-neutral rows: one
+    selectable row per device, keyed by ``address`` so the engine's
+    ``bluetooth_device_select`` item action opens the right device, labelled with
+    the (truncated) name. Returns a single non-selectable 'No devices' row when
+    nothing is paired so the list never renders blank and can still be backed out
+    of -- the placeholder the deleted imperative loop used to insert.
+
+    Like ``wifi_network_rows`` this sets no e-paper chrome (``MenuRow`` is
+    platform-neutral); the board renderer applies default entry chrome. Kept pure
+    so row construction is unit-tested rather than buried in a board closure.
     """
-    entries: List[IconMenuEntry] = []
+    rows: List[MenuRow] = []
     for dev in devices[:_PAIRED_DEVICE_LIST_LIMIT]:
         name = str(dev.get("name") or dev.get("address") or "")
-        label = name[:_DEVICE_LABEL_MAX_CHARS]
-        entries.append(
-            IconMenuEntry(key=dev["address"], label=label, icon_name="bluetooth",
-                          enabled=True, font_size=14, height_ratio=1.0,
-                          max_height=_PAIRED_DEVICE_ENTRY_MAX_HEIGHT)
-        )
-    if not entries:
-        entries.append(
-            IconMenuEntry(key="NoDevices", label="No devices",
-                          icon_name="bluetooth", enabled=True, selectable=False,
-                          font_size=14, height_ratio=1.0,
-                          max_height=_PAIRED_DEVICE_ENTRY_MAX_HEIGHT)
-        )
-    return entries
+        rows.append(MenuRow(key=dev["address"], label=name[:_DEVICE_LABEL_MAX_CHARS],
+                            icon="bluetooth"))
+    if not rows:
+        rows.append(MenuRow(key="__none__", label="No devices", icon="bluetooth",
+                            selectable=False))
+    return rows
 
 
-def _build_device_detail_entries(name: str, connected: bool) -> List[IconMenuEntry]:
-    """Build the per-device detail rows: a status header plus the actions.
+def keyboard_rows(named_devices: List[dict], scanning: bool) -> List[MenuRow]:
+    """Build engine rows for the keyboard-discovery list (the provider's output).
 
-    The connect/disconnect action is chosen from the current connection state so
-    only the meaningful action is offered (Connect when down, Disconnect when
-    up). Forget is always available.
+    Pure transform from the live scan results to platform-neutral rows: one
+    selectable row per discovered, named keyboard, keyed by ``address`` so the
+    engine's ``bluetooth_pair_select`` item action pairs the right device. When
+    none have been found yet, returns a single non-selectable placeholder --
+    "Scanning..." (keyed ``__scanning__``) while discovery is still running, or
+    "No devices" (keyed ``__none__``) once it has ended -- so the screen is never
+    blank and the user can tell whether the board is still looking.
+
+    Callers pass only devices that already advertise a friendly name (see
+    :func:`_has_friendly_name`); nameless mid-discovery entries are filtered out
+    upstream so a real keyboard is not buried among anonymous ones. Like the other
+    list providers this sets no e-paper chrome; the board renderer applies default
+    entry chrome.
     """
-    status_label = f"{name[:_DEVICE_LABEL_MAX_CHARS]}\n" + (
-        "Connected" if connected else "Not connected")
-    entries = [
-        IconMenuEntry(key="Info", label=status_label, icon_name="bluetooth",
-                      enabled=True, selectable=False, height_ratio=1.5,
-                      icon_size=36, layout="vertical", font_size=11,
-                      border_width=1),
-    ]
-    if connected:
-        entries.append(
-            IconMenuEntry(key="Disconnect", label="Disconnect", icon_name="cancel",
-                          enabled=True, selectable=True, height_ratio=0.8,
-                          layout="horizontal", font_size=14))
-    else:
-        entries.append(
-            IconMenuEntry(key="Connect", label="Connect", icon_name="bluetooth",
-                          enabled=True, selectable=True, height_ratio=0.8,
-                          layout="horizontal", font_size=14))
-    entries.append(
-        IconMenuEntry(key="Forget", label="Forget", icon_name="exit",
-                      enabled=True, selectable=True, height_ratio=0.8,
-                      layout="horizontal", font_size=14))
-    return entries
-
-
-def _build_stale_pairing_entries(name: str) -> List[IconMenuEntry]:
-    """Build the stale-pairing confirmation shown after auth failure only."""
-    return [
-        IconMenuEntry(key="Info", label=f"{name[:16]}\nrejected pairing",
-                      icon_name="bluetooth", enabled=True, selectable=False,
-                      height_ratio=1.2, layout="vertical", font_size=11),
-        IconMenuEntry(key="RemovePairing", label="Remove\nPairing",
-                      icon_name="exit", enabled=True, selectable=True,
-                      height_ratio=0.8, layout="horizontal", font_size=14),
-        IconMenuEntry(key="KeepPairing", label="Keep\nPairing",
-                      icon_name="cancel", enabled=True, selectable=True,
-                      height_ratio=0.8, layout="horizontal", font_size=14),
-    ]
-
-
-def _handle_device_detail(
-    device: dict,
-    connect_device: Callable[[str], bool],
-    disconnect_device: Callable[[str], bool],
-    forget_device: Callable[[str], bool],
-    show_menu: Callable[[list], str],
-    is_break_result_fn: Callable[[str], bool],
-    board,
-    log,
-    connect_device_status: Optional[Callable[[str], str]] = None,
-):
-    """Run the detail screen for one paired device.
-
-    Returns one of:
-        * ``None`` to go back to the list (Back pressed, or device forgotten).
-        * a break result / "SHUTDOWN" / "HELP" to propagate up the menu stack.
-
-    Connection status is re-derived locally after each action so the action row
-    flips between Connect and Disconnect without needing a re-query.
-    """
-    address = device["address"]
-    name = str(device.get("name") or address)
-    connected = bool(device.get("connected", False))
-
-    while True:
-        result = show_menu(_build_device_detail_entries(name, connected))
-        if is_break_result_fn(result):
-            return result
-        if result in ("SHUTDOWN", "HELP"):
-            return result
-        if result == "BACK":
-            return None
-        if result == "Connect":
-            _show_splash(board, f"Connecting\n{name[:14]}...")
-            status = (connect_device_status(address)
-                      if connect_device_status is not None
-                      else ("ok" if connect_device(address) else "failed"))
-            if status == "ok":
-                _show_splash(board, "Connected", hold_seconds=2.0)
-                connected = True
-            elif status == "auth_failed":
-                confirm = show_menu(_build_stale_pairing_entries(name))
-                if is_break_result_fn(confirm):
-                    return confirm
-                if confirm in ("SHUTDOWN", "HELP"):
-                    return confirm
-                if confirm == "RemovePairing":
-                    _show_splash(board, f"Forgetting\n{name[:14]}...")
-                    ok = forget_device(address)
-                    _show_splash(board, "Pairing removed" if ok else "Forget failed",
-                                 hold_seconds=2.0)
-                    if ok:
-                        return None
-                connected = False
-            else:
-                _show_splash(board, "Connect failed", hold_seconds=2.0)
-                connected = False
-        elif result == "Disconnect":
-            _show_splash(board, f"Disconnecting\n{name[:14]}...")
-            ok = disconnect_device(address)
-            _show_splash(board, "Disconnected" if ok else "Disconnect failed",
-                         hold_seconds=2.0)
-            # A successful disconnect clears the link; a failure leaves it up.
-            connected = not ok
-        elif result == "Forget":
-            _show_splash(board, f"Forgetting\n{name[:14]}...")
-            ok = forget_device(address)
-            _show_splash(board, "Forgotten" if ok else "Forget failed",
-                         hold_seconds=2.0)
-            if ok:
-                return None  # Device is gone; return to the (re-queried) list.
-
-
-def handle_paired_devices_menu(
-    list_devices: Callable[[], List[dict]],
-    connect_device: Callable[[str], bool],
-    disconnect_device: Callable[[str], bool],
-    forget_device: Callable[[str], bool],
-    show_menu: Callable[[list], str],
-    is_break_result_fn: Callable[[str], bool],
-    board,
-    log,
-    connect_device_status: Optional[Callable[[str], str]] = None,
-):
-    """List paired Bluetooth devices and manage the selected one.
-
-    Selecting a device opens a detail screen showing its connection status with
-    Connect/Disconnect and Forget actions. The list is re-queried each time it is
-    shown so a forgotten device disappears and connection-state changes are
-    reflected.
-
-    Args:
-        list_devices: Returns the current paired devices as
-            ``[{"address", "name", "connected"}, ...]``.
-        connect_device/disconnect_device/forget_device: Act on an address and
-            return success.
-        show_menu: Renders an IconMenuEntry list and returns the selected key.
-        is_break_result_fn: Detects break results from show_menu.
-        board: Board module (for splash display access).
-        log: Logger.
-    """
-    while True:
-        devices = list_devices()
-        result = show_menu(_build_paired_list_entries(devices))
-        if is_break_result_fn(result):
-            return result
-        if result in ("BACK", "SHUTDOWN", "HELP"):
-            return result if result in ("SHUTDOWN", "HELP") else None
-        if result == "NoDevices":
-            continue
-
-        selected = next((d for d in devices if d["address"] == result), None)
-        if not selected:
-            continue
-
-        detail_result = _handle_device_detail(
-            selected, connect_device, disconnect_device, forget_device,
-            show_menu, is_break_result_fn, board, log,
-            connect_device_status=connect_device_status)
-        if detail_result is None:
-            continue  # Back from detail (or forgotten) -> re-list.
-        if is_break_result_fn(detail_result) or detail_result in ("SHUTDOWN", "HELP"):
-            return detail_result
-
-
-def handle_keyboard_pairing_menu(
-    scan_stream: Callable[[Callable[[dict], None], threading.Event], None],
-    pair_keyboard: Callable[[str], bool],
-    show_menu: Callable[[list], str],
-    is_break_result_fn: Callable[[str], bool],
-    board,
-    log,
-    refresh_menu: Optional[Callable[[], None]] = None,
-):
-    """Continuously scan for Bluetooth keyboards and pair the selected one.
-
-    Discovery runs for the whole lifetime of this screen rather than for a fixed
-    window: real keyboards answer a BR/EDR inquiry on their own schedule and some
-    advertise only intermittently, so a keyboard that responds late still appears
-    as soon as it is seen. The list screen is shown immediately with a
-    "Scanning..." row and repopulates as keyboards arrive. The passkey (if the
-    keyboard requires one) is displayed automatically by the pairing agent.
-
-    Args:
-        scan_stream: Runs continuous discovery, calling its ``on_found`` argument
-            with a {'address', 'name'} dict for each keyboard the first time it
-            is seen and again when its resolved name changes, until the passed
-            stop Event is set.
-        pair_keyboard: Pairs/trusts/connects the given address; returns success.
-        show_menu: Renders an IconMenuEntry list and returns the selected key.
-        is_break_result_fn: Detects break results from show_menu.
-        board: Board module (for display access).
-        log: Logger.
-        refresh_menu: Optional callback that asks the active menu to rebuild when
-            a keyboard arrives, so the list updates without user input.
-    """
-    log.info("[BTKeyboard] Starting continuous keyboard discovery...")
-    devices_by_address: dict = {}
-    devices_lock = threading.Lock()
-    stop_scan = threading.Event()
-    scan_ended = threading.Event()
-
-    # Only show devices that advertise a real, human-readable name; a keyboard
-    # often appears mid-discovery with an address-only name before BlueZ resolves
-    # the friendly name, and listing those would bury a real keyboard among
-    # anonymous entries (and past the display cap).
-    def current_named_devices() -> List[dict]:
-        with devices_lock:
-            return [d for d in devices_by_address.values() if _has_friendly_name(d)]
-
-    def on_found(device: dict) -> None:
-        address = device.get("address")
-        if not address or not _has_friendly_name(device):
-            return
-        with devices_lock:
-            existing = devices_by_address.get(address)
-            if existing is not None:
-                if existing.get("name") == device.get("name"):
-                    return
-                existing.update(device)
-            else:
-                devices_by_address[address] = device
-        if not stop_scan.is_set() and refresh_menu is not None:
-            refresh_menu()
-
-    def run_scan() -> None:
-        try:
-            scan_stream(on_found, stop_scan)
-        except Exception as e:
-            log.error(f"[BTKeyboard] Keyboard discovery failed: {e}")
-        finally:
-            scan_ended.set()
-            if not stop_scan.is_set() and refresh_menu is not None:
-                refresh_menu()
-
-    def build_entries(named_devices: List[dict]) -> List[IconMenuEntry]:
-        entries = []
-        for dev in named_devices[:10]:
-            name = dev["name"]
-            label = name[:18] if len(name) > 18 else name
-            entries.append(
-                IconMenuEntry(key=dev["address"], label=label,
-                              icon_name="bluetooth", enabled=True, font_size=14,
-                              height_ratio=1.0,
-                              max_height=_KEYBOARD_DEVICE_ENTRY_MAX_HEIGHT)
-            )
-        if not entries:
-            still_scanning = not scan_ended.is_set()
-            entries.append(
-                IconMenuEntry(
-                    key="Scanning" if still_scanning else "NoDevices",
-                    label="Scanning..." if still_scanning else "No devices",
-                    icon_name="bluetooth",
-                    enabled=True,
-                    selectable=False,
-                    font_size=14,
-                    height_ratio=1.0,
-                    max_height=_KEYBOARD_DEVICE_ENTRY_MAX_HEIGHT,
-                )
-            )
-        return entries
-
-    scan_thread = threading.Thread(target=run_scan, daemon=True)
-    scan_thread.start()
-
-    try:
-        while True:
-            result = show_menu(build_entries(current_named_devices()))
-            if result == "REFRESH":
-                continue
-            if is_break_result_fn(result):
-                return result
-            if result in ["BACK", "SHUTDOWN", "HELP"]:
-                return
-            if result in ["Scanning", "NoDevices"]:
-                continue
-            break
-    finally:
-        stop_scan.set()
-
-    # Wind down discovery before pairing: an active inquiry keeps the controller
-    # busy, which makes the pairing connection time out.
-    scan_thread.join(timeout=6.0)
-
-    selected = next(
-        (d for d in current_named_devices() if d["address"] == result), None)
-    if not selected:
-        return
-
-    _show_splash(board, f"Pairing\n{selected['name'][:14]}...")
-    ok = pair_keyboard(selected["address"])
-    _show_splash(board, "Keyboard paired" if ok else "Pairing failed",
-                 hold_seconds=2.0)
+    rows: List[MenuRow] = []
+    for dev in named_devices[:_KEYBOARD_LIST_LIMIT]:
+        name = str(dev.get("name") or "")
+        rows.append(MenuRow(key=dev["address"], label=name[:_DEVICE_LABEL_MAX_CHARS],
+                            icon="bluetooth"))
+    if not rows:
+        rows.append(MenuRow(
+            key="__scanning__" if scanning else "__none__",
+            label="Scanning..." if scanning else "No devices",
+            icon="bluetooth", selectable=False))
+    return rows
 

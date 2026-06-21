@@ -49,26 +49,18 @@ from universalchess.menus import (
     _get_players_summary,
     handle_positions_menu,
     handle_chromecast_menu,
-    handle_inactivity_timeout,
     wifi_status_icon,
     wifi_signal_icon,
     wifi_network_rows,
-    handle_keyboard_pairing_menu,
-    handle_paired_devices_menu,
     handle_accounts_menu,
     mask_token,
     handle_engine_manager_menu,
     handle_engine_detail_menu,
     show_engine_install_progress,
     reset_all_settings,
-    handle_analysis_engine_selection,
     get_lichess_client,
     ensure_token,
     start_lichess_game_service,
-)
-from universalchess.menus.engine_menu import (
-    handle_engine_selection,
-    handle_elo_selection,
 )
 from universalchess.utils.wifi import (
     scan_wifi_networks,
@@ -302,28 +294,106 @@ def _on_display_refresh(image):
     except Exception as e:
         log.debug(f"Failed to write epaper.jpg: {e}")
 
-def _init_display_early():
-    """Initialize display and show splash screen before board initialization.
-    
-    Display operations are queued and monitored in background threads,
-    allowing the main thread to continue with other startup tasks while
-    the e-paper display catches up (the initial Clear() takes ~3 seconds).
+def _read_il3820_enabled() -> bool:
+    """Return whether the [display] il3820 opt-in is set (default off).
+
+    The opt-in does NOT gate the SSD1680 fallback -- that is automatic whenever
+    the UC8151D driver trips its BUSY timeout. It only enables the optional
+    IL3820-specific init additions inside the SSD1680 driver.
     """
-    global _early_display_manager, _startup_splash
+    from universalchess.board.settings import Settings
+    value = Settings.read('display', 'il3820', 'False')
+    return str(value).strip().lower() in ('1', 'true', 'on', 'yes')
+
+
+def _attempt_display_init(epd):
+    """Build a Manager around ``epd`` and run initialize(); never raises.
+
+    Returns ``(manager, DisplayAttempt)``. A failed init is reported as an
+    attempt rather than an exception so the selector can decide whether to fall
+    back. ``busy_timeout`` is read from the driver's flag so a BUSY-timeout
+    failure (the inverted-polarity V1 signature) is distinguished from any other
+    initialization error.
+    """
+    from universalchess.board.display_selection import DisplayAttempt
+    manager = Manager(on_refresh=_on_display_refresh, epd=epd)
     try:
-        _early_display_manager = Manager(on_refresh=_on_display_refresh)
-        promise = _early_display_manager.initialize()
+        promise = manager.initialize()
         # Don't block - monitor in background thread
         _wait_for_display_promise(promise, "initialize", timeout=10.0)
-        
+        return manager, DisplayAttempt(ok=True)
+    except Exception as e:
+        return manager, DisplayAttempt(
+            ok=False,
+            busy_timeout=getattr(epd, "busy_timeout_occurred", False),
+            error=str(e),
+        )
+
+
+def _init_display_early():
+    """Initialize display and show splash screen before board initialization.
+
+    Tries the UC8151D (V2) driver first. If it trips the BUSY timeout -- the
+    signature of an inverted-polarity V1 panel -- it automatically retries with
+    the SSD1680 (V1-family) driver; no opt-in is required for that fallback. The
+    [display] il3820 opt-in only toggles the optional IL3820 additions inside
+    the SSD1680 driver. The resolved outcome (controller + busy_timeout) is
+    published to the cross-process status file for the web System card.
+
+    Display operations are queued and monitored in background threads, allowing
+    the main thread to continue with other startup tasks while the e-paper
+    display catches up (the initial Clear() takes ~3 seconds).
+    """
+    global _early_display_manager, _startup_splash
+    from universalchess.board import hardware_info
+    from universalchess.board import display_selection as ds
+    from universalchess.epaper.framework.waveshare.epd2in9d import EPD as PrimaryEPD
+
+    il3820_enabled = _read_il3820_enabled()
+
+    manager, primary = _attempt_display_init(PrimaryEPD())
+    alt = None
+    if ds.should_attempt_alt(primary):
+        # UC8151D never saw idle -> automatically try the SSD1680 (V1) driver.
+        from universalchess.epaper.framework.waveshare.epd2in9_ssd1680 import (
+            EPD as AltEPD,
+        )
+        log.warning(
+            "UC8151D BUSY timeout at startup; trying SSD1680 fallback "
+            f"(il3820_additions={il3820_enabled})"
+        )
+        alt_manager, alt = _attempt_display_init(AltEPD(il3820_additions=il3820_enabled))
+        if alt.ok:
+            manager = alt_manager
+
+    outcome = ds.resolve_outcome(primary, alt)
+
+    if outcome.initialized:
+        _early_display_manager = manager
         # Show splash screen immediately (full screen, no status bar)
         _early_display_manager.clear_widgets(addStatusBar=False)
         _startup_splash = SplashScreen(_early_display_manager.update, message="Starting...", leave_room_for_status_bar=False)
         promise = _early_display_manager.add_widget(_startup_splash)
         # Don't block - monitor in background thread
         _wait_for_display_promise(promise, "add_splash", timeout=10.0)
-    except Exception as e:
-        log.warning(f"Early display initialization failed: {e}")
+        # Publish success so the web System card reflects the live panel state.
+        hardware_info.write_display_status(
+            initialized=True,
+            busy_timeout=outcome.busy_timeout,
+            controller=outcome.active_controller,
+        )
+    else:
+        log.warning(f"Early display initialization failed: {outcome.error}")
+        # Latch the failure for the (separate) web process: the panel never
+        # initialized (e.g. a V1 panel that trips the BUSY timeout), so the
+        # System card must show "Not responding" rather than the configured V2.
+        # busy_timeout still propagates so the UI reveals the IL3820 opt-in.
+        hardware_info.write_display_status(
+            initialized=False,
+            error=outcome.error,
+            busy_timeout=outcome.busy_timeout,
+            controller=None,
+        )
 
 # Initialize display before importing board
 _init_display_early()
@@ -416,6 +486,7 @@ try:
         DisplayManager,
         MenuManager,
         MenuSelection,
+        WebCommandInterrupt,
         is_break_result,
         is_refresh_result,
         find_entry_index,
@@ -699,27 +770,54 @@ def _broadcast_bt_event(event_type: str, data: dict = None) -> None:
         log.debug(f"[App] Failed to broadcast {event_type}: {e}")
 
 
-def _start_web_pairing(address: str) -> None:
-    """Pair a keyboard requested from the web UI, on a background thread.
+def _pair_keyboard_board_initiated(address: str) -> bool:
+    """Pair a keyboard the user explicitly chose, with the agent auto-accepting.
 
-    Runs the proven ``BluezPairingManager.pair_keyboard`` flow (the same one the
-    board menu uses) off the IPC subscriber thread because it blocks for the
-    duration of the BlueZ handshake. The board's KeyboardDisplay agent still
-    services any passkey; ``_on_display_passkey`` mirrors that passkey to the web.
-    The start and final result are broadcast so the web card can show progress.
+    Both keyboard-pairing entry points -- the board's Pair-Keyboard menu and the
+    web UI -- must route through here so they behave identically. The pairing is
+    flagged board-initiated, which makes the BlueZ agent auto-accept the
+    numeric-comparison/just-works confirmation rather than raising a Pair/Reject
+    prompt the user cannot satisfy: a real keyboard has no display to compare a
+    code against, so that prompt would only time out (the observed "check the
+    code" failure when pairing from the web UI, which previously skipped the
+    flag). The flag is always cleared so a later *incoming* pairing keeps its
+    on-board confirmation gate.
+
+    Centralising the flag here -- the single seam that owns both managers --
+    keeps ``bluez_pairing`` decoupled from the BLE agent and prevents any one
+    entry point from forgetting to set it.
     """
     global bluez_pairing_manager
-    if not address:
-        return
     if bluez_pairing_manager is None:
         from universalchess.managers import BluezPairingManager
         bluez_pairing_manager = BluezPairingManager()
+    if ble_manager is not None:
+        ble_manager.begin_keyboard_pairing()
+    try:
+        return bool(bluez_pairing_manager.pair_keyboard(address))
+    finally:
+        if ble_manager is not None:
+            ble_manager.end_keyboard_pairing()
+
+
+def _start_web_pairing(address: str) -> None:
+    """Pair a keyboard requested from the web UI, on a background thread.
+
+    Runs the shared board-initiated pairing flow (the same one the board menu
+    uses, so the auto-accept agent behaviour is identical) off the IPC subscriber
+    thread because it blocks for the duration of the BlueZ handshake. The board's
+    KeyboardDisplay agent still services any passkey; ``_on_display_passkey``
+    mirrors that passkey to the web. The start and final result are broadcast so
+    the web card can show progress.
+    """
+    if not address:
+        return
 
     def worker():
         _broadcast_bt_event("bt_pair_result", {"address": address, "status": "started"})
         success = False
         try:
-            success = bool(bluez_pairing_manager.pair_keyboard(address))
+            success = _pair_keyboard_board_initiated(address)
         except Exception as e:  # noqa: BLE001 - report failure, never crash
             log.warning(f"[App] Web pairing of {address} failed: {e}")
         # Clear any lingering passkey on both surfaces, then report the outcome.
@@ -2141,10 +2239,12 @@ def _on_board_command(parsed: dict) -> None:
     """Receive a web board-control command (runs on the subscriber thread).
 
     Stores the command for the main thread to apply (display/game work must not
-    happen here) and, when the top-level main menu is showing, cancels its
-    selection so the main loop wakes and applies it promptly. A deep settings
-    submenu is left untouched; the command is applied when the board returns to
-    the main menu, so the on-board user's navigation is not interrupted.
+    happen here) and, whenever any menu is on screen, cancels its selection with
+    ``WEB_COMMAND``. The MenuManager latches that and raises ``WebCommandInterrupt``
+    from every nested ``show_menu``, so the command unwinds to the main loop from
+    any menu depth (root or a deep settings submenu) rather than being swallowed.
+    During a game no menu widget is active, so the command is instead picked up by
+    the main loop's per-iteration poll of ``_pending_board_command``.
     """
     global _pending_board_command
     command = parsed.get("command")
@@ -2180,11 +2280,12 @@ def _on_board_command(parsed: dict) -> None:
         return
 
     _pending_board_command = parsed
-    if (
-        app_state == AppState.MENU
-        and _menu_manager is not None
-        and _menu_manager.active_widget is not None
-    ):
+    # Cancel whenever a menu widget is active, regardless of MENU vs SETTINGS
+    # app_state: a settings submenu (app_state == SETTINGS) must also unwind, or
+    # the web command would block until the on-board user pressed a key. In GAME
+    # state no menu widget is active, so this is skipped and the main loop's poll
+    # applies the command.
+    if _menu_manager is not None and _menu_manager.active_widget is not None:
         _menu_manager.cancel_selection("WEB_COMMAND")
 
 
@@ -2512,13 +2613,16 @@ def _build_players_context():
 def _build_player_detail_context(player_num: int):
     """Build the context for one player's detail menu (settings.player_detail).
 
-    Binds the engine's generic "player" store to the chosen player's settings
-    and registers the board interactions the detail rows invoke. The virtual
-    ``has_color`` key drives the Color row's visibility (Player 1 only). The
-    store returns the real stored values (an unset name reads as ""); the "Human"
-    placeholder for the Name row is supplied declaratively by the node's
-    ``valueDefault`` so the store, the keyboard prefill, and the game's PGN name
-    all see the same truthful value.
+    Binds the engine's generic "player" store to the chosen player's settings,
+    registers the Engine/ELO list providers (installed engines, per-engine
+    levels) backing those provider-backed selects, and the board interactions the
+    detail rows invoke (name keyboard, Lichess). The virtual ``has_color`` key
+    drives the Color row's visibility (Player 1 only). The store returns the real
+    stored values (an unset name reads as ""); the "Human" placeholder for the
+    Name row is supplied declaratively by the node's ``valueDefault`` so the
+    store, the keyboard prefill, and the game's PGN name all see the same truthful
+    value. Changing the engine resets ELO to Default, since ELO levels are
+    engine-specific.
     """
     from universalchess.menus.board_context import BoardMenuContext
 
@@ -2526,14 +2630,10 @@ def _build_player_detail_context(player_num: int):
         settings_dict = _player1_settings_dict
         save_setting = _save_player1_setting
         has_color = True
-        select_engine = _handle_player1_engine_selection
-        select_elo = _handle_player1_elo_selection
     else:
         settings_dict = _player2_settings_dict
         save_setting = _save_player2_setting
         has_color = False
-        select_engine = _handle_player2_engine_selection
-        select_elo = _handle_player2_elo_selection
 
     def player_get(key):
         if key == "has_color":
@@ -2543,12 +2643,45 @@ def _build_player_detail_context(player_num: int):
     def player_set(key, value):
         save_setting(key, value)
         log.info(f"[Settings] Player{player_num} {key} changed to {value}")
+        if key == "engine":
+            # ELO levels are engine-specific (a level valid for one engine is
+            # meaningless for another), so changing the engine resets ELO to
+            # Default -- the cascade the imperative engine picker performed inline.
+            save_setting("elo", "Default")
+            log.info(f"[Settings] Player{player_num} elo reset to Default (engine changed)")
+
+    def installed_engines():
+        """Rows for the Engine select: installed engines, with reverse-H+B compat."""
+        from universalchess.menus.engine import MenuRow
+
+        settings = settings_dict()
+        is_reverse_hb = (
+            settings["type"] == "hand_brain"
+            and settings.get("hand_brain_mode") == "reverse"
+        )
+        return [
+            MenuRow(
+                key=engine,
+                label=_format_engine_label_with_compat(engine, is_selected=False, show_compat=is_reverse_hb),
+                icon="engine",
+            )
+            for engine in _get_installed_engines()
+        ]
+
+    def engine_levels():
+        """Rows for the ELO select: the levels the current engine defines."""
+        from universalchess.menus.engine import MenuRow
+
+        return [
+            MenuRow(key=level, label=level, icon="elo")
+            for level in _get_engine_elo_levels(settings_dict()["engine"])
+        ]
 
     ctx = BoardMenuContext()
     ctx.register_store("player", player_get, player_set)
+    ctx.register_provider("installed_engines", installed_engines)
+    ctx.register_provider("engine_levels", engine_levels)
     ctx.register_action("edit_name", lambda: _prompt_player_name(player_num))
-    ctx.register_action("select_engine", lambda: _signal_from(select_engine()))
-    ctx.register_action("select_elo", lambda: _signal_from(select_elo()))
     ctx.register_action("lichess", lambda: _signal_from(_handle_lichess_menu()))
     return ctx
 
@@ -2584,60 +2717,6 @@ def _handle_players_menu():
     return None
 
 
-def _handle_player1_engine_selection():
-    """Handle engine selection for Player 1."""
-    return handle_engine_selection(
-        player_settings=_player1_settings_dict(),
-        show_menu=_show_menu,
-        is_break_result=is_break_result,
-        get_installed_engines=_get_installed_engines,
-        format_engine_label_with_compat=_format_engine_label_with_compat,
-        save_player_setting=_save_player1_setting,
-        log=log,
-        board=board,
-    )
-
-
-def _handle_player2_engine_selection():
-    """Handle engine selection for Player 2."""
-    return handle_engine_selection(
-        player_settings=_player2_settings_dict(),
-        show_menu=_show_menu,
-        is_break_result=is_break_result,
-        get_installed_engines=_get_installed_engines,
-        format_engine_label_with_compat=_format_engine_label_with_compat,
-        save_player_setting=_save_player2_setting,
-        log=log,
-        board=board,
-    )
-
-
-def _handle_player1_elo_selection():
-    """Handle ELO selection for Player 1."""
-    return handle_elo_selection(
-        player_settings=_player1_settings_dict(),
-        show_menu=_show_menu,
-        is_break_result=is_break_result,
-        get_engine_elo_levels=_get_engine_elo_levels,
-        save_player_setting=_save_player1_setting,
-        log=log,
-        board=board,
-    )
-
-
-def _handle_player2_elo_selection():
-    """Handle ELO selection for Player 2."""
-    return handle_elo_selection(
-        player_settings=_player2_settings_dict(),
-        show_menu=_show_menu,
-        is_break_result=is_break_result,
-        get_engine_elo_levels=_get_engine_elo_levels,
-        save_player_setting=_save_player2_setting,
-        log=log,
-        board=board,
-    )
-
-
 def _get_wifi_password_from_board(ssid: str) -> Optional[str]:
     """Get WiFi password using keyboard widget (delegated to wifi_service)."""
     def _factory(update_fn, title, max_len):
@@ -2649,65 +2728,6 @@ def _get_wifi_password_from_board(ssid: str) -> Optional[str]:
         keyboard_factory=_factory,
         set_active_keyboard=lambda w: _set_active_keyboard_widget(w),
         clear_active_keyboard=_clear_active_keyboard_widget,
-    )
-
-
-def _handle_pair_keyboard():
-    """Scan for and pair a Bluetooth keyboard (Settings > Bluetooth).
-
-    Pairing requests are serviced by the application's KeyboardDisplay agent, so
-    a passkey (if the keyboard requires one) is shown on the board during the
-    pair step. After pairing the device is trusted and connected; BlueZ then
-    exposes it as an input device which the keyboard manager begins reading.
-    """
-    global bluez_pairing_manager
-    if bluez_pairing_manager is None:
-        from universalchess.managers import BluezPairingManager
-        bluez_pairing_manager = BluezPairingManager()
-
-    def pair_keyboard(address: str) -> bool:
-        return bluez_pairing_manager.pair_keyboard(address)
-
-    def scan_stream(on_found, stop_event):
-        # Continuous BlueZ discovery (BR/EDR inquiry + LE scan) reports each
-        # keyboard the moment it appears and keeps running until the pairing
-        # screen is dismissed, so an intermittently-discoverable keyboard is not
-        # missed by a fixed-length scan.
-        bluez_pairing_manager.discover_keyboards_stream(on_found, stop_event)
-
-    return handle_keyboard_pairing_menu(
-        scan_stream=scan_stream,
-        pair_keyboard=pair_keyboard,
-        show_menu=_show_menu,
-        is_break_result_fn=is_break_result,
-        board=board,
-        log=log,
-        refresh_menu=_menu_manager.refresh_menu if _menu_manager else None,
-    )
-
-
-def _handle_manage_devices():
-    """List paired Bluetooth devices and connect/disconnect/forget them.
-
-    Opens the management screen (Settings > Bluetooth > Devices). Paired devices
-    persist in the BlueZ object tree, so the list is read without an inquiry;
-    selecting a device shows its connection status and the relevant actions.
-    """
-    global bluez_pairing_manager
-    if bluez_pairing_manager is None:
-        from universalchess.managers import BluezPairingManager
-        bluez_pairing_manager = BluezPairingManager()
-
-    return handle_paired_devices_menu(
-        list_devices=bluez_pairing_manager.list_paired_devices,
-        connect_device=bluez_pairing_manager.connect_device,
-        disconnect_device=bluez_pairing_manager.disconnect_device,
-        forget_device=bluez_pairing_manager.forget_device,
-        show_menu=_show_menu,
-        is_break_result_fn=is_break_result,
-        board=board,
-        log=log,
-        connect_device_status=getattr(bluez_pairing_manager, "connect_device_status", None),
     )
 
 
@@ -2739,9 +2759,6 @@ def _get_installed_version() -> str:
 # Defaults for game settings the Display menu reads that may be absent from a
 # freshly initialized centaur.ini (mirrors the old menu's .get(...) fallbacks).
 _DISPLAY_GAME_DEFAULTS = {"led_brightness": 5, "chess_sprites": "default"}
-
-# Prefix for per-sheet radio rows in the Board submenu (key = sprite:<id>).
-_SPRITE_KEY_PREFIX = "sprite:"
 
 
 def _build_game_context():
@@ -2859,37 +2876,31 @@ def _build_settings_entries():
 def _build_display_context():
     """Build a BoardMenuContext for the Display menu.
 
-    Extends the shared game context with the ``sprite_sheets`` dynamic provider
-    (one radio row per installed sheet, with its black-king preview as the row
-    glyph). The engine then drives the toggles, the LED range cycler, the
-    conditional Show Graph row, and sprite selection.
+    Extends the shared game context with the ``sprite_sheets`` dynamic provider,
+    a pure data source returning one row per installed sheet (with its black-king
+    preview as the row glyph). The engine then drives the toggles, the LED range
+    cycler, the conditional Show Graph row, and -- via the catalog node's
+    ``itemBind`` -- the inline sprite radio set (the engine attaches each row's
+    set_value behavior and the radio marker, so this provider carries no
+    dispatch/marking logic).
     """
     from universalchess.menus.engine import MenuRow
 
     ctx = _build_game_context()
 
     def sprite_sheets():
-        current = _game_settings_dict().get("chess_sprites", _DISPLAY_GAME_DEFAULTS["chess_sprites"])
+        """Pure data source: one row per installed sheet with its preview glyph.
+
+        The radio behavior (write chess_sprites on select) and the radio marker
+        are owned by the engine via the catalog node's ``itemBind`` -- this
+        provider returns only the list and each sheet's preview image/mask.
+        """
         rows = []
         for sheet in _list_chess_sprite_sheets():
             preview = _chess_sprite_preview(sheet)
             image, mask = preview if preview is not None else (None, None)
             rows.append(
-                MenuRow(
-                    key=f"{_SPRITE_KEY_PREFIX}{sheet}",
-                    label=sheet,
-                    icon="positions",
-                    icon_image=image,
-                    icon_mask=mask,
-                    trailing_icon="radio_checked" if sheet == current else "radio_empty",
-                    node={
-                        "id": f"{_SPRITE_KEY_PREFIX}{sheet}",
-                        "key": f"{_SPRITE_KEY_PREFIX}{sheet}",
-                        "type": "set_value",
-                        "bind": {"store": "game", "key": "chess_sprites"},
-                        "value": sheet,
-                    },
-                )
+                MenuRow(key=sheet, label=sheet, icon="positions", icon_image=image, icon_mask=mask)
             )
         return rows
 
@@ -2964,16 +2975,15 @@ def _handle_sound_menu():
 # ============================================================================
 # System Menu (data-driven)
 # ----------------------------------------------------------------------------
-# The System subtree (engines, analysis engine, sleep timer, reset, about,
-# power) and its nested Power and Reset-confirm menus are defined by the shared
-# catalog (``system`` / ``power`` / ``system.reset.confirm`` containers) and run
-# through the engine. main.py supplies only the board glue: a read-only
-# ``system`` store (analysis-mode and sleep-timer state used for the row icon
-# and label), the computed Sleep Timer label, and the actions that open the
-# still-dynamic sub-menus (engine manager, analysis, sleep timer, about) or
-# perform an effect (reset, shutdown, reboot, cancel). Engine/analysis/about
-# stay code-driven because they are inherently dynamic (device/engine lists,
-# live telemetry); the engine simply invokes them as actions.
+# The System subtree (engines, sleep timer, reset, about, power) and its nested
+# Power and Reset-confirm menus are defined by the shared catalog (``system`` /
+# ``power`` / ``system.reset.confirm`` containers) and run through the engine.
+# main.py supplies only the board glue: a ``system`` store backing the Sleep
+# Timer select (``sleep_seconds`` read/write), and the actions that open the
+# still-dynamic sub-menus (engine manager, about) or perform an effect (reset,
+# shutdown, reboot, cancel). Engine manager and about stay code-driven because
+# they are inherently dynamic (engine lists, live telemetry); the engine simply
+# invokes them as actions.
 # ============================================================================
 
 def _run_engine_manager_menu():
@@ -3003,13 +3013,13 @@ def _build_game_menu_context():
     """Build the BoardMenuContext for the data-driven Game submenu.
 
     Combines the shared ``game`` store (Time Control, read/write) with the
-    ``analysis`` store (``mode`` read/write, persisted on toggle; ``engine``
-    read-only -- the displayed label) plus the dynamic engine-pick action and the
-    concise Time Control label compute. This single context backs the
-    ``settings.game`` container, which groups exactly the settings the web shows
-    under its Game tab (Time Control, Live Analysis, Analysis Engine). The
-    Analysis Engine row is gated on ``mode`` via the catalog's ``visibleWhen`` so
-    it only appears when Live Analysis is enabled.
+    ``analysis`` store (``mode`` and ``engine`` read/write, persisted on
+    toggle/pick) plus the ``installed_engines`` provider backing the Analysis
+    Engine select and the concise Time Control label compute. This single context
+    backs the ``settings.game`` container, which groups exactly the settings the
+    web shows under its Game tab (Time Control, Live Analysis, Analysis Engine).
+    The Analysis Engine row is gated on ``mode`` via the catalog's ``visibleWhen``
+    so it only appears when Live Analysis is enabled.
     """
     ctx = _build_game_context()
 
@@ -3026,22 +3036,20 @@ def _build_game_menu_context():
             _save_game_setting("analysis_mode", bool(value))
             log.info(f"[Settings] Analysis mode set to {bool(value)}")
             return
-        raise NotImplementedError(f"analysis store key is read-only: {key!r}")
+        if key == "engine":
+            _save_game_setting("analysis_engine", value)
+            log.info(f"[Settings] Analysis engine changed to {value}")
+            return
+        raise NotImplementedError(f"unknown analysis store key: {key!r}")
 
-    def do_select_engine():
-        # The installed-engine list is dynamic, so engine selection stays an
-        # imperative sub-flow invoked as an action (like the player engine pick).
-        return _signal_from(handle_analysis_engine_selection(
-            game_settings=_game_settings_dict(),
-            show_menu=_show_menu,
-            get_installed_engines=_get_installed_engines,
-            save_game_setting=_save_game_setting,
-            log=log,
-            board=board,
-        ))
+    def installed_engines():
+        """Rows for the Analysis Engine select: the installed engines."""
+        from universalchess.menus.engine import MenuRow
+
+        return [MenuRow(key=engine, label=engine, icon="engine") for engine in _get_installed_engines()]
 
     ctx.register_store("analysis", analysis_get, analysis_set)
-    ctx.register_action("select_analysis_engine", do_select_engine)
+    ctx.register_provider("installed_engines", installed_engines)
     ctx.register_value("time_control", lambda node: _time_control_label())
     return ctx
 
@@ -3058,11 +3066,6 @@ def _handle_game_menu():
     from universalchess.menus.board_context import run_engine_menu
 
     return run_engine_menu("settings.game", _build_game_menu_context(), _menu_manager)
-
-
-def _run_inactivity_menu():
-    """Run the (dynamic) Sleep Timer menu; return its break/None result."""
-    return handle_inactivity_timeout(board=board, log=log, menu_manager=_menu_manager)
 
 
 def _update_status_state_and_label():
@@ -3136,16 +3139,22 @@ def _build_updates_context():
     compute supplies the toggle's Enabled/Disabled label, and the actions invoke
     the imperative, splash-driven update flows.
     """
-    from universalchess.menus.board_context import BoardMenuContext
+    from universalchess.menus.board_context import BoardMenuContext, run_engine_menu
     from universalchess.services.update_service import get_update_service, UpdateChannel
     from universalchess.menus.update_menu import (
         check_for_updates_interactive,
         download_update_interactive,
         install_pending_interactive,
-        install_local_interactive,
+        perform_local_deb_install,
+        find_local_deb_files,
+        _show_update_splash,
     )
 
     svc = get_update_service()
+    # Path of the .deb discovered by the Install-Local action, read back by the
+    # confirmation's filename label and its Yes handler. Held per menu session so
+    # the catalog confirm container stays a pure structure with no path of its own.
+    local_deb = {"path": None}
 
     def update_get(key):
         status = svc.get_status_dict()
@@ -3157,6 +3166,9 @@ def _build_updates_context():
             return bool(status["has_pending_update"])
         if key == "available":
             return status["available_version"] or ""
+        if key == "local_deb_name":
+            # Basename for the confirm label; empty until discovery sets a path.
+            return os.path.basename(local_deb["path"]) if local_deb["path"] else ""
         if key == "has_download":
             # Download is offered only when an update is available but not yet
             # downloaded; once pending, the Install Pending row replaces it.
@@ -3187,8 +3199,28 @@ def _build_updates_context():
         return None
 
     def do_install_local():
-        install_local_interactive(board, log, _menu_manager)
-        return None
+        """Discover a local .deb, then open the data-driven confirm container.
+
+        Discovery and the "no package" feedback are board side effects; the
+        Install/Cancel gate and its filename label live in the catalog
+        (``updates.install_local.confirm``). The discovered path is stashed for
+        the confirm's Yes handler. Returns the confirm loop's break signal so a
+        game/connection event still unwinds the menu stack.
+        """
+        deb_files = find_local_deb_files()
+        if not deb_files:
+            _show_update_splash(board, "No .deb\nfound")
+            time.sleep(2)
+            return None
+        local_deb["path"] = deb_files[0]
+        return _signal_from(
+            run_engine_menu("updates.install_local.confirm", ctx, _menu_manager)
+        )
+
+    def do_install_local_confirmed():
+        """Install the discovered .deb (the confirm's Yes), then return to Updates."""
+        perform_local_deb_install(board, log, local_deb["path"])
+        return "BACK"
 
     ctx = BoardMenuContext()
     ctx.register_store("update", update_get, update_set)
@@ -3200,6 +3232,8 @@ def _build_updates_context():
     ctx.register_action("download_update", do_download)
     ctx.register_action("install_pending", do_install_pending)
     ctx.register_action("install_local", do_install_local)
+    ctx.register_action("install_local_confirmed", do_install_local_confirmed)
+    ctx.register_action("cancel", lambda: "BACK")
     return ctx
 
 
@@ -3235,27 +3269,27 @@ def _reset_settings_confirmed() -> str:
 def _build_system_context():
     """Build the BoardMenuContext for the System / Power / Reset subtree.
 
-    The read-only ``system`` store exposes the live state the System rows render:
-    ``sleep_enabled`` (the Sleep Timer row's timer icon). It is read-only because
-    none of these rows mutate state via the engine -- each opens a dynamic
-    sub-menu or performs an effect through an action -- so the setter fails
-    loudly if a future bound writer is added by mistake. (Live Analysis moved to
+    The ``system`` store backs the data-driven Sleep Timer select: ``sleep_seconds``
+    reads the current inactivity timeout (for the row's label/icon and the marked
+    option) and writes the chosen seconds back through the board. The remaining
+    System rows open a dynamic sub-menu (engine manager, about) or perform an
+    effect (reset, shutdown, reboot, cancel) via actions. (Live Analysis moved to
     the Game submenu, matching the web.)
     """
     from universalchess.menus.board_context import BoardMenuContext
     from universalchess.services.power import perform_shutdown, perform_reboot
 
     def system_get(key):
-        if key == "sleep_enabled":
-            return board.get_inactivity_timeout() != 0
+        if key == "sleep_seconds":
+            return board.get_inactivity_timeout()
         raise KeyError(f"unknown system store key: {key!r}")
 
     def system_set(key, value):
-        raise NotImplementedError(f"system store is read-only (key={key!r})")
-
-    def sleep_timer_label(node):
-        timeout = board.get_inactivity_timeout()
-        return "Disabled" if timeout == 0 else f"{timeout // 60} min"
+        if key == "sleep_seconds":
+            board.set_inactivity_timeout(int(value))
+            log.info(f"[Settings] Inactivity timeout set to {int(value)}s")
+            return
+        raise NotImplementedError(f"unknown system store key: {key!r}")
 
     def do_shutdown():
         # Clear menu state first so no stale menu survives the shutdown, then
@@ -3272,9 +3306,7 @@ def _build_system_context():
 
     ctx = BoardMenuContext()
     ctx.register_store("system", system_get, system_set)
-    ctx.register_value("sleep_timer", sleep_timer_label)
     ctx.register_action("engine_manager", lambda: _signal_from(_run_engine_manager_menu()))
-    ctx.register_action("inactivity", lambda: _signal_from(_run_inactivity_menu()))
     ctx.register_action("about", lambda: _signal_from(_run_about_menu()))
     ctx.register_action("reset_confirm", _reset_settings_confirmed)
     ctx.register_action("cancel", lambda: "BACK")
@@ -3496,18 +3528,46 @@ def _build_bluetooth_context():
 
     The ``bluetooth`` store exposes the radio's enabled flag (rfkill); the
     ``bluetooth_status`` provider yields the live readout rows; the
-    ``bluetooth_enable_state`` value supplies the toggle's Enabled/Disabled
-    label. Devices and Pair stay imperative (they own multi-screen flows with
-    live discovery and on-board passkey display), exposed as actions that forward
-    any break result up through ``_signal_from``.
+    ``bluetooth_enable_state`` value supplies the toggle's Enabled/Disabled label.
+
+    Paired-device management is now data-driven too: the ``bt_device`` store holds
+    the selected device the detail container renders, the
+    ``bluetooth_paired_devices`` provider fills the list, ``bt_device_status``
+    labels the detail header, and the connect/disconnect/forget/remove actions
+    perform the BlueZ side effects (with splash feedback) -- returning ``"BACK"``
+    when the device is gone so the engine pops the detail back to the (re-queried)
+    list. Connect's auth-failure path opens the ``bluetooth.device.stale`` confirm
+    container; a removal there exits the detail to the list. Keyboard pairing
+    stays imperative (a continuous discovery scan with on-board passkey display),
+    exposed as the ``bluetooth_pair`` action.
     """
-    from universalchess.menus.board_context import BoardMenuContext
+    from universalchess.menus.board_context import BoardMenuContext, run_engine_menu
+    from universalchess.menus.bluetooth_menu import (
+        paired_device_rows,
+        keyboard_rows,
+        show_splash,
+        _has_friendly_name,
+    )
     from universalchess.connectivity import bluetooth as _bt_conn
 
     bt_status_mod = __import__(
         "DGTCentaurMods.epaper.bluetooth_status",
         fromlist=["get_bluetooth_status"],
     )
+
+    # The device the detail screen acts on, set when a list row is selected and
+    # mutated in place as connect/disconnect change its state (the loop redraws,
+    # so visibleWhen flips Connect<->Disconnect). ``pairing.removed`` lets the
+    # auth-failure confirm tell the connect action to exit the detail to the list.
+    device = {"address": None, "name": "", "connected": False}
+    pairing = {"removed": False}
+
+    def _bluez():
+        global bluez_pairing_manager
+        if bluez_pairing_manager is None:
+            from universalchess.managers import BluezPairingManager
+            bluez_pairing_manager = BluezPairingManager()
+        return bluez_pairing_manager
 
     def bt_get(key):
         if key == "enabled":
@@ -3522,15 +3582,209 @@ def _build_bluetooth_context():
         else:
             bt_status_mod.disable_bluetooth()
 
+    def bt_device_get(key):
+        return device[key]
+
+    def bt_device_set(key, value):
+        device[key] = value
+
+    def paired_provider():
+        return paired_device_rows(_bluez().list_paired_devices())
+
+    def device_select(address):
+        """Open the detail screen for the chosen paired device.
+
+        The list's non-selectable empty-state row is keyed ``__none__`` and never
+        dispatches; a stale address that vanished between list builds is ignored.
+        """
+        if address == "__none__":
+            return None
+        chosen = next(
+            (d for d in _bluez().list_paired_devices() if d["address"] == address),
+            None,
+        )
+        if chosen is None:
+            return None
+        device["address"] = chosen["address"]
+        device["name"] = str(chosen.get("name") or chosen["address"])
+        device["connected"] = bool(chosen.get("connected", False))
+        return _signal_from(
+            run_engine_menu("bluetooth.device.detail", ctx, _menu_manager)
+        )
+
+    def device_connect():
+        mgr = _bluez()
+        address, name = device["address"], device["name"]
+        show_splash(board, f"Connecting\n{name[:14]}...")
+        status_fn = getattr(mgr, "connect_device_status", None)
+        status = (status_fn(address) if status_fn is not None
+                  else ("ok" if mgr.connect_device(address) else "failed"))
+        if status == "ok":
+            show_splash(board, "Connected", hold_seconds=2.0)
+            device["connected"] = True
+            return None
+        if status == "auth_failed":
+            # The peer rejected the saved bond; ask whether to remove it. A
+            # removal forgets the device, so exit the detail back to the list.
+            pairing["removed"] = False
+            run_engine_menu("bluetooth.device.stale", ctx, _menu_manager)
+            if pairing["removed"]:
+                return "BACK"
+            device["connected"] = False
+            return None
+        show_splash(board, "Connect failed", hold_seconds=2.0)
+        device["connected"] = False
+        return None
+
+    def device_disconnect():
+        mgr = _bluez()
+        show_splash(board, f"Disconnecting\n{device['name'][:14]}...")
+        ok = mgr.disconnect_device(device["address"])
+        show_splash(board, "Disconnected" if ok else "Disconnect failed", hold_seconds=2.0)
+        # A successful disconnect clears the link; a failure leaves it up.
+        device["connected"] = not ok
+        return None
+
+    def device_forget():
+        mgr = _bluez()
+        show_splash(board, f"Forgetting\n{device['name'][:14]}...")
+        ok = mgr.forget_device(device["address"])
+        show_splash(board, "Forgotten" if ok else "Forget failed", hold_seconds=2.0)
+        return "BACK" if ok else None  # gone -> pop detail to the re-queried list
+
+    def device_remove_pairing():
+        mgr = _bluez()
+        show_splash(board, f"Forgetting\n{device['name'][:14]}...")
+        ok = mgr.forget_device(device["address"])
+        show_splash(board, "Pairing removed" if ok else "Forget failed", hold_seconds=2.0)
+        pairing["removed"] = ok
+        return "BACK"  # exit the stale-pairing confirm
+
+    # -- keyboard pairing (continuous discovery + on-board passkey) ----------
+    # Like the WiFi scan, the imperative parts (a background discovery thread and
+    # the refresh-on-found subscription) live here while the list screen is the
+    # data-driven ``bluetooth.keyboards`` container. ``kbd`` carries the running
+    # scan's handles to the provider and the pair action.
+    kbd = {}
+
+    def keyboards_provider():
+        current = kbd.get("current_named")
+        scanning = kbd.get("scanning")
+        return keyboard_rows(current() if current else [],
+                             scanning() if scanning else False)
+
+    def pair_select(address):
+        """Pair the chosen keyboard, winding down discovery first.
+
+        The provider's placeholder rows (``__scanning__``/``__none__``) are
+        non-selectable and never reach here; a vanished address is ignored. An
+        active inquiry keeps the controller busy and makes the pairing connect
+        time out, so the scan is stopped and joined before pairing.
+        """
+        if address in ("__scanning__", "__none__"):
+            return None
+        current = kbd.get("current_named")
+        selected = next(
+            (d for d in (current() if current else []) if d["address"] == address),
+            None,
+        )
+        if selected is None:
+            return None
+        stop = kbd.get("stop_scan")
+        thread = kbd.get("scan_thread")
+        if stop is not None:
+            stop.set()
+        if thread is not None:
+            thread.join(timeout=6.0)
+        show_splash(board, f"Pairing\n{selected['name'][:14]}...")
+        ok = _pair_keyboard_board_initiated(address)
+        show_splash(board, "Keyboard paired" if ok else "Pairing failed", hold_seconds=2.0)
+        return "BACK"
+
+    def pair_keyboard_flow():
+        """Start continuous keyboard discovery, then run the data-driven list.
+
+        Discovery runs for the lifetime of the screen (real keyboards answer a
+        BR/EDR inquiry on their own schedule; some advertise only intermittently),
+        repopulating the list as keyboards arrive. Only friendly-named devices are
+        surfaced -- a keyboard often appears mid-discovery with an address-only
+        name before BlueZ resolves it. Each discovery (and scan end) cancels the
+        open selection so the engine redraws the list from fresh results, the same
+        mechanism the live WiFi/Bluetooth-status menus use.
+        """
+        mgr = _bluez()
+        found = {}
+        found_lock = threading.Lock()
+        stop_scan = threading.Event()
+        scan_ended = threading.Event()
+
+        def current_named():
+            with found_lock:
+                return [d for d in found.values() if _has_friendly_name(d)]
+
+        def on_found(dev):
+            address = dev.get("address")
+            if not address or not _has_friendly_name(dev):
+                return
+            with found_lock:
+                existing = found.get(address)
+                if existing is not None:
+                    if existing.get("name") == dev.get("name"):
+                        return
+                    existing.update(dev)
+                else:
+                    found[address] = dev
+            if not stop_scan.is_set() and _menu_manager is not None:
+                _menu_manager.cancel_selection("BT_KBD_REFRESH")
+
+        def run_scan():
+            try:
+                mgr.discover_keyboards_stream(on_found, stop_scan)
+            except Exception as e:
+                log.error(f"[BTKeyboard] keyboard discovery failed: {e}")
+            finally:
+                scan_ended.set()
+                if not stop_scan.is_set() and _menu_manager is not None:
+                    _menu_manager.cancel_selection("BT_KBD_REFRESH")
+
+        scan_thread = threading.Thread(target=run_scan, daemon=True)
+        kbd["current_named"] = current_named
+        kbd["scanning"] = lambda: not scan_ended.is_set()
+        kbd["stop_scan"] = stop_scan
+        kbd["scan_thread"] = scan_thread
+        log.info("[BTKeyboard] starting continuous keyboard discovery...")
+        scan_thread.start()
+        try:
+            return _signal_from(
+                run_engine_menu("bluetooth.keyboards", ctx, _menu_manager)
+            )
+        finally:
+            stop_scan.set()
+            scan_thread.join(timeout=6.0)
+
     ctx = BoardMenuContext()
     ctx.register_store("bluetooth", bt_get, bt_set)
+    ctx.register_store("bt_device", bt_device_get, bt_device_set)
     ctx.register_provider("bluetooth_status", _bluetooth_status_rows)
+    ctx.register_provider("bluetooth_paired_devices", paired_provider)
+    ctx.register_provider("bluetooth_keyboards", keyboards_provider)
     ctx.register_value(
         "bluetooth_enable_state",
         lambda node: "Enabled" if bt_get("enabled") else "Disabled",
     )
-    ctx.register_action("bluetooth_devices", lambda: _signal_from(_handle_manage_devices()))
-    ctx.register_action("bluetooth_pair", lambda: _signal_from(_handle_pair_keyboard()))
+    ctx.register_value(
+        "bt_device_status",
+        lambda node: f"{device['name'][:18]}\n"
+        + ("Connected" if device["connected"] else "Not connected"),
+    )
+    ctx.register_action("bluetooth_device_select", device_select)
+    ctx.register_action("bluetooth_connect", device_connect)
+    ctx.register_action("bluetooth_disconnect", device_disconnect)
+    ctx.register_action("bluetooth_forget", device_forget)
+    ctx.register_action("bluetooth_remove_pairing", device_remove_pairing)
+    ctx.register_action("cancel", lambda: "BACK")
+    ctx.register_action("bluetooth_pair_select", pair_select)
+    ctx.register_action("bluetooth_pair", pair_keyboard_flow)
     return ctx
 
 
@@ -5005,178 +5259,191 @@ def main():
     
     try:
         while running and not kill:
-            if app_state == AppState.MENU:
-                # Apply a web board-control command (set up position / abort) that
-                # arrived while the menu was showing. Runs here on the main thread.
-                if _pending_board_command is not None:
-                    _process_pending_board_command()
-                    continue  # Re-check app_state (may now be GAME)
+            try:
+                if app_state == AppState.MENU:
+                    # Apply a web board-control command (set up position / abort) that
+                    # arrived while the menu was showing. Runs here on the main thread.
+                    if _pending_board_command is not None:
+                        _process_pending_board_command()
+                        continue  # Re-check app_state (may now be GAME)
 
-                # Check for pending BLE client connection (set when connection happens between menus)
-                global _pending_ble_client_type
-                if _pending_ble_client_type is not None:
-                    log.info(f"[App] Pending BLE client connection detected ({_pending_ble_client_type}) - entering game")
-                    _pending_ble_client_type = None
-                    _enter_game()
-                    continue  # Re-check app_state (now should be GAME)
-                
-                # Check for pending piece events before showing menu
-                # These may have been queued while in a submenu
-                if _pending_piece_events:
-                    log.info(f"[App] Pending piece events detected ({len(_pending_piece_events)}) - entering game")
-                    _enter_game()
-                    continue  # Re-check app_state (now should be GAME)
-                
-                # Check if we need to restore to Settings menu (on startup)
-                if restore_to_settings:
-                    restore_to_settings = False
-                    log.info(f"[App] Restoring to Settings menu (submenu={restore_settings_submenu})")
-                    settings_result = _handle_settings(initial_selection=restore_settings_submenu)
-                    restore_settings_submenu = None  # Clear after use
-                    if is_break_result(settings_result):
+                    # Check for pending BLE client connection (set when connection happens between menus)
+                    global _pending_ble_client_type
+                    if _pending_ble_client_type is not None:
+                        log.info(f"[App] Pending BLE client connection detected ({_pending_ble_client_type}) - entering game")
+                        _pending_ble_client_type = None
                         _enter_game()
-                    continue  # After settings, loop back to check state
-                
-                # Restore the submenu the user was in when they suspended the
-                # game (PLAY), so the full menu reopens at its last position.
-                # One-shot: consumed here so a normal BACK out of the submenu does
-                # not immediately re-enter it.
-                global _suspended_menu_restore_path
-                if _suspended_menu_restore_path is not None:
-                    resume_path = _suspended_menu_restore_path
-                    _suspended_menu_restore_path = None
-                    if resume_path and resume_path[0][0] == "Settings":
-                        ctx.restore_from_path(resume_path)
-                        resume_submenu = resume_path[1][0] if len(resume_path) > 1 else None
-                        log.info(f"[App] Restoring suspended menu position (submenu={resume_submenu})")
-                        settings_result = _handle_settings(initial_selection=resume_submenu)
+                        continue  # Re-check app_state (now should be GAME)
+
+                    # Check for pending piece events before showing menu
+                    # These may have been queued while in a submenu
+                    if _pending_piece_events:
+                        log.info(f"[App] Pending piece events detected ({len(_pending_piece_events)}) - entering game")
+                        _enter_game()
+                        continue  # Re-check app_state (now should be GAME)
+
+                    # Check if we need to restore to Settings menu (on startup)
+                    if restore_to_settings:
+                        restore_to_settings = False
+                        log.info(f"[App] Restoring to Settings menu (submenu={restore_settings_submenu})")
+                        settings_result = _handle_settings(initial_selection=restore_settings_submenu)
+                        restore_settings_submenu = None  # Clear after use
                         if is_break_result(settings_result):
                             _enter_game()
+                        continue  # After settings, loop back to check state
+
+                    # Restore the submenu the user was in when they suspended the
+                    # game (PLAY), so the full menu reopens at its last position.
+                    # One-shot: consumed here so a normal BACK out of the submenu does
+                    # not immediately re-enter it.
+                    global _suspended_menu_restore_path
+                    if _suspended_menu_restore_path is not None:
+                        resume_path = _suspended_menu_restore_path
+                        _suspended_menu_restore_path = None
+                        if resume_path and resume_path[0][0] == "Settings":
+                            ctx.restore_from_path(resume_path)
+                            resume_submenu = resume_path[1][0] if len(resume_path) > 1 else None
+                            log.info(f"[App] Restoring suspended menu position (submenu={resume_submenu})")
+                            settings_result = _handle_settings(initial_selection=resume_submenu)
+                            if is_break_result(settings_result):
+                                _enter_game()
+                            continue
+                        # A non-Settings (e.g. root) capture has nothing to restore;
+                        # fall through to show the main menu normally.
+
+                    # Show main menu. The top entry relabels to RESUME when a game
+                    # is suspended (managers alive) so PLAY resumes it, and Original
+                    # Centaur is hidden when the Centaur software is absent -- both
+                    # resolved by the engine from the shared catalog.
+                    entries = _build_main_menu_entries()
+
+                    # Get initial index from context if at root, else use 0
+                    main_menu_index = ctx.current_index() if ctx.depth() == 0 else 0
+                    result = _show_menu(entries, initial_index=main_menu_index)
+
+                    # Update context with current selection (at root level, we just track the index)
+                    selected_index = find_entry_index(entries, result)
+                    if ctx.depth() == 0:
+                        # At root level - save main menu selection directly
+                        # We don't push "Main" since it's the root
+                        from universalchess.board.settings import Settings
+                        Settings.write(MENU_STATE_SECTION, 'path', '')
+                        Settings.write(MENU_STATE_SECTION, 'indices', str(selected_index))
+
+                    log.info(f"[App] Main menu selection: {result}")
+
+                    if result == "BACK":
+                        # BACK at the root menu has nowhere to go - there is no parent
+                        # menu and no meaningful standby state - so it simply stays on
+                        # the menu (re-renders on the next loop iteration).
                         continue
-                    # A non-Settings (e.g. root) capture has nothing to restore;
-                    # fall through to show the main menu normally.
-                
-                # Show main menu. The top entry relabels to RESUME when a game
-                # is suspended (managers alive) so PLAY resumes it, and Original
-                # Centaur is hidden when the Centaur software is absent -- both
-                # resolved by the engine from the shared catalog.
-                entries = _build_main_menu_entries()
-                
-                # Get initial index from context if at root, else use 0
-                main_menu_index = ctx.current_index() if ctx.depth() == 0 else 0
-                result = _show_menu(entries, initial_index=main_menu_index)
 
-                # A web board-control command cancelled the menu; loop back so the
-                # top-of-branch handler applies it (avoids writing the sentinel as
-                # a menu index).
-                if result == "WEB_COMMAND":
-                    continue
+                    elif result == "SHUTDOWN":
+                        ctx.clear()
+                        _shutdown("Shutdown")
 
-                # Update context with current selection (at root level, we just track the index)
-                selected_index = find_entry_index(entries, result)
-                if ctx.depth() == 0:
-                    # At root level - save main menu selection directly
-                    # We don't push "Main" since it's the root
-                    from universalchess.board.settings import Settings
-                    Settings.write(MENU_STATE_SECTION, 'path', '')
-                    Settings.write(MENU_STATE_SECTION, 'indices', str(selected_index))
-                
-                log.info(f"[App] Main menu selection: {result}")
-                
-                if result == "BACK":
-                    # BACK at the root menu has nowhere to go - there is no parent
-                    # menu and no meaningful standby state - so it simply stays on
-                    # the menu (re-renders on the next loop iteration).
-                    continue
-                
-                elif result == "SHUTDOWN":
-                    ctx.clear()
-                    _shutdown("Shutdown")
-                
-                elif result == "Centaur":
-                    ctx.clear()
-                    _run_centaur()
-                    # Note: _run_centaur() exits the process
-                
-                elif result in ("Universal", "PLAY", "CLIENT_CONNECTED", "PIECE_MOVED"):
-                    # Start a new game or resume the suspended one. _enter_game()
-                    # decides which, forwards queued piece events, and wires up an
-                    # already-connected client.
-                    _enter_game()
-                
-                elif result == "Settings":
-                    settings_result = _handle_settings()
-                    # A board event or PLAY pressed inside Settings breaks out to
-                    # enter (start or resume) the game.
-                    if is_break_result(settings_result):
+                    elif result == "Centaur":
+                        ctx.clear()
+                        _run_centaur()
+                        # Note: _run_centaur() exits the process
+
+                    elif result in ("Universal", "PLAY", "CLIENT_CONNECTED", "PIECE_MOVED"):
+                        # Start a new game or resume the suspended one. _enter_game()
+                        # decides which, forwards queued piece events, and wires up an
+                        # already-connected client.
                         _enter_game()
-                    # After settings, continue to main menu
-                
-                elif result == "HELP":
-                    # Could show about/help screen here
-                    pass
-            
-            elif app_state == AppState.GAME:
-                # Check if we need to switch from position game to normal game
-                if _switch_to_normal_game:
-                    _switch_to_normal_game = False
-                    log.info("[App] Switching from position game to normal game")
-                    _cleanup_game()
-                    _start_game_mode(starting_fen=None, is_position_game=False)
-                # Apply a settings change pushed from the web app during a game so
-                # display/sprite toggles take effect live, matching the on-board
-                # display menu. Rebuilt here (main thread) - never from the
-                # subscriber thread that set the flag.
-                elif _pending_settings_reload:
-                    _pending_settings_reload = False
-                    log.info("[App] Applying web settings change to live display")
-                    if display_manager:
-                        display_manager._init_widgets()
-                elif _pending_board_command is not None:
-                    # Web set up a position / aborted while a game was running.
-                    # Applied here on the main thread (rebuilds the game display).
-                    _process_pending_board_command()
-                else:
-                    # Stay in game mode - key_callback handles exit via _return_to_menu
-                    time.sleep(0.5)
-            
-            elif app_state == AppState.SETTINGS:
-                # Check if we need to return to positions menu (from position game back)
-                if _return_to_positions_menu:
-                    _return_to_positions_menu = False
-                    # Return directly to the last selected position in the menu
-                    ctx = _get_menu_context()
-                    position_result = handle_positions_menu(
-                        ctx=ctx,
-                        load_positions_config=lambda: load_positions_config(log),
-                        start_from_position=_start_from_position,
-                        show_menu=_show_menu,
-                        find_entry_index=find_entry_index,
-                        board=board,
-                        log=log,
-                        last_position_category_index_ref=[_last_position_category_index],
-                        last_position_index_ref=[_last_position_index],
-                        last_position_category_ref=[_last_position_category],
-                        return_to_last_position=True,
-                        is_game_in_progress=_has_suspended_game,
-                        abort_game=_abort_current_game,
-                    )
-                    if is_break_result(position_result):
-                        # BLE client connected during positions menu
-                        _start_game_mode()
-                        if protocol_manager:
-                            protocol_manager.on_app_connected()
-                    elif not position_result:
-                        # User backed out of positions menu, show settings
+
+                    elif result == "Settings":
                         settings_result = _handle_settings()
+                        # A board event or PLAY pressed inside Settings breaks out to
+                        # enter (start or resume) the game.
                         if is_break_result(settings_result):
+                            _enter_game()
+                        # After settings, continue to main menu
+
+                    elif result == "HELP":
+                        # Could show about/help screen here
+                        pass
+
+                elif app_state == AppState.GAME:
+                    # Check if we need to switch from position game to normal game
+                    if _switch_to_normal_game:
+                        _switch_to_normal_game = False
+                        log.info("[App] Switching from position game to normal game")
+                        _cleanup_game()
+                        _start_game_mode(starting_fen=None, is_position_game=False)
+                    # Apply a settings change pushed from the web app during a game so
+                    # display/sprite toggles take effect live, matching the on-board
+                    # display menu. Rebuilt here (main thread) - never from the
+                    # subscriber thread that set the flag.
+                    elif _pending_settings_reload:
+                        _pending_settings_reload = False
+                        log.info("[App] Applying web settings change to live display")
+                        if display_manager:
+                            display_manager._init_widgets()
+                    elif _pending_board_command is not None:
+                        # Web set up a position / aborted while a game was running.
+                        # Applied here on the main thread (rebuilds the game display).
+                        _process_pending_board_command()
+                    else:
+                        # Stay in game mode - key_callback handles exit via _return_to_menu
+                        time.sleep(0.5)
+
+                elif app_state == AppState.SETTINGS:
+                    # Check if we need to return to positions menu (from position game back)
+                    if _return_to_positions_menu:
+                        _return_to_positions_menu = False
+                        # Return directly to the last selected position in the menu
+                        ctx = _get_menu_context()
+                        position_result = handle_positions_menu(
+                            ctx=ctx,
+                            load_positions_config=lambda: load_positions_config(log),
+                            start_from_position=_start_from_position,
+                            show_menu=_show_menu,
+                            find_entry_index=find_entry_index,
+                            board=board,
+                            log=log,
+                            last_position_category_index_ref=[_last_position_category_index],
+                            last_position_index_ref=[_last_position_index],
+                            last_position_category_ref=[_last_position_category],
+                            return_to_last_position=True,
+                            is_game_in_progress=_has_suspended_game,
+                            abort_game=_abort_current_game,
+                        )
+                        if is_break_result(position_result):
+                            # BLE client connected during positions menu
                             _start_game_mode()
                             if protocol_manager:
                                 protocol_manager.on_app_connected()
-                else:
-                    # Settings handled by _handle_settings loop
-                    time.sleep(0.1)
-                
+                        elif not position_result:
+                            # User backed out of positions menu, show settings
+                            settings_result = _handle_settings()
+                            if is_break_result(settings_result):
+                                _start_game_mode()
+                                if protocol_manager:
+                                    protocol_manager.on_app_connected()
+                    else:
+                        # Settings handled by _handle_settings loop
+                        time.sleep(0.1)
+
+            except WebCommandInterrupt:
+                # A web board command (shutdown/reboot/reset/setup/...) was latched
+                # and raised through the menu stack from whatever depth was on
+                # screen, unwinding every nested loop at once. Clear the latch and
+                # apply it here on the main thread. Shutdown/reboot/run_centaur tear
+                # the process down; setup_position transitions to GAME; the rest
+                # return to the main menu below. This is what makes web Shutdown/
+                # Reboot work from a settings submenu, not only at the root menu.
+                _menu_manager.clear_web_command()
+                _process_pending_board_command()
+                if app_state == AppState.SETTINGS:
+                    # The interrupt unwound out of the Settings submenu loop; drop
+                    # its navigation state and show the main menu so the board is
+                    # usable again for non-exiting commands.
+                    _get_menu_context().clear()
+                    app_state = AppState.MENU
+                continue
+
     except KeyboardInterrupt:
         log.info("[App] Interrupted by Ctrl+C")
     except Exception as e:

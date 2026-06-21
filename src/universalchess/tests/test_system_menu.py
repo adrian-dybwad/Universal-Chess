@@ -46,25 +46,27 @@ class _FakeMenuManager:
                 return result
 
 
-def _system_ctx(*, timeout_seconds=0, calls=None):
+def _system_ctx(*, timeout_seconds=0, calls=None, saved=None):
     """Board context for the System subtree, mirroring main._build_system_context.
 
-    The read-only ``system`` store reports whether the sleep timer is enabled;
-    ``sleep_timer`` computes the timer label; every action is recorded (and
-    returns None unless noted) so dispatch effects are observable without a
-    display. ``reset_confirm`` and ``cancel`` return "BACK" exactly as the board
-    does, so the confirm submenu closes after either choice. (Live Analysis moved
-    to the Game submenu, so it is no longer part of the System context.)
+    The ``system`` store exposes ``sleep_seconds`` (the inactivity timeout) and is
+    writable so the Sleep Timer select can persist a choice; writes are recorded
+    in ``saved``. Every action is recorded (and returns None unless noted) so
+    dispatch effects are observable without a display. ``reset_confirm`` and
+    ``cancel`` return "BACK" exactly as the board does, so the confirm submenu
+    closes after either choice. (Sleep Timer is now a data-driven select, not an
+    action; Live Analysis moved to the Game submenu.)
     """
     calls = calls if calls is not None else []
+    saved = saved if saved is not None else {}
 
     def system_get(key):
-        if key == "sleep_enabled":
-            return timeout_seconds != 0
+        if key == "sleep_seconds":
+            return timeout_seconds
         raise KeyError(key)
 
-    def sleep_timer_label(node):
-        return "Disabled" if timeout_seconds == 0 else f"{timeout_seconds // 60} min"
+    def system_set(key, value):
+        saved[key] = value
 
     def record(name, result=None):
         def _fn():
@@ -73,16 +75,15 @@ def _system_ctx(*, timeout_seconds=0, calls=None):
         return _fn
 
     ctx = BoardMenuContext()
-    ctx.register_store("system", system_get, lambda k, v: (_ for _ in ()).throw(NotImplementedError(k)))
-    ctx.register_value("sleep_timer", sleep_timer_label)
+    ctx.register_store("system", system_get, system_set)
     ctx.register_action("engine_manager", record("engine_manager"))
-    ctx.register_action("inactivity", record("inactivity"))
     ctx.register_action("about", record("about"))
     ctx.register_action("reset_confirm", record("reset_confirm", "BACK"))
     ctx.register_action("cancel", record("cancel", "BACK"))
     ctx.register_action("shutdown", record("shutdown"))
     ctx.register_action("reboot", record("reboot"))
     ctx._recorded_calls = calls
+    ctx._saved = saved
     return ctx
 
 
@@ -119,11 +120,13 @@ def test_power_submenu_contains_only_shutdown_and_reboot():
 def test_sleep_timer_row_label_and_icon_reflect_timeout():
     """The Sleep Timer row shows the configured timeout and a matching icon.
 
-    Why this test exists: the label is a ``{fn:sleep_timer}`` computed token and
-    the icon is bound to ``system.sleep_enabled``; both must reflect the live
-    timeout (Disabled + plain timer when 0, "N min" + checked timer otherwise).
-    How a regression manifests: the label reverts to a static "Sleep Timer" or
-    the icon stops tracking the enabled state.
+    Why this test exists: Sleep Timer is now a ``select`` bound to
+    ``system.sleep_seconds`` over the shared ``sleep_timer`` option set, so the
+    label resolves the bound seconds through the option set ({value}) and the icon
+    is a state map keyed by the seconds value (plain timer when 0/Disabled, the
+    checked timer for any set interval). How a regression manifests: the label
+    reverts to a static "Sleep Timer" (no {value}) or the icon stops tracking
+    whether a timeout is set.
     """
     disabled = {r.key: r for r in _system_rows(timeout_seconds=0)}["Inactivity"]
     assert disabled.label == "Sleep Timer\nDisabled"
@@ -132,6 +135,22 @@ def test_sleep_timer_row_label_and_icon_reflect_timeout():
     enabled = {r.key: r for r in _system_rows(timeout_seconds=600)}["Inactivity"]
     assert enabled.label == "Sleep Timer\n10 min"
     assert enabled.icon == "timer_checked"
+
+
+def test_selecting_sleep_timer_persists_seconds():
+    """Picking a Sleep Timer option writes the seconds value to the system store.
+
+    Why this test exists: Sleep Timer was migrated from an imperative action to a
+    provider-less ``select`` over the ``sleep_timer`` option set bound to
+    system.sleep_seconds. How a regression manifests: the select is inert, so the
+    board can no longer change the inactivity timeout.
+    """
+    saved = {}
+    ctx = _system_ctx(timeout_seconds=0, saved=saved)
+    # System: open Sleep Timer; inner list: pick 600 (10 min); System: BACK.
+    mm = _FakeMenuManager(["Inactivity", "600", "BACK"])
+    run_engine_menu("system", ctx, mm, catalog=load_catalog())
+    assert saved["sleep_seconds"] == "600"
 
 
 def test_reset_is_submenu_and_about_is_action_and_power_is_submenu():

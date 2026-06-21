@@ -63,7 +63,6 @@ def _bt_ctx(*, enabled=True, snapshot=None, status_label="DGT PEGASUS\nReady"):
             for r in bluetooth_status_menu_rows(snap, status_label)
         ],
     )
-    ctx.register_action("bluetooth_devices", lambda: ctx.actions.append("devices") or None)
     ctx.register_action("bluetooth_pair", lambda: ctx.actions.append("pair") or None)
     return ctx
 
@@ -140,12 +139,13 @@ def test_toggle_dispatch_flips_radio_state():
     assert ctx.state["enabled"] is True
 
 
-def test_devices_and_pair_dispatch_their_actions():
-    # Devices and Pair must route to exactly their imperative actions (the
-    # multi-screen flows), replacing the scaffold's key branches.
+def test_devices_opens_submenu_and_pair_dispatches_its_action():
+    # Devices is now a data-driven submenu into the paired-device list container,
+    # while Pair stays an imperative action (continuous scan + passkey display).
+    # Regression: Devices reverting to a dead action, or Pair losing its handler.
     ctx = _bt_ctx()
     d = dispatch(_CATALOG.get_node("bluetooth.devices"), ctx)
-    assert d.kind == "action" and d.action == "bluetooth_devices"
+    assert d.kind == "submenu" and d.target == "bluetooth.devices.list"
     p = dispatch(_CATALOG.get_node("bluetooth.pair"), ctx)
     assert p.kind == "action" and p.action == "bluetooth_pair"
-    assert ctx.actions == ["devices", "pair"]
+    assert ctx.actions == ["pair"]

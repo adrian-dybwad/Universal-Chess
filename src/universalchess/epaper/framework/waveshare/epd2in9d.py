@@ -31,9 +31,27 @@
 #
 
 import logging
+import time
 from . import epdconfig
 from PIL import Image
 import RPi.GPIO as GPIO
+
+log = logging.getLogger(__name__)
+
+# Maximum time to wait for the panel BUSY line to signal idle before giving up.
+# A legitimate full-refresh waveform holds BUSY low for well under a second, so
+# this ceiling is only reached when the panel never releases BUSY -- e.g. a DGT
+# Centaur V1 panel whose BUSY polarity is inverted, or no panel attached. Left
+# unbounded, ReadBusy() spins forever and wedges the display thread during
+# startup (the "startup LED circles never stop" symptom). On timeout ReadBusy()
+# raises EPDTimeoutError, which init() converts into a -1 result so the caller
+# disables the display instead of hanging.
+BUSY_TIMEOUT_SECONDS = 5.0
+
+
+class EPDTimeoutError(RuntimeError):
+    """Raised when the panel BUSY line never reaches idle within the timeout."""
+
 
 # Display resolution
 EPD_WIDTH       = 128
@@ -51,6 +69,11 @@ class EPD:
         self.cs_pin = epdconfig.CS_PIN
         self.width = EPD_WIDTH
         self.height = EPD_HEIGHT
+        # Set True by init() when it returns -1 specifically because the BUSY
+        # line never reached idle within the timeout (the inverted-polarity V1
+        # panel signature). Lets the startup selector distinguish that case --
+        # which warrants the SSD1680 fallback -- from other init failures.
+        self.busy_timeout_occurred = False
         # Store the last image sent for partial refresh
         self.buffer = [0xFF] * int(self.width * self.height / 8)
          
@@ -143,9 +166,27 @@ class EPD:
         epdconfig.digital_write(self.cs_pin, 1)
         
     def ReadBusy(self):
-        while(epdconfig.digital_read(self.busy_pin) == 0):      # 0: idle, 1: busy
+        """Poll the panel BUSY line until idle, bounded by BUSY_TIMEOUT_SECONDS.
+
+        Waits while the pin reads LOW (busy) and returns once it reads HIGH
+        (idle). An unresponsive or incompatible panel -- notably a V1 panel with
+        inverted BUSY polarity, or no panel at all -- never drives the expected
+        idle level, so without a deadline this loop never returns and the
+        display thread hangs. The bounded wait converts that hang into an
+        EPDTimeoutError; init() catches it and returns -1.
+
+        Raises:
+            EPDTimeoutError: if BUSY does not reach idle within the timeout.
+        """
+        deadline = time.monotonic() + BUSY_TIMEOUT_SECONDS
+        while(epdconfig.digital_read(self.busy_pin) == 0):  # LOW: busy, HIGH: idle
             self.send_command(0x71)
-            epdconfig.delay_ms(10)  
+            epdconfig.delay_ms(10)
+            if time.monotonic() >= deadline:
+                raise EPDTimeoutError(
+                    f"BUSY not released within {BUSY_TIMEOUT_SECONDS}s; panel "
+                    "unresponsive or incompatible (e.g. inverted BUSY polarity)"
+                )
         
     def TurnOnDisplay(self):
         self.send_command(0x12)
@@ -162,13 +203,25 @@ class EPD:
         self.ReadBusy()
         
     def init(self):
+        self.busy_timeout_occurred = False
         if (epdconfig.module_init() != 0):
             return -1
         # EPD hardware init start
         self.reset()
         
         self.send_command(0x04)
-        self.ReadBusy() #waiting for the electronic paper IC to release the idle signal
+        try:
+            self.ReadBusy() #waiting for the electronic paper IC to release the idle signal
+        except EPDTimeoutError as e:
+            # Panel never signaled idle: unresponsive or incompatible hardware
+            # (e.g. a V1 panel). Report failure via the documented -1 result so
+            # Manager.initialize() disables the display rather than hanging the
+            # board at startup. This is the one-time startup detection; runtime
+            # refreshes re-call init() and are themselves bounded by the same
+            # timeout, so a display that fails later keeps being retried.
+            self.busy_timeout_occurred = True
+            log.error(f"[EPD] init aborted: {e}")
+            return -1
 
         self.send_command(0x00)     #panel setting
         self.send_data(0x1f)        # LUT from OTP，KW-BF   KWR-AF    BWROTP 0f   BWOTP 1f

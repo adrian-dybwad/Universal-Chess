@@ -253,7 +253,7 @@ def test_web_settings_field_ids_resolve_with_labels():
         "field.display.show_clock",
         "field.display.show_analysis",
         "field.display.show_graph",
-        "field.display.chess_sprites",
+        "field.display.sprites",
         "field.display.led_brightness",
         "field.sound.enabled",
         "field.sound.piece_events",
@@ -295,21 +295,21 @@ def test_web_settings_option_sets_present_and_non_empty():
     assert not empty, f"web Settings selects reference empty/missing option sets: {empty}"
 
 
-def test_web_control_hint_fields_render_as_selects():
-    """Engine/ELO/analysis-engine nodes must carry a web select hint + provider.
+def test_engine_pickers_are_provider_backed_selects():
+    """Engine/ELO/analysis-engine nodes are provider-backed selects on both platforms.
 
-    Why this test exists: these nodes are ``type: "action"`` because the board
-    opens a chained engine -> ELO picker, but the web renders each as a plain
-    dropdown. The web's generic field renderer (CatalogField) keys off
-    ``webType`` (falling back to ``type``); without ``webType: "select"`` it
-    would render nothing for an action node, and without a ``provider`` the web
-    has no named runtime source for the options.
+    Why this test exists: these pickers were migrated from imperative board
+    ``action`` sub-flows to ``select`` nodes whose runtime options come from a
+    named provider and whose pick is written to the bound store. The board engine
+    opens the provider list through the shared select path; the web renders the
+    same provider-backed dropdown. A single source (type + provider + bind) now
+    drives both platforms, so the redundant ``webType`` hint is gone.
 
-    How a regression manifests: a node loses ``webType``/``provider`` (e.g. an
-    edit reverts it to a bare action), so the web Settings page shows a blank gap
-    where the Engine/ELO/Analysis-Engine select should be. Pins both the hint and
-    the provider name the web resolves, while asserting the board ``type`` stays
-    an action so the e-paper chained picker is unaffected.
+    How a regression manifests: a node reverts to an ``action`` (the board would
+    need the deleted handler and the web would render a blank gap), loses its
+    ``provider`` (no named runtime source for the options), or loses its ``bind``
+    (the pick has nowhere to persist) -- breaking the picker on one or both
+    platforms.
     """
     catalog = load_catalog()
     expected_providers = {
@@ -319,9 +319,49 @@ def test_web_control_hint_fields_render_as_selects():
     }
     for node_id, provider in expected_providers.items():
         node = catalog.get_node(node_id)
-        assert node["type"] == "action", f"{node_id} must stay an action for the board flow"
-        assert node.get("webType") == "select", f"{node_id} missing webType 'select' for the web"
+        assert node["type"] == "select", f"{node_id} must be a select for both platforms"
         assert node.get("provider") == provider, f"{node_id} missing provider '{provider}'"
+        assert "bind" in node, f"{node_id} must bind a store/key to persist the pick"
+
+
+def test_sleep_timer_node_is_select_bound_to_seconds():
+    """system.inactivity is a select over sleep_timer bound to system.sleep_seconds.
+
+    Why this test exists: the Sleep Timer row was migrated from an imperative
+    action to a data-driven ``select`` so the board changes the inactivity timeout
+    through the shared ``sleep_timer`` option set (values in seconds), the same
+    way the web does. How a regression manifests: the node reverts to an action or
+    loses its optionSet/bind, so the board can no longer set the timeout via the
+    engine and the saved value drifts from seconds.
+    """
+    catalog = load_catalog()
+    node = catalog.get_node("system.inactivity")
+    assert node["type"] == "select"
+    assert node["optionSet"] == "sleep_timer"
+    assert node["bind"] == {"store": "system", "key": "sleep_seconds"}
+
+
+def test_sprites_node_is_one_cross_platform_radio_set():
+    """Sprites is a single cross-platform dynamic node with an itemBind radio set.
+
+    Why this test exists: the board's inline sprite list and the web's sprite
+    radiogroup are the same setting (game.chess_sprites), so they share one
+    catalog node rather than the old duplicate pair (board ``field.display.sprites``
+    + web ``field.display.chess_sprites``). The node drives the runtime sheet list
+    via the ``sprite_sheets`` provider and persists the picked sheet through
+    ``itemBind``; both platforms read its label/help. How a regression manifests:
+    the duplicate web node returns (two sources for one setting drift), the node
+    loses its provider/itemBind (no list, or nothing persists), or it drops a
+    platform so one UI stops rendering the picker.
+    """
+    catalog = load_catalog()
+    assert not catalog.has_node("field.display.chess_sprites"), "duplicate web sprite node must be removed"
+    node = catalog.get_node("field.display.sprites")
+    assert node["type"] == "dynamic"
+    assert node["provider"] == "sprite_sheets"
+    assert node["itemBind"] == {"store": "game", "key": "chess_sprites"}
+    assert set(node["platforms"]) == {"board", "web"}
+    assert node.get("label"), "web renders the node's label/help, so it must have a label"
 
 
 def test_option_label_resolves_value_to_catalog_label():
