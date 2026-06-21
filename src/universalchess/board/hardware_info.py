@@ -8,17 +8,22 @@ Why this is separate from :mod:`universalchess.board.system_info`:
   the telemetry card re-run kernel-log parsing on every 5-second poll. Identity
   is gathered once and cached.
 
-Primary motivation -- the wireless "hotspot health" row:
+Primary motivation -- the Bluetooth advertising health row:
   The DGT Centaur's Pi uses a Broadcom combo (Wi-Fi + Bluetooth on one die).
-  Field investigation proved that the **BCM43430B0** stepping is broken by the
-  Raspberry Pi **kernel 6.18.x** line + ``firmware-brcm80211`` 2025-04: on that
-  combination the brcmfmac SDIO link fails (so Wi-Fi STA *and* the setup AP /
-  hotspot stop working) and BlueZ LE-advertising is rejected. The *same* B0 die
-  works on kernel 6.12.x, and the older **BCM43430A1** stepping works on every
-  kernel observed. So the honest signal is the chip stepping *together with* the
-  kernel version -- not the chip alone. :func:`assess_wireless_health` encodes
-  exactly the proven data points and reports "unknown" for combinations never
-  observed, rather than guessing.
+  Field investigation proved that on the **BCM43430B0** stepping running the
+  Raspberry Pi **kernel 6.18.x** line, BlueZ LE advertising stops working: the
+  identical ``RegisterAdvertisement`` call accepted on kernel 6.12.x is rejected
+  with ``Invalid Parameters`` on 6.18 (the companion app can no longer see the
+  board). The *same* B0 die works on kernel 6.12.x, and the older **BCM43430A1**
+  stepping works on every kernel observed. So the honest signal is the chip
+  stepping *together with* the kernel version -- not the chip alone. The scope
+  is strictly Bluetooth LE advertising; the Wi-Fi STA/AP path was not shown to
+  fail and is deliberately not claimed here.
+
+  Mitigation: running a 6.12.x kernel avoids it, and Universal Chess applies a
+  self-healing patch on install (to be rolled back once the official fix ships).
+  :func:`assess_wireless_health` encodes exactly the proven data points and
+  reports "unknown" for combinations never observed, rather than guessing.
 
 Design mirrors ``system_info``: all OS access is isolated behind an injectable
 :class:`HardwareInfoSource`, so assembly (:func:`collect_hardware_info`), the
@@ -93,8 +98,9 @@ HEALTH_UNKNOWN = "unknown"
 
 # The proven-broken stepping and the kernel boundary where it breaks. Both are
 # evidence, not assumption: BCM43430B0 was confirmed working on 6.12.47/6.12.75
-# and broken on 6.18.34 (Wi-Fi SDIO + BLE advertising). The known-good recovery
-# is to run a 6.12.x kernel.
+# and broken on 6.18.34, where BlueZ LE advertising is rejected with "Invalid
+# Parameters". The known-good recovery is to run a 6.12.x kernel (or rely on the
+# self-healing patch applied at install).
 _AFFECTED_CHIP = "BCM43430B0"
 _AFFECTED_KERNEL_MIN: tuple[int, int] = (6, 18)
 _KNOWN_GOOD_KERNEL_MAX: tuple[int, int] = (6, 12)
@@ -234,7 +240,7 @@ def parse_kernel_tuple(kernel_release: str) -> Optional[tuple[int, int]]:
 def assess_wireless_health(
     wireless_chip: Optional[str], kernel_release: str
 ) -> tuple[str, str]:
-    """Classify Wi-Fi hotspot / Bluetooth reliability for the fitted chip+kernel.
+    """Classify Bluetooth LE advertising reliability for the fitted chip+kernel.
 
     Returns ``(health, human_summary)`` where ``health`` is one of
     :data:`HEALTH_OK`, :data:`HEALTH_AFFECTED`, :data:`HEALTH_UNKNOWN`.
@@ -246,16 +252,16 @@ def assess_wireless_health(
     if not wireless_chip:
         return (
             HEALTH_UNKNOWN,
-            "Wireless chip could not be identified, so hotspot reliability is "
-            "unknown.",
+            "Wireless chip could not be identified, so Bluetooth advertising "
+            "reliability is unknown.",
         )
 
     if wireless_chip != _AFFECTED_CHIP:
         # Any other identified Broadcom stepping (notably the older BCM43430A1)
-        # has no reported Wi-Fi hotspot fault in this project's testing.
+        # has no reported Bluetooth advertising fault in this project's testing.
         return (
             HEALTH_OK,
-            f"{wireless_chip}: no known Wi-Fi hotspot issue on this chip.",
+            f"{wireless_chip}: no known Bluetooth advertising issue on this chip.",
         )
 
     kernel = parse_kernel_tuple(kernel_release)
@@ -263,26 +269,28 @@ def assess_wireless_health(
         return (
             HEALTH_UNKNOWN,
             f"{wireless_chip} fitted, but the kernel version could not be read, "
-            "so hotspot reliability is unknown.",
+            "so Bluetooth advertising reliability is unknown.",
         )
 
     if kernel >= _AFFECTED_KERNEL_MIN:
         return (
             HEALTH_AFFECTED,
-            f"{wireless_chip} on kernel {kernel_release} has a known fault: the "
-            "Wi-Fi setup hotspot and Bluetooth advertising can stop working. "
-            "Running a 6.12.x kernel resolves it.",
+            f"{wireless_chip} on kernel {kernel_release} has a known fault: "
+            "Bluetooth advertising can stop working. Running a 6.12.x kernel "
+            "resolves it, or on installing Universal Chess a self-healing patch "
+            "is applied that will be rolled back as soon as the official fix is "
+            "released.",
         )
     if kernel <= _KNOWN_GOOD_KERNEL_MAX:
         return (
             HEALTH_OK,
             f"{wireless_chip} on kernel {kernel_release}: the known-good kernel "
-            "for this chip; no hotspot issue expected.",
+            "for this chip; no Bluetooth advertising issue expected.",
         )
     return (
         HEALTH_UNKNOWN,
         f"{wireless_chip} on kernel {kernel_release}: this combination has not "
-        "been verified, so hotspot reliability is unknown.",
+        "been verified, so Bluetooth advertising reliability is unknown.",
     )
 
 
