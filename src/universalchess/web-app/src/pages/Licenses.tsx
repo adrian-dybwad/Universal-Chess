@@ -85,14 +85,14 @@ const licenses: License[] = [
   {
     name: 'GxEPD2',
     type: 'GPL-3.0',
-    description: 'Arduino e-paper library by Jean-Marc Zingg. Corroborates the GDEM029T94 waveform table and the panel-OTP (Built-In) approach used by the V1-panel tuning profiles.',
+    description: 'Arduino e-paper library by Jean-Marc Zingg. Verbatim source of the IL3820/GDEH029A1 30-byte LUTs and init (class GxEPD2_290) and the DEPG0290BS register partial LUT and init (class GxEPD2_290_BS) used by the V1-panel tuning profiles; also corroborates the GDEM029T94 table and the panel-OTP (Built-In) approach.',
     copyright: 'Jean-Marc Zingg',
     url: 'https://github.com/ZinggJM/GxEPD2',
   },
   {
-    name: 'Good Display IL3820 / GDEH029A1',
+    name: 'Good Display IL3820 / GDEH029A1 / DEPG0290BS',
     type: 'Reference data',
-    description: 'Source of the IL3820 (GDEH029A1) analog init additions used by the "IL3820 / GDEH029A1" V1-panel tuning profile.',
+    description: 'Original vendor demo code (relayed verbatim via GxEPD2) behind the IL3820/GDEH029A1 and DEPG0290BS V1-panel tuning profiles.',
     copyright: 'Good Display',
     url: 'https://www.good-display.com/',
   },

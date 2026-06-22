@@ -54,13 +54,26 @@ class WaveformProfileRegistryTests(unittest.TestCase):
         self.assertEqual(profile.full_lut, ())
         self.assertEqual(profile.partial_lut, ())
 
-    def test_il3820_profile_requests_additions(self):
-        # The IL3820 profile must request the analog additions on top of register
-        # LUTs. Regression: il3820_additions False would silently drop the
-        # IL3820-specific init the profile exists to apply.
+    def test_il3820_profile_uses_il3820_driver_with_30_byte_luts(self):
+        # The IL3820 profile must select the IL3820 driver strategy and carry the
+        # 30-byte IL3820 LUTs (NOT the SSD1680 159-byte tables). Regression: a
+        # wrong driver/length would drive a true IL3820 panel with the SSD1680
+        # protocol -- the mislabeled-hybrid bug this profile replaced.
         profile = wp.get_profile("il3820_gdeh029a1")
-        self.assertTrue(profile.il3820_additions)
+        self.assertEqual(profile.driver, wp.DRIVER_IL3820)
+        self.assertEqual(len(profile.full_lut), 30)
+        self.assertEqual(len(profile.partial_lut), 30)
         self.assertFalse(profile.use_otp)
+
+    def test_depg0290bs_profile_uses_dke_driver_otp_full_register_partial(self):
+        # The DEPG0290BS profile must select the DKE/SSD1680 driver, carry NO full
+        # LUT (full is driven from OTP) and a 153-byte register partial LUT (no
+        # trailing voltage bytes). Regression: a full LUT present or wrong partial
+        # length would not match the GxEPD2_290_BS sequence this transcribes.
+        profile = wp.get_profile("depg0290bs")
+        self.assertEqual(profile.driver, wp.DRIVER_DKE_SSD1680)
+        self.assertEqual(profile.full_lut, ())
+        self.assertEqual(len(profile.partial_lut), 153)
 
     def test_every_profile_has_provenance(self):
         # Enforces the "no fabricated/unattributed waveforms" rule: each profile
@@ -71,15 +84,23 @@ class WaveformProfileRegistryTests(unittest.TestCase):
                 self.assertTrue(profile.source.strip(),
                                 f"profile {profile.key} has no source attribution")
 
-    def test_register_luts_are_correct_length(self):
-        # The 0x32 write expects 153 LUT bytes + 6 voltage bytes. A wrong length
-        # corrupts the waveform write (SetLut indexes [153]..[158]).
+    def test_register_luts_are_correct_length_for_each_driver(self):
+        # Each driver has a fixed LUT format; a wrong length corrupts the 0x32
+        # write. SSD1680 SetLut() indexes [0..152] + voltage [153..158] (159);
+        # IL3820 writes 30 raw bytes; DEPG0290BS writes a 153-byte raw partial
+        # LUT and drives full from OTP (no full LUT).
+        expected = {
+            wp.DRIVER_SSD1680: {"full": EXPECTED_LUT_LEN, "partial": EXPECTED_LUT_LEN},
+            wp.DRIVER_IL3820: {"full": 30, "partial": 30},
+            wp.DRIVER_DKE_SSD1680: {"full": 0, "partial": 153},
+        }
         for profile in wp.all_profiles():
             if profile.use_otp:
                 continue
             with self.subTest(key=profile.key):
-                self.assertEqual(len(profile.full_lut), EXPECTED_LUT_LEN)
-                self.assertEqual(len(profile.partial_lut), EXPECTED_LUT_LEN)
+                exp = expected[profile.driver]
+                self.assertEqual(len(profile.full_lut), exp["full"])
+                self.assertEqual(len(profile.partial_lut), exp["partial"])
 
     def test_metadata_excludes_waveform_bytes(self):
         # The web API payload must expose only key/label/source/url -- never the

@@ -31,12 +31,26 @@ command sets**, which is the root of the V1/V2 split.
   Used for the V2 panel. BUSY is active-LOW (idle = LOW). A bounded wait raises
   `EPDTimeoutError` after `BUSY_TIMEOUT_SECONDS = 5.0`; `init()` converts that to
   a `-1` result so the board disables the display rather than hanging.
-- **Fallback driver — SSD1680:** `epaper/framework/waveshare/epd2in9_ssd1680.py`.
-  Used for V1-family (E029A01) panels. BUSY is active-HIGH (busy = HIGH) — the
-  **inverse** of the UC8151D. Same 128×296 geometry. Drives the panel from a
-  selected **waveform profile** (see `waveform_profiles.py`); the default
-  profile uses the register-loaded `WS_20_30` full / `WF_PARTIAL_2IN9` partial
-  tables, ported verbatim from Waveshare's `epd2in9_V2.py` (GDEM029T94 / SSD1680).
+- **Fallback driver — SSD16xx/IL3820 family:**
+  `epaper/framework/waveshare/epd2in9_ssd1680.py`. Used for V1-family (E029A01)
+  panels. BUSY is active-HIGH (busy = HIGH) — the **inverse** of the UC8151D.
+  Same 128×296 geometry. Drives the panel from a selected **waveform profile**
+  (see `waveform_profiles.py`). The V1 family does **not** share one protocol, so
+  each profile names a **driver strategy** that selects the init sequence, LUT
+  format and refresh-activation bytes:
+  - `ssd1680` — Waveshare `epd2in9_V2.py` style. Register full+partial LUTs (159
+    bytes each = 153 LUT + 6 voltage), full activation `0xC7`. With `use_otp`,
+    full is driven from the panel OTP (`0xF7`) and partial falls back to full.
+    The **default** profile uses this with the `WS_20_30` / `WF_PARTIAL_2IN9`
+    tables ported verbatim from Waveshare (GDEM029T94 / SSD1680).
+  - `il3820` — true IL3820/GDEH029A1. **No** SWRESET; voltages programmed in init
+    (booster `0x0C`, VCOM `0x2C`, dummy-line `0x3A`, gate-width `0x3B`); a
+    **30-byte** LUT via `0x32`; full activation `0xC4`, partial `0x04`.
+  - `dke_ssd1680` — DEPG0290BS (SSD1680). Full from OTP (`0xF7`); a **153-byte**
+    register partial LUT (no voltage bytes), partial activation `0xCC`.
+
+  All non-default strategies are transcribed verbatim from GxEPD2 (Jean-Marc
+  Zingg); see each profile's `source`.
 - **Selection logic:** `board/display_selection.py` →
   `should_attempt_alt(primary)` returns True **only** when the primary attempt
   fails *by BUSY timeout* (the V1 signature). `main.py::_init_display_early`
@@ -90,8 +104,12 @@ selected, and is applied **live** (no reboot).
   - Reaches the SSD1680 fallback (UC8151D times out → fallback selected).
   - **Draws, but very faintly**, with ghosting of the previous (stock firmware)
     image still visible behind it.
-- **What has been tried:** the **IL3820 / GDEH029A1** profile (extra analog
-  setup) was tested and made *little to no difference*.
+- **What has been tried:** an earlier **mislabeled** "IL3820 additions" profile
+  (which actually layered IL3820 analog tweaks on top of the SSD1680 init + the
+  159-byte SSD1680 LUT) made *little to no difference*. That was **not** a real
+  IL3820 driver. It has since been replaced by a **faithful IL3820 profile**
+  (`il3820` driver: no SWRESET, 30-byte LUT, `0xC4`/`0x04` activation) plus a new
+  **DEPG0290BS** profile — neither tried on this panel yet.
 - **Working hypothesis:** the `E029A01T1956C0` is a different panel revision (or
   controller variant) from the bench `E029A01`. The default `WS_20_30` LUT and
   voltages are correct for the bench `FPC-7519rev.b` revision but under-drive
@@ -103,12 +121,12 @@ selected, and is applied **live** (no reboot).
 
 ## Waveform profiles (SSD1680 driver)
 
-A **waveform profile** is the self-contained recipe for how the SSD1680 panel
-moves its pixels: a register full/partial LUT, the panel's own OTP waveform,
-and/or the IL3820 analog additions. Profiles live in
+A **waveform profile** is the self-contained recipe for how the V1 panel moves
+its pixels: a **driver strategy** (`ssd1680` / `il3820` / `dke_ssd1680`) plus its
+LUT data and/or the panel's own OTP waveform. Profiles live in
 `epaper/framework/waveshare/waveform_profiles.py` as a small, **attributed**
-registry — every register LUT is transcribed from a credited published source,
-never invented (see "Data integrity" in that module).
+registry — every register LUT is transcribed verbatim from a credited published
+source, never invented (see "Data integrity" in that module).
 
 Exposed in the web UI under **Settings → System → "Display tuning (V1 panel)"**
 as a dropdown plus a high-contrast toggle, backed by `GET/POST
@@ -134,11 +152,12 @@ If the board process is not running, the change still applies on the next boot
 from the persisted setting.
 
 ### Shipped profiles
-| Key | Label | What it does | Source |
-|---|---|---|---|
-| `gdem029t94` | Waveshare 2.9″ V2 — GDEM029T94 (SSD1680) | Register LUT `WS_20_30` full / `WF_PARTIAL_2IN9` partial; activation `0xC7`. The no-config default; identical to the prior driver. | Waveshare e-Paper (also GxEPD2) |
-| `builtin_otp` | Built-In (panel OTP waveform) | Skips the register LUT; activation `0xF7` (load temperature + OTP LUT). No register partial LUT exists, so **every partial refresh becomes a full refresh**. | Panel factory OTP |
-| `il3820_gdeh029a1` | IL3820 / GDEH029A1 additions | `gdem029t94` LUTs plus IL3820/SSD1608 analog setup (`_apply_il3820_additions`): booster `0x0C=D7 D6 9D`, VCOM `0x2C=A8`, dummy-line `0x3A=1A`, gate-width `0x3B=08`. | Good Display / Waveshare IL3820 |
+| Key | Label | Driver | What it does | Source |
+|---|---|---|---|---|
+| `gdem029t94` | Waveshare 2.9″ V2 — GDEM029T94 (SSD1680) | `ssd1680` | Register LUT `WS_20_30` full / `WF_PARTIAL_2IN9` partial; activation `0xC7`. The no-config default; identical to the prior driver. | Waveshare e-Paper (also GxEPD2) |
+| `builtin_otp` | Built-In (panel OTP waveform) | `ssd1680` (`use_otp`) | Skips the register LUT; activation `0xF7` (load temperature + OTP LUT). No register partial LUT exists, so **every partial refresh becomes a full refresh**. | Panel factory OTP |
+| `il3820_gdeh029a1` | IL3820 / GDEH029A1 (Good Display) | `il3820` | Faithful IL3820: no SWRESET; init programs booster `0x0C=D7 D6 9D`, VCOM `0x2C=A8`, dummy-line `0x3A=1A`, gate-width `0x3B=08`; **30-byte** full/partial LUTs via `0x32`; activation `0xC4` full / `0x04` partial. | GxEPD2 `GxEPD2_290` (Good Display IL3820 demo) |
+| `depg0290bs` | DEPG0290BS (SSD1680, OTP full + LUT partial) | `dke_ssd1680` | SSD1680 init with border `0x3C=05` + internal temp `0x18=80`; **full from OTP** (`0xF7`); **153-byte** register partial LUT, activation `0xCC`. | GxEPD2 `GxEPD2_290_BS` (Good Display DEPG0290BS demo) |
 
 **Built-In behavior:** if the OTP holds a valid waveform the image renders
 (possibly cleaner) but all updates are full-screen flashes; if the OTP is
@@ -146,9 +165,11 @@ blank/generic (common on raw panels) it may render blank or garbage. No damage
 risk — OTP is factory data and nothing is written to OTP.
 
 ### High contrast (experimental toggle)
-Orthogonal to the profile. Overrides the source (`0x04`) and VCOM (`0x2C`)
-registers **after** the profile's LUT and any IL3820 additions, so it is the
-final word on voltage. Register deltas vs. the `WS_20_30` trailing bytes:
+Orthogonal to the profile. For the `ssd1680`/`dke_ssd1680` drivers it overrides
+the source (`0x04`) and VCOM (`0x2C`) registers **after** the profile's LUT, so
+it is the final word on voltage. The `il3820` driver has **no** `0x04` register,
+so high contrast there instead raises VCOM inline (`0x2C=0x44` vs the `0xA8`
+default). Register deltas vs. the `WS_20_30` trailing bytes (`ssd1680`):
 
 | Register | Default (`WS_20_30`) | High contrast | Delta |
 |---|---|---|---|
@@ -171,8 +192,9 @@ final word on voltage. Register deltas vs. the `WS_20_30` trailing bytes:
 - **Guidance:** safe to enable **briefly** to observe; do not leave running on a
   panel you care about.
 
-It composes with any profile (including `builtin_otp`: OTP timing + boosted
-voltages — the least-characterized combination).
+It composes with any profile (including `builtin_otp` and `depg0290bs`, where the
+register overrides are written best-effort over an OTP-driven full refresh — the
+least-characterized combination).
 
 ## Remote test procedure (for Panel 3)
 
