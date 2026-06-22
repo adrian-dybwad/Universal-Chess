@@ -70,15 +70,27 @@ class Manager:
 
         return None
     
-    def apply_waveform_profile(self, profile, high_contrast: bool) -> Future:
-        """Adopt a new SSD1680 waveform profile live and force a full refresh.
+    @property
+    def epd(self):
+        """The active EPD driver instance.
 
-        Backs the no-reboot profile change: swaps the driver's profile/override,
-        forces the next refresh to re-run init() (which reloads the LUT and
+        Exposed read-only so ``main`` can resolve the correct waveform profile
+        for whichever controller actually drove the panel (the primary UC8151D or
+        the SSD1680 fallback) via ``epd.CONTROLLER``, without reaching into the
+        coordinator's internals.
+        """
+        return self._epd
+
+    def apply_waveform_profile(self, profile, high_contrast: bool) -> Future:
+        """Adopt a new waveform profile live and force a full refresh.
+
+        Works for either driver (UC8151D or SSD1680): both expose ``apply_profile``
+        and consume a controller-appropriate profile. Backs the no-reboot profile
+        change: swaps the driver's profile/override, forces the next refresh to
+        re-run init() (which reloads the LUT and
         voltages), and submits a full refresh so the current screen redraws with
-        the new settings. A no-op when the active driver is not the SSD1680
-        driver (the UC8151D V2 driver has no register-LUT profiles to swap), so
-        calling it on a V2 panel is harmless.
+        the new settings. A no-op when the active driver predates ``apply_profile``
+        (no such attribute), so calling it is always harmless.
 
         Returns a Future that completes when the refresh finishes (already
         completed if not applicable or the display is not initialized).

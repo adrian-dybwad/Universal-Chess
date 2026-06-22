@@ -298,28 +298,28 @@ def _read_display_flag(name: str) -> bool:
     """Return whether a [display] boolean opt-in is set (default off).
 
     Used for the experimental high_contrast drive-voltage override. It does not
-    gate the SSD1680 fallback itself -- that is automatic whenever the UC8151D
-    driver trips its BUSY timeout; it only adjusts how the SSD1680 driver then
-    drives the panel.
+    gate any driver selection -- it only adjusts how the active driver drives the
+    panel (SSD1680 source/VCOM push, or UC8151D VCOM_DC bump).
     """
     from universalchess.board.settings import Settings
     value = Settings.read('display', name, 'False')
     return str(value).strip().lower() in ('1', 'true', 'on', 'yes')
 
 
-def _read_display_profile():
-    """Return ``(WaveformProfile, high_contrast)`` from the [display] settings.
+def _read_display_selection():
+    """Return ``(waveform_profile_key, high_contrast)`` from the [display] settings.
 
-    ``waveform_profile`` selects the SSD1680 waveform recipe (see
-    waveform_profiles); an unset or unknown key resolves to the verified default
-    so the working bench panel is unchanged. ``high_contrast`` is the
-    experimental drive-voltage override applied on top. Neither gates the
-    SSD1680 fallback itself -- that is automatic on a UC8151D BUSY timeout.
+    Returns the raw stored key (resolved to a concrete profile only later, per
+    the active controller). One key is shared across both controllers; each
+    driver resolves it against its own family via
+    ``waveform_profiles.get_profile(key, controller)``, falling back to that
+    controller's verified default when the stored key belongs to the other
+    controller (e.g. after a panel swap) -- so a working panel is never left
+    without a waveform.
     """
     from universalchess.board.settings import Settings
-    from universalchess.epaper.framework.waveshare.waveform_profiles import get_profile
     key = str(Settings.read('display', 'waveform_profile', '')).strip()
-    return get_profile(key), _read_display_flag('high_contrast')
+    return key, _read_display_flag('high_contrast')
 
 
 def _attempt_display_init(epd):
@@ -352,8 +352,11 @@ def _init_display_early():
     Tries the UC8151D (V2) driver first. If it trips the BUSY timeout -- the
     signature of an inverted-polarity V1 panel -- it automatically retries with
     the SSD1680 (V1-family) driver; no opt-in is required for that fallback. The
-    [display] waveform_profile / high_contrast settings only select how the
-    SSD1680 driver then drives the panel. The resolved outcome (controller +
+    [display] waveform_profile / high_contrast settings select how each driver
+    drives the panel: the stored key is resolved against each controller's own
+    profile family, so the UC8151D driver gets a UC8151D profile and the SSD1680
+    fallback gets an SSD16xx one (each defaulting to its verified table when the
+    key belongs to the other controller). The resolved outcome (controller +
     busy_timeout) is published to the cross-process status file for the web
     System card.
 
@@ -365,22 +368,28 @@ def _init_display_early():
     from universalchess.board import hardware_info
     from universalchess.board import display_selection as ds
     from universalchess.epaper.framework.waveshare.epd2in9d import EPD as PrimaryEPD
+    from universalchess.epaper.framework.waveshare import waveform_profiles as wp
 
-    profile, high_contrast = _read_display_profile()
+    key, high_contrast = _read_display_selection()
+    primary_profile = wp.get_profile(key, wp.CONTROLLER_UC8151D)
 
-    manager, primary = _attempt_display_init(PrimaryEPD())
+    manager, primary = _attempt_display_init(PrimaryEPD(
+        profile=primary_profile,
+        high_contrast=high_contrast,
+    ))
     alt = None
     if ds.should_attempt_alt(primary):
         # UC8151D never saw idle -> automatically try the SSD1680 (V1) driver.
         from universalchess.epaper.framework.waveshare.epd2in9_ssd1680 import (
             EPD as AltEPD,
         )
+        alt_profile = wp.get_profile(key, wp.CONTROLLER_SSD16XX)
         log.warning(
             "UC8151D BUSY timeout at startup; trying SSD1680 fallback "
-            f"(profile={profile.key}, high_contrast={high_contrast})"
+            f"(profile={alt_profile.key}, high_contrast={high_contrast})"
         )
         alt_manager, alt = _attempt_display_init(AltEPD(
-            profile=profile,
+            profile=alt_profile,
             high_contrast=high_contrast,
         ))
         if alt.ok:
@@ -2324,12 +2333,13 @@ def _on_board_command(parsed: dict) -> None:
 def _process_pending_display_profile() -> None:
     """Apply a pending live waveform-profile change on the main thread.
 
-    Re-reads the selection from settings (already persisted by the web app) and
-    asks the early display Manager (which owns the EPD and its scheduler) to
-    adopt it and force a full refresh, so the panel re-renders the current screen
-    with the new waveform/voltages -- no reboot. A no-op when no display Manager
-    exists or the active driver is the UC8151D V2 driver (which has no
-    register-LUT profiles); apply_waveform_profile handles the latter.
+    Re-reads the selection from settings (already persisted by the web app),
+    resolves it against the *active* controller (so a UC8151D panel gets a
+    UC8151D profile and an SSD1680 panel gets an SSD16xx one), then asks the
+    early display Manager (which owns the EPD and its scheduler) to adopt it and
+    force a full refresh -- so the panel re-renders the current screen with the
+    new waveform/voltages without a reboot. A no-op when no display Manager
+    exists.
     """
     global _pending_display_profile
     cmd = _pending_display_profile
@@ -2338,9 +2348,15 @@ def _process_pending_display_profile() -> None:
         return
     if _early_display_manager is None:
         return
-    profile, high_contrast = _read_display_profile()
+    from universalchess.epaper.framework.waveshare import waveform_profiles as wp
+    key, high_contrast = _read_display_selection()
+    # Resolve for whichever controller actually drove the panel. The EPD driver
+    # exposes its family via CONTROLLER; fall back to the UC8151D default family
+    # if a driver predates that attribute.
+    controller = getattr(_early_display_manager.epd, "CONTROLLER", wp.CONTROLLER_UC8151D)
+    profile = wp.get_profile(key, controller)
     log.info(f"[App] Applying display profile live: {profile.key} "
-             f"(high_contrast={high_contrast})")
+             f"(controller={controller}, high_contrast={high_contrast})")
     _early_display_manager.apply_waveform_profile(profile, high_contrast)
 
 

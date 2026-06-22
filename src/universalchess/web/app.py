@@ -2362,47 +2362,74 @@ def _read_display_flag(name: str) -> bool:
     return str(value).strip().lower() in ('1', 'true', 'on', 'yes')
 
 
-def _read_selected_profile_key() -> str:
+# Map the board-reported active controller (display_selection.CONTROLLER_*) to
+# the waveform-profile family the web layer filters on. Kept as a plain table so
+# the web process needs no import from the RPi.GPIO-dependent driver modules.
+_CONTROLLER_TO_WAVEFORM_FAMILY = {
+    "UC8151D": "uc8151d",
+    "SSD1680": "ssd16xx",
+}
+
+
+def _active_waveform_controller():
+    """Return the active controller's waveform family, or None if unknown.
+
+    Reads the cross-process display-status file the board writes at startup. The
+    family selects which profiles the UI offers (a UC8151D table is meaningless
+    on the SSD1680 driver and vice versa). None when the board has not reported,
+    the display is disabled, or it reported a controller with no profile family.
+    """
+    from universalchess.board import hardware_info
+    status = hardware_info.read_display_status()
+    if not status or not status.get("initialized"):
+        return None
+    return _CONTROLLER_TO_WAVEFORM_FAMILY.get(status.get("active_controller"))
+
+
+def _read_selected_profile_key(controller=None) -> str:
     """Return the configured waveform-profile key, resolved to a known profile.
 
-    A blank or stale stored key resolves to the verified default so the UI never
-    shows an unknown selection and the board never runs with no waveform.
+    A blank or stale stored key -- or one belonging to the other controller after
+    a panel swap -- resolves to the active controller's verified default, so the
+    UI never shows an unknown selection and the board never runs with no waveform.
     """
     from universalchess.board.settings import Settings
     from universalchess.epaper.framework.waveshare import waveform_profiles as wp
     key = str(Settings.read('display', 'waveform_profile', '')).strip()
-    return wp.get_profile(key).key
+    return wp.get_profile(key, controller).key
 
 
 def _display_tuning_available() -> bool:
-    """Whether to offer the display-tuning card: only after a UC8151D BUSY timeout.
+    """Whether to offer the display-tuning card: whenever a panel is active.
 
-    Profiles target the SSD1680 (V1-family) fallback driver and are meaningless
-    on a healthy V2 panel (no fallback occurred), so the card is surfaced only
-    when the board recorded a BUSY timeout -- the V1-panel signature -- in the
-    cross-process display-status file.
+    Both controllers have selectable waveform profiles now (the SSD1680 V1
+    fallback and the primary UC8151D, including replacement-panel variants), so
+    the card is surfaced whenever the board reported an initialized panel with a
+    known controller family. It stays hidden when the display is disabled or the
+    board has not reported yet.
     """
-    from universalchess.board import hardware_info
-    status = hardware_info.read_display_status()
-    return bool(status and status.get("busy_timeout"))
+    return _active_waveform_controller() is not None
 
 
 @app.route("/api/system/display-tuning", methods=["GET"])
 def api_get_display_tuning():
-    """Report the V1-panel waveform profiles, current selection and availability.
+    """Report the active panel's waveform profiles, selection and availability.
 
     Read-only and unauthenticated like the other GET probes; exposes only
-    profile metadata (key/label/source/url) and the current selection, no
-    secrets and no raw waveform bytes. ``available`` reflects a recorded UC8151D
-    BUSY timeout so the card is hidden on a healthy V2 panel where profiles are
-    meaningless.
+    profile metadata (key/label/source/url/controller) for the *active*
+    controller and the current selection -- no secrets, no raw waveform bytes.
+    The list is filtered to the live controller so the UI never offers a table
+    the active driver cannot drive. ``available`` is False until the board
+    reports an initialized panel, hiding the card when there is nothing to tune.
     """
     try:
         from universalchess.epaper.framework.waveshare import waveform_profiles as wp
+        controller = _active_waveform_controller()
         return jsonify({
-            "available": _display_tuning_available(),
-            "profiles": wp.profiles_metadata(),
-            "selected": _read_selected_profile_key(),
+            "available": controller is not None,
+            "active_controller": controller,
+            "profiles": wp.profiles_metadata(controller),
+            "selected": _read_selected_profile_key(controller),
             "high_contrast": _read_display_flag("high_contrast"),
         })
     except Exception as e:
@@ -2412,23 +2439,27 @@ def api_get_display_tuning():
 @app.route("/api/system/display-tuning", methods=["POST"])
 @requires_auth
 def api_set_display_tuning():
-    """Select a V1-panel waveform profile and apply it live. Requires auth.
+    """Select a waveform profile for the active panel and apply it live. Requires auth.
 
     Persists [display] waveform_profile and high_contrast, then sends the board
     process a ``display_profile`` command so it re-inits the panel and forces a
     full refresh -- the new waveform/voltages take effect without a reboot. An
-    unknown profile key is rejected (400) so a client bug fails loudly rather
-    than writing an invalid selection. Body: {"profile": "<key>",
-    "high_contrast": bool}.
+    unknown profile key, or one that does not target the active controller, is
+    rejected (400) so a client bug fails loudly rather than writing an invalid
+    selection. Body: {"profile": "<key>", "high_contrast": bool}.
     """
     try:
         from universalchess.epaper.framework.waveshare import waveform_profiles as wp
 
+        controller = _active_waveform_controller()
         body = request.get_json(silent=True) or {}
         updates = {}
         if "profile" in body:
             key = str(body["profile"]).strip()
-            if not wp.is_known_profile(key):
+            # Validate against the active controller's family so a UC8151D key
+            # cannot be persisted for an SSD1680 panel (or vice versa). When the
+            # board has not reported a controller yet, fall back to any-known.
+            if not wp.is_known_profile(key, controller):
                 return jsonify({"success": False, "error": f"unknown profile: {key}"}), 400
             updates["waveform_profile"] = key
         if "high_contrast" in body:
@@ -2443,14 +2474,14 @@ def api_set_display_tuning():
         # still takes effect on the next boot from the persisted settings.
         from universalchess.services.game_broadcast import send_board_command
         applied_live = send_board_command("display_profile", {
-            "profile": _read_selected_profile_key(),
+            "profile": _read_selected_profile_key(controller),
             "high_contrast": _read_display_flag("high_contrast"),
         })
 
         return jsonify({
             "success": True,
             "applied_live": bool(applied_live),
-            "selected": _read_selected_profile_key(),
+            "selected": _read_selected_profile_key(controller),
             "high_contrast": _read_display_flag("high_contrast"),
         })
     except Exception as e:

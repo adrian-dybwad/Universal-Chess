@@ -33,11 +33,24 @@
 import logging
 import time
 from . import epdconfig
+from .waveform_profiles import (
+    CONTROLLER_UC8151D,
+    WaveformProfile,
+    get_profile,
+)
 from PIL import Image
 import numpy as np
 import RPi.GPIO as GPIO
 
 log = logging.getLogger(__name__)
+
+# Experimental "high contrast" override for UC8151D: add this to the profile's
+# VCOM_DC byte (register 0x82), clamped to the 6-bit field max. A more-negative
+# VCOM_DC darkens black and lifts a faint partial image. Not datasheet-backed --
+# the one tuning knob without provenance, surfaced as experimental in the UI and
+# mirrors the SSD1680 driver's high_contrast voltage push.
+UC8151D_HIGH_CONTRAST_VCOM_DC_DELTA = 0x08
+UC8151D_VCOM_DC_MAX = 0x3F
 
 # Maximum time to wait for the panel BUSY line to signal idle before giving up.
 # A legitimate full-refresh waveform holds BUSY low for well under a second, so
@@ -112,13 +125,27 @@ def pack_image_to_buffer(image, width, height):
 
 
 class EPD:
-    def __init__(self):
+    # Controller family (waveform_profiles.CONTROLLER_*). Lets ``main`` resolve
+    # the correct profile for whichever driver actually drove the panel.
+    CONTROLLER = CONTROLLER_UC8151D
+
+    def __init__(self, profile: WaveformProfile = None, high_contrast: bool = False):
         self.reset_pin = epdconfig.RST_PIN
         self.dc_pin = epdconfig.DC_PIN
         self.busy_pin = epdconfig.BUSY_PIN
         self.cs_pin = epdconfig.CS_PIN
         self.width = EPD_WIDTH
         self.height = EPD_HEIGHT
+        # Selected waveform profile. The full refresh is OTP for every UC8151D
+        # profile; the profile only chooses the partial-refresh register LUTs and
+        # analog bytes (see SetPartReg). None selects the verified Waveshare
+        # default so a working V2 panel is byte-for-byte unchanged. Variants exist
+        # for replacement panels (GDEW029I6FD/T5D/M06) that ghost or render faint
+        # on the stock partial waveform.
+        self.profile = profile if profile is not None else get_profile("", CONTROLLER_UC8151D)
+        # Experimental drive-voltage override (VCOM_DC bump). Off by default; the
+        # one knob without datasheet backing, surfaced separately in the UI.
+        self.high_contrast = high_contrast
         # Set True by init() when it returns -1 specifically because the BUSY
         # line never reached idle within the timeout (the inverted-polarity V1
         # panel signature). Lets the startup selector distinguish that case --
@@ -126,57 +153,32 @@ class EPD:
         self.busy_timeout_occurred = False
         # Store the last image sent for partial refresh
         self.buffer = [0xFF] * int(self.width * self.height / 8)
-         
-    lut_vcom1 = [  
-        0x00, 0x19, 0x01, 0x00, 0x00, 0x01,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00,
-    ]
 
-    lut_ww1 = [  
-        0x00, 0x19, 0x01, 0x00, 0x00, 0x01,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    ]
+    def apply_profile(self, profile: WaveformProfile, high_contrast: bool) -> None:
+        """Select a new waveform profile/override for the next refresh.
 
-    lut_bw1 = [  
-        0x80, 0x19, 0x01, 0x00, 0x00, 0x01,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    ]
+        Backs the live (no-reboot) profile change: the caller sets the new
+        selection here, then re-runs init() followed by a full refresh so the
+        panel adopts the new partial LUTs and voltages without restarting the
+        board process. None selects the verified default, matching the
+        constructor. The full refresh is OTP regardless, so this only changes how
+        subsequent partial refreshes drive the panel.
+        """
+        self.profile = profile if profile is not None else get_profile("", CONTROLLER_UC8151D)
+        self.high_contrast = high_contrast
 
-    lut_wb1 = [
-        0x40, 0x19, 0x01, 0x00, 0x00, 0x01,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    ]
+    def _effective_vcom_dc(self) -> int:
+        """VCOM_DC byte (0x82) for the active profile, with high_contrast applied.
 
-    lut_bb1 = [ 
-        0x00, 0x19, 0x01, 0x00, 0x00, 0x01,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    ]
+        Returns the profile's nominal VCOM_DC, or -- when high_contrast is on --
+        that value pushed harder by UC8151D_HIGH_CONTRAST_VCOM_DC_DELTA, clamped
+        to the register's 6-bit range so the experimental boost can never write
+        an out-of-range value.
+        """
+        base = self.profile.uc8151d.vcom_dc
+        if not self.high_contrast:
+            return base
+        return min(base + UC8151D_HIGH_CONTRAST_VCOM_DC_DELTA, UC8151D_VCOM_DC_MAX)
         
     # Hardware reset
     def reset(self):
@@ -287,6 +289,18 @@ class EPD:
         return 0
     
     def SetPartReg(self):
+        """Program the partial-refresh registers from the active profile.
+
+        Same command sequence as the Waveshare reference; the LUTs (0x20-0x24)
+        and analog bytes (0x30 PLL, 0x82 VCOM_DC, 0x50 interval) come from
+        ``self.profile.uc8151d`` so a replacement panel variant
+        (GDEW029I6FD/T5D/M06) can be driven without code changes. With the
+        Waveshare default profile and high_contrast off, the bytes emitted are
+        identical to the stock driver. PLL is skipped when the profile leaves it
+        ``None`` (the controller default), matching GxEPD2's I6FD/T5D partial init.
+        """
+        wf = self.profile.uc8151d
+
         self.send_command(0x01)
         self.send_data(0x03)
         self.send_data(0x00)
@@ -303,10 +317,11 @@ class EPD:
         self.ReadBusy()
 
         self.send_command(0x00) #panel setting
-        self.send_data(0xbf)     #LUT from OTP，128x296
+        self.send_data(0xbf)     #LUT from register, 128x296
 
-        self.send_command(0x30) #PLL setting
-        self.send_data(0x3a)     # 3a 100HZ   29 150Hz 39 200HZ 31 171HZ
+        if wf.pll is not None:
+            self.send_command(0x30) #PLL setting
+            self.send_data(wf.pll)   # 3a 100HZ   29 150Hz 39 200HZ 31 171HZ
 
         self.send_command(0x61) #resolution setting
         self.send_data(self.width)
@@ -314,21 +329,21 @@ class EPD:
         self.send_data(self.height & 0xff)
 
         self.send_command(0x82) #vcom_DC setting
-        self.send_data(0x12)
+        self.send_data(self._effective_vcom_dc())
 
         self.send_command(0X50)     #VCOM AND DATA INTERVAL SETTING
-        self.send_data(0x97)
+        self.send_data(wf.interval)
 
         self.send_command(0x20)         #vcom
-        self.send_data2(self.lut_vcom1)
+        self.send_data2(list(wf.vcom))
         self.send_command(0x21)         # ww --
-        self.send_data2(self.lut_ww1)
+        self.send_data2(list(wf.ww))
         self.send_command(0x22)         # bw r
-        self.send_data2(self.lut_bw1)
+        self.send_data2(list(wf.bw))
         self.send_command(0x23)         # wb w
-        self.send_data2(self.lut_wb1)
+        self.send_data2(list(wf.wb))
         self.send_command(0x24)         # bb b
-        self.send_data2(self.lut_bb1)
+        self.send_data2(list(wf.bb))
 
     def getbuffer(self, image):
         return pack_image_to_buffer(image, self.width, self.height)

@@ -1728,19 +1728,48 @@ function DebugCard() {
 }
 
 
-// A V1-panel waveform profile as reported by /api/system/display-tuning. The
-// dropdown is driven entirely by the backend registry (waveform_profiles.py),
-// so adding a profile there is enough -- no change here. `source`/`url` credit
-// the waveform's origin and are shown in the card.
+// A waveform profile as reported by /api/system/display-tuning. The dropdown is
+// driven entirely by the backend registry (waveform_profiles.py), filtered to
+// the active controller, so adding a profile there is enough -- no change here.
+// `source`/`url` credit the waveform's origin and are shown in the card.
 interface WaveformProfile {
   key: string;
   label: string;
   source: string;
   url: string;
+  controller: string;
 }
+
+// Active controller as reported by the backend (waveform_profiles.CONTROLLER_*).
+// 'uc8151d' is the primary V2 driver; 'ssd16xx' is the V1-family fallback.
+type WaveformController = 'uc8151d' | 'ssd16xx';
+
+// Per-controller card copy. Exhaustive lookup (no default) so a newly added
+// controller family forces an explicit entry rather than silently inheriting
+// the wrong wording.
+const DISPLAY_TUNING_COPY = {
+  uc8151d: {
+    title: 'Display tuning (UC8151D)',
+    description:
+      'If a replacement panel ghosts, ' +
+      'smears, or looks faint on partial updates (e.g. the clock), try a different ' +
+      'waveform profile. Full refresh always uses the panel\u2019s built-in waveform; ' +
+      'only the partial-refresh waveform changes. Each selection applies immediately ' +
+      'with a full refresh -- no reboot.',
+  },
+  ssd16xx: {
+    title: 'Display tuning (SSD1680)',
+    description:
+      'If the panel is blank, faint, or ghosted, try a ' +
+      'different waveform profile. Each selection is applied immediately with a full ' +
+      'refresh -- no reboot -- so you can compare them and keep the one that produces a ' +
+      'clean image.',
+  },
+} satisfies Record<WaveformController, { title: string; description: string }>;
 
 function DisplayTuningCard() {
   const [available, setAvailable] = useState(false);
+  const [activeController, setActiveController] = useState<WaveformController | null>(null);
   const [profiles, setProfiles] = useState<WaveformProfile[]>([]);
   const [selected, setSelected] = useState<string>('');
   const [highContrast, setHighContrast] = useState(false);
@@ -1756,6 +1785,9 @@ function DisplayTuningCard() {
       .then((data) => {
         if (!data) return;
         if (typeof data.available === 'boolean') setAvailable(data.available);
+        if (data.active_controller === 'uc8151d' || data.active_controller === 'ssd16xx') {
+          setActiveController(data.active_controller);
+        }
         if (Array.isArray(data.profiles)) setProfiles(data.profiles);
         if (typeof data.selected === 'string') setSelected(data.selected);
         if (typeof data.high_contrast === 'boolean') setHighContrast(data.high_contrast);
@@ -1812,10 +1844,12 @@ function DisplayTuningCard() {
     }
   };
 
-  // Hidden entirely on a healthy V2 panel: profiles only make sense after a
-  // UC8151D BUSY timeout, which the GET probe reports via `available`.
-  if (!available) return null;
+  // Hidden until the board reports an initialized panel with a known
+  // controller. Both controllers have selectable profiles, so the card appears
+  // for V1 and V2; the copy below adapts to whichever drove the panel.
+  if (!available || activeController === null) return null;
 
+  const copy = DISPLAY_TUNING_COPY[activeController];
   const selectedProfile = profiles.find((p) => p.key === selected);
 
   return (
@@ -1829,14 +1863,8 @@ function DisplayTuningCard() {
         onSuccess={handleLoginSuccess}
       />
       <Card className="mb-6">
-        <CardHeader title="Display tuning (V1 panel)" />
-        <p className="text-muted mb-4">
-          The display did not respond to the standard (UC8151D) driver, so the board fell
-          back to the SSD1680 driver. If the panel is blank, faint, or ghosted, try a
-          different waveform profile. Each selection is applied immediately with a full
-          refresh -- no reboot -- so you can compare them and keep the one that produces a
-          clean image.
-        </p>
+        <CardHeader title={copy.title} />
+        <p className="text-muted mb-4">{copy.description}</p>
         {notice && <Card variant="primary" className="mb-4">{notice}</Card>}
         {error && (
           <Card variant="danger" className="mb-4">
@@ -1867,7 +1895,7 @@ function DisplayTuningCard() {
         )}
         <Toggle
           label="High contrast (experimental)"
-          help="Drive the source and VCOM voltages harder than the profile's defaults. Try this if the image draws but only faintly. Not a datasheet-backed setting; leave off if the display already looks good."
+          help="Drive the VCOM/source voltages harder than the profile's defaults to darken a faint image. Try this if the image draws but only faintly. Not a datasheet-backed setting; leave off if the display already looks good."
           checked={highContrast}
           onChange={(v) => apply(selected, v)}
           disabled={busy}

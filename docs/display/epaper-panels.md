@@ -25,12 +25,25 @@ remains unsolved.
 The two controllers use **inverse BUSY polarity** and **entirely different
 command sets**, which is the root of the V1/V2 split.
 
+**Both** controllers are now tunable via selectable, attributed waveform
+profiles, applied live without a reboot. This covers replacement panels: a field
+unit may have had its panel swapped for a **UC8151D variant** (flexible
+`GDEW029I6FD`, `GDEW029M06`, LILYGO `T5D`) that passes the primary driver's BUSY
+check yet ghosts or renders faint on the stock partial waveform. The UI offers
+only the **active** controller's profiles.
+
 ## Driver architecture
 
 - **Primary driver — UC8151D:** `epaper/framework/waveshare/epd2in9d.py`.
   Used for the V2 panel. BUSY is active-LOW (idle = LOW). A bounded wait raises
   `EPDTimeoutError` after `BUSY_TIMEOUT_SECONDS = 5.0`; `init()` converts that to
   a `-1` result so the board disables the display rather than hanging.
+  Consumes a UC8151D `WaveformProfile` (`+ high_contrast`), with
+  `apply_profile()` for live re-selection. **Full refresh is OTP for every
+  UC8151D profile** (the already-working V2 full path is untouched); only the
+  **partial** register LUTs (`0x20`–`0x24`) and analog bytes (PLL `0x30`,
+  VCOM_DC `0x82`, interval `0x50`) come from the profile. The no-config default
+  (`uc8151d_waveshare`) reproduces the stock `epd2in9d.py` partial byte-for-byte.
 - **Fallback driver — SSD16xx/IL3820 family:**
   `epaper/framework/waveshare/epd2in9_ssd1680.py`. Used for V1-family (E029A01)
   panels. BUSY is active-HIGH (busy = HIGH) — the **inverse** of the UC8151D.
@@ -82,11 +95,15 @@ waveform. Pinned by `PartialBaselineTests` in `tests/test_epd_ssd1680.py`.
 
 ## Panel 1 — DGT Centaur V2 (UC8151D)
 
-- The factory V2 panel. Works on the unmodified primary driver.
+- The factory V2 panel. Works on the unmodified primary driver with the default
+  `uc8151d_waveshare` profile (byte-for-byte the stock partial waveform).
 - BUSY active-LOW. Initializes within the 5 s window, so the SSD1680 fallback is
-  never attempted and the display-tuning card is hidden (waveform profiles do not
-  apply to the UC8151D driver).
-- No issues; nothing to tune.
+  never attempted.
+- **Replacement-panel tuning:** because field units may have a swapped UC8151D
+  *variant*, the display-tuning card is now shown on V2 panels too, offering the
+  UC8151D profiles (`uc8151d_waveshare` default, `uc8151d_gdew029i6fd`,
+  `uc8151d_t5d`, experimental `uc8151d_gdew029m06`). On an unmodified factory
+  panel the default needs no change.
 
 ## Panel 2 — E029A01, bench (SSD1680)
 
@@ -137,21 +154,28 @@ waveform. Pinned by `PartialBaselineTests` in `tests/test_epd_ssd1680.py`.
   *defaults* to chase it would risk regressing the working bench panel. Hence the
   selectable profiles, applied and compared remotely.
 
-## Waveform profiles (SSD1680 driver)
+## Waveform profiles (both controllers)
 
-A **waveform profile** is the self-contained recipe for how the V1 panel moves
-its pixels: a **driver strategy** (`ssd1680` / `il3820` / `dke_ssd1680`) plus its
-LUT data and/or the panel's own OTP waveform. Profiles live in
+A **waveform profile** is the self-contained recipe for how a panel moves its
+pixels. Each profile is tagged with a **controller family** (`ssd16xx` /
+`uc8151d`): the SSD16xx families carry a **driver strategy** (`ssd1680` /
+`il3820` / `dke_ssd1680`) plus LUT data and/or the panel's OTP waveform; the
+UC8151D family carries a `Uc8151dWaveform` (5 partial register LUTs + analog
+bytes, full always OTP). Profiles live in
 `epaper/framework/waveshare/waveform_profiles.py` as a small, **attributed**
 registry — every register LUT is transcribed verbatim from a credited published
 source, never invented (see "Data integrity" in that module).
 
-Exposed in the web UI under **Settings → System → "Display tuning (V1 panel)"**
-as a dropdown plus a high-contrast toggle, backed by `GET/POST
-/api/system/display-tuning`. The card is **hidden** unless the board recorded a
-UC8151D BUSY timeout (`_display_tuning_available()`), so it never appears on a
-healthy V2 panel. The selection is stored in `[display] waveform_profile` /
-`high_contrast`.
+Exposed in the web UI under **Settings → System → "Display tuning"** as a
+dropdown plus a high-contrast toggle, backed by `GET/POST
+/api/system/display-tuning`. The card is **shown whenever the board reports an
+initialized panel with a known controller** (`_display_tuning_available()` /
+`_active_waveform_controller()`), and the dropdown is **filtered to the active
+controller** so it never offers a table the live driver cannot drive. The card
+title/copy adapt to the active controller (V1 vs V2). The selection is stored in
+`[display] waveform_profile` / `high_contrast` (one key shared across
+controllers; each driver resolves it against its own family, falling back to that
+controller's verified default for a mismatched key — e.g. after a panel swap).
 
 ### Live apply (no reboot)
 Selecting a profile (or toggling high contrast) **takes effect immediately**:
@@ -169,13 +193,30 @@ Selecting a profile (or toggling high contrast) **takes effect immediately**:
 If the board process is not running, the change still applies on the next boot
 from the persisted setting.
 
-### Shipped profiles
+### Shipped profiles — SSD16xx family (V1 fallback driver)
 | Key | Label | Driver | What it does | Source |
 |---|---|---|---|---|
-| `gdem029t94` | Waveshare 2.9″ V2 — GDEM029T94 (SSD1680) | `ssd1680` | Register LUT `WS_20_30` full / `WF_PARTIAL_2IN9` partial; activation `0xC7`. The no-config default; identical to the prior driver. | Waveshare e-Paper (also GxEPD2) |
+| `gdem029t94` | Waveshare 2.9″ V2 — GDEM029T94 (SSD1680) | `ssd1680` | Register LUT `WS_20_30` full / `WF_PARTIAL_2IN9` partial; activation `0xC7`. The no-config **SSD16xx default**; identical to the prior driver. | Waveshare e-Paper (also GxEPD2) |
 | `builtin_otp` | Built-In (panel OTP waveform) | `ssd1680` (`use_otp`) | Skips the register LUT; activation `0xF7` (load temperature + OTP LUT). No register partial LUT exists, so **every partial refresh becomes a full refresh**. | Panel factory OTP |
 | `il3820_gdeh029a1` | IL3820 / GDEH029A1 (Good Display) | `il3820` | Faithful IL3820: no SWRESET; init programs booster `0x0C=D7 D6 9D`, VCOM `0x2C=A8`, dummy-line `0x3A=1A`, gate-width `0x3B=08`; **30-byte** full/partial LUTs via `0x32`; activation `0xC4` full / `0x04` partial. | GxEPD2 `GxEPD2_290` (Good Display IL3820 demo) |
 | `depg0290bs` | DEPG0290BS (SSD1680, OTP full + LUT partial) | `dke_ssd1680` | SSD1680 init with border `0x3C=05` + internal temp `0x18=80`; **full from OTP** (`0xF7`); **153-byte** register partial LUT, activation `0xCC`. | GxEPD2 `GxEPD2_290_BS` (Good Display DEPG0290BS demo) |
+
+### Shipped profiles — UC8151D family (V2 primary driver)
+Full refresh is **OTP for all**; they differ only in the partial register LUTs
+(`0x20`–`0x24`) and analog bytes. The distinguishing knob is the partial **phase
+length** (second LUT byte) plus VCOM_DC (`0x82`) / interval (`0x50`).
+
+| Key | Label | Partial phase | `0x82`/`0x50`/`0x30` | Source |
+|---|---|---|---|---|
+| `uc8151d_waveshare` | Waveshare 2.9″ V2 — UC8151D (default) | `0x19` (25) | `0x12`/`0x97`/`0x3a` | Waveshare `epd2in9d.py` |
+| `uc8151d_gdew029i6fd` | GDEW029I6FD flexible (faster partial) | `0x10` (16) | `0x08`/`0x17`/skip | GxEPD2 `GxEPD2_290_I6FD` |
+| `uc8151d_t5d` | T5D / LILYGO (longer partial) | `0x20` (32) | `0x08`/`0x17`/skip | GxEPD2 `GxEPD2_290_T5D` |
+| `uc8151d_gdew029m06` | GDEW029M06 (experimental balanced-charge) | `0x19` (25), short LUTs | `0x12`/`0x17`/`0x3c` | GxEPD2 `GxEPD2_290_M06` (author-labelled experimental) |
+
+The `uc8151d_waveshare` default emits the stock partial sequence byte-for-byte
+(pinned by `DefaultProfilePreservesStockPartialTests` in
+`tests/test_epd_uc8151d.py`), so a working V2 panel is unchanged. I6FD/T5D **skip
+the PLL write** (`0x30`), matching GxEPD2's partial init exactly.
 
 **Built-In behavior:** if the OTP holds a valid waveform the image renders
 (possibly cleaner) but all updates are full-screen flashes; if the OTP is
@@ -187,7 +228,10 @@ Orthogonal to the profile. For the `ssd1680`/`dke_ssd1680` drivers it overrides
 the source (`0x04`) and VCOM (`0x2C`) registers **after** the profile's LUT, so
 it is the final word on voltage. The `il3820` driver has **no** `0x04` register,
 so high contrast there instead raises VCOM inline (`0x2C=0x44` vs the `0xA8`
-default). Register deltas vs. the `WS_20_30` trailing bytes (`ssd1680`):
+default). On the **UC8151D** driver it bumps VCOM_DC (`0x82`) by
+`UC8151D_HIGH_CONTRAST_VCOM_DC_DELTA = 0x08`, clamped to the 6-bit field max
+`0x3F` (e.g. the default `0x12` → `0x1A`) — a more-negative VCOM_DC to darken a
+faint partial. Register deltas vs. the `WS_20_30` trailing bytes (`ssd1680`):
 
 | Register | Default (`WS_20_30`) | High contrast | Delta |
 |---|---|---|---|
@@ -239,23 +283,28 @@ high contrast should be enabled only briefly.
 
 ## Key source files
 
-- `src/universalchess/epaper/framework/waveshare/epd2in9d.py` — UC8151D (V2).
+- `src/universalchess/epaper/framework/waveshare/epd2in9d.py` — UC8151D (V2);
+  consumes a UC8151D `WaveformProfile` + `high_contrast`, with `apply_profile()`
+  for live re-selection. Exposes `CONTROLLER` for profile resolution.
 - `src/universalchess/epaper/framework/waveshare/epd2in9_ssd1680.py` — SSD1680
   (V1); consumes a `WaveformProfile` + `high_contrast`, with `apply_profile()`
   for live re-selection.
 - `src/universalchess/epaper/framework/waveshare/waveform_profiles.py` — the
-  attributed profile registry (LUT data + metadata).
-- `src/universalchess/epaper/framework/manager.py` (`apply_waveform_profile`) and
-  `.../scheduler.py` (`force_reinit`) — live re-init + full refresh.
+  attributed profile registry (per-controller LUT data + metadata).
+- `src/universalchess/epaper/framework/manager.py` (`apply_waveform_profile`,
+  `epd` property) and `.../scheduler.py` (`force_reinit`) — live re-init + full
+  refresh.
 - `src/universalchess/board/display_selection.py` — primary→fallback selection.
-- `src/universalchess/main.py` (`_init_display_early`, `_read_display_profile`,
+- `src/universalchess/main.py` (`_init_display_early`, `_read_display_selection`,
   `_on_board_command`, `_process_pending_display_profile`) — startup wiring +
-  live-apply handling.
+  per-active-controller profile resolution + live-apply handling.
 - `src/universalchess/web/app.py` (`/api/system/display-tuning`,
-  `_display_tuning_available`) — web API + visibility gate + live-apply command.
+  `_display_tuning_available`, `_active_waveform_controller`) — web API +
+  visibility gate + active-controller filtering + live-apply command.
 - `src/universalchess/web-app/src/pages/Settings.tsx` (`DisplayTuningCard`) — UI
-  dropdown + high-contrast toggle + source credits.
+  dropdown + high-contrast toggle + per-controller copy + source credits.
 - `src/universalchess/web-app/src/pages/Licenses.tsx` — waveform-source credits.
 - `src/universalchess/tests/test_epd_ssd1680.py`,
+  `src/universalchess/tests/test_epd_uc8151d.py`,
   `src/universalchess/tests/test_waveform_profiles.py`,
   `src/universalchess/tests/test_debug_endpoints.py` — tests.

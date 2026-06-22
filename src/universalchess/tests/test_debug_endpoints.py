@@ -132,27 +132,47 @@ def test_set_debug_serial_requires_auth(monkeypatch):
     assert resp.status_code == 401
 
 
-def test_display_tuning_available_only_on_busy_timeout(monkeypatch):
-    """availability must be True only when the status file records busy_timeout.
+def test_display_tuning_available_for_any_initialized_known_controller(monkeypatch):
+    """availability is True for any initialized panel with a known controller.
 
-    Why this test exists: this is the exact gate that hides the display-tuning
-    card on a healthy V2 panel. A V2 board (no timeout) must report unavailable;
-    a V1 board (timeout) must report available. Also covers the no-status-yet
-    case.
+    Why this test exists: the card now tunes BOTH controllers (the primary
+    UC8151D, including replacement-panel variants, and the SSD1680 V1 fallback),
+    so it must appear whenever the board reports an initialized panel whose
+    controller maps to a profile family -- not only after a V1 BUSY timeout. It
+    must stay hidden when nothing is reported, the display is disabled, or the
+    controller is unrecognized (no profiles to offer).
 
-    How a regression manifests: _display_tuning_available returns True without a
-    recorded busy_timeout, leaking the V1-only card onto every board.
+    How a regression manifests: availability reverts to the busy-timeout gate
+    (hiding the card on a healthy V2 panel) or returns True for a disabled /
+    unknown-controller panel (showing an empty dropdown).
     """
     from universalchess.board import hardware_info
 
+    # No status yet -> hidden.
     monkeypatch.setattr(hardware_info, "read_display_status", lambda: None)
     assert webapp._display_tuning_available() is False
 
-    monkeypatch.setattr(hardware_info, "read_display_status", lambda: {"busy_timeout": False})
+    # Disabled panel (init failed) -> hidden even if a controller is named.
+    monkeypatch.setattr(hardware_info, "read_display_status",
+                        lambda: {"initialized": False, "active_controller": "UC8151D"})
     assert webapp._display_tuning_available() is False
 
-    monkeypatch.setattr(hardware_info, "read_display_status", lambda: {"busy_timeout": True})
+    # Healthy V2 panel -> available (the new behavior; previously hidden).
+    monkeypatch.setattr(hardware_info, "read_display_status",
+                        lambda: {"initialized": True, "active_controller": "UC8151D"})
     assert webapp._display_tuning_available() is True
+    assert webapp._active_waveform_controller() == "uc8151d"
+
+    # V1 fallback panel -> available.
+    monkeypatch.setattr(hardware_info, "read_display_status",
+                        lambda: {"initialized": True, "active_controller": "SSD1680"})
+    assert webapp._display_tuning_available() is True
+    assert webapp._active_waveform_controller() == "ssd16xx"
+
+    # Initialized but an unrecognized controller -> hidden (no profile family).
+    monkeypatch.setattr(hardware_info, "read_display_status",
+                        lambda: {"initialized": True, "active_controller": "MYSTERY"})
+    assert webapp._display_tuning_available() is False
 
 
 def test_download_debug_log_serves_file(client, monkeypatch, tmp_path):
@@ -209,32 +229,37 @@ def test_download_debug_log_requires_auth(monkeypatch):
 
 
 def test_get_display_tuning_reports_profiles_and_selection(client, monkeypatch):
-    """GET must report the profile list, current selection and availability.
+    """GET must report the active controller, its profile list and the selection.
 
-    Why this test exists: the Display tuning card hides unless a UC8151D BUSY
-    timeout was recorded (available), and it populates the dropdown from the
-    profile registry and the currently selected key. A missing profile list or a
-    wrong selection would leave the card unusable. Drives a known selection.
+    Why this test exists: the Display tuning card populates the dropdown from the
+    profile registry *filtered to the active controller* and the currently
+    selected key. A missing profile list, a wrong selection, or profiles for the
+    wrong controller would leave the card unusable. Drives a known V2 controller.
 
-    How a regression manifests: profiles are dropped from the payload, the
-    selection is not reported, or available stops tracking the busy-timeout gate.
+    How a regression manifests: profiles are dropped or not filtered to the
+    active controller, the selection is not reported, or active_controller is
+    omitted so the card cannot choose its copy.
     """
-    monkeypatch.setattr(webapp, "_display_tuning_available", lambda: True)
-    monkeypatch.setattr(webapp, "_read_selected_profile_key", lambda: "builtin_otp")
+    monkeypatch.setattr(webapp, "_active_waveform_controller", lambda: "uc8151d")
+    monkeypatch.setattr(webapp, "_read_selected_profile_key",
+                        lambda controller=None: "uc8151d_waveshare")
     monkeypatch.setattr(webapp, "_read_display_flag", lambda name: name == "high_contrast")
 
     resp = client.get("/api/system/display-tuning")
     assert resp.status_code == 200
     body = json.loads(resp.data)
     assert body["available"] is True
-    assert body["selected"] == "builtin_otp"
+    assert body["active_controller"] == "uc8151d"
+    assert body["selected"] == "uc8151d_waveshare"
     assert body["high_contrast"] is True
-    # The dropdown is driven by the registry; every entry must carry attribution
-    # so the card and Licenses page can credit the waveform source.
+    # The dropdown is driven by the registry, filtered to the active controller;
+    # every entry must carry attribution and target this controller so the card
+    # never offers a table the live driver cannot drive.
     assert len(body["profiles"]) >= 1
     for entry in body["profiles"]:
-        assert set(entry.keys()) == {"key", "label", "source", "url"}
+        assert set(entry.keys()) == {"key", "label", "source", "url", "controller"}
         assert entry["source"]
+        assert entry["controller"] == "uc8151d"
 
 
 def test_set_display_tuning_persists_and_applies_live(client, monkeypatch):
@@ -251,8 +276,12 @@ def test_set_display_tuning_persists_and_applies_live(client, monkeypatch):
     """
     saved = []
     sent = []
+    # Active panel is the V2 UC8151D, so a UC8151D profile key validates and is
+    # what the resolved-selection helper returns.
+    monkeypatch.setattr(webapp, "_active_waveform_controller", lambda: "uc8151d")
     monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
-    monkeypatch.setattr(webapp, "_read_selected_profile_key", lambda: "builtin_otp")
+    monkeypatch.setattr(webapp, "_read_selected_profile_key",
+                        lambda controller=None: "uc8151d_t5d")
     monkeypatch.setattr(webapp, "_read_display_flag", lambda name: name == "high_contrast")
     import universalchess.services.game_broadcast as gb
     monkeypatch.setattr(gb, "send_board_command",
@@ -260,18 +289,18 @@ def test_set_display_tuning_persists_and_applies_live(client, monkeypatch):
 
     resp = client.post(
         "/api/system/display-tuning",
-        data=json.dumps({"profile": "builtin_otp", "high_contrast": True}),
+        data=json.dumps({"profile": "uc8151d_t5d", "high_contrast": True}),
         content_type="application/json",
     )
     assert resp.status_code == 200
     body = json.loads(resp.data)
     assert body["success"] is True
     assert body["applied_live"] is True
-    assert saved == [{"display": {"waveform_profile": "builtin_otp", "high_contrast": True}}]
+    assert saved == [{"display": {"waveform_profile": "uc8151d_t5d", "high_contrast": True}}]
     # The live-apply command must be dispatched with the resolved selection.
     # (Persisting settings may emit other board commands, e.g. reset_inactivity,
     # so assert membership rather than an exact call list.)
-    assert ("display_profile", {"profile": "builtin_otp", "high_contrast": True}) in sent
+    assert ("display_profile", {"profile": "uc8151d_t5d", "high_contrast": True}) in sent
 
 
 def test_set_display_tuning_rejects_unknown_profile(client, monkeypatch):
@@ -290,6 +319,32 @@ def test_set_display_tuning_rejects_unknown_profile(client, monkeypatch):
     resp = client.post(
         "/api/system/display-tuning",
         data=json.dumps({"profile": "not-a-real-profile"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 400
+    assert saved == []
+
+
+def test_set_display_tuning_rejects_profile_for_other_controller(client, monkeypatch):
+    """A known key for the WRONG controller must 400, not be persisted.
+
+    Why this test exists: one waveform_profile setting is shared across both
+    controllers. Persisting an SSD1680 key while a UC8151D panel is active (or
+    vice versa) would silently fall back to the default at apply time -- the user
+    picks a table and gets a different one. Validating against the active
+    controller surfaces the mismatch immediately. Drives a real SSD1680 key
+    against an active UC8151D panel.
+
+    How a regression manifests: the cross-controller key passes validation and is
+    saved, returning 200 with a selection the live driver cannot honor.
+    """
+    saved = []
+    monkeypatch.setattr(webapp, "_active_waveform_controller", lambda: "uc8151d")
+    monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
+
+    resp = client.post(
+        "/api/system/display-tuning",
+        data=json.dumps({"profile": "gdem029t94"}),  # SSD16xx key, UC8151D panel
         content_type="application/json",
     )
     assert resp.status_code == 400
