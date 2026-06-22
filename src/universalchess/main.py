@@ -297,23 +297,29 @@ def _on_display_refresh(image):
 def _read_display_flag(name: str) -> bool:
     """Return whether a [display] boolean opt-in is set (default off).
 
-    Shared reader for the SSD1680 driver opt-ins (il3820 and the experimental
-    tuning flags). None of these gate the SSD1680 fallback itself -- that is
-    automatic whenever the UC8151D driver trips its BUSY timeout; they only
-    adjust how the SSD1680 driver then drives the panel.
+    Used for the experimental high_contrast drive-voltage override. It does not
+    gate the SSD1680 fallback itself -- that is automatic whenever the UC8151D
+    driver trips its BUSY timeout; it only adjusts how the SSD1680 driver then
+    drives the panel.
     """
     from universalchess.board.settings import Settings
     value = Settings.read('display', name, 'False')
     return str(value).strip().lower() in ('1', 'true', 'on', 'yes')
 
 
-def _read_il3820_enabled() -> bool:
-    """Return whether the [display] il3820 opt-in is set (default off).
+def _read_display_profile():
+    """Return ``(WaveformProfile, high_contrast)`` from the [display] settings.
 
-    Enables the optional IL3820-specific init additions inside the SSD1680
-    driver.
+    ``waveform_profile`` selects the SSD1680 waveform recipe (see
+    waveform_profiles); an unset or unknown key resolves to the verified default
+    so the working bench panel is unchanged. ``high_contrast`` is the
+    experimental drive-voltage override applied on top. Neither gates the
+    SSD1680 fallback itself -- that is automatic on a UC8151D BUSY timeout.
     """
-    return _read_display_flag('il3820')
+    from universalchess.board.settings import Settings
+    from universalchess.epaper.framework.waveshare.waveform_profiles import get_profile
+    key = str(Settings.read('display', 'waveform_profile', '')).strip()
+    return get_profile(key), _read_display_flag('high_contrast')
 
 
 def _attempt_display_init(epd):
@@ -346,9 +352,10 @@ def _init_display_early():
     Tries the UC8151D (V2) driver first. If it trips the BUSY timeout -- the
     signature of an inverted-polarity V1 panel -- it automatically retries with
     the SSD1680 (V1-family) driver; no opt-in is required for that fallback. The
-    [display] il3820 opt-in only toggles the optional IL3820 additions inside
-    the SSD1680 driver. The resolved outcome (controller + busy_timeout) is
-    published to the cross-process status file for the web System card.
+    [display] waveform_profile / high_contrast settings only select how the
+    SSD1680 driver then drives the panel. The resolved outcome (controller +
+    busy_timeout) is published to the cross-process status file for the web
+    System card.
 
     Display operations are queued and monitored in background threads, allowing
     the main thread to continue with other startup tasks while the e-paper
@@ -359,9 +366,7 @@ def _init_display_early():
     from universalchess.board import display_selection as ds
     from universalchess.epaper.framework.waveshare.epd2in9d import EPD as PrimaryEPD
 
-    il3820_enabled = _read_il3820_enabled()
-    otp_waveform = _read_display_flag('otp_waveform')
-    strong_drive = _read_display_flag('strong_drive')
+    profile, high_contrast = _read_display_profile()
 
     manager, primary = _attempt_display_init(PrimaryEPD())
     alt = None
@@ -372,13 +377,11 @@ def _init_display_early():
         )
         log.warning(
             "UC8151D BUSY timeout at startup; trying SSD1680 fallback "
-            f"(il3820_additions={il3820_enabled}, otp_waveform={otp_waveform}, "
-            f"strong_drive={strong_drive})"
+            f"(profile={profile.key}, high_contrast={high_contrast})"
         )
         alt_manager, alt = _attempt_display_init(AltEPD(
-            il3820_additions=il3820_enabled,
-            otp_waveform=otp_waveform,
-            strong_drive=strong_drive,
+            profile=profile,
+            high_contrast=high_contrast,
         ))
         if alt.ok:
             manager = alt_manager
@@ -404,7 +407,7 @@ def _init_display_early():
         # Latch the failure for the (separate) web process: the panel never
         # initialized (e.g. a V1 panel that trips the BUSY timeout), so the
         # System card must show "Not responding" rather than the configured V2.
-        # busy_timeout still propagates so the UI reveals the IL3820 opt-in.
+        # busy_timeout still propagates so the UI reveals the display-tuning card.
         hardware_info.write_display_status(
             initialized=False,
             error=outcome.error,
@@ -566,6 +569,12 @@ _pending_settings_reload = False  # Flag: web changed settings, rebuild live gam
 # the main thread (see _process_pending_board_command), since it rebuilds the
 # live game display. None means "no command pending".
 _pending_board_command = None
+# Web-initiated live waveform-profile change (no reboot). Set on the subscriber
+# thread by _on_board_command and applied on the main thread by
+# _process_pending_display_profile (it re-inits the panel and forces a full
+# refresh, which is display work that must run on the main thread). None means
+# "no change pending".
+_pending_display_profile = None
 # Menu navigation path captured when entering a game from the menu, so suspending
 # (PLAY) returns the full menu to that exact submenu position. None means "no
 # captured position"; it is cleared when a game truly ends (see _return_to_menu).
@@ -2263,8 +2272,14 @@ def _on_board_command(parsed: dict) -> None:
     During a game no menu widget is active, so the command is instead picked up by
     the main loop's per-iteration poll of ``_pending_board_command``.
     """
-    global _pending_board_command
+    global _pending_board_command, _pending_display_profile
     command = parsed.get("command")
+    # Live waveform-profile change: defer to the main thread (it re-inits the
+    # panel and forces a full refresh -- display work). Does not need to unwind a
+    # menu, since the per-iteration poll applies it from any app_state.
+    if command == "display_profile":
+        _pending_display_profile = parsed
+        return
     # Bluetooth pairing commands are handled here (off the main loop): pairing
     # runs on its own worker thread and confirming an incoming pairing only
     # resolves an already-displayed modal, so neither needs main-thread display
@@ -2304,6 +2319,29 @@ def _on_board_command(parsed: dict) -> None:
     # applies the command.
     if _menu_manager is not None and _menu_manager.active_widget is not None:
         _menu_manager.cancel_selection("WEB_COMMAND")
+
+
+def _process_pending_display_profile() -> None:
+    """Apply a pending live waveform-profile change on the main thread.
+
+    Re-reads the selection from settings (already persisted by the web app) and
+    asks the early display Manager (which owns the EPD and its scheduler) to
+    adopt it and force a full refresh, so the panel re-renders the current screen
+    with the new waveform/voltages -- no reboot. A no-op when no display Manager
+    exists or the active driver is the UC8151D V2 driver (which has no
+    register-LUT profiles); apply_waveform_profile handles the latter.
+    """
+    global _pending_display_profile
+    cmd = _pending_display_profile
+    _pending_display_profile = None
+    if not cmd:
+        return
+    if _early_display_manager is None:
+        return
+    profile, high_contrast = _read_display_profile()
+    log.info(f"[App] Applying display profile live: {profile.key} "
+             f"(high_contrast={high_contrast})")
+    _early_display_manager.apply_waveform_profile(profile, high_contrast)
 
 
 def _process_pending_board_command() -> None:
@@ -5277,6 +5315,12 @@ def main():
     try:
         while running and not kill:
             try:
+                # Apply a pending live waveform-profile change (no reboot) from
+                # any app_state: it only re-inits the panel and redraws the
+                # current framebuffer, so it is independent of menu/game state.
+                if _pending_display_profile is not None:
+                    _process_pending_display_profile()
+
                 if app_state == AppState.MENU:
                     # Apply a web board-control command (set up position / abort) that
                     # arrived while the menu was showing. Runs here on the main thread.

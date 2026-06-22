@@ -7,10 +7,11 @@ BUSY timeout occurs, the board automatically retries with the SSD1680 driver.
 
 The SSD1680 fallback requires *no* opt-in: a BUSY timeout is the V1-panel
 signature, and the SSD1680 driver is harmless on a panel that already failed the
-UC8151D path. The separate ``[display] il3820`` opt-in does NOT gate this
-selection at all; it only toggles optional IL3820-specific init additions
-*inside* the SSD1680 driver (see ``epd2in9_ssd1680.EPD(il3820_additions=...)``).
-That keeps driver configuration out of this pure branching rule.
+UC8151D path. The separate ``[display] waveform_profile`` / ``high_contrast``
+settings do NOT gate this selection at all; they only choose how the SSD1680
+driver then drives the panel (see ``epd2in9_ssd1680.EPD(profile=...)`` and the
+``waveform_profiles`` registry). That keeps driver configuration out of this
+pure branching rule.
 
 This module holds *only* the branching rule, kept pure so it is exhaustively
 unit-testable without any hardware. ``main`` performs the actual init attempts

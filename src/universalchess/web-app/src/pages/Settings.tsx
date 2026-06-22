@@ -1727,37 +1727,22 @@ function DebugCard() {
 }
 
 
-// V1-panel display-tuning knobs. Each entry maps 1:1 to a
-// [display] flag read at board startup and an SSD1680 driver opt-in. Adding a
-// future iteration is a one-line append here plus a matching driver flag and an
-// entry in the backend DISPLAY_TUNING_FLAGS allow-list -- no new endpoint.
-const DISPLAY_TUNING_FLAGS = [
-  {
-    key: 'il3820',
-    label: 'IL3820 additions',
-    help: 'Apply the IL3820/SSD1608-specific analog setup (booster, dummy-line, gate-width, VCOM). Try this if the panel is a genuine IL3820 and renders incorrectly.',
-  },
-  {
-    key: 'otp_waveform',
-    label: 'Use built-in panel waveform',
-    help: "Ignore the bundled waveform table and drive the panel from its own factory (OTP) waveform. Try this first if the image is faint or ghosted.",
-  },
-  {
-    key: 'strong_drive',
-    label: 'Boost drive voltage',
-    help: 'Push the source and VCOM voltages harder than the defaults. Try this if the image draws but only faintly.',
-  },
-] as const;
-
-type DisplayTuningKey = (typeof DISPLAY_TUNING_FLAGS)[number]['key'];
+// A V1-panel waveform profile as reported by /api/system/display-tuning. The
+// dropdown is driven entirely by the backend registry (waveform_profiles.py),
+// so adding a profile there is enough -- no change here. `source`/`url` credit
+// the waveform's origin and are shown in the card.
+interface WaveformProfile {
+  key: string;
+  label: string;
+  source: string;
+  url: string;
+}
 
 function DisplayTuningCard() {
   const [available, setAvailable] = useState(false);
-  const [flags, setFlags] = useState<Record<DisplayTuningKey, boolean>>({
-    il3820: false,
-    otp_waveform: false,
-    strong_drive: false,
-  });
+  const [profiles, setProfiles] = useState<WaveformProfile[]>([]);
+  const [selected, setSelected] = useState<string>('');
+  const [highContrast, setHighContrast] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -1770,9 +1755,9 @@ function DisplayTuningCard() {
       .then((data) => {
         if (!data) return;
         if (typeof data.available === 'boolean') setAvailable(data.available);
-        if (data.flags && typeof data.flags === 'object') {
-          setFlags((prev) => ({ ...prev, ...data.flags }));
-        }
+        if (Array.isArray(data.profiles)) setProfiles(data.profiles);
+        if (typeof data.selected === 'string') setSelected(data.selected);
+        if (typeof data.high_contrast === 'boolean') setHighContrast(data.high_contrast);
       })
       .catch(() => {
         // Best-effort initial read; the card stays hidden if unavailable.
@@ -1788,24 +1773,10 @@ function DisplayTuningCard() {
     }
   };
 
-  // The flags are read only at board startup, so a change has no effect until
-  // the next reboot. Reuses the Power card's reboot endpoint and 401 login-retry.
-  const reboot = async () => {
-    const response = await apiFetch('/api/system/reboot', { method: 'POST', requiresAuth: true });
-    if (response.status === 401) {
-      pendingActionRef.current = reboot;
-      setShowLoginDialog(true);
-      return;
-    }
-    const data = await response.json().catch(() => ({}));
-    if (response.ok && data.success) {
-      setNotice('Rebooting. The web interface will return shortly.');
-    } else {
-      setError(data.error || 'Failed to reboot the board.');
-    }
-  };
-
-  const setFlag = async (key: DisplayTuningKey, next: boolean) => {
+  // Persist the selection and apply it live: the board re-inits the panel and
+  // forces a full refresh, so the change takes effect without a reboot. On 401
+  // the login dialog opens and the same apply is retried after authentication.
+  const apply = async (profile: string, contrast: boolean) => {
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -1813,24 +1784,26 @@ function DisplayTuningCard() {
       const response = await apiFetch('/api/system/display-tuning', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [key]: next }),
+        body: JSON.stringify({ profile, high_contrast: contrast }),
         requiresAuth: true,
       });
       if (response.status === 401) {
-        pendingActionRef.current = () => setFlag(key, next);
+        pendingActionRef.current = () => apply(profile, contrast);
         setShowLoginDialog(true);
         return;
       }
-      if (!response.ok) {
-        setError('Failed to update the display tuning setting.');
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) {
+        setError(data.error || 'Failed to update the display profile.');
         return;
       }
-      setFlags((prev) => ({ ...prev, [key]: next }));
-      if (confirm('Display tuning changed. Reboot now to apply it to the display driver?')) {
-        await reboot();
-      } else {
-        setNotice('Display tuning changed. Reboot the board for it to take effect.');
-      }
+      setSelected(data.selected ?? profile);
+      setHighContrast(typeof data.high_contrast === 'boolean' ? data.high_contrast : contrast);
+      setNotice(
+        data.applied_live
+          ? 'Profile applied. The panel refreshed with the new waveform.'
+          : 'Profile saved. It will apply when the board is running.',
+      );
     } catch {
       setError('Network error');
     } finally {
@@ -1838,9 +1811,11 @@ function DisplayTuningCard() {
     }
   };
 
-  // Hidden entirely on a healthy V2 panel: these knobs only make sense after a
+  // Hidden entirely on a healthy V2 panel: profiles only make sense after a
   // UC8151D BUSY timeout, which the GET probe reports via `available`.
   if (!available) return null;
+
+  const selectedProfile = profiles.find((p) => p.key === selected);
 
   return (
     <>
@@ -1856,9 +1831,10 @@ function DisplayTuningCard() {
         <CardHeader title="Display tuning (V1 panel)" />
         <p className="text-muted mb-4">
           The display did not respond to the standard (UC8151D) driver, so the board fell
-          back to the SSD1680 driver. If the panel is blank, faint, or ghosted, try these
-          options one at a time, rebooting after each, and report which combination
-          produces a clean image. Leave them off if the display already works.
+          back to the SSD1680 driver. If the panel is blank, faint, or ghosted, try a
+          different waveform profile. Each selection is applied immediately with a full
+          refresh -- no reboot -- so you can compare them and keep the one that produces a
+          clean image.
         </p>
         {notice && <Card variant="primary" className="mb-4">{notice}</Card>}
         {error && (
@@ -1866,17 +1842,35 @@ function DisplayTuningCard() {
             <strong>Error:</strong> {error}
           </Card>
         )}
-        {DISPLAY_TUNING_FLAGS.map((flag) => (
-          <div key={flag.key} className="mb-4 last:mb-0">
-            <Toggle
-              label={flag.label}
-              help={flag.help}
-              checked={flags[flag.key]}
-              onChange={(v) => setFlag(flag.key, v)}
-              disabled={busy}
-            />
-          </div>
-        ))}
+        <FormRow
+          label="Waveform profile"
+          help="The recipe used to drive the panel. Built-In uses the panel's own factory waveform; the others load a known manufacturer table."
+        >
+          <Select
+            value={selected}
+            onChange={(e) => apply(e.target.value, highContrast)}
+            disabled={busy}
+            options={profiles.map((p) => ({ value: p.key, label: p.label }))}
+          />
+        </FormRow>
+        {selectedProfile && (
+          <p className="text-muted mb-4" style={{ fontSize: '0.85em' }}>
+            Waveform source: {selectedProfile.url ? (
+              <a href={selectedProfile.url} target="_blank" rel="noreferrer">
+                {selectedProfile.source}
+              </a>
+            ) : (
+              selectedProfile.source
+            )}
+          </p>
+        )}
+        <Toggle
+          label="High contrast (experimental)"
+          help="Drive the source and VCOM voltages harder than the profile's defaults. Try this if the image draws but only faintly. Not a datasheet-backed setting; leave off if the display already looks good."
+          checked={highContrast}
+          onChange={(v) => apply(selected, v)}
+          disabled={busy}
+        />
       </Card>
     </>
   );

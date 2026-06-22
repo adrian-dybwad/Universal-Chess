@@ -41,6 +41,7 @@ import time
 
 from . import epd2in9d, epdconfig
 from .epd2in9d import EPDTimeoutError
+from .waveform_profiles import WaveformProfile, get_profile
 
 log = logging.getLogger(__name__)
 
@@ -52,32 +53,24 @@ EPD_HEIGHT = 296
 class EPD:
     """SSD1680 panel driver exposing the framework's EPD interface."""
 
-    def __init__(self, il3820_additions: bool = False,
-                 otp_waveform: bool = False, strong_drive: bool = False):
+    def __init__(self, profile: WaveformProfile = None, high_contrast: bool = False):
         self.reset_pin = epdconfig.RST_PIN
         self.dc_pin = epdconfig.DC_PIN
         self.busy_pin = epdconfig.BUSY_PIN
         self.cs_pin = epdconfig.CS_PIN
         self.width = EPD_WIDTH
         self.height = EPD_HEIGHT
-        # Optional IL3820-specific init additions, gated by the [display] il3820
-        # opt-in. The SSD1680 base init drives a genuine SSD1680 panel; these
-        # extra analog/waveform registers are what a true IL3820/SSD1608 panel
-        # needs that the SSD1680 OTP/LUT path does not supply. Off by default so
-        # the automatic SSD1680 fallback is never altered unless requested.
-        self.il3820_additions = il3820_additions
-        # Experimental V1-panel bring-up opt-ins (see [display] otp_waveform /
-        # strong_drive). Both default off so the verified SSD1680 fallback is
-        # untouched unless an operator explicitly enables them to chase a faint
-        # or ghosted image on real V1 hardware:
-        #   otp_waveform: ignore the register-loaded WS_20_30 LUT and drive the
-        #     panel from its built-in (OTP) waveform instead. The likely fix when
-        #     the ported LUT is wrong for the specific panel revision.
-        #   strong_drive: rewrite the source (VSH/VSL) and VCOM voltages harder
-        #     than the WS_20_30 defaults. The likely fix when the image draws but
-        #     only faintly (under-driven ink).
-        self.otp_waveform = otp_waveform
-        self.strong_drive = strong_drive
+        # Selected waveform profile -- the recipe for how the panel moves pixels:
+        # a register full/partial LUT, the panel's own OTP waveform, and/or the
+        # IL3820 analog additions. None selects the verified GDEM029T94 default so
+        # the working bench panel is unchanged when nothing is configured. See
+        # waveform_profiles for the registry and the provenance of each table.
+        self.profile = profile if profile is not None else get_profile("")
+        # Experimental drive-voltage override applied on top of whatever the
+        # profile programs (see _apply_high_contrast). Off by default; the one
+        # knob without datasheet backing, surfaced separately in the UI as
+        # experimental.
+        self.high_contrast = high_contrast
         # Last image sent, kept for parity with the V2 driver's interface. The
         # SSD1680 itself holds the partial-refresh baseline in its 0x26 RAM (set
         # by display()), so this is not re-sent to the controller per partial.
@@ -86,63 +79,27 @@ class EPD:
         # main reads this to populate the cross-process display-status record.
         self.busy_timeout_occurred = False
 
-    # --- Waveform look-up tables (ported verbatim from Waveshare epd2in9_V2) ---
-    # 159 bytes: 153 LUT bytes written via 0x32, then 6 trailing bytes consumed
-    # by SetLut() for the gate/source/VCOM voltage registers (0x3F/0x03/0x04/0x2C).
-    WF_PARTIAL_2IN9 = [
-        0x0, 0x40, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x80, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x40, 0x40, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0A, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1,
-        0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x0, 0x0, 0x0,
-        0x22, 0x17, 0x41, 0xB0, 0x32, 0x36,
-    ]
+    def apply_profile(self, profile: WaveformProfile, high_contrast: bool) -> None:
+        """Select a new waveform profile/override for the next init().
 
-    WS_20_30 = [
-        0x80, 0x66, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x40, 0x0, 0x0, 0x0,
-        0x10, 0x66, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x20, 0x0, 0x0, 0x0,
-        0x80, 0x66, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x40, 0x0, 0x0, 0x0,
-        0x10, 0x66, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x20, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x14, 0x8, 0x0, 0x0, 0x0, 0x0, 0x2,
-        0xA, 0xA, 0x0, 0xA, 0xA, 0x0, 0x1,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x14, 0x8, 0x0, 0x1, 0x0, 0x0, 0x1,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x44, 0x44, 0x44, 0x44, 0x44, 0x44, 0x0, 0x0, 0x0,
-        0x22, 0x17, 0x41, 0x0, 0x32, 0x36,
-    ]
+        Backs the live (no-reboot) profile change: the caller sets the new
+        selection here, then re-runs init() followed by a full refresh so the
+        panel adopts the new waveform and voltages without restarting the board
+        process. None selects the verified default, matching the constructor.
+        """
+        self.profile = profile if profile is not None else get_profile("")
+        self.high_contrast = high_contrast
 
-    # --- "strong drive" voltages (experimental, strong_drive opt-in) ----------
-    # Pushed harder than the WS_20_30 trailing voltage bytes (VSH 0x41, VSL 0x32,
-    # VCOM 0x36): a larger VSH darkens black pixels and a more-negative VSL/VCOM
-    # raises contrast on a faint panel. These are an on-hardware tuning starting
-    # point, not a datasheet guarantee -- the whole reason they sit behind an
-    # opt-in the remote operator can flip and reboot.
-    STRONG_DRIVE_VSH1 = 0x4A  # source high (was 0x41)
-    STRONG_DRIVE_VSH2 = 0x00  # second source high (unused on this panel)
-    STRONG_DRIVE_VSL = 0x3A   # source low / more negative (was 0x32)
-    STRONG_DRIVE_VCOM = 0x44  # VCOM (was 0x36)
+    # --- "high contrast" drive voltages (experimental override) ---------------
+    # Pushed harder than the GDEM029T94 trailing voltage bytes (VSH 0x41, VSL
+    # 0x32, VCOM 0x36): a larger VSH darkens black pixels and a more-negative
+    # VSL/VCOM raises contrast on a faint panel. An on-hardware tuning starting
+    # point, not a datasheet guarantee -- the reason it is surfaced as a separate
+    # experimental toggle, applied over whatever profile is selected.
+    HIGH_CONTRAST_VSH1 = 0x4A  # source high (profile default 0x41)
+    HIGH_CONTRAST_VSH2 = 0x00  # second source high (unused on this panel)
+    HIGH_CONTRAST_VSL = 0x3A   # source low / more negative (profile default 0x32)
+    HIGH_CONTRAST_VCOM = 0x44  # VCOM (profile default 0x36)
 
     # --- low-level SPI / GPIO (identical wiring to the V2 driver) -------------
     def reset(self):
@@ -201,10 +158,10 @@ class EPD:
         The display-update-control-2 (0x22) payload selects the waveform source:
         0xC7 runs the register-loaded LUT written by SetLut(); 0xF7 additionally
         loads temperature and the panel's OTP waveform. The OTP byte is used only
-        when the otp_waveform opt-in is set (init() then skips SetLut()).
+        for a use_otp profile (init() then skips SetLut()).
         """
         self.send_command(0x22)  # display update control 2
-        self.send_data(0xF7 if self.otp_waveform else 0xC7)
+        self.send_data(0xF7 if self.profile.use_otp else 0xC7)
         self.send_command(0x20)  # master activation
         self.ReadBusy()
 
@@ -292,18 +249,19 @@ class EPD:
             self.SetCursor(0, 0)
             self.ReadBusy()
 
-            # otp_waveform: skip the register LUT so the panel uses its built-in
-            # (OTP) waveform, loaded at activation by TurnOnDisplay()'s 0xF7.
-            if not self.otp_waveform:
-                self.SetLut(self.WS_20_30)
+            # use_otp profile: skip the register LUT so the panel uses its
+            # built-in (OTP) waveform, loaded at activation by TurnOnDisplay()'s
+            # 0xF7. Otherwise load this profile's full-refresh table.
+            if not self.profile.use_otp:
+                self.SetLut(self.profile.full_lut)
 
-            if self.il3820_additions:
+            if self.profile.il3820_additions:
                 self._apply_il3820_additions()
 
-            # strong_drive runs LAST so its higher-contrast source/VCOM voltages
-            # override whatever SetLut() or the IL3820 additions just wrote.
-            if self.strong_drive:
-                self._apply_strong_drive()
+            # high_contrast runs LAST so its harder source/VCOM voltages override
+            # whatever SetLut() or the IL3820 additions just wrote.
+            if self.high_contrast:
+                self._apply_high_contrast()
         except EPDTimeoutError as e:
             # Panel never signaled idle: unresponsive or not an SSD1680-family
             # panel. Report -1 so Manager.initialize() disables the display
@@ -344,23 +302,23 @@ class EPD:
         self.send_command(0x3B)  # set gate line width
         self.send_data(0x08)
 
-    def _apply_strong_drive(self):
+    def _apply_high_contrast(self):
         """Rewrite source (0x04) and VCOM (0x2C) with higher-contrast voltages.
 
         Invoked from init() last (after the waveform LUT and any IL3820
-        additions) when ``strong_drive`` is set, so these values are the final
+        additions) when ``high_contrast`` is set, so these values are the final
         word on drive voltage. Targets the "draws but faint" symptom: a higher
         VSH and more-negative VSL/VCOM push more charge into the ink. The bytes
         are an on-hardware tuning starting point, not a datasheet guarantee --
-        hence the opt-in. If the panel still renders faint, these constants are
-        the values to adjust next.
+        hence the experimental toggle. If the panel still renders faint, these
+        constants are the values to adjust next.
         """
         self.send_command(0x04)  # source driving voltage
-        self.send_data(self.STRONG_DRIVE_VSH1)  # VSH1
-        self.send_data(self.STRONG_DRIVE_VSH2)  # VSH2
-        self.send_data(self.STRONG_DRIVE_VSL)   # VSL
+        self.send_data(self.HIGH_CONTRAST_VSH1)  # VSH1
+        self.send_data(self.HIGH_CONTRAST_VSH2)  # VSH2
+        self.send_data(self.HIGH_CONTRAST_VSL)   # VSL
         self.send_command(0x2C)  # VCOM
-        self.send_data(self.STRONG_DRIVE_VCOM)
+        self.send_data(self.HIGH_CONTRAST_VCOM)
 
     def getbuffer(self, image):
         """Pack a PIL image into the 1bpp panel buffer (white=1, black=0).
@@ -393,12 +351,12 @@ class EPD:
         0x26 is left intact, so the scheduler should perform a periodic full
         refresh (display()) to re-seat the baseline and avoid cumulative ghosting.
 
-        In otp_waveform mode there is no register-loaded partial LUT to run, so a
-        partial activation would have no waveform; route through the full-refresh
-        path instead (correctness over speed -- every update still renders with
-        the OTP waveform).
+        For a use_otp profile there is no register-loaded partial LUT to run, so
+        a partial activation would have no waveform; route through the
+        full-refresh path instead (correctness over speed -- every update still
+        renders with the OTP waveform).
         """
-        if self.otp_waveform:
+        if self.profile.use_otp:
             self.display(image)
             return
 
@@ -407,7 +365,7 @@ class EPD:
         epdconfig.digital_write(self.reset_pin, 1)
         epdconfig.delay_ms(2)
 
-        self.SetLut(self.WF_PARTIAL_2IN9)
+        self.SetLut(self.profile.partial_lut)
         self.send_command(0x37)
         self.send_data(0x00)
         self.send_data(0x00)

@@ -32,6 +32,7 @@ from PIL import Image
 
 from universalchess.epaper.framework.waveshare import epd2in9d, epdconfig
 from universalchess.epaper.framework.waveshare import epd2in9_ssd1680 as ssd
+from universalchess.epaper.framework.waveshare import waveform_profiles as wp
 from universalchess.epaper.framework.waveshare.epd2in9_ssd1680 import EPD
 
 # A short timeout to keep the hang-path tests fast.
@@ -155,8 +156,8 @@ class Il3820AdditionsTests(unittest.TestCase):
         epdconfig.delay_ms = self._orig_delay_ms
         epdconfig.module_init = self._orig_module_init
 
-    def _init_and_record(self, il3820_additions):
-        epd = EPD(il3820_additions=il3820_additions)
+    def _init_and_record(self, profile_key):
+        epd = EPD(profile=wp.get_profile(profile_key))
         commands = []
         epd.send_command = lambda c: commands.append(c)
         epd.send_data = MagicMock()
@@ -165,17 +166,17 @@ class Il3820AdditionsTests(unittest.TestCase):
         return result, commands
 
     def test_additions_off_omits_il3820_opcodes(self):
-        # Default fallback: the verified SSD1680 path must not emit any IL3820
-        # analog setup, so the working SSD1680 panel behavior is unchanged.
-        result, commands = self._init_and_record(il3820_additions=False)
+        # Default profile (GDEM029T94): the verified SSD1680 path must not emit
+        # any IL3820 analog setup, so the working SSD1680 panel is unchanged.
+        result, commands = self._init_and_record("gdem029t94")
         self.assertEqual(result, 0)
         for opcode in self.IL3820_ONLY_OPCODES:
             self.assertNotIn(opcode, commands, f"unexpected IL3820 cmd 0x{opcode:02x}")
 
     def test_additions_on_emits_il3820_opcodes(self):
-        # Opt-in on: every IL3820-only analog command must be issued, on top of
-        # the SSD1680 base init (which still ran -- result is 0).
-        result, commands = self._init_and_record(il3820_additions=True)
+        # IL3820 profile: every IL3820-only analog command must be issued, on top
+        # of the SSD1680 base init (which still ran -- result is 0).
+        result, commands = self._init_and_record("il3820_gdeh029a1")
         self.assertEqual(result, 0)
         for opcode in self.IL3820_ONLY_OPCODES:
             self.assertIn(opcode, commands, f"missing IL3820 cmd 0x{opcode:02x}")
@@ -225,19 +226,19 @@ class OtpWaveformTests(unittest.TestCase):
         return transcript
 
     def test_default_writes_register_lut(self):
-        # Baseline: with the opt-in off, init must still load the WS_20_30 LUT
-        # via 0x32. If this regresses, the OTP path would be taken unconditionally
-        # and the verified SSD1680 panel behavior would change.
+        # Baseline: with the default profile, init must still load the GDEM029T94
+        # LUT via 0x32. If this regresses, the OTP path would be taken
+        # unconditionally and the verified SSD1680 panel behavior would change.
         epd = EPD()
         transcript = self._record(epd)
         self.assertEqual(epd.init(), 0)
         self.assertIn(("cmd", 0x32), transcript)
 
     def test_otp_waveform_skips_register_lut(self):
-        # Opt-in on: the LUT register write (0x32) must be absent so the panel
-        # uses its OTP waveform. If 0x32 still fired, both waveforms would fight
-        # and the experiment would be meaningless.
-        epd = EPD(otp_waveform=True)
+        # Built-In (OTP) profile: the LUT register write (0x32) must be absent so
+        # the panel uses its OTP waveform. If 0x32 still fired, both waveforms
+        # would fight and the experiment would be meaningless.
+        epd = EPD(profile=wp.get_profile("builtin_otp"))
         transcript = self._record(epd)
         self.assertEqual(epd.init(), 0)
         self.assertNotIn(("cmd", 0x32), transcript)
@@ -246,9 +247,9 @@ class OtpWaveformTests(unittest.TestCase):
         # The 0x22 (display update control 2) payload selects the waveform
         # source: 0xC7 runs the written LUT, 0xF7 loads the OTP LUT. The wrong
         # byte either ignores the OTP waveform (faint) or runs no LUT at all.
-        for otp, expected in ((False, 0xC7), (True, 0xF7)):
-            with self.subTest(otp=otp):
-                epd = EPD(otp_waveform=otp)
+        for profile_key, expected in (("gdem029t94", 0xC7), ("builtin_otp", 0xF7)):
+            with self.subTest(profile=profile_key):
+                epd = EPD(profile=wp.get_profile(profile_key))
                 transcript = self._record(epd)
                 epd.TurnOnDisplay()
                 idx = transcript.index(("cmd", 0x22))
@@ -258,27 +259,27 @@ class OtpWaveformTests(unittest.TestCase):
         # In OTP mode a partial refresh has no written partial LUT, so it must
         # route through the full-refresh path -- detectable by the 0x26 baseline
         # write, which a real partial refresh deliberately omits.
-        epd = EPD(otp_waveform=True)
+        epd = EPD(profile=wp.get_profile("builtin_otp"))
         transcript = self._record(epd)
         epd.DisplayPartial([0x00] * BUFFER_LEN)
         self.assertIn(("cmd", 0x26), transcript)
 
     def test_partial_stays_partial_when_not_otp(self):
-        # Guard the inverse: with the opt-in off, DisplayPartial must remain a
-        # true partial refresh (loads partial LUT 0x32, no 0x26 baseline write),
-        # so the fallback only happens in OTP mode.
-        epd = EPD(otp_waveform=False)
+        # Guard the inverse: with a register-LUT profile, DisplayPartial must
+        # remain a true partial refresh (loads partial LUT 0x32, no 0x26 baseline
+        # write), so the fallback only happens in OTP mode.
+        epd = EPD()
         transcript = self._record(epd)
         epd.DisplayPartial([0x00] * BUFFER_LEN)
         self.assertIn(("cmd", 0x32), transcript)
         self.assertNotIn(("cmd", 0x26), transcript)
 
 
-class StrongDriveTests(unittest.TestCase):
-    """The strong-drive opt-in must override source/VCOM voltages, last word.
+class HighContrastTests(unittest.TestCase):
+    """The high-contrast override must rewrite source/VCOM voltages, last word.
 
     A faint image that draws but lightly is the classic symptom of under-driven
-    source (VSH) / VCOM voltages. This opt-in rewrites the 0x04 (source) and
+    source (VSH) / VCOM voltages. This override rewrites the 0x04 (source) and
     0x2C (VCOM) registers AFTER the LUT/IL3820 setup so its higher-contrast
     values win regardless of what the waveform or IL3820 additions wrote.
     """
@@ -323,44 +324,61 @@ class StrongDriveTests(unittest.TestCase):
         return payload
 
     def test_default_keeps_waveform_voltages(self):
-        # Baseline: with the opt-in off, the last source-voltage (0x04) write is
-        # the WS_20_30 LUT's trailing bytes. If this regresses, the panel's
+        # Baseline: with high-contrast off, the last source-voltage (0x04) write
+        # is the GDEM029T94 LUT's trailing bytes. If this regresses, the panel's
         # verified voltages would change without anyone asking.
         epd, result, transcript = self._record_and_init()
         self.assertEqual(result, 0)
         self.assertEqual(
             self._last_command_payload(transcript, 0x04),
-            [EPD.WS_20_30[155], EPD.WS_20_30[156], EPD.WS_20_30[157]],
+            [wp.WS_20_30[155], wp.WS_20_30[156], wp.WS_20_30[157]],
         )
 
-    def test_strong_drive_overrides_source_and_vcom(self):
-        # Opt-in on: the final 0x04 (source) and 0x2C (VCOM) writes must be the
-        # strong-drive constants, proving the override runs last and wins. A
-        # regression (running before SetLut, or not at all) leaves the faint
-        # waveform voltages in place.
-        epd, result, transcript = self._record_and_init(strong_drive=True)
+    def test_high_contrast_overrides_source_and_vcom(self):
+        # High-contrast on: the final 0x04 (source) and 0x2C (VCOM) writes must
+        # be the high-contrast constants, proving the override runs last and
+        # wins. A regression (running before SetLut, or not at all) leaves the
+        # faint waveform voltages in place.
+        epd, result, transcript = self._record_and_init(high_contrast=True)
         self.assertEqual(result, 0)
         self.assertEqual(
             self._last_command_payload(transcript, 0x04),
-            [EPD.STRONG_DRIVE_VSH1, EPD.STRONG_DRIVE_VSH2, EPD.STRONG_DRIVE_VSL],
+            [EPD.HIGH_CONTRAST_VSH1, EPD.HIGH_CONTRAST_VSH2, EPD.HIGH_CONTRAST_VSL],
         )
         self.assertEqual(
             self._last_command_payload(transcript, 0x2C),
-            [EPD.STRONG_DRIVE_VCOM],
+            [EPD.HIGH_CONTRAST_VCOM],
         )
 
-    def test_strong_drive_overrides_il3820_voltages_too(self):
-        # Combined with the IL3820 additions (which also write VCOM 0x2C), the
-        # strong-drive override must still be the final VCOM write. This pins the
-        # ordering contract so the two opt-ins can be tested together.
+    def test_high_contrast_overrides_il3820_voltages_too(self):
+        # Combined with the IL3820 profile (which also writes VCOM 0x2C), the
+        # high-contrast override must still be the final VCOM write. This pins the
+        # ordering contract so the profile and override can be combined.
         epd, result, transcript = self._record_and_init(
-            il3820_additions=True, strong_drive=True
+            profile=wp.get_profile("il3820_gdeh029a1"), high_contrast=True
         )
         self.assertEqual(result, 0)
         self.assertEqual(
             self._last_command_payload(transcript, 0x2C),
-            [EPD.STRONG_DRIVE_VCOM],
+            [EPD.HIGH_CONTRAST_VCOM],
         )
+
+    def test_apply_profile_switches_selection_for_next_init(self):
+        # Live (no-reboot) apply path: apply_profile() must change which waveform
+        # the NEXT init() programs. Start on the default (register LUT, writes
+        # 0x32), switch to Built-In OTP, and confirm the re-init now skips 0x32.
+        # A regression here means a live profile change would not take effect
+        # until a reboot -- the exact behavior the feature removes.
+        epd = EPD()
+        epd.apply_profile(wp.get_profile("builtin_otp"), high_contrast=False)
+        transcript = []
+        epd.send_command = lambda c: transcript.append(("cmd", c))
+        epd.send_data = MagicMock()
+        epd.send_data2 = MagicMock()
+        epd.reset = MagicMock()
+        epd.ReadBusy = MagicMock()
+        self.assertEqual(epd.init(), 0)
+        self.assertNotIn(("cmd", 0x32), transcript)
 
 
 class BufferAndRefreshTests(unittest.TestCase):

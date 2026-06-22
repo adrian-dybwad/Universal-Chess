@@ -75,6 +75,27 @@ const licenses: License[] = [
     copyright: 'Poimandres',
     url: 'https://github.com/pmndrs/zustand',
   },
+  {
+    name: 'Waveshare e-Paper',
+    type: 'Reference driver',
+    description: 'Source of the SSD1680 (GDEM029T94) waveform tables and init sequence used by the V1-panel display driver and the "Waveshare 2.9\u2033 V2" tuning profile.',
+    copyright: 'Waveshare',
+    url: 'https://github.com/waveshareteam/e-Paper',
+  },
+  {
+    name: 'GxEPD2',
+    type: 'GPL-3.0',
+    description: 'Arduino e-paper library by Jean-Marc Zingg. Corroborates the GDEM029T94 waveform table and the panel-OTP (Built-In) approach used by the V1-panel tuning profiles.',
+    copyright: 'Jean-Marc Zingg',
+    url: 'https://github.com/ZinggJM/GxEPD2',
+  },
+  {
+    name: 'Good Display IL3820 / GDEH029A1',
+    type: 'Reference data',
+    description: 'Source of the IL3820 (GDEH029A1) analog init additions used by the "IL3820 / GDEH029A1" V1-panel tuning profile.',
+    copyright: 'Good Display',
+    url: 'https://www.good-display.com/',
+  },
 ];
 
 /**

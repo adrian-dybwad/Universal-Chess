@@ -2351,31 +2351,36 @@ def api_set_debug_serial():
         return _internal_error(e)
 
 
-# V1-panel display-tuning flags exposed via /api/system/display-tuning. Each maps
-# 1:1 to a [display] boolean read at board startup and an SSD1680 driver opt-in
-# (see epd2in9_ssd1680.EPD). Kept as an explicit allow-list so the POST handler
-# can ignore unknown keys rather than writing arbitrary settings. il3820 is the
-# established opt-in; otp_waveform/strong_drive are experimental bring-up knobs.
-DISPLAY_TUNING_FLAGS = ("il3820", "otp_waveform", "strong_drive")
-
-
 def _read_display_flag(name: str) -> bool:
     """Return whether a [display] boolean flag is enabled (tolerant of spellings).
 
-    Shared reader for every [display] on/off opt-in (il3820 and the experimental
-    tuning flags) so they parse stored values identically.
+    Shared reader for [display] on/off settings (the high_contrast override) so
+    they parse stored values identically to the board process.
     """
     from universalchess.board.settings import Settings
     value = Settings.read('display', name, 'False')
     return str(value).strip().lower() in ('1', 'true', 'on', 'yes')
 
 
-def _il3820_available() -> bool:
+def _read_selected_profile_key() -> str:
+    """Return the configured waveform-profile key, resolved to a known profile.
+
+    A blank or stale stored key resolves to the verified default so the UI never
+    shows an unknown selection and the board never runs with no waveform.
+    """
+    from universalchess.board.settings import Settings
+    from universalchess.epaper.framework.waveshare import waveform_profiles as wp
+    key = str(Settings.read('display', 'waveform_profile', '')).strip()
+    return wp.get_profile(key).key
+
+
+def _display_tuning_available() -> bool:
     """Whether to offer the display-tuning card: only after a UC8151D BUSY timeout.
 
-    The knobs are meaningless on a healthy V2 panel (no fallback occurred), so the
-    card is surfaced only when the board recorded a BUSY timeout -- the V1-panel
-    signature -- in the cross-process display-status file.
+    Profiles target the SSD1680 (V1-family) fallback driver and are meaningless
+    on a healthy V2 panel (no fallback occurred), so the card is surfaced only
+    when the board recorded a BUSY timeout -- the V1-panel signature -- in the
+    cross-process display-status file.
     """
     from universalchess.board import hardware_info
     status = hardware_info.read_display_status()
@@ -2384,17 +2389,21 @@ def _il3820_available() -> bool:
 
 @app.route("/api/system/display-tuning", methods=["GET"])
 def api_get_display_tuning():
-    """Report the V1-panel display-tuning flags and availability.
+    """Report the V1-panel waveform profiles, current selection and availability.
 
-    Read-only and unauthenticated like the other GET probes; exposes only the
-    boolean tuning flags, no secrets. ``available`` reflects a recorded UC8151D
-    BUSY timeout so the card is hidden on a healthy V2 panel where these knobs
-    (il3820, otp_waveform, strong_drive) are meaningless.
+    Read-only and unauthenticated like the other GET probes; exposes only
+    profile metadata (key/label/source/url) and the current selection, no
+    secrets and no raw waveform bytes. ``available`` reflects a recorded UC8151D
+    BUSY timeout so the card is hidden on a healthy V2 panel where profiles are
+    meaningless.
     """
     try:
+        from universalchess.epaper.framework.waveshare import waveform_profiles as wp
         return jsonify({
-            "available": _il3820_available(),
-            "flags": {name: _read_display_flag(name) for name in DISPLAY_TUNING_FLAGS},
+            "available": _display_tuning_available(),
+            "profiles": wp.profiles_metadata(),
+            "selected": _read_selected_profile_key(),
+            "high_contrast": _read_display_flag("high_contrast"),
         })
     except Exception as e:
         return _internal_error(e)
@@ -2403,24 +2412,46 @@ def api_get_display_tuning():
 @app.route("/api/system/display-tuning", methods=["POST"])
 @requires_auth
 def api_set_display_tuning():
-    """Set one or more V1-panel display-tuning flags. Requires authentication.
+    """Select a V1-panel waveform profile and apply it live. Requires auth.
 
-    Persists only recognized [display] flags (DISPLAY_TUNING_FLAGS) via
-    save_all_settings, each coerced to a bool. Unknown keys are ignored, and a
-    body naming no known flag is rejected (400) so a client field-name bug fails
-    loudly instead of writing an empty section. The flags are read once at board
-    startup, so the operator toggles, reboots, and re-checks the panel. Body:
-    {"il3820": bool, "otp_waveform": bool, "strong_drive": bool} (any subset).
+    Persists [display] waveform_profile and high_contrast, then sends the board
+    process a ``display_profile`` command so it re-inits the panel and forces a
+    full refresh -- the new waveform/voltages take effect without a reboot. An
+    unknown profile key is rejected (400) so a client bug fails loudly rather
+    than writing an invalid selection. Body: {"profile": "<key>",
+    "high_contrast": bool}.
     """
     try:
+        from universalchess.epaper.framework.waveshare import waveform_profiles as wp
+
         body = request.get_json(silent=True) or {}
-        updates = {name: bool(body[name]) for name in DISPLAY_TUNING_FLAGS if name in body}
+        updates = {}
+        if "profile" in body:
+            key = str(body["profile"]).strip()
+            if not wp.is_known_profile(key):
+                return jsonify({"success": False, "error": f"unknown profile: {key}"}), 400
+            updates["waveform_profile"] = key
+        if "high_contrast" in body:
+            updates["high_contrast"] = bool(body["high_contrast"])
         if not updates:
-            return jsonify({"success": False, "error": "no recognized display flags"}), 400
+            return jsonify({"success": False, "error": "no profile or high_contrast given"}), 400
+
         save_all_settings({"display": updates})
+
+        # Apply live (no reboot): the board process re-inits the panel and forces
+        # a full refresh. Best-effort -- if the board is not running, the change
+        # still takes effect on the next boot from the persisted settings.
+        from universalchess.services.game_broadcast import send_board_command
+        applied_live = send_board_command("display_profile", {
+            "profile": _read_selected_profile_key(),
+            "high_contrast": _read_display_flag("high_contrast"),
+        })
+
         return jsonify({
             "success": True,
-            "flags": {name: _read_display_flag(name) for name in DISPLAY_TUNING_FLAGS},
+            "applied_live": bool(applied_live),
+            "selected": _read_selected_profile_key(),
+            "high_contrast": _read_display_flag("high_contrast"),
         })
     except Exception as e:
         return _internal_error(e)

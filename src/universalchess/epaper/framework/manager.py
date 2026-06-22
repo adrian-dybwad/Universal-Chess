@@ -70,6 +70,27 @@ class Manager:
 
         return None
     
+    def apply_waveform_profile(self, profile, high_contrast: bool) -> Future:
+        """Adopt a new SSD1680 waveform profile live and force a full refresh.
+
+        Backs the no-reboot profile change: swaps the driver's profile/override,
+        forces the next refresh to re-run init() (which reloads the LUT and
+        voltages), and submits a full refresh so the current screen redraws with
+        the new settings. A no-op when the active driver is not the SSD1680
+        driver (the UC8151D V2 driver has no register-LUT profiles to swap), so
+        calling it on a V2 panel is harmless.
+
+        Returns a Future that completes when the refresh finishes (already
+        completed if not applicable or the display is not initialized).
+        """
+        if not hasattr(self._epd, "apply_profile"):
+            future = Future()
+            future.set_result("not-applicable")
+            return future
+        self._epd.apply_profile(profile, high_contrast)
+        self._scheduler.force_reinit()
+        return self.update(full=True, immediate=True)
+
     def add_widget(self, widget: Widget) -> Future:
         """Add a widget to the display.
         
