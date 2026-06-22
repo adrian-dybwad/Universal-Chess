@@ -945,7 +945,7 @@ export function Settings() {
             </Card>
 
             <DebugCard />
-            <Il3820Card />
+            <DisplayTuningCard />
             <PasswordChange />
             <SystemActions />
           </section>
@@ -1727,14 +1727,37 @@ function DebugCard() {
 }
 
 
-// Optional IL3820 init additions for the SSD1680 (V1) fallback driver. The
-// SSD1680 fallback itself is automatic on a UC8151D BUSY timeout and needs no
-// opt-in; this toggle only layers the IL3820-specific init additions on top.
-// The whole card is hidden unless the board recorded a BUSY timeout
-// (available), since the option is meaningless on a healthy V2 panel.
-function Il3820Card() {
+// V1-panel display-tuning knobs. Each entry maps 1:1 to a
+// [display] flag read at board startup and an SSD1680 driver opt-in. Adding a
+// future iteration is a one-line append here plus a matching driver flag and an
+// entry in the backend DISPLAY_TUNING_FLAGS allow-list -- no new endpoint.
+const DISPLAY_TUNING_FLAGS = [
+  {
+    key: 'il3820',
+    label: 'IL3820 additions',
+    help: 'Apply the IL3820/SSD1608-specific analog setup (booster, dummy-line, gate-width, VCOM). Try this if the panel is a genuine IL3820 and renders incorrectly.',
+  },
+  {
+    key: 'otp_waveform',
+    label: 'Use built-in panel waveform',
+    help: "Ignore the bundled waveform table and drive the panel from its own factory (OTP) waveform. Try this first if the image is faint or ghosted.",
+  },
+  {
+    key: 'strong_drive',
+    label: 'Boost drive voltage',
+    help: 'Push the source and VCOM voltages harder than the defaults. Try this if the image draws but only faintly.',
+  },
+] as const;
+
+type DisplayTuningKey = (typeof DISPLAY_TUNING_FLAGS)[number]['key'];
+
+function DisplayTuningCard() {
   const [available, setAvailable] = useState(false);
-  const [enabled, setEnabled] = useState(false);
+  const [flags, setFlags] = useState<Record<DisplayTuningKey, boolean>>({
+    il3820: false,
+    otp_waveform: false,
+    strong_drive: false,
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -1742,12 +1765,14 @@ function Il3820Card() {
   const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
 
   useEffect(() => {
-    fetch(buildApiUrl('/api/system/il3820'))
+    fetch(buildApiUrl('/api/system/display-tuning'))
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (!data) return;
         if (typeof data.available === 'boolean') setAvailable(data.available);
-        if (typeof data.enabled === 'boolean') setEnabled(data.enabled);
+        if (data.flags && typeof data.flags === 'object') {
+          setFlags((prev) => ({ ...prev, ...data.flags }));
+        }
       })
       .catch(() => {
         // Best-effort initial read; the card stays hidden if unavailable.
@@ -1763,8 +1788,8 @@ function Il3820Card() {
     }
   };
 
-  // The flag is read only at board startup, so a toggle has no effect until the
-  // next reboot. Reuses the Power card's reboot endpoint and 401 login-retry.
+  // The flags are read only at board startup, so a change has no effect until
+  // the next reboot. Reuses the Power card's reboot endpoint and 401 login-retry.
   const reboot = async () => {
     const response = await apiFetch('/api/system/reboot', { method: 'POST', requiresAuth: true });
     if (response.status === 401) {
@@ -1780,38 +1805,31 @@ function Il3820Card() {
     }
   };
 
-  const setIl3820 = async (next: boolean) => {
+  const setFlag = async (key: DisplayTuningKey, next: boolean) => {
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      const response = await apiFetch('/api/system/il3820', {
+      const response = await apiFetch('/api/system/display-tuning', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: next }),
+        body: JSON.stringify({ [key]: next }),
         requiresAuth: true,
       });
       if (response.status === 401) {
-        pendingActionRef.current = () => setIl3820(next);
+        pendingActionRef.current = () => setFlag(key, next);
         setShowLoginDialog(true);
         return;
       }
       if (!response.ok) {
-        setError('Failed to update the IL3820 setting.');
+        setError('Failed to update the display tuning setting.');
         return;
       }
-      setEnabled(next);
-      const rebootPrompt = next
-        ? 'IL3820 additions enabled. Reboot now to apply them to the display driver?'
-        : 'IL3820 additions disabled. Reboot now for the change to take effect?';
-      if (confirm(rebootPrompt)) {
+      setFlags((prev) => ({ ...prev, [key]: next }));
+      if (confirm('Display tuning changed. Reboot now to apply it to the display driver?')) {
         await reboot();
       } else {
-        setNotice(
-          next
-            ? 'IL3820 additions enabled. Reboot the board to apply them.'
-            : 'IL3820 additions disabled. Reboot the board for the change to take effect.'
-        );
+        setNotice('Display tuning changed. Reboot the board for it to take effect.');
       }
     } catch {
       setError('Network error');
@@ -1820,7 +1838,7 @@ function Il3820Card() {
     }
   };
 
-  // Hidden entirely on a healthy V2 panel: the option only makes sense after a
+  // Hidden entirely on a healthy V2 panel: these knobs only make sense after a
   // UC8151D BUSY timeout, which the GET probe reports via `available`.
   if (!available) return null;
 
@@ -1835,12 +1853,12 @@ function Il3820Card() {
         onSuccess={handleLoginSuccess}
       />
       <Card className="mb-6">
-        <CardHeader title="IL3820 display" />
+        <CardHeader title="Display tuning (V1 panel)" />
         <p className="text-muted mb-4">
-          The display did not respond to the standard (UC8151D) driver, so the board has
-          fallen back to the SSD1680 driver automatically. If the panel is a genuine IL3820
-          and still renders incorrectly, enable these IL3820-specific init additions and
-          reboot to test. Leave this off if the display already works.
+          The display did not respond to the standard (UC8151D) driver, so the board fell
+          back to the SSD1680 driver. If the panel is blank, faint, or ghosted, try these
+          options one at a time, rebooting after each, and report which combination
+          produces a clean image. Leave them off if the display already works.
         </p>
         {notice && <Card variant="primary" className="mb-4">{notice}</Card>}
         {error && (
@@ -1848,13 +1866,17 @@ function Il3820Card() {
             <strong>Error:</strong> {error}
           </Card>
         )}
-        <Toggle
-          label="IL3820 additions"
-          help="Takes effect after the next reboot."
-          checked={enabled}
-          onChange={(v) => setIl3820(v)}
-          disabled={busy}
-        />
+        {DISPLAY_TUNING_FLAGS.map((flag) => (
+          <div key={flag.key} className="mb-4 last:mb-0">
+            <Toggle
+              label={flag.label}
+              help={flag.help}
+              checked={flags[flag.key]}
+              onChange={(v) => setFlag(flag.key, v)}
+              disabled={busy}
+            />
+          </div>
+        ))}
       </Card>
     </>
   );

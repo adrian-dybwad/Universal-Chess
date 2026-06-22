@@ -2351,18 +2351,30 @@ def api_set_debug_serial():
         return _internal_error(e)
 
 
-def _read_il3820_enabled() -> bool:
-    """Return whether [display] il3820 is enabled (tolerant of spellings)."""
+# V1-panel display-tuning flags exposed via /api/system/display-tuning. Each maps
+# 1:1 to a [display] boolean read at board startup and an SSD1680 driver opt-in
+# (see epd2in9_ssd1680.EPD). Kept as an explicit allow-list so the POST handler
+# can ignore unknown keys rather than writing arbitrary settings. il3820 is the
+# established opt-in; otp_waveform/strong_drive are experimental bring-up knobs.
+DISPLAY_TUNING_FLAGS = ("il3820", "otp_waveform", "strong_drive")
+
+
+def _read_display_flag(name: str) -> bool:
+    """Return whether a [display] boolean flag is enabled (tolerant of spellings).
+
+    Shared reader for every [display] on/off opt-in (il3820 and the experimental
+    tuning flags) so they parse stored values identically.
+    """
     from universalchess.board.settings import Settings
-    value = Settings.read('display', 'il3820', 'False')
+    value = Settings.read('display', name, 'False')
     return str(value).strip().lower() in ('1', 'true', 'on', 'yes')
 
 
 def _il3820_available() -> bool:
-    """Whether to offer the IL3820 opt-in: only after a UC8151D BUSY timeout.
+    """Whether to offer the display-tuning card: only after a UC8151D BUSY timeout.
 
-    The opt-in is meaningless on a healthy V2 panel (no fallback occurred), so it
-    is surfaced only when the board recorded a BUSY timeout -- the V1-panel
+    The knobs are meaningless on a healthy V2 panel (no fallback occurred), so the
+    card is surfaced only when the board recorded a BUSY timeout -- the V1-panel
     signature -- in the cross-process display-status file.
     """
     from universalchess.board import hardware_info
@@ -2370,39 +2382,46 @@ def _il3820_available() -> bool:
     return bool(status and status.get("busy_timeout"))
 
 
-@app.route("/api/system/il3820", methods=["GET"])
-def api_get_il3820():
-    """Report the IL3820 opt-in state and whether it should be offered.
+@app.route("/api/system/display-tuning", methods=["GET"])
+def api_get_display_tuning():
+    """Report the V1-panel display-tuning flags and availability.
 
-    Read-only and unauthenticated like the other GET probes; exposes only two
-    booleans, no secrets. ``available`` is True only after a UC8151D BUSY
-    timeout, so the UI hides the toggle entirely on a healthy V2 panel.
+    Read-only and unauthenticated like the other GET probes; exposes only the
+    boolean tuning flags, no secrets. ``available`` reflects a recorded UC8151D
+    BUSY timeout so the card is hidden on a healthy V2 panel where these knobs
+    (il3820, otp_waveform, strong_drive) are meaningless.
     """
     try:
         return jsonify({
-            "enabled": _read_il3820_enabled(),
             "available": _il3820_available(),
+            "flags": {name: _read_display_flag(name) for name in DISPLAY_TUNING_FLAGS},
         })
     except Exception as e:
         return _internal_error(e)
 
 
-@app.route("/api/system/il3820", methods=["POST"])
+@app.route("/api/system/display-tuning", methods=["POST"])
 @requires_auth
-def api_set_il3820():
-    """Enable/disable the optional IL3820 init additions. Requires authentication.
+def api_set_display_tuning():
+    """Set one or more V1-panel display-tuning flags. Requires authentication.
 
-    Persists [display] il3820 via save_all_settings. The setting does NOT gate
-    the SSD1680 fallback (automatic on a BUSY timeout); it only toggles the
-    IL3820-specific init additions inside that driver, read once at board
-    startup. The user enables it, reboots, and re-checks the panel. Body:
-    {"enabled": bool}.
+    Persists only recognized [display] flags (DISPLAY_TUNING_FLAGS) via
+    save_all_settings, each coerced to a bool. Unknown keys are ignored, and a
+    body naming no known flag is rejected (400) so a client field-name bug fails
+    loudly instead of writing an empty section. The flags are read once at board
+    startup, so the operator toggles, reboots, and re-checks the panel. Body:
+    {"il3820": bool, "otp_waveform": bool, "strong_drive": bool} (any subset).
     """
     try:
         body = request.get_json(silent=True) or {}
-        enabled = bool(body.get("enabled"))
-        save_all_settings({"display": {"il3820": enabled}})
-        return jsonify({"success": True, "enabled": enabled})
+        updates = {name: bool(body[name]) for name in DISPLAY_TUNING_FLAGS if name in body}
+        if not updates:
+            return jsonify({"success": False, "error": "no recognized display flags"}), 400
+        save_all_settings({"display": updates})
+        return jsonify({
+            "success": True,
+            "flags": {name: _read_display_flag(name) for name in DISPLAY_TUNING_FLAGS},
+        })
     except Exception as e:
         return _internal_error(e)
 

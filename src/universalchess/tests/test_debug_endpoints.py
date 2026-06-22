@@ -132,39 +132,16 @@ def test_set_debug_serial_requires_auth(monkeypatch):
     assert resp.status_code == 401
 
 
-def test_get_il3820_reports_enabled_and_availability(client, monkeypatch):
-    """GET must report both the opt-in state and whether to offer it.
-
-    Why this test exists: the IL3820 toggle is hidden entirely unless a UC8151D
-    BUSY timeout was recorded (available), and its switch initializes from the
-    persisted opt-in (enabled). Wrong values would either hide the toggle on a
-    real V1 panel or show it on a healthy V2 panel. Drives both flags.
-
-    How a regression manifests: enabled/available stop tracking their sources
-    (e.g. available ignores busy_timeout, so the toggle shows on every board).
-    """
-    monkeypatch.setattr(webapp, "_read_il3820_enabled", lambda: True)
-    monkeypatch.setattr(webapp, "_il3820_available", lambda: True)
-    resp = client.get("/api/system/il3820")
-    assert resp.status_code == 200
-    body = json.loads(resp.data)
-    assert body == {"enabled": True, "available": True}
-
-    monkeypatch.setattr(webapp, "_read_il3820_enabled", lambda: False)
-    monkeypatch.setattr(webapp, "_il3820_available", lambda: False)
-    resp = client.get("/api/system/il3820")
-    assert json.loads(resp.data) == {"enabled": False, "available": False}
-
-
 def test_il3820_available_only_on_busy_timeout(monkeypatch):
     """availability must be True only when the status file records busy_timeout.
 
-    Why this test exists: this is the exact gate that hides the opt-in on a
-    healthy V2 panel. A V2 board (no timeout) must report unavailable; a V1 board
-    (timeout) must report available. Also covers the no-status-yet case.
+    Why this test exists: this is the exact gate that hides the display-tuning
+    card on a healthy V2 panel. A V2 board (no timeout) must report unavailable;
+    a V1 board (timeout) must report available. Also covers the no-status-yet
+    case.
 
     How a regression manifests: _il3820_available returns True without a recorded
-    busy_timeout, leaking the V1-only opt-in onto every board.
+    busy_timeout, leaking the V1-only card onto every board.
     """
     from universalchess.board import hardware_info
 
@@ -176,73 +153,6 @@ def test_il3820_available_only_on_busy_timeout(monkeypatch):
 
     monkeypatch.setattr(hardware_info, "read_display_status", lambda: {"busy_timeout": True})
     assert webapp._il3820_available() is True
-
-
-def test_set_il3820_persists_boolean(client, monkeypatch):
-    """POST must persist il3820 as a boolean under [display] and echo it.
-
-    Why this test exists: the board reads [display] il3820 at startup to decide
-    whether to apply the IL3820 additions; a wrong section/key or non-boolean
-    would leave the additions off after reboot despite a success response.
-    Asserts the precise payload handed to save_all_settings.
-
-    How a regression manifests: save_all_settings receives a different
-    section/key, or a truthy string instead of a bool.
-    """
-    saved = []
-    monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
-
-    resp = client.post(
-        "/api/system/il3820",
-        data=json.dumps({"enabled": True}),
-        content_type="application/json",
-    )
-    assert resp.status_code == 200
-    body = json.loads(resp.data)
-    assert body["success"] is True and body["enabled"] is True
-    assert saved == [{"display": {"il3820": True}}]
-
-
-def test_set_il3820_defaults_missing_enabled_to_false(client, monkeypatch):
-    """A POST without "enabled" must persist False, not raise or enable.
-
-    Why this test exists: a malformed/empty body must fail safe to "off" so the
-    SSD1680 fallback runs without the unverified IL3820 additions. The bool()
-    coercion of a missing key is the guard. Sends an empty JSON object.
-
-    How a regression manifests: missing key yields an error response, or persists
-    a truthy value.
-    """
-    saved = []
-    monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
-
-    resp = client.post(
-        "/api/system/il3820", data=json.dumps({}), content_type="application/json"
-    )
-    assert resp.status_code == 200
-    assert saved == [{"display": {"il3820": False}}]
-
-
-def test_set_il3820_requires_auth(monkeypatch):
-    """Toggling the IL3820 additions must require authentication (401).
-
-    Why this test exists: it mutates persisted state and the board's startup
-    driver configuration, so like the other System mutations it must be
-    auth-gated; an unauthenticated caller must not flip it.
-
-    How a regression manifests: the endpoint writes the setting without
-    credentials (status is not 401).
-    """
-    webapp.app.config.update(TESTING=True)
-    monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
-    unauth = webapp.app.test_client()
-
-    resp = unauth.post(
-        "/api/system/il3820",
-        data=json.dumps({"enabled": True}),
-        content_type="application/json",
-    )
-    assert resp.status_code == 401
 
 
 def test_download_debug_log_serves_file(client, monkeypatch, tmp_path):
@@ -295,4 +205,102 @@ def test_download_debug_log_requires_auth(monkeypatch):
     unauth = webapp.app.test_client()
 
     resp = unauth.get("/api/system/debug-log")
+    assert resp.status_code == 401
+
+
+def test_get_display_tuning_reports_flags_and_availability(client, monkeypatch):
+    """GET must report every experimental flag plus the availability gate.
+
+    Why this test exists: the Display tuning card hides unless a UC8151D BUSY
+    timeout was recorded (available) and initializes each switch from its
+    persisted [display] flag. A missing flag in the response would leave that
+    switch stuck off regardless of config. Drives a mixed flag state.
+
+    How a regression manifests: a flag is dropped from the payload, or available
+    stops tracking the busy-timeout gate.
+    """
+    monkeypatch.setattr(webapp, "_il3820_available", lambda: True)
+    monkeypatch.setattr(
+        webapp, "_read_display_flag",
+        lambda name: name == "otp_waveform",
+    )
+    resp = client.get("/api/system/display-tuning")
+    assert resp.status_code == 200
+    body = json.loads(resp.data)
+    assert body["available"] is True
+    assert body["flags"] == {
+        "il3820": False,
+        "otp_waveform": True,
+        "strong_drive": False,
+    }
+
+
+def test_set_display_tuning_persists_only_known_flags(client, monkeypatch):
+    """POST must persist only recognized flags under [display] as booleans.
+
+    Why this test exists: the board reads these exact [display] keys at startup;
+    an unknown key would be silently written and could shadow a real setting, and
+    a non-boolean would not match the startup truthiness check. Sends one known
+    flag plus an unknown key and asserts only the known one is saved, coerced to
+    bool.
+
+    How a regression manifests: the unknown key is persisted, the section/key is
+    wrong, or a truthy string is saved instead of True.
+    """
+    saved = []
+    monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
+    monkeypatch.setattr(webapp, "_read_display_flag", lambda name: name == "strong_drive")
+
+    resp = client.post(
+        "/api/system/display-tuning",
+        data=json.dumps({"strong_drive": True, "bogus": True}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    body = json.loads(resp.data)
+    assert body["success"] is True
+    assert saved == [{"display": {"strong_drive": True}}]
+
+
+def test_set_display_tuning_rejects_empty_body(client, monkeypatch):
+    """A POST naming no known flag must 400 rather than save an empty section.
+
+    Why this test exists: save_all_settings({"display": {}}) would be a no-op
+    write that masks a client bug (wrong field names); failing fast surfaces it.
+    Sends a body with only an unrecognized key.
+
+    How a regression manifests: an empty/garbage body returns 200 and calls
+    save_all_settings with no flags.
+    """
+    saved = []
+    monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
+
+    resp = client.post(
+        "/api/system/display-tuning",
+        data=json.dumps({"bogus": True}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 400
+    assert saved == []
+
+
+def test_set_display_tuning_requires_auth(monkeypatch):
+    """Toggling display tuning must require authentication (401).
+
+    Why this test exists: it mutates persisted state and the board's startup
+    driver configuration, exactly like the IL3820 and debug toggles, so it must
+    be auth-gated; an unauthenticated caller must not flip it.
+
+    How a regression manifests: the endpoint writes the setting without
+    credentials (status is not 401).
+    """
+    webapp.app.config.update(TESTING=True)
+    monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
+    unauth = webapp.app.test_client()
+
+    resp = unauth.post(
+        "/api/system/display-tuning",
+        data=json.dumps({"otp_waveform": True}),
+        content_type="application/json",
+    )
     assert resp.status_code == 401

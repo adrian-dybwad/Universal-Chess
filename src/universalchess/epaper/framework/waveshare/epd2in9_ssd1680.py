@@ -52,7 +52,8 @@ EPD_HEIGHT = 296
 class EPD:
     """SSD1680 panel driver exposing the framework's EPD interface."""
 
-    def __init__(self, il3820_additions: bool = False):
+    def __init__(self, il3820_additions: bool = False,
+                 otp_waveform: bool = False, strong_drive: bool = False):
         self.reset_pin = epdconfig.RST_PIN
         self.dc_pin = epdconfig.DC_PIN
         self.busy_pin = epdconfig.BUSY_PIN
@@ -65,6 +66,18 @@ class EPD:
         # needs that the SSD1680 OTP/LUT path does not supply. Off by default so
         # the automatic SSD1680 fallback is never altered unless requested.
         self.il3820_additions = il3820_additions
+        # Experimental V1-panel bring-up opt-ins (see [display] otp_waveform /
+        # strong_drive). Both default off so the verified SSD1680 fallback is
+        # untouched unless an operator explicitly enables them to chase a faint
+        # or ghosted image on real V1 hardware:
+        #   otp_waveform: ignore the register-loaded WS_20_30 LUT and drive the
+        #     panel from its built-in (OTP) waveform instead. The likely fix when
+        #     the ported LUT is wrong for the specific panel revision.
+        #   strong_drive: rewrite the source (VSH/VSL) and VCOM voltages harder
+        #     than the WS_20_30 defaults. The likely fix when the image draws but
+        #     only faintly (under-driven ink).
+        self.otp_waveform = otp_waveform
+        self.strong_drive = strong_drive
         # Last image sent, kept for parity with the V2 driver's interface. The
         # SSD1680 itself holds the partial-refresh baseline in its 0x26 RAM (set
         # by display()), so this is not re-sent to the controller per partial.
@@ -120,6 +133,17 @@ class EPD:
         0x22, 0x17, 0x41, 0x0, 0x32, 0x36,
     ]
 
+    # --- "strong drive" voltages (experimental, strong_drive opt-in) ----------
+    # Pushed harder than the WS_20_30 trailing voltage bytes (VSH 0x41, VSL 0x32,
+    # VCOM 0x36): a larger VSH darkens black pixels and a more-negative VSL/VCOM
+    # raises contrast on a faint panel. These are an on-hardware tuning starting
+    # point, not a datasheet guarantee -- the whole reason they sit behind an
+    # opt-in the remote operator can flip and reboot.
+    STRONG_DRIVE_VSH1 = 0x4A  # source high (was 0x41)
+    STRONG_DRIVE_VSH2 = 0x00  # second source high (unused on this panel)
+    STRONG_DRIVE_VSL = 0x3A   # source low / more negative (was 0x32)
+    STRONG_DRIVE_VCOM = 0x44  # VCOM (was 0x36)
+
     # --- low-level SPI / GPIO (identical wiring to the V2 driver) -------------
     def reset(self):
         epdconfig.digital_write(self.reset_pin, 1)
@@ -172,9 +196,15 @@ class EPD:
                 )
 
     def TurnOnDisplay(self):
-        """Trigger a full refresh (load LUT/temp + activate)."""
+        """Trigger a full refresh (load LUT/temp + activate).
+
+        The display-update-control-2 (0x22) payload selects the waveform source:
+        0xC7 runs the register-loaded LUT written by SetLut(); 0xF7 additionally
+        loads temperature and the panel's OTP waveform. The OTP byte is used only
+        when the otp_waveform opt-in is set (init() then skips SetLut()).
+        """
         self.send_command(0x22)  # display update control 2
-        self.send_data(0xC7)
+        self.send_data(0xF7 if self.otp_waveform else 0xC7)
         self.send_command(0x20)  # master activation
         self.ReadBusy()
 
@@ -262,10 +292,18 @@ class EPD:
             self.SetCursor(0, 0)
             self.ReadBusy()
 
-            self.SetLut(self.WS_20_30)
+            # otp_waveform: skip the register LUT so the panel uses its built-in
+            # (OTP) waveform, loaded at activation by TurnOnDisplay()'s 0xF7.
+            if not self.otp_waveform:
+                self.SetLut(self.WS_20_30)
 
             if self.il3820_additions:
                 self._apply_il3820_additions()
+
+            # strong_drive runs LAST so its higher-contrast source/VCOM voltages
+            # override whatever SetLut() or the IL3820 additions just wrote.
+            if self.strong_drive:
+                self._apply_strong_drive()
         except EPDTimeoutError as e:
             # Panel never signaled idle: unresponsive or not an SSD1680-family
             # panel. Report -1 so Manager.initialize() disables the display
@@ -306,6 +344,24 @@ class EPD:
         self.send_command(0x3B)  # set gate line width
         self.send_data(0x08)
 
+    def _apply_strong_drive(self):
+        """Rewrite source (0x04) and VCOM (0x2C) with higher-contrast voltages.
+
+        Invoked from init() last (after the waveform LUT and any IL3820
+        additions) when ``strong_drive`` is set, so these values are the final
+        word on drive voltage. Targets the "draws but faint" symptom: a higher
+        VSH and more-negative VSL/VCOM push more charge into the ink. The bytes
+        are an on-hardware tuning starting point, not a datasheet guarantee --
+        hence the opt-in. If the panel still renders faint, these constants are
+        the values to adjust next.
+        """
+        self.send_command(0x04)  # source driving voltage
+        self.send_data(self.STRONG_DRIVE_VSH1)  # VSH1
+        self.send_data(self.STRONG_DRIVE_VSH2)  # VSH2
+        self.send_data(self.STRONG_DRIVE_VSL)   # VSL
+        self.send_command(0x2C)  # VCOM
+        self.send_data(self.STRONG_DRIVE_VCOM)
+
     def getbuffer(self, image):
         """Pack a PIL image into the 1bpp panel buffer (white=1, black=0).
 
@@ -336,7 +392,16 @@ class EPD:
         the new frame to 0x24, and triggers a partial activation. The baseline in
         0x26 is left intact, so the scheduler should perform a periodic full
         refresh (display()) to re-seat the baseline and avoid cumulative ghosting.
+
+        In otp_waveform mode there is no register-loaded partial LUT to run, so a
+        partial activation would have no waveform; route through the full-refresh
+        path instead (correctness over speed -- every update still renders with
+        the OTP waveform).
         """
+        if self.otp_waveform:
+            self.display(image)
+            return
+
         epdconfig.digital_write(self.reset_pin, 0)
         epdconfig.delay_ms(2)
         epdconfig.digital_write(self.reset_pin, 1)

@@ -294,16 +294,26 @@ def _on_display_refresh(image):
     except Exception as e:
         log.debug(f"Failed to write epaper.jpg: {e}")
 
+def _read_display_flag(name: str) -> bool:
+    """Return whether a [display] boolean opt-in is set (default off).
+
+    Shared reader for the SSD1680 driver opt-ins (il3820 and the experimental
+    tuning flags). None of these gate the SSD1680 fallback itself -- that is
+    automatic whenever the UC8151D driver trips its BUSY timeout; they only
+    adjust how the SSD1680 driver then drives the panel.
+    """
+    from universalchess.board.settings import Settings
+    value = Settings.read('display', name, 'False')
+    return str(value).strip().lower() in ('1', 'true', 'on', 'yes')
+
+
 def _read_il3820_enabled() -> bool:
     """Return whether the [display] il3820 opt-in is set (default off).
 
-    The opt-in does NOT gate the SSD1680 fallback -- that is automatic whenever
-    the UC8151D driver trips its BUSY timeout. It only enables the optional
-    IL3820-specific init additions inside the SSD1680 driver.
+    Enables the optional IL3820-specific init additions inside the SSD1680
+    driver.
     """
-    from universalchess.board.settings import Settings
-    value = Settings.read('display', 'il3820', 'False')
-    return str(value).strip().lower() in ('1', 'true', 'on', 'yes')
+    return _read_display_flag('il3820')
 
 
 def _attempt_display_init(epd):
@@ -350,6 +360,8 @@ def _init_display_early():
     from universalchess.epaper.framework.waveshare.epd2in9d import EPD as PrimaryEPD
 
     il3820_enabled = _read_il3820_enabled()
+    otp_waveform = _read_display_flag('otp_waveform')
+    strong_drive = _read_display_flag('strong_drive')
 
     manager, primary = _attempt_display_init(PrimaryEPD())
     alt = None
@@ -360,9 +372,14 @@ def _init_display_early():
         )
         log.warning(
             "UC8151D BUSY timeout at startup; trying SSD1680 fallback "
-            f"(il3820_additions={il3820_enabled})"
+            f"(il3820_additions={il3820_enabled}, otp_waveform={otp_waveform}, "
+            f"strong_drive={strong_drive})"
         )
-        alt_manager, alt = _attempt_display_init(AltEPD(il3820_additions=il3820_enabled))
+        alt_manager, alt = _attempt_display_init(AltEPD(
+            il3820_additions=il3820_enabled,
+            otp_waveform=otp_waveform,
+            strong_drive=strong_drive,
+        ))
         if alt.ok:
             manager = alt_manager
 

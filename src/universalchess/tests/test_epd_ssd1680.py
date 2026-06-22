@@ -183,6 +183,186 @@ class Il3820AdditionsTests(unittest.TestCase):
         self.assertLess(commands.index(0x12), commands.index(0x0C))
 
 
+class OtpWaveformTests(unittest.TestCase):
+    """The OTP-waveform opt-in must drive the panel from its built-in waveform.
+
+    A faint/ghosted V1 image often means the register-loaded WS_20_30 LUT is
+    wrong for the specific panel. The opt-in skips that LUT and loads the
+    panel's factory (OTP) waveform instead. That requires three coordinated
+    changes, each pinned below:
+      - init() must NOT write the LUT register (0x32),
+      - the full-refresh activation byte must switch from 0xC7 (use written LUT)
+        to 0xF7 (load temperature + OTP LUT),
+      - partial refresh has no written LUT to run, so it must fall back to a
+        full refresh (which writes the 0x26 baseline) rather than activating an
+        empty partial waveform.
+    """
+
+    def setUp(self):
+        self._orig_digital_read = epdconfig.digital_read
+        self._orig_delay_ms = epdconfig.delay_ms
+        self._orig_module_init = epdconfig.module_init
+        self._orig_digital_write = epdconfig.digital_write
+        epdconfig.digital_read = MagicMock(return_value=IDLE_LOW)
+        epdconfig.delay_ms = MagicMock()
+        epdconfig.digital_write = MagicMock()
+        epdconfig.module_init = MagicMock(return_value=0)
+
+    def tearDown(self):
+        epdconfig.digital_read = self._orig_digital_read
+        epdconfig.delay_ms = self._orig_delay_ms
+        epdconfig.module_init = self._orig_module_init
+        epdconfig.digital_write = self._orig_digital_write
+
+    def _record(self, epd):
+        """Capture the ordered (kind, value) command/data transcript of epd."""
+        transcript = []
+        epd.send_command = lambda c: transcript.append(("cmd", c))
+        epd.send_data = lambda d: transcript.append(("data", d))
+        epd.send_data2 = MagicMock()
+        epd.reset = MagicMock()
+        epd.ReadBusy = MagicMock()
+        return transcript
+
+    def test_default_writes_register_lut(self):
+        # Baseline: with the opt-in off, init must still load the WS_20_30 LUT
+        # via 0x32. If this regresses, the OTP path would be taken unconditionally
+        # and the verified SSD1680 panel behavior would change.
+        epd = EPD()
+        transcript = self._record(epd)
+        self.assertEqual(epd.init(), 0)
+        self.assertIn(("cmd", 0x32), transcript)
+
+    def test_otp_waveform_skips_register_lut(self):
+        # Opt-in on: the LUT register write (0x32) must be absent so the panel
+        # uses its OTP waveform. If 0x32 still fired, both waveforms would fight
+        # and the experiment would be meaningless.
+        epd = EPD(otp_waveform=True)
+        transcript = self._record(epd)
+        self.assertEqual(epd.init(), 0)
+        self.assertNotIn(("cmd", 0x32), transcript)
+
+    def test_full_refresh_control_byte_depends_on_otp(self):
+        # The 0x22 (display update control 2) payload selects the waveform
+        # source: 0xC7 runs the written LUT, 0xF7 loads the OTP LUT. The wrong
+        # byte either ignores the OTP waveform (faint) or runs no LUT at all.
+        for otp, expected in ((False, 0xC7), (True, 0xF7)):
+            with self.subTest(otp=otp):
+                epd = EPD(otp_waveform=otp)
+                transcript = self._record(epd)
+                epd.TurnOnDisplay()
+                idx = transcript.index(("cmd", 0x22))
+                self.assertEqual(transcript[idx + 1], ("data", expected))
+
+    def test_partial_falls_back_to_full_when_otp(self):
+        # In OTP mode a partial refresh has no written partial LUT, so it must
+        # route through the full-refresh path -- detectable by the 0x26 baseline
+        # write, which a real partial refresh deliberately omits.
+        epd = EPD(otp_waveform=True)
+        transcript = self._record(epd)
+        epd.DisplayPartial([0x00] * BUFFER_LEN)
+        self.assertIn(("cmd", 0x26), transcript)
+
+    def test_partial_stays_partial_when_not_otp(self):
+        # Guard the inverse: with the opt-in off, DisplayPartial must remain a
+        # true partial refresh (loads partial LUT 0x32, no 0x26 baseline write),
+        # so the fallback only happens in OTP mode.
+        epd = EPD(otp_waveform=False)
+        transcript = self._record(epd)
+        epd.DisplayPartial([0x00] * BUFFER_LEN)
+        self.assertIn(("cmd", 0x32), transcript)
+        self.assertNotIn(("cmd", 0x26), transcript)
+
+
+class StrongDriveTests(unittest.TestCase):
+    """The strong-drive opt-in must override source/VCOM voltages, last word.
+
+    A faint image that draws but lightly is the classic symptom of under-driven
+    source (VSH) / VCOM voltages. This opt-in rewrites the 0x04 (source) and
+    0x2C (VCOM) registers AFTER the LUT/IL3820 setup so its higher-contrast
+    values win regardless of what the waveform or IL3820 additions wrote.
+    """
+
+    def setUp(self):
+        self._orig_digital_read = epdconfig.digital_read
+        self._orig_delay_ms = epdconfig.delay_ms
+        self._orig_module_init = epdconfig.module_init
+        self._orig_digital_write = epdconfig.digital_write
+        epdconfig.digital_read = MagicMock(return_value=IDLE_LOW)
+        epdconfig.delay_ms = MagicMock()
+        epdconfig.digital_write = MagicMock()
+        epdconfig.module_init = MagicMock(return_value=0)
+
+    def tearDown(self):
+        epdconfig.digital_read = self._orig_digital_read
+        epdconfig.delay_ms = self._orig_delay_ms
+        epdconfig.module_init = self._orig_module_init
+        epdconfig.digital_write = self._orig_digital_write
+
+    def _record_and_init(self, **kwargs):
+        epd = EPD(**kwargs)
+        transcript = []
+        epd.send_command = lambda c: transcript.append(("cmd", c))
+        epd.send_data = lambda d: transcript.append(("data", d))
+        epd.send_data2 = MagicMock()
+        epd.reset = MagicMock()
+        epd.ReadBusy = MagicMock()
+        result = epd.init()
+        return epd, result, transcript
+
+    @staticmethod
+    def _last_command_payload(transcript, opcode):
+        """Return the data bytes that follow the LAST occurrence of opcode."""
+        last_idx = max(i for i, (kind, v) in enumerate(transcript)
+                       if kind == "cmd" and v == opcode)
+        payload = []
+        for kind, value in transcript[last_idx + 1:]:
+            if kind == "cmd":
+                break
+            payload.append(value)
+        return payload
+
+    def test_default_keeps_waveform_voltages(self):
+        # Baseline: with the opt-in off, the last source-voltage (0x04) write is
+        # the WS_20_30 LUT's trailing bytes. If this regresses, the panel's
+        # verified voltages would change without anyone asking.
+        epd, result, transcript = self._record_and_init()
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            self._last_command_payload(transcript, 0x04),
+            [EPD.WS_20_30[155], EPD.WS_20_30[156], EPD.WS_20_30[157]],
+        )
+
+    def test_strong_drive_overrides_source_and_vcom(self):
+        # Opt-in on: the final 0x04 (source) and 0x2C (VCOM) writes must be the
+        # strong-drive constants, proving the override runs last and wins. A
+        # regression (running before SetLut, or not at all) leaves the faint
+        # waveform voltages in place.
+        epd, result, transcript = self._record_and_init(strong_drive=True)
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            self._last_command_payload(transcript, 0x04),
+            [EPD.STRONG_DRIVE_VSH1, EPD.STRONG_DRIVE_VSH2, EPD.STRONG_DRIVE_VSL],
+        )
+        self.assertEqual(
+            self._last_command_payload(transcript, 0x2C),
+            [EPD.STRONG_DRIVE_VCOM],
+        )
+
+    def test_strong_drive_overrides_il3820_voltages_too(self):
+        # Combined with the IL3820 additions (which also write VCOM 0x2C), the
+        # strong-drive override must still be the final VCOM write. This pins the
+        # ordering contract so the two opt-ins can be tested together.
+        epd, result, transcript = self._record_and_init(
+            il3820_additions=True, strong_drive=True
+        )
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            self._last_command_payload(transcript, 0x2C),
+            [EPD.STRONG_DRIVE_VCOM],
+        )
+
+
 class BufferAndRefreshTests(unittest.TestCase):
     """getbuffer packing and the full/partial refresh command flows."""
 
