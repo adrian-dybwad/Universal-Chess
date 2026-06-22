@@ -921,6 +921,8 @@ export function Settings() {
               <UpdateManager catalog={catalog} />
             </Card>
 
+            <DisplayTuningCard />
+
             <Card className="mb-6">
               <CardHeader title="Game Database" />
               <p className="text-muted mb-4">
@@ -945,7 +947,6 @@ export function Settings() {
             </Card>
 
             <DebugCard />
-            <DisplayTuningCard />
             <PasswordChange />
             <SystemActions />
           </section>
