@@ -97,6 +97,8 @@ WS_20_30 = (
 # Source: GxEPD2 (Jean-Marc Zingg), class GxEPD2_290 (LUTDefault_full /
 # LUTDefault_part), itself from the Good Display IL3820 demo. Transcribed
 # verbatim (the leading 0x32 command byte is omitted; the driver issues it).
+# Independently corroborated byte-for-byte by Waveshare's v1 epd2in9.py
+# (lut_full_update / lut_partial_update) -- two sources agree on these bytes.
 IL3820_LUT_FULL = (
     0x50, 0xAA, 0x55, 0xAA, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x1F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,

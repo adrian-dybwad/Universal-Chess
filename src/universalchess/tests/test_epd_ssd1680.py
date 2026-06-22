@@ -203,9 +203,10 @@ class Il3820DriverTests(unittest.TestCase):
         self.assertEqual(transcript[idx + 1], ("data", 0xC4))
 
     def test_il3820_partial_loads_30_byte_lut_and_activates_04(self):
-        # IL3820 partial refresh must load the partial LUT (0x32) and run the
-        # IL3820 partial activation 0x04, writing current RAM (0x24) but NOT the
-        # 0x26 baseline. A wrong activation byte would freeze the partial update.
+        # IL3820 partial refresh must load the partial LUT (0x32), re-seed OLD RAM
+        # (0x26, the differential baseline) and write NEW RAM (0x24), then run the
+        # IL3820 partial activation 0x04. A wrong activation byte would freeze the
+        # partial update; a missing 0x26 re-seed reintroduces ghosting.
         epd = EPD(profile=wp.get_profile("il3820_gdeh029a1"))
         transcript = []
         epd.send_command = lambda c: transcript.append(("cmd", c))
@@ -215,7 +216,7 @@ class Il3820DriverTests(unittest.TestCase):
         epd.DisplayPartial([0x00] * BUFFER_LEN)
         self.assertIn(("cmd", 0x32), transcript)
         self.assertIn(("cmd", 0x24), transcript)
-        self.assertNotIn(("cmd", 0x26), transcript)
+        self.assertIn(("cmd", 0x26), transcript)
         idx = transcript.index(("cmd", 0x22))
         self.assertEqual(transcript[idx + 1], ("data", 0x04))
 
@@ -271,14 +272,15 @@ class Depg0290bsDriverTests(unittest.TestCase):
         self.assertEqual(t2[idx + 1], ("data", 0xF7))
 
     def test_partial_loads_register_lut_and_activates_cc(self):
-        # Partial refresh loads the 153-byte register LUT (0x32) + current RAM
-        # (0x24), activation 0xCC, and leaves the 0x26 baseline (seeded by the
-        # OTP full refresh) intact. Wrong activation would not run the partial.
+        # Partial refresh loads the 153-byte register LUT (0x32), re-seeds OLD RAM
+        # (0x26, the differential baseline) and writes NEW RAM (0x24), activation
+        # 0xCC. Wrong activation would not run the partial; a missing 0x26 re-seed
+        # reintroduces ghosting.
         epd, transcript = self._make()
         epd.DisplayPartial([0x00] * BUFFER_LEN)
         self.assertIn(("cmd", 0x32), transcript)
         self.assertIn(("cmd", 0x24), transcript)
-        self.assertNotIn(("cmd", 0x26), transcript)
+        self.assertIn(("cmd", 0x26), transcript)
         idx = transcript.index(("cmd", 0x22))
         self.assertEqual(transcript[idx + 1], ("data", 0xCC))
 
@@ -356,22 +358,27 @@ class OtpWaveformTests(unittest.TestCase):
 
     def test_partial_falls_back_to_full_when_otp(self):
         # In OTP mode a partial refresh has no written partial LUT, so it must
-        # route through the full-refresh path -- detectable by the 0x26 baseline
-        # write, which a real partial refresh deliberately omits.
+        # route through the full-refresh path: full OTP activation (0x22->0xF7),
+        # no partial LUT load (0x32) and no partial activation (0x22->0x0F).
+        # (0x26 alone no longer distinguishes the paths -- both write it now.)
         epd = EPD(profile=wp.get_profile("builtin_otp"))
         transcript = self._record(epd)
         epd.DisplayPartial([0x00] * BUFFER_LEN)
-        self.assertIn(("cmd", 0x26), transcript)
+        self.assertIn(("data", 0xF7), transcript)
+        self.assertNotIn(("data", 0x0F), transcript)
+        self.assertNotIn(("cmd", 0x32), transcript)
 
     def test_partial_stays_partial_when_not_otp(self):
         # Guard the inverse: with a register-LUT profile, DisplayPartial must
-        # remain a true partial refresh (loads partial LUT 0x32, no 0x26 baseline
-        # write), so the fallback only happens in OTP mode.
+        # remain a true partial refresh -- load the partial LUT (0x32) and use the
+        # partial activation (0x22->0x0F), never a full activation (0xC7/0xF7).
         epd = EPD()
         transcript = self._record(epd)
         epd.DisplayPartial([0x00] * BUFFER_LEN)
         self.assertIn(("cmd", 0x32), transcript)
-        self.assertNotIn(("cmd", 0x26), transcript)
+        self.assertIn(("data", 0x0F), transcript)
+        self.assertNotIn(("data", 0xC7), transcript)
+        self.assertNotIn(("data", 0xF7), transcript)
 
 
 class HighContrastTests(unittest.TestCase):
@@ -532,14 +539,95 @@ class BufferAndRefreshTests(unittest.TestCase):
         self.assertIn(0x20, self.commands)
         self.assertEqual(len(self.data2), 2)  # one write to each RAM bank
 
-    def test_partial_loads_partial_lut_and_writes_current_ram(self):
-        # Partial refresh must load the partial LUT (0x32) and write the new
-        # frame to 0x24, but must NOT reseat the 0x26 baseline (that is reserved
-        # for full refreshes); writing 0x26 here would defeat the diff.
+    def test_partial_loads_partial_lut_and_writes_both_rams(self):
+        # Partial refresh must load the partial LUT (0x32), write the new frame to
+        # NEW RAM (0x24) AND re-seed OLD RAM (0x26) with the previous frame. The
+        # 0x26 re-seed is mandatory for the differential waveform: without it the
+        # panel diffs against a stale baseline and ghosts (see PartialBaselineTests
+        # for the previous/new content check). It is NOT a full refresh, so no full
+        # activation byte is issued.
         self.epd.DisplayPartial([0x00] * BUFFER_LEN)
         self.assertIn(0x32, self.commands)
         self.assertIn(0x24, self.commands)
-        self.assertNotIn(0x26, self.commands)
+        self.assertIn(0x26, self.commands)
+
+
+class PartialBaselineTests(unittest.TestCase):
+    """Partial refresh must re-seed OLD RAM (0x26) with the PREVIOUS shown frame.
+
+    Why this exists (root cause of the reported partial ghosting -- a clock's
+    digits stacked on top of each other): the SSD16xx/IL3820 partial waveform
+    transitions each pixel from its OLD value (RAM 0x26) to its NEW value (RAM
+    0x24). init()'s SWRESET wipes 0x26 on every full->partial / deep-sleep-wake
+    transition, and a partial otherwise never re-writes it, so the driver must
+    re-load 0x26 with the frame currently on the panel each call. Earlier code
+    wrote only 0x24, leaving 0x26 at the last full-refresh baseline (or blank),
+    so every partial diffed against a stale frame and never cleared the prior
+    content. These pin the corrected behavior for all three register-partial
+    drivers.
+
+    How a regression manifests: if the 0x26 write is dropped or fed the NEW frame
+    instead of the PREVIOUS one, the OLD/NEW assertion below fails -- and on
+    hardware the previous frame is never erased (ghosting returns).
+    """
+
+    # Distinct fill bytes so the OLD (previous) and NEW (current) RAM payloads
+    # are unambiguously identifiable in the transcript.
+    PREV = [0x11] * BUFFER_LEN
+    NEW = [0x22] * BUFFER_LEN
+
+    def setUp(self):
+        self._orig_digital_read = epdconfig.digital_read
+        self._orig_delay_ms = epdconfig.delay_ms
+        self._orig_digital_write = epdconfig.digital_write
+        epdconfig.digital_read = MagicMock(return_value=IDLE_LOW)
+        epdconfig.delay_ms = MagicMock()
+        epdconfig.digital_write = MagicMock()
+
+    def tearDown(self):
+        epdconfig.digital_read = self._orig_digital_read
+        epdconfig.delay_ms = self._orig_delay_ms
+        epdconfig.digital_write = self._orig_digital_write
+
+    @staticmethod
+    def _buf_after(transcript, ram_cmd):
+        """Return the first send_data2 payload written after a RAM-select command."""
+        for i, (kind, val) in enumerate(transcript):
+            if kind == "cmd" and val == ram_cmd:
+                for k2, v2 in transcript[i + 1:]:
+                    if k2 == "buf":
+                        return v2
+                    if k2 == "cmd":
+                        break
+        return None
+
+    def _check(self, profile_key):
+        epd = EPD(profile=wp.get_profile(profile_key))
+        epd.buffer = list(self.PREV)  # the frame currently on the panel
+        transcript = []
+        epd.send_command = lambda c: transcript.append(("cmd", c))
+        epd.send_data = lambda d: transcript.append(("data", d))
+        epd.send_data2 = lambda d: transcript.append(("buf", list(d)))
+        epd.reset = MagicMock()
+        epd.ReadBusy = MagicMock()
+
+        epd.DisplayPartial(list(self.NEW))
+
+        self.assertEqual(self._buf_after(transcript, 0x26), self.PREV,
+                         "OLD RAM (0x26) must hold the PREVIOUS frame")
+        self.assertEqual(self._buf_after(transcript, 0x24), self.NEW,
+                         "NEW RAM (0x24) must hold the NEW frame")
+        # The driver must record the new frame as the next 'previous'.
+        self.assertEqual(list(epd.buffer), self.NEW)
+
+    def test_ssd1680_partial_reseeds_old_ram(self):
+        self._check("gdem029t94")
+
+    def test_il3820_partial_reseeds_old_ram(self):
+        self._check("il3820_gdeh029a1")
+
+    def test_depg0290bs_partial_reseeds_old_ram(self):
+        self._check("depg0290bs")
 
 
 if __name__ == '__main__':

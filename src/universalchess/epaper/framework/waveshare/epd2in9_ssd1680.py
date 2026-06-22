@@ -76,9 +76,12 @@ class EPD:
         # knob without datasheet backing, surfaced separately in the UI as
         # experimental.
         self.high_contrast = high_contrast
-        # Last image sent, kept for parity with the V2 driver's interface. The
-        # SSD1680 itself holds the partial-refresh baseline in its 0x26 RAM (set
-        # by display()), so this is not re-sent to the controller per partial.
+        # Last frame shown on the panel. Re-sent to the OLD-RAM bank (0x26) before
+        # every partial refresh (see _write_partial_rams) so the differential
+        # waveform diffs (currently-shown -> new) and fully clears the prior
+        # frame. Initialized white to match the cold-start Clear(). Not optional:
+        # init()'s SWRESET wipes 0x26, so a partial cannot rely on a baseline the
+        # controller "remembers".
         self.buffer = [0xFF] * int(self.width * self.height / 8)
         # True when the most recent init() failed specifically on a BUSY timeout.
         # main reads this to populate the cross-process display-status record.
@@ -434,13 +437,43 @@ class EPD:
         self.TurnOnDisplay()
         self.buffer = image.copy() if hasattr(image, 'copy') else list(image)
 
-    def DisplayPartial(self, image):
-        """Partial refresh against the baseline set by the last display().
+    def _write_partial_rams(self, image):
+        """Load a differential partial frame: previous shown -> 0x26, new -> 0x24.
 
-        Re-arms partial mode (soft reset pulse + partial LUT + border), writes
-        the new frame to 0x24, and triggers a partial activation. The baseline in
-        0x26 is left intact, so the scheduler should perform a periodic full
-        refresh (display()) to re-seat the baseline and avoid cumulative ghosting.
+        The SSD16xx/IL3820 partial waveform transitions each pixel from its OLD
+        value (RAM 0x26) to its NEW value (RAM 0x24), so the OLD RAM must hold the
+        frame *currently on the panel*. Two things corrupt that if 0x26 is not
+        re-loaded here: init()'s SWRESET wipes both RAM banks on every
+        full->partial / deep-sleep-wake transition, and a partial otherwise never
+        re-seeds 0x26. Without this, the panel diffs every partial against a stale
+        (or blank) baseline and never clears the previous frame -- stacking
+        content, e.g. a clock's digits drawn on top of each other.
+
+        ``self.buffer`` is the last shown frame; writing it to 0x26 before the new
+        frame to 0x24 mirrors GxEPD2's writeImageAgain (set previous = currently
+        displayed). The cursor is reset between banks because a full-frame write
+        advances the shared RAM address counter.
+
+        Do NOT "optimize" this back to a single 0x24 write: dropping the 0x26
+        re-seed reintroduces the partial-refresh ghosting this fixes.
+        """
+        previous = self.buffer
+        self.SetWindow(0, 0, self.width - 1, self.height - 1)
+        if previous is not None:
+            self.SetCursor(0, 0)
+            self.send_command(0x26)  # OLD RAM = frame currently on the panel
+            self.send_data2(previous)
+        self.SetCursor(0, 0)
+        self.send_command(0x24)  # NEW RAM = target frame
+        self.send_data2(image)
+
+    def DisplayPartial(self, image):
+        """Partial refresh diffing the previously shown frame against the new one.
+
+        Re-arms partial mode (soft reset pulse + partial LUT + border), loads the
+        differential frame (previous -> 0x26, new -> 0x24; see _write_partial_rams
+        for why re-seeding 0x26 every call is mandatory), and triggers a partial
+        activation.
 
         IL3820 and DEPG0290BS use their own partial LUT + activation (see
         _display_partial_il3820 / _display_partial_dke). For a use_otp SSD1680
@@ -485,11 +518,7 @@ class EPD:
         self.send_command(0x20)
         self.ReadBusy()
 
-        self.SetWindow(0, 0, self.width - 1, self.height - 1)
-        self.SetCursor(0, 0)
-
-        self.send_command(0x24)  # write RAM (current)
-        self.send_data2(image)
+        self._write_partial_rams(image)
         self.TurnOnDisplayPart()
         self.buffer = image.copy() if hasattr(image, 'copy') else list(image)
 
@@ -497,13 +526,12 @@ class EPD:
         """IL3820 partial refresh (load 30-byte partial LUT, write, activate 0x04).
 
         Transcribed from GxEPD2 ``GxEPD2_290::_Init_Part`` / ``_Update_Part``:
-        load the partial waveform LUT, write the new frame to current RAM, then
-        run the partial activation (0x22=0x04). The 0x26 baseline set by the last
-        full display() is left intact for the panel's internal diff.
+        load the partial waveform LUT, load the differential frame (previous ->
+        0x26, new -> 0x24; see _write_partial_rams), then run the partial
+        activation (0x22=0x04).
         """
         self._write_lut_raw(self.profile.partial_lut)
-        self.send_command(0x24)  # write RAM (current)
-        self.send_data2(image)
+        self._write_partial_rams(image)
         self.send_command(0x22)  # display update control 2
         self.send_data(0x04)     # IL3820 partial activation
         self.send_command(0x20)  # master activation
@@ -514,13 +542,12 @@ class EPD:
         """DEPG0290BS partial refresh (load 153-byte partial LUT, write, 0xCC).
 
         Transcribed from GxEPD2 ``GxEPD2_290_BS::_Init_Part`` / ``_Update_Part``:
-        load the register partial LUT (no voltage bytes), write the new frame to
-        current RAM, then run the partial activation (0x22=0xCC). Full refreshes
-        (display()) drive from OTP and seat the 0x26 baseline this diffs against.
+        load the register partial LUT (no voltage bytes), load the differential
+        frame (previous -> 0x26, new -> 0x24; see _write_partial_rams), then run
+        the partial activation (0x22=0xCC).
         """
         self._write_lut_raw(self.profile.partial_lut)
-        self.send_command(0x24)  # write RAM (current)
-        self.send_data2(image)
+        self._write_partial_rams(image)
         self.send_command(0x22)  # display update control 2
         self.send_data(0xCC)     # DEPG0290BS partial activation
         self.send_command(0x20)  # master activation

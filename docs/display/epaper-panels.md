@@ -62,6 +62,24 @@ The SSD1680 fallback is **automatic**; it requires no opt-in. The waveform
 profile selection below only *configures* the SSD1680 driver once it has been
 selected, and is applied **live** (no reboot).
 
+### Partial refresh (differential baseline)
+All three V1 drivers do **differential** partial refreshes: the controller
+transitions each pixel from its OLD value (RAM `0x26`) to its NEW value (RAM
+`0x24`). The OLD bank must therefore hold *the frame currently on the panel*
+before each partial. Two things break that if left unmanaged: `init()`'s SWRESET
+(run on every full→partial / deep-sleep-wake transition) wipes both RAM banks,
+and a partial otherwise never re-writes `0x26`. So `DisplayPartial`
+(`_write_partial_rams`) re-loads `0x26` with the last shown frame (`self.buffer`)
+and `0x24` with the new frame on **every** call — mirroring GxEPD2's
+`writeImageAgain`.
+
+This fixed a real ghosting bug: previously only `0x24` was written, so every
+partial diffed against the last *full-refresh* baseline (or, after a transition,
+garbage), and the prior frame was never cleared — e.g. a clock's digits stacked
+on top of each other. The waveform/voltage profiles and the high-contrast toggle
+could **not** fix this, because the cause was baseline-RAM management, not the
+waveform. Pinned by `PartialBaselineTests` in `tests/test_epd_ssd1680.py`.
+
 ## Panel 1 — DGT Centaur V2 (UC8151D)
 
 - The factory V2 panel. Works on the unmodified primary driver.
