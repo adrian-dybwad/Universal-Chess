@@ -57,10 +57,10 @@ sys.modules['serial'] = MagicMock()
 sys.modules['serial.tools'] = MagicMock()
 sys.modules['serial.tools.list_ports'] = MagicMock()
 
-# Mock numpy (not an installed dependency in the test env). PIL is real and is
-# left unmocked: replacing it in sys.modules here leaked a MagicMock to every
-# later-collected test module, breaking real PIL rendering (icons/help dialog).
-sys.modules['numpy'] = MagicMock()
+# numpy is a real dependency (used by the e-paper drivers via np.packbits) and
+# is left unmocked, exactly like PIL: replacing it in sys.modules here leaked a
+# MagicMock to every later-collected test module, breaking real numpy/PIL
+# consumers (e.g. the e-paper packing tests and icon/help-dialog rendering).
 
 # Create proper package mocks for DGTCentaurMods.board
 board_package = types.ModuleType('DGTCentaurMods.board')

@@ -21,9 +21,7 @@ from universalchess.services.chess_clock import _elapsed_whole_seconds
 
 # NOTE: exact float equality is used deliberately below. The anchor advances by
 # an integer number of whole seconds, so results like 100.0 + 1 == 101.0 are
-# exact. pytest.approx is intentionally avoided: several other test modules stub
-# numpy as a MagicMock in sys.modules, which breaks pytest.approx when they run
-# before this module in the full suite.
+# exact, making approximate comparison unnecessary here.
 
 
 # Each row: (anchor, now, expected_ticks, expected_new_anchor, why)

@@ -309,26 +309,11 @@ class EPD:
     def getbuffer(self, image):
         """Pack a PIL image into the 1bpp panel buffer (white=1, black=0).
 
-        Identical packing to the V2 driver so the framebuffer/scheduler produce
-        the same byte layout regardless of which driver is active.
+        Delegates to the shared vectorized packer in the V2 driver so the
+        framebuffer/scheduler produce the same byte layout regardless of which
+        driver is active (the two drivers must never disagree on packing).
         """
-        buf = [0xFF] * (int(self.width / 8) * self.height)
-        image_monocolor = image.convert('1')
-        imwidth, imheight = image_monocolor.size
-        pixels = image_monocolor.load()
-        if imwidth == self.width and imheight == self.height:
-            for y in range(imheight):
-                for x in range(imwidth):
-                    if pixels[x, y] == 0:
-                        buf[int((x + y * self.width) / 8)] &= ~(0x80 >> (x % 8))
-        elif imwidth == self.height and imheight == self.width:
-            for y in range(imheight):
-                for x in range(imwidth):
-                    newx = y
-                    newy = self.height - x - 1
-                    if pixels[x, y] == 0:
-                        buf[int((newx + newy * self.width) / 8)] &= ~(0x80 >> (y % 8))
-        return buf
+        return epd2in9d.pack_image_to_buffer(image, self.width, self.height)
 
     def display(self, image):
         """Full refresh, and set the partial-refresh baseline.

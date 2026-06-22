@@ -34,6 +34,7 @@ import logging
 import time
 from . import epdconfig
 from PIL import Image
+import numpy as np
 import RPi.GPIO as GPIO
 
 log = logging.getLogger(__name__)
@@ -60,6 +61,55 @@ EPD_HEIGHT      = 296
 # Debug flag for buffer diagnostics in DisplayPartial
 # Set to True to print buffer statistics on each partial refresh
 DEBUG_DISPLAY_PARTIAL = False
+
+
+def pack_image_to_buffer(image, width, height):
+    """Pack a PIL image into the panel's 1bpp byte buffer (white=1, black=0).
+
+    Vectorized replacement for the historical per-pixel nested loop. On the
+    single-core Pi Zero W that loop ran ~38k interpreted iterations on every
+    refresh (pure display latency); ``np.packbits`` does the same packing as a
+    single C call. The output is byte-identical to the old loop for both panel
+    orientations, so the rendered image is unchanged regardless of which driver
+    is active.
+
+    Layout: ``(width // 8) * height`` bytes, MSB-first within each byte. White
+    pixels leave the bit set (buffer baseline is all-0xFF); black pixels clear
+    it. Two orientations are accepted:
+      - upright  (image size == ``width`` x ``height``): row-major pack.
+      - rotated  (image size == ``height`` x ``width``): the panel is mounted
+        180-rotated and the framebuffer hands over a transposed frame, so each
+        source pixel ``(x, y)`` maps to ``(newx=y, newy=height-1-x)`` before
+        packing -- expressed here as transpose + vertical flip.
+
+    An image matching neither orientation returns an all-0xFF (white) buffer,
+    matching the original loop, which left the buffer untouched in that case
+    rather than guessing a layout.
+
+    Args:
+        image: a PIL image; any mode is accepted and thresholded via
+            ``convert('1')`` exactly as the original implementation did.
+        width: panel width in pixels (must be a multiple of 8).
+        height: panel height in pixels.
+
+    Returns:
+        A list of ``(width // 8) * height`` ints (0-255). A list (not an
+        ndarray) is returned because callers store it as the partial-refresh
+        baseline and re-send it to the controller.
+    """
+    # mode '1' -> uint8 array shape (rows, cols) with white=1, black=0.
+    mono = np.array(image.convert('1'), dtype=np.uint8)
+    imheight, imwidth = mono.shape
+    if imwidth == width and imheight == height:
+        return np.packbits(mono, axis=1).reshape(-1).tolist()
+    if imwidth == height and imheight == width:
+        # (x, y) -> (newx=y, newy=height-1-x): transpose, then flip rows so row
+        # newy = height-1-x. Column index becomes newx=y, matching the loop's
+        # 0x80>>(y%8) bit selection.
+        rotated = mono.T[::-1, :]
+        return np.packbits(rotated, axis=1).reshape(-1).tolist()
+    return [0xFF] * ((width // 8) * height)
+
 
 class EPD:
     def __init__(self):
@@ -281,23 +331,7 @@ class EPD:
         self.send_data2(self.lut_bb1)
 
     def getbuffer(self, image):
-        buf = [0xFF] * (int(self.width/8) * self.height)
-        image_monocolor = image.convert('1')
-        imwidth, imheight = image_monocolor.size
-        pixels = image_monocolor.load()
-        if(imwidth == self.width and imheight == self.height):
-            for y in range(imheight):
-                for x in range(imwidth):
-                    if pixels[x, y] == 0:
-                        buf[int((x + y * self.width) / 8)] &= ~(0x80 >> (x % 8))
-        elif(imwidth == self.height and imheight == self.width):
-            for y in range(imheight):
-                for x in range(imwidth):
-                    newx = y
-                    newy = self.height - x - 1
-                    if pixels[x, y] == 0:
-                        buf[int((newx + newy*self.width) / 8)] &= ~(0x80 >> (y % 8))
-        return buf
+        return pack_image_to_buffer(image, self.width, self.height)
 
     def display(self, image):
         # Wake the panel in case it was parked (powered off) after a prior
