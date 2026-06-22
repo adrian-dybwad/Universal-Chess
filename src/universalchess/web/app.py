@@ -2351,58 +2351,139 @@ def api_set_debug_serial():
         return _internal_error(e)
 
 
-def _read_il3820_enabled() -> bool:
-    """Return whether [display] il3820 is enabled (tolerant of spellings)."""
+def _read_display_flag(name: str) -> bool:
+    """Return whether a [display] boolean flag is enabled (tolerant of spellings).
+
+    Shared reader for [display] on/off settings (the high_contrast override) so
+    they parse stored values identically to the board process.
+    """
     from universalchess.board.settings import Settings
-    value = Settings.read('display', 'il3820', 'False')
+    value = Settings.read('display', name, 'False')
     return str(value).strip().lower() in ('1', 'true', 'on', 'yes')
 
 
-def _il3820_available() -> bool:
-    """Whether to offer the IL3820 opt-in: only after a UC8151D BUSY timeout.
+# Map the board-reported active controller (display_selection.CONTROLLER_*) to
+# the waveform-profile family the web layer filters on. Kept as a plain table so
+# the web process needs no import from the RPi.GPIO-dependent driver modules.
+_CONTROLLER_TO_WAVEFORM_FAMILY = {
+    "UC8151D": "uc8151d",
+    "SSD1680": "ssd16xx",
+}
 
-    The opt-in is meaningless on a healthy V2 panel (no fallback occurred), so it
-    is surfaced only when the board recorded a BUSY timeout -- the V1-panel
-    signature -- in the cross-process display-status file.
+
+def _active_waveform_controller():
+    """Return the active controller's waveform family, or None if unknown.
+
+    Reads the cross-process display-status file the board writes at startup. The
+    family selects which profiles the UI offers (a UC8151D table is meaningless
+    on the SSD1680 driver and vice versa). None when the board has not reported,
+    the display is disabled, or it reported a controller with no profile family.
     """
     from universalchess.board import hardware_info
     status = hardware_info.read_display_status()
-    return bool(status and status.get("busy_timeout"))
+    if not status or not status.get("initialized"):
+        return None
+    return _CONTROLLER_TO_WAVEFORM_FAMILY.get(status.get("active_controller"))
 
 
-@app.route("/api/system/il3820", methods=["GET"])
-def api_get_il3820():
-    """Report the IL3820 opt-in state and whether it should be offered.
+def _read_selected_profile_key(controller=None) -> str:
+    """Return the configured waveform-profile key, resolved to a known profile.
 
-    Read-only and unauthenticated like the other GET probes; exposes only two
-    booleans, no secrets. ``available`` is True only after a UC8151D BUSY
-    timeout, so the UI hides the toggle entirely on a healthy V2 panel.
+    A blank or stale stored key -- or one belonging to the other controller after
+    a panel swap -- resolves to the active controller's verified default, so the
+    UI never shows an unknown selection and the board never runs with no waveform.
+    """
+    from universalchess.board.settings import Settings
+    from universalchess.epaper.framework.waveshare import waveform_profiles as wp
+    key = str(Settings.read('display', 'waveform_profile', '')).strip()
+    return wp.get_profile(key, controller).key
+
+
+def _display_tuning_available() -> bool:
+    """Whether to offer the display-tuning card: whenever a panel is active.
+
+    Both controllers have selectable waveform profiles now (the SSD1680 V1
+    fallback and the primary UC8151D, including replacement-panel variants), so
+    the card is surfaced whenever the board reported an initialized panel with a
+    known controller family. It stays hidden when the display is disabled or the
+    board has not reported yet.
+    """
+    return _active_waveform_controller() is not None
+
+
+@app.route("/api/system/display-tuning", methods=["GET"])
+def api_get_display_tuning():
+    """Report the active panel's waveform profiles, selection and availability.
+
+    Read-only and unauthenticated like the other GET probes; exposes only
+    profile metadata (key/label/source/url/controller) for the *active*
+    controller and the current selection -- no secrets, no raw waveform bytes.
+    The list is filtered to the live controller so the UI never offers a table
+    the active driver cannot drive. ``available`` is False until the board
+    reports an initialized panel, hiding the card when there is nothing to tune.
     """
     try:
+        from universalchess.epaper.framework.waveshare import waveform_profiles as wp
+        controller = _active_waveform_controller()
         return jsonify({
-            "enabled": _read_il3820_enabled(),
-            "available": _il3820_available(),
+            "available": controller is not None,
+            "active_controller": controller,
+            "profiles": wp.profiles_metadata(controller),
+            "selected": _read_selected_profile_key(controller),
+            "high_contrast": _read_display_flag("high_contrast"),
         })
     except Exception as e:
         return _internal_error(e)
 
 
-@app.route("/api/system/il3820", methods=["POST"])
+@app.route("/api/system/display-tuning", methods=["POST"])
 @requires_auth
-def api_set_il3820():
-    """Enable/disable the optional IL3820 init additions. Requires authentication.
+def api_set_display_tuning():
+    """Select a waveform profile for the active panel and apply it live. Requires auth.
 
-    Persists [display] il3820 via save_all_settings. The setting does NOT gate
-    the SSD1680 fallback (automatic on a BUSY timeout); it only toggles the
-    IL3820-specific init additions inside that driver, read once at board
-    startup. The user enables it, reboots, and re-checks the panel. Body:
-    {"enabled": bool}.
+    Persists [display] waveform_profile and high_contrast, then sends the board
+    process a ``display_profile`` command so it re-inits the panel and forces a
+    full refresh -- the new waveform/voltages take effect without a reboot. An
+    unknown profile key, or one that does not target the active controller, is
+    rejected (400) so a client bug fails loudly rather than writing an invalid
+    selection. Body: {"profile": "<key>", "high_contrast": bool}.
     """
     try:
+        from universalchess.epaper.framework.waveshare import waveform_profiles as wp
+
+        controller = _active_waveform_controller()
         body = request.get_json(silent=True) or {}
-        enabled = bool(body.get("enabled"))
-        save_all_settings({"display": {"il3820": enabled}})
-        return jsonify({"success": True, "enabled": enabled})
+        updates = {}
+        if "profile" in body:
+            key = str(body["profile"]).strip()
+            # Validate against the active controller's family so a UC8151D key
+            # cannot be persisted for an SSD1680 panel (or vice versa). When the
+            # board has not reported a controller yet, fall back to any-known.
+            if not wp.is_known_profile(key, controller):
+                return jsonify({"success": False, "error": f"unknown profile: {key}"}), 400
+            updates["waveform_profile"] = key
+        if "high_contrast" in body:
+            updates["high_contrast"] = bool(body["high_contrast"])
+        if not updates:
+            return jsonify({"success": False, "error": "no profile or high_contrast given"}), 400
+
+        save_all_settings({"display": updates})
+
+        # Apply live (no reboot): the board process re-inits the panel and forces
+        # a full refresh. Best-effort -- if the board is not running, the change
+        # still takes effect on the next boot from the persisted settings.
+        from universalchess.services.game_broadcast import send_board_command
+        applied_live = send_board_command("display_profile", {
+            "profile": _read_selected_profile_key(controller),
+            "high_contrast": _read_display_flag("high_contrast"),
+        })
+
+        return jsonify({
+            "success": True,
+            "applied_live": bool(applied_live),
+            "selected": _read_selected_profile_key(controller),
+            "high_contrast": _read_display_flag("high_contrast"),
+        })
     except Exception as e:
         return _internal_error(e)
 

@@ -41,6 +41,12 @@ import time
 
 from . import epd2in9d, epdconfig
 from .epd2in9d import EPDTimeoutError
+from .waveform_profiles import (
+    DRIVER_DKE_SSD1680,
+    DRIVER_IL3820,
+    WaveformProfile,
+    get_profile,
+)
 
 log = logging.getLogger(__name__)
 
@@ -52,73 +58,56 @@ EPD_HEIGHT = 296
 class EPD:
     """SSD1680 panel driver exposing the framework's EPD interface."""
 
-    def __init__(self, il3820_additions: bool = False):
+    def __init__(self, profile: WaveformProfile = None, high_contrast: bool = False):
         self.reset_pin = epdconfig.RST_PIN
         self.dc_pin = epdconfig.DC_PIN
         self.busy_pin = epdconfig.BUSY_PIN
         self.cs_pin = epdconfig.CS_PIN
         self.width = EPD_WIDTH
         self.height = EPD_HEIGHT
-        # Optional IL3820-specific init additions, gated by the [display] il3820
-        # opt-in. The SSD1680 base init drives a genuine SSD1680 panel; these
-        # extra analog/waveform registers are what a true IL3820/SSD1608 panel
-        # needs that the SSD1680 OTP/LUT path does not supply. Off by default so
-        # the automatic SSD1680 fallback is never altered unless requested.
-        self.il3820_additions = il3820_additions
-        # Last image sent, kept for parity with the V2 driver's interface. The
-        # SSD1680 itself holds the partial-refresh baseline in its 0x26 RAM (set
-        # by display()), so this is not re-sent to the controller per partial.
+        # Selected waveform profile -- the recipe for how the panel moves pixels:
+        # a register full/partial LUT, the panel's own OTP waveform, and/or the
+        # IL3820 analog additions. None selects the verified GDEM029T94 default so
+        # the working bench panel is unchanged when nothing is configured. See
+        # waveform_profiles for the registry and the provenance of each table.
+        self.profile = profile if profile is not None else get_profile("")
+        # Experimental drive-voltage override applied on top of whatever the
+        # profile programs (see _apply_high_contrast). Off by default; the one
+        # knob without datasheet backing, surfaced separately in the UI as
+        # experimental.
+        self.high_contrast = high_contrast
+        # Last frame shown on the panel. Re-sent to the OLD-RAM bank (0x26) before
+        # every partial refresh (see _write_partial_rams) so the differential
+        # waveform diffs (currently-shown -> new) and fully clears the prior
+        # frame. Initialized white to match the cold-start Clear(). Not optional:
+        # init()'s SWRESET wipes 0x26, so a partial cannot rely on a baseline the
+        # controller "remembers".
         self.buffer = [0xFF] * int(self.width * self.height / 8)
         # True when the most recent init() failed specifically on a BUSY timeout.
         # main reads this to populate the cross-process display-status record.
         self.busy_timeout_occurred = False
 
-    # --- Waveform look-up tables (ported verbatim from Waveshare epd2in9_V2) ---
-    # 159 bytes: 153 LUT bytes written via 0x32, then 6 trailing bytes consumed
-    # by SetLut() for the gate/source/VCOM voltage registers (0x3F/0x03/0x04/0x2C).
-    WF_PARTIAL_2IN9 = [
-        0x0, 0x40, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x80, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x40, 0x40, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0A, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1,
-        0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x0, 0x0, 0x0,
-        0x22, 0x17, 0x41, 0xB0, 0x32, 0x36,
-    ]
+    def apply_profile(self, profile: WaveformProfile, high_contrast: bool) -> None:
+        """Select a new waveform profile/override for the next init().
 
-    WS_20_30 = [
-        0x80, 0x66, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x40, 0x0, 0x0, 0x0,
-        0x10, 0x66, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x20, 0x0, 0x0, 0x0,
-        0x80, 0x66, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x40, 0x0, 0x0, 0x0,
-        0x10, 0x66, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x20, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x14, 0x8, 0x0, 0x0, 0x0, 0x0, 0x2,
-        0xA, 0xA, 0x0, 0xA, 0xA, 0x0, 0x1,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x14, 0x8, 0x0, 0x1, 0x0, 0x0, 0x1,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x44, 0x44, 0x44, 0x44, 0x44, 0x44, 0x0, 0x0, 0x0,
-        0x22, 0x17, 0x41, 0x0, 0x32, 0x36,
-    ]
+        Backs the live (no-reboot) profile change: the caller sets the new
+        selection here, then re-runs init() followed by a full refresh so the
+        panel adopts the new waveform and voltages without restarting the board
+        process. None selects the verified default, matching the constructor.
+        """
+        self.profile = profile if profile is not None else get_profile("")
+        self.high_contrast = high_contrast
+
+    # --- "high contrast" drive voltages (experimental override) ---------------
+    # Pushed harder than the GDEM029T94 trailing voltage bytes (VSH 0x41, VSL
+    # 0x32, VCOM 0x36): a larger VSH darkens black pixels and a more-negative
+    # VSL/VCOM raises contrast on a faint panel. An on-hardware tuning starting
+    # point, not a datasheet guarantee -- the reason it is surfaced as a separate
+    # experimental toggle, applied over whatever profile is selected.
+    HIGH_CONTRAST_VSH1 = 0x4A  # source high (profile default 0x41)
+    HIGH_CONTRAST_VSH2 = 0x00  # second source high (unused on this panel)
+    HIGH_CONTRAST_VSL = 0x3A   # source low / more negative (profile default 0x32)
+    HIGH_CONTRAST_VCOM = 0x44  # VCOM (profile default 0x36)
 
     # --- low-level SPI / GPIO (identical wiring to the V2 driver) -------------
     def reset(self):
@@ -171,10 +160,24 @@ class EPD:
                     "panel unresponsive or not an SSD1680/IL3820-family panel"
                 )
 
+    def _full_activation_byte(self) -> int:
+        """Return the 0x22 (display update control 2) payload for a full refresh.
+
+        The payload selects the waveform source, and it differs per driver:
+          - SSD1680 register LUT: 0xC7 (run the LUT written by SetLut()).
+          - SSD1680 OTP / DEPG0290BS: 0xF7 (load temperature + the OTP waveform).
+          - IL3820: 0xC4 (per the IL3820 reference update sequence).
+        """
+        if self.profile.driver == DRIVER_IL3820:
+            return 0xC4
+        if self.profile.driver == DRIVER_DKE_SSD1680 or self.profile.use_otp:
+            return 0xF7
+        return 0xC7
+
     def TurnOnDisplay(self):
-        """Trigger a full refresh (load LUT/temp + activate)."""
+        """Trigger a full refresh (load LUT/temp + activate) for this driver."""
         self.send_command(0x22)  # display update control 2
-        self.send_data(0xC7)
+        self.send_data(self._full_activation_byte())
         self.send_command(0x20)  # master activation
         self.ReadBusy()
 
@@ -227,47 +230,44 @@ class EPD:
         self.send_data(y & 0xFF)
         self.send_data((y >> 8) & 0xFF)
 
+    def _write_lut_raw(self, lut):
+        """Write a raw register LUT via 0x32 with no trailing voltage registers.
+
+        Used by the IL3820 (30-byte) and DEPG0290BS (153-byte) drivers, whose
+        waveform tables carry no appended gate/source/VCOM bytes -- unlike the
+        SSD1680 SetLut(), which writes 153 LUT bytes plus 6 voltage bytes.
+        """
+        self.send_command(0x32)  # write LUT register
+        for b in lut:
+            self.send_data(b)
+        self.ReadBusy()
+
     def init(self):
-        """Initialize the SSD1680 panel.
+        """Initialize the panel for the selected profile's driver strategy.
 
         Returns 0 on success, -1 on failure. A BUSY timeout (panel absent or not
-        an SSD1680/IL3820-family panel) is caught and reported as -1 -- the same
+        an SSD16xx/IL3820-family panel) is caught and reported as -1 -- the same
         contract Manager.initialize() expects from the V2 driver -- and recorded
         in ``busy_timeout_occurred`` for the startup status report.
+
+        The init sequence, LUT format and refresh activation bytes are selected
+        by ``profile.driver`` (see waveform_profiles): the V1 panel family does
+        not share one protocol, so SSD1680 (Waveshare), IL3820 and DEPG0290BS
+        each get their own faithful sequence.
         """
         self.busy_timeout_occurred = False
         if epdconfig.module_init() != 0:
             return -1
         try:
             self.reset()
-
-            self.ReadBusy()
-            self.send_command(0x12)  # SWRESET
-            self.ReadBusy()
-
-            self.send_command(0x01)  # driver output control
-            self.send_data(0x27)
-            self.send_data(0x01)
-            self.send_data(0x00)
-
-            self.send_command(0x11)  # data entry mode
-            self.send_data(0x03)
-
-            self.SetWindow(0, 0, self.width - 1, self.height - 1)
-
-            self.send_command(0x21)  # display update control 1
-            self.send_data(0x00)
-            self.send_data(0x80)
-
-            self.SetCursor(0, 0)
-            self.ReadBusy()
-
-            self.SetLut(self.WS_20_30)
-
-            if self.il3820_additions:
-                self._apply_il3820_additions()
+            if self.profile.driver == DRIVER_IL3820:
+                self._init_il3820()
+            elif self.profile.driver == DRIVER_DKE_SSD1680:
+                self._init_dke()
+            else:
+                self._init_ssd1680()
         except EPDTimeoutError as e:
-            # Panel never signaled idle: unresponsive or not an SSD1680-family
+            # Panel never signaled idle: unresponsive or not an SSD16xx-family
             # panel. Report -1 so Manager.initialize() disables the display
             # rather than hanging; main records the timeout for the status card.
             self.busy_timeout_occurred = True
@@ -275,36 +275,144 @@ class EPD:
             return -1
         return 0
 
-    def _apply_il3820_additions(self):
-        """Apply the optional IL3820/SSD1608-specific analog + waveform setup.
+    def _init_ssd1680(self):
+        """Waveshare epd2in9_V2-style SSD1680 init (the default, verified path).
 
-        Invoked from init() only when ``il3820_additions`` is set. A true IL3820
-        panel (the period-appropriate V1 controller) has no usable OTP waveform
-        and relies on explicit analog programming the SSD1680 path skips:
-
-          - 0x0C booster soft start
-          - 0x3A dummy-line period, 0x3B gate-line width
-          - 0x03 gate driving voltage, 0x04 source driving voltage, 0x2C VCOM
-
-        These bytes are the IL3820 datasheet defaults and are the primary
-        on-hardware tuning point: if a genuine V1 panel renders blank/ghosted
-        with the base SSD1680 path, enabling this opt-in and adjusting these
-        values is the intended path to a clean image. Kept additive and isolated
-        so the verified SSD1680 fallback is untouched when the opt-in is off.
+        Loads the profile's 159-byte full LUT via SetLut() unless ``use_otp`` is
+        set (then the panel's OTP waveform drives the full refresh at activation,
+        TurnOnDisplay()'s 0xF7). Unchanged from the original SSD1680 driver so the
+        working bench panel behaves exactly as before.
         """
-        self.send_command(0x0C)  # booster soft start control
+        self.ReadBusy()
+        self.send_command(0x12)  # SWRESET
+        self.ReadBusy()
+
+        self.send_command(0x01)  # driver output control
+        self.send_data(0x27)
+        self.send_data(0x01)
+        self.send_data(0x00)
+
+        self.send_command(0x11)  # data entry mode
+        self.send_data(0x03)
+
+        self.SetWindow(0, 0, self.width - 1, self.height - 1)
+
+        self.send_command(0x21)  # display update control 1
+        self.send_data(0x00)
+        self.send_data(0x80)
+
+        self.SetCursor(0, 0)
+        self.ReadBusy()
+
+        if not self.profile.use_otp:
+            self.SetLut(self.profile.full_lut)
+
+        # high_contrast runs LAST so its harder source/VCOM voltages override
+        # whatever SetLut() just wrote.
+        if self.high_contrast:
+            self._apply_high_contrast()
+
+    def _init_dke(self):
+        """DEPG0290BS (SSD1680) init: OTP full refresh, register partial LUT.
+
+        Transcribed from GxEPD2 ``GxEPD2_290_BS::_InitDisplay``. Differs from the
+        Waveshare path by the border-waveform select (0x3C=0x05) and internal
+        temperature-sensor select (0x18=0x80), and it loads NO full-refresh LUT
+        (the panel drives full from OTP, activation 0xF7). The partial LUT is
+        loaded per partial refresh by DisplayPartial().
+        """
+        self.send_command(0x12)  # SWRESET
+        self.ReadBusy()
+
+        self.send_command(0x01)  # driver output control
+        self.send_data(0x27)
+        self.send_data(0x01)
+        self.send_data(0x00)
+
+        self.send_command(0x11)  # data entry mode
+        self.send_data(0x03)
+
+        self.send_command(0x3C)  # border waveform
+        self.send_data(0x05)
+
+        self.send_command(0x21)  # display update control 1
+        self.send_data(0x00)
+        self.send_data(0x80)
+
+        self.send_command(0x18)  # temperature sensor: internal
+        self.send_data(0x80)
+
+        self.SetWindow(0, 0, self.width - 1, self.height - 1)
+        self.SetCursor(0, 0)
+        self.ReadBusy()
+
+        if self.high_contrast:
+            self._apply_high_contrast()
+
+    def _init_il3820(self):
+        """IL3820 (GDEH029A1) init + 30-byte full LUT load.
+
+        Transcribed from GxEPD2 ``GxEPD2_290::_InitDisplay`` / ``_Init_Full``.
+        IL3820 has no SWRESET; drive voltages are programmed here (booster 0x0C,
+        VCOM 0x2C, dummy-line 0x3A, gate-width 0x3B) rather than appended to the
+        LUT, and the waveform is a 30-byte register LUT written via 0x32. A
+        power-on (0x22=0xC0, enable clock+analog only -- no display) settles the
+        panel before the first image write; the full-refresh activation byte is
+        0xC4 (see TurnOnDisplay).
+
+        high_contrast raises VCOM here (0x2C=0x44 vs 0xA8); IL3820 has no separate
+        source-voltage register, so the SSD1680 0x04 override does not apply.
+        """
+        self.send_command(0x01)  # driver output / gate config
+        self.send_data((self.height - 1) % 256)
+        self.send_data((self.height - 1) // 256)
+        self.send_data(0x00)
+
+        self.send_command(0x0C)  # booster soft start
         self.send_data(0xD7)
         self.send_data(0xD6)
         self.send_data(0x9D)
 
-        self.send_command(0x2C)  # write VCOM register
-        self.send_data(0xA8)
+        self.send_command(0x2C)  # VCOM
+        self.send_data(0x44 if self.high_contrast else 0xA8)
 
-        self.send_command(0x3A)  # set dummy line period
+        self.send_command(0x3A)  # dummy line period
         self.send_data(0x1A)
 
-        self.send_command(0x3B)  # set gate line width
+        self.send_command(0x3B)  # gate line width
         self.send_data(0x08)
+
+        self.send_command(0x11)  # data entry mode
+        self.send_data(0x03)
+
+        self.SetWindow(0, 0, self.width - 1, self.height - 1)
+        self.SetCursor(0, 0)
+        self.ReadBusy()
+
+        self._write_lut_raw(self.profile.full_lut)  # 30-byte IL3820 full LUT
+
+        self.send_command(0x22)  # power on: enable clock + analog (no display)
+        self.send_data(0xC0)
+        self.send_command(0x20)  # master activation
+        self.ReadBusy()
+
+    def _apply_high_contrast(self):
+        """Rewrite source (0x04) and VCOM (0x2C) with higher-contrast voltages.
+
+        Invoked from init() last (after the waveform LUT and any IL3820
+        additions) when ``high_contrast`` is set, so these values are the final
+        word on drive voltage. Targets the "draws but faint" symptom: a higher
+        VSH and more-negative VSL/VCOM push more charge into the ink. The bytes
+        are an on-hardware tuning starting point, not a datasheet guarantee --
+        hence the experimental toggle. If the panel still renders faint, these
+        constants are the values to adjust next.
+        """
+        self.send_command(0x04)  # source driving voltage
+        self.send_data(self.HIGH_CONTRAST_VSH1)  # VSH1
+        self.send_data(self.HIGH_CONTRAST_VSH2)  # VSH2
+        self.send_data(self.HIGH_CONTRAST_VSL)   # VSL
+        self.send_command(0x2C)  # VCOM
+        self.send_data(self.HIGH_CONTRAST_VCOM)
 
     def getbuffer(self, image):
         """Pack a PIL image into the 1bpp panel buffer (white=1, black=0).
@@ -329,20 +437,67 @@ class EPD:
         self.TurnOnDisplay()
         self.buffer = image.copy() if hasattr(image, 'copy') else list(image)
 
-    def DisplayPartial(self, image):
-        """Partial refresh against the baseline set by the last display().
+    def _write_partial_rams(self, image):
+        """Load a differential partial frame: previous shown -> 0x26, new -> 0x24.
 
-        Re-arms partial mode (soft reset pulse + partial LUT + border), writes
-        the new frame to 0x24, and triggers a partial activation. The baseline in
-        0x26 is left intact, so the scheduler should perform a periodic full
-        refresh (display()) to re-seat the baseline and avoid cumulative ghosting.
+        The SSD16xx/IL3820 partial waveform transitions each pixel from its OLD
+        value (RAM 0x26) to its NEW value (RAM 0x24), so the OLD RAM must hold the
+        frame *currently on the panel*. Two things corrupt that if 0x26 is not
+        re-loaded here: init()'s SWRESET wipes both RAM banks on every
+        full->partial / deep-sleep-wake transition, and a partial otherwise never
+        re-seeds 0x26. Without this, the panel diffs every partial against a stale
+        (or blank) baseline and never clears the previous frame -- stacking
+        content, e.g. a clock's digits drawn on top of each other.
+
+        ``self.buffer`` is the last shown frame; writing it to 0x26 before the new
+        frame to 0x24 mirrors GxEPD2's writeImageAgain (set previous = currently
+        displayed). The cursor is reset between banks because a full-frame write
+        advances the shared RAM address counter.
+
+        Do NOT "optimize" this back to a single 0x24 write: dropping the 0x26
+        re-seed reintroduces the partial-refresh ghosting this fixes.
         """
+        previous = self.buffer
+        self.SetWindow(0, 0, self.width - 1, self.height - 1)
+        if previous is not None:
+            self.SetCursor(0, 0)
+            self.send_command(0x26)  # OLD RAM = frame currently on the panel
+            self.send_data2(previous)
+        self.SetCursor(0, 0)
+        self.send_command(0x24)  # NEW RAM = target frame
+        self.send_data2(image)
+
+    def DisplayPartial(self, image):
+        """Partial refresh diffing the previously shown frame against the new one.
+
+        Re-arms partial mode (soft reset pulse + partial LUT + border), loads the
+        differential frame (previous -> 0x26, new -> 0x24; see _write_partial_rams
+        for why re-seeding 0x26 every call is mandatory), and triggers a partial
+        activation.
+
+        IL3820 and DEPG0290BS use their own partial LUT + activation (see
+        _display_partial_il3820 / _display_partial_dke). For a use_otp SSD1680
+        profile there is no register partial LUT to run, so a partial activation
+        would have no waveform; route through the full-refresh path instead
+        (correctness over speed -- every update still renders with the OTP
+        waveform).
+        """
+        if self.profile.driver == DRIVER_IL3820:
+            self._display_partial_il3820(image)
+            return
+        if self.profile.driver == DRIVER_DKE_SSD1680:
+            self._display_partial_dke(image)
+            return
+        if self.profile.use_otp:
+            self.display(image)
+            return
+
         epdconfig.digital_write(self.reset_pin, 0)
         epdconfig.delay_ms(2)
         epdconfig.digital_write(self.reset_pin, 1)
         epdconfig.delay_ms(2)
 
-        self.SetLut(self.WF_PARTIAL_2IN9)
+        self.SetLut(self.profile.partial_lut)
         self.send_command(0x37)
         self.send_data(0x00)
         self.send_data(0x00)
@@ -363,12 +518,40 @@ class EPD:
         self.send_command(0x20)
         self.ReadBusy()
 
-        self.SetWindow(0, 0, self.width - 1, self.height - 1)
-        self.SetCursor(0, 0)
-
-        self.send_command(0x24)  # write RAM (current)
-        self.send_data2(image)
+        self._write_partial_rams(image)
         self.TurnOnDisplayPart()
+        self.buffer = image.copy() if hasattr(image, 'copy') else list(image)
+
+    def _display_partial_il3820(self, image):
+        """IL3820 partial refresh (load 30-byte partial LUT, write, activate 0x04).
+
+        Transcribed from GxEPD2 ``GxEPD2_290::_Init_Part`` / ``_Update_Part``:
+        load the partial waveform LUT, load the differential frame (previous ->
+        0x26, new -> 0x24; see _write_partial_rams), then run the partial
+        activation (0x22=0x04).
+        """
+        self._write_lut_raw(self.profile.partial_lut)
+        self._write_partial_rams(image)
+        self.send_command(0x22)  # display update control 2
+        self.send_data(0x04)     # IL3820 partial activation
+        self.send_command(0x20)  # master activation
+        self.ReadBusy()
+        self.buffer = image.copy() if hasattr(image, 'copy') else list(image)
+
+    def _display_partial_dke(self, image):
+        """DEPG0290BS partial refresh (load 153-byte partial LUT, write, 0xCC).
+
+        Transcribed from GxEPD2 ``GxEPD2_290_BS::_Init_Part`` / ``_Update_Part``:
+        load the register partial LUT (no voltage bytes), load the differential
+        frame (previous -> 0x26, new -> 0x24; see _write_partial_rams), then run
+        the partial activation (0x22=0xCC).
+        """
+        self._write_lut_raw(self.profile.partial_lut)
+        self._write_partial_rams(image)
+        self.send_command(0x22)  # display update control 2
+        self.send_data(0xCC)     # DEPG0290BS partial activation
+        self.send_command(0x20)  # master activation
+        self.ReadBusy()
         self.buffer = image.copy() if hasattr(image, 'copy') else list(image)
 
     def Clear(self, color=0xFF):

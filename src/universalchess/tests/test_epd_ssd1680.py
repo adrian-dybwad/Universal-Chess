@@ -32,6 +32,7 @@ from PIL import Image
 
 from universalchess.epaper.framework.waveshare import epd2in9d, epdconfig
 from universalchess.epaper.framework.waveshare import epd2in9_ssd1680 as ssd
+from universalchess.epaper.framework.waveshare import waveform_profiles as wp
 from universalchess.epaper.framework.waveshare.epd2in9_ssd1680 import EPD
 
 # A short timeout to keep the hang-path tests fast.
@@ -134,12 +135,17 @@ class InitContractTests(unittest.TestCase):
         self.assertTrue(self.epd.busy_timeout_occurred)
 
 
-class Il3820AdditionsTests(unittest.TestCase):
-    """The IL3820 opt-in must add IL3820-only analog setup, and only when on."""
+class Il3820DriverTests(unittest.TestCase):
+    """The IL3820 profile must use the IL3820-native init, not the SSD1680 path.
 
-    # IL3820-specific opcodes not emitted by the base SSD1680 init: booster soft
-    # start, dummy-line period, gate-line width. (0x2C/VCOM is excluded because
-    # the base SetLut also writes it.)
+    IL3820 (GDEH029A1) is a different controller from the SSD1680: it has NO
+    SWRESET, programs drive voltages directly (booster 0x0C, VCOM 0x2C, dummy
+    line 0x3A, gate width 0x3B), and loads a 30-byte register LUT via 0x32. The
+    old profile mislabeled a SSD1680-init + 159-byte LUT as "IL3820"; these pin
+    the faithful sequence so a true IL3820 panel is driven correctly.
+    """
+
+    # IL3820-specific analog opcodes not emitted by the SSD1680 init.
     IL3820_ONLY_OPCODES = (0x0C, 0x3A, 0x3B)
 
     def setUp(self):
@@ -155,8 +161,8 @@ class Il3820AdditionsTests(unittest.TestCase):
         epdconfig.delay_ms = self._orig_delay_ms
         epdconfig.module_init = self._orig_module_init
 
-    def _init_and_record(self, il3820_additions):
-        epd = EPD(il3820_additions=il3820_additions)
+    def _init_and_record(self, profile_key):
+        epd = EPD(profile=wp.get_profile(profile_key))
         commands = []
         epd.send_command = lambda c: commands.append(c)
         epd.send_data = MagicMock()
@@ -164,23 +170,330 @@ class Il3820AdditionsTests(unittest.TestCase):
         result = epd.init()
         return result, commands
 
-    def test_additions_off_omits_il3820_opcodes(self):
-        # Default fallback: the verified SSD1680 path must not emit any IL3820
-        # analog setup, so the working SSD1680 panel behavior is unchanged.
-        result, commands = self._init_and_record(il3820_additions=False)
+    def test_ssd1680_path_omits_il3820_opcodes(self):
+        # Default profile (GDEM029T94): the verified SSD1680 path must not emit
+        # any IL3820 analog setup, so the working SSD1680 panel is unchanged.
+        result, commands = self._init_and_record("gdem029t94")
         self.assertEqual(result, 0)
         for opcode in self.IL3820_ONLY_OPCODES:
             self.assertNotIn(opcode, commands, f"unexpected IL3820 cmd 0x{opcode:02x}")
 
-    def test_additions_on_emits_il3820_opcodes(self):
-        # Opt-in on: every IL3820-only analog command must be issued, on top of
-        # the SSD1680 base init (which still ran -- result is 0).
-        result, commands = self._init_and_record(il3820_additions=True)
+    def test_il3820_uses_native_init_without_swreset(self):
+        # IL3820 profile: must emit the IL3820 analog opcodes and the LUT write
+        # (0x32), and must NOT emit SWRESET (0x12). SWRESET's presence would mean
+        # the SSD1680 init ran -- the mislabeled-hybrid bug. Its absence proves
+        # the IL3820-native path is taken.
+        result, commands = self._init_and_record("il3820_gdeh029a1")
         self.assertEqual(result, 0)
-        for opcode in self.IL3820_ONLY_OPCODES:
+        for opcode in self.IL3820_ONLY_OPCODES + (0x32,):
             self.assertIn(opcode, commands, f"missing IL3820 cmd 0x{opcode:02x}")
-        # Additions run after the base init, so they follow SWRESET(0x12).
-        self.assertLess(commands.index(0x12), commands.index(0x0C))
+        self.assertNotIn(0x12, commands, "IL3820 must not issue SWRESET (SSD1680 only)")
+
+    def test_il3820_full_activation_byte_is_c4(self):
+        # IL3820 full-refresh activation is 0xC4 (per GxEPD2 GxEPD2_290::
+        # _Update_Full), not the SSD1680 0xC7/0xF7. The wrong byte would not
+        # latch the IL3820 waveform and the panel would not refresh.
+        epd = EPD(profile=wp.get_profile("il3820_gdeh029a1"))
+        transcript = []
+        epd.send_command = lambda c: transcript.append(("cmd", c))
+        epd.send_data = lambda d: transcript.append(("data", d))
+        epd.ReadBusy = MagicMock()
+        epd.TurnOnDisplay()
+        idx = transcript.index(("cmd", 0x22))
+        self.assertEqual(transcript[idx + 1], ("data", 0xC4))
+
+    def test_il3820_partial_loads_30_byte_lut_and_activates_04(self):
+        # IL3820 partial refresh must load the partial LUT (0x32), re-seed OLD RAM
+        # (0x26, the differential baseline) and write NEW RAM (0x24), then run the
+        # IL3820 partial activation 0x04. A wrong activation byte would freeze the
+        # partial update; a missing 0x26 re-seed reintroduces ghosting.
+        epd = EPD(profile=wp.get_profile("il3820_gdeh029a1"))
+        transcript = []
+        epd.send_command = lambda c: transcript.append(("cmd", c))
+        epd.send_data = lambda d: transcript.append(("data", d))
+        epd.send_data2 = MagicMock()
+        epd.ReadBusy = MagicMock()
+        epd.DisplayPartial([0x00] * BUFFER_LEN)
+        self.assertIn(("cmd", 0x32), transcript)
+        self.assertIn(("cmd", 0x24), transcript)
+        self.assertIn(("cmd", 0x26), transcript)
+        idx = transcript.index(("cmd", 0x22))
+        self.assertEqual(transcript[idx + 1], ("data", 0x04))
+
+
+class Depg0290bsDriverTests(unittest.TestCase):
+    """DEPG0290BS must drive full from OTP and partial from a register LUT.
+
+    Transcribed from GxEPD2 GxEPD2_290_BS: SSD1680 init with the border-waveform
+    (0x3C=0x05) and internal temperature-sensor (0x18=0x80) selects, NO full LUT
+    (full activation 0xF7 loads OTP), and a 153-byte register partial LUT with
+    activation 0xCC.
+    """
+
+    def setUp(self):
+        self._orig_digital_read = epdconfig.digital_read
+        self._orig_delay_ms = epdconfig.delay_ms
+        self._orig_module_init = epdconfig.module_init
+        epdconfig.digital_read = MagicMock(return_value=IDLE_LOW)
+        epdconfig.delay_ms = MagicMock()
+        epdconfig.module_init = MagicMock(return_value=0)
+
+    def tearDown(self):
+        epdconfig.digital_read = self._orig_digital_read
+        epdconfig.delay_ms = self._orig_delay_ms
+        epdconfig.module_init = self._orig_module_init
+
+    def _make(self):
+        epd = EPD(profile=wp.get_profile("depg0290bs"))
+        transcript = []
+        epd.send_command = lambda c: transcript.append(("cmd", c))
+        epd.send_data = lambda d: transcript.append(("data", d))
+        epd.send_data2 = MagicMock()
+        epd.reset = MagicMock()
+        epd.ReadBusy = MagicMock()
+        return epd, transcript
+
+    def test_init_skips_full_lut_and_selects_otp_full(self):
+        # No full register LUT (0x32 absent in init) and the border/temp selects
+        # present; full activation is 0xF7 (OTP). A 0x32 in init would fight the
+        # OTP full waveform this panel relies on.
+        epd, transcript = self._make()
+        self.assertEqual(epd.init(), 0)
+        self.assertNotIn(("cmd", 0x32), transcript)
+        self.assertIn(("cmd", 0x3C), transcript)
+        self.assertIn(("cmd", 0x18), transcript)
+        epd2 = EPD(profile=wp.get_profile("depg0290bs"))
+        t2 = []
+        epd2.send_command = lambda c: t2.append(("cmd", c))
+        epd2.send_data = lambda d: t2.append(("data", d))
+        epd2.ReadBusy = MagicMock()
+        epd2.TurnOnDisplay()
+        idx = t2.index(("cmd", 0x22))
+        self.assertEqual(t2[idx + 1], ("data", 0xF7))
+
+    def test_partial_loads_register_lut_and_activates_cc(self):
+        # Partial refresh loads the 153-byte register LUT (0x32), re-seeds OLD RAM
+        # (0x26, the differential baseline) and writes NEW RAM (0x24), activation
+        # 0xCC. Wrong activation would not run the partial; a missing 0x26 re-seed
+        # reintroduces ghosting.
+        epd, transcript = self._make()
+        epd.DisplayPartial([0x00] * BUFFER_LEN)
+        self.assertIn(("cmd", 0x32), transcript)
+        self.assertIn(("cmd", 0x24), transcript)
+        self.assertIn(("cmd", 0x26), transcript)
+        idx = transcript.index(("cmd", 0x22))
+        self.assertEqual(transcript[idx + 1], ("data", 0xCC))
+
+
+class OtpWaveformTests(unittest.TestCase):
+    """The OTP-waveform opt-in must drive the panel from its built-in waveform.
+
+    A faint/ghosted V1 image often means the register-loaded WS_20_30 LUT is
+    wrong for the specific panel. The opt-in skips that LUT and loads the
+    panel's factory (OTP) waveform instead. That requires three coordinated
+    changes, each pinned below:
+      - init() must NOT write the LUT register (0x32),
+      - the full-refresh activation byte must switch from 0xC7 (use written LUT)
+        to 0xF7 (load temperature + OTP LUT),
+      - partial refresh has no written LUT to run, so it must fall back to a
+        full refresh (which writes the 0x26 baseline) rather than activating an
+        empty partial waveform.
+    """
+
+    def setUp(self):
+        self._orig_digital_read = epdconfig.digital_read
+        self._orig_delay_ms = epdconfig.delay_ms
+        self._orig_module_init = epdconfig.module_init
+        self._orig_digital_write = epdconfig.digital_write
+        epdconfig.digital_read = MagicMock(return_value=IDLE_LOW)
+        epdconfig.delay_ms = MagicMock()
+        epdconfig.digital_write = MagicMock()
+        epdconfig.module_init = MagicMock(return_value=0)
+
+    def tearDown(self):
+        epdconfig.digital_read = self._orig_digital_read
+        epdconfig.delay_ms = self._orig_delay_ms
+        epdconfig.module_init = self._orig_module_init
+        epdconfig.digital_write = self._orig_digital_write
+
+    def _record(self, epd):
+        """Capture the ordered (kind, value) command/data transcript of epd."""
+        transcript = []
+        epd.send_command = lambda c: transcript.append(("cmd", c))
+        epd.send_data = lambda d: transcript.append(("data", d))
+        epd.send_data2 = MagicMock()
+        epd.reset = MagicMock()
+        epd.ReadBusy = MagicMock()
+        return transcript
+
+    def test_default_writes_register_lut(self):
+        # Baseline: with the default profile, init must still load the GDEM029T94
+        # LUT via 0x32. If this regresses, the OTP path would be taken
+        # unconditionally and the verified SSD1680 panel behavior would change.
+        epd = EPD()
+        transcript = self._record(epd)
+        self.assertEqual(epd.init(), 0)
+        self.assertIn(("cmd", 0x32), transcript)
+
+    def test_otp_waveform_skips_register_lut(self):
+        # Built-In (OTP) profile: the LUT register write (0x32) must be absent so
+        # the panel uses its OTP waveform. If 0x32 still fired, both waveforms
+        # would fight and the experiment would be meaningless.
+        epd = EPD(profile=wp.get_profile("builtin_otp"))
+        transcript = self._record(epd)
+        self.assertEqual(epd.init(), 0)
+        self.assertNotIn(("cmd", 0x32), transcript)
+
+    def test_full_refresh_control_byte_depends_on_otp(self):
+        # The 0x22 (display update control 2) payload selects the waveform
+        # source: 0xC7 runs the written LUT, 0xF7 loads the OTP LUT. The wrong
+        # byte either ignores the OTP waveform (faint) or runs no LUT at all.
+        for profile_key, expected in (("gdem029t94", 0xC7), ("builtin_otp", 0xF7)):
+            with self.subTest(profile=profile_key):
+                epd = EPD(profile=wp.get_profile(profile_key))
+                transcript = self._record(epd)
+                epd.TurnOnDisplay()
+                idx = transcript.index(("cmd", 0x22))
+                self.assertEqual(transcript[idx + 1], ("data", expected))
+
+    def test_partial_falls_back_to_full_when_otp(self):
+        # In OTP mode a partial refresh has no written partial LUT, so it must
+        # route through the full-refresh path: full OTP activation (0x22->0xF7),
+        # no partial LUT load (0x32) and no partial activation (0x22->0x0F).
+        # (0x26 alone no longer distinguishes the paths -- both write it now.)
+        epd = EPD(profile=wp.get_profile("builtin_otp"))
+        transcript = self._record(epd)
+        epd.DisplayPartial([0x00] * BUFFER_LEN)
+        self.assertIn(("data", 0xF7), transcript)
+        self.assertNotIn(("data", 0x0F), transcript)
+        self.assertNotIn(("cmd", 0x32), transcript)
+
+    def test_partial_stays_partial_when_not_otp(self):
+        # Guard the inverse: with a register-LUT profile, DisplayPartial must
+        # remain a true partial refresh -- load the partial LUT (0x32) and use the
+        # partial activation (0x22->0x0F), never a full activation (0xC7/0xF7).
+        epd = EPD()
+        transcript = self._record(epd)
+        epd.DisplayPartial([0x00] * BUFFER_LEN)
+        self.assertIn(("cmd", 0x32), transcript)
+        self.assertIn(("data", 0x0F), transcript)
+        self.assertNotIn(("data", 0xC7), transcript)
+        self.assertNotIn(("data", 0xF7), transcript)
+
+
+class HighContrastTests(unittest.TestCase):
+    """The high-contrast override must rewrite source/VCOM voltages, last word.
+
+    A faint image that draws but lightly is the classic symptom of under-driven
+    source (VSH) / VCOM voltages. For the SSD1680 path this override rewrites the
+    0x04 (source) and 0x2C (VCOM) registers AFTER SetLut() so its higher-contrast
+    values win regardless of what the waveform wrote. (The IL3820 driver has no
+    0x04 register and instead raises VCOM inline; see Il3820DriverTests.)
+    """
+
+    def setUp(self):
+        self._orig_digital_read = epdconfig.digital_read
+        self._orig_delay_ms = epdconfig.delay_ms
+        self._orig_module_init = epdconfig.module_init
+        self._orig_digital_write = epdconfig.digital_write
+        epdconfig.digital_read = MagicMock(return_value=IDLE_LOW)
+        epdconfig.delay_ms = MagicMock()
+        epdconfig.digital_write = MagicMock()
+        epdconfig.module_init = MagicMock(return_value=0)
+
+    def tearDown(self):
+        epdconfig.digital_read = self._orig_digital_read
+        epdconfig.delay_ms = self._orig_delay_ms
+        epdconfig.module_init = self._orig_module_init
+        epdconfig.digital_write = self._orig_digital_write
+
+    def _record_and_init(self, **kwargs):
+        epd = EPD(**kwargs)
+        transcript = []
+        epd.send_command = lambda c: transcript.append(("cmd", c))
+        epd.send_data = lambda d: transcript.append(("data", d))
+        epd.send_data2 = MagicMock()
+        epd.reset = MagicMock()
+        epd.ReadBusy = MagicMock()
+        result = epd.init()
+        return epd, result, transcript
+
+    @staticmethod
+    def _last_command_payload(transcript, opcode):
+        """Return the data bytes that follow the LAST occurrence of opcode."""
+        last_idx = max(i for i, (kind, v) in enumerate(transcript)
+                       if kind == "cmd" and v == opcode)
+        payload = []
+        for kind, value in transcript[last_idx + 1:]:
+            if kind == "cmd":
+                break
+            payload.append(value)
+        return payload
+
+    def test_default_keeps_waveform_voltages(self):
+        # Baseline: with high-contrast off, the last source-voltage (0x04) write
+        # is the GDEM029T94 LUT's trailing bytes. If this regresses, the panel's
+        # verified voltages would change without anyone asking.
+        epd, result, transcript = self._record_and_init()
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            self._last_command_payload(transcript, 0x04),
+            [wp.WS_20_30[155], wp.WS_20_30[156], wp.WS_20_30[157]],
+        )
+
+    def test_high_contrast_overrides_source_and_vcom(self):
+        # High-contrast on: the final 0x04 (source) and 0x2C (VCOM) writes must
+        # be the high-contrast constants, proving the override runs last and
+        # wins. A regression (running before SetLut, or not at all) leaves the
+        # faint waveform voltages in place.
+        epd, result, transcript = self._record_and_init(high_contrast=True)
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            self._last_command_payload(transcript, 0x04),
+            [EPD.HIGH_CONTRAST_VSH1, EPD.HIGH_CONTRAST_VSH2, EPD.HIGH_CONTRAST_VSL],
+        )
+        self.assertEqual(
+            self._last_command_payload(transcript, 0x2C),
+            [EPD.HIGH_CONTRAST_VCOM],
+        )
+
+    def test_high_contrast_raises_il3820_vcom(self):
+        # The IL3820 driver has no separate source-voltage (0x04) register, so
+        # high_contrast raises VCOM (0x2C) inline to 0x44 (vs the 0xA8 default).
+        # Regression: leaving 0xA8 keeps the panel under-driven (faint); the
+        # SSD1680 0x04 override does not apply to IL3820.
+        epd, result, transcript = self._record_and_init(
+            profile=wp.get_profile("il3820_gdeh029a1"), high_contrast=True
+        )
+        self.assertEqual(result, 0)
+        self.assertEqual(self._last_command_payload(transcript, 0x2C), [0x44])
+        self.assertNotIn(("cmd", 0x04), transcript)
+
+    def test_il3820_default_vcom_is_a8(self):
+        # Inverse guard: with high_contrast off, the IL3820 VCOM must be the
+        # reference 0xA8. A drift here would silently change the panel's drive.
+        epd, result, transcript = self._record_and_init(
+            profile=wp.get_profile("il3820_gdeh029a1"), high_contrast=False
+        )
+        self.assertEqual(result, 0)
+        self.assertEqual(self._last_command_payload(transcript, 0x2C), [0xA8])
+
+    def test_apply_profile_switches_selection_for_next_init(self):
+        # Live (no-reboot) apply path: apply_profile() must change which waveform
+        # the NEXT init() programs. Start on the default (register LUT, writes
+        # 0x32), switch to Built-In OTP, and confirm the re-init now skips 0x32.
+        # A regression here means a live profile change would not take effect
+        # until a reboot -- the exact behavior the feature removes.
+        epd = EPD()
+        epd.apply_profile(wp.get_profile("builtin_otp"), high_contrast=False)
+        transcript = []
+        epd.send_command = lambda c: transcript.append(("cmd", c))
+        epd.send_data = MagicMock()
+        epd.send_data2 = MagicMock()
+        epd.reset = MagicMock()
+        epd.ReadBusy = MagicMock()
+        self.assertEqual(epd.init(), 0)
+        self.assertNotIn(("cmd", 0x32), transcript)
 
 
 class BufferAndRefreshTests(unittest.TestCase):
@@ -226,14 +539,95 @@ class BufferAndRefreshTests(unittest.TestCase):
         self.assertIn(0x20, self.commands)
         self.assertEqual(len(self.data2), 2)  # one write to each RAM bank
 
-    def test_partial_loads_partial_lut_and_writes_current_ram(self):
-        # Partial refresh must load the partial LUT (0x32) and write the new
-        # frame to 0x24, but must NOT reseat the 0x26 baseline (that is reserved
-        # for full refreshes); writing 0x26 here would defeat the diff.
+    def test_partial_loads_partial_lut_and_writes_both_rams(self):
+        # Partial refresh must load the partial LUT (0x32), write the new frame to
+        # NEW RAM (0x24) AND re-seed OLD RAM (0x26) with the previous frame. The
+        # 0x26 re-seed is mandatory for the differential waveform: without it the
+        # panel diffs against a stale baseline and ghosts (see PartialBaselineTests
+        # for the previous/new content check). It is NOT a full refresh, so no full
+        # activation byte is issued.
         self.epd.DisplayPartial([0x00] * BUFFER_LEN)
         self.assertIn(0x32, self.commands)
         self.assertIn(0x24, self.commands)
-        self.assertNotIn(0x26, self.commands)
+        self.assertIn(0x26, self.commands)
+
+
+class PartialBaselineTests(unittest.TestCase):
+    """Partial refresh must re-seed OLD RAM (0x26) with the PREVIOUS shown frame.
+
+    Why this exists (root cause of the reported partial ghosting -- a clock's
+    digits stacked on top of each other): the SSD16xx/IL3820 partial waveform
+    transitions each pixel from its OLD value (RAM 0x26) to its NEW value (RAM
+    0x24). init()'s SWRESET wipes 0x26 on every full->partial / deep-sleep-wake
+    transition, and a partial otherwise never re-writes it, so the driver must
+    re-load 0x26 with the frame currently on the panel each call. Earlier code
+    wrote only 0x24, leaving 0x26 at the last full-refresh baseline (or blank),
+    so every partial diffed against a stale frame and never cleared the prior
+    content. These pin the corrected behavior for all three register-partial
+    drivers.
+
+    How a regression manifests: if the 0x26 write is dropped or fed the NEW frame
+    instead of the PREVIOUS one, the OLD/NEW assertion below fails -- and on
+    hardware the previous frame is never erased (ghosting returns).
+    """
+
+    # Distinct fill bytes so the OLD (previous) and NEW (current) RAM payloads
+    # are unambiguously identifiable in the transcript.
+    PREV = [0x11] * BUFFER_LEN
+    NEW = [0x22] * BUFFER_LEN
+
+    def setUp(self):
+        self._orig_digital_read = epdconfig.digital_read
+        self._orig_delay_ms = epdconfig.delay_ms
+        self._orig_digital_write = epdconfig.digital_write
+        epdconfig.digital_read = MagicMock(return_value=IDLE_LOW)
+        epdconfig.delay_ms = MagicMock()
+        epdconfig.digital_write = MagicMock()
+
+    def tearDown(self):
+        epdconfig.digital_read = self._orig_digital_read
+        epdconfig.delay_ms = self._orig_delay_ms
+        epdconfig.digital_write = self._orig_digital_write
+
+    @staticmethod
+    def _buf_after(transcript, ram_cmd):
+        """Return the first send_data2 payload written after a RAM-select command."""
+        for i, (kind, val) in enumerate(transcript):
+            if kind == "cmd" and val == ram_cmd:
+                for k2, v2 in transcript[i + 1:]:
+                    if k2 == "buf":
+                        return v2
+                    if k2 == "cmd":
+                        break
+        return None
+
+    def _check(self, profile_key):
+        epd = EPD(profile=wp.get_profile(profile_key))
+        epd.buffer = list(self.PREV)  # the frame currently on the panel
+        transcript = []
+        epd.send_command = lambda c: transcript.append(("cmd", c))
+        epd.send_data = lambda d: transcript.append(("data", d))
+        epd.send_data2 = lambda d: transcript.append(("buf", list(d)))
+        epd.reset = MagicMock()
+        epd.ReadBusy = MagicMock()
+
+        epd.DisplayPartial(list(self.NEW))
+
+        self.assertEqual(self._buf_after(transcript, 0x26), self.PREV,
+                         "OLD RAM (0x26) must hold the PREVIOUS frame")
+        self.assertEqual(self._buf_after(transcript, 0x24), self.NEW,
+                         "NEW RAM (0x24) must hold the NEW frame")
+        # The driver must record the new frame as the next 'previous'.
+        self.assertEqual(list(epd.buffer), self.NEW)
+
+    def test_ssd1680_partial_reseeds_old_ram(self):
+        self._check("gdem029t94")
+
+    def test_il3820_partial_reseeds_old_ram(self):
+        self._check("il3820_gdeh029a1")
+
+    def test_depg0290bs_partial_reseeds_old_ram(self):
+        self._check("depg0290bs")
 
 
 if __name__ == '__main__':

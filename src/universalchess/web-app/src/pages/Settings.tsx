@@ -921,6 +921,8 @@ export function Settings() {
               <UpdateManager catalog={catalog} />
             </Card>
 
+            <DisplayTuningCard />
+
             <Card className="mb-6">
               <CardHeader title="Game Database" />
               <p className="text-muted mb-4">
@@ -945,7 +947,6 @@ export function Settings() {
             </Card>
 
             <DebugCard />
-            <Il3820Card />
             <PasswordChange />
             <SystemActions />
           </section>
@@ -1727,14 +1728,51 @@ function DebugCard() {
 }
 
 
-// Optional IL3820 init additions for the SSD1680 (V1) fallback driver. The
-// SSD1680 fallback itself is automatic on a UC8151D BUSY timeout and needs no
-// opt-in; this toggle only layers the IL3820-specific init additions on top.
-// The whole card is hidden unless the board recorded a BUSY timeout
-// (available), since the option is meaningless on a healthy V2 panel.
-function Il3820Card() {
+// A waveform profile as reported by /api/system/display-tuning. The dropdown is
+// driven entirely by the backend registry (waveform_profiles.py), filtered to
+// the active controller, so adding a profile there is enough -- no change here.
+// `source`/`url` credit the waveform's origin and are shown in the card.
+interface WaveformProfile {
+  key: string;
+  label: string;
+  source: string;
+  url: string;
+  controller: string;
+}
+
+// Active controller as reported by the backend (waveform_profiles.CONTROLLER_*).
+// 'uc8151d' is the primary V2 driver; 'ssd16xx' is the V1-family fallback.
+type WaveformController = 'uc8151d' | 'ssd16xx';
+
+// Per-controller card copy. Exhaustive lookup (no default) so a newly added
+// controller family forces an explicit entry rather than silently inheriting
+// the wrong wording.
+const DISPLAY_TUNING_COPY = {
+  uc8151d: {
+    title: 'Display tuning (UC8151D)',
+    description:
+      'If a replacement panel ghosts, ' +
+      'smears, or looks faint on partial updates (e.g. the clock), try a different ' +
+      'waveform profile. Full refresh always uses the panel\u2019s built-in waveform; ' +
+      'only the partial-refresh waveform changes. Each selection applies immediately ' +
+      'with a full refresh -- no reboot.',
+  },
+  ssd16xx: {
+    title: 'Display tuning (SSD1680)',
+    description:
+      'If the panel is blank, faint, or ghosted, try a ' +
+      'different waveform profile. Each selection is applied immediately with a full ' +
+      'refresh -- no reboot -- so you can compare them and keep the one that produces a ' +
+      'clean image.',
+  },
+} satisfies Record<WaveformController, { title: string; description: string }>;
+
+function DisplayTuningCard() {
   const [available, setAvailable] = useState(false);
-  const [enabled, setEnabled] = useState(false);
+  const [activeController, setActiveController] = useState<WaveformController | null>(null);
+  const [profiles, setProfiles] = useState<WaveformProfile[]>([]);
+  const [selected, setSelected] = useState<string>('');
+  const [highContrast, setHighContrast] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -1742,12 +1780,17 @@ function Il3820Card() {
   const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
 
   useEffect(() => {
-    fetch(buildApiUrl('/api/system/il3820'))
+    fetch(buildApiUrl('/api/system/display-tuning'))
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (!data) return;
         if (typeof data.available === 'boolean') setAvailable(data.available);
-        if (typeof data.enabled === 'boolean') setEnabled(data.enabled);
+        if (data.active_controller === 'uc8151d' || data.active_controller === 'ssd16xx') {
+          setActiveController(data.active_controller);
+        }
+        if (Array.isArray(data.profiles)) setProfiles(data.profiles);
+        if (typeof data.selected === 'string') setSelected(data.selected);
+        if (typeof data.high_contrast === 'boolean') setHighContrast(data.high_contrast);
       })
       .catch(() => {
         // Best-effort initial read; the card stays hidden if unavailable.
@@ -1763,56 +1806,37 @@ function Il3820Card() {
     }
   };
 
-  // The flag is read only at board startup, so a toggle has no effect until the
-  // next reboot. Reuses the Power card's reboot endpoint and 401 login-retry.
-  const reboot = async () => {
-    const response = await apiFetch('/api/system/reboot', { method: 'POST', requiresAuth: true });
-    if (response.status === 401) {
-      pendingActionRef.current = reboot;
-      setShowLoginDialog(true);
-      return;
-    }
-    const data = await response.json().catch(() => ({}));
-    if (response.ok && data.success) {
-      setNotice('Rebooting. The web interface will return shortly.');
-    } else {
-      setError(data.error || 'Failed to reboot the board.');
-    }
-  };
-
-  const setIl3820 = async (next: boolean) => {
+  // Persist the selection and apply it live: the board re-inits the panel and
+  // forces a full refresh, so the change takes effect without a reboot. On 401
+  // the login dialog opens and the same apply is retried after authentication.
+  const apply = async (profile: string, contrast: boolean) => {
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      const response = await apiFetch('/api/system/il3820', {
+      const response = await apiFetch('/api/system/display-tuning', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: next }),
+        body: JSON.stringify({ profile, high_contrast: contrast }),
         requiresAuth: true,
       });
       if (response.status === 401) {
-        pendingActionRef.current = () => setIl3820(next);
+        pendingActionRef.current = () => apply(profile, contrast);
         setShowLoginDialog(true);
         return;
       }
-      if (!response.ok) {
-        setError('Failed to update the IL3820 setting.');
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) {
+        setError(data.error || 'Failed to update the display profile.');
         return;
       }
-      setEnabled(next);
-      const rebootPrompt = next
-        ? 'IL3820 additions enabled. Reboot now to apply them to the display driver?'
-        : 'IL3820 additions disabled. Reboot now for the change to take effect?';
-      if (confirm(rebootPrompt)) {
-        await reboot();
-      } else {
-        setNotice(
-          next
-            ? 'IL3820 additions enabled. Reboot the board to apply them.'
-            : 'IL3820 additions disabled. Reboot the board for the change to take effect.'
-        );
-      }
+      setSelected(data.selected ?? profile);
+      setHighContrast(typeof data.high_contrast === 'boolean' ? data.high_contrast : contrast);
+      setNotice(
+        data.applied_live
+          ? 'Profile applied. The panel refreshed with the new waveform.'
+          : 'Profile saved. It will apply when the board is running.',
+      );
     } catch {
       setError('Network error');
     } finally {
@@ -1820,9 +1844,13 @@ function Il3820Card() {
     }
   };
 
-  // Hidden entirely on a healthy V2 panel: the option only makes sense after a
-  // UC8151D BUSY timeout, which the GET probe reports via `available`.
-  if (!available) return null;
+  // Hidden until the board reports an initialized panel with a known
+  // controller. Both controllers have selectable profiles, so the card appears
+  // for V1 and V2; the copy below adapts to whichever drove the panel.
+  if (!available || activeController === null) return null;
+
+  const copy = DISPLAY_TUNING_COPY[activeController];
+  const selectedProfile = profiles.find((p) => p.key === selected);
 
   return (
     <>
@@ -1835,24 +1863,41 @@ function Il3820Card() {
         onSuccess={handleLoginSuccess}
       />
       <Card className="mb-6">
-        <CardHeader title="IL3820 display" />
-        <p className="text-muted mb-4">
-          The display did not respond to the standard (UC8151D) driver, so the board has
-          fallen back to the SSD1680 driver automatically. If the panel is a genuine IL3820
-          and still renders incorrectly, enable these IL3820-specific init additions and
-          reboot to test. Leave this off if the display already works.
-        </p>
+        <CardHeader title={copy.title} />
+        <p className="text-muted mb-4">{copy.description}</p>
         {notice && <Card variant="primary" className="mb-4">{notice}</Card>}
         {error && (
           <Card variant="danger" className="mb-4">
             <strong>Error:</strong> {error}
           </Card>
         )}
+        <FormRow
+          label="Waveform profile"
+          help="The recipe used to drive the panel. Built-In uses the panel's own factory waveform; the others load a known manufacturer table."
+        >
+          <Select
+            value={selected}
+            onChange={(e) => apply(e.target.value, highContrast)}
+            disabled={busy}
+            options={profiles.map((p) => ({ value: p.key, label: p.label }))}
+          />
+        </FormRow>
+        {selectedProfile && (
+          <p className="text-muted mb-4" style={{ fontSize: '0.85em' }}>
+            Waveform source: {selectedProfile.url ? (
+              <a href={selectedProfile.url} target="_blank" rel="noreferrer">
+                {selectedProfile.source}
+              </a>
+            ) : (
+              selectedProfile.source
+            )}
+          </p>
+        )}
         <Toggle
-          label="IL3820 additions"
-          help="Takes effect after the next reboot."
-          checked={enabled}
-          onChange={(v) => setIl3820(v)}
+          label="High contrast (experimental)"
+          help="Drive the VCOM/source voltages harder than the profile's defaults to darken a faint image. Try this if the image draws but only faintly. Not a datasheet-backed setting; leave off if the display already looks good."
+          checked={highContrast}
+          onChange={(v) => apply(selected, v)}
           disabled={busy}
         />
       </Card>

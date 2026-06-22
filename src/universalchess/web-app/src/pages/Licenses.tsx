@@ -75,6 +75,27 @@ const licenses: License[] = [
     copyright: 'Poimandres',
     url: 'https://github.com/pmndrs/zustand',
   },
+  {
+    name: 'Waveshare e-Paper',
+    type: 'Reference driver',
+    description: 'Source of the SSD1680 (GDEM029T94) waveform tables and init for the V1-panel driver and the "Waveshare 2.9\u2033 V2" profile, and of the UC8151D partial LUTs/analog bytes (epd2in9d.py) used by the default "Waveshare 2.9\u2033 V2 \u2014 UC8151D" profile.',
+    copyright: 'Waveshare',
+    url: 'https://github.com/waveshareteam/e-Paper',
+  },
+  {
+    name: 'GxEPD2',
+    type: 'GPL-3.0',
+    description: 'Arduino e-paper library by Jean-Marc Zingg. Verbatim source of the IL3820/GDEH029A1 LUTs (class GxEPD2_290), the DEPG0290BS register partial LUT (GxEPD2_290_BS), and the UC8151D variant partial LUTs/analog bytes \u2014 GDEW029I6FD (GxEPD2_290_I6FD), T5D (GxEPD2_290_T5D) and the experimental GDEW029M06 (GxEPD2_290_M06) \u2014 used by the tuning profiles; also corroborates the GDEM029T94 table and the panel-OTP approach.',
+    copyright: 'Jean-Marc Zingg',
+    url: 'https://github.com/ZinggJM/GxEPD2',
+  },
+  {
+    name: 'Good Display / LILYGO panels',
+    type: 'Reference data',
+    description: 'Original vendor demo code (relayed verbatim via GxEPD2) behind the IL3820/GDEH029A1, DEPG0290BS, GDEW029I6FD, GDEW029M06 and T5D tuning profiles.',
+    copyright: 'Good Display / LILYGO',
+    url: 'https://www.good-display.com/',
+  },
 ];
 
 /**

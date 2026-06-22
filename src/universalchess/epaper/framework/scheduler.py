@@ -63,7 +63,21 @@ class Scheduler:
         self._idle_sleep_seconds = self.IDLE_SLEEP_SECONDS
         self._last_activity = None  # monotonic time of last refresh; None until first refresh
         self._deep_asleep = False  # True while the panel is parked in idle deep sleep
+        # Set by force_reinit() to make the next refresh re-run epd.init() even in
+        # full-refresh mode, so a live waveform-profile change reloads the panel's
+        # LUT/voltages (a normal full refresh skips init() unless transitioning).
+        self._force_reinit = False
     
+    def force_reinit(self) -> None:
+        """Force the next refresh to re-run the panel's init().
+
+        A full refresh normally calls init() only when transitioning from partial
+        mode or waking from deep sleep. A live waveform-profile change swaps the
+        driver's LUT/voltage recipe, which is only applied during init(), so this
+        flag makes the next refresh re-init even when already in full mode.
+        """
+        self._force_reinit = True
+
     def start(self) -> None:
         """Start the refresh scheduler thread."""
         if self._thread is None or not self._thread.is_alive():
@@ -282,11 +296,12 @@ class Scheduler:
             # Re-initialize when transitioning from partial mode, OR when waking the
             # panel from idle deep sleep. init() calls reset(), which is what exits
             # deep sleep; without it display() would write to an unresponsive panel.
-            if self._in_partial_mode or self._deep_asleep:
-                log.debug(f"Scheduler._execute_full_refresh_single(): init() (partial->full or wake from idle sleep)")
+            if self._in_partial_mode or self._deep_asleep or self._force_reinit:
+                log.debug(f"Scheduler._execute_full_refresh_single(): init() (partial->full, idle-sleep wake, or forced re-init)")
                 self._epd.init()
                 self._in_partial_mode = False
                 self._deep_asleep = False
+                self._force_reinit = False
             
             # Use provided image if available, otherwise take snapshot from framebuffer
             if image is not None:
@@ -341,8 +356,10 @@ class Scheduler:
             #    the partial baseline already matches the panel - skipping Clear()
             #    removes the white flash.
             needs_baseline = not self._baseline_established
-            needs_init = needs_baseline or self._deep_asleep or not self._in_partial_mode
+            needs_init = (needs_baseline or self._deep_asleep
+                          or not self._in_partial_mode or self._force_reinit)
             if needs_init:
+                self._force_reinit = False
                 # Check again before using hardware (might have been shut down while processing)
                 if self._stop_event.is_set():
                     if not future.done():
