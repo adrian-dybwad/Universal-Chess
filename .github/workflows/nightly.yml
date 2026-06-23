@@ -21,6 +21,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # Full history and tags are required so the release-notes step can diff
+          # against the previous nightly tag with `git log`.
+          fetch-depth: 0
       
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -71,6 +75,50 @@ jobs:
           cd scripts/releases
           sha256sum *.deb > SHA256SUMS.txt
       
+      - name: Generate release notes
+        env:
+          DATE_TAG: ${{ steps.version.outputs.date_tag }}
+          BASE_VERSION: ${{ steps.version.outputs.base_version }}
+          NIGHTLY_VERSION: ${{ steps.version.outputs.version }}
+          TAG_NAME: ${{ steps.version.outputs.tag_name }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          BUILT_TIMESTAMP: ${{ github.event.head_commit.timestamp }}
+        run: |
+          # The current run's tag does not exist yet, so the most recent existing
+          # nightly tag is the previous build. Summarise commits since then.
+          PREV_TAG=$(git tag -l 'nightly-*' --sort=-creatordate | head -n 1)
+          if [ -n "$PREV_TAG" ]; then
+            CHANGES=$(git log "${PREV_TAG}..${COMMIT_SHA}" --no-merges --pretty=format:'- %s')
+            CHANGES_HEADING="### Changes since ${PREV_TAG}"
+          else
+            # First nightly: no prior tag to diff against, fall back to recent history.
+            CHANGES=$(git log -n 20 --no-merges --pretty=format:'- %s')
+            CHANGES_HEADING="### Recent changes"
+          fi
+          if [ -z "$CHANGES" ]; then
+            CHANGES="- No code changes since the previous nightly."
+          fi
+
+          # The static install body lives in a template file so this workflow's
+          # YAML literal block stays valid (no column-0 heredoc lines). Dynamic
+          # values are substituted with `|` as the sed delimiter because the
+          # repository slug contains a `/`.
+          {
+            printf '## Nightly Build - %s\n\n' "$DATE_TAG"
+            printf '**This is an automated build from the latest development branch.**\n'
+            printf '**Not recommended for production use.**\n\n'
+            printf -- '- Base version: %s\n' "$BASE_VERSION"
+            printf -- '- Commit: %s\n' "$COMMIT_SHA"
+            printf -- '- Built: %s\n\n' "$BUILT_TIMESTAMP"
+            printf '%s\n\n' "$CHANGES_HEADING"
+            printf '%s\n\n' "$CHANGES"
+            sed -e "s|__REPOSITORY__|${REPOSITORY}|g" \
+                -e "s|__TAG_NAME__|${TAG_NAME}|g" \
+                -e "s|__NIGHTLY_VERSION__|${NIGHTLY_VERSION}|g" \
+                .github/release-notes/nightly-body.md
+          } > release_notes.md
+      
       - name: Delete existing releases for today
         uses: dev-drprasad/delete-older-releases@v0.3.4
         with:
@@ -91,60 +139,7 @@ jobs:
           files: |
             scripts/releases/*.deb
             scripts/releases/SHA256SUMS.txt
-          body: |
-            ## Nightly Build - ${{ steps.version.outputs.date_tag }}
-            
-            **This is an automated build from the latest development branch.**
-            **Not recommended for production use.**
-            
-            - Base version: ${{ steps.version.outputs.base_version }}
-            - Commit: ${{ github.sha }}
-            - Built: ${{ github.event.head_commit.timestamp }}
-            
-            ## Prepare a new SD card
-
-            Start clean on a new SD card using the Raspberry Pi Imager. Do not reuse
-            the original card from the Centaur -- keep it safe, you may want it later.
-
-            1. In the Pi Imager, choose Raspberry Pi OS (32-bit) **Trixie**, with no
-               apps or desktop (Lite).
-            2. In the Imager's advanced settings, configure the hostname, a user and
-               password (any username works, you are not limited to `pi` -- just
-               remember the password), Wi-Fi credentials, and enable SSH. Set any
-               other options you like.
-            3. Write the image, insert the card into the Pi, and power it on. With
-               Wi-Fi configured correctly the Pi usually joins your network within a
-               minute or two. No screen or keyboard required.
-            4. SSH into the Pi, then update the base system:
-
-            ```bash
-            sudo apt update && sudo apt upgrade -y
-            ```
-
-            ## Installation
-            
-            Download and install on your Raspberry Pi:
-            
-            ```bash
-            # Download the .deb file (run on the Pi)
-            wget https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag_name }}/universal-chess_${{ steps.version.outputs.version }}_all.deb
-            
-            # Install -- apt resolves dependencies in one step (./ prefix required).
-            # --reinstall is needed because every nightly shares the version "2.0.0-nightly".
-            sudo apt-get install -y --reinstall ./universal-chess_${{ steps.version.outputs.version }}_all.deb
-            ```
-            
-            Or download the `.deb` file from the Assets section below and transfer it to your Pi.
-
-            When the install finishes, reboot the Pi and it should come up running
-            Universal Chess.
-            
-            ## Switch to Stable
-            
-            To switch back to stable releases:
-            ```bash
-            sudo apt-get install --reinstall universal-chess
-            ```
+          body_path: release_notes.md
       
       - name: Delete old nightly releases
         uses: dev-drprasad/delete-older-releases@v0.3.4

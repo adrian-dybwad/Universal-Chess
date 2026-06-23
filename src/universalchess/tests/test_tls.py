@@ -1,47 +1,49 @@
-"""Tests for TLS certificate management.
+"""Tests for TLS certificate generation (universalchess.tls).
 
-Verifies that certificate generation, path accessors, and mobileconfig
-generation work correctly without requiring mkcert to be installed
-(mkcert calls are mocked).
+These guard the regression reported in the field: the server certificate was
+generated for a hardcoded ``dgt.local`` name that does not match the device's
+real mDNS hostname (``<hostname>.local``), producing browser name-mismatch
+warnings even after the CA was installed. They also guard the follow-on
+requirement that the hostname can change after install, so the certificate must
+be regenerated when it no longer covers the current hostname.
+
+mkcert is not available in CI, so the boundary that shells out to mkcert
+(``tls._run_mkcert``) is replaced with a fake that writes real, parseable
+certificate files honouring the requested SAN list. This keeps the SAN-coverage
+logic under test against actual X.509 parsing rather than a stubbed predicate.
 """
 
 import datetime
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
-from universalchess.tls import (
-    ensure_certificates,
-    get_ca_cert_path,
-    get_server_cert_paths,
-    generate_mobileconfig,
-    SSL_DIR_NAME,
-    HOSTNAME,
-)
+pytest.importorskip("cryptography")
+
+from cryptography import x509
+from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+
+import universalchess.tls as tls
 
 
-@pytest.fixture
-def ssl_dir(tmp_path):
-    """Provide a temporary config directory for certificate storage."""
-    return tmp_path
+# ---------------------------------------------------------------------------
+# Test helpers
+# ---------------------------------------------------------------------------
 
+def _write_cert(cert_path: Path, key_path: Path, dns_names, ip_names=()):
+    """Write a self-signed cert with the given SAN entries to disk.
 
-def _create_test_cert(ssl_dir: Path) -> tuple:
-    """Create a real self-signed cert and key for testing.
-
-    Uses the cryptography library directly rather than mkcert so tests
-    run without mkcert installed.
+    Used both to fabricate a pre-existing certificate and as the payload of the
+    fake mkcert, so SAN-coverage assertions run against genuine X.509 parsing.
     """
-    from cryptography import x509
-    from cryptography.x509.oid import NameOID
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
-
+    cert_path.parent.mkdir(parents=True, exist_ok=True)
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    subject = issuer = x509.Name([
-        x509.NameAttribute(NameOID.COMMON_NAME, HOSTNAME),
-    ])
+    san = [x509.DNSName(n) for n in dns_names]
+    import ipaddress
+    san += [x509.IPAddress(ipaddress.ip_address(ip)) for ip in ip_names]
+    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, dns_names[0])])
     cert = (
         x509.CertificateBuilder()
         .subject_name(subject)
@@ -50,199 +52,210 @@ def _create_test_cert(ssl_dir: Path) -> tuple:
         .serial_number(x509.random_serial_number())
         .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
         .not_valid_after(
-            datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=365)
+            datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=825)
         )
+        .add_extension(x509.SubjectAlternativeName(san), critical=False)
         .sign(key, hashes.SHA256())
     )
-
-    cert_dir = ssl_dir / SSL_DIR_NAME
-    cert_dir.mkdir(parents=True, exist_ok=True)
-
-    ca_cert_path = cert_dir / "rootCA.pem"
-    ca_key_path = cert_dir / "rootCA-key.pem"
-    server_cert_path = cert_dir / f"{HOSTNAME}.pem"
-    server_key_path = cert_dir / f"{HOSTNAME}-key.pem"
-
-    cert_pem = cert.public_bytes(serialization.Encoding.PEM)
-    key_pem = key.private_bytes(
-        serialization.Encoding.PEM,
-        serialization.PrivateFormat.TraditionalOpenSSL,
-        serialization.NoEncryption(),
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        )
     )
 
-    for p in (ca_cert_path, server_cert_path):
-        p.write_bytes(cert_pem)
-    for p in (ca_key_path, server_key_path):
-        p.write_bytes(key_pem)
 
-    return server_cert_path, server_key_path
+def _install_fake_mkcert(monkeypatch):
+    """Replace tls._run_mkcert with a fake that writes cert files from the SAN args.
 
+    Returns a list that records each invocation so tests can assert whether
+    generation happened and with which SAN entries.
+    """
+    calls = []
+
+    def fake(cmd, env, purpose):
+        calls.append({"cmd": list(cmd), "purpose": purpose, "env": dict(env)})
+        cert_path = Path(cmd[cmd.index("-cert-file") + 1])
+        key_path = Path(cmd[cmd.index("-key-file") + 1])
+        # SAN entries are every positional arg after the flag pairs.
+        san = [a for a in cmd[1:] if not a.startswith("-") and a not in (str(cert_path), str(key_path))]
+        dns = [s for s in san if not s.replace(".", "").isdigit()]
+        ips = [s for s in san if s.replace(".", "").isdigit()]
+        _write_cert(cert_path, key_path, dns or ["localhost"], ips)
+        caroot = Path(env["CAROOT"])
+        _write_cert(caroot / tls.CA_CERT_FILENAME, caroot / tls.CA_KEY_FILENAME, ["Universal Chess Test CA"])
+        return True
+
+    monkeypatch.setattr(tls, "_run_mkcert", fake)
+    return calls
+
+
+@pytest.fixture
+def fixed_hostname(monkeypatch):
+    """Pin the reported hostname so SAN/coverage assertions are deterministic."""
+    monkeypatch.setattr(tls.socket, "gethostname", lambda: "dgtcentaur")
+    monkeypatch.setattr(tls, "get_local_ips", lambda: [])
+    return "dgtcentaur"
+
+
+# ---------------------------------------------------------------------------
+# Hostname derivation
+# ---------------------------------------------------------------------------
+
+class TestLocalHostnames:
+    def test_includes_mdns_bare_and_loopback(self, fixed_hostname):
+        """SAN must contain the real ``<host>.local`` mDNS name.
+        Regression: a hardcoded ``dgt.local`` omitted the real name and the
+        cert failed to validate when reached as ``dgtcentaur.local``.
+        """
+        names = tls.local_hostnames()
+        assert "dgtcentaur.local" in names
+        assert "dgtcentaur" in names
+        assert "localhost" in names
+
+    def test_strips_existing_dot_local_suffix(self, monkeypatch):
+        """A hostname already ending in .local must not yield ``host.local.local``.
+        Regression: doubled suffix would never match the name the client uses.
+        """
+        monkeypatch.setattr(tls.socket, "gethostname", lambda: "dgtcentaur.local")
+        names = tls.local_hostnames()
+        assert "dgtcentaur.local" in names
+        assert "dgtcentaur.local.local" not in names
+
+
+class TestBuildSanEntries:
+    def test_contains_mdns_name_and_loopback_ip(self, fixed_hostname):
+        """SAN list must carry the mDNS name and 127.0.0.1 with no duplicates.
+        Regression: missing loopback broke local checks; duplicates make mkcert
+        emit redundant SANs.
+        """
+        entries = tls._build_san_entries()
+        assert "dgtcentaur.local" in entries
+        assert "127.0.0.1" in entries
+        assert len(entries) == len(set(entries))
+
+    def test_includes_detected_local_ips(self, monkeypatch):
+        """Detected LAN IPs must be present so IP-based access also validates.
+        Regression: dropping detected IPs forced clients onto name-only access.
+        """
+        monkeypatch.setattr(tls.socket, "gethostname", lambda: "dgtcentaur")
+        monkeypatch.setattr(tls, "get_local_ips", lambda: ["192.168.1.50"])
+        entries = tls._build_san_entries()
+        assert "192.168.1.50" in entries
+
+
+# ---------------------------------------------------------------------------
+# Certificate SAN inspection
+# ---------------------------------------------------------------------------
+
+class TestCertificateDnsNames:
+    def test_parses_san_dns_names(self, tmp_path):
+        """SAN DNS names must be read back from a written cert.
+        Regression: failure to parse SAN would make coverage checks always
+        regenerate (or never), defeating rename handling.
+        """
+        cert = tmp_path / "server.pem"
+        key = tmp_path / "server-key.pem"
+        _write_cert(cert, key, ["dgtcentaur.local", "dgtcentaur", "localhost"], ["127.0.0.1"])
+        names = tls.certificate_dns_names(cert)
+        assert "dgtcentaur.local" in names
+        assert "localhost" in names
+
+    def test_missing_file_returns_empty(self, tmp_path):
+        """A missing cert yields no names rather than raising.
+        Regression: an exception here would crash the boot-time generator.
+        """
+        assert tls.certificate_dns_names(tmp_path / "nope.pem") == set()
+
+
+class TestCoversCurrentHostname:
+    def test_true_when_mdns_name_present(self, tmp_path, fixed_hostname):
+        """Coverage is True only when ``<host>.local`` is in the SAN.
+        Regression: this predicate gates regeneration on rename.
+        """
+        cert = tmp_path / "server.pem"
+        key = tmp_path / "server-key.pem"
+        _write_cert(cert, key, ["dgtcentaur.local", "localhost"], ["127.0.0.1"])
+        assert tls.certificate_covers_current_hostname(cert) is True
+
+    def test_false_when_mdns_name_absent(self, tmp_path, fixed_hostname):
+        """A cert for a different host must report not-covered so it regenerates.
+        Regression: the exact field bug -- cert for ``dgt.local`` on a host
+        named ``dgtcentaur`` -- must be detected as stale.
+        """
+        cert = tmp_path / "server.pem"
+        key = tmp_path / "server-key.pem"
+        _write_cert(cert, key, ["dgt.local", "localhost"], ["127.0.0.1"])
+        assert tls.certificate_covers_current_hostname(cert) is False
+
+
+# ---------------------------------------------------------------------------
+# ensure_certificates
+# ---------------------------------------------------------------------------
 
 class TestEnsureCertificates:
-    """Tests for ensure_certificates().
-
-    Verifies mkcert is invoked with the right arguments when certs are missing
-    and skipped when they already exist.
-    """
-
-    def test_generates_certs_when_missing(self, ssl_dir):
-        """When no certificates exist, ensure_certificates calls mkcert to
-        create them. Regression: if this breaks, the app starts without TLS.
+    def test_generates_when_missing(self, tmp_path, fixed_hostname, monkeypatch):
+        """First run must create cert/key/CA covering the real hostname.
+        Regression: nginx cannot start without these files; SAN must match host.
         """
-        with patch("universalchess.tls._run_mkcert") as mock_mkcert:
-            mock_mkcert.return_value = True
-            _create_test_cert(ssl_dir)
+        calls = _install_fake_mkcert(monkeypatch)
+        cert, key, regenerated = tls.ensure_certificates(tmp_path)
+        assert regenerated is True
+        assert cert.exists() and key.exists()
+        assert tls.get_ca_cert_path(tmp_path).exists()
+        assert "dgtcentaur.local" in tls.certificate_dns_names(cert)
+        assert len(calls) == 1
 
-            cert_path, key_path = ensure_certificates(ssl_dir)
-
-            assert cert_path.exists()
-            assert key_path.exists()
-
-    def test_skips_generation_when_certs_exist(self, ssl_dir):
-        """When certificates already exist, mkcert should not be called.
-        Regression: re-generating certs on every start would invalidate
-        the CA trust on all client devices.
+    def test_filenames_are_hostname_independent(self, tmp_path, fixed_hostname, monkeypatch):
+        """Cert filenames must be stable regardless of hostname.
+        Regression: embedding the hostname in the filename broke the nginx
+        config path whenever the device was renamed.
         """
-        _create_test_cert(ssl_dir)
+        _install_fake_mkcert(monkeypatch)
+        cert, key, _ = tls.ensure_certificates(tmp_path)
+        assert cert.name == "server.pem"
+        assert key.name == "server-key.pem"
 
-        with patch("universalchess.tls._run_mkcert") as mock_mkcert:
-            cert_path, key_path = ensure_certificates(ssl_dir)
-            mock_mkcert.assert_not_called()
-
-    def test_returns_correct_paths(self, ssl_dir):
-        """Returned paths must point to the server cert and key files.
-        Regression: wrong paths would cause nginx to fail to load certs.
+    def test_skips_when_present_and_covers_hostname(self, tmp_path, fixed_hostname, monkeypatch):
+        """A valid, hostname-matching cert must not be regenerated.
+        Regression: regenerating every boot would churn the CA and force
+        clients to re-trust repeatedly.
         """
-        _create_test_cert(ssl_dir)
-        cert_path, key_path = ensure_certificates(ssl_dir)
+        ssl_dir = tmp_path / tls.SSL_DIR_NAME
+        cert, key = tls.get_server_cert_paths(tmp_path)
+        _write_cert(cert, key, ["dgtcentaur.local", "localhost"], ["127.0.0.1"])
+        _write_cert(ssl_dir / tls.CA_CERT_FILENAME, ssl_dir / tls.CA_KEY_FILENAME, ["CA"])
+        calls = _install_fake_mkcert(monkeypatch)
+        _, _, regenerated = tls.ensure_certificates(tmp_path)
+        assert regenerated is False
+        assert calls == []
 
-        assert cert_path.name == f"{HOSTNAME}.pem"
-        assert key_path.name == f"{HOSTNAME}-key.pem"
-
-    def test_mkcert_receives_hostname_in_san(self, ssl_dir):
-        """mkcert must receive the hostname as a SAN entry so browsers
-        accept the certificate for https://dgt.local.
-        Regression: missing SAN would cause ERR_CERT_COMMON_NAME_INVALID.
+    def test_regenerates_when_hostname_changed(self, tmp_path, fixed_hostname, monkeypatch):
+        """A cert that no longer covers the current hostname must regenerate.
+        Regression: the device can be renamed after install; a stale cert must
+        be replaced so the new ``<host>.local`` validates.
         """
-        with patch("universalchess.tls._run_mkcert") as mock_mkcert:
-            mock_mkcert.return_value = True
-            _create_test_cert(ssl_dir)
+        ssl_dir = tmp_path / tls.SSL_DIR_NAME
+        cert, key = tls.get_server_cert_paths(tmp_path)
+        _write_cert(cert, key, ["dgt.local", "localhost"], ["127.0.0.1"])
+        _write_cert(ssl_dir / tls.CA_CERT_FILENAME, ssl_dir / tls.CA_KEY_FILENAME, ["CA"])
+        calls = _install_fake_mkcert(monkeypatch)
+        _, _, regenerated = tls.ensure_certificates(tmp_path)
+        assert regenerated is True
+        assert len(calls) == 1
+        assert "dgtcentaur.local" in tls.certificate_dns_names(cert)
 
-            (ssl_dir / SSL_DIR_NAME / "rootCA.pem").unlink()
-
-            ensure_certificates(ssl_dir)
-
-            call_args = mock_mkcert.call_args
-            cmd = call_args[0][0] if call_args[0] else call_args[1].get("cmd", [])
-            assert HOSTNAME in cmd
-
-    def test_sets_restrictive_permissions_on_keys(self, ssl_dir):
-        """Private key files must be chmod 600 after generation.
-        Regression: world-readable keys would be a security vulnerability.
+    def test_force_regenerates_even_when_valid(self, tmp_path, fixed_hostname, monkeypatch):
+        """force=True must regenerate regardless of current validity.
+        Regression: operators need an explicit way to rotate certs.
         """
-        with patch("universalchess.tls._run_mkcert") as mock_mkcert:
-            mock_mkcert.return_value = True
-            _create_test_cert(ssl_dir)
-
-            (ssl_dir / SSL_DIR_NAME / "rootCA.pem").unlink()
-
-            with patch("os.chmod") as mock_chmod:
-                ensure_certificates(ssl_dir)
-                chmod_paths = {str(call[0][0]) for call in mock_chmod.call_args_list}
-                ca_key = str(ssl_dir / SSL_DIR_NAME / "rootCA-key.pem")
-                server_key = str(ssl_dir / SSL_DIR_NAME / f"{HOSTNAME}-key.pem")
-                assert ca_key in chmod_paths
-                assert server_key in chmod_paths
-
-    def test_raises_on_mkcert_not_installed(self, ssl_dir):
-        """If mkcert is not installed, ensure_certificates must raise with
-        install instructions rather than silently falling back to HTTP.
-        Regression: silent HTTP fallback would serve passwords in cleartext.
-        """
-        with patch("subprocess.run", side_effect=FileNotFoundError("mkcert")):
-            with pytest.raises(RuntimeError, match="mkcert is not installed"):
-                ensure_certificates(ssl_dir)
-
-
-class TestGetCaCertPath:
-    """Tests for get_ca_cert_path()."""
-
-    def test_returns_ca_cert_path(self, ssl_dir):
-        """Should return the path to rootCA.pem under the ssl directory.
-        Regression: wrong path would serve the wrong file or 404 on download.
-        """
-        path = get_ca_cert_path(ssl_dir)
-        assert path == ssl_dir / SSL_DIR_NAME / "rootCA.pem"
-
-
-class TestGetServerCertPaths:
-    """Tests for get_server_cert_paths()."""
-
-    def test_returns_server_cert_paths(self, ssl_dir):
-        """Should return a tuple of (cert_path, key_path) under the ssl directory.
-        Regression: wrong paths would cause nginx to fail to load certs.
-        """
-        cert_path, key_path = get_server_cert_paths(ssl_dir)
-        assert cert_path == ssl_dir / SSL_DIR_NAME / f"{HOSTNAME}.pem"
-        assert key_path == ssl_dir / SSL_DIR_NAME / f"{HOSTNAME}-key.pem"
-
-
-class TestGenerateMobileconfig:
-    """Tests for generate_mobileconfig().
-
-    Verifies that a valid Apple mobileconfig XML profile is generated
-    containing the CA certificate.
-    """
-
-    def test_generates_valid_mobileconfig_xml(self, ssl_dir):
-        """The mobileconfig output must be valid XML with the certificate payload.
-        Regression: malformed XML would prevent iOS from installing the CA.
-        """
-        _create_test_cert(ssl_dir)
-        ca_path = get_ca_cert_path(ssl_dir)
-
-        result = generate_mobileconfig(ca_path)
-
-        assert b"<!DOCTYPE plist" in result
-        assert b"PayloadType" in result
-        assert b"com.apple.security.root" in result
-
-    def test_contains_universal_chess_branding(self, ssl_dir):
-        """The profile must use Universal Chess branding, not wifikey/bouncer.
-        Regression: wrong branding confuses users about what they're installing.
-        """
-        _create_test_cert(ssl_dir)
-        ca_path = get_ca_cert_path(ssl_dir)
-
-        result = generate_mobileconfig(ca_path)
-
-        assert b"Universal Chess" in result
-        assert b"com.universalchess" in result
-        assert b"wifikey" not in result.lower()
-        assert b"bouncer" not in result.lower()
-
-    def test_contains_base64_cert_data(self, ssl_dir):
-        """The mobileconfig must embed the CA cert as base64-encoded DER data.
-        Regression: missing cert data would install an empty profile on iOS.
-        """
-        import base64
-        from cryptography.x509 import load_pem_x509_certificate
-        from cryptography.hazmat.primitives.serialization import Encoding
-
-        _create_test_cert(ssl_dir)
-        ca_path = get_ca_cert_path(ssl_dir)
-
-        result = generate_mobileconfig(ca_path)
-
-        cert_pem = ca_path.read_bytes()
-        cert = load_pem_x509_certificate(cert_pem)
-        cert_der_b64 = base64.b64encode(cert.public_bytes(Encoding.DER))
-
-        assert cert_der_b64 in result
-
-    def test_raises_on_missing_ca_file(self, ssl_dir):
-        """Should raise FileNotFoundError when the CA cert doesn't exist.
-        Regression: silent failure would serve an empty mobileconfig.
-        """
-        with pytest.raises(FileNotFoundError):
-            generate_mobileconfig(ssl_dir / "nonexistent.pem")
+        ssl_dir = tmp_path / tls.SSL_DIR_NAME
+        cert, key = tls.get_server_cert_paths(tmp_path)
+        _write_cert(cert, key, ["dgtcentaur.local", "localhost"], ["127.0.0.1"])
+        _write_cert(ssl_dir / tls.CA_CERT_FILENAME, ssl_dir / tls.CA_KEY_FILENAME, ["CA"])
+        calls = _install_fake_mkcert(monkeypatch)
+        _, _, regenerated = tls.ensure_certificates(tmp_path, force=True)
+        assert regenerated is True
+        assert len(calls) == 1

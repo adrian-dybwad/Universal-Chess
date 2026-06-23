@@ -16,6 +16,10 @@ function stopServices {
     systemctl stop universal-chess-stop-controller.service || true
     systemctl stop var-run-sdp.path || true
     systemctl stop var-run-sdp.service || true
+    # Stop the hostname-watch path first so it cannot re-trigger cert
+    # generation while package files are being replaced during an upgrade.
+    systemctl stop universal-chess-tls.path || true
+    systemctl stop universal-chess-tls.service || true
     systemctl stop rfcomm.service || true
 }
 

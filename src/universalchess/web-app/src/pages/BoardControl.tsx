@@ -208,7 +208,10 @@ export function BoardControl() {
 
       <div className="board-control">
         <div className="board-control-stage">
-          <img className="board-control-feed" src={buildApiUrl('/video')} alt="Live board feed" />
+          {/* Request a downscaled feed: this embedded view is small, so a
+              960x540 frame is crisp here while cutting the board's JPEG encode
+              and transfer cost to a quarter of the full 1920x1080 cast frame. */}
+          <img className="board-control-feed" src={buildApiUrl('/video?w=960')} alt="Live board feed" />
 
           <div className="board-remote" role="group" aria-label="Board buttons">
             {BUTTONS.map((btn) => {

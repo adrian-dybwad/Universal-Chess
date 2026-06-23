@@ -266,6 +266,15 @@ PYEOF
     systemctl enable var-run-sdp.service
     systemctl start var-run-sdp.path
 
+    # Hostname-matching TLS certificate. The oneshot regenerates the cert (with
+    # SANs for the current <hostname>.local) at boot before nginx; the path unit
+    # retriggers it immediately whenever /etc/hostname changes (device rename),
+    # so the cert never drifts from the name clients use to reach the device.
+    echo -e "::: Enabling hostname-matching TLS certificate units"
+    systemctl enable universal-chess-tls.path 2>/dev/null || true
+    systemctl enable universal-chess-tls.service 2>/dev/null || true
+    systemctl start universal-chess-tls.path 2>/dev/null || true
+
 # Allow the web service user to change passwords via chpasswd (used by
 # the /api/system/change-password endpoint). The sudoers drop-in grants
 # passwordless access to chpasswd only.
@@ -331,14 +340,12 @@ for s in bluez-selfheal bluez-advertising-probe; do
     [ -f "${DGTCM_PATH}/scripts/$s" ] && chmod +x "${DGTCM_PATH}/scripts/$s"
 done
 
-# Setup nginx HTTPS proxy for web service
-echo -e "::: Setting up nginx proxy with TLS"
-    if [ -f "${DGTCM_PATH}/scripts/enable-web-proxy.sh" ]; then
-        chmod +x "${DGTCM_PATH}/scripts/enable-web-proxy.sh"
-        "${DGTCM_PATH}/scripts/enable-web-proxy.sh"
-    else
-        echo -e "::: Warning: enable-web-proxy.sh not found"
-    fi
+# nginx HTTPS proxy + TLS certificate are set up later in the configure case
+# (after the venv is built and the hostname is finalized), via
+# enable-web-proxy.sh. Generating here -- before the venv exists and before the
+# hostname is updated -- would issue a certificate for the wrong name. The
+# boot-time universal-chess-tls.service then regenerates it for the final
+# hostname before nginx starts.
 
 # Install dhcpcd hook for WiFi status widget
 echo -e "::: Installing dhcpcd hook for WiFi status widget"
@@ -570,10 +577,31 @@ case $1 in
         # services cleanly. Set DGTCM_SKIP_REBOOT=1 to suppress.
         if [ -z "${DGTCM_SKIP_REBOOT:-}" ]; then
             echo -e "::: Fresh install -- rebooting to complete setup..."
-            if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
-                nohup /bin/sh -c "sleep 3; systemctl reboot" >/dev/null 2>&1 &
+            # Schedule the reboot from a transient systemd unit owned by PID 1
+            # rather than a backgrounded child of this maintainer script. A
+            # nohup'd '&' child stays inside apt/dpkg's cgroup (or the invoking
+            # SSH session scope); the moment 'apt install ./...deb' returns that
+            # scope is torn down and the orphaned child is killed by SIGTERM --
+            # which nohup does NOT ignore -- before it can issue the reboot, so
+            # the box prints this message but never reboots. systemd-run hands
+            # the work to PID 1, which outlives apt. Same lesson already applied
+            # in scripts/install-update.
+            #
+            # The unit first waits for the dpkg frontend lock to clear so the
+            # reboot cannot interrupt the tail of the current apt transaction
+            # (trigger processing continues after this postinst returns), which
+            # could otherwise leave packages half-configured.
+            REBOOT_CMD='i=0; while command -v fuser >/dev/null 2>&1 && fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && [ "$i" -lt 150 ]; do sleep 2; i=$((i+1)); done; sleep 2; systemctl reboot'
+            if [ -d /run/systemd/system ] && command -v systemd-run >/dev/null 2>&1; then
+                systemd-run --collect --unit=universal-chess-firstboot-reboot \
+                    /bin/sh -c "$REBOOT_CMD" >/dev/null 2>&1
+            elif command -v systemctl >/dev/null 2>&1; then
+                # No systemd-run available: best-effort detached child. It can
+                # still be reaped by cgroup teardown, but systemd-run is present
+                # on every supported Raspberry Pi OS release.
+                nohup /bin/sh -c "$REBOOT_CMD" >/dev/null 2>&1 &
             else
-                nohup /bin/sh -c "sleep 3; /sbin/shutdown -r now" >/dev/null 2>&1 &
+                nohup /bin/sh -c "sleep 5; /sbin/shutdown -r now" >/dev/null 2>&1 &
             fi
         else
             echo -e "::: DGTCM_SKIP_REBOOT set; skipping automatic reboot."

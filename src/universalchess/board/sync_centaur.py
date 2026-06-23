@@ -290,22 +290,37 @@ class SyncCentaur:
                 self.ser.open()
         
     def _listener_thread(self):
-        """Continuously listen for data on the serial port."""
+        """Continuously listen for data on the serial port.
+
+        Reads are drained per burst, not per byte: read(1) blocks (honoring the
+        port's read timeout) for the first byte, then any bytes already buffered
+        are pulled in a single read(in_waiting) call and handed to
+        processResponse one at a time. The board streams continuously at 1 Mbps,
+        so a read(1) syscall per byte made this thread the dominant CPU cost;
+        draining the buffer keeps byte-identical parsing while collapsing the
+        per-byte syscall/Python-call overhead to one read per burst.
+        """
         log.info("Listening for serial data...")
         while self.listener_running:
             try:
                 # Check if serial port is still valid
                 if self.ser is None or not self.ser.is_open:
                     break
-                byte = self.ser.read(1)
-                if not byte:
+                first = self.ser.read(1)
+                if not first:
                     # Read timed out (board idle): flush any buffered serial
                     # debug bytes so a short, unframed burst (the typical v1
                     # symptom) is logged instead of waiting for a full row.
                     if self.serial_debug:
                         self._serial_debug_flush_rx()
                     continue
-                self.processResponse(byte[0])
+                # Drain whatever else already arrived in a single read so a
+                # multi-byte burst costs one syscall, not one per byte. Parsing
+                # stays byte-by-byte and in order, identical to before.
+                buffered = self.ser.in_waiting
+                chunk = first + self.ser.read(buffered) if buffered else first
+                for value in chunk:
+                    self.processResponse(value)
             except (OSError, TypeError, AttributeError):
                 # Expected during shutdown when serial port is closed
                 break

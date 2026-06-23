@@ -67,64 +67,44 @@ jobs:
           name: release-artifacts
           path: ./artifacts
       
-      - name: Extract changelog for version
+      - name: Build release notes
         id: changelog
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
-          VERSION="${{ needs.build.outputs.version }}"
-          
-          # Extract the section for this version from CHANGELOG.md
-          awk "/^## \[${VERSION}\]/{found=1; next} /^## \[/{found=0} found" CHANGELOG.md > changelog_section.md
-          
-          # Build release notes
-          cat > release_notes.md << 'EOF'
-          ## Prepare a new SD card
+          # Stable releases are curated, so the change summary comes from the
+          # hand-maintained CHANGELOG.md section rather than raw git history.
 
-          Start clean on a new SD card using the Raspberry Pi Imager. Do not reuse
-          the original card from the Centaur -- keep it safe, you may want it later.
-
-          1. In the Pi Imager, choose Raspberry Pi OS (32-bit) **Trixie**, with no
-             apps or desktop (Lite).
-          2. In the Imager's advanced settings, configure the hostname, a user and
-             password (any username works, you are not limited to `pi` -- just
-             remember the password), Wi-Fi credentials, and enable SSH. Set any
-             other options you like.
-          3. Write the image, insert the card into the Pi, and power it on. With
-             Wi-Fi configured correctly the Pi usually joins your network within a
-             minute or two. No screen or keyboard required.
-          4. SSH into the Pi, then update the base system:
-
-          ```bash
-          sudo apt update && sudo apt upgrade -y
-          ```
-
-          ## Installation
-          
-          Download the `.deb` file and install on your Raspberry Pi:
-          
-          ```bash
-          # apt resolves dependencies in one step (the ./ prefix is required)
-          sudo apt-get install -y ./universal-chess_${{ needs.build.outputs.version }}_all.deb
-          ```
-
-          When the install finishes, reboot the Pi and it should come up running
-          Universal Chess.
-          
-          ## Verify Download
-          
-          ```bash
-          sha256sum -c SHA256SUMS.txt
-          ```
-          
-          ---
-          
-          EOF
-          
-          # Append changelog section if it exists
-          if [ -s changelog_section.md ]; then
-            cat changelog_section.md >> release_notes.md
-          else
-            echo "See [CHANGELOG.md](https://github.com/adrian-dybwad/Universal-Chess/blob/main/CHANGELOG.md) for full details." >> release_notes.md
+          # Fail loudly rather than ship a stable release with wrong or missing
+          # notes. The header line carries the release-readiness marker, so it is
+          # checked separately from the section body (awk skips the header line).
+          HEADER=$(grep -m1 "^## \[${VERSION}\]" CHANGELOG.md || true)
+          if [ -z "$HEADER" ]; then
+            echo "::error::No CHANGELOG.md section found for '## [${VERSION}]'. Add a changelog entry before tagging."
+            exit 1
           fi
+          if echo "$HEADER" | grep -qi 'unreleased'; then
+            echo "::error::CHANGELOG.md section for ${VERSION} is still marked 'Unreleased'. Set the release date before tagging."
+            exit 1
+          fi
+
+          # Capture the section body: everything after the version header up to
+          # the next top-level '## [' heading.
+          awk "/^## \[${VERSION}\]/{found=1; next} /^## \[/{found=0} found" CHANGELOG.md > changelog_section.md
+          if [ -z "$(tr -d '[:space:]' < changelog_section.md)" ]; then
+            echo "::error::CHANGELOG.md section for ${VERSION} is empty. Document the changes before tagging."
+            exit 1
+          fi
+
+          # The change summary goes above the install instructions; the static
+          # install body lives in a template file so this workflow's YAML literal
+          # block stays valid (no column-0 heredoc lines).
+          {
+            printf '## Changes in %s\n\n' "$VERSION"
+            cat changelog_section.md
+            printf '\n---\n\n'
+            sed -e "s|__VERSION__|${VERSION}|g" .github/release-notes/stable-body.md
+          } > release_notes.md
       
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

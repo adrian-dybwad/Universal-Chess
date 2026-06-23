@@ -1,0 +1,24 @@
+[Unit]
+Description=Universal Chess TLS certificate generator (hostname-matching)
+# Run after the network/hostname are up so the certificate's SANs match the
+# device's final hostname, and before nginx so it never starts with a cert
+# that does not cover the current <hostname>.local name.
+After=network-online.target
+Wants=network-online.target
+Before=nginx.service
+
+[Service]
+# Plain oneshot (no RemainAfterExit): each trigger -- boot and every
+# /etc/hostname change via universal-chess-tls.path -- must rerun the
+# generator. RemainAfterExit would make path-triggered starts a no-op and
+# defeat immediate regeneration on rename.
+Type=oneshot
+Environment=PYTHONPATH=/opt
+ExecStart=/opt/universalchess/.venv/bin/python -m universalchess.tls /opt/universalchess/config
+# Reload nginx only when it is already running (a runtime rename) so it picks
+# up the regenerated certificate. At boot nginx is not yet active, so this is a
+# no-op and nginx starts afterwards with the fresh cert via the ordering above.
+ExecStartPost=/bin/sh -c 'systemctl is-active --quiet nginx.service && systemctl reload nginx.service || true'
+
+[Install]
+WantedBy=multi-user.target
