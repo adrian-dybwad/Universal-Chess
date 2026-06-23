@@ -60,7 +60,14 @@ class RaspberryPi:
         self.GPIO_DC_PIN     = gpiozero.LED(self.DC_PIN)
         # self.GPIO_CS_PIN     = gpiozero.LED(self.CS_PIN)
         # self.GPIO_PWR_PIN    = gpiozero.LED(self.PWR_PIN)
-        self.GPIO_BUSY_PIN   = gpiozero.Button(self.BUSY_PIN, pull_up = False)
+        # BUSY is read synchronously via digital_read (.value); no edge/hold
+        # callback is ever attached. A plain InputDevice claims the line for
+        # value reads only, so the lgpio alert thread (lgPthAlert) -- which
+        # ppolls at a hardcoded 0.5 ms timeout (~2000 Hz) whenever any alert is
+        # claimed -- stays parked. Using gpiozero.Button here armed that loop and
+        # cost ~10% of a single armv6 core continuously. .value semantics are
+        # identical for pull_up=False (1 == HIGH == busy).
+        self.GPIO_BUSY_PIN   = gpiozero.InputDevice(self.BUSY_PIN, pull_up = False)
 
         
 
