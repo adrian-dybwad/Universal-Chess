@@ -46,6 +46,8 @@ import os
 import time
 import pathlib
 import io
+import functools
+import threading
 import chess
 import chess.pgn
 import json
@@ -1767,11 +1769,115 @@ if os.path.isfile(epaper_path):
     sc = Image.open(epaper_path)
     moddate = os.stat(epaper_path)[8]
 
-# Cap the cast MJPEG frame rate. The board only changes on moves and the clock
-# ticks once per second, so a high frame rate just pegs a CPU core (each frame
-# is a 1920x1080 JPEG) and starves the rest of the web server during casting.
-# ~5 fps keeps the clock smooth while leaving headroom.
-VIDEO_FRAME_INTERVAL_SECONDS = 0.2
+# /video frame production is change-driven, not clock-driven. A 1920x1080 JPEG
+# render takes longer than a frame interval on the board's single ARMv6 core, so
+# rendering every tick pegged the core and starved the rest of the web server
+# whenever any client (Chromecast, the board-control page, OBS) was connected.
+# Instead a cheap fingerprint (position, plus the e-paper snapshot mtime for the
+# classic layout) decides when a frame actually changed; unchanged frames reuse
+# the cached JPEG. POLL is how quickly a move becomes a new frame; KEEPALIVE is
+# the longest gap between frames sent on an idle board so Chromecast's LIVE
+# receiver and <img>-based MJPEG viewers keep their connection open.
+VIDEO_POLL_INTERVAL_SECONDS = 0.2
+VIDEO_KEEPALIVE_SECONDS = 1.0
+
+# Canonical 16:9 render size. Chromecast and OBS use the full size; the
+# in-browser board-control view requests a smaller width (?w=) to cut JPEG
+# encode and transfer cost. Width is clamped to [MIN, NATIVE]; upscaling is
+# never done (a larger request just gets native).
+VIDEO_NATIVE_WIDTH = 1920
+VIDEO_NATIVE_HEIGHT = 1080
+VIDEO_MIN_WIDTH = 320
+VIDEO_JPEG_QUALITY = 30
+
+try:
+    _VIDEO_RESAMPLE = Image.Resampling.BILINEAR
+except AttributeError:  # Pillow < 9.1
+    _VIDEO_RESAMPLE = Image.BILINEAR
+
+
+def _video_target_dimensions(requested_width) -> tuple[int, int]:
+    """Clamp a requested frame width to a sane 16:9 (width, height).
+
+    Returns the canonical 1920x1080 when no/invalid width is requested. A
+    smaller width reduces encode and transfer cost; the height is derived to
+    preserve the 16:9 aspect so the receiver never letterboxes or stretches.
+    An out-of-range or non-numeric request is clamped (or falls back) rather
+    than raising, because the value comes straight from a query string.
+    """
+    if requested_width is None:
+        return VIDEO_NATIVE_WIDTH, VIDEO_NATIVE_HEIGHT
+    try:
+        width = int(requested_width)
+    except (TypeError, ValueError):
+        return VIDEO_NATIVE_WIDTH, VIDEO_NATIVE_HEIGHT
+    width = max(VIDEO_MIN_WIDTH, min(width, VIDEO_NATIVE_WIDTH))
+    height = round(width * VIDEO_NATIVE_HEIGHT / VIDEO_NATIVE_WIDTH)
+    return width, height
+
+
+def _epaper_snapshot_mtime():
+    """Return the e-paper snapshot mtime, or None when it is absent.
+
+    Cheap change signal for the classic layout, which composites the latest
+    e-paper JPEG beside the board. Uses the stat tuple's index 8 (st_mtime) to
+    match _render_classic_cast_frame's own snapshot-cache check, so the
+    fingerprint and the render agree on what "changed" means. None (file
+    missing) is a stable value, so a missing snapshot does not by itself force
+    re-renders.
+    """
+    try:
+        return os.stat(EPAPER_STATIC_JPG)[8]
+    except OSError:
+        return None
+
+
+def _video_frame_fingerprint(source, fen):
+    """Signature of everything that affects a rendered frame for ``source``.
+
+    A frame is re-rendered only when this value changes, which is what lets an
+    idle board cost ~0 CPU. The position affects both layouts; the classic
+    layout additionally composites the e-paper snapshot, so its mtime
+    participates only there - including it for live_board would force needless
+    re-renders on every e-paper refresh.
+    """
+    if source == "classic":
+        return (source, fen, _epaper_snapshot_mtime())
+    return (source, fen)
+
+
+class _VideoFrameCache:
+    """Render-once-per-change JPEG cache shared by all /video clients.
+
+    Concurrent clients at the same key (e.g. Chromecast plus the board-control
+    page) share a single render: the first to observe a new fingerprint renders
+    and stores the encoded bytes under the lock; the rest reuse it. CPU cost
+    therefore tracks how often the board changes, not how many clients are
+    connected. Rendering runs under the lock because the classic layout also
+    reads/writes the snapshot globals (sc/moddate); serializing renders on a
+    single-core board is no loss and removes that latent data race.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._frames = {}  # key -> (fingerprint, jpeg_bytes)
+
+    def get(self, key, fingerprint, render):
+        """Return (jpeg_bytes, rendered).
+
+        rendered is True when ``render`` was invoked (the fingerprint changed),
+        letting the caller distinguish a fresh frame from a keepalive reuse.
+        """
+        with self._lock:
+            cached = self._frames.get(key)
+            if cached is not None and cached[0] == fingerprint:
+                return cached[1], False
+            jpeg = render()
+            self._frames[key] = (fingerprint, jpeg)
+            return jpeg, True
+
+
+_video_frame_cache = _VideoFrameCache()
 
 
 def _parse_config_bool(value: str, default: bool = True) -> bool:
@@ -1821,8 +1927,13 @@ def _selected_chromecast_video_source() -> str:
 
 
 def _render_live_board_frame(curfen, piece_images):
-    """Render the refreshed Chromecast frame: Live Board content only."""
-    image = Image.new(mode="RGBA", size=(1920, 1080), color=(18, 18, 18))
+    """Render the refreshed Chromecast frame: Live Board content only.
+
+    Built in RGB (not RGBA): pieces are pasted using their own alpha as the mask,
+    so no full-image alpha channel is needed and the expensive per-frame
+    RGBA->RGB convert before JPEG encoding is avoided.
+    """
+    image = Image.new(mode="RGB", size=(1920, 1080), color=(18, 18, 18))
     draw = ImageDraw.Draw(image)
     sqsize = 130.9
     board_width = int(8 * sqsize + 32)
@@ -1851,13 +1962,18 @@ def _render_live_board_frame(curfen, piece_images):
 
 
 def _render_classic_cast_frame(curfen, piece_images):
-    """Render the classic Chromecast frame with e-paper image beside the board."""
+    """Render the classic Chromecast frame with e-paper image beside the board.
+
+    Built in RGB (see _render_live_board_frame): the board pieces and the logo
+    are pasted with their own alpha masks, and the e-paper snapshot has no alpha,
+    so the full-image RGBA->RGB convert is unnecessary.
+    """
     global logo, sc, moddate
     x_offset = 345
     y_offset = 16
     sqsize = 130.9
 
-    image = Image.new(mode="RGBA", size=(1920, 1080), color=(255, 255, 255))
+    image = Image.new(mode="RGB", size=(1920, 1080), color=(255, 255, 255))
     draw = ImageDraw.Draw(image)
     draw.rectangle([(x_offset, 0), (x_offset + 1329 - 100, 1080)], fill=(33, 33, 33), outline=(33, 33, 33))
     draw.rectangle([(x_offset + 9, 9), (x_offset + 1220 - 149, 1071)], fill=(225, 225, 225), outline=(225, 225, 225))
@@ -1881,30 +1997,76 @@ def _render_classic_cast_frame(curfen, piece_images):
     return image
 
 
-def generateVideoFrame():
-    piece_images = _get_piece_images()
-    source = _selected_chromecast_video_source()
+def _encode_video_jpeg(image, dimensions):
+    """Resize (if needed) and JPEG-encode a rendered RGB frame.
 
-    while True:
-        frame_started = time.monotonic()
-        curfen = parse_fen_to_board_string(get_current_fen())
-        if source == "classic":
-            image = _render_classic_cast_frame(curfen, piece_images)
-        else:
-            image = _render_live_board_frame(curfen, piece_images)
-        output = io.BytesIO()
-        image = image.convert("RGB")
-        image.save(output, "JPEG", quality=30)
-        cnn = output.getvalue()
-        yield (b'--frame\r\n'
+    Frames render at native 1920x1080; a smaller client gets a single downscale
+    here. BILINEAR is enough for the large flat board regions and far cheaper
+    than higher-order filters on an ARMv6 core.
+    """
+    if (image.width, image.height) != tuple(dimensions):
+        image = image.resize(tuple(dimensions), _VIDEO_RESAMPLE)
+    output = io.BytesIO()
+    image.save(output, "JPEG", quality=VIDEO_JPEG_QUALITY)
+    return output.getvalue()
+
+
+def _render_encoded_frame(source, curfen, piece_images, dimensions):
+    """Render the requested layout for ``source`` and return JPEG bytes.
+
+    Pure given its inputs, which is what makes the change-detection cache and
+    its tests straightforward: identical inputs always yield the same frame.
+    """
+    if source == "classic":
+        image = _render_classic_cast_frame(curfen, piece_images)
+    else:
+        image = _render_live_board_frame(curfen, piece_images)
+    return _encode_video_jpeg(image, dimensions)
+
+
+def _build_multipart_frame(jpeg: bytes) -> bytes:
+    """Wrap encoded JPEG bytes as one multipart/x-mixed-replace part."""
+    return (b'--frame\r\n'
             b'Content-Type: image/jpeg\r\n'
-            b'Content-Length: ' + f"{len(cnn)}".encode() + b'\r\n'
-            b'\r\n' + cnn + b'\r\n')
+            b'Content-Length: ' + f"{len(jpeg)}".encode() + b'\r\n'
+            b'\r\n' + jpeg + b'\r\n')
 
-        # Throttle to the target frame rate, accounting for render time so a
-        # slow frame does not add extra delay on top of the interval.
-        elapsed = time.monotonic() - frame_started
-        remaining = VIDEO_FRAME_INTERVAL_SECONDS - elapsed
+
+def generateVideoFrame(source="classic", dimensions=(VIDEO_NATIVE_WIDTH, VIDEO_NATIVE_HEIGHT)):
+    """Yield an MJPEG stream, re-rendering only when the frame content changes.
+
+    The board position is polled every VIDEO_POLL_INTERVAL_SECONDS so a move
+    becomes a new frame quickly, but a frame is encoded only when the
+    fingerprint changes (see _video_frame_fingerprint / _VideoFrameCache). When
+    nothing changes, the cached JPEG is re-sent at most every
+    VIDEO_KEEPALIVE_SECONDS to keep Chromecast's LIVE receiver and <img>-based
+    viewers connected - no render or re-encode happens for that keepalive. An
+    idle board therefore performs essentially no work regardless of how many
+    clients are connected.
+
+    source and dimensions are resolved by the caller (the view) so the generator
+    never touches the request context while streaming.
+    """
+    piece_images = _get_piece_images()
+    key = (source, tuple(dimensions))
+
+    last_sent = 0.0
+    while True:
+        loop_started = time.monotonic()
+        curfen = parse_fen_to_board_string(get_current_fen())
+        fingerprint = _video_frame_fingerprint(source, curfen)
+        render = functools.partial(
+            _render_encoded_frame, source, curfen, piece_images, dimensions
+        )
+        jpeg, rendered = _video_frame_cache.get(key, fingerprint, render)
+
+        now = time.monotonic()
+        if rendered or (now - last_sent) >= VIDEO_KEEPALIVE_SECONDS:
+            yield _build_multipart_frame(jpeg)
+            last_sent = now
+
+        elapsed = time.monotonic() - loop_started
+        remaining = VIDEO_POLL_INTERVAL_SECONDS - elapsed
         if remaining > 0:
             time.sleep(remaining)
 
@@ -1918,8 +2080,10 @@ _REMOTE_KEYS = frozenset({"BACK", "TICK", "UP", "DOWN", "HELP", "PLAY"})
 
 @app.route('/video')
 def video_feed():
+    source = _selected_chromecast_video_source()
+    dimensions = _video_target_dimensions(request.args.get("w"))
     return Response(
-        stream_with_context(generateVideoFrame()),
+        stream_with_context(generateVideoFrame(source, dimensions)),
         mimetype='multipart/x-mixed-replace; boundary=frame',
         headers={
             'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -3578,7 +3742,6 @@ def api_change_password():
 # -----------------------------------------------------------------------------
 
 import queue
-import threading
 
 # Thread-safe queue for SSE clients - each client gets its own queue
 _sse_clients: list[queue.Queue] = []
