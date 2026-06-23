@@ -266,6 +266,15 @@ PYEOF
     systemctl enable var-run-sdp.service
     systemctl start var-run-sdp.path
 
+    # Hostname-matching TLS certificate. The oneshot regenerates the cert (with
+    # SANs for the current <hostname>.local) at boot before nginx; the path unit
+    # retriggers it immediately whenever /etc/hostname changes (device rename),
+    # so the cert never drifts from the name clients use to reach the device.
+    echo -e "::: Enabling hostname-matching TLS certificate units"
+    systemctl enable universal-chess-tls.path 2>/dev/null || true
+    systemctl enable universal-chess-tls.service 2>/dev/null || true
+    systemctl start universal-chess-tls.path 2>/dev/null || true
+
 # Allow the web service user to change passwords via chpasswd (used by
 # the /api/system/change-password endpoint). The sudoers drop-in grants
 # passwordless access to chpasswd only.
@@ -331,14 +340,12 @@ for s in bluez-selfheal bluez-advertising-probe; do
     [ -f "${DGTCM_PATH}/scripts/$s" ] && chmod +x "${DGTCM_PATH}/scripts/$s"
 done
 
-# Setup nginx HTTPS proxy for web service
-echo -e "::: Setting up nginx proxy with TLS"
-    if [ -f "${DGTCM_PATH}/scripts/enable-web-proxy.sh" ]; then
-        chmod +x "${DGTCM_PATH}/scripts/enable-web-proxy.sh"
-        "${DGTCM_PATH}/scripts/enable-web-proxy.sh"
-    else
-        echo -e "::: Warning: enable-web-proxy.sh not found"
-    fi
+# nginx HTTPS proxy + TLS certificate are set up later in the configure case
+# (after the venv is built and the hostname is finalized), via
+# enable-web-proxy.sh. Generating here -- before the venv exists and before the
+# hostname is updated -- would issue a certificate for the wrong name. The
+# boot-time universal-chess-tls.service then regenerates it for the final
+# hostname before nginx starts.
 
 # Install dhcpcd hook for WiFi status widget
 echo -e "::: Installing dhcpcd hook for WiFi status widget"

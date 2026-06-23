@@ -1,0 +1,13 @@
+[Unit]
+Description=Regenerate Universal Chess TLS certificate when the hostname changes
+
+[Path]
+# hostnamectl and raspi-config rewrite /etc/hostname on rename; PathChanged
+# fires on the close-after-write (or atomic replace) and starts the generator,
+# which reissues the certificate for the new <hostname>.local and reloads
+# nginx -- so a rename takes effect immediately, without waiting for a reboot.
+PathChanged=/etc/hostname
+Unit=universal-chess-tls.service
+
+[Install]
+WantedBy=multi-user.target
