@@ -570,10 +570,31 @@ case $1 in
         # services cleanly. Set DGTCM_SKIP_REBOOT=1 to suppress.
         if [ -z "${DGTCM_SKIP_REBOOT:-}" ]; then
             echo -e "::: Fresh install -- rebooting to complete setup..."
-            if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
-                nohup /bin/sh -c "sleep 3; systemctl reboot" >/dev/null 2>&1 &
+            # Schedule the reboot from a transient systemd unit owned by PID 1
+            # rather than a backgrounded child of this maintainer script. A
+            # nohup'd '&' child stays inside apt/dpkg's cgroup (or the invoking
+            # SSH session scope); the moment 'apt install ./...deb' returns that
+            # scope is torn down and the orphaned child is killed by SIGTERM --
+            # which nohup does NOT ignore -- before it can issue the reboot, so
+            # the box prints this message but never reboots. systemd-run hands
+            # the work to PID 1, which outlives apt. Same lesson already applied
+            # in scripts/install-update.
+            #
+            # The unit first waits for the dpkg frontend lock to clear so the
+            # reboot cannot interrupt the tail of the current apt transaction
+            # (trigger processing continues after this postinst returns), which
+            # could otherwise leave packages half-configured.
+            REBOOT_CMD='i=0; while command -v fuser >/dev/null 2>&1 && fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && [ "$i" -lt 150 ]; do sleep 2; i=$((i+1)); done; sleep 2; systemctl reboot'
+            if [ -d /run/systemd/system ] && command -v systemd-run >/dev/null 2>&1; then
+                systemd-run --collect --unit=universal-chess-firstboot-reboot \
+                    /bin/sh -c "$REBOOT_CMD" >/dev/null 2>&1
+            elif command -v systemctl >/dev/null 2>&1; then
+                # No systemd-run available: best-effort detached child. It can
+                # still be reaped by cgroup teardown, but systemd-run is present
+                # on every supported Raspberry Pi OS release.
+                nohup /bin/sh -c "$REBOOT_CMD" >/dev/null 2>&1 &
             else
-                nohup /bin/sh -c "sleep 3; /sbin/shutdown -r now" >/dev/null 2>&1 &
+                nohup /bin/sh -c "sleep 5; /sbin/shutdown -r now" >/dev/null 2>&1 &
             fi
         else
             echo -e "::: DGTCM_SKIP_REBOOT set; skipping automatic reboot."
