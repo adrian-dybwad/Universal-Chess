@@ -15,6 +15,19 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **Three-color (red/white/black) e-paper mode**: Opt-in `[display] three_color`
+  switch for tri-color BWR panels, implemented in both the UC8151D (V2) and
+  SSD1680 (V1) drivers (tri-color is a property of the panel, not the controller)
+  - Fixes the black-into-red bleed by routing the B/W plane to the controller's
+    B/W RAM and a parallel red plane to its red RAM (UC8151D `0x10`/`0x13`,
+    SSD1680 `0x24`/`0x26`); the mono partial path had written B/W into the red RAM
+  - Hybrid refresh: fast black/white updates during normal play; the slow full
+    tri-color refresh (~12–15 s) only when red appears, changes, or clears
+  - Highlights the checked king and checker, a threatened queen and its attacker,
+    the game result line, and losing-side evaluation-graph bars in red
+  - Live toggle in the Display tuning settings card and a red web-mirror preview
+    (no reboot required)
+
 - **Engine Registry**: Centralized management of UCI chess engine instances
   - Prevents duplicate engine processes
   - Automatic lifecycle management

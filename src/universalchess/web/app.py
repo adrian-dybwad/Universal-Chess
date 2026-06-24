@@ -2595,6 +2595,12 @@ def api_get_display_tuning():
             "profiles": wp.profiles_metadata(controller),
             "selected": _read_selected_profile_key(controller),
             "high_contrast": _read_display_flag("high_contrast"),
+            # Three-color (red/white/black) mode. Both the UC8151D (V2) and SSD1680
+            # (V1) drivers can drive tri-color BWR panels, so the toggle is offered
+            # whenever a panel is active; tri-color is a property of the physical
+            # panel, not the controller family.
+            "three_color": _read_display_flag("three_color"),
+            "three_color_supported": controller is not None,
         })
     except Exception as e:
         return _internal_error(e)
@@ -2628,8 +2634,10 @@ def api_set_display_tuning():
             updates["waveform_profile"] = key
         if "high_contrast" in body:
             updates["high_contrast"] = bool(body["high_contrast"])
+        if "three_color" in body:
+            updates["three_color"] = bool(body["three_color"])
         if not updates:
-            return jsonify({"success": False, "error": "no profile or high_contrast given"}), 400
+            return jsonify({"success": False, "error": "no profile, high_contrast or three_color given"}), 400
 
         save_all_settings({"display": updates})
 
@@ -2647,6 +2655,7 @@ def api_set_display_tuning():
             "applied_live": bool(applied_live),
             "selected": _read_selected_profile_key(controller),
             "high_contrast": _read_display_flag("high_contrast"),
+            "three_color": _read_display_flag("three_color"),
         })
     except Exception as e:
         return _internal_error(e)

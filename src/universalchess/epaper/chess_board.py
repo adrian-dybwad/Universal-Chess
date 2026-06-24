@@ -4,7 +4,8 @@ Chess board widget displaying a chess position.
 Subscribes to ChessGameState and updates automatically when position changes.
 """
 
-from PIL import Image, ImageDraw
+import chess
+from PIL import Image, ImageDraw, ImageChops
 from .framework.widget import Widget
 from typing import Optional, TYPE_CHECKING
 
@@ -368,4 +369,109 @@ class ChessBoardWidget(Widget):
                 continue
         
         log.debug(f"ChessBoardWidget.render(): Rendered {squares_rendered} squares (rank_filter={self._render_only_rank}, file_filter={self._render_only_file}, range=[{self._min_square_index}, {self._max_square_index}))")
+
+    # -------------------------------------------------------------------------
+    # Three-color (red) highlighting
+    # -------------------------------------------------------------------------
+
+    def _square_to_fen_index(self, square: int) -> int:
+        """python-chess square (a1=0) -> this widget's FEN expansion index (a8=0).
+
+        The FEN expansion lists rank 8 first; python-chess numbers rank 1 first,
+        so the rank is mirrored while the file is preserved.
+        """
+        return (7 - (square // 8)) * 8 + (square % 8)
+
+    def _square_to_cell(self, square: int) -> tuple:
+        """python-chess square -> top-left (x, y) of its 16x16 cell on the board.
+
+        Uses the exact same file/rank-to-pixel mapping as render() (including the
+        ``flip`` transform) so a highlighted square lines up pixel-for-pixel with
+        the piece drawn there. A drift between this and render() would paint the
+        red highlight on the wrong square.
+        """
+        file = square % 8
+        fen_rank = 7 - (square // 8)
+        dest_rank = fen_rank if not self.flip else 7 - fen_rank
+        dest_file = file if not self.flip else 7 - file
+        return dest_file * 16, dest_rank * 16
+
+    def _compute_red_squares(self) -> set:
+        """Squares to highlight red for the position currently being drawn.
+
+        Derived from ``self.fen`` (the exact rendered position) so the highlight
+        cannot disagree with the board image due to state-mutation timing. Mirrors
+        ChessGameState's alert priority -- check outranks queen-threat, one alert
+        at a time:
+          - in check: the checked king and every checking piece;
+          - else if the side-to-move attacks the opponent's queen: that queen and
+            every attacker of it.
+        Returns an empty set for a quiet position (no red).
+        """
+        try:
+            board = chess.Board(self.fen)
+        except (ValueError, AttributeError):
+            return set()
+
+        squares = set()
+        if board.is_check():
+            king_square = board.king(board.turn)
+            if king_square is not None:
+                squares.add(king_square)
+            squares.update(board.checkers())
+            return squares
+
+        side_to_move = board.turn
+        queens = board.pieces(chess.QUEEN, not side_to_move)
+        if queens:
+            queen_square = next(iter(queens))
+            attackers = board.attackers(side_to_move, queen_square)
+            if attackers:
+                squares.add(queen_square)
+                squares.update(attackers)
+        return squares
+
+    def render_red(self, sprite: Image.Image) -> None:
+        """Render the RED overlay: outline highlighted squares and redden pieces.
+
+        For each square returned by _compute_red_squares draws a red 16x16 cell
+        outline (the "square" highlight) and reddens the piece glyph on it (the
+        piece silhouette taken from the light-square sprite row, which has a clean
+        white background). The piece silhouette is composited so the king/queen/
+        attacker renders red while non-piece areas of the cell stay as the B/W
+        plane drew them.
+        """
+        if self._chess_font is None:
+            return
+
+        squares = self._compute_red_squares()
+        if not squares:
+            return
+
+        try:
+            ordered = self._expand_fen(self.fen.split()[0])
+        except (ValueError, AttributeError, IndexError):
+            ordered = None
+
+        draw = ImageDraw.Draw(sprite)
+        for square in squares:
+            x, y = self._square_to_cell(square)
+            # Square highlight: red cell outline.
+            draw.rectangle([(x, y), (x + 15, y + 15)], outline=0)
+
+            if ordered is None:
+                continue
+            symbol = ordered[self._square_to_fen_index(square)]
+            px = self._piece_x(symbol)
+            if px <= 0:
+                continue
+            # Piece silhouette from the light-square row (py=0): clean white
+            # background, so its black pixels are exactly the piece shape.
+            if not self._validate_crop_coords(px, 0, px + 16, 16):
+                continue
+            glyph = self._chess_font.crop((px, 0, px + 16, 16)).convert('1')
+            # Paste red (0) where the glyph is black (mask = inverted glyph). A
+            # 4-tuple box sizes the region from the box, not from the mask, which
+            # is robust to PIL-mock pollution from other test modules.
+            sprite.paste(0, (x, y, x + 16, y + 16), ImageChops.invert(glyph))
 

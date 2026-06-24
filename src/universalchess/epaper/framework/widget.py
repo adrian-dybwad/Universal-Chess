@@ -3,7 +3,7 @@ Base widget class for ePaper display.
 """
 
 from abc import ABC
-from PIL import Image
+from PIL import Image, ImageChops
 from typing import Optional, TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
@@ -90,6 +90,10 @@ class Widget(ABC):
         self.visible = True  # Whether the widget should be rendered by the Manager
         self._background_shade = max(0, min(16, background_shade))
         self._cached_sprite: Optional[Image.Image] = None  # Cached rendered image for fast blit
+        # Cached RED overlay sprite for three-color mode. Mirrors _cached_sprite
+        # but holds the widget's red mask (0 = red, 255 = not red). Only built for
+        # widgets that override render_red(); None means "no red contribution".
+        self._cached_red_sprite: Optional[Image.Image] = None
         self._scheduler: Optional['Scheduler'] = None
         self._update_callback: Callable[[bool], object] = update_callback
         log.debug(f"Widget.__init__(): Created {self.__class__.__name__} instance id={id(self)} at ({x}, {y}) size {width}x{height}")
@@ -207,13 +211,19 @@ class Widget(ABC):
             self.invalidate_and_update()
     
     def invalidate_cache(self) -> None:
-        """Invalidate the cached sprite, forcing re-render on next draw.
+        """Invalidate the cached sprites, forcing re-render on next draw.
         
         Subclasses should call this when their state changes and they need
         to be re-rendered. This is more efficient than re-rendering immediately
         as multiple state changes can be batched into a single render.
+
+        Clears BOTH the black/white sprite and the red overlay sprite: a state
+        change that alters a widget's content (e.g. a new check square) usually
+        affects its red mask too, and a stale red sprite would keep showing the
+        previous highlight on a three-color panel.
         """
         self._cached_sprite = None
+        self._cached_red_sprite = None
     
     def draw_background_on_sprite(self, sprite: Image.Image) -> None:
         """Draw dithered background pattern onto the sprite image.
@@ -287,6 +297,63 @@ class Widget(ABC):
         raise NotImplementedError(
             f"{self.__class__.__name__} must implement render() or override draw_on()"
         )
+
+    def render_red(self, sprite: Image.Image) -> None:
+        """Render this widget's RED overlay onto the sprite (three-color mode).
+
+        The sprite is a 1-bit mask, pre-sized to the widget and pre-filled white
+        (255 = not red). Subclasses that want to highlight content in red paint
+        those pixels black (0 = red); the value 0 is the red channel, mirroring
+        the black=0 convention of the black/white plane.
+
+        The default is a no-op: a widget contributes no red. ``draw_red_on``
+        detects an un-overridden ``render_red`` and skips it entirely, so plain
+        widgets cost nothing on a three-color panel and never leak red onto
+        unrelated content.
+
+        Args:
+            sprite: The widget's red-mask sprite (0,0 is top-left of widget).
+        """
+        return
+
+    def _paints_red(self) -> bool:
+        """Whether this widget overrides render_red (i.e. can contribute red)."""
+        return type(self).render_red is not Widget.render_red
+
+    def draw_red_on(self, canvas: Image.Image, draw_x: int, draw_y: int) -> None:
+        """Composite this widget's red overlay onto the shared red canvas.
+
+        Additive compositing: only the widget's red pixels (0) are written to the
+        canvas; not-red areas (255) leave the canvas untouched so a lower widget's
+        red is never erased by an upper widget that simply has no red there. This
+        mirrors transparent compositing and is why a plain ``paste`` (which would
+        overwrite the whole region) must not be used.
+
+        No-op for widgets that do not override ``render_red`` (the common case),
+        and sprite-cached exactly like ``draw_on`` for fast repeated blits.
+
+        Args:
+            canvas: The shared red-mask canvas (0 = red, 255 = not red).
+            draw_x: X coordinate on the canvas where the widget starts.
+            draw_y: Y coordinate on the canvas where the widget starts.
+        """
+        if not self._paints_red():
+            return
+
+        sprite = self._cached_red_sprite
+        if sprite is None:
+            sprite = Image.new('1', (self.width, self.height), 255)
+            self.render_red(sprite)
+            self._cached_red_sprite = sprite
+
+        # Paste solid red (0) only where the sprite is red. The mask must be
+        # non-zero where red, so invert the sprite (red 0 -> mask 255). A 4-tuple
+        # box is used (not a 2-tuple) so PIL takes the region size from the box
+        # rather than inferring it from the mask via isImageType -- the latter
+        # breaks when a test has left a second PIL module in sys.modules (see
+        # test_resources_sprites' note on PIL-mock pollution).
+        mask = ImageChops.invert(sprite)
+        canvas.paste(0, (draw_x, draw_y, draw_x + self.width, draw_y + self.height), mask)
     
     def show(self) -> None:
         """Show the widget (make it visible).

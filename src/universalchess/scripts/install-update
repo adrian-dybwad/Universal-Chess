@@ -75,6 +75,19 @@ echo "$(date): [update] install start: $REAL_DEB"
 # repos. Tolerate failure (e.g. offline) and fall back to cached lists.
 apt-get update || echo "$(date): [update] apt-get update failed (continuing)"
 
+# Finish any dpkg transaction that a previous (often unrelated) operation left
+# interrupted. A killed/aborted apt run -- e.g. a manual `apt build-dep` or a
+# reboot mid-install -- leaves the dpkg database half-configured, and EVERY
+# subsequent apt operation then aborts during "Reading package lists" with
+# "E: dpkg was interrupted, you must manually run 'dpkg --configure -a'". That
+# bricks the OTA even though the update .deb is fine (observed on a field
+# board). The apt `-f` install below does NOT clear this state -- only
+# `dpkg --configure -a` completes the interrupted transaction -- so it must run
+# BEFORE the apt step, which would otherwise abort before reaching it.
+# Tolerate failure so a genuinely broken package surfaces as the apt error
+# below rather than being masked here.
+dpkg --configure -a || echo "$(date): [update] dpkg --configure -a failed (continuing)"
+
 # apt resolves dependencies in a single atomic transaction. Flags (do not drop):
 #   -f/--fix-broken    repair a system left half-configured by a previously
 #                      interrupted install, and pull the package's missing

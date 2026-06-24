@@ -31,9 +31,11 @@ from unittest.mock import MagicMock
 for _mod in ('spidev', 'RPi', 'RPi.GPIO', 'gpiozero'):
     sys.modules.setdefault(_mod, MagicMock())
 
+from universalchess.epaper.framework.waveshare import epd2in9d, epdconfig
 from universalchess.epaper.framework.waveshare import waveform_profiles as wp
 from universalchess.epaper.framework.waveshare.epd2in9d import (
     EPD,
+    RefreshInterrupted,
     UC8151D_HIGH_CONTRAST_VCOM_DC_DELTA,
     UC8151D_VCOM_DC_MAX,
 )
@@ -55,7 +57,7 @@ class _RecordingEpd:
         self.epd.send_command = lambda c: self.ops.append(("cmd", c))
         self.epd.send_data = lambda d: self.ops.append(("data", d))
         self.epd.send_data2 = lambda d: self.ops.append(("data2", list(d)))
-        self.epd.ReadBusy = lambda: None
+        self.epd.ReadBusy = lambda *args, **kwargs: None
 
     def run_set_part_reg(self):
         self.ops.clear()
@@ -200,6 +202,56 @@ class ApplyProfileLiveTests(unittest.TestCase):
         self.assertEqual(
             rec.epd.profile.key,
             wp.DEFAULT_PROFILE_KEY_BY_CONTROLLER[wp.CONTROLLER_UC8151D])
+
+
+class InterruptibleRefreshTests(unittest.TestCase):
+    """The UC8151D driver mirrors the interruptible-refresh contract.
+
+    The scheduler is shared across both panel drivers and passes should_abort to
+    display()/display_color(); this driver must accept it and abort its BUSY wait
+    on it, so the feature works regardless of which panel is active. Without the
+    parity, the scheduler call would raise TypeError on a UC8151D board.
+    """
+
+    def setUp(self):
+        self._orig_read = epdconfig.digital_read
+        self._orig_delay = epdconfig.delay_ms
+        self._orig_timeout = epd2in9d.BUSY_TIMEOUT_SECONDS
+        epdconfig.delay_ms = MagicMock()
+        epd2in9d.BUSY_TIMEOUT_SECONDS = 0.05
+
+    def tearDown(self):
+        epdconfig.digital_read = self._orig_read
+        epdconfig.delay_ms = self._orig_delay
+        epd2in9d.BUSY_TIMEOUT_SECONDS = self._orig_timeout
+
+    def test_read_busy_aborts_on_should_abort(self):
+        # Busy (LOW) panel with should_abort True must raise RefreshInterrupted,
+        # not EPDTimeoutError -- the signal the scheduler uses to restart with
+        # newer data. UC8151D BUSY polarity: LOW == busy.
+        epd = EPD()
+        epd.send_command = MagicMock()
+        epdconfig.digital_read = MagicMock(return_value=0)  # LOW = busy
+        with self.assertRaises(RefreshInterrupted):
+            epd.ReadBusy(should_abort=lambda: True)
+
+    def test_display_methods_accept_should_abort(self):
+        # display()/display_color() must accept the should_abort kwarg the
+        # scheduler passes. Stub ReadBusy/TurnOnDisplay so this checks signature
+        # parity only (no GPIO), and assert the predicate reaches the refresh.
+        epd = EPD(three_color=True)
+        epd.send_command = MagicMock()
+        epd.send_data = MagicMock()
+        epd.send_data2 = MagicMock()
+        epd.ReadBusy = MagicMock()
+        epd.TurnOnDisplay = MagicMock()
+        buf = [0xFF] * ((epd.width // 8) * epd.height)
+        predicate = lambda: False
+        epd.display(buf, should_abort=predicate)
+        epd.display_color(buf, buf, should_abort=predicate)
+        # Both full paths forward should_abort to TurnOnDisplay's wait.
+        for call in epd.TurnOnDisplay.call_args_list:
+            self.assertEqual(call.kwargs.get("should_abort"), predicate)
 
 
 if __name__ == "__main__":

@@ -149,7 +149,18 @@ class RaspberryPi:
             self.DEV_SPI.DEV_Module_Init()
 
         else:
-            # SPI device, bus = 0, device = 0
+            # SPI device, bus = 0, device = 0.
+            # Close any handle left open by a previous module_init() before
+            # re-opening. spidev.open() does not release the prior fd, so calling
+            # module_init() repeatedly (every live profile/mode switch and every
+            # partial->full re-init) leaked a /dev/spidev fd each time and
+            # eventually failed with OSError [Errno 24] Too many open files,
+            # wedging the panel until the process/board was power-cycled. close()
+            # on a not-open handle is a no-op-or-raises, so it is guarded.
+            try:
+                self.SPI.close()
+            except Exception:
+                pass
             self.SPI.open(1, 0)
             self.SPI.max_speed_hz = 4000000
             self.SPI.mode = 0b00

@@ -268,6 +268,76 @@ least-characterized combination).
 `builtin_otp` is the lower-risk, higher-information experiment to try first;
 high contrast should be enabled only briefly.
 
+## Three-color (red/white/black) mode
+
+Some 2.9" panels are tri-color **BWR**. Both controller families have a BWR
+variant and both drivers implement three-color mode, because tri-color is a
+property of the **panel**, not the controller:
+
+- **UC8151D** (e.g. `GDEH029Z13` / `GDEW029Z13`): command `0x10` is the
+  black/white channel and `0x13` is the **red** channel — but the mono partial
+  path uses `0x10`/`0x13` as old/new B/W RAM.
+- **SSD1680** (the panel in use at `192.168.20.116`): command `0x24` is the
+  black/white RAM and `0x26` is the **red** RAM — but the mono partial path uses
+  `0x24`/`0x26` as new/old B/W RAM.
+
+In both cases the mono partial writes a B/W frame into the panel's red RAM, which
+is why a mono driver bleeds the board's black into red on a BWR panel. Three-color
+mode is an opt-in `[display] three_color` switch that fixes the channel mapping
+for whichever driver is live and adds red highlighting.
+
+**Hardware facts**
+
+- Red ink can only change with a **full** tri-color refresh (~12–15 s); the front
+  ITO is one electrode, so red cannot be partial-refreshed.
+- The B/W layer can still refresh fast on a BWR panel using the register B/W LUTs
+  with the red LUT left unloaded (red "muted") — the technique used for the fast
+  path.
+
+**Architecture (additive, non-invasive)**
+
+- A parallel 1-bit **red mask** plane (`0` = red, `255` = not red) is composited
+  alongside the unchanged B/W plane. Widgets opt in via `Widget.render_red`; the
+  `Manager` builds the red plane only when the driver reports `three_color`, so a
+  mono panel pays zero cost.
+- **Hybrid scheduler:** no red on screen → fast B/W refresh (`DisplayPartial`);
+  red appears/changes/clears, or any explicit full refresh → `display_color`
+  (full tri-color). The mono full path is never used in three-color mode (it
+  would write B/W to the red channel). Clearing red forces one full refresh to
+  erase the bistable red ink, then fast refreshes resume.
+- **Red wins:** any red pixel is forced white in the B/W buffer so a pixel is
+  never driven both black and red.
+
+**What is highlighted in red:** the checked king and the checking piece; else a
+threatened queen and its attacker; the game-over result line; and the losing-side
+(negative) bars of the evaluation graph. The web mirror composes a white/black/red
+RGB preview so the dashboard shows red too.
+
+**Bring-up unknowns (verified on hardware at the panel).** The byte layout and
+channel routing are unit-tested, but these BWR-specific constants are finalized on
+the board. The live panel is SSD1680, so the SSD1680 driver is the one to tune
+(`SSD1680_BWR_RED_INVERTED` in `epd2in9_ssd1680.py`; the UC8151D equivalents are
+`UC8151D_BWR_PANEL_SETTING` / `UC8151D_BWR_RED_INVERTED` in `epd2in9d.py`):
+
+- **SSD1680 waveform (confirmed on hardware):** the OTP waveform (`0x22 = 0xF7`)
+  loads the image then erases it to blank on this panel. The **register LUT**
+  (`0xC7`, the default profile) produces a stable image. Three-color therefore
+  reuses the profile's normal init + register-LUT activation and only changes the
+  channel mapping (B/W → `0x24`, red-only plane → `0x26`); it does **not** force
+  OTP. The red electrode is driven by the same register LUT that already produced
+  visible (faint) red in mono.
+- **SSD1680 red polarity (confirmed):** the mono driver wrote the image
+  (black = `0` bit) to `0x26` and produced red where the image was black, so a
+  **cleared** bit in `0x26` is red (active-LOW) — the same polarity as the red
+  mask, hence `SSD1680_BWR_RED_INVERTED = False`. (Inverting it produced the
+  earlier solid-red, but that was under the abandoned OTP regime.)
+- UC8151D only: the panel-setting byte (`0x00`) selecting the BWR OTP waveform
+  (`0x0F`).
+- that a fast B/W refresh does not visibly disturb existing red. On SSD1680 the
+  fast path writes B/W to `0x24` only and leaves the red RAM (`0x26`) untouched;
+  if red still ghosts, the fallback is a full refresh whenever red is on screen
+  (still fast when no red — only the OTP profile forces full always).
+
 ## Open questions / next steps
 
 - Confirm the **controller** of `E029A01T1956C0` (SSD1680 vs SSD1608/IL3820 vs

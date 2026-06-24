@@ -139,6 +139,29 @@ class TestHelperScriptContract:
         assert "--allow-downgrades" in apt_line
         assert "dpkg -i" not in helper_text
 
+    def test_recovers_interrupted_dpkg_before_apt_install(self, helper_text):
+        """The helper must run `dpkg --configure -a` before the apt install.
+
+        Regression (observed on a field board): an unrelated, previously
+        interrupted dpkg transaction (e.g. a manual `apt build-dep` or install
+        that was killed) leaves the dpkg database half-configured. Every
+        subsequent apt operation then aborts during "Reading package lists"
+        with "E: dpkg was interrupted, you must manually run 'dpkg --configure
+        -a'", so the OTA install fails even though nothing is wrong with the
+        update itself. `apt-get install -f` does NOT clear this state -- only
+        `dpkg --configure -a` finishes the interrupted transaction. Running it
+        first makes the installer self-heal instead of bricking the OTA.
+
+        The ordering matters: configuring must happen BEFORE the apt install,
+        otherwise apt aborts before the recovery runs.
+        """
+        assert "dpkg --configure -a" in helper_text
+        configure_pos = helper_text.index("dpkg --configure -a")
+        install_pos = helper_text.index("apt-get install")
+        assert configure_pos < install_pos, (
+            "dpkg --configure -a must run before apt-get install"
+        )
+
     def test_validates_deb_lives_in_pending_dir(self, helper_text):
         """The helper must refuse a .deb outside the managed pending-updates
         directory. Regression: this directory check is the security boundary

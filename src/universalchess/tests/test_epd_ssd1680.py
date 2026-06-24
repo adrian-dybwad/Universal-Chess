@@ -81,6 +81,27 @@ class ReadBusyPolarityTests(unittest.TestCase):
             self.epd.ReadBusy()
         self.assertLess(time.monotonic() - started, HANG_GUARD_SECONDS)
 
+    def test_read_busy_aborts_when_should_abort_true(self):
+        # Interruptible refresh: while the panel is busy (HIGH), a should_abort
+        # that returns True (newer frame queued) must raise RefreshInterrupted --
+        # NOT wait out the timeout and NOT raise EPDTimeoutError. Distinguishing
+        # the two is what lets the scheduler restart with new data vs. disable a
+        # dead panel. Use the long refresh timeout to prove the abort is what ends
+        # the wait, not the deadline.
+        epdconfig.digital_read = MagicMock(return_value=BUSY_HIGH)
+        started = time.monotonic()
+        with self.assertRaises(epd2in9d.RefreshInterrupted):
+            self.epd.ReadBusy(ssd.REFRESH_TIMEOUT_SECONDS, should_abort=lambda: True)
+        self.assertLess(time.monotonic() - started, HANG_GUARD_SECONDS)
+
+    def test_read_busy_ignores_should_abort_when_false(self):
+        # Inverse guard: a should_abort that stays False must not change behavior
+        # -- a busy panel still times out with EPDTimeoutError. A regression that
+        # treated "False" as abort would turn every healthy wait into an abort.
+        epdconfig.digital_read = MagicMock(return_value=BUSY_HIGH)
+        with self.assertRaises(epd2in9d.EPDTimeoutError):
+            self.epd.ReadBusy(should_abort=lambda: False)
+
 
 class InitContractTests(unittest.TestCase):
     """init() must return 0/-1 (never hang) and emit the SSD1680 command set."""
@@ -494,6 +515,37 @@ class HighContrastTests(unittest.TestCase):
         epd.ReadBusy = MagicMock()
         self.assertEqual(epd.init(), 0)
         self.assertNotIn(("cmd", 0x32), transcript)
+
+    def test_controller_identity_is_ssd16xx(self):
+        # The live profile-apply path (main._process_pending_display_profile)
+        # resolves the stored key against epd.CONTROLLER. If this driver does not
+        # advertise the SSD16xx family, that lookup falls back to the UC8151D
+        # default and get_profile() converts any SSD16xx selection into the
+        # UC8151D default (uc8151d_waveshare), whose full_lut is empty.
+        # Regression manifests downstream as SetLut() raising "tuple index out of
+        # range" on the next init() -- the panel dies until reboot. Pin the
+        # identity here so the family can never silently cross.
+        self.assertEqual(EPD.CONTROLLER, wp.CONTROLLER_SSD16XX)
+
+    def test_live_apply_of_an_ssd16xx_key_keeps_a_loadable_full_lut(self):
+        # End-to-end guard for the crash above: resolving a stored SSD16xx key
+        # against THIS driver's controller must yield a same-family profile whose
+        # full_lut SetLut() can index (153..158). If CONTROLLER regresses to the
+        # UC8151D family, get_profile() returns uc8151d_waveshare (full_lut == ())
+        # and this init() raises IndexError exactly as it did on the panel.
+        epd = EPD()
+        profile = wp.get_profile("gdem029t94", EPD.CONTROLLER)
+        epd.apply_profile(profile, high_contrast=False)
+        epd.send_command = MagicMock()
+        epd.send_data = MagicMock()
+        epd.send_data2 = MagicMock()
+        epd.reset = MagicMock()
+        epd.ReadBusy = MagicMock()
+        # Must not raise: a register-LUT SSD16xx profile has the 159 bytes SetLut
+        # reads. (builtin_otp would skip SetLut via use_otp; gdem029t94 exercises
+        # the indexing path that crashed.)
+        self.assertEqual(epd.init(), 0)
+        self.assertEqual(epd.profile.key, "gdem029t94")
 
 
 class BufferAndRefreshTests(unittest.TestCase):

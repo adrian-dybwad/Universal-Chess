@@ -79,7 +79,39 @@ def _config_bool(value: str, default: bool = True) -> bool:
     return default
 
 
-def write_epaper_jpg(image) -> str:
+def compose_epaper_rgb(bw_image, red_image):
+    """Compose a white/black/red RGB preview from the B/W and RED planes.
+
+    Mirrors the tri-color panel: white background, black where the B/W plane is
+    black, red where the red plane is set (red wins, matching the panel where a
+    red pixel is forced white in the B/W buffer). Both planes share the same
+    orientation/size.
+
+    Args:
+        bw_image: B/W plane (mode '1' or 'L'; black = 0).
+        red_image: RED-plane mask (mode '1'; red = 0, not-red = 255).
+
+    Returns:
+        An RGB PIL Image.
+    """
+    from PIL import Image
+
+    bw = bw_image.convert('1')
+    rgb = Image.new('RGB', bw.size, (255, 255, 255))
+    width, height = bw.size
+    box = (0, 0, width, height)
+
+    # Black where the B/W plane is black (mask = 255 at black pixels).
+    black_mask = bw.point(lambda p: 255 if p == 0 else 0, mode='1')
+    rgb.paste((0, 0, 0), box, black_mask)
+
+    # Red where the red plane is set (painted after black so red wins).
+    red_mask = red_image.convert('1').point(lambda p: 255 if p == 0 else 0, mode='1')
+    rgb.paste((220, 0, 0), box, red_mask)
+    return rgb
+
+
+def write_epaper_jpg(image, red_image=None) -> str:
     """Write the provided Pillow Image to web/static/epaper.jpg for streaming.
     
     The image will be converted to a JPEG-compatible mode if needed.
@@ -87,7 +119,10 @@ def write_epaper_jpg(image) -> str:
     for Chromecast streaming.
     
     Args:
-        image: PIL Image to save
+        image: PIL Image to save (the black/white plane).
+        red_image: Optional RED-plane mask (three-color mode). When provided, the
+            saved preview is composed in RGB (white/black/red) so the dashboard
+            mirrors the red ink; None saves the plain B/W image as before.
         
     Returns:
         Path where image was saved
@@ -109,9 +144,12 @@ def write_epaper_jpg(image) -> str:
             log.error(f"Permission denied creating directory: {parent}")
             raise
     
-    img = image
-    if img.mode not in ("L", "RGB"):
-        img = img.convert("L")
+    if red_image is not None:
+        img = compose_epaper_rgb(image, red_image)
+    else:
+        img = image
+        if img.mode not in ("L", "RGB"):
+            img = img.convert("L")
     
     # Rotate 180 degrees to correct orientation for streaming
     img = img.rotate(180)
