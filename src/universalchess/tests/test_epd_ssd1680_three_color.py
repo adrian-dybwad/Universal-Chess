@@ -249,6 +249,58 @@ class FastBwPartialTests(unittest.TestCase):
         self.assertEqual(rec.data2_after(0x26), [PANEL_RED_ALL] * BUFFER_LEN)
 
 
+class InterruptibleColorRefreshTests(unittest.TestCase):
+    """display_color must abort its activation wait when should_abort fires."""
+
+    def setUp(self):
+        self._orig_read = epd2in9_ssd1680.epdconfig.digital_read
+        self._orig_delay = epd2in9_ssd1680.epdconfig.delay_ms
+
+    def tearDown(self):
+        epd2in9_ssd1680.epdconfig.digital_read = self._orig_read
+        epd2in9_ssd1680.epdconfig.delay_ms = self._orig_delay
+
+    def _epd_with_real_readbusy(self, busy_high=True):
+        # Record SPI ops but keep the REAL ReadBusy so should_abort is honored.
+        # Drive BUSY HIGH (busy) so only should_abort (or the deadline) can end
+        # the wait; stub delay so the poll loop spins fast.
+        epd = EPD(three_color=True)
+        ops = []
+        epd.send_command = lambda c: ops.append(("cmd", c))
+        epd.send_data = lambda d: ops.append(("data", d))
+        epd.send_data2 = lambda d: ops.append(("data2", list(d)))
+        epd.reset = lambda: None
+        epd2in9_ssd1680.epdconfig.digital_read = MagicMock(
+            return_value=1 if busy_high else 0)
+        epd2in9_ssd1680.epdconfig.delay_ms = MagicMock()
+        return epd, ops
+
+    def test_display_color_propagates_refresh_interrupted(self):
+        # The full tri-color refresh is the slow (~14s) path the user wants to
+        # interrupt. With should_abort True, its post-activation ReadBusy must
+        # raise RefreshInterrupted (propagated to the scheduler), not block to the
+        # 30s deadline. RAM/activation were written before the wait, which is fine
+        # -- the next init() resets the panel and halts the aborted waveform.
+        epd, ops = self._epd_with_real_readbusy(busy_high=True)
+        try:
+            with self.assertRaises(epd2in9_ssd1680.RefreshInterrupted):
+                epd.display_color([0x00] * BUFFER_LEN, [0xFF] * BUFFER_LEN,
+                                  should_abort=lambda: True)
+        finally:
+            pass
+        # The activation byte (0xF7) was issued before the wait aborted.
+        self.assertIn(("data", SSD1680_COLOR_ACTIVATION), ops)
+
+    def test_display_color_completes_when_not_aborted(self):
+        # Inverse guard: an idle panel (BUSY LOW) with no abort completes the
+        # refresh normally and stores the buffers. A regression that aborted
+        # spuriously would leave red_buffer unset.
+        epd, ops = self._epd_with_real_readbusy(busy_high=False)
+        red = [0xFF] * BUFFER_LEN
+        epd.display_color([0x00] * BUFFER_LEN, red, should_abort=lambda: False)
+        self.assertEqual(epd.red_buffer, red)
+
+
 class MonoPathUnchangedTests(unittest.TestCase):
     """With the switch off, the mono paths are byte-for-byte the historical ones."""
 

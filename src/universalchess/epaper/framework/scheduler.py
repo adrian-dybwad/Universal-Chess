@@ -9,7 +9,7 @@ from typing import Optional
 from concurrent.futures import Future
 from PIL import Image
 from .framebuffer import FrameBuffer
-from .waveshare.epd2in9d import EPD
+from .waveshare.epd2in9d import EPD, RefreshInterrupted
 from .waveshare import epdconfig
 
 try:
@@ -175,6 +175,20 @@ class Scheduler:
                 future.set_result("queue-full")
         return future
     
+    def _refresh_should_abort(self) -> bool:
+        """Predicate handed to the driver's full-refresh BUSY wait.
+
+        Returns True the instant newer frame data is queued (or shutdown is
+        requested), so an in-flight full refresh aborts immediately and the
+        scheduler restarts with the latest data. By design there is NO livelock
+        guard: a relentless stream of updates keeps restarting the refresh.
+        That is acceptable here because real update bursts are finite (a move
+        settles) and showing the freshest frame is preferred over completing a
+        stale one. Only full refreshes consult this; fast B/W partials are too
+        short to be worth interrupting.
+        """
+        return self._stop_event.is_set() or not self._queue.empty()
+
     def _mark_activity(self) -> None:
         """Record that a refresh just happened, resetting the idle-sleep timer."""
         self._last_activity = time.monotonic()
@@ -380,7 +394,15 @@ class Scheduler:
         )
 
         if go_full:
-            self._execute_color_refresh_single(future, image, red_buf, red_image)
+            interrupted = self._execute_color_refresh_single(
+                future, image, red_buf, red_image)
+            if interrupted:
+                # The aborted tri-color frame never fully developed on the panel,
+                # so do NOT record it as the baseline. Forgetting it forces the
+                # restart (with the newer data) to take the full color path and
+                # re-lay the red from a known state.
+                self._last_red_buffer = None
+                return
         else:
             self._execute_partial_refresh_single(False, future, image)
 
@@ -389,18 +411,22 @@ class Scheduler:
     def _execute_color_refresh_single(self, future: Future,
                                       image: Optional[Image.Image],
                                       red_buf: list,
-                                      red_image: Optional[Image.Image] = None) -> None:
+                                      red_image: Optional[Image.Image] = None) -> bool:
         """Execute a full three-color (red/white/black) refresh for one request.
 
         The tri-color refresh is the only path that can change the red layer, so
         it always drives every pixel (no Clear() needed). Re-inits when waking
         from deep sleep, transitioning from the B/W partial path, or when a live
         mode/profile change forced it -- matching the B/W full path.
+
+        Returns True if the refresh was interrupted by newer queued data (the
+        caller must then forget the red baseline and let the restart redraw it),
+        False otherwise.
         """
         if self._stop_event.is_set():
             if not future.done():
                 future.set_result("shutdown")
-            return
+            return False
 
         try:
             if self._in_partial_mode or self._deep_asleep or self._force_reinit:
@@ -416,12 +442,24 @@ class Scheduler:
 
             bw_buf = self._epd.getbuffer(full_image)
             log.debug("Scheduler: Sending FULL THREE-COLOR refresh to display")
-            self._epd.display_color(bw_buf, red_buf)
+            self._epd.display_color(bw_buf, red_buf,
+                                    should_abort=self._refresh_should_abort)
             self._partial_refresh_count = 0
             self._baseline_established = True
             self._mark_activity()
 
             self._emit_display_updated(full_image, red_image)
+        except RefreshInterrupted:
+            # Newer data arrived mid-refresh. The aborted waveform left the panel
+            # mid-transition, so force a re-init before the next draw (its reset()
+            # halts the partial update and re-establishes a clean state). The
+            # restart with the latest frame happens on the next loop iteration.
+            log.info("Scheduler: three-color refresh interrupted by newer data; "
+                     "will re-init and restart with latest frame")
+            self._force_reinit = True
+            if not future.done():
+                future.set_result("interrupted")
+            return True
         except Exception as e:
             error_msg = str(e).lower()
             is_shutdown_error = 'closed' in error_msg or 'uninitialized' in error_msg or 'gpio' in error_msg
@@ -432,6 +470,7 @@ class Scheduler:
 
         if not future.done():
             future.set_result("color")
+        return False
     
     def _execute_full_refresh_single(self, full: bool, future: Future, image: Optional[Image.Image]) -> None:
         """Execute a full screen refresh for a single request."""
@@ -460,7 +499,7 @@ class Scheduler:
             
             buf = self._epd.getbuffer(full_image)
             log.debug(f"Scheduler: Sending FULL refresh to display")
-            self._epd.display(buf)
+            self._epd.display(buf, should_abort=self._refresh_should_abort)
             self._partial_refresh_count = 0
             # A full refresh drives every pixel and records the shown image as the
             # driver baseline, so the following partial needs no cold-start Clear().
@@ -469,6 +508,16 @@ class Scheduler:
             
             # Invoke callback after successful display update (mono: no red plane)
             self._emit_display_updated(full_image)
+        except RefreshInterrupted:
+            # Newer data arrived mid-refresh: abort and force a re-init so the
+            # next draw resets the panel (halting the aborted waveform) and
+            # restarts with the latest frame on the next loop iteration.
+            log.info("Scheduler: full refresh interrupted by newer data; "
+                     "will re-init and restart with latest frame")
+            self._force_reinit = True
+            if not future.done():
+                future.set_result("interrupted")
+            return
         except Exception as e:
             # Don't log errors during shutdown (SPI may be closed)
             # Also suppress GPIO-related errors that occur during shutdown race conditions

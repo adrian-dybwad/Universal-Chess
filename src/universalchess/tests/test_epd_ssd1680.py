@@ -81,6 +81,27 @@ class ReadBusyPolarityTests(unittest.TestCase):
             self.epd.ReadBusy()
         self.assertLess(time.monotonic() - started, HANG_GUARD_SECONDS)
 
+    def test_read_busy_aborts_when_should_abort_true(self):
+        # Interruptible refresh: while the panel is busy (HIGH), a should_abort
+        # that returns True (newer frame queued) must raise RefreshInterrupted --
+        # NOT wait out the timeout and NOT raise EPDTimeoutError. Distinguishing
+        # the two is what lets the scheduler restart with new data vs. disable a
+        # dead panel. Use the long refresh timeout to prove the abort is what ends
+        # the wait, not the deadline.
+        epdconfig.digital_read = MagicMock(return_value=BUSY_HIGH)
+        started = time.monotonic()
+        with self.assertRaises(epd2in9d.RefreshInterrupted):
+            self.epd.ReadBusy(ssd.REFRESH_TIMEOUT_SECONDS, should_abort=lambda: True)
+        self.assertLess(time.monotonic() - started, HANG_GUARD_SECONDS)
+
+    def test_read_busy_ignores_should_abort_when_false(self):
+        # Inverse guard: a should_abort that stays False must not change behavior
+        # -- a busy panel still times out with EPDTimeoutError. A regression that
+        # treated "False" as abort would turn every healthy wait into an abort.
+        epdconfig.digital_read = MagicMock(return_value=BUSY_HIGH)
+        with self.assertRaises(epd2in9d.EPDTimeoutError):
+            self.epd.ReadBusy(should_abort=lambda: False)
+
 
 class InitContractTests(unittest.TestCase):
     """init() must return 0/-1 (never hang) and emit the SSD1680 command set."""

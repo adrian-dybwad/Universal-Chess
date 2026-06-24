@@ -40,7 +40,7 @@ import logging
 import time
 
 from . import epd2in9d, epdconfig
-from .epd2in9d import EPDTimeoutError, mask_bw_with_red
+from .epd2in9d import EPDTimeoutError, RefreshInterrupted, mask_bw_with_red
 from .waveform_profiles import (
     CONTROLLER_SSD16XX,
     DRIVER_DKE_SSD1680,
@@ -213,7 +213,7 @@ class EPD:
         epdconfig.spi_writebyte2(data)
         epdconfig.digital_write(self.cs_pin, 1)
 
-    def ReadBusy(self, timeout_seconds=None):
+    def ReadBusy(self, timeout_seconds=None, should_abort=None):
         """Poll BUSY until idle, bounded by a timeout.
 
         SSD1680 BUSY polarity is the INVERSE of the UC8151D V2 driver: the line
@@ -235,13 +235,22 @@ class EPD:
             timeout_seconds: deadline override; defaults to the short
                 BUSY_TIMEOUT_SECONDS read from the V2 module at call time (single
                 source of truth, patchable in tests).
+            should_abort: optional zero-arg predicate polled each tick. When it
+                returns True (newer frame queued, or shutdown) the wait raises
+                RefreshInterrupted so the caller can abort the in-flight refresh
+                and restart with the new data. Distinct from EPDTimeoutError,
+                which means the panel is unresponsive.
 
         Raises:
             EPDTimeoutError: if BUSY does not reach idle within the timeout.
+            RefreshInterrupted: if should_abort() returns True during the wait.
         """
         timeout = timeout_seconds if timeout_seconds is not None else epd2in9d.BUSY_TIMEOUT_SECONDS
         deadline = time.monotonic() + timeout
         while epdconfig.digital_read(self.busy_pin) == 1:  # HIGH: busy, LOW: idle
+            if should_abort is not None and should_abort():
+                raise RefreshInterrupted(
+                    "SSD1680 BUSY wait aborted: newer frame pending")
             epdconfig.delay_ms(10)
             if time.monotonic() >= deadline:
                 raise EPDTimeoutError(
@@ -269,12 +278,12 @@ class EPD:
             return 0xF7
         return 0xC7
 
-    def TurnOnDisplay(self):
+    def TurnOnDisplay(self, should_abort=None):
         """Trigger a full refresh (load LUT/temp + activate) for this driver."""
         self.send_command(0x22)  # display update control 2
         self.send_data(self._full_activation_byte())
         self.send_command(0x20)  # master activation
-        self.ReadBusy(REFRESH_TIMEOUT_SECONDS)
+        self.ReadBusy(REFRESH_TIMEOUT_SECONDS, should_abort=should_abort)
 
     def TurnOnDisplayPart(self):
         """Trigger a partial refresh (activation only, partial LUT preloaded)."""
@@ -546,7 +555,7 @@ class EPD:
         """
         return epd2in9d.pack_image_to_buffer(image, self.width, self.height)
 
-    def display_color(self, bw_buf, red_buf):
+    def display_color(self, bw_buf, red_buf, should_abort=None):
         """Full tri-color refresh: B/W -> 0x24, red -> 0x26, profile's full waveform.
 
         Matches Waveshare's official epd2in9b_V4 driver for this panel (SKU 13276):
@@ -578,7 +587,10 @@ class EPD:
         self.send_command(0x22)  # display update control 2
         self.send_data(SSD1680_BWR_COLOR_ACTIVATION)
         self.send_command(0x20)  # master activation
-        self.ReadBusy(REFRESH_TIMEOUT_SECONDS)
+        # On abort this raises RefreshInterrupted BEFORE the buffers are stored,
+        # so red_buffer keeps the last fully-rendered red rather than this
+        # never-developed frame; the scheduler also forgets _last_red_buffer.
+        self.ReadBusy(REFRESH_TIMEOUT_SECONDS, should_abort=should_abort)
         self.buffer = list(bw_masked)
         self.red_buffer = list(red_buf)
 
@@ -648,12 +660,15 @@ class EPD:
         self.TurnOnDisplayPart()
         self.buffer = list(masked)
 
-    def display(self, image):
+    def display(self, image, should_abort=None):
         """Full refresh, and set the partial-refresh baseline.
 
         Writes the image to both the current (0x24) and "old" (0x26) RAM so a
         subsequent DisplayPartial() diffs against this frame. Mirrors Waveshare's
         ``display_Base``; the framework only calls this on full-refresh cycles.
+
+        should_abort is forwarded to the refresh wait so a newer queued frame can
+        interrupt this full refresh (the scheduler then restarts with new data).
         """
         log.info("[EPD SSD1680] mono FULL refresh: profile=%s activation=0x%02X",
                  self.profile.key, self._full_activation_byte())
@@ -661,7 +676,7 @@ class EPD:
         self.send_data2(image)
         self.send_command(0x26)  # write RAM (baseline for partial diff)
         self.send_data2(image)
-        self.TurnOnDisplay()
+        self.TurnOnDisplay(should_abort=should_abort)
         self.buffer = image.copy() if hasattr(image, 'copy') else list(image)
 
     def _write_partial_rams(self, image):

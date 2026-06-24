@@ -86,6 +86,16 @@ class EPDTimeoutError(RuntimeError):
     """Raised when the panel BUSY line never reaches idle within the timeout."""
 
 
+class RefreshInterrupted(RuntimeError):
+    """Raised by a full-refresh BUSY wait when newer frame data is pending.
+
+    Distinct from EPDTimeoutError so the scheduler can tell a deliberate abort
+    ("newer data arrived, restart with it") from a genuinely unresponsive panel.
+    The driver does not recover the panel itself; the scheduler re-inits before
+    the next refresh, which resets the panel and halts the aborted waveform.
+    """
+
+
 # Display resolution
 EPD_WIDTH       = 128
 EPD_HEIGHT      = 296
@@ -274,7 +284,7 @@ class EPD:
         epdconfig.spi_writebyte2(data)
         epdconfig.digital_write(self.cs_pin, 1)
         
-    def ReadBusy(self):
+    def ReadBusy(self, should_abort=None):
         """Poll the panel BUSY line until idle, bounded by BUSY_TIMEOUT_SECONDS.
 
         Waits while the pin reads LOW (busy) and returns once it reads HIGH
@@ -284,11 +294,20 @@ class EPD:
         display thread hangs. The bounded wait converts that hang into an
         EPDTimeoutError; init() catches it and returns -1.
 
+        Args:
+            should_abort: optional zero-arg predicate polled each tick. When it
+                returns True (newer frame queued, or shutdown), the wait raises
+                RefreshInterrupted so the caller can abort and restart with the
+                new data. Distinct from EPDTimeoutError (a dead panel).
+
         Raises:
             EPDTimeoutError: if BUSY does not reach idle within the timeout.
+            RefreshInterrupted: if should_abort() returns True during the wait.
         """
         deadline = time.monotonic() + BUSY_TIMEOUT_SECONDS
         while(epdconfig.digital_read(self.busy_pin) == 0):  # LOW: busy, HIGH: idle
+            if should_abort is not None and should_abort():
+                raise RefreshInterrupted("BUSY wait aborted: newer frame pending")
             self.send_command(0x71)
             epdconfig.delay_ms(10)
             if time.monotonic() >= deadline:
@@ -297,10 +316,10 @@ class EPD:
                     "unresponsive or incompatible (e.g. inverted BUSY polarity)"
                 )
         
-    def TurnOnDisplay(self):
+    def TurnOnDisplay(self, should_abort=None):
         self.send_command(0x12)
         epdconfig.delay_ms(10)
-        self.ReadBusy()
+        self.ReadBusy(should_abort=should_abort)
         # Park the panel after the refresh settles: power off the DC-DC booster
         # and source/gate drivers (0x02). The e-ink image is bistable and holds
         # without active bias, and an unpowered panel is not disturbed by bright
@@ -432,7 +451,7 @@ class EPD:
         """Force B/W pixels white wherever red is set (see mask_bw_with_red)."""
         return mask_bw_with_red(bw_buf, red_buf)
 
-    def display_color(self, bw_buf, red_buf):
+    def display_color(self, bw_buf, red_buf, should_abort=None):
         """Full three-color refresh: B/W -> 0x10, red -> 0x13, then refresh.
 
         This is the only path that can change the red layer (the red waveform is
@@ -443,6 +462,9 @@ class EPD:
         Args:
             bw_buf: packed black/white buffer (white=1, black=0), as from getbuffer.
             red_buf: packed red buffer (red=0), as from getbuffer_red.
+            should_abort: optional predicate; when it returns True during the
+                final refresh wait, TurnOnDisplay raises RefreshInterrupted so the
+                scheduler can restart with newer data.
         """
         # Wake the panel in case it was parked after a prior refresh.
         self.send_command(0x04)
@@ -464,9 +486,9 @@ class EPD:
 
         self.buffer = list(bw_masked)
         self.red_buffer = list(red_buf)
-        self.TurnOnDisplay()
+        self.TurnOnDisplay(should_abort=should_abort)
 
-    def display(self, image):
+    def display(self, image, should_abort=None):
         # Wake the panel in case it was parked (powered off) after a prior
         # refresh. Harmless if init() already powered it on this cycle.
         self.send_command(0x04)
@@ -483,7 +505,7 @@ class EPD:
         # (Previously reset to all-white, which forced a Clear() flash on the
         # following partial to reconcile the mismatch.)
         self.buffer = image.copy() if hasattr(image, 'copy') else list(image)
-        self.TurnOnDisplay()
+        self.TurnOnDisplay(should_abort=should_abort)
         
     def _dump_buffer(self, label, buf):
         """Debug helper: print buffer statistics.

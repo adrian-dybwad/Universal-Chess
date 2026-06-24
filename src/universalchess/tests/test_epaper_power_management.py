@@ -64,7 +64,7 @@ def _instrument(epd):
     epd.send_command = lambda c: trace.append(('C', c))
     epd.send_data = lambda d: trace.append(('D', d))
     epd.send_data2 = lambda d: trace.append(('D2', len(d)))
-    epd.ReadBusy = lambda: None
+    epd.ReadBusy = lambda *args, **kwargs: None
     epd.reset = lambda: trace.append(('RESET',))
     return trace
 

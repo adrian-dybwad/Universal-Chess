@@ -59,7 +59,7 @@ class _RecordingEpd:
         self.epd.send_command = lambda c: self.ops.append(("cmd", c))
         self.epd.send_data = lambda d: self.ops.append(("data", d))
         self.epd.send_data2 = lambda d: self.ops.append(("data2", list(d)))
-        self.epd.ReadBusy = lambda: None
+        self.epd.ReadBusy = lambda *args, **kwargs: None
         self.epd.reset = lambda: None
 
     def commands(self):

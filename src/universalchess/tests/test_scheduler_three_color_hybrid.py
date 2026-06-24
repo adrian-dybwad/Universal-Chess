@@ -35,6 +35,7 @@ from universalchess.epaper.framework.scheduler import Scheduler
 from universalchess.epaper.framework.waveshare.epd2in9d import (
     EPD_WIDTH,
     EPD_HEIGHT,
+    RefreshInterrupted,
     pack_image_to_buffer,
 )
 
@@ -82,14 +83,18 @@ class _FakeEpd:
     def Clear(self):
         self.calls.append("Clear")
 
-    def display(self, buf):
+    def display(self, buf, should_abort=None):
         self.calls.append("display")              # mono full (must NOT run in 3-color)
+        if should_abort and should_abort():       # simulate driver aborting mid-wait
+            raise RefreshInterrupted("newer data")
 
     def DisplayPartial(self, buf):
         self.calls.append("DisplayPartial")        # fast B/W path
 
-    def display_color(self, bw, red):
+    def display_color(self, bw, red, should_abort=None):
         self.calls.append("display_color")         # full tri-color path
+        if should_abort and should_abort():       # simulate driver aborting mid-wait
+            raise RefreshInterrupted("newer data")
 
 
 def _make_scheduler(three_color, on_display_updated=None):
@@ -224,6 +229,59 @@ class BatchCoalesceTests(unittest.TestCase):
         sched._process_batch([i1, i2])
         self.assertIn("display_color", epd.calls)
         self.assertNotIn("display", epd.calls)
+
+
+class InterruptRefreshTests(unittest.TestCase):
+    """A full refresh aborts and restarts when newer frame data is queued.
+
+    The driver's wait raises RefreshInterrupted once should_abort fires;
+    should_abort is true while sched._queue is non-empty (newer data waiting).
+    The scheduler must resolve the in-flight future as "interrupted", arm a
+    re-init (so the next refresh resets the panel and halts the aborted
+    waveform), and -- for the color path -- forget the last red buffer so the
+    next frame is forced full (the interrupted red never fully developed).
+    """
+
+    def _queue_newer_item(self, sched):
+        # Put a newer item in the queue so _refresh_should_abort() returns True
+        # during the refresh, then drain it so the test can inspect it.
+        newer = _item(False, _bw_image(), _red_image(has_red=True))
+        sched._queue.put_nowait(newer)
+        return newer
+
+    def test_color_refresh_interrupted_when_newer_queued(self):
+        # Red onset would normally complete a color refresh; with a newer item
+        # queued, display_color aborts. Regression (no abort handling): the future
+        # never resolves "interrupted" and the stale red is committed, so the next
+        # frame would diff against a frame that never rendered.
+        sched, epd = _make_scheduler(three_color=True)
+        self._queue_newer_item(sched)
+        item = _item(False, _bw_image(), _red_image(has_red=True))
+        sched._process_three_color(item[0], item[1], item[2], item[3])
+        self.assertEqual(item[1].result(), "interrupted")
+        self.assertTrue(sched._force_reinit)
+        self.assertIsNone(sched._last_red_buffer)
+        self.assertEqual(epd.calls.count("display_color"), 1)
+
+    def test_mono_full_refresh_interrupted_when_newer_queued(self):
+        # The mono full path is interruptible too (scope: all full refreshes).
+        sched, epd = _make_scheduler(three_color=False)
+        self._queue_newer_item(sched)
+        future = Future()
+        sched._execute_full_refresh_single(True, future, _bw_image())
+        self.assertEqual(future.result(), "interrupted")
+        self.assertTrue(sched._force_reinit)
+
+    def test_color_refresh_completes_when_no_newer_data(self):
+        # Inverse guard: empty queue -> should_abort False -> the refresh
+        # completes normally, resolves "color", and commits the red buffer. A
+        # regression that aborted spuriously would resolve "interrupted" here.
+        sched, epd = _make_scheduler(three_color=True)
+        item = _item(False, _bw_image(), _red_image(has_red=True))
+        sched._process_three_color(item[0], item[1], item[2], item[3])
+        self.assertEqual(item[1].result(), "color")
+        self.assertFalse(sched._force_reinit)
+        self.assertIsNotNone(sched._last_red_buffer)
 
 
 class MirrorCallbackTests(unittest.TestCase):
