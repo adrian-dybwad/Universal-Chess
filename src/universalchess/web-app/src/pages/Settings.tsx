@@ -1773,6 +1773,8 @@ function DisplayTuningCard() {
   const [profiles, setProfiles] = useState<WaveformProfile[]>([]);
   const [selected, setSelected] = useState<string>('');
   const [highContrast, setHighContrast] = useState(false);
+  const [threeColor, setThreeColor] = useState(false);
+  const [threeColorSupported, setThreeColorSupported] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -1791,6 +1793,8 @@ function DisplayTuningCard() {
         if (Array.isArray(data.profiles)) setProfiles(data.profiles);
         if (typeof data.selected === 'string') setSelected(data.selected);
         if (typeof data.high_contrast === 'boolean') setHighContrast(data.high_contrast);
+        if (typeof data.three_color === 'boolean') setThreeColor(data.three_color);
+        if (typeof data.three_color_supported === 'boolean') setThreeColorSupported(data.three_color_supported);
       })
       .catch(() => {
         // Best-effort initial read; the card stays hidden if unavailable.
@@ -1809,7 +1813,12 @@ function DisplayTuningCard() {
   // Persist the selection and apply it live: the board re-inits the panel and
   // forces a full refresh, so the change takes effect without a reboot. On 401
   // the login dialog opens and the same apply is retried after authentication.
-  const apply = async (profile: string, contrast: boolean) => {
+  // Field-based so each control (profile / high contrast / three-color) sends
+  // only its change, merged with the current state for the others.
+  const apply = async (updates: { profile?: string; high_contrast?: boolean; three_color?: boolean }) => {
+    const profile = updates.profile ?? selected;
+    const contrast = updates.high_contrast ?? highContrast;
+    const tricolor = updates.three_color ?? threeColor;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -1817,11 +1826,11 @@ function DisplayTuningCard() {
       const response = await apiFetch('/api/system/display-tuning', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profile, high_contrast: contrast }),
+        body: JSON.stringify({ profile, high_contrast: contrast, three_color: tricolor }),
         requiresAuth: true,
       });
       if (response.status === 401) {
-        pendingActionRef.current = () => apply(profile, contrast);
+        pendingActionRef.current = () => apply(updates);
         setShowLoginDialog(true);
         return;
       }
@@ -1832,10 +1841,14 @@ function DisplayTuningCard() {
       }
       setSelected(data.selected ?? profile);
       setHighContrast(typeof data.high_contrast === 'boolean' ? data.high_contrast : contrast);
+      setThreeColor(typeof data.three_color === 'boolean' ? data.three_color : tricolor);
+      const enabledRed = updates.three_color === true;
       setNotice(
-        data.applied_live
-          ? 'Profile applied. The panel refreshed with the new waveform.'
-          : 'Profile saved. It will apply when the board is running.',
+        !data.applied_live
+          ? 'Saved. It will apply when the board is running.'
+          : enabledRed
+            ? 'Three-color mode on. Red highlights refresh in ~12-15s; normal moves stay fast.'
+            : 'Applied. The panel refreshed with the new setting.',
       );
     } catch {
       setError('Network error');
@@ -1877,7 +1890,7 @@ function DisplayTuningCard() {
         >
           <Select
             value={selected}
-            onChange={(e) => apply(e.target.value, highContrast)}
+            onChange={(e) => apply({ profile: e.target.value })}
             disabled={busy}
             options={profiles.map((p) => ({ value: p.key, label: p.label }))}
           />
@@ -1897,9 +1910,18 @@ function DisplayTuningCard() {
           label="High contrast (experimental)"
           help="Drive the VCOM/source voltages harder than the profile's defaults to darken a faint image. Try this if the image draws but only faintly. Not a datasheet-backed setting; leave off if the display already looks good."
           checked={highContrast}
-          onChange={(v) => apply(selected, v)}
+          onChange={(v) => apply({ high_contrast: v })}
           disabled={busy}
         />
+        {threeColorSupported && (
+          <Toggle
+            label="Three-color (red) mode"
+            help="For red/white/black panels only. Highlights checks, threatened queens, the game result, and losing evaluation bars in red. Red ink can only change with a full refresh, so those red updates take ~12-15 seconds; ordinary moves stay fast."
+            checked={threeColor}
+            onChange={(v) => apply({ three_color: v })}
+            disabled={busy}
+          />
+        )}
       </Card>
     </>
   );

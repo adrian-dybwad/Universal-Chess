@@ -103,6 +103,28 @@ class Manager:
         self._scheduler.force_reinit()
         return self.update(full=True, immediate=True)
 
+    def apply_three_color(self, enabled: bool) -> Future:
+        """Enable/disable three-color (red) mode live and force a full refresh.
+
+        Mirrors apply_waveform_profile: flips the driver's three_color switch,
+        forces the next refresh to re-run init(), and submits a full refresh so
+        the current screen re-renders in the new mode without a reboot. The driver
+        keeps the same waveform in both modes (three_color changes only the
+        channel mapping, B/W -> 0x24 / red -> 0x26 on SSD1680, B/W -> 0x10 / red
+        -> 0x13 on UC8151D), so turning the switch off restores the exact mono
+        behavior. A no-op (already-completed Future) when the active driver
+        predates ``apply_three_color``, so calling it is always harmless.
+
+        Returns a Future that completes when the refresh finishes.
+        """
+        if not hasattr(self._epd, "apply_three_color"):
+            future = Future()
+            future.set_result("not-applicable")
+            return future
+        self._epd.apply_three_color(enabled)
+        self._scheduler.force_reinit()
+        return self.update(full=True, immediate=True)
+
     def add_widget(self, widget: Widget) -> Future:
         """Add a widget to the display.
         
@@ -360,10 +382,48 @@ class Manager:
         # This ensures each update request carries its own image state, so rapid
         # updates display all intermediate states, not just the final one
         snapshot = self._framebuffer.snapshot(rotation=epdconfig.ROTATION)
-        
+
+        # Three-color mode: composite a parallel RED plane from the same widget
+        # stack. Built only when the active driver reports three_color so a mono
+        # panel pays zero cost and the mono scheduler path is never handed an
+        # unexpected red image. The red canvas mirrors the B/W canvas geometry and
+        # rotation; widgets that do not override render_red contribute nothing, so
+        # an all-white (no-red) plane is produced when no highlight is active.
+        red_snapshot = self._render_red_snapshot(modal_widget) if self._is_three_color() else None
+
         # Submit refresh with the captured snapshot and return Future
         # The on_refresh callback is invoked by Scheduler after display update
-        return self._scheduler.submit(full=full, immediate=immediate, image=snapshot)
+        return self._scheduler.submit(full=full, immediate=immediate, image=snapshot, red_image=red_snapshot)
+
+    def _is_three_color(self) -> bool:
+        """Whether the active driver is in three-color (red) mode.
+
+        Read off the driver so the coordinator stays agnostic of which controller
+        drives the panel; absent attribute (older drivers) means mono.
+        """
+        return bool(getattr(self._epd, "three_color", False))
+
+    def _render_red_snapshot(self, modal_widget) -> Image.Image:
+        """Composite the RED overlay plane for the current widget stack.
+
+        Renders the same widgets, in the same z-order/modal precedence as the
+        B/W plane, onto a fresh red-mask canvas (0 = red, 255 = not red). Returns
+        a rotated snapshot matching the B/W snapshot so the driver can pack the
+        two planes against identical geometry.
+        """
+        red_canvas = Image.new('1', (self._framebuffer.width, self._framebuffer.height), 255)
+
+        if modal_widget:
+            modal_widget.draw_red_on(red_canvas, modal_widget.x, modal_widget.y)
+        else:
+            for widget in self._widgets:
+                if not widget.visible or widget.is_modal:
+                    continue
+                widget.draw_red_on(red_canvas, widget.x, widget.y)
+
+        if epdconfig.ROTATION == 0:
+            return red_canvas
+        return red_canvas.rotate(-epdconfig.ROTATION, expand=False)
     
     def cleanup(self, for_shutdown: bool = False) -> None:
         """Clean up display resources.

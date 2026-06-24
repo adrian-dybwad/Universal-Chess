@@ -67,6 +67,11 @@ class Scheduler:
         # full-refresh mode, so a live waveform-profile change reloads the panel's
         # LUT/voltages (a normal full refresh skips init() unless transitioning).
         self._force_reinit = False
+        # Last RED-plane buffer shown on the panel (three-color mode only), in the
+        # getbuffer_red mask space (red = 0 bit, no-red = 0xFF byte). None until
+        # the first three-color frame. Used to detect when red appears, changes,
+        # or clears so the slow full tri-color refresh runs only then.
+        self._last_red_buffer = None
     
     def force_reinit(self) -> None:
         """Force the next refresh to re-run the panel's init().
@@ -105,7 +110,7 @@ class Scheduler:
             while not self._queue.empty():
                 try:
                     item = self._queue.get_nowait()
-                    _, future, _ = item if len(item) == 3 else (item[0], item[1], None)
+                    future = item[1]
                     if not future.done():
                         future.set_result("cleared")
                 except queue.Empty:
@@ -126,7 +131,8 @@ class Scheduler:
         timer.daemon = True
         timer.start()
     
-    def submit(self, full: bool = False, immediate: bool = False, image: Optional[Image.Image] = None) -> Future:
+    def submit(self, full: bool = False, immediate: bool = False, image: Optional[Image.Image] = None,
+               red_image: Optional[Image.Image] = None) -> Future:
         """Submit a refresh request.
         
         If the queue is full, the oldest item is dropped to make room for the new one.
@@ -137,6 +143,10 @@ class Scheduler:
             immediate: If True, wake scheduler immediately to process without batching delay.
             image: Optional pre-captured image snapshot. If provided, this exact image will be
                    displayed. If None, scheduler will take snapshot from framebuffer when processing.
+            red_image: Optional RED-plane snapshot for three-color mode (0 = red, 255 = not red).
+                   None on mono panels. Drives the hybrid refresh decision: a non-empty or changed
+                   red plane forces a full three-color refresh, otherwise the fast B/W partial path
+                   is used (see _process_batch).
         """
         if full:
             log.warning(f"Scheduler.submit() called with full=True (will cause flashing refresh)")
@@ -147,7 +157,7 @@ class Scheduler:
             if self._queue.full():
                 try:
                     old_item = self._queue.get_nowait()
-                    _, old_future, _ = old_item if len(old_item) == 3 else (old_item[0], old_item[1], None)
+                    old_future = old_item[1]
                     if not old_future.done():
                         old_future.set_result("evicted")
                     log.warning("Scheduler.submit(): Queue full, evicted oldest item to make room for new update")
@@ -155,7 +165,7 @@ class Scheduler:
                     pass  # Queue was emptied by another thread, that's fine
             
             try:
-                self._queue.put_nowait((full, future, image))
+                self._queue.put_nowait((full, future, image, red_image))
                 if immediate:
                     # Wake scheduler thread immediately for urgent updates (e.g., menu arrow)
                     self._wake_event.set()
@@ -257,32 +267,171 @@ class Scheduler:
         (like menu navigation) display all intermediate states, not just the final state.
         Each item carries its own image snapshot captured at render time.
         """
+        # Three-color mode: COALESCE the batch to its final composite frame. Each
+        # tri-color full refresh is ~14s, and one logical change (e.g. a single
+        # move) emits several widget updates (board + clock + analysis + status),
+        # each a separate request. Replaying them in order would queue several full
+        # refreshes for one change -- the "full refresh multiple times" flicker.
+        # Only the last item carries the latest snapshot, so refresh that once and
+        # resolve the superseded futures. A full request anywhere in the batch is
+        # preserved. (Mono/menu-nav keeps per-item replay below so rapid menu
+        # navigation still shows intermediate frames; those partials are cheap.)
+        if getattr(self._epd, "three_color", False):
+            if self._stop_event.is_set():
+                for item in batch:
+                    if not item[1].done():
+                        item[1].set_result("shutdown")
+                return
+            *superseded, last = batch
+            for s_full, s_future, _s_img, _s_red in superseded:
+                if not s_future.done():
+                    s_future.set_result("coalesced")
+            any_full = any(item[0] for item in batch)
+            full, future, image, red_image = last
+            self._process_three_color(any_full, future, image, red_image)
+            return
+
         # Process each item separately to ensure all updates are displayed
         for item in batch:
+            full, future, image, red_image = item
+
             if self._stop_event.is_set():
-                full, future, _ = item if len(item) == 3 else (item[0], item[1], None)
                 if not future.done():
                     future.set_result("shutdown")
                 continue
-            
-            # Unpack item (handle both old format and new format with image)
-            if len(item) == 3:
-                full, future, image = item
-            else:
-                full, future = item
-                image = None
-            
-            # Full refresh when explicitly requested, or when the partial count
-            # reaches the periodic threshold. _max_partial_refreshes == 0 disables
-            # the periodic count-based full refresh.
-            full_refresh = full or (
+
+            # Full refresh when explicitly requested, or when the periodic
+            # partial-count threshold is reached. _max_partial_refreshes == 0
+            # disables the periodic count-based full refresh.
+            periodic_full = (
                 self._max_partial_refreshes > 0
                 and self._partial_refresh_count >= self._max_partial_refreshes
             )
+            full_refresh = full or periodic_full
             if full_refresh:
                 self._execute_full_refresh_single(full, future, image)
             else:
                 self._execute_partial_refresh_single(full, future, image)
+
+    def _no_red_buffer(self) -> list:
+        """All-no-red buffer in getbuffer_red mask space (every byte 0xFF)."""
+        return [0xFF] * ((self._epd.width // 8) * self._epd.height)
+
+    def _emit_display_updated(self, image: Image.Image,
+                             red_image: Optional[Image.Image] = None) -> None:
+        """Notify the refresh callback of the just-displayed frame.
+
+        Passes the B/W image and, in three-color mode, the RED-plane snapshot so
+        the web mirror can compose an RGB (white/black/red) preview. red_image is
+        None for mono/fast-B/W refreshes (no red on screen). Callback failures are
+        swallowed -- the mirror is best-effort and must never break a refresh.
+        """
+        if not self._on_display_updated:
+            return
+        try:
+            self._on_display_updated(image, red_image)
+        except Exception as cb_e:
+            log.debug(f"on_display_updated callback failed: {cb_e}")
+
+    def _process_three_color(self, full: bool, future: Future,
+                             image: Optional[Image.Image],
+                             red_image: Optional[Image.Image]) -> None:
+        """Route one three-color update to the fast B/W or full tri-color path.
+
+        Decision (red buffers compared in getbuffer_red mask space):
+          - red present, red changed, red just cleared, or an explicit full
+            refresh -> display_color (full tri-color). The explicit-full case
+            must NOT fall through to the mono full path, whose display() writes
+            the B/W image to the panel RED channel (0x13) and bleeds black to red.
+          - otherwise -> the fast B/W partial path (DisplayPartial, which the
+            driver routes to its tri-color B/W-only refresh).
+
+        Tracks the shown red buffer so a clear (non-empty -> empty) still forces
+        one full refresh to erase the bistable red ink.
+        """
+        if red_image is not None:
+            red_buf = self._epd.getbuffer_red(red_image)
+        else:
+            red_buf = self._no_red_buffer()
+
+        has_red = any(b != 0xFF for b in red_buf)
+        # A full tri-color refresh is the ONLY way to change the red layer, but it
+        # is also the slow (~14s) flashing path. So go full ONLY when the red plane
+        # actually CHANGES -- not merely because red is on screen. Static red (e.g.
+        # a persistent analysis bar or a king-in-check square that has not moved)
+        # rides along untouched on the fast B/W partial path: the partial waveform
+        # drives 0x24 only and the bistable red RAM (0x26) holds its ink. Forcing a
+        # full refresh on has_red instead made every clock tick a full refresh
+        # whenever any red was visible -- the runaway flicker.
+        if self._last_red_buffer is None:
+            # First three-color frame: full only if there is red to lay down;
+            # otherwise a B/W partial is fine (no red to develop yet).
+            red_changed = has_red
+        else:
+            red_changed = red_buf != self._last_red_buffer
+        go_full = full or red_changed
+
+        log.info(
+            "Scheduler three-color: path=%s (full_req=%s has_red=%s red_changed=%s) "
+            "in_partial=%s deep_asleep=%s force_reinit=%s",
+            "FULL_COLOR" if go_full else "BW_PARTIAL",
+            full, has_red, red_changed,
+            self._in_partial_mode, self._deep_asleep, self._force_reinit,
+        )
+
+        if go_full:
+            self._execute_color_refresh_single(future, image, red_buf, red_image)
+        else:
+            self._execute_partial_refresh_single(False, future, image)
+
+        self._last_red_buffer = red_buf
+
+    def _execute_color_refresh_single(self, future: Future,
+                                      image: Optional[Image.Image],
+                                      red_buf: list,
+                                      red_image: Optional[Image.Image] = None) -> None:
+        """Execute a full three-color (red/white/black) refresh for one request.
+
+        The tri-color refresh is the only path that can change the red layer, so
+        it always drives every pixel (no Clear() needed). Re-inits when waking
+        from deep sleep, transitioning from the B/W partial path, or when a live
+        mode/profile change forced it -- matching the B/W full path.
+        """
+        if self._stop_event.is_set():
+            if not future.done():
+                future.set_result("shutdown")
+            return
+
+        try:
+            if self._in_partial_mode or self._deep_asleep or self._force_reinit:
+                self._epd.init()
+                self._in_partial_mode = False
+                self._deep_asleep = False
+                self._force_reinit = False
+
+            if image is not None:
+                full_image = image
+            else:
+                full_image = self._framebuffer.snapshot(rotation=epdconfig.ROTATION)
+
+            bw_buf = self._epd.getbuffer(full_image)
+            log.debug("Scheduler: Sending FULL THREE-COLOR refresh to display")
+            self._epd.display_color(bw_buf, red_buf)
+            self._partial_refresh_count = 0
+            self._baseline_established = True
+            self._mark_activity()
+
+            self._emit_display_updated(full_image, red_image)
+        except Exception as e:
+            error_msg = str(e).lower()
+            is_shutdown_error = 'closed' in error_msg or 'uninitialized' in error_msg or 'gpio' in error_msg
+            if not self._stop_event.is_set() and not is_shutdown_error:
+                log.error(f"ERROR in three-color refresh: {e}")
+                import traceback
+                traceback.print_exc()
+
+        if not future.done():
+            future.set_result("color")
     
     def _execute_full_refresh_single(self, full: bool, future: Future, image: Optional[Image.Image]) -> None:
         """Execute a full screen refresh for a single request."""
@@ -318,12 +467,8 @@ class Scheduler:
             self._baseline_established = True
             self._mark_activity()
             
-            # Invoke callback after successful display update
-            if self._on_display_updated:
-                try:
-                    self._on_display_updated(full_image)
-                except Exception as cb_e:
-                    log.debug(f"on_display_updated callback failed: {cb_e}")
+            # Invoke callback after successful display update (mono: no red plane)
+            self._emit_display_updated(full_image)
         except Exception as e:
             # Don't log errors during shutdown (SPI may be closed)
             # Also suppress GPIO-related errors that occur during shutdown race conditions
@@ -396,12 +541,8 @@ class Scheduler:
             self._partial_refresh_count += 1
             self._mark_activity()
             
-            # Invoke callback after successful display update
-            if self._on_display_updated:
-                try:
-                    self._on_display_updated(display_image)
-                except Exception as cb_e:
-                    log.debug(f"on_display_updated callback failed: {cb_e}")
+            # Invoke callback after successful display update (fast B/W: no red plane)
+            self._emit_display_updated(display_image)
         except Exception as e:
             # Don't log errors during shutdown (SPI may be closed)
             # Also suppress GPIO-related errors that occur during shutdown race conditions

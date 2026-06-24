@@ -52,6 +52,25 @@ log = logging.getLogger(__name__)
 UC8151D_HIGH_CONTRAST_VCOM_DC_DELTA = 0x08
 UC8151D_VCOM_DC_MAX = 0x3F
 
+# --- Three-color (red/white/black) mode ------------------------------------
+# The same UC8151D controller drives the tri-color BWR panels (GDEH029Z13 /
+# GDEW029Z13). On a tri-color panel command 0x10 is the BLACK/WHITE data channel
+# and 0x13 is the RED data channel (the mono partial path instead uses them as
+# OLD/NEW B/W RAM, which is why the mono driver bleeds black into red here).
+#
+# Panel-setting byte (register 0x00) selecting the BWR OTP waveform. The init
+# comment enumerates the options: "KW-BF 1f, KWR-AF, BWROTP 0f, BWOTP 1f"; 0x0f
+# is the BWR-from-OTP setting. Surfaced as a named constant because it (and the
+# red polarity below) are the bytes most likely to be tuned during on-hardware
+# bring-up on the actual panel.
+UC8151D_BWR_PANEL_SETTING = 0x0F
+
+# Red channel polarity. getbuffer_red packs red pixels as a cleared bit (0),
+# matching the black=0 convention of the B/W plane. If the physical panel treats
+# a SET bit as red instead, flip this during bring-up and the driver inverts the
+# red buffer (and the no-red blank) in one place.
+UC8151D_BWR_RED_INVERTED = False
+
 # Maximum time to wait for the panel BUSY line to signal idle before giving up.
 # A legitimate full-refresh waveform holds BUSY low for well under a second, so
 # this ceiling is only reached when the panel never releases BUSY -- e.g. a DGT
@@ -74,6 +93,20 @@ EPD_HEIGHT      = 296
 # Debug flag for buffer diagnostics in DisplayPartial
 # Set to True to print buffer statistics on each partial refresh
 DEBUG_DISPLAY_PARTIAL = False
+
+
+def mask_bw_with_red(bw_buf, red_buf):
+    """Force B/W pixels white wherever red is set (shared by both BWR drivers).
+
+    A tri-color pixel must be driven red OR black, never both, or the red renders
+    muddy/dark. getbuffer_red marks red as a cleared bit (0), so ``bw | ~red``
+    sets those positions white (1) in the B/W buffer while leaving every non-red
+    position untouched. Returns a plain list (the buffers are stored/re-sent as
+    lists by both drivers).
+    """
+    bw = np.frombuffer(bytes(bw_buf), dtype=np.uint8)
+    red = np.frombuffer(bytes(red_buf), dtype=np.uint8)
+    return (bw | (~red & 0xFF)).astype(np.uint8).tolist()
 
 
 def pack_image_to_buffer(image, width, height):
@@ -129,13 +162,19 @@ class EPD:
     # the correct profile for whichever driver actually drove the panel.
     CONTROLLER = CONTROLLER_UC8151D
 
-    def __init__(self, profile: WaveformProfile = None, high_contrast: bool = False):
+    def __init__(self, profile: WaveformProfile = None, high_contrast: bool = False,
+                 three_color: bool = False):
         self.reset_pin = epdconfig.RST_PIN
         self.dc_pin = epdconfig.DC_PIN
         self.busy_pin = epdconfig.BUSY_PIN
         self.cs_pin = epdconfig.CS_PIN
         self.width = EPD_WIDTH
         self.height = EPD_HEIGHT
+        # Three-color (red/white/black) mode switch. Off by default so a mono V2
+        # panel is byte-for-byte unchanged. When on, init() selects the BWR OTP
+        # waveform and the refresh paths route B/W -> 0x10 and red -> 0x13 (see
+        # display_color / DisplayPartial).
+        self.three_color = three_color
         # Selected waveform profile. The full refresh is OTP for every UC8151D
         # profile; the profile only chooses the partial-refresh register LUTs and
         # analog bytes (see SetPartReg). None selects the verified Waveshare
@@ -153,6 +192,24 @@ class EPD:
         self.busy_timeout_occurred = False
         # Store the last image sent for partial refresh
         self.buffer = [0xFF] * int(self.width * self.height / 8)
+        # Last RED frame sent to the panel (three-color mode). All-0xFF = no red,
+        # matching getbuffer_red's polarity. Re-sent to the red channel so a fast
+        # B/W refresh leaves the red layer in a defined (cleared) state.
+        self.red_buffer = self._red_blank()
+
+    def _red_blank(self) -> list:
+        """The 'no red' red-channel buffer for the current polarity."""
+        fill = 0x00 if UC8151D_BWR_RED_INVERTED else 0xFF
+        return [fill] * int(self.width * self.height / 8)
+
+    def apply_three_color(self, enabled: bool) -> None:
+        """Enable/disable three-color mode live (no-reboot toggle path).
+
+        Mirrors apply_profile: the caller sets the new mode here, then re-runs
+        init() (which selects the matching panel-setting waveform) and forces a
+        full refresh so the panel adopts the change without restarting the board.
+        """
+        self.three_color = enabled
 
     def apply_profile(self, profile: WaveformProfile, high_contrast: bool) -> None:
         """Select a new waveform profile/override for the next refresh.
@@ -276,7 +333,12 @@ class EPD:
             return -1
 
         self.send_command(0x00)     #panel setting
-        self.send_data(0x1f)        # LUT from OTP，KW-BF   KWR-AF    BWROTP 0f   BWOTP 1f
+        if self.three_color:
+            # BWR-from-OTP waveform: drives the black/white (0x10) and red (0x13)
+            # channels from the panel's on-chip tri-color waveform.
+            self.send_data(UC8151D_BWR_PANEL_SETTING)
+        else:
+            self.send_data(0x1f)    # LUT from OTP，KW-BF   KWR-AF    BWROTP 0f   BWOTP 1f
 
         self.send_command(0x61)     #resolution setting
         self.send_data (0x80)       
@@ -348,6 +410,62 @@ class EPD:
     def getbuffer(self, image):
         return pack_image_to_buffer(image, self.width, self.height)
 
+    def getbuffer_red(self, image):
+        """Pack a red-mask image into the panel's red-channel byte buffer.
+
+        The red mask is a 1-bit image where 0 = red and 255 = not red, so it
+        packs with the SAME polarity as the B/W plane (a red pixel clears its
+        bit, exactly as a black pixel does). Delegates to the shared vectorized
+        packer so red and B/W never disagree on byte layout/orientation. Polarity
+        to the panel is applied at send time (display_color) via
+        UC8151D_BWR_RED_INVERTED, keeping this a pure packing step.
+        """
+        return pack_image_to_buffer(image, self.width, self.height)
+
+    def _red_for_panel(self, red_buf):
+        """Apply the configured red polarity to a packed red buffer."""
+        if not UC8151D_BWR_RED_INVERTED:
+            return list(red_buf)
+        return [(~b) & 0xFF for b in red_buf]
+
+    def _bw_with_red_removed(self, bw_buf, red_buf):
+        """Force B/W pixels white wherever red is set (see mask_bw_with_red)."""
+        return mask_bw_with_red(bw_buf, red_buf)
+
+    def display_color(self, bw_buf, red_buf):
+        """Full three-color refresh: B/W -> 0x10, red -> 0x13, then refresh.
+
+        This is the only path that can change the red layer (the red waveform is
+        OTP and runs the full ~12-15s tri-color refresh). The B/W buffer has its
+        red pixels forced white first so no pixel is driven both black and red.
+        Records both channels as the live baselines.
+
+        Args:
+            bw_buf: packed black/white buffer (white=1, black=0), as from getbuffer.
+            red_buf: packed red buffer (red=0), as from getbuffer_red.
+        """
+        # Wake the panel in case it was parked after a prior refresh.
+        self.send_command(0x04)
+        self.ReadBusy()
+        # Re-assert the BWR OTP waveform: a preceding fast B/W refresh switches the
+        # panel-setting to the register LUT, so select it again before driving red.
+        self.send_command(0x00)
+        self.send_data(UC8151D_BWR_PANEL_SETTING)
+
+        bw_masked = self._bw_with_red_removed(bw_buf, red_buf)
+        red_on_panel = self._red_for_panel(red_buf)
+
+        self.send_command(0x10)
+        self.send_data2(bw_masked)
+        epdconfig.delay_ms(10)
+        self.send_command(0x13)
+        self.send_data2(red_on_panel)
+        epdconfig.delay_ms(10)
+
+        self.buffer = list(bw_masked)
+        self.red_buffer = list(red_buf)
+        self.TurnOnDisplay()
+
     def display(self, image):
         # Wake the panel in case it was parked (powered off) after a prior
         # refresh. Harmless if init() already powered it on this cycle.
@@ -381,6 +499,50 @@ class EPD:
         print(f"EPD [{label}] len={len(buf_bytes)} black_bytes={black} white_bytes={white} other={other}")
         print(f"EPD [{label}] first 16: {sample}")
     
+    def _display_bw_fast(self, image):
+        """Fast black/white-only refresh on a tri-color panel (three_color mode).
+
+        On a BWR panel the mono OLD/NEW differential cannot be used: 0x10 is the
+        B/W channel and 0x13 is the RED channel, so the mono path's "new image ->
+        0x13" would paint the board red (the reported bleed). Instead this writes
+        the new B/W frame to the B/W channel (0x10) and the no-red blank to the
+        red channel (0x13), then runs the register B/W LUTs (SetPartReg selects
+        0x00=0xbf and loads the ww/bw/wb/bb tables). The red LUT is never loaded,
+        so the red layer is left muted -- the u8g2-documented "B/W mode on a BWR
+        panel" technique.
+
+        The hybrid scheduler only takes this path when NO red is on screen, so
+        emitting the no-red blank to 0x13 is correct (it keeps the red layer
+        clear). Changing red goes through display_color instead.
+
+        The exact LUT/timing that makes this genuinely fast on the physical panel
+        is finalized during on-hardware bring-up; the channel routing asserted
+        here (B/W -> 0x10, never the B/W image -> 0x13) is the correctness
+        contract that fixes the bleed.
+        """
+        self.SetPartReg()
+        self.send_command(0x91)             # partial in
+        self.send_command(0x90)             # partial window
+        self.send_data(0)
+        self.send_data(self.width - 1)
+        self.send_data(0)
+        self.send_data(0)
+        self.send_data((self.height - 1) >> 8)
+        self.send_data((self.height - 1) & 0xFF)
+        self.send_data(0x28)
+
+        red_blank = self._red_for_panel(self._red_blank())
+        self.send_command(0x10)             # B/W channel <- new frame
+        self.send_data2(image)
+        epdconfig.delay_ms(10)
+        self.send_command(0x13)             # RED channel <- no-red blank (never the B/W image)
+        self.send_data2(red_blank)
+        epdconfig.delay_ms(10)
+
+        self.buffer = image.copy() if hasattr(image, 'copy') else list(image)
+        self.red_buffer = self._red_blank()
+        self.TurnOnDisplay()
+
     def DisplayPartial(self, image):
         """
         Display partial refresh following Waveshare pattern.
@@ -388,6 +550,13 @@ class EPD:
         Args:
             image: Buffer containing the new/current content (sent to 0x13)
         """
+        if self.three_color:
+            # Tri-color panel: route the B/W frame to the B/W channel and keep
+            # the red channel blank (see _display_bw_fast). Never reuse the mono
+            # OLD/NEW-on-0x13 scheme, which bleeds black into red here.
+            self._display_bw_fast(image)
+            return
+
         if DEBUG_DISPLAY_PARTIAL:
             self._dump_buffer("OLD_BUFFER_0x10", self.buffer)
             self._dump_buffer("NEW_IMAGE_0x13", image)
@@ -425,6 +594,20 @@ class EPD:
         # refresh. Harmless if init() already powered it on this cycle.
         self.send_command(0x04)
         self.ReadBusy()
+        if self.three_color:
+            # Tri-color: 0x10 is the B/W channel (white = 0xFF) and 0x13 is the
+            # red channel (no-red blank). The mono values (0x10 <- 0x00) would
+            # clear the panel to black on a BWR panel.
+            self.send_command(0x10)
+            self.send_data2([0xFF] * int(self.width * self.height / 8))
+            epdconfig.delay_ms(10)
+            self.send_command(0x13)
+            self.send_data2(self._red_for_panel(self._red_blank()))
+            epdconfig.delay_ms(10)
+            self.TurnOnDisplay()
+            self.buffer = [0xFF] * int(self.width * self.height / 8)
+            self.red_buffer = self._red_blank()
+            return
         self.send_command(0x10)
         self.send_data2([0x00] * int(self.width * self.height / 8))
         epdconfig.delay_ms(10)

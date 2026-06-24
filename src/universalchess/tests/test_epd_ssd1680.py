@@ -495,6 +495,37 @@ class HighContrastTests(unittest.TestCase):
         self.assertEqual(epd.init(), 0)
         self.assertNotIn(("cmd", 0x32), transcript)
 
+    def test_controller_identity_is_ssd16xx(self):
+        # The live profile-apply path (main._process_pending_display_profile)
+        # resolves the stored key against epd.CONTROLLER. If this driver does not
+        # advertise the SSD16xx family, that lookup falls back to the UC8151D
+        # default and get_profile() converts any SSD16xx selection into the
+        # UC8151D default (uc8151d_waveshare), whose full_lut is empty.
+        # Regression manifests downstream as SetLut() raising "tuple index out of
+        # range" on the next init() -- the panel dies until reboot. Pin the
+        # identity here so the family can never silently cross.
+        self.assertEqual(EPD.CONTROLLER, wp.CONTROLLER_SSD16XX)
+
+    def test_live_apply_of_an_ssd16xx_key_keeps_a_loadable_full_lut(self):
+        # End-to-end guard for the crash above: resolving a stored SSD16xx key
+        # against THIS driver's controller must yield a same-family profile whose
+        # full_lut SetLut() can index (153..158). If CONTROLLER regresses to the
+        # UC8151D family, get_profile() returns uc8151d_waveshare (full_lut == ())
+        # and this init() raises IndexError exactly as it did on the panel.
+        epd = EPD()
+        profile = wp.get_profile("gdem029t94", EPD.CONTROLLER)
+        epd.apply_profile(profile, high_contrast=False)
+        epd.send_command = MagicMock()
+        epd.send_data = MagicMock()
+        epd.send_data2 = MagicMock()
+        epd.reset = MagicMock()
+        epd.ReadBusy = MagicMock()
+        # Must not raise: a register-LUT SSD16xx profile has the 159 bytes SetLut
+        # reads. (builtin_otp would skip SetLut via use_otp; gdem029t94 exercises
+        # the indexing path that crashed.)
+        self.assertEqual(epd.init(), 0)
+        self.assertEqual(epd.profile.key, "gdem029t94")
+
 
 class BufferAndRefreshTests(unittest.TestCase):
     """getbuffer packing and the full/partial refresh command flows."""

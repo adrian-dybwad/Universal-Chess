@@ -283,14 +283,16 @@ def _wait_for_display_promise(promise, operation_name: str, timeout: float = 10.
     thread = threading.Thread(target=_wait, daemon=True)
     thread.start()
 
-def _on_display_refresh(image):
+def _on_display_refresh(image, red_image=None):
     """Callback for display refreshes - writes image to web static folder.
-    
-    Used by the web dashboard to mirror the e-paper display.
+
+    Used by the web dashboard to mirror the e-paper display. In three-color mode
+    the RED-plane snapshot is forwarded so the mirror is composed in RGB
+    (white/black/red); ``red_image`` is None for mono/fast-B/W refreshes.
     """
     try:
         from universalchess.services.chromecast import write_epaper_jpg
-        write_epaper_jpg(image)
+        write_epaper_jpg(image, red_image=red_image)
     except Exception as e:
         log.debug(f"Failed to write epaper.jpg: {e}")
 
@@ -371,11 +373,13 @@ def _init_display_early():
     from universalchess.epaper.framework.waveshare import waveform_profiles as wp
 
     key, high_contrast = _read_display_selection()
+    three_color = _read_display_flag('three_color')
     primary_profile = wp.get_profile(key, wp.CONTROLLER_UC8151D)
 
     manager, primary = _attempt_display_init(PrimaryEPD(
         profile=primary_profile,
         high_contrast=high_contrast,
+        three_color=three_color,
     ))
     alt = None
     if ds.should_attempt_alt(primary):
@@ -391,6 +395,7 @@ def _init_display_early():
         alt_manager, alt = _attempt_display_init(AltEPD(
             profile=alt_profile,
             high_contrast=high_contrast,
+            three_color=three_color,
         ))
         if alt.ok:
             manager = alt_manager
@@ -2358,6 +2363,15 @@ def _process_pending_display_profile() -> None:
     log.info(f"[App] Applying display profile live: {profile.key} "
              f"(controller={controller}, high_contrast={high_contrast})")
     _early_display_manager.apply_waveform_profile(profile, high_contrast)
+
+    # Three-color (red) mode is toggled through the same display-tuning settings,
+    # so apply it on the same live path. Only when it actually changed, to avoid a
+    # second ~12-15s full refresh when only the waveform/contrast was edited.
+    desired_three_color = _read_display_flag('three_color')
+    current_three_color = bool(getattr(_early_display_manager.epd, "three_color", False))
+    if desired_three_color != current_three_color:
+        log.info(f"[App] Applying three-color mode live: {desired_three_color}")
+        _early_display_manager.apply_three_color(desired_three_color)
 
 
 def _process_pending_board_command() -> None:

@@ -13,7 +13,7 @@ This is the observer pattern - each widget manages its own visibility based on
 game state, rather than being externally managed by other widgets.
 """
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageChops
 from .framework.widget import Widget
 from .text import TextWidget, Justify
 import os
@@ -320,3 +320,23 @@ class GameOverWidget(Widget):
             black_str = self._format_time(self.black_time)
             self._times_text.set_text(f"W:{white_str}  B:{black_str}")
             self._times_text.draw_on(sprite, 0, 58)
+
+    def render_red(self, sprite: Image.Image) -> None:
+        """Render the RED overlay: the winner/result line in red (three-color).
+
+        Reddens the main result line ("White wins" / "Black wins" / "Draw") by
+        taking the same TextWidget glyph mask used in render() and compositing its
+        black pixels as red. No red is produced before a result is set (the widget
+        is hidden then anyway), so a fresh game shows no stale red.
+        """
+        if not self.winner:
+            return
+
+        # Render the winner glyphs to a scratch image at the same size/offset as
+        # render() draws them, then paste red where those glyphs are black.
+        glyphs = Image.new('1', (self.width, 18), 255)
+        self._winner_text.set_text(self.winner)
+        self._winner_text.draw_on(glyphs, 0, 0)
+        # 4-tuple box sizes the paste region from the box, not from the mask via
+        # isImageType, which is robust to PIL-mock pollution from other tests.
+        sprite.paste(0, (0, 4, self.width, 22), ImageChops.invert(glyphs))

@@ -112,6 +112,57 @@ class GameAnalysisWidget(Widget):
     def _handle_child_update(self, full: bool = False, immediate: bool = False):
         """Handle update requests from child widgets by forwarding to parent callback."""
         return self._update_callback(full, immediate)
+
+    def _graph_geometry(self) -> dict:
+        """Pixel geometry of the history graph, shared by render and render_red.
+
+        Single source of truth for the graph rectangle and center line so the
+        B/W bars and their red overlay are computed identically (any drift would
+        offset the red highlight from the bar it marks).
+        """
+        graph_x = self.SCORE_COLUMN_WIDTH + 2
+        graph_right = graph_x + self.GRAPH_WIDTH
+        graph_top = 4
+        graph_bottom = self.height - 4
+        chart_y = graph_top + (graph_bottom - graph_top) // 2
+        return {
+            "graph_x": graph_x, "graph_right": graph_right,
+            "graph_top": graph_top, "graph_bottom": graph_bottom,
+            "chart_y": chart_y,
+        }
+
+    def _iter_graph_bars(self, history):
+        """Yield ``(x0, y0, x1, y1, adjusted_score)`` for each history bar.
+
+        Encapsulates the bar layout (width cap, score scaling, right-justified
+        offset, center-line clamping) so render() draws the bars and render_red()
+        can redraw the losing-side ones in red without duplicating the maths.
+        ``adjusted_score`` is from the bottom player's perspective: negative means
+        the bottom player is worse off (the bars rendered in red).
+        """
+        if not history:
+            return
+
+        geo = self._graph_geometry()
+        chart_y = geo["chart_y"]
+        graph_top = geo["graph_top"]
+        graph_bottom = geo["graph_bottom"]
+        graph_height = graph_bottom - graph_top
+
+        bar_width = self.GRAPH_WIDTH / len(history)
+        if bar_width > 6:
+            bar_width = 6
+        scale = (graph_height // 2) / 12.0
+        bar_offset = geo["graph_right"] - bar_width * len(history)
+
+        for score in history:
+            adjusted_score = -score if self.bottom_color == "black" else score
+            y_calc = chart_y - adjusted_score * scale
+            y_calc = max(graph_top, min(graph_bottom, y_calc))
+            y0 = min(chart_y, int(y_calc))
+            y1 = max(chart_y, int(y_calc))
+            yield (int(bar_offset), y0, int(bar_offset + bar_width), y1, adjusted_score)
+            bar_offset += bar_width
     
     def stop(self) -> None:
         """Stop the widget and perform cleanup tasks."""
@@ -185,51 +236,35 @@ class GameAnalysisWidget(Widget):
         
         # === RIGHT SECTION: History graph ===
         if self._show_graph and len(history) > 0:
-            graph_top = 4
-            graph_bottom = self.height - 4
-            graph_height = graph_bottom - graph_top
-            
             # Center line
-            chart_y = graph_top + graph_height // 2
+            chart_y = self._graph_geometry()["chart_y"]
             draw.line([(graph_x, chart_y), (graph_right, chart_y)], fill=0, width=1)
-            
-            # Calculate bar width based on history length
-            bar_width = graph_width / len(history)
-            if bar_width > 6:
-                bar_width = 6
-            
-            # Scale factor: map score range (-12 to +12) to half the graph height
-            half_height = graph_height // 2
-            scale = half_height / 12.0
-            
-            # Right-justify: calculate starting offset so bars end at graph_right
-            total_bars_width = bar_width * len(history)
-            bar_offset = graph_right - total_bars_width
-            
-            for score in history:
-                # Adjust score for display if bottom_color is black
-                adjusted_score = -score if self.bottom_color == "black" else score
-                # Positive scores (white advantage) go up, use white fill
-                # Negative scores (black advantage) go down, use black fill
+
+            for x0, y0, x1, y1, adjusted_score in self._iter_graph_bars(history):
+                # Positive scores (bottom-player advantage) go up, use white fill;
+                # negative scores (bottom-player worse) go down, use black fill.
                 color = 255 if adjusted_score >= 0 else 0
-                
-                # Scale score to pixel offset from center line
-                y_offset = adjusted_score * scale
-                y_calc = chart_y - y_offset
-                y_calc = max(graph_top, min(graph_bottom, y_calc))
-                
-                y0 = min(chart_y, int(y_calc))
-                y1 = max(chart_y, int(y_calc))
-                
-                draw.rectangle(
-                    [(int(bar_offset), y0), (int(bar_offset + bar_width), y1)],
-                    fill=color,
-                    outline=0
-                )
-                bar_offset += bar_width
+                draw.rectangle([(x0, y0), (x1, y1)], fill=color, outline=0)
         elif self._show_graph:
             # Still draw the center line even if no history yet
-            graph_top = 4
-            graph_bottom = self.height - 4
-            chart_y = graph_top + (graph_bottom - graph_top) // 2
+            chart_y = self._graph_geometry()["chart_y"]
             draw.line([(graph_x, chart_y), (graph_right, chart_y)], fill=0, width=1)
+
+    def render_red(self, sprite: Image.Image) -> None:
+        """Render the RED overlay: the losing-side (negative) history bars in red.
+
+        Reuses the exact bar geometry from render() (via _iter_graph_bars) and
+        fills only the bars whose adjusted score is negative -- i.e. when the
+        bottom player is worse off -- with red. Positive bars and the rest of the
+        widget contribute no red.
+        """
+        if not self._show_graph:
+            return
+        history = self._analysis_state.history
+        if not history:
+            return
+
+        draw = ImageDraw.Draw(sprite)
+        for x0, y0, x1, y1, adjusted_score in self._iter_graph_bars(history):
+            if adjusted_score < 0:
+                draw.rectangle([(x0, y0), (x1, y1)], fill=0, outline=0)

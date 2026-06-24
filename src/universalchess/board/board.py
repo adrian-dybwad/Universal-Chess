@@ -87,10 +87,12 @@ board_meta_properties: Optional[dict] = None
 # Global display manager
 display_manager: Optional["Manager"] = None
 
-def _default_on_refresh(image):
+def _default_on_refresh(image, red_image=None):
     """Default callback for display refreshes - writes image to web static folder.
-    
-    Used by the web dashboard to mirror the e-paper display.
+
+    Used by the web dashboard to mirror the e-paper display. Accepts the optional
+    RED-plane snapshot (three-color mode) for signature parity with the scheduler
+    callback; mono refreshes pass None.
     """
     try:
         from universalchess.managers import AssetManager
