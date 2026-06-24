@@ -272,6 +272,40 @@ class InterruptRefreshTests(unittest.TestCase):
         self.assertEqual(future.result(), "interrupted")
         self.assertTrue(sched._force_reinit)
 
+    def test_restart_after_color_interrupt_is_full_even_without_red_change(self):
+        # An aborted full refresh leaves the panel mid-transition, so the restart
+        # must be a FULL refresh even when the interrupting frame would normally
+        # take the fast B/W partial path (no red change, no full request).
+        # Regression: routing on red_changed alone sends the restart to
+        # DisplayPartial, ghosting on top of the half-developed full waveform.
+        sched, epd = _make_scheduler(three_color=True)
+        self._queue_newer_item(sched)
+        first = _item(False, _bw_image(), _red_image(has_red=True))
+        sched._process_three_color(first[0], first[1], first[2], first[3])
+        self.assertEqual(first[1].result(), "interrupted")
+        sched._queue.get_nowait()  # drain so the restart is not itself aborted
+        epd.calls.clear()
+        # No red, not a full request -> normally BW_PARTIAL; must be promoted.
+        restart = _item(False, _bw_image(), _red_image(has_red=False))
+        sched._process_three_color(restart[0], restart[1], restart[2], restart[3])
+        self.assertIn("display_color", epd.calls)
+        self.assertNotIn("DisplayPartial", epd.calls)
+
+    def test_mono_restart_after_interrupt_is_full(self):
+        # Same rule on a mono panel: after an interrupted full refresh, a plain
+        # partial request must be promoted to a full refresh. Regression: the
+        # restart runs DisplayPartial over a half-developed full waveform.
+        sched, epd = _make_scheduler(three_color=False)
+        self._queue_newer_item(sched)
+        future = Future()
+        sched._execute_full_refresh_single(True, future, _bw_image())
+        self.assertEqual(future.result(), "interrupted")
+        sched._queue.get_nowait()  # drain
+        epd.calls.clear()
+        sched._process_batch([_item(False, _bw_image(), None)])
+        self.assertIn("display", epd.calls)
+        self.assertNotIn("DisplayPartial", epd.calls)
+
     def test_color_refresh_completes_when_no_newer_data(self):
         # Inverse guard: empty queue -> should_abort False -> the refresh
         # completes normally, resolves "color", and commits the red buffer. A

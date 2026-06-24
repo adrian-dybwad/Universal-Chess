@@ -67,6 +67,11 @@ class Scheduler:
         # full-refresh mode, so a live waveform-profile change reloads the panel's
         # LUT/voltages (a normal full refresh skips init() unless transitioning).
         self._force_reinit = False
+        # Set by an interrupted full refresh: the panel was left mid-transition
+        # by the aborted waveform, so the very next refresh MUST be full (a
+        # partial drawn over a half-developed full frame ghosts). Consumed by the
+        # next routing decision; re-armed if that restart is itself interrupted.
+        self._pending_full_after_interrupt = False
         # Last RED-plane buffer shown on the panel (three-color mode only), in the
         # getbuffer_red mask space (red = 0 bit, no-red = 0xFF byte). None until
         # the first three-color frame. Used to detect when red appears, changes,
@@ -321,9 +326,15 @@ class Scheduler:
                 self._max_partial_refreshes > 0
                 and self._partial_refresh_count >= self._max_partial_refreshes
             )
-            full_refresh = full or periodic_full
+            # Promote to full after an interrupted full refresh (consume the
+            # one-shot flag; the interrupt handler re-arms it if this restart is
+            # itself interrupted). The aborted waveform left the panel
+            # mid-transition, so a partial over it would ghost.
+            force_full = self._pending_full_after_interrupt
+            self._pending_full_after_interrupt = False
+            full_refresh = full or periodic_full or force_full
             if full_refresh:
-                self._execute_full_refresh_single(full, future, image)
+                self._execute_full_refresh_single(full or force_full, future, image)
             else:
                 self._execute_partial_refresh_single(full, future, image)
 
@@ -383,13 +394,19 @@ class Scheduler:
             red_changed = has_red
         else:
             red_changed = red_buf != self._last_red_buffer
-        go_full = full or red_changed
+        # A restart after an interrupted full refresh is forced full regardless of
+        # red: the prior aborted waveform left the panel mid-transition, so a
+        # partial would ghost. Consume the one-shot flag; the interrupt handler
+        # re-arms it if this restart is itself interrupted.
+        force_full = self._pending_full_after_interrupt
+        self._pending_full_after_interrupt = False
+        go_full = full or red_changed or force_full
 
         log.info(
-            "Scheduler three-color: path=%s (full_req=%s has_red=%s red_changed=%s) "
-            "in_partial=%s deep_asleep=%s force_reinit=%s",
+            "Scheduler three-color: path=%s (full_req=%s has_red=%s red_changed=%s "
+            "post_interrupt_full=%s) in_partial=%s deep_asleep=%s force_reinit=%s",
             "FULL_COLOR" if go_full else "BW_PARTIAL",
-            full, has_red, red_changed,
+            full, has_red, red_changed, force_full,
             self._in_partial_mode, self._deep_asleep, self._force_reinit,
         )
 
@@ -455,8 +472,9 @@ class Scheduler:
             # halts the partial update and re-establishes a clean state). The
             # restart with the latest frame happens on the next loop iteration.
             log.info("Scheduler: three-color refresh interrupted by newer data; "
-                     "will re-init and restart with latest frame")
+                     "will re-init and restart with a FULL refresh")
             self._force_reinit = True
+            self._pending_full_after_interrupt = True
             if not future.done():
                 future.set_result("interrupted")
             return True
@@ -513,8 +531,9 @@ class Scheduler:
             # next draw resets the panel (halting the aborted waveform) and
             # restarts with the latest frame on the next loop iteration.
             log.info("Scheduler: full refresh interrupted by newer data; "
-                     "will re-init and restart with latest frame")
+                     "will re-init and restart with a FULL refresh")
             self._force_reinit = True
+            self._pending_full_after_interrupt = True
             if not future.done():
                 future.set_result("interrupted")
             return
