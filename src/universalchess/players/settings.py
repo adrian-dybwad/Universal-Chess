@@ -284,6 +284,22 @@ class AllSettings:
 
         return cls(player1=player1, player2=player2, game=game)
 
+    def player_config_signature(self) -> tuple:
+        """Game-defining player fields for both players.
+
+        Captures the player configuration that a game's player objects are built
+        from. When this signature differs from a running game's captured value,
+        the configured players no longer match the ones in play (e.g. the engine
+        was changed), so a new game must rebuild the players rather than reuse the
+        stale ones. Excludes ``name`` (cosmetic: a rename must not abandon or
+        rebuild a game).
+        """
+        p1, p2 = self.player1, self.player2
+        return (
+            p1.type, p1.color, p1.engine, p1.elo, p1.hand_brain_mode,
+            p2.type, p2.color, p2.engine, p2.elo, p2.hand_brain_mode,
+        )
+
     def log_summary(self) -> None:
         """Log a summary of all settings."""
         self.player1.log_summary("Player1")

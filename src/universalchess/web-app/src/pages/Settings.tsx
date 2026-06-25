@@ -171,6 +171,7 @@ export function Settings() {
   const [hasChanges, setHasChanges] = useState(false);
   const [saving, setSaving] = useState(false);
   const [installingEngine, setInstallingEngine] = useState<string | null>(null);
+  const [engineError, setEngineError] = useState<string | null>(null);
   const [loginDialogOpen, setLoginDialogOpen] = useState(false);
   const [loginError, setLoginError] = useState<string | undefined>();
   const [pendingAction, setPendingAction] = useState<'save' | 'apply' | null>(null);
@@ -408,34 +409,98 @@ export function Settings() {
     setHasChanges(false);
   };
 
+  // Refresh the full engine list and the installed-engine subset used by the
+  // player/analysis dropdowns. Returns the fetched list so callers can inspect
+  // it (e.g. to resolve a display name) without waiting for the state update.
+  const refreshEngines = useCallback(async (): Promise<EngineDefinition[]> => {
+    const enginesData: EngineDefinition[] = await apiFetch('/api/engines/all').then((r) => r.json());
+    setEngines(enginesData);
+    setInstalledEngines(enginesData.filter((e) => e.installed));
+    return enginesData;
+  }, []);
+
+  // Poll the shared install-status endpoint until the in-progress install
+  // finishes, then refresh the engine list. The install runs in a background
+  // thread on the board, so the status singleton (GET /api/engines/status) is
+  // the source of truth -- this is reused both when an install is started from
+  // this session and when the page loads while one is already running, so the
+  // progress and any failure survive a page reload.
+  const pollEngineInstall = useCallback((engineName: string) => {
+    const checkStatus = async () => {
+      try {
+        const status = await apiFetch('/api/engines/status').then((r) => r.json());
+        if (status.installing) {
+          setInstallingEngine(status.engine ?? engineName);
+          setTimeout(checkStatus, 2000);
+          return;
+        }
+        const enginesData = await refreshEngines();
+        setInstallingEngine(null);
+        const result = status.last_result;
+        if (result && result.engine === engineName && result.success === false) {
+          const label = enginesData.find((e) => e.name === engineName)?.display_name ?? engineName;
+          setEngineError(`Failed to install ${label}.${result.error ? ` ${result.error}` : ''}`);
+        }
+      } catch (e) {
+        console.error('Failed to poll engine install status:', e);
+        setInstallingEngine(null);
+        setEngineError('Lost connection while installing. Reload to see the current status.');
+      }
+    };
+    setTimeout(checkStatus, 1500);
+  }, [refreshEngines]);
+
+  // The backend contract is POST /api/engines/{install,uninstall} with the
+  // engine name in the JSON body (matching the legacy configure page). Install
+  // runs asynchronously and is tracked via /api/engines/status; uninstall
+  // completes synchronously in the request.
   const toggleEngine = useCallback(async (engineName: string, install: boolean) => {
+    setEngineError(null);
     setInstallingEngine(engineName);
     const endpoint = install ? 'install' : 'uninstall';
     try {
-      await apiFetch(`/api/engines/${endpoint}/${engineName}`, { method: 'POST' });
-      // Poll for completion
-      const checkStatus = async () => {
-        const response = await apiFetch('/api/engines/all');
-        const enginesData = await response.json();
-        const engine = enginesData.find((e: EngineDefinition) => e.name === engineName);
-        if (engine && engine.installed === install) {
-          setEngines(enginesData);
-          setInstalledEngines(enginesData.filter((e: EngineDefinition) => e.installed));
-          setInstallingEngine(null);
-        } else if (install) {
-          setTimeout(checkStatus, 2000);
-        } else {
-          setEngines(enginesData);
-          setInstalledEngines(enginesData.filter((e: EngineDefinition) => e.installed));
-          setInstallingEngine(null);
-        }
-      };
-      setTimeout(checkStatus, 1000);
+      const response = await apiFetch(`/api/engines/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ engine: engineName }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.success === false) {
+        setInstallingEngine(null);
+        setEngineError(data.error || `Failed to ${endpoint} ${engineName}.`);
+        return;
+      }
+      if (install) {
+        pollEngineInstall(engineName);
+      } else {
+        await refreshEngines();
+        setInstallingEngine(null);
+      }
     } catch (e) {
       console.error(`Failed to ${endpoint} engine:`, e);
       setInstallingEngine(null);
+      setEngineError(`Failed to ${endpoint} ${engineName}. Check the connection and try again.`);
     }
-  }, []);
+  }, [pollEngineInstall, refreshEngines]);
+
+  // Resume an install that is already running on the board (started before this
+  // page loaded, from another client, or surviving a reload). Without this, a
+  // reload mid-install would drop the "Installing..." button/notice even though
+  // the background install is still running. Runs once on mount; the poll then
+  // clears itself and refreshes the engine list when the install finishes.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const status = await apiFetch('/api/engines/status').then((r) => r.json());
+        if (status.installing && status.engine) {
+          setInstallingEngine(status.engine);
+          pollEngineInstall(status.engine);
+        }
+      } catch (e) {
+        console.error('Failed to read engine install status on load:', e);
+      }
+    })();
+  }, [pollEngineInstall]);
 
   if (loading) {
     return (
@@ -874,12 +939,9 @@ export function Settings() {
             <h2 className="page-title">Chess Engines</h2>
             <p className="text-muted mb-6">Install and manage chess engines for play and analysis</p>
 
-            {installingEngine && (
+            {engineError && (
               <Card variant="muted" className="mb-6">
-                <div className="flex items-center gap-4">
-                  <div className="spinner" />
-                  <span>Installing {installingEngine}... This may take several minutes.</span>
-                </div>
+                <div className="error">{engineError}</div>
               </Card>
             )}
 
@@ -1011,6 +1073,7 @@ function EnginesList({
                   key={engine.name}
                   engine={engine}
                   isInstalling={installingEngine === engine.name}
+                  installInProgress={installingEngine !== null}
                   onToggle={onToggle}
                 />
               ))}
@@ -1025,13 +1088,29 @@ function EnginesList({
 function EngineCard({
   engine,
   isInstalling,
+  installInProgress,
   onToggle,
 }: {
   engine: EngineDefinition;
   isInstalling: boolean;
+  // True while any engine on the page is installing. The backend installs one
+  // engine at a time (returns 409 otherwise), so every action button is
+  // disabled for the duration -- not just the one being installed.
+  installInProgress: boolean;
   onToggle: (name: string, install: boolean) => void;
 }) {
   const isSystem = engine.name === 'stockfish'; // Stockfish is a system package
+
+  // During an install the engine is not yet installed; during an uninstall it
+  // still is. This distinguishes the two in-flight labels for this card.
+  const isUninstalling = isInstalling && engine.installed;
+  const buttonLabel = isUninstalling
+    ? `Uninstalling ${engine.display_name}...`
+    : isInstalling
+      ? `Installing ${engine.display_name}...`
+      : engine.installed
+        ? 'Uninstall'
+        : 'Install';
 
   return (
     <div className="engine-card">
@@ -1056,14 +1135,22 @@ function EngineCard({
         </p>
       )}
       {!isSystem && (
-        <Button
-          variant={engine.installed ? 'danger' : 'primary'}
-          size="sm"
-          disabled={isInstalling}
-          onClick={() => onToggle(engine.name, !engine.installed)}
-        >
-          {isInstalling ? 'Installing...' : engine.installed ? 'Uninstall' : 'Install'}
-        </Button>
+        <div className="engine-card-actions">
+          <Button
+            variant={engine.installed ? 'danger' : 'primary'}
+            size="sm"
+            disabled={installInProgress}
+            onClick={() => onToggle(engine.name, !engine.installed)}
+          >
+            {buttonLabel}
+          </Button>
+          {isInstalling && !isUninstalling && (
+            <span className="engine-install-note">
+              <span className="spinner spinner--sm" />
+              This may take several minutes.
+            </span>
+          )}
+        </div>
       )}
     </div>
   );

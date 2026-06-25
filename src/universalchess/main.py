@@ -578,6 +578,16 @@ _is_position_game = False  # Flag to track if current game is a position (practi
 _switch_to_normal_game = False  # Flag to signal switch from position game to normal game
 _pending_ble_client_type: str = None  # Flag for BLE connection when between menus
 _pending_settings_reload = False  # Flag: web changed settings, rebuild live game display
+# A board-reset new game (pieces returned to the start position) restarts play
+# in place, reusing the current player objects. Those objects were built from the
+# settings in effect when the game started, so if player-defining settings changed
+# since (e.g. the engine was changed from the web), the reused players are stale.
+# This flag, set when such a new game is detected, defers a full game rebuild to
+# the main thread (game/display mutation must not run on the event/subscriber
+# thread). _active_player_signature records the running game's player config so the
+# change can be detected; see _player_config_signature.
+_pending_player_rebuild = False
+_active_player_signature: Optional[tuple] = None
 # Board-control command pushed from the web app (set up a position / abort the
 # game) over the settings socket. Set on the subscriber thread and applied on
 # the main thread (see _process_pending_board_command), since it rebuilds the
@@ -1059,6 +1069,18 @@ def _player2_settings_dict() -> Dict[str, Any]:
 def _game_settings_dict() -> Dict[str, Any]:
     """Get game settings as a dict."""
     return _get_settings().game.to_dict()
+
+
+def _player_config_changed_since_game_start() -> bool:
+    """True when player-defining settings differ from the running game's.
+
+    The signature itself lives on ``AllSettings`` (pure settings logic). Returns
+    False when no game signature has been captured yet (no game built), so
+    callers treat "unknown" as "no change" and keep the existing behavior.
+    """
+    if _active_player_signature is None:
+        return False
+    return _get_settings().player_config_signature() != _active_player_signature
 
 
 def _list_chess_sprite_sheets() -> List[str]:
@@ -1661,6 +1683,7 @@ def _start_game_mode(
                                       resume, where moves are replayed AFTER game mode starts.
     """
     global app_state, protocol_manager, display_manager, controller_manager, _is_position_game
+    global _active_player_signature, _pending_player_rebuild
 
     log.info(f"[App] Transitioning to GAME mode (position_game={is_position_game})")
 
@@ -1684,6 +1707,12 @@ def _start_game_mode(
     settings = _get_settings()
     p1 = settings.player1
     p2 = settings.player2
+
+    # Record the player config this game is built from, and clear any pending
+    # rebuild request (this start already reflects the latest settings). A later
+    # board-reset new game compares against this to detect a settings change.
+    _active_player_signature = settings.player_config_signature()
+    _pending_player_rebuild = False
 
     # Player 1 is at the bottom of the board
     # Determine which color each player plays
@@ -2056,7 +2085,7 @@ def _start_game_mode(
     _clock_started = False
     def _on_game_event(event):
         nonlocal _clock_started
-        global _switch_to_normal_game, _is_position_game
+        global _switch_to_normal_game, _is_position_game, _pending_player_rebuild
         if event == EVENT_NEW_GAME:
             from universalchess.services.analysis import get_analysis_service
             get_analysis_service().reset()
@@ -2073,6 +2102,15 @@ def _start_game_mode(
             if _is_position_game:
                 log.info("[App] Starting position detected in position game - signaling switch to normal game")
                 _switch_to_normal_game = True
+            elif _player_config_changed_since_game_start():
+                # A board-reset new game reuses the current player objects, but
+                # player-defining settings changed since they were built (e.g. the
+                # engine was changed from the web). Defer a full rebuild to the main
+                # thread so the new game uses the new players/engine. This callback
+                # runs on the controller event thread; game/display teardown must
+                # run on the main thread (mirrors _switch_to_normal_game).
+                log.info("[App] New game on board with changed player settings - scheduling player rebuild")
+                _pending_player_rebuild = True
         elif event == EVENT_WHITE_TURN or event == EVENT_BLACK_TURN:
             # Start clock on first turn event (game has truly started)
             # Turn indicator is handled by ChessClockWidget observing ChessGameState directly
@@ -2230,9 +2268,15 @@ def _enter_game():
     the menu was showing are forwarded as the first move, and an already-
     connected client is switched to remote control.
     """
-    if _has_suspended_game():
+    if _has_suspended_game() and not _player_config_changed_since_game_start():
         _resume_game_mode()
     else:
+        # No suspended game, or the suspended game's players are stale because
+        # player-defining settings changed since it began (e.g. engine changed
+        # from the web). Start fresh so the new players/engine take effect rather
+        # than resuming the old game. _start_game_mode tears down any stale game.
+        if _has_suspended_game():
+            log.info("[App] Player settings changed since the suspended game began - starting a new game")
         _get_menu_context().clear()
         _start_game_mode()
 
@@ -2921,7 +2965,10 @@ def _build_main_menu_context():
     def play_label(node):
         # Keep the PLAY/RESUME strings in the catalog; choose by suspended-game
         # state so the row tells the user whether selecting it resumes or starts.
-        return node["label_in_progress"] if _has_suspended_game() else node["label"]
+        # A suspended game whose player settings changed will start fresh (see
+        # _enter_game), so show PLAY rather than RESUME in that case.
+        will_resume = _has_suspended_game() and not _player_config_changed_since_game_start()
+        return node["label_in_progress"] if will_resume else node["label"]
 
     ctx = BoardMenuContext()
     ctx.register_store("main", main_get, main_set)
@@ -4887,7 +4934,7 @@ def main():
     global running, kill
     global mainloop, relay_mode, protocol_manager, relay_manager, app_state, _args
     global _pending_piece_events, _return_to_positions_menu, _switch_to_normal_game, _menu_manager
-    global _pending_settings_reload
+    global _pending_settings_reload, _pending_player_rebuild
     
     try:
         log.info("[Main] Parsing arguments...")
@@ -5463,6 +5510,15 @@ def main():
                         log.info("[App] Switching from position game to normal game")
                         _cleanup_game()
                         _start_game_mode(starting_fen=None, is_position_game=False)
+                    # A board-reset new game was detected while player-defining
+                    # settings had changed (e.g. engine changed from the web). Rebuild
+                    # the game so the new players/engine take effect. _start_game_mode
+                    # tears down the stale players and re-reads the current settings.
+                    elif _pending_player_rebuild:
+                        _pending_player_rebuild = False
+                        log.info("[App] Rebuilding game with updated player settings (new engine/players)")
+                        _cleanup_game()
+                        _start_game_mode()
                     # Apply a settings change pushed from the web app during a game so
                     # display/sprite toggles take effect live, matching the on-board
                     # display menu. Rebuilt here (main thread) - never from the

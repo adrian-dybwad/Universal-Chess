@@ -86,6 +86,19 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- Changing a player's engine (or other player-defining setting) from the web did
+  not take effect in the next game: a board-reset new game restarts play in place
+  and reused the player objects built when the game first started, so the old
+  engine kept playing. The running game's player configuration is now captured as
+  a signature; when it differs from the current settings, the next new game (board
+  reset or menu PLAY) rebuilds the players so the new engine is loaded.
+- Web UI engine install never started and the progress notice spun forever: the
+  React Settings page posted to `/api/engines/{install,uninstall}/<name>` with no
+  body, but the backend expects `POST /api/engines/{install,uninstall}` with the
+  engine name in the JSON body, so every request 404'd. The page now uses the
+  correct contract, polls `/api/engines/status`, surfaces failures, shows
+  `Installing <name>...` on the button with the "may take several minutes" notice
+  beside it, and restores the in-progress state after a page reload
 - Engine timeout issues on Raspberry Pi (removed default timeouts)
 - Multiple engine instance conflicts (via EngineRegistry)
 - dpkg lock conflicts during installation
