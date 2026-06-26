@@ -61,3 +61,17 @@ export interface EngineDefinition {
  * Connection status for SSE.
  */
 export type ConnectionStatus = 'connected' | 'reconnecting' | 'disconnected';
+
+/**
+ * Board battery status. Mirrors GET /api/system/battery and the board's
+ * `battery_status` SSE event. Battery is read from the board controller in the
+ * main process, so values are null until the board has reported a reading.
+ */
+export interface BatteryStatus {
+  /** Battery level on the board's 0-20 scale, or null if unknown. */
+  battery_level: number | null;
+  /** Battery level as a percentage (0-100), or null if unknown. */
+  battery_percent: number | null;
+  /** Whether the charger is connected. */
+  charger_connected: boolean;
+}

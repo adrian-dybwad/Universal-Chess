@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { ConnectionStatus } from './ConnectionStatus';
+import { BatteryIndicator } from './BatteryIndicator';
 import './Navbar.css';
 
 /**
@@ -35,6 +36,7 @@ export function Navbar() {
             <span aria-hidden="true" />
           </button>
           <div className="navbar-item navbar-item--mobile-status">
+            <BatteryIndicator compact />
             <ConnectionStatus compact />
           </div>
         </div>
@@ -100,8 +102,9 @@ export function Navbar() {
           >
             Licenses
           </Link>
-          {/* Desktop: full connection status in navbar-end */}
+          {/* Desktop: battery + full connection status in navbar-end */}
           <div className="navbar-item navbar-item--desktop-status">
+            <BatteryIndicator />
             <ConnectionStatus />
           </div>
         </div>

@@ -910,6 +910,27 @@ def _broadcast_chromecast_state() -> None:
         log.debug(f"[App] Failed to broadcast chromecast state: {e}")
 
 
+def _broadcast_battery_status() -> None:
+    """Mirror the board's battery level/charger state to the web UI (board -> web).
+
+    Registered as a SystemState battery observer and also invoked on demand for a
+    'request_battery_status' pull, so the web navbar indicator reflects the level
+    and charging state that only the board process can read (via the controller).
+    Best-effort; never raises into the observer notification.
+    """
+    try:
+        from universalchess.state import get_system
+        from universalchess.services.game_broadcast import broadcast_battery_status
+        state = get_system()
+        broadcast_battery_status(
+            state.battery_level,
+            state.battery_percent,
+            state.charger_connected,
+        )
+    except Exception as e:  # noqa: BLE001 - web mirror is best-effort
+        log.debug(f"[App] Failed to broadcast battery status: {e}")
+
+
 def _handle_web_chromecast_command(command: str, parsed: dict) -> None:
     """Apply a web Chromecast command (start/stop/status) on the board.
 
@@ -5053,12 +5074,22 @@ def main():
         except Exception as e:
             log.debug(f"[Main] BT-status request error: {e}")
 
+    # Re-broadcast the current battery status on demand. The web battery
+    # indicator sends this when it mounts (or after a web-service restart)
+    # without a cached snapshot; the board -> web broadcast is one-way with no
+    # replay, so this pushes the current level/charger state immediately.
+    def _on_battery_status_requested():
+        """A web client asked for the current battery status."""
+        log.debug("[Main] Web requested current battery status, re-broadcasting")
+        _broadcast_battery_status()
+
     try:
         from universalchess.services.game_broadcast import get_settings_subscriber
         settings_subscriber = get_settings_subscriber()
         settings_subscriber.add_callback(_on_settings_changed)
         settings_subscriber.add_request_callback(_on_game_state_requested)
         settings_subscriber.add_bt_status_request_callback(_on_bt_status_requested)
+        settings_subscriber.add_battery_status_request_callback(_on_battery_status_requested)
         settings_subscriber.add_command_callback(_on_board_command)
         settings_subscriber.start()
         log.info("[Main] Settings subscriber started (hot reload enabled)")
@@ -5074,6 +5105,15 @@ def main():
         get_chromecast().add_observer(_broadcast_chromecast_state)
     except Exception as e:  # noqa: BLE001 - web mirror is optional
         log.debug(f"[Main] Failed to register chromecast state observer: {e}")
+
+    # Mirror battery level/charger changes to the web navbar indicator. The
+    # SystemPollingService updates SystemState every 5s; this observer pushes
+    # each change to the web over the game socket (board -> web).
+    try:
+        from universalchess.state import get_system
+        get_system().on_battery_change(_broadcast_battery_status)
+    except Exception as e:  # noqa: BLE001 - web mirror is optional
+        log.debug(f"[Main] Failed to register battery state observer: {e}")
     
     try:
         log.info("[Main] Initializing ConnectionManager...")

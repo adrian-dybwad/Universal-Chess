@@ -1,0 +1,48 @@
+/**
+ * Battery indicator for the navbar. Sits on the dark navbar background, so the
+ * outline and text use the inherited white text color (currentColor) and only
+ * the fill carries the level/charge color.
+ */
+
+.battery-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  color: #fff;
+  font-size: 0.75rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.battery-glyph {
+  display: block;
+  flex-shrink: 0;
+}
+
+/* Outline and cap track the text color so the empty battery reads on the dark
+   navbar; the fill rect supplies the level/charge color. */
+.battery-body {
+  stroke: currentColor;
+  opacity: 0.85;
+}
+
+.battery-cap {
+  fill: currentColor;
+  opacity: 0.85;
+}
+
+/* The bolt is drawn over the fill; white keeps it visible across fill colors. */
+.battery-bolt {
+  fill: #fff;
+  stroke: rgba(0, 0, 0, 0.35);
+  stroke-width: 0.4;
+}
+
+.battery-text {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Compact mode (mobile): glyph only, matching the connection status treatment. */
+.battery-indicator--compact .battery-text {
+  display: none;
+}

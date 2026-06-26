@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { GameState, AnalysisResult, ConnectionStatus } from '../types/game';
+import type { GameState, AnalysisResult, ConnectionStatus, BatteryStatus } from '../types/game';
 
 export interface MoveToastData {
   move: string;
@@ -12,6 +12,7 @@ export interface MoveToastData {
 interface GameStoreState {
   gameState: GameState | null;
   connectionStatus: ConnectionStatus;
+  battery: BatteryStatus | null;
   analysis: AnalysisResult | null;
   analysisHistory: AnalysisResult[];
   currentMoveIndex: number;
@@ -19,6 +20,7 @@ interface GameStoreState {
   
   setGameState: (state: GameState) => void;
   setConnectionStatus: (status: ConnectionStatus) => void;
+  setBattery: (battery: BatteryStatus) => void;
   setAnalysis: (analysis: AnalysisResult) => void;
   addAnalysisToHistory: (analysis: AnalysisResult) => void;
   setCurrentMoveIndex: (index: number) => void;
@@ -30,6 +32,7 @@ interface GameStoreState {
 export const useGameStore = create<GameStoreState>((set) => ({
   gameState: null,
   connectionStatus: 'disconnected',
+  battery: null,
   analysis: null,
   analysisHistory: [],
   currentMoveIndex: -1,
@@ -37,6 +40,7 @@ export const useGameStore = create<GameStoreState>((set) => ({
 
   setGameState: (gameState) => set({ gameState }),
   setConnectionStatus: (connectionStatus) => set({ connectionStatus }),
+  setBattery: (battery) => set({ battery }),
   setAnalysis: (analysis) => set({ analysis }),
   addAnalysisToHistory: (analysis) =>
     set((state) => ({

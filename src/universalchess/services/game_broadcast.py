@@ -256,6 +256,11 @@ class GameSubscriber:
         # immediately, mirroring _last_state for game state. The board owns the
         # authoritative engine; this is the web process's most-recent copy.
         self._last_bt_status: Optional[dict] = None
+        # Latest live battery snapshot (type == 'battery_status'). Battery is read
+        # from the board controller in the main process; this is the web process's
+        # most-recent copy so GET /api/system/battery and a fresh SSE client can
+        # render the indicator without waiting for the next board poll to change.
+        self._last_battery_status: Optional[dict] = None
     
     def _ensure_socket(self) -> None:
         """Create and bind the Unix socket."""
@@ -326,6 +331,15 @@ class GameSubscriber:
             after a web-service restart before the board re-broadcasts).
         """
         return self._last_bt_status
+
+    def get_last_battery_status(self) -> Optional[dict]:
+        """Get the most recent battery status snapshot received.
+
+        Returns:
+            Last ``battery_status`` payload dict, or None if none received yet
+            (e.g. after a web-service restart before the board re-broadcasts).
+        """
+        return self._last_battery_status
     
     def start(self) -> None:
         """Start the subscriber thread."""
@@ -381,6 +395,12 @@ class GameSubscriber:
                 # for the next board change.
                 if parsed.get("type") == "bt_status":
                     self._last_bt_status = parsed
+
+                # Cache the latest battery snapshot for the same reason: the web
+                # battery indicator (REST initial fetch, fresh SSE client) can
+                # render at once without waiting for the next board change.
+                if parsed.get("type") == "battery_status":
+                    self._last_battery_status = parsed
 
                 # Notify raw callbacks for all message types
                 with self._lock:
@@ -689,6 +709,36 @@ class SettingsPublisher:
             self._connected = False
             return False
 
+    def request_battery_status(self) -> bool:
+        """Ask the main process to re-broadcast the current battery status.
+
+        Sent when the web app needs the live battery level but has no cached
+        snapshot (e.g. after a web-service restart, or when the battery indicator
+        first mounts). The board -> web broadcast is one-way with no replay, so
+        this pull triggers an immediate re-broadcast of the current battery state
+        instead of waiting for the next board battery poll to change the level.
+
+        Returns:
+            True if sent successfully, False otherwise.
+        """
+        if not self._connected:
+            if not self.connect():
+                return False
+
+        try:
+            socket_path = get_settings_socket_path()
+            message = json.dumps({"type": "request_battery_status"}).encode("utf-8")
+            self._socket.sendto(message, str(socket_path))
+            log.debug("[SettingsPublisher] Sent request_battery_status")
+            return True
+        except FileNotFoundError:
+            log.debug("[SettingsPublisher] Main process not listening")
+            return False
+        except Exception as e:
+            log.debug(f"[SettingsPublisher] Send failed: {e}")
+            self._connected = False
+            return False
+
     def close(self) -> None:
         """Close the socket."""
         with self._lock:
@@ -715,6 +765,7 @@ class SettingsSubscriber:
         self._callbacks: List[Callable[[], None]] = []
         self._request_callbacks: List[Callable[[], None]] = []
         self._bt_status_request_callbacks: List[Callable[[], None]] = []
+        self._battery_status_request_callbacks: List[Callable[[], None]] = []
         self._command_callbacks: List[Callable[[dict], None]] = []
         self._lock = threading.Lock()
     
@@ -769,6 +820,19 @@ class SettingsSubscriber:
         """
         with self._lock:
             self._bt_status_request_callbacks.append(callback)
+
+    def add_battery_status_request_callback(self, callback: Callable[[], None]) -> None:
+        """Register a callback for battery-status re-broadcast requests.
+
+        Invoked when the web app asks the main process to re-broadcast the current
+        battery status (the web mounted/restarted with no cached snapshot). The
+        handler asks the board to broadcast the current battery state now.
+
+        Args:
+            callback: Function to call on a battery-status request (no arguments).
+        """
+        with self._lock:
+            self._battery_status_request_callbacks.append(callback)
 
     def add_command_callback(self, callback: Callable[[dict], None]) -> None:
         """Register a callback for board-control commands.
@@ -863,6 +927,16 @@ class SettingsSubscriber:
                             callback()
                         except Exception as e:
                             log.error(f"[SettingsSubscriber] BT status request callback error: {e}")
+                elif msg_type == "request_battery_status":
+                    log.debug("[SettingsSubscriber] Received request_battery_status, notifying callbacks")
+                    with self._lock:
+                        battery_status_callbacks = list(self._battery_status_request_callbacks)
+
+                    for callback in battery_status_callbacks:
+                        try:
+                            callback()
+                        except Exception as e:
+                            log.error(f"[SettingsSubscriber] Battery status request callback error: {e}")
                 elif msg_type == "board_command":
                     log.info(f"[SettingsSubscriber] Received board_command: {parsed.get('command')}")
                     with self._lock:
@@ -953,4 +1027,46 @@ def request_bt_status_broadcast() -> bool:
         True if the request was sent, False otherwise.
     """
     return get_settings_publisher().request_bt_status()
+
+
+def request_battery_status_broadcast() -> bool:
+    """Ask the main process to re-broadcast the current battery status.
+
+    Called from the web app when the battery indicator needs the live level but
+    has no cached snapshot, so the board re-broadcasts immediately rather than
+    the web waiting for the next board battery poll to change the level.
+
+    Returns:
+        True if the request was sent, False otherwise.
+    """
+    return get_settings_publisher().request_battery_status()
+
+
+def broadcast_battery_status(
+    battery_level: Optional[int],
+    battery_percent: Optional[int],
+    charger_connected: bool,
+) -> bool:
+    """Broadcast the current battery status to the web (board -> web).
+
+    Called from the main process whenever the battery level or charger state
+    changes (and on demand for a re-broadcast request). The web app caches the
+    snapshot and forwards it to SSE clients so the navbar indicator updates live.
+
+    Args:
+        battery_level: Battery level on the 0-20 scale, or None if unknown.
+        battery_percent: Battery level as a percentage (0-100), or None if unknown.
+        charger_connected: Whether the charger is connected.
+
+    Returns:
+        True if the broadcast was sent, False otherwise.
+    """
+    return get_broadcaster().broadcast_event(
+        "battery_status",
+        {
+            "battery_level": battery_level,
+            "battery_percent": battery_percent,
+            "charger_connected": charger_connected,
+        },
+    )
 

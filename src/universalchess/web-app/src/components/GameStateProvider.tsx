@@ -16,7 +16,7 @@ export function GameStateProvider({ children }: { children: React.ReactNode }) {
   const lastGameIdRef = useRef<number | null>(null);
   const isInitializedRef = useRef(false);
   const isOnLiveBoardRef = useRef(false);
-  const { setGameState, setConnectionStatus } = useGameStore();
+  const { setGameState, setConnectionStatus, setBattery } = useGameStore();
   const { toast, showToast, hideToast } = useGameStore();
   const location = useLocation();
 
@@ -79,7 +79,26 @@ export function GameStateProvider({ children }: { children: React.ReactNode }) {
 
       es.onmessage = (event) => {
         try {
-          const state: GameState = JSON.parse(event.data);
+          const data = JSON.parse(event.data);
+
+          // The /events stream multiplexes several event types over one
+          // connection. Battery updates feed the navbar indicator; other
+          // non-game events (bt_status, chromecast_state, pairing) are handled
+          // by the pages that need them. Only game_state messages carry board
+          // state, so anything else must not be written into gameState.
+          if (data.type === 'battery_status') {
+            setBattery({
+              battery_level: data.battery_level ?? null,
+              battery_percent: data.battery_percent ?? null,
+              charger_connected: Boolean(data.charger_connected),
+            });
+            return;
+          }
+          if (data.type && data.type !== 'game_state') {
+            return;
+          }
+
+          const state: GameState = data;
           setGameState(state);
 
           const prevPgn = lastPgnRef.current;
@@ -164,7 +183,7 @@ export function GameStateProvider({ children }: { children: React.ReactNode }) {
         eventSourceRef.current = null;
       }
     };
-  }, [setGameState, setConnectionStatus, showToast]);
+  }, [setGameState, setConnectionStatus, setBattery, showToast]);
 
   return (
     <>

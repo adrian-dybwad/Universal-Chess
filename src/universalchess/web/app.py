@@ -2721,6 +2721,48 @@ def api_system_hardware():
         return _internal_error(e)
 
 
+@app.route("/api/system/battery", methods=["GET"])
+def api_system_battery():
+    """Return the latest battery level/charger state for the navbar indicator.
+
+    Read-only and unauthenticated like the other GET probes. Battery is read from
+    the board controller, which exists only in the main process; that process
+    broadcasts every change over the game socket and the web subscriber caches the
+    latest snapshot. Live updates reach the browser over SSE -- this endpoint just
+    seeds the indicator on load. When nothing is cached yet (fresh web start,
+    before the board re-broadcasts), ask the board to re-broadcast so the next SSE
+    push fills it, and return the unknown contract (nulls) for now.
+
+    Contract: {battery_level: 0-20|null, battery_percent: 0-100|null,
+    charger_connected: bool}.
+    """
+    try:
+        from universalchess.services.game_broadcast import (
+            get_subscriber,
+            request_battery_status_broadcast,
+        )
+
+        cached = get_subscriber().get_last_battery_status()
+        if cached is None:
+            request_battery_status_broadcast()
+            return jsonify(
+                {
+                    "battery_level": None,
+                    "battery_percent": None,
+                    "charger_connected": False,
+                }
+            )
+        return jsonify(
+            {
+                "battery_level": cached.get("battery_level"),
+                "battery_percent": cached.get("battery_percent"),
+                "charger_connected": bool(cached.get("charger_connected", False)),
+            }
+        )
+    except Exception as e:
+        return _internal_error(e)
+
+
 @app.route("/api/system/reset", methods=["POST"])
 @requires_auth
 def api_system_reset():
