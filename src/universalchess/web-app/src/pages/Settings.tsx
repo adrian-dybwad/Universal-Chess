@@ -1299,11 +1299,12 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
         setError(data.error || 'Install failed');
       } else {
         // The install runs asynchronously; the board and web interface
-        // restart when it finishes, so this page may briefly disconnect.
-        // This is informational, not an error. The status poll flips this to
-        // a completion message once the install finishes (see effect above).
+        // restart when it finishes, so this page may briefly disconnect. The
+        // "Update in progress…" card (driven by status.is_installing) already
+        // conveys this, so no toast is shown here to avoid a redundant, nearly
+        // identical message. The status poll flips awaitingInstallRef to a
+        // completion notice once the install finishes (see effect above).
         awaitingInstallRef.current = true;
-        setNotice('Update installation started. The board will restart when it completes; this page may briefly disconnect.');
       }
     } catch {
       setError('Network error');
@@ -1386,7 +1387,7 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
             <strong>Update in progress…</strong>
             <p className="text-muted mt-2">
               An update is installing. The board will restart when it completes;
-              this page may briefly disconnect. Please don&apos;t start another install.
+              this page may briefly disconnect.
             </p>
           </Card>
         )}
