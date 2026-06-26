@@ -32,7 +32,8 @@ Node behavior schema (fields read here; all optional unless noted):
   by provider-backed ``select`` nodes whose choices are a runtime list (installed
   engines, per-engine ELO levels) rather than a static option set; a ``select``
   carries either ``optionSet`` or ``provider``.
-- ``visibleWhen``: ``{"store", "key", "in": [...] | "equals": <v>}`` gating the row.
+- ``visibleWhen``: ``{"store", "key", "in": [...] | "equals": <v>}`` gating the row,
+  or ``{"allOf": [<condition>, ...]}`` to require every subcondition (AND).
 - ``enabledWhen``: same shape as ``visibleWhen``; gates the row's *enabled* flag
   (the row stays visible but is non-selectable when unmet).
 - ``range``: ``{"min", "max", "step"?, "wrap"?}`` for ``range`` cyclers.
@@ -250,8 +251,14 @@ def _condition_met(condition: dict, ctx: MenuContext) -> bool:
     """Evaluate a ``{store, key, in|equals}`` condition against bound state.
 
     Shared by ``visibleWhen`` and ``enabledWhen`` so the two gates cannot drift.
-    An unrecognized condition shape returns True (fails open).
+    A compound ``{"allOf": [<condition>, ...]}`` is satisfied only when *every*
+    subcondition holds (logical AND), letting a row depend on more than one bound
+    value -- e.g. 'Show Graph' requires both the master analysis compute
+    (analysis.mode) and the analysis widget (game.show_analysis). An unrecognized
+    condition shape returns True (fails open).
     """
+    if "allOf" in condition:
+        return all(_condition_met(sub, ctx) for sub in condition["allOf"])
     value = ctx.get(condition["store"], condition["key"])
     if "in" in condition:
         return value in condition["in"]

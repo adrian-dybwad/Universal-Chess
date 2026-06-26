@@ -53,13 +53,17 @@ def _state(**overrides):
         "show_graph": True,
         "led_brightness": 5,
         "chess_sprites": "default",
+        # Master analysis compute switch (Game menu's Live Analysis). The Display
+        # analysis toggles gate on it via the catalog, so the fixture must carry
+        # it the same way the real display context does (see _ctx below).
+        "analysis_mode": True,
     }
     base.update(overrides)
     return base
 
 
 def _ctx(state, sheets=_SHEETS):
-    """Board context with a dict-backed game store and a fake sprite provider.
+    """Board context with dict-backed game + analysis stores and a sprite provider.
 
     The provider is a *pure data source*: it returns one row per sheet (key =
     sheet id, with the sheet's preview image/mask) and nothing else. The engine
@@ -67,9 +71,19 @@ def _ctx(state, sheets=_SHEETS):
     declares ``itemBind: game.chess_sprites``, so build_rows attaches each row's
     ``set_value`` behavior and the radio marking against the current value. This
     mirrors main._build_display_context after the sprite migration.
+
+    The ``analysis`` store is registered (reading ``mode`` from the shared
+    ``analysis_mode`` game setting, as main._build_display_context does) because
+    the Show Analysis / Show Graph rows gate on ``analysis.mode`` via the
+    catalog; without it, building those rows would raise on the missing store.
     """
     ctx = BoardMenuContext()
     ctx.register_store("game", lambda k: state[k], lambda k, v: state.__setitem__(k, v))
+    ctx.register_store(
+        "analysis",
+        lambda k: state["analysis_mode"] if k == "mode" else state[k],
+        lambda k, v: state.__setitem__("analysis_mode" if k == "mode" else k, v),
+    )
 
     def sprite_sheets():
         return [
@@ -129,17 +143,47 @@ def test_board_labels_use_abbreviations_and_led_shows_value():
     assert by_id["field.display.led_brightness"].label == "LED: 7"
 
 
-def test_graph_row_disabled_when_analysis_off():
+def test_graph_row_disabled_when_analysis_widget_off():
     """Show Graph is selectable only while Show Analysis is on (enabledWhen).
 
-    Why this test exists: the graph overlays the analysis, so it is meaningless
-    with analysis hidden. How the regression manifests: Show Graph stays enabled
-    with analysis off, letting the user toggle a no-op setting.
+    Why this test exists: the graph overlays the analysis widget, so it is
+    meaningless with the widget hidden. How the regression manifests: Show Graph
+    stays enabled with the widget off, letting the user toggle a no-op setting.
     """
     on = {r.node["id"]: r for r in _display_rows(_state(show_analysis=True))}
     off = {r.node["id"]: r for r in _display_rows(_state(show_analysis=False))}
     assert on["field.display.show_graph"].enabled is True
     assert off["field.display.show_graph"].enabled is False
+
+
+def test_analysis_rows_disabled_when_live_analysis_off():
+    """Show Analysis and Show Graph disable when Live Analysis (master) is off.
+
+    Why this test exists: the Display analysis toggles only affect a widget the
+    Game menu's Live Analysis (analysis.mode) computes. With analysis off the
+    widget never renders, so both toggles are no-ops and must be disabled. How
+    the regression manifests: Show Analysis stays selectable (and, via the
+    allOf gate, Show Graph too) while no analysis is being computed -- the gap
+    this dependency was added to close.
+    """
+    off = {r.node["id"]: r for r in _display_rows(_state(analysis_mode=False, show_analysis=True))}
+    assert off["field.display.show_analysis"].enabled is False
+    # Show Graph stays disabled even with the widget toggle on, because the
+    # master switch is off (allOf requires *both*).
+    assert off["field.display.show_graph"].enabled is False
+
+
+def test_analysis_rows_enabled_when_live_analysis_on():
+    """With Live Analysis on, Show Analysis is enabled (and Graph follows widget).
+
+    Why this test exists: the new analysis.mode gate must not over-disable -- the
+    toggles have to be usable in the normal case (analysis running). How the
+    regression manifests: an inverted or mis-keyed condition leaves Show Analysis
+    disabled even while analysis is on, hiding a working control.
+    """
+    rows = {r.node["id"]: r for r in _display_rows(_state(analysis_mode=True, show_analysis=True))}
+    assert rows["field.display.show_analysis"].enabled is True
+    assert rows["field.display.show_graph"].enabled is True
 
 
 def test_board_submenu_show_board_first_then_radio_rows_per_sheet():

@@ -309,6 +309,23 @@
   transform: translateX(24px);
 }
 
+/* Disabled toggle: a dependent control whose master is off (e.g. Show Graph
+   while Show Analysis/Live Analysis is off). The button already blocks clicks
+   via the native disabled attribute, but without this it looked identical to an
+   enabled toggle; fade it and switch the cursor so "unavailable" reads at a
+   glance rather than only on a no-op click. */
+.toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+/* Dim the row's label and help to match a disabled control, so the whole option
+   -- not just the switch -- reads as unavailable. */
+.form-row--disabled .form-label,
+.form-row--disabled .form-help {
+  opacity: 0.55;
+}
+
 /* Form Row */
 .form-row {
   display: flex;

@@ -243,7 +243,10 @@ def test_get_display_tuning_reports_profiles_and_selection(client, monkeypatch):
     monkeypatch.setattr(webapp, "_active_waveform_controller", lambda: "uc8151d")
     monkeypatch.setattr(webapp, "_read_selected_profile_key",
                         lambda controller=None: "uc8151d_waveshare")
-    monkeypatch.setattr(webapp, "_read_display_flag", lambda name: name == "high_contrast")
+    # Stub honors the per-flag default so the endpoint's default=True for
+    # batch_updates is exercised (high_contrast stays an explicit on here).
+    monkeypatch.setattr(webapp, "_read_display_flag",
+                        lambda name, default=False: True if name == "high_contrast" else default)
 
     resp = client.get("/api/system/display-tuning")
     assert resp.status_code == 200
@@ -252,6 +255,10 @@ def test_get_display_tuning_reports_profiles_and_selection(client, monkeypatch):
     assert body["active_controller"] == "uc8151d"
     assert body["selected"] == "uc8151d_waveshare"
     assert body["high_contrast"] is True
+    # Update batching ships ON: the GET must report it true by default so the
+    # card's toggle starts on. Regression: endpoint omits default=True and the
+    # toggle reads false, telling the user batching is off when it is not.
+    assert body["batch_updates"] is True
     # The dropdown is driven by the registry, filtered to the active controller;
     # every entry must carry attribution and target this controller so the card
     # never offers a table the live driver cannot drive.
@@ -282,7 +289,8 @@ def test_set_display_tuning_persists_and_applies_live(client, monkeypatch):
     monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
     monkeypatch.setattr(webapp, "_read_selected_profile_key",
                         lambda controller=None: "uc8151d_t5d")
-    monkeypatch.setattr(webapp, "_read_display_flag", lambda name: name == "high_contrast")
+    monkeypatch.setattr(webapp, "_read_display_flag",
+                        lambda name, default=False: True if name == "high_contrast" else default)
     import universalchess.services.game_broadcast as gb
     monkeypatch.setattr(gb, "send_board_command",
                         lambda cmd, params=None: sent.append((cmd, params)) or True)
@@ -301,6 +309,37 @@ def test_set_display_tuning_persists_and_applies_live(client, monkeypatch):
     # (Persisting settings may emit other board commands, e.g. reset_inactivity,
     # so assert membership rather than an exact call list.)
     assert ("display_profile", {"profile": "uc8151d_t5d", "high_contrast": True}) in sent
+
+
+def test_set_display_tuning_persists_batch_updates(client, monkeypatch):
+    """POST must persist the batch_updates flag when supplied.
+
+    Why this test exists: the display-tuning card's "Batch rapid updates" toggle
+    posts batch_updates; the endpoint must write it under [display] so the board
+    reads it at startup and on the live-apply path. The board re-reads settings
+    itself, so the persisted value is the contract.
+
+    How a regression manifests: the field is ignored and the toggle never takes
+    effect (nothing written, so the board keeps the prior/default behavior).
+    """
+    saved = []
+    monkeypatch.setattr(webapp, "_active_waveform_controller", lambda: "uc8151d")
+    monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
+    monkeypatch.setattr(webapp, "_read_selected_profile_key",
+                        lambda controller=None: "uc8151d_waveshare")
+    monkeypatch.setattr(webapp, "_read_display_flag",
+                        lambda name, default=False: default)
+    import universalchess.services.game_broadcast as gb
+    monkeypatch.setattr(gb, "send_board_command",
+                        lambda cmd, params=None: True)
+
+    resp = client.post(
+        "/api/system/display-tuning",
+        data=json.dumps({"batch_updates": False}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    assert saved == [{"display": {"batch_updates": False}}]
 
 
 def test_set_display_tuning_rejects_unknown_profile(client, monkeypatch):

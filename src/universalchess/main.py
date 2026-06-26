@@ -296,15 +296,18 @@ def _on_display_refresh(image, red_image=None):
     except Exception as e:
         log.debug(f"Failed to write epaper.jpg: {e}")
 
-def _read_display_flag(name: str) -> bool:
-    """Return whether a [display] boolean opt-in is set (default off).
+def _read_display_flag(name: str, default: bool = False) -> bool:
+    """Return whether a [display] boolean opt-in is set.
 
-    Used for the experimental high_contrast drive-voltage override. It does not
-    gate any driver selection -- it only adjusts how the active driver drives the
-    panel (SSD1680 source/VCOM push, or UC8151D VCOM_DC bump).
+    Used for the experimental high_contrast drive-voltage override (default off)
+    and the navigation-batching option (default on). high_contrast does not gate
+    any driver selection -- it only adjusts how the active driver drives the
+    panel (SSD1680 source/VCOM push, or UC8151D VCOM_DC bump). ``default`` is the
+    value when the key is absent, so a never-configured board gets the intended
+    shipped behavior (e.g. batching on).
     """
     from universalchess.board.settings import Settings
-    value = Settings.read('display', name, 'False')
+    value = Settings.read('display', name, 'True' if default else 'False')
     return str(value).strip().lower() in ('1', 'true', 'on', 'yes')
 
 
@@ -324,17 +327,19 @@ def _read_display_selection():
     return key, _read_display_flag('high_contrast')
 
 
-def _attempt_display_init(epd):
+def _attempt_display_init(epd, batch_updates: bool = True):
     """Build a Manager around ``epd`` and run initialize(); never raises.
 
     Returns ``(manager, DisplayAttempt)``. A failed init is reported as an
     attempt rather than an exception so the selector can decide whether to fall
     back. ``busy_timeout`` is read from the driver's flag so a BUSY-timeout
     failure (the inverted-polarity V1 signature) is distinguished from any other
-    initialization error.
+    initialization error. ``batch_updates`` is injected into the Manager so the
+    scheduler ships with the configured update-batching behavior.
     """
     from universalchess.board.display_selection import DisplayAttempt
-    manager = Manager(on_refresh=_on_display_refresh, epd=epd)
+    manager = Manager(on_refresh=_on_display_refresh, epd=epd,
+                      batch_updates=batch_updates)
     try:
         promise = manager.initialize()
         # Don't block - monitor in background thread
@@ -374,13 +379,14 @@ def _init_display_early():
 
     key, high_contrast = _read_display_selection()
     three_color = _read_display_flag('three_color')
+    batch_updates = _read_display_flag('batch_updates', default=True)
     primary_profile = wp.get_profile(key, wp.CONTROLLER_UC8151D)
 
     manager, primary = _attempt_display_init(PrimaryEPD(
         profile=primary_profile,
         high_contrast=high_contrast,
         three_color=three_color,
-    ))
+    ), batch_updates=batch_updates)
     alt = None
     if ds.should_attempt_alt(primary):
         # UC8151D never saw idle -> automatically try the SSD1680 (V1) driver.
@@ -396,7 +402,7 @@ def _init_display_early():
             profile=alt_profile,
             high_contrast=high_contrast,
             three_color=three_color,
-        ))
+        ), batch_updates=batch_updates)
         if alt.ok:
             manager = alt_manager
 
@@ -2438,6 +2444,13 @@ def _process_pending_display_profile() -> None:
         log.info(f"[App] Applying three-color mode live: {desired_three_color}")
         _early_display_manager.apply_three_color(desired_three_color)
 
+    # Update batching is part of the same display-tuning settings. It only
+    # changes how the scheduler folds future request bursts (no panel re-init or
+    # full refresh), so apply it unconditionally -- the setter is idempotent.
+    batch_updates = _read_display_flag('batch_updates', default=True)
+    log.info(f"[App] Applying update batching live: {batch_updates}")
+    _early_display_manager.set_batch_updates(batch_updates)
+
 
 def _process_pending_board_command() -> None:
     """Apply a pending web board-control command on the main thread.
@@ -3036,10 +3049,17 @@ def _build_display_context():
     ``itemBind`` -- the inline sprite radio set (the engine attaches each row's
     set_value behavior and the radio marker, so this provider carries no
     dispatch/marking logic).
+
+    The ``analysis`` store is registered (read-only here) because the Show
+    Analysis / Show Graph rows gate on ``analysis.mode`` via the catalog: with
+    Live Analysis off the analysis widget never renders, so those toggles are
+    disabled. Without the store, building the rows would raise on the missing
+    ``analysis`` reference.
     """
     from universalchess.menus.engine import MenuRow
 
     ctx = _build_game_context()
+    _register_analysis_store(ctx)
 
     def sprite_sheets():
         """Pure data source: one row per installed sheet with its preview glyph.
@@ -3162,19 +3182,17 @@ def _run_engine_manager_menu():
     )
 
 
-def _build_game_menu_context():
-    """Build the BoardMenuContext for the data-driven Game submenu.
+def _register_analysis_store(ctx):
+    """Register the ``analysis`` store (``mode``/``engine``) on a board context.
 
-    Combines the shared ``game`` store (Time Control, read/write) with the
-    ``analysis`` store (``mode`` and ``engine`` read/write, persisted on
-    toggle/pick) plus the ``installed_engines`` provider backing the Analysis
-    Engine select and the concise Time Control label compute. This single context
-    backs the ``settings.game`` container, which groups exactly the settings the
-    web shows under its Game tab (Time Control, Live Analysis, Analysis Engine).
-    The Analysis Engine row is gated on ``mode`` via the catalog's ``visibleWhen``
-    so it only appears when Live Analysis is enabled.
+    The catalog models analysis under its own store (``analysis.mode``/
+    ``analysis.engine``), but the board persists both as game settings
+    (``analysis_mode``/``analysis_engine``); this getter/setter owns that name
+    translation so the shared catalog stays platform-neutral. Shared by the Game
+    submenu (which reads *and writes* the values) and the Display submenu (which
+    only reads ``mode`` to gate the Show Analysis / Show Graph rows), so both
+    resolve the same setting rather than duplicating the mapping.
     """
-    ctx = _build_game_context()
 
     def analysis_get(key):
         settings = _game_settings_dict()
@@ -3195,13 +3213,30 @@ def _build_game_menu_context():
             return
         raise NotImplementedError(f"unknown analysis store key: {key!r}")
 
+    ctx.register_store("analysis", analysis_get, analysis_set)
+
+
+def _build_game_menu_context():
+    """Build the BoardMenuContext for the data-driven Game submenu.
+
+    Combines the shared ``game`` store (Time Control, read/write) with the
+    ``analysis`` store (``mode`` and ``engine`` read/write, persisted on
+    toggle/pick) plus the ``installed_engines`` provider backing the Analysis
+    Engine select and the concise Time Control label compute. This single context
+    backs the ``settings.game`` container, which groups exactly the settings the
+    web shows under its Game tab (Time Control, Live Analysis, Analysis Engine).
+    The Analysis Engine row is gated on ``mode`` via the catalog's ``visibleWhen``
+    so it only appears when Live Analysis is enabled.
+    """
+    ctx = _build_game_context()
+
     def installed_engines():
         """Rows for the Analysis Engine select: the installed engines."""
         from universalchess.menus.engine import MenuRow
 
         return [MenuRow(key=engine, label=engine, icon="engine") for engine in _get_installed_engines()]
 
-    ctx.register_store("analysis", analysis_get, analysis_set)
+    _register_analysis_store(ctx)
     ctx.register_provider("installed_engines", installed_engines)
     ctx.register_value("time_control", lambda node: _time_control_label())
     return ctx

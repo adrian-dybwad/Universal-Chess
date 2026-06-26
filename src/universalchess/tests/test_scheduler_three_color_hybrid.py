@@ -123,6 +123,132 @@ class MonoSchedulerUnchangedTests(unittest.TestCase):
         self.assertNotIn("display_color", epd.calls)
 
 
+class MonoBatchCoalesceTests(unittest.TestCase):
+    """A rapid burst of refreshes must collapse to a single refresh of the final
+    frame (mono path), not replay one partial per queued frame.
+
+    Why these tests exist:
+        Each widget update enqueues its own refresh request. When requests arrive
+        faster than the panel can draw a partial (fast menu browsing, a quickly
+        changing position, frequent status/clock updates), the scheduler drains
+        the whole burst into one batch (the wake-event/get_nowait collection
+        loop). The mono path historically replayed the burst item-by-item, so N
+        rapid requests ran N sequential partial refreshes (each hundreds of ms on
+        the panel). The panel then visibly lags behind the latest state -- the
+        delay seen on every mono panel but absent on the three-color panel, which
+        already coalesces its batch to the last frame. These pin the mono path to
+        the same coalescing so a burst costs one refresh.
+
+    How a regression manifests:
+        If per-item replay returns, count("DisplayPartial") rises to N instead of
+        1 and the superseded futures resolve "partial" instead of "coalesced" --
+        i.e. the backlog/lag is back. A single request would still refresh, so a
+        count of 1 (not 0) distinguishes the fix from over-coalescing that drops
+        the final frame.
+    """
+
+    def test_partial_burst_coalesces_to_single_refresh_of_last(self):
+        # Three queued partial frames (a rapid burst). Only the final frame
+        # refreshes once; the two superseded futures resolve "coalesced".
+        # Regression: three DisplayPartial calls -> the lag returns.
+        sched, epd = _make_scheduler(three_color=False)
+        i1 = _item(False, _bw_image(), None)
+        i2 = _item(False, _bw_image(), None)
+        i3 = _item(False, _bw_image(), None)
+        sched._process_batch([i1, i2, i3])
+        self.assertEqual(
+            epd.calls.count("DisplayPartial"), 1,
+            f"burst must collapse to one partial, got calls={epd.calls}")
+        self.assertEqual(i1[1].result(), "coalesced")
+        self.assertEqual(i2[1].result(), "coalesced")
+        # The LAST frame is the one actually rendered (not a superseded one).
+        self.assertEqual(i3[1].result(), "partial")
+
+    def test_partial_burst_preserves_full_request_from_any_item(self):
+        # A screen transition (full=True) anywhere in the burst must still force a
+        # full refresh of the final frame, not be lost to coalescing. Regression:
+        # the full request is dropped and the transition ghosts over a partial.
+        sched, epd = _make_scheduler(three_color=False)
+        i1 = _item(True, _bw_image(), None)   # full requested (e.g. screen change)
+        i2 = _item(False, _bw_image(), None)
+        sched._process_batch([i1, i2])
+        self.assertIn("display", epd.calls)            # mono full path on last frame
+        self.assertNotIn("DisplayPartial", epd.calls)
+        self.assertEqual(i1[1].result(), "coalesced")
+        self.assertEqual(i2[1].result(), "full")
+
+    def test_single_item_batch_still_refreshes(self):
+        # Edge guard for the coalescing split: a burst of one must still render
+        # (not be treated as superseded and dropped). Fails if the fix's
+        # "*superseded, last = batch" mishandles the single-item case.
+        sched, epd = _make_scheduler(three_color=False)
+        i1 = _item(False, _bw_image(), None)
+        sched._process_batch([i1])
+        self.assertEqual(epd.calls.count("DisplayPartial"), 1)
+        self.assertEqual(i1[1].result(), "partial")
+
+    def test_batching_off_replays_every_frame(self):
+        # The "Batch rapid updates" option is user-disableable. With it off the
+        # legacy per-item replay is restored: a 3-frame burst draws all three
+        # intermediate states. Regression: OFF still coalesces -> the option is a
+        # no-op and the user cannot get the show-every-frame behavior back.
+        epd = _FakeEpd(three_color=False)
+        sched = Scheduler(MagicMock(), epd, batch_updates=False)
+        sched._process_batch([
+            _item(False, _bw_image(), None),
+            _item(False, _bw_image(), None),
+            _item(False, _bw_image(), None),
+        ])
+        self.assertEqual(
+            epd.calls.count("DisplayPartial"), 3,
+            f"batching off must replay each frame, got calls={epd.calls}")
+
+    def test_batch_updates_defaults_on(self):
+        # The option ships ON: a scheduler built without the flag coalesces. This
+        # pins the shipped default so a burst is fast out of the box. Regression:
+        # default flips to off and every panel regains the lag.
+        epd = _FakeEpd(three_color=False)
+        sched = Scheduler(MagicMock(), epd)
+        sched._process_batch([
+            _item(False, _bw_image(), None),
+            _item(False, _bw_image(), None),
+        ])
+        self.assertEqual(epd.calls.count("DisplayPartial"), 1)
+
+    def test_set_batch_updates_live_toggle(self):
+        # The setter flips behavior at runtime (the web toggle applies live with
+        # no reboot): off -> replays both frames, on -> coalesces to one.
+        # Regression: the setter does not take effect, so toggling in the UI does
+        # nothing until reboot.
+        sched, epd = _make_scheduler(three_color=False)
+        sched.set_batch_updates(False)
+        sched._process_batch([_item(False, _bw_image(), None),
+                              _item(False, _bw_image(), None)])
+        self.assertEqual(epd.calls.count("DisplayPartial"), 2)
+        epd.calls.clear()
+        sched.set_batch_updates(True)
+        sched._process_batch([_item(False, _bw_image(), None),
+                              _item(False, _bw_image(), None)])
+        self.assertEqual(epd.calls.count("DisplayPartial"), 1)
+
+    def test_three_color_always_coalesces_regardless_of_flag(self):
+        # Update batching only governs the mono fast path. Three-color MUST always
+        # coalesce because each tri-color refresh is ~14s; replaying a burst there
+        # is catastrophic. So batch_updates=False must NOT re-enable per-item
+        # replay on a three-color panel. Regression: the flag leaks into the
+        # three-color path and a single move queues several ~14s refreshes.
+        epd = _FakeEpd(three_color=True)
+        sched = Scheduler(MagicMock(), epd, batch_updates=False)
+        sched._process_batch([
+            _item(False, _bw_image(), _red_image(has_red=False)),
+            _item(False, _bw_image(), _red_image(has_red=False)),
+            _item(False, _bw_image(), _red_image(has_red=True)),
+        ])
+        # Still exactly one refresh (the final frame had red -> color path).
+        self.assertEqual(epd.calls.count("display_color"), 1)
+        self.assertEqual(epd.calls.count("DisplayPartial"), 0)
+
+
 class ThreeColorHybridTests(unittest.TestCase):
     def test_no_red_uses_fast_bw_path(self):
         # No red present/requested -> fast B/W (DisplayPartial), never the slow

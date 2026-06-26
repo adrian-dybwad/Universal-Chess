@@ -19,12 +19,19 @@ export interface MenuBind {
   key: string;
 }
 
-/** A condition over a bound value gating visibility/enablement of a node. */
+/**
+ * A condition gating visibility/enablement of a node. Either a leaf condition
+ * over a single bound value (`store`/`key` with `in`/`equals`), or a compound
+ * `allOf` satisfied only when every subcondition holds (logical AND) -- used
+ * where a row depends on more than one value (e.g. Show Graph requires both
+ * analysis.mode and game.show_analysis).
+ */
 export interface MenuCondition {
-  store: string;
-  key: string;
+  store?: string;
+  key?: string;
   in?: string[];
   equals?: string | number | boolean;
+  allOf?: MenuCondition[];
 }
 
 /** Numeric range spec for `range` cyclers. */

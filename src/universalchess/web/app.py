@@ -2515,14 +2515,17 @@ def api_set_debug_serial():
         return _internal_error(e)
 
 
-def _read_display_flag(name: str) -> bool:
+def _read_display_flag(name: str, default: bool = False) -> bool:
     """Return whether a [display] boolean flag is enabled (tolerant of spellings).
 
-    Shared reader for [display] on/off settings (the high_contrast override) so
-    they parse stored values identically to the board process.
+    Shared reader for [display] on/off settings (the high_contrast override, the
+    three_color switch, the update-batching option) so they parse stored values
+    identically to the board process. ``default`` is the value when the key is
+    absent, so an un-configured board reports the intended shipped state (e.g.
+    batching on).
     """
     from universalchess.board.settings import Settings
-    value = Settings.read('display', name, 'False')
+    value = Settings.read('display', name, 'True' if default else 'False')
     return str(value).strip().lower() in ('1', 'true', 'on', 'yes')
 
 
@@ -2601,6 +2604,11 @@ def api_get_display_tuning():
             # panel, not the controller family.
             "three_color": _read_display_flag("three_color"),
             "three_color_supported": controller is not None,
+            # Update batching (default on): coalesce a rapid burst of refreshes to
+            # one refresh of the final frame so the panel does not lag behind when
+            # updates arrive faster than it can draw. Applies to every panel, so
+            # it is reported whenever the card is available.
+            "batch_updates": _read_display_flag("batch_updates", default=True),
         })
     except Exception as e:
         return _internal_error(e)
@@ -2636,8 +2644,10 @@ def api_set_display_tuning():
             updates["high_contrast"] = bool(body["high_contrast"])
         if "three_color" in body:
             updates["three_color"] = bool(body["three_color"])
+        if "batch_updates" in body:
+            updates["batch_updates"] = bool(body["batch_updates"])
         if not updates:
-            return jsonify({"success": False, "error": "no profile, high_contrast or three_color given"}), 400
+            return jsonify({"success": False, "error": "no profile, high_contrast, three_color or batch_updates given"}), 400
 
         save_all_settings({"display": updates})
 
@@ -2656,6 +2666,7 @@ def api_set_display_tuning():
             "selected": _read_selected_profile_key(controller),
             "high_contrast": _read_display_flag("high_contrast"),
             "three_color": _read_display_flag("three_color"),
+            "batch_updates": _read_display_flag("batch_updates", default=True),
         })
     except Exception as e:
         return _internal_error(e)

@@ -570,12 +570,25 @@ export function Settings() {
   // so row gating is driven by the same catalog nodes the board engine uses
   // rather than hand-coded per control.
   const boundValue = (store: string, key: string): FieldValue | undefined => {
+    // The catalog models analysis under its own store (analysis.mode/engine),
+    // but the web persists both in the game section (analysis_mode/_engine).
+    // Translate here -- the web's equivalent of the board adapter's analysis
+    // store mapping -- so catalog conditions referencing analysis.* resolve
+    // against the real form state instead of an absent section (which would
+    // read undefined and wrongly fail every gate).
+    if (store === 'analysis') {
+      if (key === 'mode') return formSettings.game.analysis_mode;
+      if (key === 'engine') return formSettings.game.analysis_engine;
+      return undefined;
+    }
     const section = (formSettings as unknown as Record<string, Record<string, FieldValue>>)[store];
     return section ? section[key] : undefined;
   };
   const conditionMet = (cond?: MenuCondition): boolean => {
     if (!cond) return true;
-    const current = boundValue(cond.store, cond.key);
+    // Compound: every subcondition must hold (mirrors the board engine's allOf).
+    if (cond.allOf) return cond.allOf.every((sub) => conditionMet(sub));
+    const current = boundValue(cond.store ?? '', cond.key ?? '');
     if (cond.equals !== undefined) return current === cond.equals;
     if (cond.in) return cond.in.includes(String(current));
     return true;
@@ -824,10 +837,11 @@ export function Settings() {
             <p className="text-muted mb-6">Control what appears on the e-paper display and the LEDs</p>
 
             {/* The visibility toggles render from the catalog's display section
-                (the same nodes as the board's Display menu). Show Graph nests
-                under Show Analysis via the node's enabledWhen, so it disables
-                while analysis is hidden -- gating driven by the catalog, not
-                hand-coded here. */}
+                (the same nodes as the board's Display menu). Both disable while
+                Live Analysis (Game tab) is off via the nodes' enabledWhen on
+                analysis.mode, since the analysis widget they control never
+                renders then; Show Graph additionally requires Show Analysis
+                (allOf) -- all gating driven by the catalog, not hand-coded. */}
             <Card className="mb-6">
               <CardHeader title="E-Paper Display" />
               {fieldsForSection(catalog, 'display')
@@ -898,6 +912,11 @@ export function Settings() {
                 onChange={(v) => updateFormSettings('game', { led_brightness: Number(v) })}
               />
             </Card>
+
+            {/* E-paper waveform/refresh tuning. Lives under Display (not System)
+                because it configures the display hardware; the card self-gates
+                (renders nothing) when no e-paper panel is active. */}
+            <DisplayTuningCard />
           </section>
         )}
 
@@ -982,8 +1001,6 @@ export function Settings() {
               <CardHeader title="Software Updates" />
               <UpdateManager catalog={catalog} />
             </Card>
-
-            <DisplayTuningCard />
 
             <Card className="mb-6">
               <CardHeader title="Game Database" />
@@ -1863,6 +1880,7 @@ function DisplayTuningCard() {
   const [highContrast, setHighContrast] = useState(false);
   const [threeColor, setThreeColor] = useState(false);
   const [threeColorSupported, setThreeColorSupported] = useState(false);
+  const [batchUpdates, setBatchUpdates] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -1883,6 +1901,7 @@ function DisplayTuningCard() {
         if (typeof data.high_contrast === 'boolean') setHighContrast(data.high_contrast);
         if (typeof data.three_color === 'boolean') setThreeColor(data.three_color);
         if (typeof data.three_color_supported === 'boolean') setThreeColorSupported(data.three_color_supported);
+        if (typeof data.batch_updates === 'boolean') setBatchUpdates(data.batch_updates);
       })
       .catch(() => {
         // Best-effort initial read; the card stays hidden if unavailable.
@@ -1903,10 +1922,11 @@ function DisplayTuningCard() {
   // the login dialog opens and the same apply is retried after authentication.
   // Field-based so each control (profile / high contrast / three-color) sends
   // only its change, merged with the current state for the others.
-  const apply = async (updates: { profile?: string; high_contrast?: boolean; three_color?: boolean }) => {
+  const apply = async (updates: { profile?: string; high_contrast?: boolean; three_color?: boolean; batch_updates?: boolean }) => {
     const profile = updates.profile ?? selected;
     const contrast = updates.high_contrast ?? highContrast;
     const tricolor = updates.three_color ?? threeColor;
+    const batching = updates.batch_updates ?? batchUpdates;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -1914,7 +1934,7 @@ function DisplayTuningCard() {
       const response = await apiFetch('/api/system/display-tuning', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profile, high_contrast: contrast, three_color: tricolor }),
+        body: JSON.stringify({ profile, high_contrast: contrast, three_color: tricolor, batch_updates: batching }),
         requiresAuth: true,
       });
       if (response.status === 401) {
@@ -1930,6 +1950,7 @@ function DisplayTuningCard() {
       setSelected(data.selected ?? profile);
       setHighContrast(typeof data.high_contrast === 'boolean' ? data.high_contrast : contrast);
       setThreeColor(typeof data.three_color === 'boolean' ? data.three_color : tricolor);
+      setBatchUpdates(typeof data.batch_updates === 'boolean' ? data.batch_updates : batching);
       const enabledRed = updates.three_color === true;
       setNotice(
         !data.applied_live
@@ -1994,6 +2015,13 @@ function DisplayTuningCard() {
             )}
           </p>
         )}
+        <Toggle
+          label="Batch rapid updates"
+          help="Coalesce a rapid burst of screen updates into a single refresh of the final frame. When updates arrive faster than the e-paper can redraw, this skips the intermediate frames so the display shows the latest state instead of lagging behind. Turn off to draw every intermediate frame (slower when updates come quickly, but shows each step). Recommended on."
+          checked={batchUpdates}
+          onChange={(v) => apply({ batch_updates: v })}
+          disabled={busy}
+        />
         <Toggle
           label="High contrast (experimental)"
           help="Drive the VCOM/source voltages harder than the profile's defaults to darken a faint image. Try this if the image draws but only faintly. Not a datasheet-backed setting; leave off if the display already looks good."

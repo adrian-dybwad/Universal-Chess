@@ -13,7 +13,7 @@ interface ToggleProps {
  */
 export function Toggle({ checked, onChange, disabled = false, label, help }: ToggleProps) {
   return (
-    <div className="form-row">
+    <div className={`form-row${disabled ? ' form-row--disabled' : ''}`}>
       <div className="form-row-info">
         {label && <label className="form-label">{label}</label>}
         {help && <div className="form-help">{help}</div>}

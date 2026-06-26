@@ -244,6 +244,36 @@ def test_is_enabled_follows_enabled_when_condition():
     assert is_enabled(node, _ctx(game={"show_analysis": False})) is False
 
 
+def test_is_enabled_allof_requires_every_subcondition():
+    """An ``allOf`` enabledWhen is satisfied only when *every* subcondition holds.
+
+    Why this test exists: 'Show Graph' depends on two switches -- the master
+    'Live Analysis' compute (analysis.mode) and the 'Show Analysis' widget
+    (game.show_analysis). A single condition cannot express that conjunction, so
+    the engine must AND the subconditions. How a regression manifests: dropping
+    or short-circuiting the conjunction would leave the graph selectable when
+    analysis is off, or disabled when both switches are on.
+    """
+    node = {
+        "id": "field.display.show_graph",
+        "type": "toggle",
+        "enabledWhen": {
+            "allOf": [
+                {"store": "analysis", "key": "mode", "equals": True},
+                {"store": "game", "key": "show_analysis", "equals": True},
+            ]
+        },
+    }
+    both_on = _ctx(analysis={"mode": True}, game={"show_analysis": True})
+    analysis_off = _ctx(analysis={"mode": False}, game={"show_analysis": True})
+    widget_off = _ctx(analysis={"mode": True}, game={"show_analysis": False})
+    both_off = _ctx(analysis={"mode": False}, game={"show_analysis": False})
+    assert is_enabled(node, both_on) is True
+    assert is_enabled(node, analysis_off) is False
+    assert is_enabled(node, widget_off) is False
+    assert is_enabled(node, both_off) is False
+
+
 def test_is_enabled_defaults_true_without_condition():
     """A node without enabledWhen is enabled unless it sets enabled=false."""
     assert is_enabled({"id": "f", "type": "toggle"}, _ctx()) is True

@@ -181,7 +181,7 @@
       "label": "Time Control",
       "boardLabel": "Time\n{fn:time_control}",
       "icon": { "0": "timer", "default": "timer_checked" },
-      "help": "Minutes per player for the game clock (0 = untimed).",
+      "help": "Minutes per player for the game clock.",
       "section": "game",
       "bind": { "store": "game", "key": "time_control" },
       "optionSet": "time_control",
@@ -971,7 +971,8 @@
       "help": "Display engine analysis widget",
       "section": "display",
       "bind": { "store": "game", "key": "show_analysis" },
-      "icon": { "true": "checkbox_checked", "false": "checkbox_empty" }
+      "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
+      "enabledWhen": { "store": "analysis", "key": "mode", "equals": true }
     },
     {
       "id": "field.display.show_graph",
@@ -982,7 +983,12 @@
       "section": "display",
       "bind": { "store": "game", "key": "show_graph" },
       "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
-      "enabledWhen": { "store": "game", "key": "show_analysis", "equals": true }
+      "enabledWhen": {
+        "allOf": [
+          { "store": "analysis", "key": "mode", "equals": true },
+          { "store": "game", "key": "show_analysis", "equals": true }
+        ]
+      }
     },
     {
       "id": "field.display.led_brightness",

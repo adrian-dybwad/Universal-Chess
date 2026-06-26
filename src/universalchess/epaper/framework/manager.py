@@ -25,13 +25,17 @@ class Manager:
                     after each successful display update. Used for web dashboard mirroring.
     """
     
-    def __init__(self, on_refresh=None, epd=None):
+    def __init__(self, on_refresh=None, epd=None, batch_updates: bool = True):
         # epd defaults to the UC8151D (V2) driver. The startup selector may
         # inject an alternate driver instance (e.g. the SSD1680 V1 fallback)
         # without this coordinator needing to know which controller it drives.
+        # batch_updates is read from settings at the edge (main) and injected
+        # here so this coordinator and the scheduler stay free of settings I/O.
         self._epd = epd if epd is not None else EPD()
         self._framebuffer = FrameBuffer(self._epd.width, self._epd.height)
-        self._scheduler = Scheduler(self._framebuffer, self._epd, on_display_updated=on_refresh)
+        self._scheduler = Scheduler(self._framebuffer, self._epd,
+                                    on_display_updated=on_refresh,
+                                    batch_updates=batch_updates)
         self._widgets: List[Widget] = []
         self._background = None  # Optional BackgroundWidget for dithered backgrounds
         self._initialized = False
@@ -124,6 +128,15 @@ class Manager:
         self._epd.apply_three_color(enabled)
         self._scheduler.force_reinit()
         return self.update(full=True, immediate=True)
+
+    def set_batch_updates(self, enabled: bool) -> None:
+        """Enable/disable update batching live, delegating to the scheduler.
+
+        Unlike apply_waveform_profile / apply_three_color this needs no panel
+        re-init or full refresh: it only changes how the scheduler folds future
+        request bursts, so the next burst reflects the new setting.
+        """
+        self._scheduler.set_batch_updates(enabled)
 
     def add_widget(self, widget: Widget) -> Future:
         """Add a widget to the display.

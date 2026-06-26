@@ -37,9 +37,19 @@ class Scheduler:
     # unattended settles quickly. Waking costs a reset+Clear, so this is a balance.
     IDLE_SLEEP_SECONDS = 20.0
     
-    def __init__(self, framebuffer: FrameBuffer, epd: EPD, on_display_updated=None):
+    def __init__(self, framebuffer: FrameBuffer, epd: EPD, on_display_updated=None,
+                 batch_updates: bool = True):
         self._framebuffer = framebuffer
         self._epd = epd
+        # Update batching (default on): coalesce a rapid burst of mono partial
+        # refreshes to a single refresh of the final frame. When refresh requests
+        # arrive faster than the panel can draw (fast menu browsing, a quickly
+        # changing position, frequent status/clock updates), each queued frame
+        # otherwise replays as its own partial, so the panel visibly lags behind
+        # the latest state. Off restores the legacy per-item replay (every
+        # intermediate frame drawn). Does NOT affect the three-color path, which
+        # always coalesces out of necessity (each tri-color refresh is ~14s).
+        self._batch_updates = batch_updates
         self._queue = queue.Queue(maxsize=self.QUEUE_MAX_SIZE)
         self._queue_lock = threading.Lock()  # Protects queue operations during eviction
         self._thread = None
@@ -78,6 +88,16 @@ class Scheduler:
         # or clears so the slow full tri-color refresh runs only then.
         self._last_red_buffer = None
     
+    def set_batch_updates(self, enabled: bool) -> None:
+        """Enable/disable update batching live (no reboot).
+
+        Backs the display-tuning toggle: when enabled, a rapid burst of mono
+        partial refreshes coalesces to the final frame; when disabled, every
+        queued frame is replayed. Takes effect on the next batch processed, so
+        the web toggle applies without restarting the board.
+        """
+        self._batch_updates = enabled
+
     def force_reinit(self) -> None:
         """Force the next refresh to re-run the panel's init().
 
@@ -293,8 +313,8 @@ class Scheduler:
         # refreshes for one change -- the "full refresh multiple times" flicker.
         # Only the last item carries the latest snapshot, so refresh that once and
         # resolve the superseded futures. A full request anywhere in the batch is
-        # preserved. (Mono/menu-nav keeps per-item replay below so rapid menu
-        # navigation still shows intermediate frames; those partials are cheap.)
+        # preserved. This coalescing is MANDATORY here (not gated by
+        # _batch_updates): replaying ~14s refreshes is never acceptable.
         if getattr(self._epd, "three_color", False):
             if self._stop_event.is_set():
                 for item in batch:
@@ -309,6 +329,24 @@ class Scheduler:
             full, future, image, red_image = last
             self._process_three_color(any_full, future, image, red_image)
             return
+
+        # Mono path. With update batching on (default), a rapid burst -- refresh
+        # requests arriving faster than the panel can draw a partial (fast menu
+        # browsing, a quickly changing position, frequent status/clock updates) --
+        # is coalesced to a single refresh of the final frame, mirroring the
+        # three-color path above. Otherwise each queued frame replays as its own
+        # partial, so N rapid requests run N sequential partials and the panel
+        # visibly lags behind the latest state. A full request anywhere in the
+        # burst is preserved so screen transitions still force a full refresh.
+        # With the option off, the legacy per-item replay below runs unchanged
+        # (every intermediate frame drawn).
+        if self._batch_updates and len(batch) > 1:
+            *superseded, last = batch
+            for s_full, s_future, _s_img, _s_red in superseded:
+                if not s_future.done():
+                    s_future.set_result("coalesced")
+            any_full = any(item[0] for item in batch)
+            batch = [(any_full, last[1], last[2], last[3])]
 
         # Process each item separately to ensure all updates are displayed
         for item in batch:
