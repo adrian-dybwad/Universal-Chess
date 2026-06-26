@@ -254,8 +254,23 @@ ENGINES = {
         description="Personality engine with 50+ playing styles from beginner to GM level. Can emulate famous players or specific playing styles. Great for practice and entertainment.",
         repo_url="https://github.com/nescitus/rodent-iv.git",
         build_commands=[
-            # Makefile is in sources/ directory, override EXENAME to output to repo root
-            "cd sources && make -j$(nproc) EXENAME=../rodentIV",
+            # Makefile is in sources/ directory; override EXENAME to output to repo root.
+            #
+            # 32-bit ARM link fix (-latomic): Rodent IV uses 64-bit std::atomic.
+            # On armhf/armel the compiler lowers 8-byte atomics to libatomic calls
+            # (__atomic_load_8/__atomic_store_8/...), so the link fails with
+            # "undefined reference to __atomic_store_8" unless libatomic is linked.
+            # The Makefile recipe places $(LDFLAGS) *before* the source objects, and
+            # the toolchain links --as-needed by default, which drops a -latomic that
+            # appears before any reference to it -- so it must be forced in with
+            # -Wl,--no-as-needed. The override also preserves the Makefile's original
+            # LDFLAGS (-s -lm). 64-bit targets inline these atomics and need no
+            # libatomic, so the flag is added only for 32-bit ARM to avoid forcing an
+            # unused libatomic dependency there.
+            "cd sources && LDFLAGS='-s -lm'; "
+            'case "$(uname -m)" in arm|armv*) '
+            'LDFLAGS="$LDFLAGS -Wl,--no-as-needed -latomic";; esac; '
+            'make -j$(nproc) EXENAME=../rodentIV LDFLAGS="$LDFLAGS"',
         ],
         binary_path="rodentIV",
         is_system_package=False,
