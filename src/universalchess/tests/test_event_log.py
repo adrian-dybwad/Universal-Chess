@@ -124,16 +124,20 @@ def test_timed_event_logs_duration_and_reraises(tmp_path):
     assert all("duration_ms" in r for r in records)
 
 
-def test_cli_emits_event_matching_in_process_format(tmp_path, monkeypatch):
-    # The root-run bash self-heal emits its completion event through this CLI;
-    # it must produce the same record shape as in-process logging so both
-    # producers share one format. Manifestation if the CLI drifts: self-heal
-    # rows look different (or fail to parse) in the viewer.
+def test_cli_emits_event_by_file_path(tmp_path, monkeypatch):
+    # The root-run bash self-heal emits its completion event by invoking
+    # event_log.py BY FILE PATH (not `python -m`), because the system python3 it
+    # runs under cannot import the package (services/__init__ pulls in
+    # third-party deps). Run it the same way here to guard that the module is
+    # stdlib-only and works standalone, and that its record matches the
+    # in-process format. Manifestation if a non-stdlib import creeps in: this
+    # subprocess fails to import and returns non-zero, so the self-heal would
+    # silently stop logging on-device.
     log_path = tmp_path / "events.jsonl"
     monkeypatch.setenv("UC_EVENT_LOG_PATH", str(log_path))
 
     result = subprocess.run(
-        [sys.executable, "-m", "universalchess.services.event_log",
+        [sys.executable, event_log.__file__,
          "--category", "bluez_selfheal", "--level", "info", "--duration-ms", "152000",
          "--", "Self-heal complete: patched bluetoothd"],
         capture_output=True, text=True,

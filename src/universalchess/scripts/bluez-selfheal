@@ -63,12 +63,13 @@ log() { logger -t "$LOG_TAG" -- "$*" 2>/dev/null || true; echo "[$LOG_TAG] $*" >
 
 # Persistent app event log (services.event_log). The self-heal is the one
 # install-class operation that runs as root from a bash unit, not the Python
-# app, so it emits its own completion event through the module's CLI. The
-# package root is the grandparent of this script's dir (scripts/ lives inside
-# the universalchess package), so PYTHONPATH points one level above the package.
-# Set when a real heal begins (past the fast no-op skip) so skipped boots emit
-# nothing; consumed by the EXIT trap below.
-PKG_PARENT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+# app, so it emits its own completion event. event_log.py is intentionally
+# stdlib-only, so it is invoked BY FILE PATH (not `python -m`): the package's
+# services/__init__ pulls in third-party deps that the system python3 the
+# self-heal runs under does not have, whereas the file-path form imports no
+# package at all. HEAL_START is set when a real heal begins (past the fast no-op
+# skip) so skipped boots emit nothing; consumed by the EXIT trap below.
+EVENT_LOG_PY="$(dirname "$SCRIPT_DIR")/services/event_log.py"
 HEAL_START=""
 
 emit_heal_event() {
@@ -80,7 +81,8 @@ emit_heal_event() {
     if [ -n "${HEAL_START:-}" ]; then
         dur_args=(--duration-ms "$(( ( $(date +%s) - HEAL_START ) * 1000 ))")
     fi
-    PYTHONPATH="$PKG_PARENT" python3 -m universalchess.services.event_log \
+    [ -f "$EVENT_LOG_PY" ] || return 0
+    python3 "$EVENT_LOG_PY" \
         --category bluez_selfheal --level "$level" "${dur_args[@]}" -- "$msg" 2>/dev/null || true
 }
 
