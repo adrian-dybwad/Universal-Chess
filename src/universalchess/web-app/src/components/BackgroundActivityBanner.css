@@ -1,0 +1,30 @@
+/**
+ * Top-of-screen background-activity banner.
+ *
+ * Rendered above the navbar in normal document flow (so it sits at the very top
+ * of the page) and only while at least one background task is running. Uses a
+ * neutral surface with a primary-colour accent stripe so the reused ProgressBar
+ * keeps its themed track/fill contrast instead of being placed on a dark bar.
+ */
+
+.activity-banner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 12px);
+  padding: var(--space-3, 12px) var(--space-4, 16px);
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #1a1a1a);
+  border-bottom: 1px solid var(--color-border, rgba(0, 0, 0, 0.1));
+  border-left: 4px solid var(--color-primary, #8a3490);
+}
+
+.activity-banner__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+}
+
+.activity-banner__label {
+  font-weight: var(--font-semibold, 600);
+  font-size: var(--font-sm, 0.9rem);
+}

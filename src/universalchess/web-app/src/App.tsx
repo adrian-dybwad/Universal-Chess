@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+import { BackgroundActivityBanner } from './components/BackgroundActivityBanner';
 import { Navbar } from './components/Navbar';
 import { GameStateProvider } from './components/GameStateProvider';
 import { LiveBoard } from './pages/LiveBoard';
@@ -21,6 +22,7 @@ function App() {
     <BrowserRouter>
       <GameStateProvider>
         <div className="app">
+          <BackgroundActivityBanner />
           <Navbar />
         
         <section className="section">

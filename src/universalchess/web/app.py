@@ -3566,6 +3566,25 @@ def api_engine_status():
     return jsonify(_engine_install_store.status_dict())
 
 
+@app.route("/api/system/activity", methods=["GET"])
+def api_system_activity():
+    """Aggregate active background tasks for the top-of-screen web banner.
+
+    Combines the structured engine-install state with the BlueZ self-heal
+    progress record into one uniform list (see services/background_activity) so
+    the banner can render any background work generically. ``read_progress`` and
+    ``status_dict`` never raise, so a missing marker/state degrades to "idle"
+    rather than erroring the poll. Returns ``{"active": bool, "activities": []}``.
+    """
+    from universalchess.managers.bluez_patch_status import read_progress
+    from universalchess.services.background_activity import activity_snapshot
+
+    return jsonify(activity_snapshot(
+        _engine_install_store.status_dict(),
+        read_progress(),
+    ))
+
+
 @app.route("/api/engines/resume", methods=["POST"])
 def api_resume_engine_install():
     """Resume an install that was interrupted by a process/board restart.
