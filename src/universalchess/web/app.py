@@ -3543,8 +3543,14 @@ def api_get_engine_refs(engine_name):
 
 
 @app.route("/api/engines/install", methods=["POST"])
+@requires_auth
 def api_install_engine():
-    """Start installing an engine, optionally from a chosen git ref."""
+    """Start installing an engine, optionally from a chosen git ref.
+
+    Requires authentication: installing runs apt/source builds and modifies the
+    system, so it is gated like the other privileged mutations (update install,
+    delengine, board/system control).
+    """
     try:
         data = request.get_json()
         engine_name = data.get("engine") if data else None
@@ -3576,8 +3582,9 @@ def api_install_engine():
 
 
 @app.route("/api/engines/uninstall", methods=["POST"])
+@requires_auth
 def api_uninstall_engine():
-    """Uninstall an engine."""
+    """Uninstall an engine. Requires authentication (system mutation)."""
     try:
         data = request.get_json()
         engine_name = data.get("engine")

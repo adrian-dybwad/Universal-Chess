@@ -327,6 +327,31 @@ else
     echo -e "::: Warning: bt-admin helper not found at $BT_ADMIN_HELPER"
 fi
 
+# Allow the service user to expand swap for the duration of an engine source
+# build. A compile of a modern engine (notably one embedding an NNUE net) can
+# exceed a 512MB board's RAM and be OOM-killed; uc-build-memory brings up a zram
+# tier + a temporary SD-card swap backstop for the build and tears it down after,
+# so normal play runs on RAM alone. The helper needs root (modprobe/zramctl/
+# mkswap/swapon/sysctl), so -- as with bt-admin and the updater -- grant
+# passwordless sudo to exactly this one pinned helper, whose `case` is the
+# boundary (it performs only acquire/release/status and validates its PID arg).
+# The BlueZ self-heal calls the same helper directly (it already runs as root).
+echo -e "::: Configuring sudoers for build memory"
+BUILD_MEM_HELPER="${DGTCM_PATH}/scripts/uc-build-memory"
+if [ -f "$BUILD_MEM_HELPER" ]; then
+    chmod +x "$BUILD_MEM_HELPER"
+    BUILD_MEM_SUDOERS_FILE="/etc/sudoers.d/universal-chess-build-memory"
+    echo "$PRIMARY_USER ALL=(root) NOPASSWD: $BUILD_MEM_HELPER" > "$BUILD_MEM_SUDOERS_FILE"
+    chmod 440 "$BUILD_MEM_SUDOERS_FILE"
+    # Validate before it can take effect; a malformed drop-in can lock out sudo.
+    if ! visudo -cf "$BUILD_MEM_SUDOERS_FILE" >/dev/null 2>&1; then
+        echo -e "::: Warning: build-memory sudoers entry invalid; removing"
+        rm -f "$BUILD_MEM_SUDOERS_FILE"
+    fi
+else
+    echo -e "::: Warning: build-memory helper not found at $BUILD_MEM_HELPER"
+fi
+
 # BlueZ advertising self-heal: keep BLE advertising working across OS/kernel
 # updates by substituting a minimally-patched bluetoothd only when the stock one
 # is broken (kernel 6.18 ext-adv-data validation vs released-BlueZ sizeof bug),

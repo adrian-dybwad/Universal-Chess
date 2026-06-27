@@ -69,6 +69,7 @@ from universalchess.services.github_tag_cache import (
 )
 from universalchess.services import apt_recovery
 from universalchess.services.apt_recovery import RecoveryOutcome
+from universalchess.services.build_memory import build_memory
 
 # Engine installation directory
 ENGINES_DIR = "/opt/universalchess/engines"
@@ -81,6 +82,55 @@ _BUILD_TAIL_LINES = 40
 # update persists install state to the SD-card-backed store and build output can
 # be chatty on a slow board.
 _BUILD_PROGRESS_THROTTLE_SECONDS = 2.0
+
+# Environment variable that overrides compile parallelism (see _build_parallelism).
+_BUILD_PARALLELISM_ENV = "UC_BUILD_PARALLELISM"
+
+
+def _build_parallelism() -> int:
+    """Number of parallel compile jobs for source builds.
+
+    Parallelism is centralized here instead of being hard-coded per engine: the
+    value is injected into every build command's environment (see _build_env), so
+    each catalog entry no longer carries its own ``-jN``. This is the single knob
+    for trading build speed against memory pressure. It is overridable via the
+    :data:`_BUILD_PARALLELISM_ENV` environment variable so the optimum can be
+    measured on a board without a code change; the default is the CPU count.
+
+    On a RAM-constrained board a high job count is only safe because the
+    temporary build-memory swap (see :mod:`services.build_memory`) is acquired
+    around the build -- without it, parallel compiles of a memory-heavy engine
+    (e.g. an embedded NNUE net) are OOM-killed. Swap lets the build *complete*;
+    the fastest job count is still bounded by what fits in RAM, which is why the
+    value is tunable rather than fixed at "unlimited".
+    """
+    override = os.environ.get(_BUILD_PARALLELISM_ENV)
+    if override:
+        try:
+            n = int(override)
+        except ValueError:
+            log.warning("Ignoring invalid %s=%r", _BUILD_PARALLELISM_ENV, override)
+        else:
+            if n >= 1:
+                return n
+            log.warning("Ignoring %s=%r (must be >= 1)", _BUILD_PARALLELISM_ENV, override)
+    return os.cpu_count() or 1
+
+
+def _build_env(parallelism: Optional[int] = None) -> dict:
+    """Environment for a build subprocess with centralized compile parallelism.
+
+    Sets ``MAKEFLAGS=-jN`` (make reads -j from the environment) and
+    ``GOFLAGS=-p=N`` (go applies -p=N to its compile concurrency) so make- and
+    go-based builds share one parallelism value. Because an explicit ``-j`` on a
+    command line overrides ``MAKEFLAGS``, the per-engine ``-jN`` flags are removed
+    from the catalog -- the env is now the single source of truth.
+    """
+    n = parallelism if parallelism is not None else _build_parallelism()
+    env = dict(os.environ)
+    env["MAKEFLAGS"] = f"-j{n}"
+    env["GOFLAGS"] = f"-p={n}"
+    return env
 
 # Repository root (for build scripts)
 # Detect from this file's location: src/universalchess/managers/engine_manager.py -> repo root
@@ -472,8 +522,9 @@ ENGINES = {
         description="Top-10 ranked engine with NNUE support. Known for fast search speed and aggressive playing style. Good for blitz and bullet games where speed matters.",
         repo_url="https://github.com/Luecx/Koivisto.git",
         build_commands=[
-            # Use -j2 to limit memory usage (NNUE compilation is memory-intensive)
-            "cd src_files && make -j2 EXE=koivisto",
+            # Parallelism comes from MAKEFLAGS (see _build_env); the temporary
+            # build-memory swap covers the NNUE compile's memory use.
+            "cd src_files && make EXE=koivisto",
         ],
         binary_path="src_files/koivisto",
         is_system_package=False,
@@ -511,8 +562,9 @@ ENGINES = {
             # On ARM the Makefile's x86 feature detection (POPCNT/AVX/PEXT) simply
             # finds none of those macros and adds no x86 flags, so gcc -march=native
             # produces a valid native binary.
-            # Use -j2 to limit memory usage (NNUE compilation is memory-intensive).
-            "cd src && make -j2 CC=gcc EXE=ethereal",
+            # Parallelism comes from MAKEFLAGS (see _build_env); the temporary
+            # build-memory swap covers the NNUE compile's memory use.
+            "cd src && make CC=gcc EXE=ethereal",
         ],
         binary_path="src/ethereal",
         is_system_package=False,
@@ -544,7 +596,7 @@ ENGINES = {
             # clang on a 32-bit Pi Zero pulls hundreds of MB of LLVM-19 and was
             # timing out/failing, which then surfaced as a cryptic "clang: not
             # found" because a failed dependency install is non-fatal.
-            "cd src && make -j$(nproc) CC=gcc",
+            "cd src && make CC=gcc",
         ],
         binary_path="src/demolito",
         is_system_package=False,
@@ -562,7 +614,7 @@ ENGINES = {
         repo_url="https://github.com/TerjeKir/weiss.git",
         build_commands=[
             # Weiss builds from src directory
-            "cd src && make -j$(nproc) EXE=weiss",
+            "cd src && make EXE=weiss",
         ],
         binary_path="src/weiss",
         is_system_package=False,
@@ -615,8 +667,10 @@ ENGINES = {
             #   compiled without -flto, so using bfd costs nothing.
             # * EXE=arasan -- the Makefile otherwise emits ../bin/arasanx-64; EXE fixes
             #   the output name to ../bin/arasan matching binary_path.
-            # * -j1 -- single-threaded to avoid OOM / overloading low-memory devices.
-            'cd src && make -j1 CC=clang++ EXE=arasan BUILD_TYPE=neon '
+            # Parallelism is no longer pinned here (-j1 was for OOM avoidance);
+            # MAKEFLAGS (see _build_env) sets it, and the temporary build-memory
+            # swap covers the memory the parallel NNUE compile uses.
+            'cd src && make CC=clang++ EXE=arasan BUILD_TYPE=neon '
             'LDFLAGS="-O3 -fno-rtti -DNDEBUG"',
             # Stage the embedded NNUE network next to where the binary is installed.
             # Arasan loads the network from the executable's own directory and embeds
@@ -671,7 +725,7 @@ ENGINES = {
             "cd sources && LDFLAGS='-s -lm'; "
             'case "$(uname -m)" in arm|armv*) '
             'LDFLAGS="$LDFLAGS -Wl,--no-as-needed -latomic";; esac; '
-            'make -j$(nproc) EXENAME=../rodentIV LDFLAGS="$LDFLAGS"',
+            'make EXENAME=../rodentIV LDFLAGS="$LDFLAGS"',
         ],
         binary_path="rodentIV",
         is_system_package=False,
@@ -744,22 +798,21 @@ ENGINES = {
         # build must also run the Makefile's `netgen` step first, which generates
         # engine/nn.go from default.nn (it is not committed) -- without it the
         # engine package does not compile. `make` (default goal `build`) does both
-        # and emits bin/zahak. FLAGS carries two overrides of the Makefile's
-        # `CC=cc CGO_ENABLED=1` default:
-        #   CGO_ENABLED=0 -- CGO would pull in fathom's Syzygy C code and require a
-        #     C compiler not in our dependencies; disabling it selects
-        #     fathom_stub.go (no tablebase probing, irrelevant on-device) and keeps
-        #     the build to just golang+git.
-        #   GOFLAGS=-p=1 -- serialize compilation. Go defaults build parallelism to
-        #     the CPU count (4 on a Pi Zero 2 W), and the engine package embeds the
-        #     ~1.5MB NNUE net as generated source, so concurrent compiles of it
-        #     exhaust the board's 512MB RAM and the OOM killer aborts the build
-        #     ("compile: signal: killed"). -p=1 bounds peak memory to one compile.
-        #     GOFLAGS lands only on the $(FLAGS)-prefixed `go run`/`go build`, not
-        #     the unprefixed `go clean` (which does not accept -p).
+        # and emits bin/zahak. FLAGS overrides the Makefile's `CC=cc CGO_ENABLED=1`
+        # default with CGO_ENABLED=0: CGO would pull in fathom's Syzygy C code and
+        # require a C compiler not in our dependencies; disabling it selects
+        # fathom_stub.go (no tablebase probing, irrelevant on-device) and keeps the
+        # build to just golang+git.
+        # Compile parallelism is NOT pinned here -- it comes from GOFLAGS=-p=N in
+        # the build environment (see _build_env), the same single knob the
+        # make-based engines use. The engine package embeds the ~1.5MB NNUE net as
+        # generated source, so on a 512MB board parallel compiles of it would OOM
+        # ("compile: signal: killed"); the temporary build-memory swap
+        # (services.build_memory), acquired around the build, is what lets a
+        # parallel build complete there instead of being killed.
         # `make` honors `git tag` for version stamping, so the shallow clone is fine.
         build_commands=[
-            "make FLAGS='CGO_ENABLED=0 GOFLAGS=-p=1'",
+            "make FLAGS='CGO_ENABLED=0'",
         ],
         binary_path="bin/zahak",
         is_system_package=False,
@@ -767,9 +820,10 @@ ENGINES = {
         extra_files=[],
         # golang package name varies: 'golang' on older Debian, 'golang-go' on newer
         dependencies=["golang", "git"],
-        # Serial (-p=1) compile of the NNUE-embedding package on a RAM-constrained
-        # board runs well past Go's usual speed; the estimate paces the progress
-        # creep (which caps, so it never shows "done" early).
+        # Compiling the NNUE-embedding package on a RAM-constrained board (even in
+        # parallel, much of it spilling through swap) runs well past Go's usual
+        # speed; the estimate paces the progress creep (which caps, so it never
+        # shows "done" early).
         estimated_install_minutes=10,
         has_prebuilt=True,
     ),
@@ -780,8 +834,9 @@ ENGINES = {
         description="Compact NNUE engine with small binary size. Efficient code optimized for resource-constrained devices. Surprisingly strong for its size.",
         repo_url="https://github.com/Disservin/Smallbrain.git",
         build_commands=[
-            # Use -j2 to limit memory usage (NNUE compilation is memory-intensive)
-            "cd src && make -j2 EXE=smallbrain",
+            # Parallelism comes from MAKEFLAGS (see _build_env); the temporary
+            # build-memory swap covers the NNUE compile's memory use.
+            "cd src && make EXE=smallbrain",
         ],
         binary_path="src/smallbrain",
         is_system_package=False,
@@ -1109,7 +1164,35 @@ class EngineManager:
                 success = True
             else:
                 log.info(f"[EngineManager] install_engine: Using source build installation for '{engine_name}'")
-                success = self._install_from_source(engine, update_progress, ref_label=resolved_ref)
+                # A source build is the only install path that compiles, so it is
+                # the only one that can OOM on a constrained board. Hold extra swap
+                # (zram + temporary SD backstop) just for its duration; the apt and
+                # prebuilt-download paths above need no extra memory and so do not
+                # acquire it (avoiding pointless swap setup/teardown). This also
+                # covers the prebuilt-fetch-failed fallback, which reaches here.
+                #
+                # The per-engine compile-memory guards (-j1/-j2) were removed in
+                # favor of this swap, so a build now REQUIRES the extra memory. If
+                # it cannot be reserved (helper missing, sudo grant absent, zram/
+                # swapon failed), abort before compiling with a visible message
+                # rather than running unguarded at full parallelism and OOM-ing --
+                # failing loudly is preferable to a silent crash mid-build.
+                with build_memory() as memory_ready:
+                    if not memory_ready:
+                        self._install_error = (
+                            f"Could not reserve the extra memory needed to build "
+                            f"{engine.display_name}. The install was stopped before "
+                            f"compiling to avoid running out of memory. Update or "
+                            f"reinstall Universal Chess so the build can reserve "
+                            f"memory, then try again."
+                        )
+                        log.error(
+                            "[EngineManager] install_engine: aborting source build for "
+                            f"'{engine_name}': build memory could not be acquired"
+                        )
+                        success = False
+                    else:
+                        success = self._install_from_source(engine, update_progress, ref_label=resolved_ref)
 
             # Record the installed ref on success for source-built engines so the
             # UI can show what is installed and mark refs that have ever built
@@ -1513,6 +1596,8 @@ class EngineManager:
             text=True,
             bufsize=1,
             start_new_session=True,
+            # Centralized compile parallelism (MAKEFLAGS/GOFLAGS); see _build_env.
+            env=_build_env(),
         )
         tail: "deque[str]" = deque(maxlen=_BUILD_TAIL_LINES)
         line_q: Queue = Queue()

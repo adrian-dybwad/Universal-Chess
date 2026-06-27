@@ -6,7 +6,14 @@ build-command string itself is the highest deterministic level at which the
 regression can be guarded.
 """
 
-from universalchess.managers.engine_manager import ENGINES
+import re
+
+from universalchess.managers.engine_manager import (
+    _BUILD_PARALLELISM_ENV,
+    ENGINES,
+    _build_env,
+    _build_parallelism,
+)
 
 
 def _build_script(engine_name: str) -> str:
@@ -323,22 +330,23 @@ class TestZahakBuildCommand:
         """
         assert "CGO_ENABLED=0" in _build_script("zahak")
 
-    def test_serializes_compilation(self):
-        """The build must pass ``-p=1`` to serialize Go compilation.
+    def test_does_not_pin_parallelism(self):
+        """Zahak must NOT hard-code Go compile parallelism in its command.
 
-        Why this test exists: a 415MB Pi Zero 2 W OOM-killed the build
-        ("compile: signal: killed"). Go defaults build parallelism to the CPU
-        count (4), and the engine package embeds the ~1.5MB NNUE net as generated
-        source, so several concurrent compiles of it exceed the board's RAM.
-        Empirically even -p=2 still OOMs; only -p=1 (one compile at a time) fits.
-        It is passed via GOFLAGS so it lands on the go build/go run steps but not
-        the unprefixed ``go clean`` (which does not accept -p).
+        Why this test exists: parallelism is centralized in the build environment
+        (GOFLAGS=-p=N via _build_env) so it is one tunable knob, not a per-engine
+        constant. An inline ``GOFLAGS=-p=1`` in FLAGS would override the
+        environment value and silently pin Zahak to serial compiles regardless of
+        the knob -- and the previous OOM that motivated -p=1 is now handled by the
+        temporary build-memory swap, not by serializing.
 
-        How the regression manifests: dropping ``-p=1`` reverts to CPU-count
-        parallelism and the build is OOM-killed on low-RAM boards.
+        How the regression manifests: re-adding GOFLAGS=-p=… to the command makes
+        the central knob a no-op for Zahak; this asserts the command carries no
+        parallelism flag.
         """
         script = _build_script("zahak")
-        assert "GOFLAGS=-p=1" in script
+        assert "GOFLAGS=-p" not in script
+        assert "-p=" not in script
 
     def test_binary_path_points_to_bin(self):
         """Zahak's binary_path must be ``bin/zahak``.
@@ -354,3 +362,67 @@ class TestZahakBuildCommand:
         the "Binary not found" check.
         """
         assert ENGINES["zahak"].binary_path == "bin/zahak"
+
+
+# Matches a hard-coded parallelism flag in a build command: -j2 / -j 2 /
+# -j$(nproc) / -jN, or a go -p=N. The central knob (_build_env) is the only place
+# parallelism should be set, so none of these may appear in the catalog.
+_PARALLELISM_FLAG = re.compile(r"(-j\s*(\d+|\$\(nproc\)))|(-p=\d+)")
+
+
+class TestCentralizedParallelism:
+    """Parallelism is one tunable knob (env), not a per-engine constant."""
+
+    def test_no_engine_hardcodes_parallelism_in_its_command(self):
+        """No catalog build command may pin -jN/-j$(nproc)/-p=N.
+
+        Why this test exists: per-engine parallelism was the old pattern (-j2 for
+        NNUE engines, -j1 for Arasan, -p=1 for Zahak) and it fragmented a decision
+        that should be uniform and tunable. Parallelism now comes from MAKEFLAGS/
+        GOFLAGS in the build environment, and a command-line -j overrides MAKEFLAGS
+        -- so a stray inline flag silently defeats the central knob for that one
+        engine.
+
+        How the regression manifests: re-adding any -jN/-p=N to a build_commands
+        entry trips this, naming the engine whose flag escaped centralization.
+        """
+        offenders = {
+            name: eng.build_commands
+            for name, eng in ENGINES.items()
+            if _PARALLELISM_FLAG.search(_build_script(name))
+        }
+        assert offenders == {}, f"engines still pinning parallelism: {offenders}"
+
+    def test_build_env_sets_makeflags_and_goflags(self):
+        """_build_env injects -jN for make and -p=N for go from one value.
+
+        Why this test exists: make and go read parallelism from different
+        variables; both must carry the same N or the two build systems would
+        diverge. Guards that a single knob drives both.
+        """
+        env = _build_env(3)
+        assert env["MAKEFLAGS"] == "-j3"
+        assert env["GOFLAGS"] == "-p=3"
+
+    def test_parallelism_env_override_is_honored(self, monkeypatch):
+        """UC_BUILD_PARALLELISM overrides the default so a board can be tuned.
+
+        Why this test exists: the optimal job count is board-specific and is meant
+        to be measured without a code change. A valid override must win over the
+        CPU-count default.
+        """
+        monkeypatch.setenv(_BUILD_PARALLELISM_ENV, "2")
+        assert _build_parallelism() == 2
+
+    def test_invalid_parallelism_override_falls_back_to_cpu_count(self, monkeypatch):
+        """A non-positive/garbage override must be ignored, not crash the build.
+
+        Why this test exists: an operator could set a bad value; the build must
+        degrade to the CPU-count default rather than passing -j0/-jfoo to make.
+        How the regression manifests: if parsing did not validate, ``-j0`` (run
+        unlimited jobs) or a ValueError would reach the build.
+        """
+        monkeypatch.setenv(_BUILD_PARALLELISM_ENV, "0")
+        assert _build_parallelism() == (__import__("os").cpu_count() or 1)
+        monkeypatch.setenv(_BUILD_PARALLELISM_ENV, "notanint")
+        assert _build_parallelism() == (__import__("os").cpu_count() or 1)

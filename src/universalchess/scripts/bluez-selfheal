@@ -304,6 +304,16 @@ build_patched() {
     sed -i 's/sizeof(struct mgmt_cp_add_advertising) + adv_data_len/sizeof(*cp) + adv_data_len/g' \
         "$src/src/advertising.c"
 
+    # Expand swap headroom for just the compile. bluetoothd's build can exceed a
+    # 512MB board's RAM with make -j$(nproc); without the extra swap the OOM
+    # killer aborts it and the heal never completes (a likely contributor to the
+    # multi-tens-of-minutes worst case as the board thrashes). uc-build-memory
+    # brings up zram + a temporary SD backstop and tears it down after; it is
+    # reference-counted so it is safe even if an engine install is acquiring it
+    # concurrently. Best-effort: if the helper is missing we still attempt the
+    # build (prior behavior).
+    local build_mem="${SCRIPT_DIR}/uc-build-memory"
+    [ -x "$build_mem" ] && "$build_mem" acquire --owner-pid "$$" 2>/dev/null
     (
         cd "$src" || exit 1
         # BUILT_SOURCES (the lib/bluetooth header symlink + src/builtin.h) are only
@@ -313,7 +323,10 @@ build_patched() {
         debian/rules override_dh_auto_configure >/dev/null 2>&1 || ./configure >/dev/null 2>&1 || exit 1
         make src/builtin.h obexd/src/builtin.h >/dev/null 2>&1 || true
         make -j"$(nproc)" src/bluetoothd >/dev/null 2>&1 || exit 1
-    ) || { log "ERROR: compile failed"; rm -rf "$work"; return 1; }
+    )
+    local compile_rc=$?
+    [ -x "$build_mem" ] && "$build_mem" release --owner-pid "$$" 2>/dev/null
+    [ "$compile_rc" -eq 0 ] || { log "ERROR: compile failed"; rm -rf "$work"; return 1; }
 
     [ -x "$src/src/bluetoothd" ] || { log "ERROR: bluetoothd not produced"; rm -rf "$work"; return 1; }
     # Write the cache atomically: install to a temp then rename, so a power cut

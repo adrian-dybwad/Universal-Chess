@@ -1,0 +1,381 @@
+#!/bin/bash
+# uc-build-memory -- temporarily expand memory headroom for the heavy, occasional
+# operations that OOM on RAM-constrained boards (engine source builds and the
+# BlueZ self-heal bluetoothd rebuild), then release it so normal play runs on
+# RAM alone with no swap churn or SD-card wear.
+#
+# WHY THIS EXISTS
+#   A Pi Zero 2 W has ~415 MB usable RAM. A single C/C++/Go compile of a modern
+#   engine (or bluetoothd) can want 200 MB+ resident with a >1 GB virtual
+#   footprint, and parallel jobs multiply that. The board's stock swap (a small
+#   dphys swapfile) is not enough, so the OOM killer aborts the build. We do NOT
+#   want a large permanent swap: disk swap on an SD card is slow and wears the
+#   card, and routine swapping hurts gameplay latency. So memory is expanded only
+#   for the duration of a heavy operation and torn down immediately after.
+#
+# WHAT "ACQUIRE" SETS UP (all temporary, all removed on the final release)
+#   1. zram   -- a compressed-RAM swap device, swapped on at HIGH priority so the
+#                kernel fills it first. Fast (RAM-backed) and costs only the
+#                compressed size of whatever is paged out.
+#   2. SD swapfile -- a low-priority backstop, sized so total (RAM + all swap)
+#                reaches a target budget. Because its priority is below zram's,
+#                the kernel only spills here once zram is exhausted, so on a build
+#                that fits in zram the SD card is barely touched. Deleted on release.
+#   3. vm.swappiness bump -- raised for the window so the kernel is willing to
+#                page anonymous build memory out under pressure (instead of OOM-
+#                killing); the previous value is restored on release.
+#
+# REFERENCE COUNTING (safe under overlap)
+#   An engine install runs apt, and an apt run can trigger the BlueZ self-heal,
+#   so two heavy operations can overlap. Each caller takes a token keyed by its
+#   owner PID; teardown happens only when the LAST token is released. Tokens live
+#   in a tmpfs state dir (cleared on reboot), and stale tokens whose owner PID is
+#   dead are pruned on every acquire/release, so a crashed build cannot pin swap
+#   forever. We tear down only what we created (recorded at first acquire), never
+#   the board's pre-existing stock swap.
+#
+# INVOCATION
+#   Pinned, passwordless-sudo helper (see package postinst), mirroring bt-admin:
+#     <service-user> ALL=(root) NOPASSWD: /opt/universalchess/scripts/uc-build-memory
+#   The web app (unprivileged) calls `sudo -n uc-build-memory acquire|release`;
+#   the BlueZ self-heal (already root) calls it directly. The `case` below is the
+#   security boundary for the grant -- do not add a passthrough branch.
+#
+# TEST SEAMS (let the sizing + ref-count logic be exercised without root)
+#   UC_BUILD_MEM_STATE_DIR     override the tmpfs state dir (default below)
+#   UC_BUILD_MEM_SWAPFILE      override the SD swapfile path
+#   UC_BUILD_MEM_MEMTOTAL_MB   override detected RAM (MB)
+#   UC_BUILD_MEM_SWAPTOTAL_MB  override detected existing swap (MB)
+#   UC_BUILD_MEM_TARGET_MB     target total RAM+swap budget (default 4096)
+#   UC_BUILD_MEM_SWAPPINESS    swappiness value during the window (default 60)
+#   UC_BUILD_MEM_DRY_RUN=1     print intended privileged actions instead of
+#                              running them (to $UC_BUILD_MEM_ACTION_LOG if set)
+set -u
+
+STATE_DIR="${UC_BUILD_MEM_STATE_DIR:-/run/universalchess/build-memory}"
+SWAPFILE="${UC_BUILD_MEM_SWAPFILE:-/var/cache/universalchess/build-swap}"
+TARGET_MB="${UC_BUILD_MEM_TARGET_MB:-4096}"
+BUILD_SWAPPINESS="${UC_BUILD_MEM_SWAPPINESS:-60}"
+DRY_RUN="${UC_BUILD_MEM_DRY_RUN:-0}"
+ACTION_LOG="${UC_BUILD_MEM_ACTION_LOG:-}"
+LOG_TAG="uc-build-memory"
+
+TOKENS_DIR="${STATE_DIR}/tokens"
+LOCK="${STATE_DIR}/lock"
+# created.env records what THIS facility brought up, so release tears down only
+# our additions and never the board's stock swap.
+CREATED_ENV="${STATE_DIR}/created.env"
+
+# zram disksize is the (uncompressed) capacity it will accept; real RAM cost is
+# the compressed size of paged-out data. Half of RAM is a deliberate compromise:
+# a fast first swap tier that offloads build pages without itself consuming so
+# much RAM that it competes with the compile. The SD swapfile is the large tier.
+ZRAM_FRACTION_DENOMINATOR=2
+
+# Never let the SD swapfile fill the card: cap it so this much free space remains
+# on the swapfile's filesystem after allocation.
+SWAPFILE_KEEP_FREE_MB=512
+
+log() { logger -t "$LOG_TAG" -- "$*" 2>/dev/null || true; echo "[$LOG_TAG] $*" >&2; }
+
+# Record an intended privileged action in dry-run, or run it for real otherwise.
+# Keeping every privileged primitive behind this one wrapper is what makes the
+# script's decision logic testable without root: tests run with DRY_RUN=1 and a
+# temp STATE_DIR, then assert on the action log.
+run_priv() {
+    if [ "$DRY_RUN" = "1" ]; then
+        if [ -n "$ACTION_LOG" ]; then echo "$*" >> "$ACTION_LOG"; fi
+        return 0
+    fi
+    "$@"
+}
+
+usage() {
+    echo "usage: uc-build-memory {acquire|release|status} [--owner-pid PID]" >&2
+    exit 2
+}
+
+# ---------------------------------------------------------------------------
+# Environment discovery
+# ---------------------------------------------------------------------------
+
+mem_total_mb() {
+    if [ -n "${UC_BUILD_MEM_MEMTOTAL_MB:-}" ]; then echo "$UC_BUILD_MEM_MEMTOTAL_MB"; return; fi
+    awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo
+}
+
+swap_total_mb() {
+    if [ -n "${UC_BUILD_MEM_SWAPTOTAL_MB:-}" ]; then echo "$UC_BUILD_MEM_SWAPTOTAL_MB"; return; fi
+    awk '/^SwapTotal:/ {print int($2/1024)}' /proc/meminfo
+}
+
+# Free space (MB) on the filesystem that will hold the swapfile. The parent dir
+# is used because the swapfile itself may not exist yet.
+swapfile_fs_free_mb() {
+    local dir
+    dir="$(dirname "$SWAPFILE")"
+    mkdir -p "$dir" 2>/dev/null || true
+    df -Pm "$dir" 2>/dev/null | awk 'NR==2 {print $4}'
+}
+
+# Size (MB) of the SD swapfile backstop: enough to reach TARGET_MB once RAM,
+# existing stock swap, and our zram tier are counted -- never negative, and
+# capped so the SD card keeps SWAPFILE_KEEP_FREE_MB free. Echoes 0 when no SD
+# backstop is needed (e.g. a board with plenty of RAM).
+sd_swap_size_mb() {
+    local mem swap zram want free cap
+    mem="$1"; swap="$2"; zram="$3"
+    want=$(( TARGET_MB - mem - swap - zram ))
+    [ "$want" -lt 0 ] && want=0
+    if [ "$want" -gt 0 ]; then
+        free="$(swapfile_fs_free_mb)"
+        if [ -n "$free" ]; then
+            cap=$(( free - SWAPFILE_KEEP_FREE_MB ))
+            [ "$cap" -lt 0 ] && cap=0
+            [ "$want" -gt "$cap" ] && want="$cap"
+        fi
+    fi
+    echo "$want"
+}
+
+zram_size_mb() {
+    local mem="$1"
+    echo $(( mem / ZRAM_FRACTION_DENOMINATOR ))
+}
+
+# ---------------------------------------------------------------------------
+# Token / reference counting
+# ---------------------------------------------------------------------------
+
+# Ownership-independent, robust liveness test. Two failure modes must NOT be
+# confused: "the process is dead" vs "the probe could not run". Misreading the
+# latter as dead would prune a live holder and tear down swap mid-build.
+#   * Linux (the target boards): /proc is authoritative and fork-free. If /proc
+#     exists but the pid dir does not, the process is genuinely dead.
+#   * No /proc (e.g. the macOS dev box under unit tests): use `kill -0`, a shell
+#     BUILTIN (no fork, so no load-induced flakiness). Success means alive; the
+#     critical case is that EPERM ("operation not permitted", a live process
+#     owned by another user) is treated as ALIVE -- only ESRCH ("no such
+#     process") is dead.
+proc_alive() {
+    local pid="$1"
+    if [ -d /proc ]; then
+        [ -d "/proc/$pid" ]
+        return
+    fi
+    if kill -0 "$pid" 2>/dev/null; then
+        return 0
+    fi
+    case "$(kill -0 "$pid" 2>&1)" in
+        *"o such process"*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+# Remove tokens whose owner process is gone so a crashed build never pins swap.
+prune_dead_tokens() {
+    local f pid
+    [ -d "$TOKENS_DIR" ] || return 0
+    for f in "$TOKENS_DIR"/*; do
+        [ -e "$f" ] || continue
+        pid="$(basename "$f")"
+        # Non-numeric token names carry no liveness owner; keep them until an
+        # explicit release.
+        case "$pid" in
+            ''|*[!0-9]*) continue ;;
+        esac
+        if ! proc_alive "$pid"; then
+            rm -f "$f"
+        fi
+    done
+}
+
+live_token_count() {
+    [ -d "$TOKENS_DIR" ] || { echo 0; return; }
+    find "$TOKENS_DIR" -maxdepth 1 -type f | wc -l | tr -d ' '
+}
+
+# ---------------------------------------------------------------------------
+# Bring-up / teardown of the memory tiers
+# ---------------------------------------------------------------------------
+
+setup_memory() {
+    local mem swap zram sd swappiness_now
+    mem="$(mem_total_mb)"; swap="$(swap_total_mb)"
+    zram="$(zram_size_mb "$mem")"
+    sd="$(sd_swap_size_mb "$mem" "$swap" "$zram")"
+
+    : > "$CREATED_ENV"
+
+    # zram tier (compressed RAM, high priority). modprobe then allocate a device.
+    local zdev=""
+    if run_priv modprobe zram 2>/dev/null; then
+        if [ "$DRY_RUN" = "1" ]; then
+            zdev="/dev/zram-dryrun"
+            run_priv zramctl --find --size "${zram}M" --algorithm zstd
+        else
+            zdev="$(zramctl --find --size "${zram}M" --algorithm zstd 2>/dev/null \
+                    || zramctl --find --size "${zram}M" 2>/dev/null)"
+        fi
+        if [ -n "$zdev" ]; then
+            run_priv mkswap "$zdev" >/dev/null 2>&1
+            if run_priv swapon -p 100 "$zdev"; then
+                echo "ZRAM_DEV=$zdev" >> "$CREATED_ENV"
+                log "zram swap up: $zdev (${zram}M)"
+            else
+                log "WARNING: swapon zram failed; resetting $zdev"
+                run_priv zramctl --reset "$zdev" 2>/dev/null
+            fi
+        else
+            log "WARNING: could not allocate zram device"
+        fi
+    else
+        log "WARNING: zram module unavailable; relying on SD swap"
+    fi
+
+    # SD swapfile backstop (low priority). Skipped when not needed (sd == 0).
+    if [ "$sd" -gt 0 ]; then
+        run_priv mkdir -p "$(dirname "$SWAPFILE")"
+        # Prefer fallocate (fast, few writes); fall back to dd if the resulting
+        # file is unusable as swap (some filesystems leave holes fallocate-style
+        # swapfiles that swapon rejects).
+        local made=0
+        if run_priv fallocate -l "${sd}M" "$SWAPFILE" 2>/dev/null; then made=1; fi
+        if [ "$made" = "0" ]; then
+            run_priv dd if=/dev/zero of="$SWAPFILE" bs=1M count="$sd" status=none 2>/dev/null && made=1
+        fi
+        if [ "$made" = "1" ]; then
+            run_priv chmod 600 "$SWAPFILE"
+            run_priv mkswap "$SWAPFILE" >/dev/null 2>&1
+            if run_priv swapon -p 10 "$SWAPFILE"; then
+                echo "SWAPFILE=$SWAPFILE" >> "$CREATED_ENV"
+                log "SD swap backstop up: $SWAPFILE (${sd}M)"
+            else
+                log "WARNING: swapon SD swapfile failed; removing"
+                run_priv rm -f "$SWAPFILE"
+            fi
+        else
+            log "WARNING: could not create SD swapfile"
+        fi
+    fi
+
+    # swappiness bump (restore the prior value on teardown).
+    if [ -r /proc/sys/vm/swappiness ]; then
+        swappiness_now="$(cat /proc/sys/vm/swappiness 2>/dev/null)"
+    else
+        swappiness_now=""
+    fi
+    [ "$DRY_RUN" = "1" ] && swappiness_now="${swappiness_now:-60}"
+    if [ -n "$swappiness_now" ]; then
+        echo "PREV_SWAPPINESS=$swappiness_now" >> "$CREATED_ENV"
+        run_priv sysctl -q -w "vm.swappiness=$BUILD_SWAPPINESS"
+        log "vm.swappiness $swappiness_now -> $BUILD_SWAPPINESS"
+    fi
+}
+
+teardown_memory() {
+    [ -f "$CREATED_ENV" ] || return 0
+    # shellcheck disable=SC1090
+    local ZRAM_DEV="" SWAPFILE_CREATED="" PREV_SWAPPINESS=""
+    # Parse our record without sourcing arbitrary content.
+    ZRAM_DEV="$(awk -F= '/^ZRAM_DEV=/{print $2}' "$CREATED_ENV")"
+    SWAPFILE_CREATED="$(awk -F= '/^SWAPFILE=/{print $2}' "$CREATED_ENV")"
+    PREV_SWAPPINESS="$(awk -F= '/^PREV_SWAPPINESS=/{print $2}' "$CREATED_ENV")"
+
+    if [ -n "$PREV_SWAPPINESS" ]; then
+        run_priv sysctl -q -w "vm.swappiness=$PREV_SWAPPINESS"
+        log "vm.swappiness restored -> $PREV_SWAPPINESS"
+    fi
+    if [ -n "$SWAPFILE_CREATED" ]; then
+        run_priv swapoff "$SWAPFILE_CREATED" 2>/dev/null
+        run_priv rm -f "$SWAPFILE_CREATED"
+        log "SD swap backstop removed: $SWAPFILE_CREATED"
+    fi
+    if [ -n "$ZRAM_DEV" ]; then
+        run_priv swapoff "$ZRAM_DEV" 2>/dev/null
+        run_priv zramctl --reset "$ZRAM_DEV" 2>/dev/null
+        log "zram swap removed: $ZRAM_DEV"
+    fi
+    rm -f "$CREATED_ENV"
+}
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+owner_pid="$PPID"
+
+cmd_acquire() {
+    mkdir -p "$TOKENS_DIR"
+    prune_dead_tokens
+    if [ "$(live_token_count)" -eq 0 ]; then
+        setup_memory
+    else
+        log "memory already acquired by $(live_token_count) holder(s); reusing"
+    fi
+    : > "${TOKENS_DIR}/${owner_pid}"
+    log "acquired (owner pid ${owner_pid})"
+}
+
+cmd_release() {
+    rm -f "${TOKENS_DIR}/${owner_pid}" 2>/dev/null
+    prune_dead_tokens
+    if [ "$(live_token_count)" -eq 0 ]; then
+        teardown_memory
+        log "released (owner pid ${owner_pid}); memory torn down"
+    else
+        log "released (owner pid ${owner_pid}); $(live_token_count) holder(s) remain"
+    fi
+}
+
+cmd_status() {
+    local mem swap zram sd
+    mem="$(mem_total_mb)"; swap="$(swap_total_mb)"
+    zram="$(zram_size_mb "$mem")"; sd="$(sd_swap_size_mb "$mem" "$swap" "$zram")"
+    echo "ram_mb=$mem stock_swap_mb=$swap planned_zram_mb=$zram planned_sd_swap_mb=$sd target_mb=$TARGET_MB"
+    echo "live_holders=$(live_token_count)"
+    if [ -f "$CREATED_ENV" ]; then echo "created:"; cat "$CREATED_ENV"; fi
+}
+
+# Serialize a mutating command under an exclusive lock so concurrent
+# acquire/release from overlapping operations cannot race the token count or
+# teardown. flock is from util-linux (present on the target boards); where it is
+# absent (e.g. a macOS dev box running the unit tests) we proceed without it --
+# the lock only matters for real concurrent privileged runs on-device.
+with_lock() {
+    mkdir -p "$STATE_DIR"
+    if command -v flock >/dev/null 2>&1; then
+        exec 9>"$LOCK"
+        flock -w 60 9 || { log "ERROR: could not take lock"; exit 1; }
+    fi
+    "$@"
+}
+
+main() {
+    local action="${1:-}"
+    shift || true
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --owner-pid)
+                owner_pid="${2:-$PPID}"
+                # This value becomes a filename under the (root-owned) token dir,
+                # so it MUST be a bare PID -- reject anything non-numeric to close
+                # a path-traversal vector through the sudo grant.
+                case "$owner_pid" in
+                    ''|*[!0-9]*) echo "invalid --owner-pid: $owner_pid" >&2; exit 2 ;;
+                esac
+                shift 2
+                ;;
+            *) usage ;;
+        esac
+    done
+
+    case "$action" in
+        acquire) with_lock cmd_acquire ;;
+        release) with_lock cmd_release ;;
+        status)  cmd_status ;;
+        *)       usage ;;
+    esac
+}
+
+main "$@"

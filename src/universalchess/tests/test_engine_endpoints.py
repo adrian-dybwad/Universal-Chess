@@ -78,8 +78,12 @@ class _SyncThread:
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
     webapp.app.config.update(TESTING=True)
+    # install/uninstall are @requires_auth (they mutate the system via apt/source
+    # builds); bypass HTTP Basic Auth so the contract tests reach the handlers.
+    # Dedicated *_requires_auth tests below pin the 401 path separately.
+    monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (True, "tester"))
     return webapp.app.test_client()
 
 
@@ -104,6 +108,47 @@ def install_store(tmp_path):
 # ---------------------------------------------------------------------------
 # Install contract
 # ---------------------------------------------------------------------------
+
+
+def test_install_requires_auth(monkeypatch):
+    """Installing must require authentication (401 when unauthenticated).
+
+    Why this exists: an install runs apt/source builds and modifies the system,
+    so it is as privileged as update-install / delengine, which are auth-gated.
+    Manifestation if the @requires_auth decorator is dropped: an unauthenticated
+    POST starts a system-mutating install and returns 200 instead of 401.
+    """
+    webapp.app.config.update(TESTING=True)
+    monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
+    unauth = webapp.app.test_client()
+
+    resp = unauth.post(
+        "/api/engines/install",
+        data=json.dumps({"engine": INSTALLABLE_ENGINE}),
+        content_type="application/json",
+    )
+
+    assert resp.status_code == 401
+
+
+def test_uninstall_requires_auth(monkeypatch):
+    """Uninstalling must require authentication (401 when unauthenticated).
+
+    Same rationale as install: removing an engine mutates the system and must be
+    gated. Manifestation if the decorator is dropped: an unauthenticated POST
+    removes the engine and returns 200 instead of 401.
+    """
+    webapp.app.config.update(TESTING=True)
+    monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
+    unauth = webapp.app.test_client()
+
+    resp = unauth.post(
+        "/api/engines/uninstall",
+        data=json.dumps({"engine": INSTALLABLE_ENGINE}),
+        content_type="application/json",
+    )
+
+    assert resp.status_code == 401
 
 
 def test_install_starts_with_engine_in_json_body(client, monkeypatch):
