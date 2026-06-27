@@ -11,6 +11,21 @@ they are not -- before cloning or building.
 from pathlib import Path
 
 from universalchess.managers.engine_manager import EngineManager, EngineDefinition
+from universalchess.services.apt_recovery import RecoveryOutcome
+
+
+def _stub_recovery(monkeypatch, outcome=RecoveryOutcome.PROCEEDED):
+    """Replace the dpkg interrupted-transaction recovery with a fixed outcome.
+
+    The dependency-gate tests exercise the apt step, not dpkg recovery; without
+    this the source installer would invoke the real recovery (a live ``sudo
+    dpkg`` on a Debian CI host). Defaulting to PROCEEDED keeps them focused on the
+    dependency logic; passing DEFERRED_RESTART drives the self-restart path.
+    """
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.apt_recovery.recover_interrupted_dpkg",
+        lambda *a, **k: outcome,
+    )
 
 
 class _FakeProc:
@@ -94,6 +109,7 @@ def test_install_from_source_aborts_when_dependency_missing(monkeypatch, tmp_pat
     lets execution reach the git clone (the sentinel below raises) and returns a
     later, cryptic build error rather than the early, clear dependency error.
     """
+    _stub_recovery(monkeypatch)
     manager = EngineManager(engines_dir=str(tmp_path))
     manager.build_tmp = Path(tmp_path) / "build"
     engine = _make_engine(["build-essential", "git", "bc"])
@@ -134,6 +150,7 @@ def test_install_from_source_continues_when_dependencies_present(monkeypatch, tm
     installed, breaking installs on boards where apt returns non-zero for benign
     trigger reasons.
     """
+    _stub_recovery(monkeypatch)
     manager = EngineManager(engines_dir=str(tmp_path))
     manager.build_tmp = Path(tmp_path) / "build"
     engine = _make_engine(["build-essential", "git"])
@@ -160,3 +177,43 @@ def test_install_from_source_continues_when_dependencies_present(monkeypatch, tm
         pass
 
     assert reached_clone["value"] is True
+
+
+def test_install_from_source_aborts_with_friendly_message_on_deferred_restart(
+    monkeypatch, tmp_path
+):
+    """When recovery must restart the service, abort with a user-facing warning.
+
+    Why this test exists: if dpkg recovery finds universal-chess itself
+    half-configured, ``dpkg --configure -a`` is launched out-of-process and will
+    restart this service. The install cannot complete, so the installer must stop
+    BEFORE touching apt and set a plain-language message telling the user to retry
+    after the restart -- never a console instruction, and never a half-run apt.
+
+    How the regression manifests: if the deferred-restart outcome were ignored,
+    execution would fall through to ``sudo apt-get install`` (the sentinel below
+    raises) -- running apt into a transaction that is about to be killed by the
+    restart -- and no actionable message would reach the UI.
+    """
+    _stub_recovery(monkeypatch, RecoveryOutcome.DEFERRED_RESTART)
+    manager = EngineManager(engines_dir=str(tmp_path))
+    manager.build_tmp = Path(tmp_path) / "build"
+    engine = _make_engine(["build-essential", "git"])
+
+    def fake_run(cmd, **kwargs):
+        raise AssertionError(f"apt/clone must not run when a restart is imminent; ran: {cmd}")
+
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.subprocess.run", fake_run
+    )
+
+    result = manager._install_from_source(engine, lambda *a, **k: None)
+
+    assert result is False
+    assert manager._install_error is not None
+    # The message must be plain-language and reference retrying after restart,
+    # not a console command.
+    assert "Fixing incomplete install of Universal Chess" in manager._install_error
+    assert "install Dummy" in manager._install_error
+    assert "after the service restarts" in manager._install_error
+    assert "dpkg" not in manager._install_error.lower()

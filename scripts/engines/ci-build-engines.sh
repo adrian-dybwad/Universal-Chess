@@ -150,9 +150,13 @@ arasan_build() {
 }
 
 zahak_build() {
+	# Zahak's main package is in the zahak/ subdir and engine/nn.go is generated
+	# by the Makefile's netgen step from default.nn, so a bare `go build` fails.
+	# `make` runs netgen then builds to bin/zahak. CGO_ENABLED=0 avoids fathom's
+	# Syzygy C code (no C toolchain assumed) -- matches the on-device build.
 	git clone --depth 1 https://github.com/amanjpro/zahak.git /tmp/zahak
-	cd /tmp/zahak && go build -o zahak
-	cp zahak "${OUT}/"
+	cd /tmp/zahak && make FLAGS=CGO_ENABLED=0
+	cp bin/zahak "${OUT}/"
 }
 
 maia_build() {

@@ -65,6 +65,8 @@ from universalchess.services.github_tag_cache import (
     STORE as TAG_CACHE_STORE,
     GitHubTagCacheStore,
 )
+from universalchess.services import apt_recovery
+from universalchess.services.apt_recovery import RecoveryOutcome
 
 # Engine installation directory
 ENGINES_DIR = "/opt/universalchess/engines"
@@ -727,10 +729,21 @@ ENGINES = {
         summary="~2700 ELO, Go-based",
         description="Written in Go programming language. Clean, modern codebase under active development. Good strength with fast compilation. Interesting alternative architecture.",
         repo_url="https://github.com/amanjpro/zahak.git",
+        # Zahak is a Go module whose `main` package lives in the zahak/ subdir, so
+        # a bare `go build` in the repo root fails with "no Go files in ...". The
+        # build must also run the Makefile's `netgen` step first, which generates
+        # engine/nn.go from default.nn (it is not committed) -- without it the
+        # engine package does not compile. `make` (default goal `build`) does both
+        # and emits bin/zahak. FLAGS=CGO_ENABLED=0 overrides the Makefile's
+        # `CC=cc CGO_ENABLED=1` default: CGO would pull in fathom's Syzygy C code
+        # and require a C compiler we do not declare as a dependency; disabling it
+        # selects fathom_stub.go (no tablebase probing, irrelevant on-device) and
+        # keeps the build to just golang+git. `make` honors `git tag` for version
+        # stamping, so the shallow clone is fine.
         build_commands=[
-            "go build -o zahak",
+            "make FLAGS=CGO_ENABLED=0",
         ],
-        binary_path="zahak",
+        binary_path="bin/zahak",
         is_system_package=False,
         package_name=None,
         extra_files=[],
@@ -1126,7 +1139,12 @@ class EngineManager:
         """
         log.info(f"[EngineManager] _install_system_package: Installing '{engine.name}' via apt package '{engine.package_name}'")
         update_progress(f"Installing {engine.display_name} from system package...", InstallStage.INSTALLING_DEPS)
-        
+
+        # Heal any interrupted dpkg transaction first; otherwise both the update
+        # and install below abort on "dpkg was interrupted".
+        if not self._recover_dpkg_or_abort(f"install {engine.display_name}"):
+            return False
+
         # Update package list
         log.debug("[EngineManager] _install_system_package: Running apt-get update")
         result = subprocess.run(
@@ -1218,6 +1236,39 @@ class EngineManager:
             if result.returncode != 0 or "install ok installed" not in result.stdout:
                 missing.append(pkg)
         return missing
+
+    def _recover_dpkg_or_abort(self, action: str) -> bool:
+        """Finish any interrupted dpkg transaction before an apt step.
+
+        A prior killed apt/dpkg run can leave the database half-configured, after
+        which every apt operation aborts with "dpkg was interrupted, you must
+        manually run 'dpkg --configure -a'" -- the failure that blocked the Zahak
+        ``golang`` install. :func:`apt_recovery.recover_interrupted_dpkg` finishes
+        that transaction in one shared place.
+
+        Returns True if the caller may proceed with its apt command. Returns False
+        only when recovery had to restart this service (our own package was
+        half-configured, so configuring it re-runs our postinst). In that case the
+        repair now runs out-of-process and will restart us, so the install cannot
+        complete: a user-facing message is set and the caller must abort. A failed
+        recovery still returns True so the subsequent apt step surfaces the genuine
+        error instead of masking it.
+
+        Args:
+            action: what the user was doing, phrased to complete "You will need to
+                <action> after the service restarts" (e.g. "install Arasan").
+        """
+        outcome = apt_recovery.recover_interrupted_dpkg()
+        if outcome is RecoveryOutcome.DEFERRED_RESTART:
+            self._install_error = (
+                "Fixing incomplete install of Universal Chess. "
+                f"You will need to {action} after the service restarts."
+            )
+            log.warning(
+                f"[EngineManager] dpkg recovery deferred to a service restart; aborting '{action}'"
+            )
+            return False
+        return True
 
     def _copy_extra_files(self, src_base: Path, patterns: List[str]) -> None:
         """Install an engine's ``extra_files`` from ``src_base`` into engines_dir.
@@ -1444,6 +1495,10 @@ class EngineManager:
         # message naming what is missing if not.
         if engine.dependencies:
             update_progress(f"Installing build dependencies...", InstallStage.INSTALLING_DEPS)
+            # Heal any interrupted dpkg transaction first; otherwise the apt-get
+            # below aborts on "dpkg was interrupted" (the Zahak golang failure).
+            if not self._recover_dpkg_or_abort(f"install {engine.display_name}"):
+                return False
             deps = " ".join(engine.dependencies)
             log.info(f"[EngineManager] _install_from_source: Installing dependencies: {deps}")
             result = subprocess.run(

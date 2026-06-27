@@ -285,3 +285,55 @@ class TestDemolitoBuildCommand:
         this assertion.
         """
         assert "clang" not in ENGINES["demolito"].dependencies
+
+
+class TestZahakBuildCommand:
+    """Guards Zahak's Go-module build against the bare ``go build`` failure."""
+
+    def test_builds_via_make_not_bare_go_build(self):
+        """Zahak must build through ``make``, not a bare ``go build``.
+
+        Why this test exists: a field board (armhf) failed to install Zahak with
+        "no Go files in .../zahak". Zahak is a Go module whose ``main`` package
+        lives in the zahak/ subdirectory, so ``go build`` in the repo root finds no
+        Go files. The Makefile also runs a ``netgen`` step that generates
+        engine/nn.go from default.nn (not committed); without it the engine package
+        does not compile. ``make`` (default goal ``build``) does both.
+
+        How the regression manifests: reverting to ``go build -o zahak`` drops
+        ``make`` from the script and reintroduces the "no Go files" abort -- and,
+        had the path issue not existed, a later compile failure from the missing
+        generated network source.
+        """
+        script = _build_script("zahak")
+        assert "make" in script
+        assert "go build" not in script
+
+    def test_disables_cgo(self):
+        """The build must pass ``CGO_ENABLED=0``.
+
+        Why this test exists: the Makefile defaults to ``CC=cc CGO_ENABLED=1`` to
+        compile fathom's Syzygy probing C code, but Zahak declares only golang+git
+        as dependencies -- no C compiler. With CGO enabled the build needs ``cc``;
+        disabling it selects fathom_stub.go (no tablebase probing, irrelevant
+        on-device) and keeps the build to the declared dependencies.
+
+        How the regression manifests: dropping ``CGO_ENABLED=0`` reverts to the
+        Makefile's CGO default and the build fails wherever a C toolchain is absent.
+        """
+        assert "CGO_ENABLED=0" in _build_script("zahak")
+
+    def test_binary_path_points_to_bin(self):
+        """Zahak's binary_path must be ``bin/zahak``.
+
+        Why this test exists: the Makefile emits the executable to bin/zahak. The
+        ``EXE=`` move target is deliberately not used because the repo root already
+        contains a zahak/ directory -- ``mv bin/zahak zahak`` would move the binary
+        *into* that directory (verified on-device), so the post-build existence
+        check would not find it at the repo root.
+
+        How the regression manifests: setting binary_path to ``zahak`` (or adding
+        ``EXE=zahak``) makes the binary land at zahak/zahak and the install fails
+        the "Binary not found" check.
+        """
+        assert ENGINES["zahak"].binary_path == "bin/zahak"
