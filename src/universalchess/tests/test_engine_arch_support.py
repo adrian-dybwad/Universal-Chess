@@ -108,6 +108,20 @@ def test_berserk_catalog_entry_is_arm64_only():
     assert ENGINES["berserk"].supported_archs == frozenset({"arm64"})
 
 
+def test_weiss_catalog_entry_is_arm64_only():
+    """The real Weiss catalog entry declares arm64-only support.
+
+    Why: Weiss's TTIndex uses ``(unsigned __int128)key * count >> 64`` (Lemire
+    reduction), and __int128 does not exist on 32-bit ARM, so the build fails in
+    transposition.h on armhf. The catalog must gate it to arm64 so the install
+    button is disabled on 32-bit rather than offering a doomed build. Regression:
+    re-offering Weiss on armhf reintroduces the transposition.h compile failure.
+    """
+    from universalchess.managers.engine_manager import ENGINES
+
+    assert ENGINES["weiss"].supported_archs == frozenset({"arm64"})
+
+
 @pytest.mark.parametrize("arch", ["armhf", "arm64"])
 def test_empty_supported_archs_unsupported_everywhere(arch):
     """supported_archs=frozenset() means unsupported on every architecture.

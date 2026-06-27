@@ -350,6 +350,12 @@ ENGINES = {
         dependencies=["build-essential", "git"],
         estimated_install_minutes=5,  # Clean C engine
         has_prebuilt=True,
+        # 64-bit ARM only. Weiss's TTIndex (transposition.h) uses the Lemire
+        # fast-reduction trick `((unsigned __int128)key * count) >> 64`, and
+        # `__int128` does not exist on 32-bit targets, so the build fails on
+        # armv7l/armhf with an "unsupported integer type" error in transposition.h.
+        # arm64 builds and runs fine (verified). Same constraint as Berserk.
+        supported_archs=frozenset({"arm64"}),
     ),
     "arasan": EngineDefinition(
         name="arasan",

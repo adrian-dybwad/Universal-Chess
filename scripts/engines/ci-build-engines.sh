@@ -20,6 +20,9 @@
 #   - Berserk is 64-bit-only (uses __int128 and AArch64-only NEON intrinsics) and
 #     its makefile default goal forces x86 avx2/clang, so it is built only for
 #     arm64 and via `make build ARCH=native CC=gcc` (host arch, gcc, no clang).
+#   - Weiss is 64-bit-only: TTIndex (transposition.h) uses the Lemire reduction
+#     `((unsigned __int128)key * count) >> 64`, and __int128 is absent on 32-bit
+#     ARM, so it builds only for arm64.
 #   - Koivisto is NOT built here: its NNUE layer is x86-SIMD only with a broken
 #     upstream ARM NEON path (store op is `exit(-1)`, load type-mismatches), so it
 #     fails to compile on both armv7l and aarch64. It is marked unsupported in the
@@ -161,14 +164,15 @@ maia_build() {
 	wget -q -O t1-256x10.pb.gz "https://training.lczero.org/get_network?sha=00af53b081e80147172e6f281c01571016924e9aac89cdf6666a1cc3a4ecf5bf"
 }
 
-# Berserk only on 64-bit ARM (see header). Koivisto is excluded entirely (no
-# working ARM build). All other engines build on both arches.
+# Berserk and Weiss are 64-bit-only (both use `__int128`, absent on 32-bit ARM:
+# Berserk in its NNUE/eval, Weiss in TTIndex's Lemire reduction). Koivisto is
+# excluded entirely (no working ARM build). All other engines build on both.
 if [ "${ARCH}" = "arm64" ]; then
 	build_engine berserk
+	build_engine weiss
 fi
 build_engine ethereal
 build_engine demolito
-build_engine weiss
 build_engine rodentIV
 build_engine ct800
 build_engine smallbrain
