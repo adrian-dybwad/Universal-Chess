@@ -58,10 +58,19 @@ class SplashScreen(Widget):
     TEXT_MARGIN = 4  # Margin on each side
     TEXT_Y = 170  # Y position for message text (below logo)
     TEXT_HEIGHT = 88  # Height for 4 lines of text at font size 18
-    
+
+    # Optional battery indicator, shown below a single-line message (e.g. the
+    # shutdown "Press [>]" prompt). Sits just under the first text line, which
+    # is top-aligned at TEXT_Y for the font size used here.
+    BATTERY_W = 56
+    BATTERY_H = 26
+    BATTERY_Y = TEXT_Y + 38
+    BATTERY_PERCENT_Y = BATTERY_Y + BATTERY_H + 4
+
     def __init__(self, update_callback, message: str = "Press [OK]", background_shade: int = 4,
                  leave_room_for_status_bar: bool = True,
-                 logo: Image.Image = None, logo_mask: Image.Image = None):
+                 logo: Image.Image = None, logo_mask: Image.Image = None,
+                 show_battery: bool = False):
         """Initialize splash screen widget.
         
         Args:
@@ -71,6 +80,9 @@ class SplashScreen(Widget):
             leave_room_for_status_bar: If True, start below status bar; if False, use full screen
             logo: Optional knight logo image. If None, uses module-level logo.
             logo_mask: Optional mask for logo transparency.
+            show_battery: If True, draw the current battery level (icon + percentage)
+                below the message. Used by the shutdown prompt so the user sees the
+                charge state before the board sleeps.
         """
         if leave_room_for_status_bar:
             y_pos = STATUS_BAR_HEIGHT
@@ -80,6 +92,7 @@ class SplashScreen(Widget):
             height = 296
         super().__init__(0, y_pos, 128, height, update_callback, background_shade=background_shade)
         self.message = message
+        self._show_battery = show_battery
         
         # Use provided logo or module-level logo
         if logo is not None:
@@ -107,6 +120,15 @@ class SplashScreen(Widget):
             update_callback=self._handle_child_update,
             text=message, font_size=18, justify=Justify.CENTER, wrapText=True
         )
+
+        # Percentage label beneath the battery icon, only built when needed.
+        self._battery_percent_text = None
+        if self._show_battery:
+            self._battery_percent_text = TextWidget(
+                x=0, y=0, width=self.width, height=20,
+                update_callback=self._handle_child_update,
+                text="", font_size=16, justify=Justify.CENTER, transparent=True
+            )
     
     def _handle_child_update(self, full: bool = False, immediate: bool = False):
         """Handle update requests from child widgets by forwarding to parent callback."""
@@ -156,8 +178,38 @@ class SplashScreen(Widget):
         # Draw message text directly onto the sprite
         self._text_widget.draw_on(sprite, self.TEXT_MARGIN, self.TEXT_Y)
 
+        if self._show_battery:
+            self._render_battery(sprite)
 
-def show_fullscreen_splash(manager, message: str, timeout: float = 5.0) -> bool:
+    def _render_battery(self, sprite: Image.Image) -> None:
+        """Draw the current battery level (icon + percentage) below the message.
+
+        Reads the latest battery state at render time rather than holding an
+        observer: the shutdown splash is a one-shot frame drawn while subsystems
+        are tearing down, so the last polled value is what should be shown.
+        """
+        from universalchess.state import get_system
+        from .battery import render_battery
+
+        state = get_system()
+        level = state.battery_level
+        percent = state.battery_percent
+        charger_connected = state.charger_connected
+
+        # level is 0-20; default to a half icon when unknown so the glyph still
+        # reads as a battery, and show "--%" so the unknown state is explicit.
+        icon_level = level if level is not None else 10
+        battery_x = (self.width - self.BATTERY_W) // 2
+        render_battery(sprite, battery_x, self.BATTERY_Y,
+                       self.BATTERY_W, self.BATTERY_H, icon_level, charger_connected)
+
+        if self._battery_percent_text is not None:
+            self._battery_percent_text.text = "--%" if percent is None else f"{percent}%"
+            self._battery_percent_text.draw_on(sprite, 0, self.BATTERY_PERCENT_Y)
+
+
+def show_fullscreen_splash(manager, message: str, timeout: float = 5.0,
+                           show_battery: bool = False) -> bool:
     """Render a full-screen modal splash on the given panel manager.
 
     Replaces whatever widgets are currently on the panel with a single
@@ -177,6 +229,8 @@ def show_fullscreen_splash(manager, message: str, timeout: float = 5.0) -> bool:
             callers need not guard.
         message: Text to show on the splash.
         timeout: Seconds to wait for the render promise to resolve.
+        show_battery: When True, draw the current battery level below the message
+            (used by the shutdown prompt).
 
     Returns:
         True if the splash was rendered, False if no manager was available or
@@ -188,7 +242,8 @@ def show_fullscreen_splash(manager, message: str, timeout: float = 5.0) -> bool:
         manager.clear_widgets(addStatusBar=False)
         promise = manager.add_widget(
             SplashScreen(manager.update, message=message,
-                         leave_room_for_status_bar=False)
+                         leave_room_for_status_bar=False,
+                         show_battery=show_battery)
         )
         if promise:
             promise.result(timeout=timeout)

@@ -4393,7 +4393,7 @@ _cleanup_done = False  # Guard against running cleanup twice
 _shutdown_requested = False  # Flag to request shutdown from main thread (set by events thread)
 
 
-def _show_shutdown_splash(message: str, timeout: float = 5.0) -> None:
+def _show_shutdown_splash(message: str, timeout: float = 5.0, show_battery: bool = False) -> None:
     """Render a full-screen shutdown splash on the panel.
 
     Always targets ``board.display_manager`` - the low-level epaper Manager that
@@ -4407,8 +4407,10 @@ def _show_shutdown_splash(message: str, timeout: float = 5.0) -> None:
     Args:
         message: Text to show on the splash.
         timeout: Seconds to wait for the render to complete.
+        show_battery: When True, draw the current battery level below the message.
     """
-    show_fullscreen_splash(board.display_manager, message, timeout=timeout)
+    show_fullscreen_splash(board.display_manager, message, timeout=timeout,
+                           show_battery=show_battery)
 
 
 def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False, reboot: bool = False):
@@ -4589,7 +4591,7 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
             
             # Display shutdown splash screen
             log.info("[Cleanup] Displaying shutdown splash screen...")
-            _show_shutdown_splash("Press [\u25b6]", timeout=5.0)
+            _show_shutdown_splash("Press [\u25b6]", timeout=5.0, show_battery=True)
             
             # Play power off beep
             log.info("[Cleanup] Playing power off beep...")

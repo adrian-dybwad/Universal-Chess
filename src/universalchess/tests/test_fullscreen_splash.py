@@ -69,10 +69,32 @@ def test_renders_splash_replacing_existing_widgets(fake_splash):
     assert rendered is True
     manager.clear_widgets.assert_called_once_with(addStatusBar=False)
     fake_splash.assert_called_once_with(
-        manager.update, message="Shutting down", leave_room_for_status_bar=False
+        manager.update, message="Shutting down", leave_room_for_status_bar=False,
+        show_battery=False
     )
     manager.add_widget.assert_called_once_with(fake_splash.return_value)
     promise.result.assert_called_once_with(timeout=10.0)
+
+
+def test_forwards_show_battery_flag_to_splash(fake_splash):
+    """show_battery=True must reach the SplashScreen constructor.
+
+    Why: the shutdown "Press [>]" prompt asks for the battery level to be drawn
+    below the message; the only way that reaches the widget is through this flag,
+    so a dropped/renamed kwarg would silently hide the battery on shutdown.
+
+    How a regression manifests: if show_fullscreen_splash stops forwarding the
+    flag (or defaults it), the constructed kwargs no longer contain
+    show_battery=True and this assert fails.
+    """
+    manager, _ = _make_manager()
+
+    show_fullscreen_splash(manager, "Press [>]", timeout=5.0, show_battery=True)
+
+    fake_splash.assert_called_once_with(
+        manager.update, message="Press [>]", leave_room_for_status_bar=False,
+        show_battery=True
+    )
 
 
 def test_returns_false_and_renders_nothing_without_manager(fake_splash):
