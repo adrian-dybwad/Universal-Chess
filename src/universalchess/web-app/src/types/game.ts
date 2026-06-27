@@ -55,6 +55,12 @@ export interface EngineDefinition {
   installed: boolean;
   has_prebuilt: boolean;
   install_time: string | null;
+  /**
+   * Whether this engine exposes user-editable personality profiles (a parameter
+   * schema served by GET /api/engines/{name}/profiles). Drives whether the
+   * "Configure profiles" action is shown. Currently true only for Rodent IV.
+   */
+  has_profiles: boolean;
 }
 
 /**

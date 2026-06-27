@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
-import { Button, Card, CardHeader, FormRow, Input, Select, Toggle, Badge } from '../components/ui';
+import { Button, Card, CardHeader, FormRow, Input, Select, Toggle, Badge, ProgressBar } from '../components/ui';
 import { CatalogField } from '../components/CatalogField';
+import { EngineProfileEditor } from '../components/EngineProfileEditor';
 import type { FieldValue } from '../components/CatalogField';
 import { LoginDialog } from '../components/LoginDialog';
 import { MenuIcon } from '../components/MenuIcon';
@@ -18,6 +19,23 @@ interface SettingsData {
 }
 
 type SettingsTab = 'players' | 'game' | 'display' | 'sound' | 'engines' | 'system';
+
+// Structured engine-install status from GET /api/engines/status. The backend
+// owns this state on disk so it survives a page reload and a board restart;
+// `percent` is computed server-side at read time so the build bar advances
+// between polls. `interrupted` is true when an install was running before the
+// last process/board restart and now awaits a manual Resume/Cancel.
+interface EngineInstallStatus {
+  active: boolean;
+  installing: boolean;
+  engine: string | null;
+  display_name: string | null;
+  stage: string | null;
+  message: string;
+  percent: number;
+  interrupted: boolean;
+  result: { success: boolean; error: string | null } | null;
+}
 
 // Section ids this page renders, in display order. Labels and icons are sourced
 // from the catalog (menu.json) at runtime; this list only declares which
@@ -171,7 +189,17 @@ export function Settings() {
   const [hasChanges, setHasChanges] = useState(false);
   const [saving, setSaving] = useState(false);
   const [installingEngine, setInstallingEngine] = useState<string | null>(null);
-  const [engineError, setEngineError] = useState<string | null>(null);
+  // Full structured status for the install banner/progress bar and the
+  // interrupted-install Resume/Cancel controls. Null when nothing relevant is in
+  // progress or pending.
+  const [installStatus, setInstallStatus] = useState<EngineInstallStatus | null>(null);
+  // Engine action error, scoped to the engine it concerns so it can be rendered
+  // in that engine's card (below its action button) instead of at the top of the
+  // list, where it is easy to miss while scrolling/installing.
+  const [engineError, setEngineError] = useState<{ engine: string; message: string } | null>(null);
+  // When set, the Engines tab shows the profile editor for this engine instead
+  // of the install list. Cleared via the editor's "Back to engines" control.
+  const [profileEngine, setProfileEngine] = useState<EngineDefinition | null>(null);
   const [loginDialogOpen, setLoginDialogOpen] = useState(false);
   const [loginError, setLoginError] = useState<string | undefined>();
   const [pendingAction, setPendingAction] = useState<'save' | 'apply' | null>(null);
@@ -428,27 +456,86 @@ export function Settings() {
   const pollEngineInstall = useCallback((engineName: string) => {
     const checkStatus = async () => {
       try {
-        const status = await apiFetch('/api/engines/status').then((r) => r.json());
-        if (status.installing) {
+        const status: EngineInstallStatus = await apiFetch('/api/engines/status').then((r) => r.json());
+        if (status.active) {
+          setInstallStatus(status);
           setInstallingEngine(status.engine ?? engineName);
           setTimeout(checkStatus, 2000);
           return;
         }
+        // Install finished (or was reconciled away). Refresh the list and clear
+        // the in-progress UI; surface any failure via the error card.
         const enginesData = await refreshEngines();
         setInstallingEngine(null);
-        const result = status.last_result;
-        if (result && result.engine === engineName && result.success === false) {
+        setInstallStatus(null);
+        const result = status.result;
+        if (result && result.success === false) {
           const label = enginesData.find((e) => e.name === engineName)?.display_name ?? engineName;
-          setEngineError(`Failed to install ${label}.${result.error ? ` ${result.error}` : ''}`);
+          setEngineError({ engine: engineName, message: `Failed to install ${label}.${result.error ? ` ${result.error}` : ''}` });
         }
       } catch (e) {
         console.error('Failed to poll engine install status:', e);
         setInstallingEngine(null);
-        setEngineError('Lost connection while installing. Reload to see the current status.');
+        setInstallStatus(null);
+        setEngineError({ engine: engineName, message: 'Lost connection while installing. Reload to see the current status.' });
       }
     };
     setTimeout(checkStatus, 1500);
   }, [refreshEngines]);
+
+  // Resume an install that was interrupted by a process/board restart. The
+  // backend relaunches the install (reusing the cached git clone); the UI
+  // switches back to the in-progress state and resumes polling.
+  const resumeInstall = useCallback(async () => {
+    if (!installStatus?.engine) return;
+    const engineName = installStatus.engine;
+    setEngineError(null);
+    try {
+      const response = await apiFetch('/api/engines/resume', { method: 'POST' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.success === false) {
+        setEngineError({ engine: engineName, message: data.error || `Failed to resume installing ${engineName}.` });
+        return;
+      }
+      setInstallingEngine(engineName);
+      setInstallStatus({
+        ...installStatus,
+        active: true,
+        installing: true,
+        interrupted: false,
+        stage: 'starting',
+        message: 'Resuming install...',
+        percent: 0,
+      });
+      pollEngineInstall(engineName);
+    } catch (e) {
+      console.error('Failed to resume engine install:', e);
+      setEngineError({ engine: engineName, message: `Failed to resume installing ${engineName}. Check the connection and try again.` });
+    }
+  }, [installStatus, pollEngineInstall]);
+
+  // Dismiss an interrupted install: clears the persisted state so the banner
+  // does not reappear on the next poll or reload.
+  const cancelInstall = useCallback(async () => {
+    const engineName = installStatus?.engine;
+    setEngineError(null);
+    try {
+      const response = await apiFetch('/api/engines/cancel', { method: 'POST' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.success === false) {
+        if (engineName) {
+          setEngineError({ engine: engineName, message: data.error || 'Failed to cancel the interrupted install.' });
+        }
+        return;
+      }
+      setInstallStatus(null);
+    } catch (e) {
+      console.error('Failed to cancel engine install:', e);
+      if (engineName) {
+        setEngineError({ engine: engineName, message: 'Failed to cancel the interrupted install. Check the connection and try again.' });
+      }
+    }
+  }, [installStatus]);
 
   // The backend contract is POST /api/engines/{install,uninstall} with the
   // engine name in the JSON body (matching the legacy configure page). Install
@@ -467,7 +554,7 @@ export function Settings() {
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.success === false) {
         setInstallingEngine(null);
-        setEngineError(data.error || `Failed to ${endpoint} ${engineName}.`);
+        setEngineError({ engine: engineName, message: data.error || `Failed to ${endpoint} ${engineName}.` });
         return;
       }
       if (install) {
@@ -479,7 +566,7 @@ export function Settings() {
     } catch (e) {
       console.error(`Failed to ${endpoint} engine:`, e);
       setInstallingEngine(null);
-      setEngineError(`Failed to ${endpoint} ${engineName}. Check the connection and try again.`);
+      setEngineError({ engine: engineName, message: `Failed to ${endpoint} ${engineName}. Check the connection and try again.` });
     }
   }, [pollEngineInstall, refreshEngines]);
 
@@ -491,10 +578,15 @@ export function Settings() {
   useEffect(() => {
     void (async () => {
       try {
-        const status = await apiFetch('/api/engines/status').then((r) => r.json());
-        if (status.installing && status.engine) {
+        const status: EngineInstallStatus = await apiFetch('/api/engines/status').then((r) => r.json());
+        if (status.active && status.engine) {
+          setInstallStatus(status);
           setInstallingEngine(status.engine);
           pollEngineInstall(status.engine);
+        } else if (status.interrupted && status.engine) {
+          // An install was running before the last restart. Surface it with
+          // Resume/Cancel; do nothing until the user chooses.
+          setInstallStatus(status);
         }
       } catch (e) {
         console.error('Failed to read engine install status on load:', e);
@@ -955,20 +1047,29 @@ export function Settings() {
         {/* ENGINES TAB */}
         {activeTab === 'engines' && (
           <section>
-            <h2 className="page-title">Chess Engines</h2>
-            <p className="text-muted mb-6">Install and manage chess engines for play and analysis</p>
+            {profileEngine ? (
+              <EngineProfileEditor
+                engineName={profileEngine.name}
+                displayName={profileEngine.display_name}
+                onBack={() => setProfileEngine(null)}
+              />
+            ) : (
+              <>
+                <h2 className="page-title">Chess Engines</h2>
+                <p className="text-muted mb-6">Install and manage chess engines for play and analysis</p>
 
-            {engineError && (
-              <Card variant="muted" className="mb-6">
-                <div className="error">{engineError}</div>
-              </Card>
+                <EnginesList
+                  engines={engines}
+                  installingEngine={installingEngine}
+                  installStatus={installStatus}
+                  engineError={engineError}
+                  onToggle={toggleEngine}
+                  onResume={resumeInstall}
+                  onCancel={cancelInstall}
+                  onConfigureProfiles={setProfileEngine}
+                />
+              </>
             )}
-
-            <EnginesList
-              engines={engines}
-              installingEngine={installingEngine}
-              onToggle={toggleEngine}
-            />
           </section>
         )}
 
@@ -1054,11 +1155,21 @@ export function Settings() {
 function EnginesList({
   engines,
   installingEngine,
+  installStatus,
+  engineError,
   onToggle,
+  onResume,
+  onCancel,
+  onConfigureProfiles,
 }: {
   engines: EngineDefinition[];
   installingEngine: string | null;
+  installStatus: EngineInstallStatus | null;
+  engineError: { engine: string; message: string } | null;
   onToggle: (name: string, install: boolean) => void;
+  onResume: () => void;
+  onCancel: () => void;
+  onConfigureProfiles: (engine: EngineDefinition) => void;
 }) {
   // Group engines by tier
   const tiers = {
@@ -1091,7 +1202,12 @@ function EnginesList({
                   engine={engine}
                   isInstalling={installingEngine === engine.name}
                   installInProgress={installingEngine !== null}
+                  status={installStatus?.engine === engine.name ? installStatus : null}
+                  error={engineError?.engine === engine.name ? engineError.message : null}
                   onToggle={onToggle}
+                  onResume={onResume}
+                  onCancel={onCancel}
+                  onConfigureProfiles={onConfigureProfiles}
                 />
               ))}
             </div>
@@ -1106,7 +1222,12 @@ function EngineCard({
   engine,
   isInstalling,
   installInProgress,
+  status,
+  error,
   onToggle,
+  onResume,
+  onCancel,
+  onConfigureProfiles,
 }: {
   engine: EngineDefinition;
   isInstalling: boolean;
@@ -1114,9 +1235,20 @@ function EngineCard({
   // engine at a time (returns 409 otherwise), so every action button is
   // disabled for the duration -- not just the one being installed.
   installInProgress: boolean;
+  // Structured install status when this card's engine is the one being
+  // installed or pending resume; null otherwise.
+  status: EngineInstallStatus | null;
+  // Action error message for this engine, rendered below its button; null when
+  // there is no error for this card.
+  error: string | null;
   onToggle: (name: string, install: boolean) => void;
+  onResume: () => void;
+  onCancel: () => void;
+  onConfigureProfiles: (engine: EngineDefinition) => void;
 }) {
   const isSystem = engine.name === 'stockfish'; // Stockfish is a system package
+  const isActiveInstall = status?.active === true;
+  const isInterrupted = status?.interrupted === true;
 
   // During an install the engine is not yet installed; during an uninstall it
   // still is. This distinguishes the two in-flight labels for this card.
@@ -1153,21 +1285,61 @@ function EngineCard({
       )}
       {!isSystem && (
         <div className="engine-card-actions">
-          <Button
-            variant={engine.installed ? 'danger' : 'primary'}
-            size="sm"
-            disabled={installInProgress}
-            onClick={() => onToggle(engine.name, !engine.installed)}
-          >
-            {buttonLabel}
-          </Button>
-          {isInstalling && !isUninstalling && (
+          {isInterrupted ? (
+            <>
+              <Button variant="primary" size="sm" onClick={onResume}>
+                Resume install
+              </Button>
+              <Button variant="secondary" size="sm" onClick={onCancel}>
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant={engine.installed ? 'danger' : 'primary'}
+              size="sm"
+              disabled={installInProgress}
+              onClick={() => onToggle(engine.name, !engine.installed)}
+            >
+              {buttonLabel}
+            </Button>
+          )}
+          {/* Profile editor entry point: only for installed engines that expose
+              an editable parameter schema (currently Rodent IV). */}
+          {engine.has_profiles && engine.installed && !isInterrupted && (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={installInProgress}
+              onClick={() => onConfigureProfiles(engine)}
+            >
+              Configure profiles
+            </Button>
+          )}
+          {isInstalling && !isUninstalling && !isActiveInstall && (
             <span className="engine-install-note">
               <span className="spinner spinner--sm" />
               This may take several minutes.
             </span>
           )}
         </div>
+      )}
+      {!isSystem && isActiveInstall && status && (
+        <div className="engine-install-progress">
+          <ProgressBar
+            percent={status.percent}
+            label={status.message || `Installing ${engine.display_name}...`}
+          />
+        </div>
+      )}
+      {!isSystem && isInterrupted && (
+        <p className="engine-install-note engine-install-note--interrupted">
+          This install was interrupted (the board likely restarted). Resume to
+          continue or Cancel to dismiss.
+        </p>
+      )}
+      {error && (
+        <p className="engine-card-error" role="alert">{error}</p>
       )}
     </div>
   );

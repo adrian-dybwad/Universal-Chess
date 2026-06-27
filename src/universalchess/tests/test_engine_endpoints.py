@@ -82,19 +82,21 @@ def client():
 
 
 @pytest.fixture(autouse=True)
-def reset_install_state():
-    """Reset the shared install-status singleton around every test.
+def install_store(tmp_path):
+    """Point the install-state store at an isolated temp file per test.
 
-    ``_engine_install_state`` is module-global; without a reset a prior test's
-    "installing" flag would leak into the next (e.g. spuriously triggering the
-    409 "already installing" path), making outcomes order-dependent.
+    The store is a module-global singleton that persists to /opt by default
+    (not writable/shared in tests). Swapping in a per-test temp-backed store
+    isolates state so a prior test's "active"/"interrupted" flag cannot leak and
+    make outcomes order-dependent. Yields the store so tests can seed state.
     """
-    clean = {"installing": False, "engine": None, "progress": "", "last_result": None}
-    webapp._engine_install_state.clear()
-    webapp._engine_install_state.update(clean)
-    yield
-    webapp._engine_install_state.clear()
-    webapp._engine_install_state.update(clean)
+    from universalchess.services.engine_install_state import InstallStateStore
+
+    original = webapp._engine_install_store
+    store = InstallStateStore(tmp_path / "engine_install_state.json")
+    webapp._engine_install_store = store
+    yield store
+    webapp._engine_install_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -125,10 +127,11 @@ def test_install_starts_with_engine_in_json_body(client, monkeypatch):
     assert body["success"] is True
     # The endpoint wired the correct engine into the background worker.
     assert dispatched == [INSTALLABLE_ENGINE]
-    # The status singleton reflects the in-progress install for the same engine
-    # (the stubbed worker does not clear it, so this is what /status would show).
-    assert webapp._engine_install_state["installing"] is True
-    assert webapp._engine_install_state["engine"] == INSTALLABLE_ENGINE
+    # The persisted store reflects the in-progress install for the same engine
+    # (the stubbed worker does not finish it, so this is what /status would show).
+    status = webapp._engine_install_store.status_dict()
+    assert status["active"] is True
+    assert status["engine"] == INSTALLABLE_ENGINE
 
 
 def test_install_path_style_url_does_not_start_install(client, monkeypatch):
@@ -150,7 +153,7 @@ def test_install_path_style_url_does_not_start_install(client, monkeypatch):
 
     assert resp.status_code in (404, 405)
     assert dispatched == []
-    assert webapp._engine_install_state["installing"] is False
+    assert webapp._engine_install_store.status_dict()["active"] is False
 
 
 def test_install_missing_engine_returns_400(client):
@@ -193,7 +196,7 @@ def test_install_while_installing_returns_409(client, monkeypatch):
     dispatched = []
     monkeypatch.setattr(webapp, "_run_engine_install", lambda name: dispatched.append(name))
     monkeypatch.setattr(threading, "Thread", _SyncThread)
-    webapp._engine_install_state.update({"installing": True, "engine": SYSTEM_ENGINE})
+    webapp._engine_install_store.start(SYSTEM_ENGINE, "Stockfish", estimated_seconds=0)
 
     resp = client.post(
         "/api/engines/install",
@@ -294,32 +297,156 @@ def test_uninstall_unknown_engine_returns_400(client):
 
 
 def test_status_reports_idle_shape(client):
-    """GET /api/engines/status returns the keys the client polls.
+    """GET /api/engines/status returns the structured keys the client renders.
 
-    The web client reads ``installing``, ``engine`` and ``last_result`` to
-    drive the in-progress button/notice and to detect completion/failure. A
-    missing key would break that poll loop.
+    The web client reads ``installing``/``active``, ``engine``, ``stage``,
+    ``message``, ``percent``, ``interrupted`` and ``last_result`` to drive the
+    progress bar, stage label, and resume/cancel controls. A missing key would
+    break the poll loop or the progress UI.
     """
     resp = client.get("/api/engines/status")
     assert resp.status_code == 200
     data = json.loads(resp.data)
-    assert set(["installing", "engine", "progress", "last_result"]).issubset(data.keys())
+    expected = {"installing", "active", "engine", "stage", "message",
+                "percent", "interrupted", "result", "last_result"}
+    assert expected.issubset(data.keys())
     assert data["installing"] is False
+    assert data["active"] is False
     assert data["engine"] is None
+    assert data["percent"] == 0
+    assert data["interrupted"] is False
 
 
-def test_status_reflects_in_progress_install(client):
+def test_status_reflects_in_progress_install(install_store, client):
     """An in-progress install is visible via /status (drives reload-resume).
 
-    The Settings page reads this on load to restore the "Installing..." state
-    after a page reload. If the endpoint stopped reporting the installing
-    engine, a reload mid-install would drop the progress indicator.
+    The Settings page reads this on load to restore the progress state after a
+    page reload. If the endpoint stopped reporting the installing engine and its
+    stage, a reload mid-install would drop the progress indicator.
     """
-    webapp._engine_install_state.update({"installing": True, "engine": INSTALLABLE_ENGINE})
+    from universalchess.services.engine_install_state import InstallStage
+
+    install_store.start(INSTALLABLE_ENGINE, "Berserk", estimated_seconds=900)
+    install_store.update(InstallStage.BUILDING, "Building Berserk...")
+
     resp = client.get("/api/engines/status")
     data = json.loads(resp.data)
+    assert data["active"] is True
     assert data["installing"] is True
     assert data["engine"] == INSTALLABLE_ENGINE
+    assert data["stage"] == "building"
+    assert data["message"] == "Building Berserk..."
+    # Build stage just started -> bottom of the build band, an int the bar renders.
+    assert isinstance(data["percent"], int)
+    assert data["percent"] == 35
+
+
+# ---------------------------------------------------------------------------
+# Resume / cancel contract (interrupted-install recovery)
+# ---------------------------------------------------------------------------
+
+
+def _seed_interrupted(store, engine=INSTALLABLE_ENGINE):
+    """Drive the store into the interrupted state the way a restart would.
+
+    start()+update() persist an active install; reconcile_interrupted() (run at
+    process startup) then finds an active install with no live thread and flags
+    it interrupted.
+    """
+    from universalchess.services.engine_install_state import InstallStage
+
+    store.start(engine, "Berserk", estimated_seconds=900)
+    store.update(InstallStage.BUILDING, "Building Berserk...")
+    store.reconcile_interrupted()
+
+
+def test_resume_relaunches_interrupted_install(install_store, client, monkeypatch):
+    """POST /api/engines/resume relaunches the interrupted engine's install.
+
+    Guards manual resume: after a restart the UI offers Resume; pressing it must
+    re-dispatch the install for the interrupted engine and flip state back to
+    active. If resume regressed, ``dispatched`` would stay empty and the banner
+    would never recover.
+    """
+    _seed_interrupted(install_store)
+    dispatched = []
+    monkeypatch.setattr(webapp, "_run_engine_install", lambda name: dispatched.append(name))
+    monkeypatch.setattr(threading, "Thread", _SyncThread)
+
+    resp = client.post("/api/engines/resume")
+
+    assert resp.status_code == 200
+    assert json.loads(resp.data)["success"] is True
+    assert dispatched == [INSTALLABLE_ENGINE]
+    assert webapp._engine_install_store.status_dict()["active"] is True
+
+
+def test_resume_without_interrupted_returns_400(install_store, client, monkeypatch):
+    """Resume is rejected with 400 when nothing was interrupted.
+
+    Without an interrupted state there is no engine to resume; a regression that
+    dropped the guard would dispatch an install for engine=None.
+    """
+    dispatched = []
+    monkeypatch.setattr(webapp, "_run_engine_install", lambda name: dispatched.append(name))
+    monkeypatch.setattr(threading, "Thread", _SyncThread)
+
+    resp = client.post("/api/engines/resume")
+
+    assert resp.status_code == 400
+    assert json.loads(resp.data)["success"] is False
+    assert dispatched == []
+
+
+def test_resume_while_active_returns_409(install_store, client, monkeypatch):
+    """Resume is rejected with 409 while an install is already running.
+
+    Prevents a second install racing the shared build directory if resume is
+    pressed during an active install.
+    """
+    install_store.start(INSTALLABLE_ENGINE, "Berserk", estimated_seconds=900)
+    dispatched = []
+    monkeypatch.setattr(webapp, "_run_engine_install", lambda name: dispatched.append(name))
+    monkeypatch.setattr(threading, "Thread", _SyncThread)
+
+    resp = client.post("/api/engines/resume")
+
+    assert resp.status_code == 409
+    assert dispatched == []
+
+
+def test_cancel_clears_interrupted_state(install_store, client):
+    """POST /api/engines/cancel dismisses an interrupted install.
+
+    After cancel the status returns to idle (not active, not interrupted) so the
+    banner disappears and does not reappear on the next poll. A regression that
+    left the file would resurrect the banner.
+    """
+    _seed_interrupted(install_store)
+    assert client.get("/api/engines/status").get_json()["interrupted"] is True
+
+    resp = client.post("/api/engines/cancel")
+
+    assert resp.status_code == 200
+    assert json.loads(resp.data)["success"] is True
+    status = client.get("/api/engines/status").get_json()
+    assert status["active"] is False
+    assert status["interrupted"] is False
+    assert status["engine"] is None
+
+
+def test_cancel_while_active_returns_409(install_store, client):
+    """Cancel is rejected with 409 while an install is actively running.
+
+    Cancelling a running build is out of scope; the guard prevents orphaning the
+    running install thread by clearing the state out from under it.
+    """
+    install_store.start(INSTALLABLE_ENGINE, "Berserk", estimated_seconds=900)
+
+    resp = client.post("/api/engines/cancel")
+
+    assert resp.status_code == 409
+    assert webapp._engine_install_store.status_dict()["active"] is True
 
 
 def test_all_engines_list_shape(client, monkeypatch):
@@ -356,6 +483,7 @@ def test_all_engines_list_shape(client, monkeypatch):
         "can_uninstall",
         "estimated_install_minutes",
         "has_prebuilt",
+        "has_profiles",
     }
     for entry in data:
         assert required_fields.issubset(entry.keys())
@@ -366,3 +494,160 @@ def test_all_engines_list_shape(client, monkeypatch):
     assert by_name[SYSTEM_ENGINE]["installed"] is True
     # Non-system engine with no binary on disk -> reported not installed.
     assert by_name[INSTALLABLE_ENGINE]["installed"] is False
+    # has_profiles drives whether the UI offers the profile editor: Rodent IV
+    # has an editable schema, Stockfish does not.
+    assert by_name["rodentIV"]["has_profiles"] is True
+    assert by_name[SYSTEM_ENGINE]["has_profiles"] is False
+
+
+# ---------------------------------------------------------------------------
+# Engine profile editor (read/create/update/delete)
+# ---------------------------------------------------------------------------
+
+PROFILES_ENGINE = "rodentIV"
+
+_SAMPLE_PROFILES_UCI = """\
+[DEFAULT]
+Hash = 16
+Threads = 2
+
+[Default]
+Description = Maximum strength
+UCI_LimitStrength = false
+
+[Attacker]
+Description = Aggressive
+OwnAttack = 125
+"""
+
+
+@pytest.fixture
+def profile_paths(tmp_path, monkeypatch):
+    """Point the profile endpoints at isolated temp config/defaults dirs.
+
+    The endpoints resolve the writable file under ``CONFIG_DIR/engines`` and the
+    seed/fallback under ``_DEFAULT_ENGINES_UCI_DIR`` (both module globals on the
+    app). Swapping them to temp dirs (with a seeded defaults file) keeps tests
+    from touching /opt and from depending on the packaged defaults content.
+    Yields the writable config .uci path so tests can inspect what was written.
+    """
+    config_dir = tmp_path / "config"
+    defaults_dir = tmp_path / "defaults"
+    (config_dir / "engines").mkdir(parents=True)
+    defaults_dir.mkdir(parents=True)
+    (defaults_dir / f"{PROFILES_ENGINE}.uci").write_text(
+        _SAMPLE_PROFILES_UCI, encoding="utf-8"
+    )
+
+    monkeypatch.setattr(webapp, "CONFIG_DIR", str(config_dir))
+    monkeypatch.setattr(webapp, "_DEFAULT_ENGINES_UCI_DIR", str(defaults_dir))
+    return config_dir / "engines" / f"{PROFILES_ENGINE}.uci"
+
+
+def test_get_profiles_returns_schema_and_seeded_profiles(client, profile_paths):
+    """GET profiles returns editable=true, the schema, and the seeded profiles.
+
+    The editor cannot render without the schema, and on a fresh install (no
+    config file yet) it must still see the packaged profiles via fallback. This
+    asserts both: a non-empty schema and the seeded profile names.
+    """
+    resp = client.get(f"/api/engines/{PROFILES_ENGINE}/profiles")
+    assert resp.status_code == 200
+    data = resp.get_json()
+
+    assert data["editable"] is True
+    assert data["schema"] and isinstance(data["schema"], list)
+    names = {p["name"] for p in data["profiles"]}
+    assert names == {"Default", "Attacker"}
+    attacker = next(p for p in data["profiles"] if p["name"] == "Attacker")
+    # Section-local values only -- no inherited Hash/Threads from [DEFAULT].
+    assert attacker["values"] == {"Description": "Aggressive", "OwnAttack": "125"}
+
+
+def test_get_profiles_non_editable_engine_hides_editor(client):
+    """A non-editable engine reports editable=false with empty schema/profiles.
+
+    The Settings UI uses editable to decide whether to show the editor at all;
+    if this regressed to true the UI would render an empty, broken editor.
+    """
+    resp = client.get(f"/api/engines/{SYSTEM_ENGINE}/profiles")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["editable"] is False
+    assert data["schema"] == []
+    assert data["profiles"] == []
+
+
+def test_put_creates_profile_and_persists(client, profile_paths):
+    """PUT creates a profile that subsequent GET returns, seeding from defaults.
+
+    Verifies the create path end-to-end and that the seed preserved the existing
+    profiles (the new file is not just the one new section).
+    """
+    resp = client.post(
+        f"/api/engines/{PROFILES_ENGINE}/profiles/Tactical",
+        data=json.dumps({"values": {"Description": "Sharp", "OwnAttack": 140}}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["success"] is True
+
+    data = client.get(f"/api/engines/{PROFILES_ENGINE}/profiles").get_json()
+    names = {p["name"] for p in data["profiles"]}
+    assert names == {"Default", "Attacker", "Tactical"}
+    tactical = next(p for p in data["profiles"] if p["name"] == "Tactical")
+    assert tactical["values"] == {"Description": "Sharp", "OwnAttack": "140"}
+
+
+def test_put_rejects_out_of_range_value_with_400(client, profile_paths):
+    """An out-of-range value is rejected with 400 and is not written.
+
+    Rodent does not clamp, so the server is the only guard; the error message
+    names the offending parameter for the UI. Also asserts the bad write did not
+    create the config file as a side effect.
+    """
+    resp = client.post(
+        f"/api/engines/{PROFILES_ENGINE}/profiles/Tactical",
+        data=json.dumps({"values": {"UCI_Elo": 99999}}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "UCI_Elo" in body["error"]
+    assert not profile_paths.exists()
+
+
+def test_save_non_editable_engine_returns_404(client):
+    """Saving against an engine with no schema is rejected with 404.
+
+    Guards the allow-list: only schema-backed engines accept profile writes, so
+    arbitrary engines cannot have .uci files synthesized through this endpoint.
+    """
+    resp = client.post(
+        f"/api/engines/{SYSTEM_ENGINE}/profiles/Foo",
+        data=json.dumps({"values": {}}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 404
+
+
+def test_delete_removes_profile(client, profile_paths):
+    """DELETE removes an existing profile; a second delete reports 404.
+
+    Asserts the delete path and that the store reflects the removal (the profile
+    is gone from the subsequent GET), then that deleting it again is a 404 (the
+    'not found' path) rather than a false success.
+    """
+    first = client.post(f"/api/engines/{PROFILES_ENGINE}/profiles/Attacker/delete")
+    assert first.status_code == 200
+    assert first.get_json()["success"] is True
+
+    names = {
+        p["name"]
+        for p in client.get(f"/api/engines/{PROFILES_ENGINE}/profiles").get_json()["profiles"]
+    }
+    assert "Attacker" not in names
+
+    again = client.post(f"/api/engines/{PROFILES_ENGINE}/profiles/Attacker/delete")
+    assert again.status_code == 404

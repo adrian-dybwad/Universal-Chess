@@ -3277,6 +3277,110 @@ def api_get_engines():
         return jsonify([{"name": "stockfish", "display_name": "Stockfish", "installed": True}])
 
 
+# Engine personality profiles are editable only for engines with a parameter
+# schema in engine_profiles.PROFILE_SCHEMAS (currently Rodent IV). The editor
+# reads/writes the same .uci file the engine player loads at game start, so
+# edits take effect on the next game; the [DEFAULT] section is preserved.
+from universalchess.services import engine_profiles
+
+_DEFAULT_ENGINES_UCI_DIR = str(
+    pathlib.Path(__file__).parent.parent / "defaults" / "engines"
+)
+
+
+def _config_uci_path(engine_name):
+    """Resolve the writable config ``.uci`` path for an engine.
+
+    Guards the engine name against path traversal via ``safe_under_base``;
+    returns ``None`` if the name is empty or escapes the engines config dir.
+    """
+    return safe_under_base(os.path.join(CONFIG_DIR, "engines"), f"{engine_name}.uci")
+
+
+def _defaults_uci_path(engine_name):
+    """Resolve the packaged defaults ``.uci`` path (seed/fallback source)."""
+    return safe_under_base(_DEFAULT_ENGINES_UCI_DIR, f"{engine_name}.uci")
+
+
+@app.route("/api/engines/<engine_name>/profiles", methods=["GET"])
+def api_get_engine_profiles(engine_name):
+    """Return the editable profile schema and current profiles for an engine.
+
+    Engines without a schema return ``editable: false`` so the UI hides the
+    editor. Profiles come from the writable config ``.uci``, falling back to the
+    packaged defaults on a fresh install.
+    """
+    groups = engine_profiles.get_schema(engine_name)
+    if groups is None:
+        return jsonify({
+            "engine": engine_name, "editable": False, "schema": [], "profiles": [],
+        })
+    config_path = _config_uci_path(engine_name)
+    if config_path is None:
+        return jsonify({"success": False, "error": "Invalid engine"}), 400
+    profiles = engine_profiles.read_profiles(config_path, _defaults_uci_path(engine_name))
+    return jsonify({
+        "engine": engine_name,
+        "editable": True,
+        "schema": engine_profiles.schema_to_json(groups),
+        "profiles": profiles,
+    })
+
+
+# Profile mutations use POST, not PUT/DELETE: the app's WebDAV before_request
+# (handle_preflight) intercepts every PUT/DELETE app-wide and demands WebDAV
+# auth, so REST routes cannot use those verbs. All engine endpoints (install,
+# uninstall, resume, cancel) already use POST for the same reason.
+@app.route("/api/engines/<engine_name>/profiles/<profile_name>", methods=["POST"])
+def api_save_engine_profile(engine_name, profile_name):
+    """Create or replace a profile. Body: ``{"values": {key: value}}``.
+
+    Values are validated against the engine schema (unknown keys and
+    out-of-range values are rejected, not clamped, because Rodent applies them
+    verbatim) before the section is written atomically. The whole section is
+    replaced, so the client must submit the complete set of keys to retain.
+    """
+    groups = engine_profiles.get_schema(engine_name)
+    if groups is None:
+        return jsonify({"success": False, "error": "Engine has no editable profiles"}), 404
+    config_path = _config_uci_path(engine_name)
+    if config_path is None:
+        return jsonify({"success": False, "error": "Invalid engine"}), 400
+    body = request.get_json(silent=True) or {}
+    values = body.get("values", {})
+    try:
+        engine_profiles.write_profile(
+            config_path, profile_name, values, groups, _defaults_uci_path(engine_name)
+        )
+    except engine_profiles.ProfileValidationError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    return jsonify({"success": True})
+
+
+@app.route("/api/engines/<engine_name>/profiles/<profile_name>/delete", methods=["POST"])
+def api_delete_engine_profile(engine_name, profile_name):
+    """Delete a profile section.
+
+    404 if the engine has no editable profiles or the profile does not exist;
+    400 if the name is reserved (``DEFAULT``).
+    """
+    groups = engine_profiles.get_schema(engine_name)
+    if groups is None:
+        return jsonify({"success": False, "error": "Engine has no editable profiles"}), 404
+    config_path = _config_uci_path(engine_name)
+    if config_path is None:
+        return jsonify({"success": False, "error": "Invalid engine"}), 400
+    try:
+        removed = engine_profiles.delete_profile(
+            config_path, profile_name, _defaults_uci_path(engine_name)
+        )
+    except engine_profiles.ProfileValidationError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    if not removed:
+        return jsonify({"success": False, "error": "Profile not found"}), 404
+    return jsonify({"success": True})
+
+
 @app.route("/api/engines/<engine_name>/levels", methods=["GET"])
 def api_get_engine_levels(engine_name):
     """Get ELO levels and personalities for an engine from its .uci file."""
@@ -3337,6 +3441,7 @@ def api_get_all_engines():
                 "can_uninstall": engine_def.can_uninstall,
                 "estimated_install_minutes": engine_def.estimated_install_minutes,
                 "has_prebuilt": engine_def.has_prebuilt,
+                "has_profiles": name in engine_profiles.PROFILE_SCHEMAS,
             })
         
         return jsonify(engines_list)
@@ -3344,80 +3449,77 @@ def api_get_all_engines():
         return _internal_error(e)
 
 
-# Engine installation state (singleton)
-_engine_install_state = {
-    "installing": False,
-    "engine": None,
-    "progress": "",
-    "last_result": None
-}
-
-
-def _engine_progress_callback(progress: str):
-    """Callback to update install progress."""
-    global _engine_install_state
-    _engine_install_state["progress"] = progress
+# Engine installation progress is owned by engine_install_state.STORE: a single,
+# disk-persisted, structured state (stage + derived percent) so the UI reflects
+# real progress on a fresh page load AND survives a process/board restart. On
+# startup, an install that was running when the process stopped is reconciled to
+# `interrupted` so the UI can offer a manual resume instead of polling a dead
+# install.
+from universalchess.services import engine_install_state
+_engine_install_store = engine_install_state.STORE
+_engine_install_store.reconcile_interrupted()
 
 
 def _run_engine_install(engine_name: str):
-    """Background thread to install an engine."""
-    global _engine_install_state
+    """Background thread to install an engine, persisting structured progress.
+
+    The stage_callback writes each update to the store so a concurrent
+    GET /api/engines/status (and any fresh page load) sees the live stage and
+    percent.
+    """
     from universalchess.managers.engine_manager import EngineManager
-    
+
+    def on_stage(stage, message, fraction):
+        _engine_install_store.update(stage, message, fraction)
+
     try:
         engine_manager = EngineManager()
-        success = engine_manager.install_engine(engine_name, _engine_progress_callback)
-        
-        _engine_install_state["last_result"] = {
-            "engine": engine_name,
-            "success": success,
-            "error": None if success else "Installation failed"
-        }
+        success = engine_manager.install_engine(engine_name, stage_callback=on_stage)
+        error = None if success else (engine_manager.get_install_error() or "Installation failed")
+        _engine_install_store.finish(success=success, error=error)
     except Exception as e:
         app.logger.exception("Engine install failed: %s", e)
-        _engine_install_state["last_result"] = {
-            "engine": engine_name,
-            "success": False,
-            "error": "Installation failed"
-        }
-    finally:
-        _engine_install_state["installing"] = False
-        _engine_install_state["engine"] = None
-        _engine_install_state["progress"] = ""
+        _engine_install_store.finish(success=False, error="Installation failed")
+
+
+def _start_engine_install(engine_name: str):
+    """Initialize the persisted state and spawn the install thread.
+
+    Caller is responsible for validating the engine name and that no install is
+    already active.
+    """
+    from universalchess.managers.engine_manager import ENGINES
+    engine = ENGINES[engine_name]
+    _engine_install_store.start(
+        engine_name,
+        engine.display_name,
+        estimated_seconds=engine.estimated_install_minutes * 60,
+    )
+    thread = threading.Thread(target=_run_engine_install, args=(engine_name,), daemon=True)
+    thread.start()
 
 
 @app.route("/api/engines/install", methods=["POST"])
 def api_install_engine():
     """Start installing an engine."""
-    global _engine_install_state
-    
     try:
         data = request.get_json()
-        engine_name = data.get("engine")
-        
+        engine_name = data.get("engine") if data else None
+
         if not engine_name:
             return jsonify({"success": False, "error": "No engine specified"}), 400
-        
+
         from universalchess.managers.engine_manager import ENGINES
         if engine_name not in ENGINES:
             return jsonify({"success": False, "error": f"Unknown engine: {engine_name}"}), 400
-        
-        if _engine_install_state["installing"]:
+
+        if _engine_install_store.status_dict()["active"]:
             return jsonify({
-                "success": False, 
-                "error": f"Already installing {_engine_install_state['engine']}"
+                "success": False,
+                "error": f"Already installing {_engine_install_store.status_dict()['engine']}"
             }), 409
-        
-        # Start installation in background thread
-        _engine_install_state["installing"] = True
-        _engine_install_state["engine"] = engine_name
-        _engine_install_state["progress"] = "Starting..."
-        _engine_install_state["last_result"] = None
-        
-        import threading
-        thread = threading.Thread(target=_run_engine_install, args=(engine_name,), daemon=True)
-        thread.start()
-        
+
+        _start_engine_install(engine_name)
         return jsonify({"success": True, "message": f"Installing {engine_name}"})
     except Exception as e:
         return _internal_error(e)
@@ -3455,14 +3557,57 @@ def api_uninstall_engine():
 
 @app.route("/api/engines/status", methods=["GET"])
 def api_engine_status():
-    """Get current engine installation status."""
-    global _engine_install_state
-    return jsonify({
-        "installing": _engine_install_state["installing"],
-        "engine": _engine_install_state["engine"],
-        "progress": _engine_install_state["progress"],
-        "last_result": _engine_install_state["last_result"]
-    })
+    """Get current engine installation status.
+
+    Returns the structured state (stage, message, derived percent, active,
+    interrupted, result). Percent is computed at read time so the build bar
+    advances smoothly between polls without the backend ticking.
+    """
+    return jsonify(_engine_install_store.status_dict())
+
+
+@app.route("/api/engines/resume", methods=["POST"])
+def api_resume_engine_install():
+    """Resume an install that was interrupted by a process/board restart.
+
+    Valid only when the persisted state is `interrupted`. Relaunches the install
+    for that engine; the cached git clone is reused (git pull), so engine source
+    is not re-downloaded. True mid-build continuation is not possible -- "resume"
+    re-runs the install operation, which is idempotent.
+    """
+    try:
+        status = _engine_install_store.status_dict()
+        if status["active"]:
+            return jsonify({"success": False, "error": f"Already installing {status['engine']}"}), 409
+        if not status["interrupted"]:
+            return jsonify({"success": False, "error": "No interrupted install to resume"}), 400
+
+        engine_name = status["engine"]
+        from universalchess.managers.engine_manager import ENGINES
+        if engine_name not in ENGINES:
+            _engine_install_store.clear()
+            return jsonify({"success": False, "error": f"Unknown engine: {engine_name}"}), 400
+
+        _start_engine_install(engine_name)
+        return jsonify({"success": True, "message": f"Resuming {engine_name}"})
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/engines/cancel", methods=["POST"])
+def api_cancel_engine_install():
+    """Dismiss an interrupted or finished install by clearing its persisted state.
+
+    Does not abort an actively running build (out of scope): returns 409 if an
+    install is currently running so the running thread is never orphaned.
+    """
+    try:
+        if _engine_install_store.status_dict()["active"]:
+            return jsonify({"success": False, "error": "Cannot cancel a running install"}), 409
+        _engine_install_store.clear()
+        return jsonify({"success": True})
+    except Exception as e:
+        return _internal_error(e)
 
 
 # -----------------------------------------------------------------------------

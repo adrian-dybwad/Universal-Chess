@@ -274,6 +274,130 @@
   color: var(--color-text-light);
 }
 
+/* Interrupted-install explanation shown above the Resume/Cancel buttons. */
+.engine-install-note--interrupted {
+  display: block;
+  margin-top: var(--space-3);
+}
+
+/* Progress bar block under the action button while an install is running. */
+.engine-install-progress {
+  margin-top: var(--space-3);
+}
+
+/* Action error for a single engine, shown below its button (compact and
+   left-aligned, unlike the centered page-level .error block). */
+.engine-card-error {
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-danger-dark);
+  background: var(--color-danger-light);
+  border-radius: var(--radius-md, 8px);
+}
+
+/* Engine profile editor (Rodent IV personality tuner) */
+.profile-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+  flex-wrap: wrap;
+}
+
+.profile-editor-title {
+  font-size: var(--text-xl, 1.25rem);
+  font-weight: 600;
+  margin: 0;
+}
+
+.profile-editor-select {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.profile-editor-select-actions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.profile-editor-footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) 0;
+  background: var(--color-white);
+}
+
+.profile-editor-notice {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-success-dark, #1b5e20);
+  background: var(--color-success-light, #e8f5e9);
+  border-radius: var(--radius-md, 8px);
+}
+
+/* Group heading with a leading icon, used for the preset bar and each schema
+   group. Mirrors the look of CardHeader but adds the icon. */
+.profile-group-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.profile-group-icon {
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+/* Quick-start preset / playing-style bar. */
+.profile-presets {
+  margin-bottom: var(--space-4);
+}
+
+.profile-presets:last-child {
+  margin-bottom: 0;
+}
+
+.profile-presets-hint {
+  font-size: var(--text-sm);
+  color: var(--color-text-light);
+  margin: 0 0 var(--space-3);
+}
+
+.profile-preset-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* Range slider paired with a compact number box (ui/Slider). The track flexes
+   to fill the control column while the number box stays a fixed, legible width. */
+.slider-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+}
+
+.slider-control .range-slider {
+  flex: 1;
+  min-width: 90px;
+}
+
+.slider-control .slider-number {
+  width: 72px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
 /* Apply Settings Bar */
 .apply-settings-bar {
   position: fixed;

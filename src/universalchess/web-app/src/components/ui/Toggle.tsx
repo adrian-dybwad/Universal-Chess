@@ -6,16 +6,21 @@ interface ToggleProps {
   disabled?: boolean;
   label?: string;
   help?: ReactNode;
+  /** Optional node rendered inline beside the label, e.g. an info-icon tooltip. */
+  info?: ReactNode;
 }
 
 /**
  * Reusable toggle switch component.
  */
-export function Toggle({ checked, onChange, disabled = false, label, help }: ToggleProps) {
+export function Toggle({ checked, onChange, disabled = false, label, help, info }: ToggleProps) {
   return (
     <div className={`form-row${disabled ? ' form-row--disabled' : ''}`}>
       <div className="form-row-info">
-        {label && <label className="form-label">{label}</label>}
+        <div className="form-label-line">
+          {label && <label className="form-label">{label}</label>}
+          {info}
+        </div>
         {help && <div className="form-help">{help}</div>}
       </div>
       <div className="form-row-control">

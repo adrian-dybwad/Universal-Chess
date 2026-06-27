@@ -350,6 +350,68 @@
   margin-top: var(--space-2);
 }
 
+/* Label plus an optional inline info-icon tooltip (see InfoTip). */
+.form-label-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Info-icon tooltip: an "i" button that reveals longer help in a bubble. */
+.info-tip {
+  position: relative;
+  display: inline-flex;
+}
+
+.info-tip-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-light);
+  cursor: help;
+  border-radius: var(--radius-full, 999px);
+}
+
+.info-tip-btn:hover,
+.info-tip-btn:focus-visible {
+  color: var(--color-primary);
+  outline: none;
+}
+
+.info-tip-bubble {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  z-index: 20;
+  width: max-content;
+  max-width: 260px;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: var(--font-normal, 400);
+  line-height: 1.4;
+  color: var(--color-white, #fff);
+  background: var(--color-text, #1f2937);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  white-space: normal;
+  text-align: left;
+  pointer-events: none;
+}
+
+/* Keep the bubble on-screen near the right edge of narrow layouts. */
+@media (max-width: 480px) {
+  .info-tip-bubble {
+    left: auto;
+    right: 0;
+    transform: none;
+    max-width: 220px;
+  }
+}
+
 /* ============================================
    Status Indicators
    ============================================ */
@@ -466,5 +528,62 @@
     gap: var(--space-4);
     align-items: flex-start;
   }
+}
+
+/* ============================================
+   Progress Bar
+   ============================================ */
+
+/* Linear progress indicator. The determinate fill is width-driven (eased so the
+   build creep advances smoothly between 2s polls); the indeterminate variant
+   slides a block when no measurable percent is available. */
+.progress-bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.progress-bar__label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-text-light);
+}
+
+.progress-bar__percent {
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--font-semibold);
+  color: var(--color-text);
+}
+
+.progress-bar__track {
+  position: relative;
+  width: 100%;
+  height: 8px;
+  background: var(--color-bg-muted);
+  border-radius: var(--radius-sm, 4px);
+  overflow: hidden;
+}
+
+.progress-bar__fill {
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: inherit;
+  transition: width 0.6s ease;
+}
+
+.progress-bar__fill--indeterminate {
+  position: absolute;
+  left: 0;
+  width: 40%;
+  animation: progress-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes progress-indeterminate {
+  0% { left: -40%; }
+  100% { left: 100%; }
 }
 

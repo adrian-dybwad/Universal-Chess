@@ -54,6 +54,8 @@ except ImportError:
     import logging
     log = logging.getLogger(__name__)
 
+from universalchess.services.engine_install_state import InstallStage
+
 # Engine installation directory
 ENGINES_DIR = "/opt/universalchess/engines"
 BUILD_TMP = "/opt/universalchess/tmp/engine_build"
@@ -468,7 +470,8 @@ class EngineManager:
     def install_engine(
         self,
         engine_name: str,
-        progress_callback: Optional[Callable[[str], None]] = None
+        progress_callback: Optional[Callable[[str], None]] = None,
+        stage_callback: Optional[Callable[[InstallStage, str, Optional[float]], None]] = None
     ) -> bool:
         """Install an engine.
         
@@ -477,7 +480,12 @@ class EngineManager:
         
         Args:
             engine_name: Name of the engine to install
-            progress_callback: Optional callback for progress updates
+            progress_callback: Optional callback for free-text progress messages
+                (legacy contract, retained for the queue path).
+            stage_callback: Optional callback invoked with (stage, message,
+                download_fraction) on each progress update. ``download_fraction``
+                is 0..1 during a download (real byte progress) and None otherwise.
+                Used by the web layer to drive the structured progress bar.
             
         Returns:
             True if installation succeeded
@@ -497,11 +505,19 @@ class EngineManager:
         log.info(f"[EngineManager] install_engine: Engine details - display_name='{engine.display_name}', "
                  f"is_system_package={engine.is_system_package}, repo_url={engine.repo_url}")
         
-        def update_progress(msg: str):
+        current_stage = InstallStage.STARTING
+
+        def update_progress(msg: str, stage: Optional[InstallStage] = None,
+                            fraction: Optional[float] = None):
+            nonlocal current_stage
+            if stage is not None:
+                current_stage = stage
             self._install_progress = msg
             log.info(f"[EngineManager] [Progress] {msg}")
             if progress_callback:
                 progress_callback(msg)
+            if stage_callback:
+                stage_callback(current_stage, msg, fraction)
         
         try:
             if engine.is_system_package:
@@ -545,19 +561,19 @@ class EngineManager:
     def _install_system_package(
         self,
         engine: EngineDefinition,
-        update_progress: Callable[[str], None]
+        update_progress: Callable[..., None]
     ) -> bool:
         """Install engine from system package.
         
         Args:
             engine: Engine definition
-            update_progress: Callback for progress messages
+            update_progress: Callback for progress messages (msg, stage, fraction)
             
         Returns:
             True if installation succeeded
         """
         log.info(f"[EngineManager] _install_system_package: Installing '{engine.name}' via apt package '{engine.package_name}'")
-        update_progress(f"Installing {engine.display_name} from system package...")
+        update_progress(f"Installing {engine.display_name} from system package...", InstallStage.INSTALLING_DEPS)
         
         # Update package list
         log.debug("[EngineManager] _install_system_package: Running apt-get update")
@@ -606,11 +622,11 @@ class EngineManager:
             
             link_path.symlink_to(system_path)
             log.info(f"[EngineManager] _install_system_package: Created symlink {link_path} -> {system_path}")
-            update_progress(f"Created symlink: {link_path} -> {system_path}")
+            update_progress(f"Created symlink: {link_path} -> {system_path}", InstallStage.INSTALLING_FILES)
         else:
             log.warning(f"[EngineManager] _install_system_package: Could not find '{engine.name}' in PATH after installation")
         
-        update_progress(f"{engine.display_name} installed successfully")
+        update_progress(f"{engine.display_name} installed successfully", InstallStage.INSTALLING_FILES)
         log.info(f"[EngineManager] _install_system_package: Successfully installed '{engine.name}'")
         return True
     
@@ -632,7 +648,7 @@ class EngineManager:
     def _try_install_prebuilt(
         self,
         engine: EngineDefinition,
-        update_progress: Callable[[str], None]
+        update_progress: Callable[..., None]
     ) -> bool:
         """Try to install engine from pre-built binary.
         
@@ -641,7 +657,7 @@ class EngineManager:
         
         Args:
             engine: Engine definition
-            update_progress: Callback for progress messages
+            update_progress: Callback for progress messages (msg, stage, fraction)
             
         Returns:
             True if pre-built binary was installed successfully
@@ -658,7 +674,7 @@ class EngineManager:
         archive_name = PREBUILT_ARCHIVE_NAME_TEMPLATE.format(arch=arch)
         
         log.info(f"[EngineManager] _try_install_prebuilt: Attempting to download pre-built '{engine.name}' for {arch}")
-        update_progress(f"Checking for pre-built {engine.display_name}...")
+        update_progress(f"Checking for pre-built {engine.display_name}...", InstallStage.CHECKING_PREBUILT)
         
         try:
             # Get latest release info
@@ -681,7 +697,7 @@ class EngineManager:
                 return False
             
             # Download the archive
-            update_progress(f"Downloading {engine.display_name}...")
+            update_progress(f"Downloading {engine.display_name}...", InstallStage.DOWNLOADING, 0.0)
             log.info(f"[EngineManager] _try_install_prebuilt: Downloading from {download_url}")
             
             download_response = requests.get(download_url, stream=True, timeout=300)
@@ -702,10 +718,13 @@ class EngineManager:
                     downloaded += len(chunk)
                     if total_size > 0:
                         pct = (downloaded * 100) // total_size
-                        update_progress(f"Downloading {engine.display_name}... {pct}%")
+                        update_progress(
+                            f"Downloading {engine.display_name}... {pct}%",
+                            InstallStage.DOWNLOADING, downloaded / total_size,
+                        )
             
             # Extract the archive
-            update_progress(f"Extracting {engine.display_name}...")
+            update_progress(f"Extracting {engine.display_name}...", InstallStage.INSTALLING_FILES)
             log.info(f"[EngineManager] _try_install_prebuilt: Extracting {tmp_archive}")
             
             extract_dir = Path(BUILD_TMP) / "prebuilt"
@@ -724,7 +743,7 @@ class EngineManager:
                 dest_path = Path(self.engines_dir) / engine.name
                 dest_path.parent.mkdir(parents=True, exist_ok=True)
                 
-                update_progress(f"Installing {engine.display_name}...")
+                update_progress(f"Installing {engine.display_name}...", InstallStage.INSTALLING_FILES)
                 
                 # Copy entire directory
                 if dest_path.exists():
@@ -742,7 +761,7 @@ class EngineManager:
                 dest_path = Path(self.engines_dir) / engine.name
                 dest_path.parent.mkdir(parents=True, exist_ok=True)
                 
-                update_progress(f"Installing {engine.display_name}...")
+                update_progress(f"Installing {engine.display_name}...", InstallStage.INSTALLING_FILES)
                 shutil.copy2(source_path, dest_path)
                 os.chmod(dest_path, 0o755)
             else:
@@ -754,7 +773,7 @@ class EngineManager:
             tmp_archive.unlink(missing_ok=True)
             
             log.info(f"[EngineManager] _try_install_prebuilt: Successfully installed pre-built '{engine.name}'")
-            update_progress(f"{engine.display_name} installed successfully (pre-built)")
+            update_progress(f"{engine.display_name} installed successfully (pre-built)", InstallStage.INSTALLING_FILES)
             return True
             
         except requests.RequestException as e:
@@ -770,13 +789,13 @@ class EngineManager:
     def _install_from_source(
         self,
         engine: EngineDefinition,
-        update_progress: Callable[[str], None]
+        update_progress: Callable[..., None]
     ) -> bool:
         """Install engine by building from source.
         
         Args:
             engine: Engine definition
-            update_progress: Callback for progress messages
+            update_progress: Callback for progress messages (msg, stage, fraction)
             
         Returns:
             True if installation succeeded
@@ -794,7 +813,7 @@ class EngineManager:
         
         # Install build dependencies
         if engine.dependencies:
-            update_progress(f"Installing build dependencies...")
+            update_progress(f"Installing build dependencies...", InstallStage.INSTALLING_DEPS)
             deps = " ".join(engine.dependencies)
             log.info(f"[EngineManager] _install_from_source: Installing dependencies: {deps}")
             result = subprocess.run(
@@ -815,7 +834,7 @@ class EngineManager:
             # Ensure repo_dir exists for build commands that might need a working directory
             repo_dir.mkdir(parents=True, exist_ok=True)
         elif repo_dir.exists():
-            update_progress(f"Updating {engine.display_name} source...")
+            update_progress(f"Updating {engine.display_name} source...", InstallStage.CLONING)
             log.info(f"[EngineManager] _install_from_source: Repo exists, running git pull in {repo_dir}")
             result = subprocess.run(
                 ["git", "pull"],
@@ -829,7 +848,7 @@ class EngineManager:
             
             # Update submodules if needed
             if engine.clone_with_submodules:
-                update_progress(f"Updating submodules...")
+                update_progress(f"Updating submodules...", InstallStage.CLONING)
                 log.info(f"[EngineManager] _install_from_source: Updating submodules")
                 result = subprocess.run(
                     ["git", "submodule", "update", "--init", "--recursive"],
@@ -838,7 +857,7 @@ class EngineManager:
                 if result.returncode != 0:
                     log.warning(f"[EngineManager] _install_from_source: submodule update failed: {result.stderr.strip()}")
         else:
-            update_progress(f"Cloning {engine.display_name} repository...")
+            update_progress(f"Cloning {engine.display_name} repository...", InstallStage.CLONING)
             log.info(f"[EngineManager] _install_from_source: Cloning {engine.repo_url} to {repo_dir}")
             
             # Build clone command - use submodules if needed
@@ -863,7 +882,7 @@ class EngineManager:
             log.info(f"[EngineManager] _install_from_source: git clone successful")
         
         # Build
-        update_progress(f"Building {engine.display_name}...")
+        update_progress(f"Building {engine.display_name}...", InstallStage.BUILDING)
         for i, cmd in enumerate(engine.build_commands):
             log.info(f"[EngineManager] _install_from_source: Running build command {i+1}/{len(engine.build_commands)}: {cmd}")
             log.info(f"[EngineManager] _install_from_source: Build timeout: {engine.build_timeout}s")
@@ -895,7 +914,7 @@ class EngineManager:
             dst_binary = dst_dir / engine.binary_path
             if dst_binary.exists() and os.access(dst_binary, os.X_OK):
                 log.info(f"[EngineManager] _install_from_source: Custom script installed binary to {dst_binary}")
-                update_progress(f"Verifying {engine.display_name} installation...")
+                update_progress(f"Verifying {engine.display_name} installation...", InstallStage.INSTALLING_FILES)
                 return True
             else:
                 log.error(f"[EngineManager] _install_from_source: Custom script did not produce binary at {dst_binary}")
@@ -903,7 +922,7 @@ class EngineManager:
                 return False
         
         # Copy binary to engines directory
-        update_progress(f"Installing {engine.display_name}...")
+        update_progress(f"Installing {engine.display_name}...", InstallStage.INSTALLING_FILES)
         src_binary = repo_dir / engine.binary_path
         log.debug(f"[EngineManager] _install_from_source: Looking for binary at {src_binary}")
         
@@ -965,7 +984,7 @@ class EngineManager:
         if result.returncode != 0:
             log.warning(f"[EngineManager] _install_from_source: chown failed ({result.returncode})")
         
-        update_progress(f"{engine.display_name} installed successfully")
+        update_progress(f"{engine.display_name} installed successfully", InstallStage.INSTALLING_FILES)
         log.info(f"[EngineManager] _install_from_source: Successfully installed '{engine.name}'")
         return True
     
