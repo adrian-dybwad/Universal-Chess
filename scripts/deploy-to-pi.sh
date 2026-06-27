@@ -143,7 +143,7 @@ fi
 # Content-only diff preview (ignores mtime): empty output means fully in sync.
 if [[ $CHECK_ONLY -eq 1 ]]; then
 	echo "Content diffs (checksum) vs ${HOST}:${REMOTE_PATH} ..."
-	diffs="$(rsync -azn --checksum --itemize-changes "${EXCLUDES[@]}" \
+	diffs="$(rsync -an --checksum --itemize-changes "${EXCLUDES[@]}" \
 		-e "$SSH_OPTS" "$SRC_DIR" "${HOST}:${REMOTE_PATH}" 2>&1 | grep -E '^<f.*[cs]' || true)"
 	if [[ -z "$diffs" ]]; then
 		echo "All content in sync."
@@ -153,7 +153,11 @@ if [[ $CHECK_ONLY -eq 1 ]]; then
 	exit 0
 fi
 
-RSYNC_FLAGS=(-az --itemize-changes "${EXCLUDES[@]}")
+# NOTE: No -z (compression). macOS ships openrsync (advertises "rsync 2.6.9
+# compatible"); the Pi runs rsync 3.4.1. Their zlib/compression handshake is
+# incompatible and silently writes 0-byte files for newly-created paths. Plain
+# -a transfers correctly over the (fast, local) network without that risk.
+RSYNC_FLAGS=(-a --itemize-changes "${EXCLUDES[@]}")
 [[ $DRY_RUN -eq 1 ]] && RSYNC_FLAGS+=(-n)
 
 echo "Syncing ${SRC_DIR} -> ${HOST}:${REMOTE_PATH}$([[ $DRY_RUN -eq 1 ]] && echo '  (dry-run)')"
