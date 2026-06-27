@@ -9,7 +9,15 @@ casttube
 ndjson
 pyserial
 spidev
-RPi.GPIO
+# RPi.GPIO is intentionally NOT pip-installed. On the device the API is provided
+# system-wide by the Debian dependency python3-rpi.gpio, which on Trixie is the
+# python3-rpi-lgpio shim (RPi.GPIO API over lgpio, installed at
+# /usr/lib/python3/dist-packages/RPi/GPIO) and is visible to the venv via
+# --system-site-packages. In dev/test it is mocked (tests/conftest.py).
+# Listing it here makes pip ignore the shim (whose distribution metadata is named
+# "rpi-lgpio", not "RPi.GPIO") and instead build the classic RPi.GPIO C extension
+# from source -- which needs python3-dev headers (absent) and does not work on
+# current Pi kernels anyway, aborting the entire postinst pip step. Do not re-add.
 # Used by the e-paper drivers (epaper/framework/waveshare/epd2in9d.py) to pack
 # the framebuffer into the panel's 1bpp buffer with np.packbits -- far faster
 # than the per-pixel Python loop on the single-core Pi Zero W. Also provided
