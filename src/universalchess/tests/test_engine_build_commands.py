@@ -323,6 +323,23 @@ class TestZahakBuildCommand:
         """
         assert "CGO_ENABLED=0" in _build_script("zahak")
 
+    def test_serializes_compilation(self):
+        """The build must pass ``-p=1`` to serialize Go compilation.
+
+        Why this test exists: a 415MB Pi Zero 2 W OOM-killed the build
+        ("compile: signal: killed"). Go defaults build parallelism to the CPU
+        count (4), and the engine package embeds the ~1.5MB NNUE net as generated
+        source, so several concurrent compiles of it exceed the board's RAM.
+        Empirically even -p=2 still OOMs; only -p=1 (one compile at a time) fits.
+        It is passed via GOFLAGS so it lands on the go build/go run steps but not
+        the unprefixed ``go clean`` (which does not accept -p).
+
+        How the regression manifests: dropping ``-p=1`` reverts to CPU-count
+        parallelism and the build is OOM-killed on low-RAM boards.
+        """
+        script = _build_script("zahak")
+        assert "GOFLAGS=-p=1" in script
+
     def test_binary_path_points_to_bin(self):
         """Zahak's binary_path must be ``bin/zahak``.
 

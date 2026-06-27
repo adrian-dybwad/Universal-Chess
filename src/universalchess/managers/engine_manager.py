@@ -31,15 +31,17 @@ Specialty Engines:
 
 import os
 import re
+import signal
 import subprocess
 import shutil
 import threading
 import platform
 import tarfile
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Optional, Callable, List, Dict, FrozenSet
+from typing import Optional, Callable, List, Dict, FrozenSet, Tuple
 from pathlib import Path
-from queue import Queue
+from queue import Queue, Empty
 from enum import Enum
 import time
 
@@ -71,6 +73,14 @@ from universalchess.services.apt_recovery import RecoveryOutcome
 # Engine installation directory
 ENGINES_DIR = "/opt/universalchess/engines"
 BUILD_TMP = "/opt/universalchess/tmp/engine_build"
+
+# Trailing build-output lines retained for the failure message (stdout+stderr are
+# merged, so the real error is in the tail regardless of which stream it used).
+_BUILD_TAIL_LINES = 40
+# Minimum seconds between build-progress message updates. Throttled because each
+# update persists install state to the SD-card-backed store and build output can
+# be chatty on a slow board.
+_BUILD_PROGRESS_THROTTLE_SECONDS = 2.0
 
 # Repository root (for build scripts)
 # Detect from this file's location: src/universalchess/managers/engine_manager.py -> repo root
@@ -734,14 +744,22 @@ ENGINES = {
         # build must also run the Makefile's `netgen` step first, which generates
         # engine/nn.go from default.nn (it is not committed) -- without it the
         # engine package does not compile. `make` (default goal `build`) does both
-        # and emits bin/zahak. FLAGS=CGO_ENABLED=0 overrides the Makefile's
-        # `CC=cc CGO_ENABLED=1` default: CGO would pull in fathom's Syzygy C code
-        # and require a C compiler we do not declare as a dependency; disabling it
-        # selects fathom_stub.go (no tablebase probing, irrelevant on-device) and
-        # keeps the build to just golang+git. `make` honors `git tag` for version
-        # stamping, so the shallow clone is fine.
+        # and emits bin/zahak. FLAGS carries two overrides of the Makefile's
+        # `CC=cc CGO_ENABLED=1` default:
+        #   CGO_ENABLED=0 -- CGO would pull in fathom's Syzygy C code and require a
+        #     C compiler not in our dependencies; disabling it selects
+        #     fathom_stub.go (no tablebase probing, irrelevant on-device) and keeps
+        #     the build to just golang+git.
+        #   GOFLAGS=-p=1 -- serialize compilation. Go defaults build parallelism to
+        #     the CPU count (4 on a Pi Zero 2 W), and the engine package embeds the
+        #     ~1.5MB NNUE net as generated source, so concurrent compiles of it
+        #     exhaust the board's 512MB RAM and the OOM killer aborts the build
+        #     ("compile: signal: killed"). -p=1 bounds peak memory to one compile.
+        #     GOFLAGS lands only on the $(FLAGS)-prefixed `go run`/`go build`, not
+        #     the unprefixed `go clean` (which does not accept -p).
+        # `make` honors `git tag` for version stamping, so the shallow clone is fine.
         build_commands=[
-            "make FLAGS=CGO_ENABLED=0",
+            "make FLAGS='CGO_ENABLED=0 GOFLAGS=-p=1'",
         ],
         binary_path="bin/zahak",
         is_system_package=False,
@@ -749,7 +767,10 @@ ENGINES = {
         extra_files=[],
         # golang package name varies: 'golang' on older Debian, 'golang-go' on newer
         dependencies=["golang", "git"],
-        estimated_install_minutes=5,  # Go compiles quickly
+        # Serial (-p=1) compile of the NNUE-embedding package on a RAM-constrained
+        # board runs well past Go's usual speed; the estimate paces the progress
+        # creep (which caps, so it never shows "done" early).
+        estimated_install_minutes=10,
         has_prebuilt=True,
     ),
     "smallbrain": EngineDefinition(
@@ -1445,7 +1466,114 @@ class EngineManager:
         except Exception as e:
             log.warning(f"[EngineManager] _try_install_prebuilt: Unexpected error: {e}")
             return False
-    
+
+    @staticmethod
+    def _kill_process_group(proc: subprocess.Popen) -> None:
+        """SIGKILL the process group led by ``proc`` and reap it.
+
+        Build commands spawn children (``make`` -> compiler/linker). The build is
+        launched with ``start_new_session=True`` so the whole tree shares a process
+        group; killing the group on timeout avoids orphaning a compiler that would
+        keep consuming a constrained board's CPU/RAM after the install gave up.
+        """
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
+        proc.wait()
+
+    def _run_build_command(
+        self,
+        cmd: str,
+        cwd: Path,
+        timeout: int,
+        on_line: Callable[[str], None],
+    ) -> Tuple[int, str]:
+        """Run one build command, streaming combined stdout+stderr line-by-line.
+
+        A build on a constrained board can run for many minutes producing no
+        captured output until it finishes, so the UI cannot distinguish a slow
+        build from a hung one. Streaming each line to ``on_line`` lets the caller
+        surface live progress.
+
+        A reader thread drains the pipe so the main loop can enforce ``timeout``
+        even when the build is silent (no newline to unblock a plain ``readline``);
+        on timeout the whole process group is killed and ``TimeoutExpired`` is
+        raised. Returns ``(returncode, tail)`` where ``tail`` is the last
+        :data:`_BUILD_TAIL_LINES` lines of output, used to build the failure
+        message (stdout and stderr are merged so the real error -- e.g. the OOM
+        "compile: signal: killed" line -- is captured regardless of stream).
+        """
+        proc = subprocess.Popen(
+            cmd,
+            shell=True,
+            cwd=str(cwd),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            start_new_session=True,
+        )
+        tail: "deque[str]" = deque(maxlen=_BUILD_TAIL_LINES)
+        line_q: Queue = Queue()
+
+        def _reader() -> None:
+            # proc.stdout is line-buffered text; iteration yields whole lines.
+            for raw in proc.stdout:  # type: ignore[union-attr]
+                line_q.put(raw.rstrip("\n"))
+            line_q.put(None)  # EOF sentinel
+
+        reader = threading.Thread(target=_reader, daemon=True)
+        reader.start()
+
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self._kill_process_group(proc)
+                raise subprocess.TimeoutExpired(cmd, timeout)
+            try:
+                item = line_q.get(timeout=min(remaining, 1.0))
+            except Empty:
+                continue
+            if item is None:
+                break
+            tail.append(item)
+            on_line(item)
+
+        proc.wait()
+        if proc.stdout:
+            proc.stdout.close()
+        return proc.returncode, "\n".join(tail)
+
+    def _make_build_progress_updater(
+        self,
+        display_name: str,
+        update_progress: Callable[..., None],
+    ) -> Callable[[str], None]:
+        """Return an ``on_line`` callback that surfaces throttled build progress.
+
+        Each non-empty build-output line becomes the live install message (still in
+        the BUILDING stage, so the time-based percent creep keeps running). Updates
+        are throttled to :data:`_BUILD_PROGRESS_THROTTLE_SECONDS` because every
+        update persists the install state to the (SD-card) store and build output
+        can be chatty; the throttle keeps the message current without hammering the
+        disk.
+        """
+        last_update = {"at": 0.0}
+
+        def on_line(line: str) -> None:
+            text = line.strip()
+            if not text:
+                return
+            now = time.monotonic()
+            if now - last_update["at"] < _BUILD_PROGRESS_THROTTLE_SECONDS:
+                return
+            last_update["at"] = now
+            update_progress(f"Building {display_name}: {text[:80]}", InstallStage.BUILDING)
+
+        return on_line
+
     def _install_from_source(
         self,
         engine: EngineDefinition,
@@ -1594,21 +1722,31 @@ class EngineManager:
                 return False
             log.info(f"[EngineManager] _install_from_source: git clone successful")
         
-        # Build
+        # Build. Output is streamed line-by-line (not captured all-at-once) so the
+        # install message reflects live build activity -- on a constrained board a
+        # source build runs for minutes and a static message is indistinguishable
+        # from a hang. The percent continues to creep over the BUILDING band by
+        # elapsed time; the streamed lines only refresh the message.
         update_progress(f"Building {engine.display_name}...", InstallStage.BUILDING)
+        on_build_line = self._make_build_progress_updater(engine.display_name, update_progress)
         for i, cmd in enumerate(engine.build_commands):
             log.info(f"[EngineManager] _install_from_source: Running build command {i+1}/{len(engine.build_commands)}: {cmd}")
             log.info(f"[EngineManager] _install_from_source: Build timeout: {engine.build_timeout}s")
-            result = subprocess.run(
-                cmd,
-                shell=True, cwd=repo_dir,
-                capture_output=True, text=True, timeout=engine.build_timeout
-            )
-            if result.returncode != 0:
-                self._install_error = f"Build failed: {result.stderr.strip()[:100]}"
-                log.error(f"[EngineManager] _install_from_source: Build command failed ({result.returncode}): {cmd}")
-                log.error(f"[EngineManager] _install_from_source: Build stdout (last 500 chars): {result.stdout.strip()[-500:]}")
-                log.error(f"[EngineManager] _install_from_source: Build stderr (last 500 chars): {result.stderr.strip()[-500:]}")
+            try:
+                returncode, tail = self._run_build_command(
+                    cmd, repo_dir, engine.build_timeout, on_build_line
+                )
+            except subprocess.TimeoutExpired:
+                self._install_error = f"Build timed out after {engine.build_timeout}s"
+                log.error(f"[EngineManager] _install_from_source: Build command timed out after {engine.build_timeout}s: {cmd}")
+                return False
+            if returncode != 0:
+                # The merged tail holds the real cause (e.g. the compiler's
+                # "signal: killed" OOM line); surface its end in the UI message.
+                detail = tail.strip()[-160:] or f"exit code {returncode}"
+                self._install_error = f"Build failed: {detail}"
+                log.error(f"[EngineManager] _install_from_source: Build command failed ({returncode}): {cmd}")
+                log.error(f"[EngineManager] _install_from_source: Build output (last {_BUILD_TAIL_LINES} lines):\n{tail[-1000:]}")
                 return False
             log.debug(f"[EngineManager] _install_from_source: Build command {i+1} completed successfully")
         
