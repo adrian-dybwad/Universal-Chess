@@ -70,18 +70,19 @@ HEAL_PROBING_PATCH = "probing-patch"   # re-checking advertising on the patched 
 # ASCII only (no "…") so it renders on the e-paper font as well as the browser.
 _HEAL_PHASE_LABELS = {
     HEAL_PROBING_STOCK: "Checking Bluetooth advertising",
-    HEAL_BUILDING: "Building Bluetooth fix (a few min)",
+    HEAL_BUILDING: "Building Bluetooth fix (up to 45 min)",
     HEAL_APPLYING: "Applying Bluetooth fix",
     HEAL_PROBING_PATCH: "Verifying Bluetooth fix",
 }
 _HEAL_DEFAULT_LABEL = "Repairing Bluetooth advertising"
 
-# A heal cannot run longer than the unit's TimeoutStartSec (2400s); a "running"
+# A heal cannot run longer than the unit's TimeoutStartSec (5400s); a "running"
 # record older than this is therefore stale -- e.g. a hard power cut killed the
 # script before its trap could clear the file, which would otherwise pin the UI
-# on "Repairing..." forever. Kept comfortably above the timeout so a legitimately
-# long first build is never mistaken for stale.
-HEAL_MAX_AGE_SECONDS = 2700
+# on "Repairing..." forever. Kept comfortably above the unit timeout so a
+# legitimately long first build (the bluetoothd rebuild can take ~45 min on a Pi
+# Zero, and the unit allows up to 90 min) is never mistaken for stale.
+HEAL_MAX_AGE_SECONDS = 6000
 
 
 def make_status(

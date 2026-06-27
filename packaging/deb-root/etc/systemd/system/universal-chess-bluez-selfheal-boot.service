@@ -17,9 +17,12 @@ Wants=bluetooth.service network-online.target
 
 [Service]
 Type=oneshot
-# A first-time build from distro source on a Pi Zero can take many minutes; do
-# not let systemd time it out mid-compile.
-TimeoutStartSec=2400
+# A first-time bluetoothd build from distro source on a Pi Zero can take ~45 min
+# (single core, PGO/LTO-free but still heavy); systemd SIGTERMs ExecStart at this
+# limit, so it must sit well above the worst case or the heal is killed mid-
+# compile and retried -- never completing -- on every boot. 90 min gives 2x
+# headroom for board/thermal variance while still bounding a genuinely hung build.
+TimeoutStartSec=5400
 ExecStart=/opt/universalchess/scripts/bluez-selfheal boot
 # Best-effort: a self-heal failure must never fail the boot transaction or leave
 # a failed unit nagging; the script rolls back to stock on any failure and the

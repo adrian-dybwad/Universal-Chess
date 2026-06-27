@@ -111,7 +111,7 @@ def test_running_selfheal_surfaces_indeterminate_row():
     assert activities == [{
         "id": ACTIVITY_BLUEZ_SELFHEAL,
         "kind": KIND_BLUEZ_SELFHEAL,
-        "label": "Building Bluetooth fix (a few min)...",
+        "label": "Building Bluetooth fix (up to 45 min)...",
         "message": None,
         "percent": None,
     }]
