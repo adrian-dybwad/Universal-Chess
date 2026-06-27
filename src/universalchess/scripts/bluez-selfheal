@@ -61,6 +61,50 @@ FIX_REASON="kernel 6.18 ext-adv-data length validation rejects stock BlueZ 5.82"
 # output must never land on stdout or it pollutes those captured values.
 log() { logger -t "$LOG_TAG" -- "$*" 2>/dev/null || true; echo "[$LOG_TAG] $*" >&2; }
 
+# Persistent app event log (services.event_log). The self-heal is the one
+# install-class operation that runs as root from a bash unit, not the Python
+# app, so it emits its own completion event through the module's CLI. The
+# package root is the grandparent of this script's dir (scripts/ lives inside
+# the universalchess package), so PYTHONPATH points one level above the package.
+# Set when a real heal begins (past the fast no-op skip) so skipped boots emit
+# nothing; consumed by the EXIT trap below.
+PKG_PARENT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+HEAL_START=""
+
+emit_heal_event() {
+    # emit_heal_event <message> <level>. Best-effort: a missing logger must never
+    # fail the heal it is reporting on. Includes elapsed seconds (as ms) when a
+    # heal actually started.
+    local msg="$1" level="${2:-info}"
+    local dur_args=()
+    if [ -n "${HEAL_START:-}" ]; then
+        dur_args=(--duration-ms "$(( ( $(date +%s) - HEAL_START ) * 1000 ))")
+    fi
+    PYTHONPATH="$PKG_PARENT" python3 -m universalchess.services.event_log \
+        --category bluez_selfheal --level "$level" "${dur_args[@]}" -- "$msg" 2>/dev/null || true
+}
+
+# EXIT trap: always clear the transient progress record, and -- only when a real
+# heal ran -- log one timed event reflecting the final marker the run just wrote.
+# Reading the marker (not the exit path) keeps this DRY across main()'s several
+# terminal exits.
+on_exit() {
+    local rc=$?
+    clear_progress
+    if [ -n "${HEAL_START:-}" ]; then
+        if [ "$rc" -eq 0 ]; then
+            if [ "$(marker_field active)" = "patched" ]; then
+                emit_heal_event "Self-heal complete: patched bluetoothd, advertising restored" info
+            else
+                emit_heal_event "Self-heal complete: stock bluetoothd healthy, no patch needed" info
+            fi
+        else
+            emit_heal_event "Self-heal failed: advertising could not be repaired (left stock in place)" error
+        fi
+    fi
+    return "$rc"
+}
+
 # ---------------------------------------------------------------------------
 # Environment discovery
 # ---------------------------------------------------------------------------
@@ -355,7 +399,7 @@ main() {
     # to idle. Also clear it on ENTRY: a record present now can only be stale
     # (a prior run died without its trap firing -- e.g. a hard power cut), and a
     # fast-skip exit below would otherwise leave it pinned on "Repairing...".
-    trap clear_progress EXIT INT TERM
+    trap on_exit EXIT INT TERM
     clear_progress
 
     local bd ver kern active
@@ -379,6 +423,9 @@ main() {
         # active=patched but diversion gone (e.g. bluez reinstall): fall through.
     fi
 
+    # Real work begins here (past the fast no-op skip): start the heal timer so
+    # the EXIT trap emits a timed event. Skipped/no-op boots leave it unset.
+    HEAL_START="$(date +%s)"
     log "evaluating bluez $ver on kernel $kern (bluetoothd=$bd)"
 
     # Always evaluate against STOCK first so the patch auto-retires when the

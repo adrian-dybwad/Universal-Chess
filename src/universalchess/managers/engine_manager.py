@@ -70,6 +70,7 @@ from universalchess.services.github_tag_cache import (
 from universalchess.services import apt_recovery
 from universalchess.services.apt_recovery import RecoveryOutcome
 from universalchess.services.build_memory import build_memory
+from universalchess.services.event_log import log_event
 
 # Engine installation directory
 ENGINES_DIR = "/opt/universalchess/engines"
@@ -1154,6 +1155,13 @@ class EngineManager:
         log.info(f"[EngineManager] install_engine: requested ref={ref!r}, resolved={resolved_ref!r}, "
                  f"prebuilt_allowed={use_prebuilt}")
 
+        # Time the whole attempt for the event log (the operator-facing "how long
+        # did installing X take" record). `success` is initialized here so the
+        # `finally` can report the outcome even if an exception skips its
+        # assignment in the try body.
+        install_started_at = time.monotonic()
+        success = False
+
         try:
             if engine.is_system_package:
                 log.info(f"[EngineManager] install_engine: Using system package installation for '{engine_name}'")
@@ -1226,6 +1234,29 @@ class EngineManager:
             return False
         finally:
             self._installing_engine = None
+            # One persistent, timed record per install attempt (success or
+            # failure), so the Settings event-log viewer can show what was
+            # installed and how long it took. Ref is meaningful only for
+            # source-built engines.
+            elapsed_ms = int((time.monotonic() - install_started_at) * 1000)
+            ref_suffix = (
+                f" ({resolved_ref})" if (not engine.is_system_package and resolved_ref) else ""
+            )
+            if success:
+                log_event(
+                    "engine_install",
+                    f"Installed {engine.display_name}{ref_suffix}",
+                    level="info",
+                    duration_ms=elapsed_ms,
+                )
+            else:
+                detail = self._install_error or "unknown error"
+                log_event(
+                    "engine_install",
+                    f"Install failed: {engine.display_name}{ref_suffix} - {detail}",
+                    level="error",
+                    duration_ms=elapsed_ms,
+                )
     
     def _install_system_package(
         self,
@@ -1943,6 +1974,7 @@ class EngineManager:
                 log.warning(f"[EngineManager] uninstall_engine: {link_path} exists but is not a symlink")
             else:
                 log.debug(f"[EngineManager] uninstall_engine: No symlink found at {link_path}")
+            log_event("engine_uninstall", f"Uninstalled {engine.display_name}", level="info")
             return True
         
         # Remove binary
@@ -1985,6 +2017,7 @@ class EngineManager:
         self._record_store.record_uninstall(engine_name)
 
         log.info(f"[EngineManager] uninstall_engine: Successfully uninstalled '{engine_name}'")
+        log_event("engine_uninstall", f"Uninstalled {engine.display_name}", level="info")
         return True
     
     def install_async(

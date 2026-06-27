@@ -118,16 +118,22 @@ build_react() {
 	fi
 }
 
-# Provision the build-memory sudo grant on the remote, mirroring the .deb
-# postinst. A runtime-only deploy ships uc-build-memory but not the sudoers
-# drop-in that lets the service user run it; source builds now fail loudly
-# without that grant, so establish it here. Idempotent and safe to re-run.
+# Provision runtime state the .deb postinst would create but a runtime-only
+# rsync deploy does not: the build-memory sudo grant and the persistent
+# event-log file. Idempotent and safe to re-run.
 #
-# Grants to the UID-1000 user (same target postinst picks), references the exact
-# remote helper path (the sudoers command match is path-literal), and validates
-# with visudo before leaving it in place -- a malformed drop-in can lock out
-# sudo. Non-fatal: a warning here should not abort an otherwise good code deploy.
-provision_build_memory_grant() {
+# Build-memory grant: a runtime deploy ships uc-build-memory but not the sudoers
+# drop-in that lets the service user run it; source builds now fail loudly
+# without that grant. Grants to the UID-1000 user (same target postinst picks),
+# references the exact remote helper path (the sudoers command match is
+# path-literal), and validates with visudo before leaving it in place -- a
+# malformed drop-in can lock out sudo.
+#
+# Event log: pre-create it owned by the service user so the app can append +
+# rotate and the root self-heal can append.
+#
+# Non-fatal: a warning here should not abort an otherwise good code deploy.
+provision_runtime_state() {
 	local helper_path sudoers_file
 	helper_path="${REMOTE_PATH%/}/scripts/uc-build-memory"
 	sudoers_file="/etc/sudoers.d/universal-chess-build-memory"
@@ -150,6 +156,15 @@ if ! visudo -cf "\$SUDOERS" >/dev/null 2>&1; then
 	exit 1
 fi
 echo "Granted \$PRIMARY_USER NOPASSWD -> \$HELPER"
+# Pre-create the persistent event-log dir+file owned by the service user (see
+# postinst): lets the app append+rotate it and the root self-heal append to it.
+EVENT_LOG_DIR='/var/lib/universalchess/logs'
+mkdir -p "\$EVENT_LOG_DIR"
+touch "\$EVENT_LOG_DIR/events.jsonl"
+chown "\$PRIMARY_USER":"\$PRIMARY_USER" "\$EVENT_LOG_DIR" "\$EVENT_LOG_DIR/events.jsonl" 2>/dev/null \
+	|| chown "\$PRIMARY_USER" "\$EVENT_LOG_DIR" "\$EVENT_LOG_DIR/events.jsonl" 2>/dev/null || true
+chmod 664 "\$EVENT_LOG_DIR/events.jsonl"
+echo "Event log ready at \$EVENT_LOG_DIR/events.jsonl (owner \$PRIMARY_USER)"
 REMOTE
 }
 
@@ -221,10 +236,10 @@ if [[ $DRY_RUN -eq 1 ]]; then
 	exit 0
 fi
 
-# Establish the sudo grant for the freshly-synced helper before the service uses
-# it. Runs on every real sync (including --no-restart) since it is provisioning,
-# not a restart concern; the grant is read live by sudo regardless.
-provision_build_memory_grant
+# Establish runtime state (build-memory grant + event log) for the freshly-synced
+# code before the service uses it. Runs on every real sync (including
+# --no-restart) since it is provisioning, not a restart concern.
+provision_runtime_state
 
 if [[ $RESTART -eq 0 ]]; then
 	echo "Sync complete; --no-restart given, leaving service as-is."

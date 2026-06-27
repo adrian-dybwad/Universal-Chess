@@ -5190,6 +5190,19 @@ def main():
     log.info("Universal Chess Starting")
     log.info("=" * 60)
     log.info("")
+
+    # Persistent event-log marker: records each board start (with version) in the
+    # Settings event-log viewer. Running as the service user, this also creates
+    # the events file under that ownership early, so the root-run self-heal only
+    # ever appends to a service-user-owned file (it bypasses permissions). The
+    # version read is the only part that can fail; log_event is best-effort.
+    from universalchess.services.event_log import log_event
+    from universalchess.services.update_service import VERSION_FILE
+    try:
+        _version = VERSION_FILE.read_text().strip()
+    except OSError:
+        _version = "unknown"
+    log_event("system", f"Board service started (v{_version})", level="info")
     log.info("Configuration:")
     log.info(f"  Device name:       {args.device_name}")
     log.info(f"  BLE:               {'Disabled' if args.no_ble else 'Enabled'}")

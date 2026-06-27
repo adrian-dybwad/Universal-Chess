@@ -2450,6 +2450,11 @@ def _system_board_action(command: str, success_message: str):
 
         sent = send_board_command(command)
         if sent:
+            # Record operator-initiated lifecycle actions (reboot/shutdown/reset/
+            # run-centaur) in the persistent event log. Only when accepted, so a
+            # board-offline 503 is not logged as if it happened.
+            from universalchess.services.event_log import log_event
+            log_event("system", success_message, level="info")
             return jsonify({"success": True, "message": success_message})
         return jsonify({"success": False, "error": "Board not running"}), 503
     except Exception as e:
@@ -2691,6 +2696,32 @@ def api_download_debug_log():
             as_attachment=True,
             download_name="debug.log",
         )
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/event-log", methods=["GET"])
+@requires_auth
+def api_system_event_log():
+    """Return recent application events for the Settings event-log viewer.
+
+    Auth-gated like the debug-log download: event messages can name engines,
+    versions and failure details. Reads the persistent JSON-lines log
+    (services.event_log), newest first, bounded by ``limit`` (1..1000, default
+    200). Returns ``{"events": [...]}`` -- an empty list when nothing has been
+    logged yet (fresh device), never a 404, so the viewer renders an empty state.
+    """
+    try:
+        from universalchess.services.event_log import read_events
+
+        # Clamp the caller-supplied limit to a sane window; a bad value falls
+        # back to the default rather than erroring.
+        try:
+            limit = int(request.args.get("limit", 200))
+        except (TypeError, ValueError):
+            limit = 200
+        limit = max(1, min(1000, limit))
+        return jsonify({"events": read_events(limit=limit)})
     except Exception as e:
         return _internal_error(e)
 

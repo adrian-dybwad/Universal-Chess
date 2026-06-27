@@ -7,6 +7,8 @@ the network. Arasan is used because it is the real pinned engine the picker was
 built for (pin ``v25.4``, has a prebuilt).
 """
 
+import contextlib
+
 import pytest
 
 from universalchess.managers.engine_manager import EngineManager
@@ -31,6 +33,19 @@ def manager(tmp_path, monkeypatch):
         tag_cache=GitHubTagCacheStore(path=tmp_path / "cache.json"),
     )
     monkeypatch.setattr(mgr, "_get_arch", lambda: "arm64")
+
+    # A source build now hard-requires the build-memory swap (it fails loudly if
+    # it cannot be reserved). On a properly-deployed board the sudo grant makes
+    # that succeed; the dev/CI host has no passwordless grant, so stub it as
+    # "acquired" to exercise the dispatch/recording logic these tests target
+    # rather than the memory gate (covered by test_engine_install_build_memory).
+    @contextlib.contextmanager
+    def _fake_build_memory(*args, **kwargs):
+        yield True
+
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.build_memory", _fake_build_memory
+    )
     return mgr
 
 

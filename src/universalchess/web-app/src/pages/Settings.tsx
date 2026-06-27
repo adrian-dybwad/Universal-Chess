@@ -1153,6 +1153,7 @@ export function Settings() {
               </Card>
             </Card>
 
+            <LogViewer />
             <DebugCard />
             <PasswordChange />
             <SystemActions />
@@ -1947,6 +1948,158 @@ function PasswordChange() {
 // because discovery never completes). Self-contained - it reads/writes the
 // [system] debug_serial flag through its own endpoints rather than the page's
 // Save & Apply flow, so toggling it never collides with unsaved settings.
+// One row from GET /api/system/event-log (services.event_log JSON record).
+// `duration_ms` is present only for events that measured a duration.
+interface EventLogEntry {
+  ts: string;
+  level: string;
+  category: string;
+  message: string;
+  duration_ms?: number;
+}
+
+// Human labels for the event categories the backend emits. Falls back to the
+// raw token for any future category not yet listed here.
+const EVENT_CATEGORY_LABELS: Record<string, string> = {
+  engine_install: 'Engine install',
+  engine_uninstall: 'Engine',
+  bluez_selfheal: 'Bluetooth',
+  update: 'Update',
+  system: 'System',
+};
+
+// Map a severity to a Badge variant. Unknown levels render as a neutral badge.
+function eventLevelVariant(level: string): 'default' | 'danger' | 'primary' {
+  if (level === 'error') return 'danger';
+  if (level === 'warning') return 'primary';
+  return 'default';
+}
+
+// Compact elapsed-time label (e.g. "152s" -> "2m 32s"); null hides the column.
+function formatEventDuration(ms?: number): string | null {
+  if (ms === undefined || ms === null) return null;
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+}
+
+// Render the stored UTC instant in the viewer's local time; fall back to the
+// raw string if it does not parse (so a malformed ts is still visible).
+function formatEventTimestamp(ts: string): string {
+  const parsed = new Date(ts);
+  if (Number.isNaN(parsed.getTime())) return ts;
+  return parsed.toLocaleString();
+}
+
+// System -> Event Log viewer. Shows the persistent record of important events
+// (engine installs and how long they took, BlueZ self-heal, updates, reboots)
+// from /api/system/event-log. Auth-gated like the debug-log download; a 401
+// opens the shared login dialog and retries, matching DebugCard.
+function LogViewer() {
+  const [events, setEvents] = useState<EventLogEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showLoginDialog, setShowLoginDialog] = useState(false);
+  const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
+
+  const loadEvents = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await apiFetch('/api/system/event-log?limit=200', { requiresAuth: true });
+      if (response.status === 401) {
+        pendingActionRef.current = loadEvents;
+        setShowLoginDialog(true);
+        return;
+      }
+      if (!response.ok) {
+        setError('Failed to load the event log.');
+        return;
+      }
+      const data = await response.json().catch(() => ({ events: [] }));
+      setEvents(Array.isArray(data.events) ? data.events : []);
+      setLoaded(true);
+    } catch {
+      setError('Network error');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadEvents();
+  }, [loadEvents]);
+
+  const handleLoginSuccess = async () => {
+    setShowLoginDialog(false);
+    if (pendingActionRef.current) {
+      const action = pendingActionRef.current;
+      pendingActionRef.current = null;
+      await action();
+    }
+  };
+
+  return (
+    <>
+      <LoginDialog
+        isOpen={showLoginDialog}
+        onClose={() => {
+          setShowLoginDialog(false);
+          pendingActionRef.current = null;
+        }}
+        onSuccess={handleLoginSuccess}
+      />
+      <Card className="mb-6">
+        <CardHeader title="Event Log" />
+        <p className="text-muted mb-4">
+          A history of important events &mdash; engine installs (and how long they took),
+          Bluetooth self-heal, software updates, and reboots. Persists across restarts. For the
+          full low-level diagnostic log, use the Debug card below.
+        </p>
+        {error && (
+          <Card variant="danger" className="mb-4">
+            <strong>Error:</strong> {error}
+          </Card>
+        )}
+        <div className="mb-4">
+          <Button variant="secondary" onClick={loadEvents} disabled={loading}>
+            {loading ? 'Refreshing...' : 'Refresh'}
+          </Button>
+        </div>
+        {loaded && events.length === 0 && !error && (
+          <p className="text-muted">No events recorded yet.</p>
+        )}
+        {events.length > 0 && (
+          <div className="event-log-list">
+            {events.map((event) => {
+              const duration = formatEventDuration(event.duration_ms);
+              // Key from the record's content (never the array index): the log is
+              // append-only and replaced wholesale on refresh, so a content key
+              // is stable across reorders. Rows hold no state, so the only cost of
+              // a (astronomically rare) same-second duplicate is a dev warning.
+              const key = `${event.ts}|${event.level}|${event.category}|${event.duration_ms ?? ''}|${event.message}`;
+              return (
+                <div key={key} className="event-log-row">
+                  <span className="event-log-time">{formatEventTimestamp(event.ts)}</span>
+                  <Badge variant={eventLevelVariant(event.level)}>
+                    {EVENT_CATEGORY_LABELS[event.category] || event.category}
+                  </Badge>
+                  <span className="event-log-message">{event.message}</span>
+                  {duration && <span className="event-log-duration">{duration}</span>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+    </>
+  );
+}
+
+
 function DebugCard() {
   const [enabled, setEnabled] = useState(false);
   const [busy, setBusy] = useState(false);

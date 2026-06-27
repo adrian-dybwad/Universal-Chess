@@ -31,6 +31,8 @@ except ImportError:
     import logging
     log = logging.getLogger(__name__)
 
+from universalchess.services.event_log import log_event
+
 
 # Configuration
 GITHUB_OWNER = "adrian-dybwad"
@@ -594,6 +596,10 @@ class UpdateService:
             return False
 
         self._notify(UpdateEvent.INSTALLING, "Installing update...")
+        # The install is detached (systemd-run) and restarts the services, so it
+        # cannot be timed from here; record the launch. The post-restart "service
+        # started" event marks the new version coming up.
+        log_event("update", f"Installing software update ({deb_path.name})", level="info")
         return self._launch_install(deb_path)
 
     def _launch_install(self, deb_path: Path) -> bool:

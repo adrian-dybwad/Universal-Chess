@@ -352,6 +352,23 @@ else
     echo -e "::: Warning: build-memory helper not found at $BUILD_MEM_HELPER"
 fi
 
+# Persistent application event log (services.event_log). Pre-create the log dir
+# and file owned by the service user so: (a) the app (running as that user)
+# can append AND rotate it (rotation renames within the dir, needing dir
+# ownership), and (b) the root-run BlueZ self-heal can append via the event_log
+# CLI (root bypasses file permissions). Without pre-creation, whichever producer
+# writes first sets ownership -- and if that is the root self-heal at first boot,
+# the service user could no longer write. Kept under /var/lib (FHS state) so it
+# survives app reinstalls, like the bluez marker.
+echo -e "::: Provisioning application event log"
+EVENT_LOG_DIR="/var/lib/universalchess/logs"
+EVENT_LOG_FILE="${EVENT_LOG_DIR}/events.jsonl"
+mkdir -p "$EVENT_LOG_DIR"
+touch "$EVENT_LOG_FILE"
+chown "$PRIMARY_USER":"$PRIMARY_USER" "$EVENT_LOG_DIR" "$EVENT_LOG_FILE" 2>/dev/null || \
+    chown "$PRIMARY_USER" "$EVENT_LOG_DIR" "$EVENT_LOG_FILE" 2>/dev/null || true
+chmod 664 "$EVENT_LOG_FILE"
+
 # BlueZ advertising self-heal: keep BLE advertising working across OS/kernel
 # updates by substituting a minimally-patched bluetoothd only when the stock one
 # is broken (kernel 6.18 ext-adv-data validation vs released-BlueZ sizeof bug),
