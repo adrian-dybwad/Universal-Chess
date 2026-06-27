@@ -8,6 +8,11 @@
  */
 
 .activity-banner {
+  /* Accent for the banner stripe and progress fill. Deliberately NOT the purple
+     theme primary -- a teal reads as "work in progress" and keeps the banner from
+     adding yet more purple to the UI. */
+  --color-activity: #0d9488;
+
   display: flex;
   flex-direction: column;
   gap: var(--space-3, 12px);
@@ -15,7 +20,14 @@
   background: var(--color-surface, #fff);
   color: var(--color-text, #1a1a1a);
   border-bottom: 1px solid var(--color-border, rgba(0, 0, 0, 0.1));
-  border-left: 4px solid var(--color-primary, #8a3490);
+  border-left: 4px solid var(--color-activity);
+}
+
+/* Override the reused ProgressBar's purple (--color-primary) fill so the banner
+   bar uses the activity accent instead. Matches both the determinate fill and
+   the indeterminate sliding block (both carry .progress-bar__fill). */
+.activity-banner__bar .progress-bar__fill {
+  background: var(--color-activity);
 }
 
 .activity-banner__item {
