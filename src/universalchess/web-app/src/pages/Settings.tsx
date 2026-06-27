@@ -1298,7 +1298,10 @@ function EngineCard({
             <Button
               variant={engine.installed ? 'danger' : 'primary'}
               size="sm"
-              disabled={installInProgress}
+              // Block installing an engine the device can't build/run. Uninstall
+              // stays available so an engine installed before a support change
+              // can still be removed.
+              disabled={installInProgress || (!engine.installed && !engine.supported)}
               onClick={() => onToggle(engine.name, !engine.installed)}
             >
               {buttonLabel}
@@ -1331,6 +1334,11 @@ function EngineCard({
             label={status.message || `Installing ${engine.display_name}...`}
           />
         </div>
+      )}
+      {!isSystem && !engine.installed && !engine.supported && engine.unsupported_reason && (
+        <p className="engine-card-error" role="note">
+          {engine.unsupported_reason}
+        </p>
       )}
       {!isSystem && isInterrupted && (
         <p className="engine-install-note engine-install-note--interrupted">

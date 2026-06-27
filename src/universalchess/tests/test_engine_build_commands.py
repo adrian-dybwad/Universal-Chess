@@ -62,3 +62,39 @@ class TestRodentIVBuildCommand:
         script = _build_script("rodentIV")
         assert "uname -m" in script
         assert "arm" in script
+
+
+class TestEtherealBuildCommand:
+    """Guards Ethereal's compiler pin against the clang Makefile default."""
+
+    def test_pins_cc_gcc(self):
+        """Ethereal must build with ``CC=gcc``.
+
+        Why this test exists: a field board failed to install Ethereal with
+        "clang: not found". Ethereal's Makefile declares ``CC = clang`` and its
+        default target is ``pgo``, so a bare ``make`` shells out to clang -- which
+        is not in the engine's dependencies (build-essential provides gcc, not
+        clang). Pinning ``CC=gcc`` makes the build use the compiler the deps
+        actually install.
+
+        How the regression manifests: if the command reverts to a bare
+        ``make ... EXE=ethereal``, ``CC=gcc`` disappears from the script below and
+        this assertion fails -- mirroring the on-device "clang: not found" abort
+        that cannot be reproduced in CI (CI happens to have clang installed for
+        other engines).
+        """
+        script = _build_script("ethereal")
+        assert "CC=gcc" in script
+
+    def test_does_not_depend_on_clang(self):
+        """Ethereal must not require clang as a build dependency.
+
+        Why this test exists: the point of the ``CC=gcc`` pin is to avoid pulling
+        the heavyweight clang package onto a storage-constrained Pi. Declaring
+        clang as a dependency would defeat that and reintroduce the coupling the
+        fix removes.
+
+        How the regression manifests: re-adding "clang" to ``dependencies`` (e.g.
+        copying Demolito's entry) trips this assertion.
+        """
+        assert "clang" not in ENGINES["ethereal"].dependencies

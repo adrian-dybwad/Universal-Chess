@@ -484,6 +484,8 @@ def test_all_engines_list_shape(client, monkeypatch):
         "estimated_install_minutes",
         "has_prebuilt",
         "has_profiles",
+        "supported",
+        "unsupported_reason",
     }
     for entry in data:
         assert required_fields.issubset(entry.keys())
@@ -498,6 +500,40 @@ def test_all_engines_list_shape(client, monkeypatch):
     # has an editable schema, Stockfish does not.
     assert by_name["rodentIV"]["has_profiles"] is True
     assert by_name[SYSTEM_ENGINE]["has_profiles"] is False
+
+
+def test_all_engines_marks_arch_unsupported(client, monkeypatch):
+    """On 32-bit ARM, Berserk is reported unsupported with a reason; others aren't.
+
+    Why: Berserk is 64-bit-only (uses __int128 and AArch64 NEON intrinsics).
+    Offering its install button on a 32-bit (armhf) device produces a confusing
+    build failure, so the catalog must mark it unsupported there. The device arch
+    is forced to 'armhf' so the assertion does not depend on the test host's CPU.
+
+    How a regression manifests: if the arch gate is dropped, Berserk reports
+    supported=True with a null reason and this test fails on those assertions.
+    """
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.EngineManager.is_installed",
+        lambda self, name: False,
+    )
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.get_current_arch",
+        lambda: "armhf",
+    )
+
+    resp = client.get("/api/engines/all")
+    assert resp.status_code == 200
+    by_name = {e["name"]: e for e in json.loads(resp.data)}
+
+    # Berserk: unsupported on armhf, with a reason naming the supported arch.
+    assert by_name["berserk"]["supported"] is False
+    reason = by_name["berserk"]["unsupported_reason"]
+    assert reason is not None
+    assert "armhf" in reason and "arm64" in reason
+    # An unrestricted engine stays supported with no reason.
+    assert by_name["rodentIV"]["supported"] is True
+    assert by_name["rodentIV"]["unsupported_reason"] is None
 
 
 # ---------------------------------------------------------------------------

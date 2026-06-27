@@ -36,7 +36,7 @@ import threading
 import platform
 import tarfile
 from dataclasses import dataclass, field
-from typing import Optional, Callable, List, Dict
+from typing import Optional, Callable, List, Dict, FrozenSet
 from pathlib import Path
 from queue import Queue
 from enum import Enum
@@ -64,10 +64,50 @@ BUILD_TMP = "/opt/universalchess/tmp/engine_build"
 # Detect from this file's location: src/universalchess/managers/engine_manager.py -> repo root
 REPO_ROOT = str(Path(__file__).resolve().parent.parent.parent.parent)
 
-# GitHub release URL for pre-built engine binaries
+# GitHub release URL for pre-built engine binaries.
 GITHUB_REPO = "adrian-dybwad/Universal-Chess"
-GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+# List endpoint (newest-first), NOT /releases/latest: the latter ignores
+# prereleases and 404s when only nightly prereleases exist, which is the current
+# state of this repo. Scanning the list lets prebuilt binaries attached to ANY
+# release (nightly prerelease or full) be found.
+GITHUB_RELEASES_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
 PREBUILT_ARCHIVE_NAME_TEMPLATE = "engines-{arch}.tar.gz"  # arm64 or armhf
+
+
+def get_current_arch() -> str:
+    """Architecture token for the running host: 'arm64' or 'armhf'.
+
+    Centralizes the ``platform.machine`` mapping so prebuilt selection, the
+    install-time support check, and the catalog API all classify the device the
+    same way. 64-bit ARM -> 'arm64'; 32-bit ARM -> 'armhf'.
+    """
+    machine = platform.machine().lower()
+    if machine in ('aarch64', 'arm64'):
+        return 'arm64'
+    elif machine in ('armv7l', 'armv6l', 'arm'):
+        return 'armhf'
+    else:
+        # Fallback - infer width from the machine string.
+        return 'arm64' if '64' in machine else 'armhf'
+
+
+def find_prebuilt_archive_url(releases: list, archive_name: str) -> Optional[str]:
+    """Return the download URL for ``archive_name`` from the newest release that has it.
+
+    Takes the parsed GitHub ``/releases`` list (already newest-first) so the
+    selection logic is pure and unit-testable without network access. Returns the
+    asset's ``browser_download_url`` from the first (newest) release whose assets
+    include an exact name match, or None if no release carries the archive.
+
+    Args:
+        releases: Parsed JSON list from the GitHub releases endpoint.
+        archive_name: Exact asset name to match (e.g. 'engines-arm64.tar.gz').
+    """
+    for release in releases:
+        for asset in release.get("assets", []):
+            if asset.get("name") == archive_name:
+                return asset.get("browser_download_url")
+    return None
 
 
 @dataclass
@@ -89,6 +129,50 @@ class EngineDefinition:
     build_timeout: int = 600     # Timeout for build commands in seconds (default 10 min)
     estimated_install_minutes: int = 5  # Estimated install time in minutes for UI
     has_prebuilt: bool = False   # True if pre-built binary available from releases
+    # Architectures (as returned by `_get_arch`: 'arm64' / 'armhf') this engine can
+    # be installed on. None means "no architecture restriction" (the common case).
+    # A non-empty set restricts to those arches -- e.g. Berserk requires `__int128`
+    # and AArch64-only NEON intrinsics, so it is 64-bit-only ({'arm64'}) and listing
+    # it on 32-bit ARM produces a confusing build failure. An empty set means the
+    # engine builds on no architecture this project targets (e.g. Koivisto is
+    # x86-SIMD only with a broken upstream ARM NEON path).
+    supported_archs: Optional[FrozenSet[str]] = None
+
+
+def engine_supports_arch(engine: "EngineDefinition", arch: str) -> bool:
+    """Whether ``engine`` can be installed on the given architecture.
+
+    ``supported_archs is None`` means unrestricted (supported everywhere).
+
+    Args:
+        engine: The engine definition to check.
+        arch: Architecture token as produced by ``EngineManager._get_arch``
+            ('arm64' or 'armhf').
+    """
+    return engine.supported_archs is None or arch in engine.supported_archs
+
+
+def arch_unsupported_reason(engine: "EngineDefinition", arch: str) -> Optional[str]:
+    """Human-readable reason an engine is unavailable on ``arch``, else None.
+
+    Returned when the engine declares ``supported_archs`` and ``arch`` is not in
+    it. Surfaced to the UI and used as the install failure message so the user
+    sees an honest "not supported on this architecture" notice instead of a
+    downstream compiler error (e.g. clang/`__int128`).
+    """
+    if engine_supports_arch(engine, arch):
+        return None
+    # Empty set: the engine builds on no architecture this project targets
+    # (e.g. Koivisto's NNUE is x86-SIMD only; its upstream ARM NEON path is
+    # incomplete and fails to compile on both armv7l and aarch64). Listing the
+    # supported arches would render "Supported: ." here, so use a dedicated
+    # message instead of the architecture-mismatch wording.
+    if not engine.supported_archs:
+        return (f"{engine.display_name} has no working ARM build (it requires "
+                f"x86 SIMD); it cannot be installed on this device.")
+    supported = ", ".join(sorted(engine.supported_archs))
+    return (f"{engine.display_name} is not supported on this device's "
+            f"architecture ({arch}). Supported: {supported}.")
 
 
 class InstallStatus(Enum):
@@ -137,8 +221,15 @@ ENGINES = {
         description="Top-3 ranked open-source engine. Uses NNUE neural network for evaluation. Known for very strong tactical play and aggressive style. Excellent alternative to Stockfish.",
         repo_url="https://github.com/jhonnold/berserk.git",
         build_commands=[
-            # Use -j2 to limit memory usage (NNUE compilation is memory-intensive)
-            "cd src && make -j2 EXE=berserk",
+            # Berserk's makefile default goal is `openbench`, which forces
+            # ARCH=avx2 (x86 -m64 -mavx2 ...) and CC=clang -- neither valid on
+            # ARM. Use the `build` target with ARCH=native so it compiles for the
+            # host (-march=native, which enables AArch64 NEON on arm64), and
+            # CC=gcc so no clang dependency is needed. `build` also pulls in the
+            # download-network prerequisite, which fetches and embeds the NNUE
+            # file. Berserk is 64-bit-only (see supported_archs), so this path is
+            # only reached on arm64.
+            "cd src && make build ARCH=native CC=gcc EXE=berserk",
         ],
         binary_path="src/berserk",
         is_system_package=False,
@@ -148,6 +239,10 @@ ENGINES = {
         build_timeout=1200,
         estimated_install_minutes=15,  # NNUE engine with limited parallelism
         has_prebuilt=True,
+        # 64-bit ARM only. Berserk uses `__int128` (unsupported on 32-bit targets)
+        # and its NEON path uses AArch64-only intrinsics (vmull_high_s8, vaddvq_*,
+        # vpaddq_*), so it cannot build on armv7l/armhf.
+        supported_archs=frozenset({"arm64"}),
     ),
     "koivisto": EngineDefinition(
         name="koivisto",
@@ -166,7 +261,17 @@ ENGINES = {
         dependencies=["build-essential", "git"],
         build_timeout=1200,
         estimated_install_minutes=15,  # NNUE engine with limited parallelism
-        has_prebuilt=True,
+        # No prebuilt: Koivisto cannot be built for ARM at all (see below), so
+        # the CI archive never contains a working binary for it.
+        has_prebuilt=False,
+        # x86-only: Koivisto's NNUE layer (src_files/nn/defs.h) implements SIMD
+        # for AVX512/AVX2/AVX/SSE2 plus an incomplete ARM NEON branch. That NEON
+        # branch is broken upstream -- the store op is a stub (`#define
+        # avx_store_reg exit(-1)`) and the load (`vldrq_p128`) type-mismatches the
+        # register type -- and there is no scalar fallback. Both armv7l and
+        # aarch64 select that same branch, so it fails to compile on every ARM
+        # target. An empty set means "no supported architecture in this project".
+        supported_archs=frozenset(),
     ),
     "ethereal": EngineDefinition(
         name="ethereal",
@@ -175,8 +280,18 @@ ENGINES = {
         description="Top-15 engine with NNUE. Known for clean, well-documented codebase. Great for those interested in chess programming. Solid positional play.",
         repo_url="https://github.com/AndyGrant/Ethereal.git",
         build_commands=[
-            # Use -j2 to limit memory usage (NNUE compilation is memory-intensive)
-            "cd src && make -j2 EXE=ethereal",
+            # Ethereal's Makefile declares `CC = clang` and its first (default)
+            # target is `pgo`, so a bare `make` shells out to clang. clang is not
+            # in this engine's dependencies (build-essential provides gcc, not
+            # clang), so the build aborts with "clang: not found". Pin CC=gcc --
+            # the same fix used for Berserk, which shares this Makefile family --
+            # so the source build uses the compiler the dependencies actually
+            # install and no heavyweight clang package is pulled onto the device.
+            # On ARM the Makefile's x86 feature detection (POPCNT/AVX/PEXT) simply
+            # finds none of those macros and adds no x86 flags, so gcc -march=native
+            # produces a valid native binary.
+            # Use -j2 to limit memory usage (NNUE compilation is memory-intensive).
+            "cd src && make -j2 CC=gcc EXE=ethereal",
         ],
         binary_path="src/ethereal",
         is_system_package=False,
@@ -504,7 +619,18 @@ class EngineManager:
         
         log.info(f"[EngineManager] install_engine: Engine details - display_name='{engine.display_name}', "
                  f"is_system_package={engine.is_system_package}, repo_url={engine.repo_url}")
-        
+
+        # Reject unsupported architectures up front. Without this, an engine that
+        # cannot build on this CPU (e.g. Berserk on 32-bit ARM) would fall through
+        # to a source build and fail with a confusing downstream compiler error.
+        arch = self._get_arch()
+        unsupported = arch_unsupported_reason(engine, arch)
+        if unsupported is not None:
+            self._install_error = unsupported
+            log.warning(f"[EngineManager] install_engine: {unsupported}")
+            self._installing_engine = None
+            return False
+
         current_stage = InstallStage.STARTING
 
         def update_progress(msg: str, stage: Optional[InstallStage] = None,
@@ -632,18 +758,14 @@ class EngineManager:
     
     def _get_arch(self) -> str:
         """Get the current architecture for pre-built binary selection.
-        
+
+        Thin instance wrapper over the module-level :func:`get_current_arch` so
+        existing call sites keep working while the mapping lives in one place.
+
         Returns:
             'arm64' for 64-bit ARM, 'armhf' for 32-bit ARM
         """
-        machine = platform.machine().lower()
-        if machine in ('aarch64', 'arm64'):
-            return 'arm64'
-        elif machine in ('armv7l', 'armv6l', 'arm'):
-            return 'armhf'
-        else:
-            # Fallback - try to detect from uname
-            return 'arm64' if '64' in machine else 'armhf'
+        return get_current_arch()
     
     def _try_install_prebuilt(
         self,
@@ -677,23 +799,19 @@ class EngineManager:
         update_progress(f"Checking for pre-built {engine.display_name}...", InstallStage.CHECKING_PREBUILT)
         
         try:
-            # Get latest release info
-            response = requests.get(GITHUB_API_URL, timeout=30)
+            # Scan the releases list (newest-first), not /releases/latest: the
+            # latter 404s when only prereleases exist. Find the newest release
+            # that actually carries this arch's engine archive.
+            response = requests.get(GITHUB_RELEASES_URL, timeout=30)
             if response.status_code != 200:
                 log.warning(f"[EngineManager] _try_install_prebuilt: GitHub API returned {response.status_code}")
                 return False
-            
-            release_info = response.json()
-            
-            # Find the engine archive asset
-            download_url = None
-            for asset in release_info.get('assets', []):
-                if asset['name'] == archive_name:
-                    download_url = asset['browser_download_url']
-                    break
-            
+
+            releases = response.json()
+            download_url = find_prebuilt_archive_url(releases, archive_name)
+
             if not download_url:
-                log.info(f"[EngineManager] _try_install_prebuilt: No pre-built archive '{archive_name}' in latest release")
+                log.info(f"[EngineManager] _try_install_prebuilt: No pre-built archive '{archive_name}' in any release")
                 return False
             
             # Download the archive

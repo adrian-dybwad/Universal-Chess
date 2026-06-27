@@ -61,6 +61,18 @@ export interface EngineDefinition {
    * "Configure profiles" action is shown. Currently true only for Rodent IV.
    */
   has_profiles: boolean;
+  /**
+   * Whether this engine can be installed on the current device's CPU
+   * architecture. False for engines that cannot build/run here (e.g. Berserk on
+   * 32-bit ARM). When false the install button is disabled.
+   */
+  supported: boolean;
+  /**
+   * Human-readable explanation shown when `supported` is false (e.g. "Berserk is
+   * not supported on this device's architecture (armhf). Supported: arm64.").
+   * Null when the engine is supported.
+   */
+  unsupported_reason: string | null;
 }
 
 /**

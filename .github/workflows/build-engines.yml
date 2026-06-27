@@ -16,10 +16,9 @@ on:
 
 permissions: {}
 
-env:
-  # Engines that can be cross-compiled or built in QEMU
-  # Excludes: stockfish (system package), maia (too complex for CI), zahak (needs Go cross-compile setup)
-  BUILDABLE_ENGINES: "berserk,koivisto,ethereal,demolito,weiss,rodentIV,ct800,smallbrain"
+# The set of engines and their per-arch build commands lives in
+# scripts/engines/ci-build-engines.sh (the single source of truth, shared by the
+# arm64 and armhf jobs below). Stockfish is a system package and is not built here.
 
 jobs:
   build-arm64:
@@ -45,105 +44,7 @@ jobs:
               set -e
               apt-get update
               apt-get install -y build-essential git clang make meson ninja-build libopenblas-dev wget bc gawk golang
-              
-              mkdir -p /workspace/engine-binaries/arm64
-              mkdir -p /workspace/engine-binaries/arm64/maia/maia_weights
-              
-              # Berserk
-              echo "=== Building Berserk ==="
-              git clone --depth 1 https://github.com/jhonnold/berserk.git /tmp/berserk
-              cd /tmp/berserk/src && make -j2 EXE=berserk
-              cp berserk /workspace/engine-binaries/arm64/
-              
-              # Koivisto
-              echo "=== Building Koivisto ==="
-              git clone --depth 1 https://github.com/Luecx/Koivisto.git /tmp/koivisto
-              cd /tmp/koivisto/src_files && make -j2 EXE=koivisto
-              cp koivisto /workspace/engine-binaries/arm64/
-              
-              # Ethereal
-              echo "=== Building Ethereal ==="
-              git clone --depth 1 https://github.com/AndyGrant/Ethereal.git /tmp/ethereal
-              cd /tmp/ethereal/src && make -j2 EXE=ethereal
-              cp ethereal /workspace/engine-binaries/arm64/
-              
-              # Demolito
-              echo "=== Building Demolito ==="
-              git clone --depth 1 https://github.com/lucasart/Demolito.git /tmp/demolito
-              cd /tmp/demolito && make -j$(nproc) CC=clang
-              cp demolito /workspace/engine-binaries/arm64/
-              
-              # Weiss
-              echo "=== Building Weiss ==="
-              git clone --depth 1 https://github.com/TerjeKir/weiss.git /tmp/weiss
-              cd /tmp/weiss/src && make -j$(nproc) EXE=weiss
-              cp weiss /workspace/engine-binaries/arm64/
-              
-              # Rodent IV
-              echo "=== Building Rodent IV ==="
-              git clone --depth 1 https://github.com/nescitus/rodent-iv.git /tmp/rodent
-              cd /tmp/rodent/sources && make -j$(nproc) EXENAME=../rodentIV
-              cp /tmp/rodent/rodentIV /workspace/engine-binaries/arm64/
-              
-              # CT800
-              echo "=== Building CT800 ==="
-              git clone --depth 1 https://github.com/bcm314/CT800.git /tmp/ct800
-              cd /tmp/ct800/source/application-uci && mkdir -p output && bash make_ct800_raspi.sh
-              cp output/CT800_* /workspace/engine-binaries/arm64/ct800
-              
-              # Smallbrain
-              echo "=== Building Smallbrain ==="
-              git clone --depth 1 https://github.com/Disservin/Smallbrain.git /tmp/smallbrain
-              cd /tmp/smallbrain/src && make -j2 EXE=smallbrain
-              cp smallbrain /workspace/engine-binaries/arm64/
-              
-              # Arasan
-              echo "=== Building Arasan ==="
-              git clone --depth 1 https://github.com/jdart1/arasan-chess.git /tmp/arasan
-              cd /tmp/arasan/src && make -j2
-              cp arasan /workspace/engine-binaries/arm64/
-              
-              # Zahak
-              echo "=== Building Zahak ==="
-              git clone --depth 1 https://github.com/amanjpro/zahak.git /tmp/zahak
-              cd /tmp/zahak && go build -o zahak
-              cp zahak /workspace/engine-binaries/arm64/
-              
-              # Maia (lc0 with BLAS backend)
-              echo "=== Building Maia (lc0) ==="
-              git clone --depth 1 --branch v0.32.1 --recurse-submodules https://github.com/LeelaChessZero/lc0.git /tmp/lc0
-              cd /tmp/lc0
-              rm -rf build/release
-              CC=clang CXX=clang++ meson setup build/release --buildtype=release \
-                -Dplain_cuda=false -Dcudnn=false -Dopencl=false -Ddx=false \
-                -Donednn=false -Dmetal=disabled -Dispc=false -Dgtest=false \
-                -Donnx=false -Dnvcc=false -Dpython_bindings=false \
-                -Dpopcnt=false -Df16c=false -Dpext=false
-              ninja -C build/release -j2
-              cp build/release/lc0 /workspace/engine-binaries/arm64/maia/lc0
-              
-              # Download Maia weights (human-like play at various ELO levels)
-              echo "=== Downloading Maia weights ==="
-              cd /workspace/engine-binaries/arm64/maia/maia_weights
-              for elo in 1100 1200 1300 1400 1500 1600 1700 1800 1900; do
-                wget -q "https://github.com/CSSLab/maia-chess/releases/download/v1.0/maia-${elo}.pb.gz"
-              done
-              
-              # Download Leela weights
-              mkdir -p /workspace/engine-binaries/arm64/maia/leela_weights
-              cd /workspace/engine-binaries/arm64/maia/leela_weights
-              
-              # T1-256x10 - Small/fast network optimized for CPU/low-power devices (~25MB)
-              echo "=== Downloading T1-256x10 (small/fast) ==="
-              wget -q -O t1-256x10.pb.gz "https://training.lczero.org/get_network?sha=00af53b081e80147172e6f281c01571016924e9aac89cdf6666a1cc3a4ecf5bf"
-              
-              # T80-512x15 - Medium network, good balance of strength and speed (~90MB)
-              echo "=== Downloading T80-512x15 (medium) ==="
-              wget -q -O t80-512x15.pb.gz "https://training.lczero.org/get_network?sha=c8f303a4c7e3d6e6ea07e04dc29b587eef22b4dbb3f0b0b7b1e18d4ead2e9e7f" || true
-              
-              echo "=== ARM64 builds complete ==="
-              ls -la /workspace/engine-binaries/arm64/
-              ls -la /workspace/engine-binaries/arm64/maia/
+              bash /workspace/scripts/engines/ci-build-engines.sh arm64
             '
       
       - name: Package ARM64 binaries
@@ -183,105 +84,7 @@ jobs:
               set -e
               apt-get update
               apt-get install -y build-essential git clang make meson ninja-build libopenblas-dev wget bc gawk golang
-              
-              mkdir -p /workspace/engine-binaries/armhf
-              mkdir -p /workspace/engine-binaries/armhf/maia/maia_weights
-              
-              # Berserk
-              echo "=== Building Berserk ==="
-              git clone --depth 1 https://github.com/jhonnold/berserk.git /tmp/berserk
-              cd /tmp/berserk/src && make -j2 EXE=berserk
-              cp berserk /workspace/engine-binaries/armhf/
-              
-              # Koivisto
-              echo "=== Building Koivisto ==="
-              git clone --depth 1 https://github.com/Luecx/Koivisto.git /tmp/koivisto
-              cd /tmp/koivisto/src_files && make -j2 EXE=koivisto
-              cp koivisto /workspace/engine-binaries/armhf/
-              
-              # Ethereal
-              echo "=== Building Ethereal ==="
-              git clone --depth 1 https://github.com/AndyGrant/Ethereal.git /tmp/ethereal
-              cd /tmp/ethereal/src && make -j2 EXE=ethereal
-              cp ethereal /workspace/engine-binaries/armhf/
-              
-              # Demolito
-              echo "=== Building Demolito ==="
-              git clone --depth 1 https://github.com/lucasart/Demolito.git /tmp/demolito
-              cd /tmp/demolito && make -j$(nproc) CC=clang
-              cp demolito /workspace/engine-binaries/armhf/
-              
-              # Weiss
-              echo "=== Building Weiss ==="
-              git clone --depth 1 https://github.com/TerjeKir/weiss.git /tmp/weiss
-              cd /tmp/weiss/src && make -j$(nproc) EXE=weiss
-              cp weiss /workspace/engine-binaries/armhf/
-              
-              # Rodent IV
-              echo "=== Building Rodent IV ==="
-              git clone --depth 1 https://github.com/nescitus/rodent-iv.git /tmp/rodent
-              cd /tmp/rodent/sources && make -j$(nproc) EXENAME=../rodentIV
-              cp /tmp/rodent/rodentIV /workspace/engine-binaries/armhf/
-              
-              # CT800
-              echo "=== Building CT800 ==="
-              git clone --depth 1 https://github.com/bcm314/CT800.git /tmp/ct800
-              cd /tmp/ct800/source/application-uci && mkdir -p output && bash make_ct800_raspi.sh
-              cp output/CT800_* /workspace/engine-binaries/armhf/ct800
-              
-              # Smallbrain
-              echo "=== Building Smallbrain ==="
-              git clone --depth 1 https://github.com/Disservin/Smallbrain.git /tmp/smallbrain
-              cd /tmp/smallbrain/src && make -j2 EXE=smallbrain
-              cp smallbrain /workspace/engine-binaries/armhf/
-              
-              # Arasan
-              echo "=== Building Arasan ==="
-              git clone --depth 1 https://github.com/jdart1/arasan-chess.git /tmp/arasan
-              cd /tmp/arasan/src && make -j2
-              cp arasan /workspace/engine-binaries/armhf/
-              
-              # Zahak
-              echo "=== Building Zahak ==="
-              git clone --depth 1 https://github.com/amanjpro/zahak.git /tmp/zahak
-              cd /tmp/zahak && go build -o zahak
-              cp zahak /workspace/engine-binaries/armhf/
-              
-              # Maia (lc0 with BLAS backend)
-              echo "=== Building Maia (lc0) ==="
-              git clone --depth 1 --branch v0.32.1 --recurse-submodules https://github.com/LeelaChessZero/lc0.git /tmp/lc0
-              cd /tmp/lc0
-              rm -rf build/release
-              CC=clang CXX=clang++ meson setup build/release --buildtype=release \
-                -Dplain_cuda=false -Dcudnn=false -Dopencl=false -Ddx=false \
-                -Donednn=false -Dmetal=disabled -Dispc=false -Dgtest=false \
-                -Donnx=false -Dnvcc=false -Dpython_bindings=false \
-                -Dpopcnt=false -Df16c=false -Dpext=false
-              ninja -C build/release -j2
-              cp build/release/lc0 /workspace/engine-binaries/armhf/maia/lc0
-              
-              # Download Maia weights (human-like play at various ELO levels)
-              echo "=== Downloading Maia weights ==="
-              cd /workspace/engine-binaries/armhf/maia/maia_weights
-              for elo in 1100 1200 1300 1400 1500 1600 1700 1800 1900; do
-                wget -q "https://github.com/CSSLab/maia-chess/releases/download/v1.0/maia-${elo}.pb.gz"
-              done
-              
-              # Download Leela weights
-              mkdir -p /workspace/engine-binaries/armhf/maia/leela_weights
-              cd /workspace/engine-binaries/armhf/maia/leela_weights
-              
-              # T1-256x10 - Small/fast network optimized for CPU/low-power devices (~25MB)
-              echo "=== Downloading T1-256x10 (small/fast) ==="
-              wget -q -O t1-256x10.pb.gz "https://training.lczero.org/get_network?sha=00af53b081e80147172e6f281c01571016924e9aac89cdf6666a1cc3a4ecf5bf"
-              
-              # T80-512x15 - Medium network, good balance of strength and speed (~90MB)
-              echo "=== Downloading T80-512x15 (medium) ==="
-              wget -q -O t80-512x15.pb.gz "https://training.lczero.org/get_network?sha=c8f303a4c7e3d6e6ea07e04dc29b587eef22b4dbb3f0b0b7b1e18d4ead2e9e7f" || true
-              
-              echo "=== ARM32 builds complete ==="
-              ls -la /workspace/engine-binaries/armhf/
-              ls -la /workspace/engine-binaries/armhf/maia/
+              bash /workspace/scripts/engines/ci-build-engines.sh armhf
             '
       
       - name: Package ARM32 binaries
@@ -302,7 +105,11 @@ jobs:
     name: Upload to Release
     needs: [build-arm64, build-armhf]
     runs-on: ubuntu-latest
-    if: github.event_name == 'release'
+    # Runs for both a real release publish and a manual dispatch. Dispatch is the
+    # supported way to (re)publish engine binaries on demand; a `schedule:` could
+    # be added here later if periodic rebuilds are wanted (the engine build is a
+    # multi-hour QEMU job, so it is intentionally not automatic).
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
     
@@ -318,10 +125,24 @@ jobs:
         with:
           name: engines-armhf
           path: ./artifacts
-      
-      - name: Upload to release
+
+      # Publish to a STABLE, dedicated prerelease (tag: engines-latest) rather
+      # than the rotating nightly releases. The device's installer scans all
+      # releases for engines-<arch>.tar.gz, so a fixed tag means it always finds
+      # the current binaries regardless of nightly pruning. softprops creates the
+      # release if missing and replaces same-named assets on re-publish. A nightly
+      # release cannot be used because it is created with GITHUB_TOKEN (which does
+      # not trigger this workflow) and its tag changes daily.
+      - name: Publish engine binaries to stable release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: engines-latest
+          name: "Engine Binaries (latest)"
+          prerelease: true
+          body: |
+            Prebuilt chess-engine binaries consumed by the on-device installer
+            (`engines-<arch>.tar.gz`). Auto-published by the Build Engines
+            workflow; not a product release.
           files: |
             artifacts/engines-arm64.tar.gz
             artifacts/engines-arm64.tar.gz.sha256
