@@ -149,3 +149,38 @@ class TestArasanBuildCommand:
         assert "BUILD_TYPE=neon" in script
         assert "uname -m" in script
         assert "aarch64" in script and "arm64" in script
+
+
+class TestDemolitoBuildCommand:
+    """Guards Demolito's compiler pin against the clang makefile default."""
+
+    def test_pins_cc_gcc(self):
+        """Demolito must build with ``CC=gcc``.
+
+        Why this test exists: a field board (armhf) failed to install Demolito with
+        "clang: not found". Demolito's makefile declares ``CC = clang`` and its
+        default target runs ``$(CC) -march=native ...``. Installing clang on a
+        32-bit Pi Zero pulls the whole LLVM toolchain and was failing/timing out,
+        and because a failed dependency install is non-fatal the build proceeded
+        without clang. Pinning ``CC=gcc`` uses the compiler build-essential
+        provides; the makefile's clang-only flags are gated behind
+        ``ifeq ($(CC),clang)``.
+
+        How the regression manifests: dropping ``CC=gcc`` reverts to the clang
+        default and the build aborts with "clang: not found" wherever clang is not
+        installed.
+        """
+        assert "CC=gcc" in _build_script("demolito")
+
+    def test_does_not_depend_on_clang(self):
+        """Demolito must not require clang as a build dependency.
+
+        Why this test exists: the ``CC=gcc`` pin exists precisely to avoid pulling
+        clang onto the device. Declaring clang as a dependency would reintroduce
+        the heavyweight install that was failing. After this change no device
+        engine depends on clang.
+
+        How the regression manifests: re-adding "clang" to ``dependencies`` trips
+        this assertion.
+        """
+        assert "clang" not in ENGINES["demolito"].dependencies

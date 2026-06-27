@@ -79,7 +79,11 @@ ethereal_build() {
 
 demolito_build() {
 	git clone --depth 1 https://github.com/lucasart/Demolito.git /tmp/demolito
-	cd /tmp/demolito && make -j"$(nproc)" CC=clang
+	# The makefile lives in src/ (there is no root makefile), so build there --
+	# matches the device's `cd src && make`. Pin CC=gcc so the prebuilt uses the
+	# same compiler as the on-device build (avoids the heavyweight clang dep; the
+	# makefile defaults to clang).
+	cd /tmp/demolito/src && make -j"$(nproc)" CC=gcc
 	cp demolito "${OUT}/"
 }
 

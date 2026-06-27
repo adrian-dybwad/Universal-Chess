@@ -313,15 +313,23 @@ ENGINES = {
         description="Simple, efficient engine with clean C code. Fast to compile and run. Good for lower-powered devices. Solid but straightforward play.",
         repo_url="https://github.com/lucasart/Demolito.git",
         build_commands=[
-            # Demolito builds from src directory where makefile is located
-            # The makefile uses clang by default
-            "cd src && make -j$(nproc)",
+            # Demolito's makefile declares `CC = clang` (its `default` target runs
+            # `$(CC) -march=native ...`). Pin CC=gcc -- the same approach used for
+            # Berserk and Ethereal -- so the build uses the compiler build-essential
+            # provides instead of pulling the heavyweight LLVM toolchain onto the
+            # device. The makefile's clang-only warning flags are gated behind
+            # `ifeq ($(CC),clang)`, so gcc skips them; the source is portable C and
+            # builds on both arm64 and armhf with gcc -march=native. Installing
+            # clang on a 32-bit Pi Zero pulls hundreds of MB of LLVM-19 and was
+            # timing out/failing, which then surfaced as a cryptic "clang: not
+            # found" because a failed dependency install is non-fatal.
+            "cd src && make -j$(nproc) CC=gcc",
         ],
         binary_path="src/demolito",
         is_system_package=False,
         package_name=None,
         extra_files=[],
-        dependencies=["build-essential", "git", "clang"],  # Makefile uses clang
+        dependencies=["build-essential", "git"],
         estimated_install_minutes=3,  # Simple C engine
         has_prebuilt=True,
     ),
