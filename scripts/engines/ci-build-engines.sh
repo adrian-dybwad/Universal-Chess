@@ -114,8 +114,17 @@ smallbrain_build() {
 
 arasan_build() {
 	git clone --depth 1 https://github.com/jdart1/arasan-chess.git /tmp/arasan
-	cd /tmp/arasan/src && make -j2
-	cp arasan "${OUT}/"
+	cd /tmp/arasan/src
+	# Arasan writes to ../bin and names the exe arasanx-<bits> unless EXE is set;
+	# EXE=arasan fixes the name/location to ../bin/arasan (matches the device
+	# binary_path). NEON only on 64-bit ARM (the Makefile defines NEON flags for
+	# arm64/aarch64 only); armhf falls back to the scalar NNUE path.
+	local arasan_args="EXE=arasan"
+	if [ "${ARCH}" = "arm64" ]; then
+		arasan_args="${arasan_args} BUILD_TYPE=neon"
+	fi
+	make -j2 ${arasan_args}
+	cp ../bin/arasan "${OUT}/"
 }
 
 zahak_build() {

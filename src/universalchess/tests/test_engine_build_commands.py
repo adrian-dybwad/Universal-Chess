@@ -98,3 +98,54 @@ class TestEtherealBuildCommand:
         copying Demolito's entry) trips this assertion.
         """
         assert "clang" not in ENGINES["ethereal"].dependencies
+
+
+class TestArasanBuildCommand:
+    """Guards Arasan's output name/location and arm64 NEON selection."""
+
+    def test_binary_path_points_to_bin_not_src(self):
+        """Arasan's binary_path must be ``bin/arasan``, never ``src/arasan``.
+
+        Why this test exists: Arasan's Makefile writes the executable to
+        ../bin/arasanx-<bits> (EXPORT=../bin), not to src/. The catalog previously
+        declared binary_path=src/arasan, so every install compiled fine and then
+        failed the post-build existence check with "Binary not found: src/arasan"
+        -- and the CI ``cp arasan`` (from src/) failed too, so no prebuilt ever
+        shipped. The fix pairs EXE=arasan (fixed name) with binary_path=bin/arasan.
+
+        How the regression manifests: reverting binary_path to src/arasan (or any
+        src/ path) trips this and reintroduces the silent install failure.
+        """
+        engine = ENGINES["arasan"]
+        assert engine.binary_path == "bin/arasan"
+        assert not engine.binary_path.startswith("src/")
+
+    def test_fixes_exe_name(self):
+        """The build must pass ``EXE=arasan`` so the output name is deterministic.
+
+        Why this test exists: without EXE the Makefile emits arasanx-$(LONG_BIT)
+        (arasanx-64 / arasanx-32), which neither binary_path nor the CI cp can
+        predict. EXE=arasan pins ../bin/arasan on both arches.
+
+        How the regression manifests: dropping EXE=arasan reverts to the
+        arch-dependent arasanx-<bits> name and the binary is not found post-build.
+        """
+        assert "EXE=arasan" in _build_script("arasan")
+
+    def test_requests_neon_only_on_64bit_arm(self):
+        """NEON must be gated on the arm64/aarch64 uname, not applied blindly.
+
+        Why this test exists: Arasan's Makefile defines NEON flags only for the
+        arm64/aarch64 arch tokens (no armv7l branch) and enables them only with
+        BUILD_TYPE=neon. The vectorized NNUE path should be requested on 64-bit ARM
+        for speed, while 32-bit ARM must stay on the scalar fallback. The command
+        therefore adds BUILD_TYPE=neon under a uname case for aarch64/arm64.
+
+        How the regression manifests: removing the guard (applying BUILD_TYPE=neon
+        unconditionally) would request a non-existent NEON build on armhf; dropping
+        it entirely would leave arm64 on the slower scalar NNUE path.
+        """
+        script = _build_script("arasan")
+        assert "BUILD_TYPE=neon" in script
+        assert "uname -m" in script
+        assert "aarch64" in script and "arm64" in script

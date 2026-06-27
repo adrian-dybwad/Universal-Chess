@@ -350,10 +350,27 @@ ENGINES = {
         description="Veteran engine in development since 1994. Very stable and reliable. NNUE support added recently. Great for consistent, predictable play.",
         repo_url="https://github.com/jdart1/arasan-chess.git",
         build_commands=[
-            # Use -j1 to avoid OOM on low-memory devices (NNUE compilation is memory-intensive)
-            "cd src && make -j1",
+            # Arasan's Makefile builds into ../bin (EXPORT=../bin), NOT src/, and
+            # names the binary arasanx-<bits> (e.g. arasanx-64) unless EXE is given.
+            # Pass EXE=arasan so the output is a fixed ../bin/arasan that matches
+            # binary_path below -- without this the post-build "binary not found:
+            # src/arasan" check fails even though compilation succeeded.
+            #
+            # SIMD: the Makefile enables NEON only with BUILD_TYPE=neon, and it
+            # defines the NEON flags solely for the arm64/aarch64 arch tokens (its
+            # arch switch has no armv7l branch). Request NEON on 64-bit ARM for the
+            # vectorized NNUE path; on 32-bit ARM there is no NEON build, so the
+            # default scalar NNUE fallback (nnue/*.h #ifndef SIMD) is used -- correct,
+            # just slower. The bundled network (network/arasanv8-*.nnue) ships in the
+            # repo, so no network fetch is needed at build time.
+            #
+            # -j1 to avoid OOM on low-memory devices (NNUE + LTO is memory-intensive).
+            'cd src && ARASAN_ARGS="EXE=arasan"; '
+            'case "$(uname -m)" in aarch64|arm64) '
+            'ARASAN_ARGS="$ARASAN_ARGS BUILD_TYPE=neon";; esac; '
+            'make -j1 $ARASAN_ARGS',
         ],
-        binary_path="src/arasan",
+        binary_path="bin/arasan",
         is_system_package=False,
         package_name=None,
         extra_files=[],
