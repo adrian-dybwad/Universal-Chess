@@ -3424,13 +3424,19 @@ def api_get_engine_levels(engine_name):
 def api_get_all_engines():
     """Get full details of all engines for management UI."""
     try:
-        from universalchess.managers.engine_manager import EngineManager, ENGINES
-        
+        from universalchess.managers.engine_manager import (
+            EngineManager, ENGINES, arch_unsupported_reason, get_current_arch,
+        )
+
         engine_manager = EngineManager()
+        # Resolve once: the device architecture is constant for this process, and
+        # it determines which engines can be installed here.
+        arch = get_current_arch()
         engines_list = []
-        
+
         for name, engine_def in ENGINES.items():
             is_installed = engine_def.is_system_package or engine_manager.is_installed(name)
+            unsupported_reason = arch_unsupported_reason(engine_def, arch)
             engines_list.append({
                 "name": name,
                 "display_name": engine_def.display_name,
@@ -3442,8 +3448,12 @@ def api_get_all_engines():
                 "estimated_install_minutes": engine_def.estimated_install_minutes,
                 "has_prebuilt": engine_def.has_prebuilt,
                 "has_profiles": name in engine_profiles.PROFILE_SCHEMAS,
+                # Architecture support for THIS device. `supported` drives the UI's
+                # install button state; `unsupported_reason` explains why when False.
+                "supported": unsupported_reason is None,
+                "unsupported_reason": unsupported_reason,
             })
-        
+
         return jsonify(engines_list)
     except Exception as e:
         return _internal_error(e)
