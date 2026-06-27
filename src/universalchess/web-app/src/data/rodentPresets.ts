@@ -13,10 +13,11 @@
  * - PrimaryPstStyle / SecondaryPstStyle are the engine's integer PST codes
  *   (0=Quirky, 1=Classic, 2=Normal, 3=Blunt, 4=Forward), not the style names
  *   used by the old tuner UI.
- * - GuideBookFile is intentionally omitted: the curated personalities pointed
- *   at opening books that are not shipped with this install, and writing a dead
- *   book reference into a profile would be misleading. The character of each
- *   personality lives in its evaluation weights, which are preserved here.
+ * - GuideBookFile values are paths relative to the engine's books/ folder
+ *   (the engine resolves books under books/ itself). Only books that differ
+ *   from the engine default (guide.bin) are listed; the referenced files ship
+ *   in the install's books/guide/ directory. Note the Strangler book file is
+ *   capitalised (guide/Strangler.bin) on a case-sensitive filesystem.
  */
 
 export interface ProfilePreset {
@@ -48,6 +49,7 @@ const RODENT_PRESETS: ProfilePreset[] = [
       Space: 100, PassedPawns: 125, PawnStructure: 150,
       DoubledPawnMg: -10, BackwardPawnMg: -4, BackwardPawnEg: -3, BackwardOnOpenMg: -9,
       PrimaryPstStyle: 2, SecondaryPstStyle: 2,
+      GuideBookFile: 'guide/active.bin',
     },
   },
   {
@@ -59,6 +61,7 @@ const RODENT_PRESETS: ProfilePreset[] = [
       Lines: 120, Outposts: 90, Space: 100,
       PawnMass: 150, PawnChains: 150, KnightLikesClosed: 7, KeepPawn: 1,
       PrimaryPstStyle: 2,
+      GuideBookFile: 'guide/closed.bin',
     },
   },
   {
@@ -80,6 +83,7 @@ const RODENT_PRESETS: ProfilePreset[] = [
       KnightValueMg: 385, KnightValueEg: 365, BishopPairMg: 41,
       OwnAttack: 120, OppMobility: 70, Space: 100,
       KnightLikesClosed: 8, KeepPawn: 1,
+      GuideBookFile: 'guide/grandpa.bin',
     },
   },
   {
@@ -96,6 +100,7 @@ const RODENT_PRESETS: ProfilePreset[] = [
       IsolatedPawnMg: -10, IsolatedPawnEg: -10,
       BackwardPawnMg: -8, BackwardPawnEg: -10, BackwardOnOpenMg: -8,
       Contempt: 5,
+      GuideBookFile: 'guide/Strangler.bin',
     },
   },
   {

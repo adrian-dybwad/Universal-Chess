@@ -314,12 +314,14 @@ _RODENT_GROUPS: Tuple[ProfileGroup, ...] = (
         _int("BookFilter", "Book filter", 20, 0, 100,
              "How strictly opening-book moves are filtered; higher trusts only "
              "the strongest book moves."),
-        ProfileField("GuideBookFile", "Guide book file", "text", "",
-                     help="Optional guide opening book (filename) that biases the "
-                          "engine's opening choices."),
-        ProfileField("MainBookFile", "Main book file", "text", "",
-                     help="Optional main opening book (filename) used for the "
-                          "engine's opening moves."),
+        ProfileField("GuideBookFile", "Guide book file", "text", "guide.bin",
+                     help="Guide opening book, as a path relative to the engine's "
+                          "books/ folder (e.g. guide/active.bin). The engine's "
+                          "built-in default is guide.bin."),
+        ProfileField("MainBookFile", "Main book file", "text", "rodent.bin",
+                     help="Main opening book, as a path relative to the engine's "
+                          "books/ folder. The engine's built-in default is "
+                          "rodent.bin."),
     )),
 )
 
