@@ -12,6 +12,13 @@
 #   The transfer is non-destructive (no --delete): remote-only files are left
 #   untouched.
 #
+#   After a real sync it also provisions the build-memory sudo grant (the
+#   /etc/sudoers.d drop-in the .deb postinst would create) so the synced code
+#   can reserve swap for engine/BlueZ builds. Without it, source installs now
+#   fail loudly ("could not reserve the extra memory ..."), so a runtime-only
+#   deploy must establish the grant itself. Idempotent; skipped for
+#   --dry-run/--check.
+#
 # Usage:
 #   ./scripts/deploy-to-pi.sh [options]
 #
@@ -111,6 +118,41 @@ build_react() {
 	fi
 }
 
+# Provision the build-memory sudo grant on the remote, mirroring the .deb
+# postinst. A runtime-only deploy ships uc-build-memory but not the sudoers
+# drop-in that lets the service user run it; source builds now fail loudly
+# without that grant, so establish it here. Idempotent and safe to re-run.
+#
+# Grants to the UID-1000 user (same target postinst picks), references the exact
+# remote helper path (the sudoers command match is path-literal), and validates
+# with visudo before leaving it in place -- a malformed drop-in can lock out
+# sudo. Non-fatal: a warning here should not abort an otherwise good code deploy.
+provision_build_memory_grant() {
+	local helper_path sudoers_file
+	helper_path="${REMOTE_PATH%/}/scripts/uc-build-memory"
+	sudoers_file="/etc/sudoers.d/universal-chess-build-memory"
+	echo "Provisioning build-memory sudo grant on ${HOST} ..."
+	# Unquoted heredoc: helper_path/sudoers_file expand locally; \$-escaped vars
+	# defer to the remote shell. Fed to `sudo bash -s` over SSH.
+	$SSH_OPTS "$HOST" "sudo bash -s" <<REMOTE || echo "WARNING: build-memory grant not established (see message above)"
+set -euo pipefail
+HELPER='${helper_path}'
+SUDOERS='${sudoers_file}'
+PRIMARY_USER=\$(getent passwd 1000 | cut -d: -f1)
+if [ -z "\$PRIMARY_USER" ]; then echo 'WARNING: no UID-1000 user; skipping grant'; exit 0; fi
+if [ ! -f "\$HELPER" ]; then echo "WARNING: helper missing at \$HELPER; skipping grant"; exit 0; fi
+chmod +x "\$HELPER"
+echo "\$PRIMARY_USER ALL=(root) NOPASSWD: \$HELPER" > "\$SUDOERS"
+chmod 440 "\$SUDOERS"
+if ! visudo -cf "\$SUDOERS" >/dev/null 2>&1; then
+	echo 'WARNING: build-memory sudoers entry invalid; removing'
+	rm -f "\$SUDOERS"
+	exit 1
+fi
+echo "Granted \$PRIMARY_USER NOPASSWD -> \$HELPER"
+REMOTE
+}
+
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		-n|--dry-run) DRY_RUN=1; shift ;;
@@ -178,6 +220,11 @@ if [[ $DRY_RUN -eq 1 ]]; then
 	echo "Dry-run complete; nothing transferred, service not restarted."
 	exit 0
 fi
+
+# Establish the sudo grant for the freshly-synced helper before the service uses
+# it. Runs on every real sync (including --no-restart) since it is provisioning,
+# not a restart concern; the grant is read live by sudo regardless.
+provision_build_memory_grant
 
 if [[ $RESTART -eq 0 ]]; then
 	echo "Sync complete; --no-restart given, leaving service as-is."
