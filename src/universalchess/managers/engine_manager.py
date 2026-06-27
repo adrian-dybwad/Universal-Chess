@@ -30,6 +30,7 @@ Specialty Engines:
 """
 
 import os
+import re
 import subprocess
 import shutil
 import threading
@@ -55,6 +56,15 @@ except ImportError:
     log = logging.getLogger(__name__)
 
 from universalchess.services.engine_install_state import InstallStage
+from universalchess.services.engine_install_record import (
+    DEFAULT_REF,
+    STORE as INSTALL_RECORD_STORE,
+    EngineInstallRecordStore,
+)
+from universalchess.services.github_tag_cache import (
+    STORE as TAG_CACHE_STORE,
+    GitHubTagCacheStore,
+)
 
 # Engine installation directory
 ENGINES_DIR = "/opt/universalchess/engines"
@@ -126,6 +136,12 @@ class EngineDefinition:
     dependencies: List[str]      # apt packages needed to build
     can_uninstall: bool = True   # Whether engine can be uninstalled
     clone_with_submodules: bool = False  # Use --recurse-submodules when cloning
+    # Git tag/branch/commit to build. None tracks the repo's default branch (master).
+    # Pin a specific release tag when the default branch is a moving target whose
+    # build can regress between installs -- e.g. Arasan is pinned to a tagged release
+    # because its master NEON path has regressed, so an unpinned clone would
+    # intermittently fail to compile depending on when the user happens to install.
+    git_ref: Optional[str] = None
     build_timeout: int = 600     # Timeout for build commands in seconds (default 10 min)
     estimated_install_minutes: int = 5  # Estimated install time in minutes for UI
     has_prebuilt: bool = False   # True if pre-built binary available from releases
@@ -173,6 +189,199 @@ def arch_unsupported_reason(engine: "EngineDefinition", arch: str) -> Optional[s
     supported = ", ".join(sorted(engine.supported_archs))
     return (f"{engine.display_name} is not supported on this device's "
             f"architecture ({arch}). Supported: {supported}.")
+
+
+# ---------------------------------------------------------------------------
+# Ref selection helpers (pure)
+#
+# Source-built engines may be installed from a user-chosen git ref (tag/branch)
+# so a newer-than-pinned release can be tried from the UI. These small pure
+# functions decide which ref to build/record and whether the prebuilt archive
+# (built only from the canonical ref) may satisfy a request. Kept free of I/O so
+# the install flow's branching is unit-testable without compiling or networking.
+# ---------------------------------------------------------------------------
+
+def canonical_ref(engine: "EngineDefinition") -> str:
+    """The ref the prebuilt archive represents and an unspecified install builds.
+
+    For a pinned engine that is its catalog ``git_ref``; for an unpinned engine it
+    is the default-branch sentinel :data:`DEFAULT_REF` (an unpinned clone, which is
+    exactly what CI builds the prebuilt from).
+    """
+    return engine.git_ref or DEFAULT_REF
+
+
+def resolve_requested_ref(engine: "EngineDefinition", requested: Optional[str]) -> str:
+    """Resolve a requested ref to the concrete label to build and record.
+
+    ``None`` (no selection / legacy client) resolves to the canonical ref so
+    behavior is unchanged; an explicit ref (a tag, a branch, or
+    :data:`DEFAULT_REF`) is used verbatim.
+    """
+    if requested is None:
+        return canonical_ref(engine)
+    return requested
+
+
+def prebuilt_allowed_for_ref(engine: "EngineDefinition", requested: Optional[str]) -> bool:
+    """Whether the prebuilt archive may satisfy ``requested``.
+
+    The prebuilt is built solely from the canonical ref, so it may only serve an
+    unspecified request or one that resolves to the canonical ref. Any other ref
+    must build from source, or the install would ship the canonical binary while
+    claiming a different version.
+    """
+    return requested is None or requested == canonical_ref(engine)
+
+
+def git_ref_for_label(label: str) -> Optional[str]:
+    """Map a recorded/selected ref label to a value for ``git clone --branch``.
+
+    :data:`DEFAULT_REF` maps to ``None`` (omit ``--branch`` -> clone the default
+    branch); any other label is a real tag/branch passed through unchanged.
+    """
+    return None if label == DEFAULT_REF else label
+
+
+def parse_github_repo(repo_url: Optional[str]) -> Optional[tuple]:
+    """Return ``(owner, repo)`` for a GitHub HTTPS URL, else None.
+
+    Only github.com HTTPS URLs are supported (the only host whose tag API the refs
+    endpoint queries). A non-GitHub host, a None/empty URL, or a malformed path
+    yields None so callers degrade gracefully instead of crashing.
+    """
+    if not repo_url:
+        return None
+    prefix = "https://github.com/"
+    if not repo_url.startswith(prefix):
+        return None
+    path = repo_url[len(prefix):]
+    if path.endswith(".git"):
+        path = path[:-len(".git")]
+    parts = path.strip("/").split("/")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+    return parts[0], parts[1]
+
+
+def merge_ref_list(
+    recommended: str,
+    installed_ref: Optional[str],
+    pin: Optional[str],
+    working_refs: List[str],
+    tags: List[str],
+    default_branch: Optional[str],
+) -> List[dict]:
+    """Build the de-duplicated, flagged ref list the tag picker renders.
+
+    The result lists each selectable ref once, recommended ref first, then the
+    GitHub tags (newest-first as given), then any working-history refs not already
+    present, and always includes the catalog pin, the installed ref, and a
+    default-branch entry. Each entry carries display and state flags:
+
+    * ``ref``: the value to send back to the install endpoint. The default branch
+      uses the :data:`DEFAULT_REF` sentinel (an unpinned clone); tags use their
+      own name.
+    * ``label``: human-readable text (the branch name for the default entry,
+      otherwise the ref itself).
+    * ``kind``: ``"branch"`` for the default entry, else ``"tag"``.
+    * ``known_working``: the catalog pin or any ref that built successfully here.
+    * ``is_pin``: this is the catalog's verified pin.
+    * ``installed``: this is the ref currently installed.
+
+    Args:
+        recommended: The canonical ref to surface first (pin or DEFAULT_REF).
+        installed_ref: The currently-installed ref label, or None.
+        pin: The catalog pin tag, or None for unpinned engines.
+        working_refs: Refs that have ever built successfully on this device.
+        tags: GitHub tag names, newest-first (may be empty if discovery failed).
+        default_branch: The repo's default branch name for display, or None.
+    """
+    working_set = set(working_refs)
+
+    # Ordered, de-duplicated ref values. DEFAULT_REF (default branch) is always
+    # offered so the latest code can be tried even when no tags are discoverable.
+    ordered: List[str] = []
+    seen = set()
+
+    def add(ref: Optional[str]) -> None:
+        if ref is None or ref in seen:
+            return
+        seen.add(ref)
+        ordered.append(ref)
+
+    add(recommended)
+    for tag in tags:
+        add(tag)
+    for ref in working_refs:
+        add(ref)
+    add(pin)
+    add(installed_ref)
+    add(DEFAULT_REF)
+
+    entries: List[dict] = []
+    for ref in ordered:
+        is_default = ref == DEFAULT_REF
+        entries.append({
+            "ref": ref,
+            "label": (default_branch or "default branch") if is_default else ref,
+            "kind": "branch" if is_default else "tag",
+            "known_working": ref == pin or ref in working_set,
+            "is_pin": pin is not None and ref == pin,
+            "installed": installed_ref is not None and ref == installed_ref,
+        })
+    return entries
+
+
+# A selectable ref must start with an alphanumeric (so it can never be parsed as a
+# ``git`` option like ``--upload-pack``) and may contain only the characters git
+# refs use. ``..`` is rejected outright to bar path traversal and git revision
+# ranges. The ref is passed to ``git clone --branch`` as a list argument (no shell),
+# so this is defense-in-depth against malformed/abusive input, not the sole barrier.
+_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$")
+
+
+def is_valid_ref(ref) -> bool:
+    """Whether ``ref`` is an acceptable git ref to install.
+
+    Accepts the :data:`DEFAULT_REF` sentinel and ordinary tag/branch names; rejects
+    non-strings, empty values, anything containing ``..``, and names that do not
+    match :data:`_REF_RE` (e.g. a leading ``-`` that could be read as a git option).
+    """
+    if not isinstance(ref, str) or not ref:
+        return False
+    if ".." in ref:
+        return False
+    return bool(_REF_RE.fullmatch(ref))
+
+
+def expand_extra_files(base_dir: Path, patterns: List[str]) -> List[Path]:
+    """Resolve ``extra_files`` entries against ``base_dir``.
+
+    An entry containing a glob metacharacter (``*``, ``?`` or ``[``) is expanded
+    with :meth:`Path.glob` so version-specific files can be matched without
+    hardcoding a name (e.g. Arasan's ``*.nnue`` network, whose filename changes
+    per release). A literal entry resolves to ``base_dir/entry`` when it exists.
+    Missing literals are skipped (the caller logs them); only existing paths are
+    returned.
+
+    Args:
+        base_dir: Directory the entries are relative to (a repo checkout, an
+            extracted prebuilt archive's arch dir, or the engines dir).
+        patterns: ``extra_files`` entries (literal names or glob patterns).
+
+    Returns:
+        Existing matched paths, glob matches sorted for determinism.
+    """
+    results: List[Path] = []
+    for pattern in patterns:
+        if any(ch in pattern for ch in "*?["):
+            results.extend(sorted(base_dir.glob(pattern)))
+        else:
+            candidate = base_dir / pattern
+            if candidate.exists():
+                results.append(candidate)
+    return results
 
 
 class InstallStatus(Enum):
@@ -363,35 +572,67 @@ ENGINES = {
         summary="~2900 ELO, veteran",
         description="Veteran engine in development since 1994. Very stable and reliable. NNUE support added recently. Great for consistent, predictable play.",
         repo_url="https://github.com/jdart1/arasan-chess.git",
+        # Pin to a tagged release. Arasan's master NEON path has regressed (the
+        # nnue/simd.h calcNnzData rewrite fails to compile), so an unpinned clone
+        # builds or fails depending on the day. v25.4 (2026-04-14) is the latest
+        # release verified to build and run on aarch64 with the recipe below. The
+        # NNUE network is handled by a glob (build_commands/extra_files use *.nnue),
+        # so bumping this tag -- or trying a newer tag from the UI picker -- needs no
+        # filename change here.
+        git_ref="v25.4",
+        # The NNUE network and the Syzygy probing code (syzygy/src/tbprobe.h) are git
+        # submodules, not part of the main tree. Without this the build dies at
+        # "syzygy/src/tbprobe.h: No such file or directory".
+        clone_with_submodules=True,
         build_commands=[
-            # Arasan's Makefile builds into ../bin (EXPORT=../bin), NOT src/, and
-            # names the binary arasanx-<bits> (e.g. arasanx-64) unless EXE is given.
-            # Pass EXE=arasan so the output is a fixed ../bin/arasan that matches
-            # binary_path below -- without this the post-build "binary not found:
-            # src/arasan" check fails even though compilation succeeded.
+            # Arasan on 64-bit ARM (this engine is arm64-only; see supported_archs):
             #
-            # SIMD: the Makefile enables NEON only with BUILD_TYPE=neon, and it
-            # defines the NEON flags solely for the arm64/aarch64 arch tokens (its
-            # arch switch has no armv7l branch). Request NEON on 64-bit ARM for the
-            # vectorized NNUE path; on 32-bit ARM there is no NEON build, so the
-            # default scalar NNUE fallback (nnue/*.h #ifndef SIMD) is used -- correct,
-            # just slower. The bundled network (network/arasanv8-*.nnue) ships in the
-            # repo, so no network fetch is needed at build time.
-            #
-            # -j1 to avoid OOM on low-memory devices (NNUE + LTO is memory-intensive).
-            'cd src && ARASAN_ARGS="EXE=arasan"; '
-            'case "$(uname -m)" in aarch64|arm64) '
-            'ARASAN_ARGS="$ARASAN_ARGS BUILD_TYPE=neon";; esac; '
-            'make -j1 $ARASAN_ARGS',
+            # * CC=clang++ -- the Makefile defaults to g++, but Arasan's NEON
+            #   intrinsics (nnue/simddefs.h) rely on implicit conversions between NEON
+            #   vector types (int16x8_t/int32x4_t/uint8x16_t) that clang accepts and
+            #   g++ rejects ("cannot convert ..."). doc/BUILD.md states clang is the
+            #   required/recommended compiler. g++ cannot build this engine.
+            # * BUILD_TYPE=neon -- mandatory, not an optimization: the NNUE
+            #   SparseLinear layer has `static_assert(0, "requires SIMD")`, so a
+            #   non-SIMD build does not compile at all. neon is the only ARM SIMD
+            #   path the Makefile defines.
+            # * LDFLAGS overrides the Makefile's hardcoded `-fuse-ld=gold`; the gold
+            #   linker was removed from binutils 2.44 (Raspberry Pi OS Trixie), so the
+            #   default bfd linker must be used. A command-line LDFLAGS assignment wins
+            #   over the Makefile's `:=` appends, dropping the gold flag. Objects are
+            #   compiled without -flto, so using bfd costs nothing.
+            # * EXE=arasan -- the Makefile otherwise emits ../bin/arasanx-64; EXE fixes
+            #   the output name to ../bin/arasan matching binary_path.
+            # * -j1 -- single-threaded to avoid OOM / overloading low-memory devices.
+            'cd src && make -j1 CC=clang++ EXE=arasan BUILD_TYPE=neon '
+            'LDFLAGS="-O3 -fno-rtti -DNDEBUG"',
+            # Stage the embedded NNUE network next to where the binary is installed.
+            # Arasan loads the network from the executable's own directory and embeds
+            # its filename, which is version-specific (changes per release). A glob
+            # copies whichever network the checked-out ref ships -- without this the
+            # tag picker could not build any ref other than the one whose exact
+            # filename was hardcoded. Each release's network/ holds exactly the one
+            # network its binary expects, so the glob installs the correct file.
+            'cp -f network/*.nnue ./',
         ],
         binary_path="bin/arasan",
         is_system_package=False,
         package_name=None,
-        extra_files=[],
-        dependencies=["build-essential", "git", "bc", "gawk"],
+        # Installed alongside the binary in engines_dir; Arasan refuses to evaluate
+        # ("failed to open network file") without it. Glob (not a fixed name) so any
+        # release's network installs -- see the build cp step above.
+        extra_files=["*.nnue"],
+        # clang is required (see build_commands). bc/gawk are NOT needed: the Makefile
+        # only invokes them in its g++ branch to compute the gcc version.
+        dependencies=["build-essential", "git", "clang"],
         build_timeout=1800,
         estimated_install_minutes=25,  # NNUE engine, single-threaded build
         has_prebuilt=True,
+        # arm64-only. 32-bit ARM (armhf) has no SIMD path in Arasan -- the Makefile
+        # defines NEON flags solely for the arm64/aarch64 arch tokens, and the
+        # non-SIMD build is blocked by the SparseLinear static_assert -- so it cannot
+        # be built on armhf at all (mirrors the gating used for Berserk/Weiss).
+        supported_archs=frozenset({"arm64"}),
     ),
     
     # === SPECIALTY ENGINES ===
@@ -526,14 +767,27 @@ class EngineManager:
     Supports queueing multiple engines for sequential installation.
     """
     
-    def __init__(self, engines_dir: str = ENGINES_DIR):
+    def __init__(
+        self,
+        engines_dir: str = ENGINES_DIR,
+        record_store: Optional[EngineInstallRecordStore] = None,
+        tag_cache: Optional[GitHubTagCacheStore] = None,
+    ):
         """Initialize the engine manager.
         
         Args:
             engines_dir: Directory where engines are installed
+            record_store: Store for the durable installed-ref / working-ref
+                history. Defaults to the module-level singleton; injectable so
+                tests run against a temp file.
+            tag_cache: Cache of GitHub tag lists for the release picker, used as a
+                fallback when a fresh fetch fails. Defaults to the module-level
+                singleton; injectable so tests run against a temp file.
         """
         self.engines_dir = Path(engines_dir)
         self.build_tmp = Path(BUILD_TMP)
+        self._record_store = record_store if record_store is not None else INSTALL_RECORD_STORE
+        self._tag_cache = tag_cache if tag_cache is not None else TAG_CACHE_STORE
         self._install_thread: Optional[threading.Thread] = None
         self._install_progress: str = ""
         self._install_error: Optional[str] = None
@@ -612,12 +866,131 @@ class EngineManager:
             })
         log.info(f"[EngineManager] get_engine_list: {installed_count}/{len(ENGINES)} engines installed")
         return result
-    
+
+    @staticmethod
+    def _fetch_github_tags(repo_url: Optional[str], limit: int = 30) -> tuple:
+        """Best-effort fetch of a GitHub repo's tags and default branch.
+
+        Returns ``(tag_names, default_branch)``. On any failure -- no ``requests``,
+        a non-GitHub URL, a network error, a rate-limit, or a non-200 -- returns
+        ``([], None)`` so the refs endpoint degrades to locally-known refs (the pin,
+        the working history, the default-branch option) instead of erroring. Tags
+        are returned newest-first as GitHub orders them, capped at ``limit``.
+        """
+        parsed = parse_github_repo(repo_url)
+        if parsed is None or not HAS_REQUESTS:
+            return [], None
+        owner, repo = parsed
+        api = f"https://api.github.com/repos/{owner}/{repo}"
+        tags: List[str] = []
+        default_branch: Optional[str] = None
+        try:
+            tags_resp = requests.get(f"{api}/tags", params={"per_page": limit}, timeout=15)
+            if tags_resp.status_code == 200:
+                tags = [t.get("name") for t in tags_resp.json() if t.get("name")]
+            else:
+                log.info(f"[EngineManager] _fetch_github_tags: tags request returned {tags_resp.status_code} for {owner}/{repo}")
+            repo_resp = requests.get(api, timeout=15)
+            if repo_resp.status_code == 200:
+                default_branch = repo_resp.json().get("default_branch")
+        except requests.RequestException as e:
+            log.warning(f"[EngineManager] _fetch_github_tags: network error for {owner}/{repo}: {e}")
+            # Keep whatever was gathered before the failure (possibly nothing).
+        return tags, default_branch
+
+    def get_installed_ref(self, engine_name: str) -> Optional[str]:
+        """Return the ref the engine is currently recorded as installed from.
+
+        None when not recorded (never installed via this path, or uninstalled).
+        Thin accessor over the record store so the web layer needs no direct
+        dependency on it.
+        """
+        return self._record_store.installed_ref(engine_name)
+
+    def _tags_with_cache(self, repo_url: Optional[str]) -> tuple:
+        """Fetch GitHub tags, caching success and falling back to the cache on failure.
+
+        A successful, non-empty fetch is cached (keyed by ``owner/repo``) and
+        returned. When the fetch fails or yields nothing -- a rate-limit, an outage,
+        or a fresh-boot network gap -- the last cached list is returned instead of
+        degrading the picker to only locally-known refs. A genuinely tag-less repo
+        (successful but empty) simply has nothing to cache or fall back to.
+
+        Returns ``(tags, default_branch)``.
+        """
+        parsed = parse_github_repo(repo_url)
+        repo_key = f"{parsed[0]}/{parsed[1]}" if parsed else None
+
+        tags, default_branch = self._fetch_github_tags(repo_url)
+        if tags:
+            if repo_key:
+                self._tag_cache.put(repo_key, tags, default_branch)
+            return tags, default_branch
+
+        if repo_key:
+            cached = self._tag_cache.get(repo_key)
+            if cached and cached.get("tags"):
+                log.info(f"[EngineManager] _tags_with_cache: fetch failed for {repo_key}; using cached tags")
+                # Prefer the freshly-fetched default branch if we got one, else the
+                # cached value (a fetch can fail after the tags request succeeds).
+                return cached["tags"], default_branch or cached.get("default_branch")
+        return tags, default_branch
+
+    def get_engine_refs(self, engine_name: str) -> dict:
+        """Return the selectable git refs for an engine and their state flags.
+
+        Combines live GitHub tags (best-effort) with the locally-known refs -- the
+        catalog pin, the working-ref history, the installed ref -- so the tag picker
+        can offer future releases while still marking which refs are known-working
+        and which is installed. System packages and bundled engines (no repo_url)
+        report ``source_installable=False`` and an empty ref list; the UI then omits
+        the picker.
+
+        Returns a JSON-serializable dict; see :func:`merge_ref_list` for the per-ref
+        entry shape.
+        """
+        if engine_name not in ENGINES:
+            return {"engine": engine_name, "source_installable": False, "refs": []}
+        engine = ENGINES[engine_name]
+        source_installable = not engine.is_system_package and engine.repo_url is not None
+        if not source_installable:
+            return {
+                "engine": engine_name,
+                "source_installable": False,
+                "installed_ref": None,
+                "recommended_ref": None,
+                "default_branch": None,
+                "refs": [],
+            }
+
+        installed_ref = self._record_store.installed_ref(engine_name)
+        working = self._record_store.working_refs(engine_name)
+        pin = engine.git_ref
+        recommended = canonical_ref(engine)
+        tags, default_branch = self._tags_with_cache(engine.repo_url)
+        refs = merge_ref_list(
+            recommended=recommended,
+            installed_ref=installed_ref,
+            pin=pin,
+            working_refs=working,
+            tags=tags,
+            default_branch=default_branch,
+        )
+        return {
+            "engine": engine_name,
+            "source_installable": True,
+            "installed_ref": installed_ref,
+            "recommended_ref": recommended,
+            "default_branch": default_branch,
+            "refs": refs,
+        }
+
     def install_engine(
         self,
         engine_name: str,
         progress_callback: Optional[Callable[[str], None]] = None,
-        stage_callback: Optional[Callable[[InstallStage, str, Optional[float]], None]] = None
+        stage_callback: Optional[Callable[[InstallStage, str, Optional[float]], None]] = None,
+        ref: Optional[str] = None,
     ) -> bool:
         """Install an engine.
         
@@ -632,6 +1005,13 @@ class EngineManager:
                 download_fraction) on each progress update. ``download_fraction``
                 is 0..1 during a download (real byte progress) and None otherwise.
                 Used by the web layer to drive the structured progress bar.
+            ref: Optional git ref (tag/branch, or the :data:`DEFAULT_REF`
+                sentinel for the default branch) to install for a source-built
+                engine. None means the canonical ref (the catalog pin, or the
+                default branch for unpinned engines) and preserves the prior
+                behavior. A non-canonical ref forces a source build because the
+                prebuilt archive only carries the canonical build. Ignored for
+                system packages.
             
         Returns:
             True if installation succeeded
@@ -676,20 +1056,35 @@ class EngineManager:
             if stage_callback:
                 stage_callback(current_stage, msg, fraction)
         
+        # Resolve which ref to build and record. ``ref`` is the user's selection
+        # (or None for the canonical ref). The prebuilt archive carries only the
+        # canonical build, so it can satisfy the request only when the request is
+        # canonical; any other ref must build from source.
+        resolved_ref = resolve_requested_ref(engine, ref)
+        use_prebuilt = prebuilt_allowed_for_ref(engine, ref)
+        log.info(f"[EngineManager] install_engine: requested ref={ref!r}, resolved={resolved_ref!r}, "
+                 f"prebuilt_allowed={use_prebuilt}")
+
         try:
             if engine.is_system_package:
                 log.info(f"[EngineManager] install_engine: Using system package installation for '{engine_name}'")
                 success = self._install_system_package(engine, update_progress)
-            elif engine.has_prebuilt and self._try_install_prebuilt(engine, update_progress):
+            elif engine.has_prebuilt and use_prebuilt and self._try_install_prebuilt(engine, update_progress):
                 # Pre-built binary downloaded and installed successfully
                 log.info(f"[EngineManager] install_engine: Installed pre-built binary for '{engine_name}'")
                 success = True
             else:
                 log.info(f"[EngineManager] install_engine: Using source build installation for '{engine_name}'")
-                success = self._install_from_source(engine, update_progress)
-            
+                success = self._install_from_source(engine, update_progress, ref_label=resolved_ref)
+
+            # Record the installed ref on success for source-built engines so the
+            # UI can show what is installed and mark refs that have ever built
+            # here as known-working. System packages have no ref concept.
+            if success and not engine.is_system_package:
+                self._record_store.record_install(engine_name, resolved_ref)
+
             if success:
-                log.info(f"[EngineManager] install_engine: Successfully installed '{engine_name}'")
+                log.info(f"[EngineManager] install_engine: Successfully installed '{engine_name}' (ref={resolved_ref})")
             else:
                 log.error(f"[EngineManager] install_engine: Failed to install '{engine_name}' - error: {self._install_error}")
             
@@ -797,7 +1192,63 @@ class EngineManager:
             'arm64' for 64-bit ARM, 'armhf' for 32-bit ARM
         """
         return get_current_arch()
-    
+
+    @staticmethod
+    def _missing_packages(packages: List[str]) -> List[str]:
+        """Return the subset of apt packages that are not currently installed.
+
+        Uses ``dpkg-query`` (the local package database) rather than re-running apt,
+        so it reports the actual installed state regardless of why an install failed.
+        A package is considered present only when dpkg reports it ``install ok
+        installed``; ``half-configured``/``unpacked``/absent all count as missing,
+        because the build genuinely cannot rely on it.
+
+        Args:
+            packages: apt package names the build declared as dependencies.
+
+        Returns:
+            The names that are not fully installed, preserving input order.
+        """
+        missing: List[str] = []
+        for pkg in packages:
+            result = subprocess.run(
+                ["dpkg-query", "-W", "-f=${Status}", pkg],
+                capture_output=True, text=True,
+            )
+            if result.returncode != 0 or "install ok installed" not in result.stdout:
+                missing.append(pkg)
+        return missing
+
+    def _copy_extra_files(self, src_base: Path, patterns: List[str]) -> None:
+        """Install an engine's ``extra_files`` from ``src_base`` into engines_dir.
+
+        Each declared entry is resolved against ``src_base`` (a repo checkout or an
+        extracted prebuilt archive's arch dir) via :func:`expand_extra_files`, which
+        supports both literal names (personalities, books, weights) and glob
+        patterns. Globs let version-specific files install without hardcoding a name
+        -- Arasan's NNUE network filename changes per release, so a ``*.nnue`` glob
+        installs whatever ref's network is present and lets non-pinned tags build.
+
+        Matches are installed flat at ``engines_dir/<name>``, replacing any existing
+        destination for directories. A literal entry that does not resolve is logged
+        (likely a build that did not produce an expected file); a glob with no match
+        is silently skipped (not necessarily an error).
+        """
+        for pattern in patterns:
+            is_glob = any(ch in pattern for ch in "*?[")
+            if not is_glob and not (src_base / pattern).exists():
+                log.warning(f"[EngineManager] _copy_extra_files: Declared extra not found: {src_base / pattern}")
+        for match in expand_extra_files(src_base, patterns):
+            dst = self.engines_dir / match.name
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if match.is_dir():
+                if dst.exists():
+                    shutil.rmtree(dst)
+                shutil.copytree(match, dst)
+            else:
+                shutil.copy2(match, dst)
+            log.info(f"[EngineManager] _copy_extra_files: Installed extra '{match.name}' from {match}")
+
     def _try_install_prebuilt(
         self,
         engine: EngineDefinition,
@@ -913,6 +1364,15 @@ class EngineManager:
                 update_progress(f"Installing {engine.display_name}...", InstallStage.INSTALLING_FILES)
                 shutil.copy2(source_path, dest_path)
                 os.chmod(dest_path, 0o755)
+
+                # Install any extra files shipped alongside the binary in the archive
+                # (e.g. Arasan's NNUE network, Rodent IV's personalities/books). The
+                # source build copies these from the repo; the prebuilt path copies the
+                # equivalents staged at <arch>/<extra> or the engine is installed
+                # incomplete (Arasan would fail at runtime with "failed to open network
+                # file"). The same glob-aware helper is used as the source path so
+                # version-specific names (e.g. *.nnue) resolve identically.
+                self._copy_extra_files(extract_dir / arch, engine.extra_files)
             else:
                 log.warning(f"[EngineManager] _try_install_prebuilt: Binary not found at {source_path}")
                 return False
@@ -938,17 +1398,28 @@ class EngineManager:
     def _install_from_source(
         self,
         engine: EngineDefinition,
-        update_progress: Callable[..., None]
+        update_progress: Callable[..., None],
+        ref_label: Optional[str] = None,
     ) -> bool:
         """Install engine by building from source.
         
         Args:
             engine: Engine definition
             update_progress: Callback for progress messages (msg, stage, fraction)
+            ref_label: Resolved ref label to build (a tag/branch, or the
+                :data:`DEFAULT_REF` sentinel for the default branch). None falls
+                back to the catalog ``git_ref`` (the legacy behavior). The
+                :data:`DEFAULT_REF` sentinel maps to an unpinned clone even for a
+                pinned engine, so the latest code can be tried from the UI.
             
         Returns:
             True if installation succeeded
         """
+        # The effective git ref drives the clone: a real tag/branch is passed to
+        # ``--branch``; None clones the default branch. When the caller requests a
+        # ref it overrides the catalog pin (that is the point of the tag picker).
+        effective_git_ref = git_ref_for_label(ref_label) if ref_label is not None else engine.git_ref
+        log.info(f"[EngineManager] _install_from_source: ref_label={ref_label!r} -> effective_git_ref={effective_git_ref!r}")
         log.info(f"[EngineManager] _install_from_source: Starting source build for '{engine.name}'")
         log.info(f"[EngineManager] _install_from_source: Repo URL: {engine.repo_url}")
         log.info(f"[EngineManager] _install_from_source: Build commands: {engine.build_commands}")
@@ -960,7 +1431,17 @@ class EngineManager:
         repo_dir = self.build_tmp / engine.name
         log.debug(f"[EngineManager] _install_from_source: Repo directory: {repo_dir}")
         
-        # Install build dependencies
+        # Install build dependencies.
+        #
+        # A failed dependency install must abort the build. Previously this only
+        # logged a warning and continued, so a missing build tool surfaced much later
+        # as a cryptic compiler/Makefile error from the *build* step (e.g. Ethereal
+        # and Demolito died with "clang: not found", Arasan with "No 'bc' found")
+        # rather than an actionable "could not install <pkg>". The apt failure was
+        # usually environmental -- e.g. a half-configured package wedging apt, or the
+        # dpkg lock held -- which the cryptic build error completely hid. Verify the
+        # packages are actually present after the install and stop with a clear
+        # message naming what is missing if not.
         if engine.dependencies:
             update_progress(f"Installing build dependencies...", InstallStage.INSTALLING_DEPS)
             deps = " ".join(engine.dependencies)
@@ -974,9 +1455,34 @@ class EngineManager:
                 log.warning(f"[EngineManager] _install_from_source: Dependency stderr: {result.stderr.strip()}")
             else:
                 log.info(f"[EngineManager] _install_from_source: Dependencies installed successfully")
+
+            missing = self._missing_packages(engine.dependencies)
+            if missing:
+                # Surface the apt error (truncated) so the real cause -- not just the
+                # symptom -- is visible to the user in the install-error UI.
+                apt_err = (result.stderr.strip() or result.stdout.strip())[:200]
+                self._install_error = (
+                    f"Could not install required build dependencies: {', '.join(missing)}. "
+                    f"apt error: {apt_err}" if apt_err else
+                    f"Could not install required build dependencies: {', '.join(missing)}."
+                )
+                log.error(f"[EngineManager] _install_from_source: Missing dependencies after install: {missing}")
+                return False
         else:
             log.debug(f"[EngineManager] _install_from_source: No dependencies to install")
         
+        # A build tied to a specific ref must build from exactly that ref. Reusing a
+        # leftover checkout from a previous install -- possibly a different ref, or a
+        # tree with stale object files from another BUILD_TYPE -- would silently build
+        # the wrong thing. Shallow tag clones also cannot be `git pull`-ed onto a new
+        # tag cleanly. So start from a clean clone whenever a specific ref is targeted
+        # (a catalog pin, or any ref the user picked -- including explicitly choosing
+        # the default branch after a previous tagged install).
+        must_clean_clone = ref_label is not None or effective_git_ref is not None
+        if must_clean_clone and engine.repo_url is not None and repo_dir.exists():
+            log.info(f"[EngineManager] _install_from_source: Targeting ref {effective_git_ref or 'default branch'}; removing stale checkout {repo_dir}")
+            shutil.rmtree(repo_dir, ignore_errors=True)
+
         # Clone or update repository (skip if repo_url is None - engine uses custom build script)
         if engine.repo_url is None:
             log.info(f"[EngineManager] _install_from_source: No repo_url - engine uses custom build script")
@@ -1009,12 +1515,15 @@ class EngineManager:
             update_progress(f"Cloning {engine.display_name} repository...", InstallStage.CLONING)
             log.info(f"[EngineManager] _install_from_source: Cloning {engine.repo_url} to {repo_dir}")
             
-            # Build clone command - use submodules if needed
-            clone_cmd = ["git", "clone"]
+            # Build clone command. Always shallow (--depth 1): we never need history,
+            # only a buildable tree, and shallow keeps low-memory devices from cloning
+            # large repos (Arasan's book PGNs are sizeable). --branch accepts a tag or
+            # branch name, so a pinned git_ref clones exactly that release.
+            clone_cmd = ["git", "clone", "--depth", "1"]
+            if effective_git_ref:
+                clone_cmd.extend(["--branch", effective_git_ref])
             if engine.clone_with_submodules:
-                clone_cmd.extend(["--recurse-submodules"])
-            else:
-                clone_cmd.extend(["--depth", "1"])
+                clone_cmd.extend(["--recurse-submodules", "--shallow-submodules"])
             clone_cmd.extend([engine.repo_url, str(repo_dir)])
             
             log.info(f"[EngineManager] _install_from_source: Clone command: {' '.join(clone_cmd)}")
@@ -1104,25 +1613,12 @@ class EngineManager:
         os.chmod(dst_binary, 0o755)
         log.info(f"[EngineManager] _install_from_source: Binary installed and made executable")
         
-        # Copy extra files (personalities, books, weights, etc.)
+        # Copy extra files (personalities, books, weights, NNUE networks, etc.).
+        # Shared glob-aware helper so version-specific names (e.g. Arasan's *.nnue)
+        # resolve without hardcoding, matching the prebuilt path exactly.
         if engine.extra_files:
             log.info(f"[EngineManager] _install_from_source: Copying {len(engine.extra_files)} extra files/directories")
-        for extra in engine.extra_files:
-            src_extra = repo_dir / extra
-            if src_extra.exists():
-                dst_extra = self.engines_dir / extra
-                log.debug(f"[EngineManager] _install_from_source: Copying extra '{extra}': {src_extra} -> {dst_extra}")
-                if src_extra.is_dir():
-                    if dst_extra.exists():
-                        log.debug(f"[EngineManager] _install_from_source: Removing existing directory {dst_extra}")
-                        shutil.rmtree(dst_extra)
-                    shutil.copytree(src_extra, dst_extra)
-                    log.debug(f"[EngineManager] _install_from_source: Copied directory {extra}")
-                else:
-                    shutil.copy2(src_extra, dst_extra)
-                    log.debug(f"[EngineManager] _install_from_source: Copied file {extra}")
-            else:
-                log.warning(f"[EngineManager] _install_from_source: Extra file/dir not found: {src_extra}")
+            self._copy_extra_files(repo_dir, engine.extra_files)
         
         # Set ownership
         log.debug(f"[EngineManager] _install_from_source: Setting ownership to pi:pi on {self.engines_dir}")
@@ -1182,21 +1678,18 @@ class EngineManager:
         else:
             log.debug(f"[EngineManager] uninstall_engine: Binary not found at {binary_path}")
         
-        # Remove extra files
-        for extra in engine.extra_files:
-            extra_path = self.engines_dir / extra
-            if extra_path.exists():
-                try:
-                    if extra_path.is_dir():
-                        shutil.rmtree(extra_path)
-                        log.info(f"[EngineManager] uninstall_engine: Removed directory {extra_path}")
-                    else:
-                        extra_path.unlink()
-                        log.info(f"[EngineManager] uninstall_engine: Removed file {extra_path}")
-                except OSError as e:
-                    log.error(f"[EngineManager] uninstall_engine: Failed to remove {extra_path}: {e}")
-            else:
-                log.debug(f"[EngineManager] uninstall_engine: Extra file/dir not found: {extra_path}")
+        # Remove extra files. Resolved with the same glob-aware helper as install so
+        # version-specific names (e.g. *.nnue) are matched in engines_dir.
+        for extra_path in expand_extra_files(self.engines_dir, engine.extra_files):
+            try:
+                if extra_path.is_dir():
+                    shutil.rmtree(extra_path)
+                    log.info(f"[EngineManager] uninstall_engine: Removed directory {extra_path}")
+                else:
+                    extra_path.unlink()
+                    log.info(f"[EngineManager] uninstall_engine: Removed file {extra_path}")
+            except OSError as e:
+                log.error(f"[EngineManager] uninstall_engine: Failed to remove {extra_path}: {e}")
         
         # Clean build directory
         build_dir = self.build_tmp / engine.name
@@ -1209,6 +1702,10 @@ class EngineManager:
         else:
             log.debug(f"[EngineManager] uninstall_engine: No build directory at {build_dir}")
         
+        # Clear the current installed ref but keep the working-ref history: an
+        # uninstall does not erase the fact that those refs once built here.
+        self._record_store.record_uninstall(engine_name)
+
         log.info(f"[EngineManager] uninstall_engine: Successfully uninstalled '{engine_name}'")
         return True
     

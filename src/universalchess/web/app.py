@@ -3426,6 +3426,7 @@ def api_get_all_engines():
     try:
         from universalchess.managers.engine_manager import (
             EngineManager, ENGINES, arch_unsupported_reason, get_current_arch,
+            canonical_ref,
         )
 
         engine_manager = EngineManager()
@@ -3437,6 +3438,11 @@ def api_get_all_engines():
         for name, engine_def in ENGINES.items():
             is_installed = engine_def.is_system_package or engine_manager.is_installed(name)
             unsupported_reason = arch_unsupported_reason(engine_def, arch)
+            # Source-built engines support the ref picker; system packages and
+            # bundled engines (no repo_url) do not. Reported here so the list view
+            # can decide whether to fetch/show the picker without a per-engine
+            # network round-trip (tags come from the dedicated /refs endpoint).
+            source_installable = not engine_def.is_system_package and engine_def.repo_url is not None
             engines_list.append({
                 "name": name,
                 "display_name": engine_def.display_name,
@@ -3452,6 +3458,13 @@ def api_get_all_engines():
                 # install button state; `unsupported_reason` explains why when False.
                 "supported": unsupported_reason is None,
                 "unsupported_reason": unsupported_reason,
+                # Ref tracking (local-only, no network): whether the engine supports
+                # the picker, the canonical/recommended ref, and the ref currently
+                # installed (None if unknown/not installed). The selectable tag list
+                # is served by GET /api/engines/<name>/refs.
+                "source_installable": source_installable,
+                "recommended_ref": canonical_ref(engine_def) if source_installable else None,
+                "installed_ref": engine_manager.get_installed_ref(name) if source_installable else None,
             })
 
         return jsonify(engines_list)
@@ -3470,12 +3483,13 @@ _engine_install_store = engine_install_state.STORE
 _engine_install_store.reconcile_interrupted()
 
 
-def _run_engine_install(engine_name: str):
+def _run_engine_install(engine_name: str, ref: Optional[str] = None):
     """Background thread to install an engine, persisting structured progress.
 
     The stage_callback writes each update to the store so a concurrent
     GET /api/engines/status (and any fresh page load) sees the live stage and
-    percent.
+    percent. ``ref`` is the optional git ref the user chose in the tag picker
+    (None for the canonical ref).
     """
     from universalchess.managers.engine_manager import EngineManager
 
@@ -3484,7 +3498,7 @@ def _run_engine_install(engine_name: str):
 
     try:
         engine_manager = EngineManager()
-        success = engine_manager.install_engine(engine_name, stage_callback=on_stage)
+        success = engine_manager.install_engine(engine_name, stage_callback=on_stage, ref=ref)
         error = None if success else (engine_manager.get_install_error() or "Installation failed")
         _engine_install_store.finish(success=success, error=error)
     except Exception as e:
@@ -3492,11 +3506,11 @@ def _run_engine_install(engine_name: str):
         _engine_install_store.finish(success=False, error="Installation failed")
 
 
-def _start_engine_install(engine_name: str):
+def _start_engine_install(engine_name: str, ref: Optional[str] = None):
     """Initialize the persisted state and spawn the install thread.
 
-    Caller is responsible for validating the engine name and that no install is
-    already active.
+    Caller is responsible for validating the engine name, the ref, and that no
+    install is already active.
     """
     from universalchess.managers.engine_manager import ENGINES
     engine = ENGINES[engine_name]
@@ -3505,23 +3519,49 @@ def _start_engine_install(engine_name: str):
         engine.display_name,
         estimated_seconds=engine.estimated_install_minutes * 60,
     )
-    thread = threading.Thread(target=_run_engine_install, args=(engine_name,), daemon=True)
+    thread = threading.Thread(target=_run_engine_install, args=(engine_name, ref), daemon=True)
     thread.start()
+
+
+@app.route("/api/engines/<engine_name>/refs", methods=["GET"])
+def api_get_engine_refs(engine_name):
+    """List the selectable git refs (tags/branches) for a source-built engine.
+
+    Merges live GitHub tags (best-effort; degrades to locally-known refs offline)
+    with the catalog pin, the working-ref history, and the installed ref, flagging
+    each. Drives the tag picker; the UI omits the picker when
+    ``source_installable`` is False.
+    """
+    try:
+        from universalchess.managers.engine_manager import EngineManager, ENGINES
+        if engine_name not in ENGINES:
+            return jsonify({"error": f"Unknown engine: {engine_name}"}), 404
+        engine_manager = EngineManager()
+        return jsonify(engine_manager.get_engine_refs(engine_name))
+    except Exception as e:
+        return _internal_error(e)
 
 
 @app.route("/api/engines/install", methods=["POST"])
 def api_install_engine():
-    """Start installing an engine."""
+    """Start installing an engine, optionally from a chosen git ref."""
     try:
         data = request.get_json()
         engine_name = data.get("engine") if data else None
+        ref = data.get("ref") if data else None
 
         if not engine_name:
             return jsonify({"success": False, "error": "No engine specified"}), 400
 
-        from universalchess.managers.engine_manager import ENGINES
+        from universalchess.managers.engine_manager import ENGINES, is_valid_ref
         if engine_name not in ENGINES:
             return jsonify({"success": False, "error": f"Unknown engine: {engine_name}"}), 400
+
+        # An empty/omitted ref means "canonical" (the prior behavior). A provided
+        # ref must be syntactically valid before it reaches `git clone --branch`.
+        if ref is not None and ref != "" and not is_valid_ref(ref):
+            return jsonify({"success": False, "error": f"Invalid ref: {ref}"}), 400
+        ref = ref or None
 
         if _engine_install_store.status_dict()["active"]:
             return jsonify({
@@ -3529,7 +3569,7 @@ def api_install_engine():
                 "error": f"Already installing {_engine_install_store.status_dict()['engine']}"
             }), 409
 
-        _start_engine_install(engine_name)
+        _start_engine_install(engine_name, ref=ref)
         return jsonify({"success": True, "message": f"Installing {engine_name}"})
     except Exception as e:
         return _internal_error(e)

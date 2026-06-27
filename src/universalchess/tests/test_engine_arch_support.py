@@ -122,6 +122,22 @@ def test_weiss_catalog_entry_is_arm64_only():
     assert ENGINES["weiss"].supported_archs == frozenset({"arm64"})
 
 
+def test_arasan_catalog_entry_is_arm64_only():
+    """The real Arasan catalog entry declares arm64-only support.
+
+    Why: Arasan's NNUE SparseLinear layer is gated by
+    ``static_assert(0, "requires SIMD")`` (so a non-SIMD build does not compile),
+    and the Makefile defines a SIMD path only for the arm64/aarch64 arch tokens
+    (NEON). 32-bit ARM (armhf) therefore has no buildable configuration. The
+    catalog must gate it to arm64 so the install button is disabled on 32-bit
+    rather than offering a doomed build. Regression: re-offering Arasan on armhf
+    reintroduces the static_assert / missing-SIMD compile failure on the board.
+    """
+    from universalchess.managers.engine_manager import ENGINES
+
+    assert ENGINES["arasan"].supported_archs == frozenset({"arm64"})
+
+
 @pytest.mark.parametrize("arch", ["armhf", "arm64"])
 def test_empty_supported_archs_unsupported_everywhere(arch):
     """supported_archs=frozenset() means unsupported on every architecture.

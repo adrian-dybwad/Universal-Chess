@@ -266,6 +266,20 @@
   flex-wrap: wrap;
 }
 
+/* Release (git ref) picker shown to the left of the Install button for
+   source-built engines. Sized to sit inline without dominating the row. */
+.engine-ref-select {
+  max-width: 16rem;
+  font-size: var(--text-sm);
+}
+
+/* "Installed release: <ref>" line shown for an installed source-built engine. */
+.engine-installed-ref {
+  font-size: var(--text-xs);
+  color: var(--color-text-lighter);
+  margin-bottom: var(--space-3);
+}
+
 .engine-install-note {
   display: inline-flex;
   align-items: center;

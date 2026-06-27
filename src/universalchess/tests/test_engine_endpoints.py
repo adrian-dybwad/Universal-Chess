@@ -65,6 +65,8 @@ class _SyncThread:
     runs.
     """
 
+    # ``_start_engine_install`` dispatches the worker with positional
+    # (engine_name, ref); accept and forward both so the stubbed target sees them.
     def __init__(self, target=None, args=(), kwargs=None, daemon=None):
         self._target = target
         self._args = args
@@ -112,7 +114,7 @@ def test_install_starts_with_engine_in_json_body(client, monkeypatch):
     would stay empty / the status singleton would not flip to installing.
     """
     dispatched = []
-    monkeypatch.setattr(webapp, "_run_engine_install", lambda name: dispatched.append(name))
+    monkeypatch.setattr(webapp, "_run_engine_install", lambda name, ref=None: dispatched.append(name))
     # Run the dispatched worker inline so the assertion does not race a thread.
     monkeypatch.setattr(threading, "Thread", _SyncThread)
 
@@ -134,6 +136,101 @@ def test_install_starts_with_engine_in_json_body(client, monkeypatch):
     assert status["engine"] == INSTALLABLE_ENGINE
 
 
+def test_install_forwards_chosen_ref_to_worker(client, monkeypatch):
+    """A ``ref`` in the body is forwarded to the install worker verbatim.
+
+    Why this test exists: the tag picker sends the chosen release as ``ref``; if the
+    endpoint dropped it, every install would silently build the canonical ref and
+    the picker would be inert.
+
+    How it manifests: a regression that ignored ``ref`` would record None below
+    instead of the requested tag.
+    """
+    captured = {}
+    monkeypatch.setattr(
+        webapp, "_run_engine_install",
+        lambda name, ref=None: captured.update(name=name, ref=ref),
+    )
+    monkeypatch.setattr(threading, "Thread", _SyncThread)
+
+    resp = client.post(
+        "/api/engines/install",
+        data=json.dumps({"engine": INSTALLABLE_ENGINE, "ref": "v25.5"}),
+        content_type="application/json",
+    )
+
+    assert resp.status_code == 200
+    assert captured == {"name": INSTALLABLE_ENGINE, "ref": "v25.5"}
+
+
+def test_install_rejects_malformed_ref(client, monkeypatch):
+    """A syntactically invalid ref is rejected before any install starts.
+
+    Why this test exists: the ref reaches ``git clone --branch``; a leading dash
+    could be read as a git option. The endpoint must reject such input with 400 and
+    start nothing.
+
+    How it manifests: dropping the validation would dispatch the worker (captured
+    set) and return success for an unsafe ref.
+    """
+    captured = {}
+    monkeypatch.setattr(
+        webapp, "_run_engine_install",
+        lambda name, ref=None: captured.update(name=name, ref=ref),
+    )
+    monkeypatch.setattr(threading, "Thread", _SyncThread)
+
+    resp = client.post(
+        "/api/engines/install",
+        data=json.dumps({"engine": INSTALLABLE_ENGINE, "ref": "--upload-pack=evil"}),
+        content_type="application/json",
+    )
+
+    assert resp.status_code == 400
+    assert captured == {}
+    assert webapp._engine_install_store.status_dict()["active"] is False
+
+
+def test_refs_endpoint_reports_source_installable_and_recommended(client, monkeypatch):
+    """GET /api/engines/<name>/refs returns the picker payload for a source engine.
+
+    Why this test exists: the picker depends on this endpoint to know an engine is
+    source-installable and what the recommended/installed refs are. GitHub is
+    stubbed empty so the test is deterministic and offline; the locally-known refs
+    must still be present.
+
+    How it manifests: a regression in get_engine_refs wiring would drop
+    source_installable or the recommended ref, leaving the picker with nothing to
+    show.
+    """
+    # Force offline tag discovery so the response is deterministic.
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.EngineManager._fetch_github_tags",
+        staticmethod(lambda repo_url, limit=30: ([], "master")),
+    )
+
+    resp = client.get(f"/api/engines/{INSTALLABLE_ENGINE}/refs")
+    assert resp.status_code == 200
+    body = json.loads(resp.data)
+    assert body["source_installable"] is True
+    assert body["recommended_ref"]
+    # The recommended ref is always offered as a selectable entry.
+    assert any(r["ref"] == body["recommended_ref"] for r in body["refs"])
+
+
+def test_refs_endpoint_unknown_engine_is_404(client):
+    """An unknown engine name yields 404 from the refs endpoint.
+
+    Why this test exists: the route takes an arbitrary path segment; an unknown
+    engine must be a clean 404, not a 500.
+
+    How it manifests: missing the membership check would raise inside
+    get_engine_refs and surface as a 500.
+    """
+    resp = client.get("/api/engines/not-a-real-engine/refs")
+    assert resp.status_code == 404
+
+
 def test_install_path_style_url_does_not_start_install(client, monkeypatch):
     """The old path-style URL has no POST handler and must not start an install.
 
@@ -146,7 +243,7 @@ def test_install_path_style_url_does_not_start_install(client, monkeypatch):
     two Werkzeug returns. The key guarantee is no dispatch / no state change.
     """
     dispatched = []
-    monkeypatch.setattr(webapp, "_run_engine_install", lambda name: dispatched.append(name))
+    monkeypatch.setattr(webapp, "_run_engine_install", lambda name, ref=None: dispatched.append(name))
     monkeypatch.setattr(threading, "Thread", _SyncThread)
 
     resp = client.post(f"/api/engines/install/{INSTALLABLE_ENGINE}")
@@ -194,7 +291,7 @@ def test_install_while_installing_returns_409(client, monkeypatch):
     staying empty confirms no second worker was started.
     """
     dispatched = []
-    monkeypatch.setattr(webapp, "_run_engine_install", lambda name: dispatched.append(name))
+    monkeypatch.setattr(webapp, "_run_engine_install", lambda name, ref=None: dispatched.append(name))
     monkeypatch.setattr(threading, "Thread", _SyncThread)
     webapp._engine_install_store.start(SYSTEM_ENGINE, "Stockfish", estimated_seconds=0)
 
@@ -370,7 +467,7 @@ def test_resume_relaunches_interrupted_install(install_store, client, monkeypatc
     """
     _seed_interrupted(install_store)
     dispatched = []
-    monkeypatch.setattr(webapp, "_run_engine_install", lambda name: dispatched.append(name))
+    monkeypatch.setattr(webapp, "_run_engine_install", lambda name, ref=None: dispatched.append(name))
     monkeypatch.setattr(threading, "Thread", _SyncThread)
 
     resp = client.post("/api/engines/resume")
@@ -388,7 +485,7 @@ def test_resume_without_interrupted_returns_400(install_store, client, monkeypat
     dropped the guard would dispatch an install for engine=None.
     """
     dispatched = []
-    monkeypatch.setattr(webapp, "_run_engine_install", lambda name: dispatched.append(name))
+    monkeypatch.setattr(webapp, "_run_engine_install", lambda name, ref=None: dispatched.append(name))
     monkeypatch.setattr(threading, "Thread", _SyncThread)
 
     resp = client.post("/api/engines/resume")
@@ -406,7 +503,7 @@ def test_resume_while_active_returns_409(install_store, client, monkeypatch):
     """
     install_store.start(INSTALLABLE_ENGINE, "Berserk", estimated_seconds=900)
     dispatched = []
-    monkeypatch.setattr(webapp, "_run_engine_install", lambda name: dispatched.append(name))
+    monkeypatch.setattr(webapp, "_run_engine_install", lambda name, ref=None: dispatched.append(name))
     monkeypatch.setattr(threading, "Thread", _SyncThread)
 
     resp = client.post("/api/engines/resume")

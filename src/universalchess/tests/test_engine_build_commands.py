@@ -100,8 +100,19 @@ class TestEtherealBuildCommand:
         assert "clang" not in ENGINES["ethereal"].dependencies
 
 
+# Arasan's NNUE network filename is version-specific (changes per release), so the
+# build stages and installs it by glob rather than a hardcoded name. This lets the
+# tag picker build any ref without a catalog edit. Guarded below.
+ARASAN_NNUE_GLOB = "*.nnue"
+
+
 class TestArasanBuildCommand:
-    """Guards Arasan's output name/location and arm64 NEON selection."""
+    """Guards Arasan's arm64 clang/NEON recipe, release pin, and NNUE install.
+
+    Each of these was an independent on-device build failure that compiles fine in
+    isolation but breaks only on the target board, so the catalog definition is the
+    highest deterministic level at which they can be guarded.
+    """
 
     def test_binary_path_points_to_bin_not_src(self):
         """Arasan's binary_path must be ``bin/arasan``, never ``src/arasan``.
@@ -109,9 +120,8 @@ class TestArasanBuildCommand:
         Why this test exists: Arasan's Makefile writes the executable to
         ../bin/arasanx-<bits> (EXPORT=../bin), not to src/. The catalog previously
         declared binary_path=src/arasan, so every install compiled fine and then
-        failed the post-build existence check with "Binary not found: src/arasan"
-        -- and the CI ``cp arasan`` (from src/) failed too, so no prebuilt ever
-        shipped. The fix pairs EXE=arasan (fixed name) with binary_path=bin/arasan.
+        failed the post-build existence check with "Binary not found: src/arasan".
+        The fix pairs EXE=arasan (fixed name) with binary_path=bin/arasan.
 
         How the regression manifests: reverting binary_path to src/arasan (or any
         src/ path) trips this and reintroduces the silent install failure.
@@ -123,32 +133,123 @@ class TestArasanBuildCommand:
     def test_fixes_exe_name(self):
         """The build must pass ``EXE=arasan`` so the output name is deterministic.
 
-        Why this test exists: without EXE the Makefile emits arasanx-$(LONG_BIT)
-        (arasanx-64 / arasanx-32), which neither binary_path nor the CI cp can
-        predict. EXE=arasan pins ../bin/arasan on both arches.
+        Why this test exists: without EXE the Makefile emits arasanx-$(LONG_BIT),
+        which neither binary_path nor the CI cp can predict. EXE=arasan pins
+        ../bin/arasan.
 
         How the regression manifests: dropping EXE=arasan reverts to the
         arch-dependent arasanx-<bits> name and the binary is not found post-build.
         """
         assert "EXE=arasan" in _build_script("arasan")
 
-    def test_requests_neon_only_on_64bit_arm(self):
-        """NEON must be gated on the arm64/aarch64 uname, not applied blindly.
+    def test_builds_with_clang(self):
+        """Arasan must build with ``CC=clang++``.
 
-        Why this test exists: Arasan's Makefile defines NEON flags only for the
-        arm64/aarch64 arch tokens (no armv7l branch) and enables them only with
-        BUILD_TYPE=neon. The vectorized NNUE path should be requested on 64-bit ARM
-        for speed, while 32-bit ARM must stay on the scalar fallback. The command
-        therefore adds BUILD_TYPE=neon under a uname case for aarch64/arm64.
+        Why this test exists: the Makefile defaults to g++, which rejects Arasan's
+        NEON vector-type conversions in nnue/simddefs.h ("cannot convert
+        int16x8_t to int32x4_t" and similar). doc/BUILD.md states clang is the
+        required compiler for ARM; clang accepts those conversions. A g++ build of
+        this engine cannot succeed on the board.
 
-        How the regression manifests: removing the guard (applying BUILD_TYPE=neon
-        unconditionally) would request a non-existent NEON build on armhf; dropping
-        it entirely would leave arm64 on the slower scalar NNUE path.
+        How the regression manifests: dropping CC=clang++ falls back to g++ and the
+        on-device build dies in nnue/simddefs.h before producing any binary.
+        """
+        assert "CC=clang++" in _build_script("arasan")
+
+    def test_requests_neon_unconditionally(self):
+        """BUILD_TYPE=neon must be passed (Arasan is arm64-only).
+
+        Why this test exists: Arasan's NNUE SparseLinear layer has
+        ``static_assert(0, "requires SIMD")``, so a non-SIMD build does not compile
+        at all -- BUILD_TYPE=neon is mandatory, not an optimization. Because the
+        engine is gated to arm64 (the only arch with a NEON path), the flag is now
+        unconditional rather than guarded by a uname check.
+
+        How the regression manifests: removing BUILD_TYPE=neon selects the scalar
+        path and the build fails on the static_assert.
+        """
+        assert "BUILD_TYPE=neon" in _build_script("arasan")
+
+    def test_overrides_gold_linker(self):
+        """The build must not link with the removed gold linker.
+
+        Why this test exists: Arasan's Makefile hardcodes ``-fuse-ld=gold``, but the
+        gold linker was removed from binutils 2.44 (Raspberry Pi OS Trixie), so the
+        link aborts with "invalid linker name in argument '-fuse-ld=gold'". A
+        command-line LDFLAGS assignment overrides the Makefile's append and drops the
+        flag, falling back to the default bfd linker.
+
+        How the regression manifests: dropping the LDFLAGS override lets the
+        Makefile's -fuse-ld=gold through and the link fails on every board.
         """
         script = _build_script("arasan")
-        assert "BUILD_TYPE=neon" in script
-        assert "uname -m" in script
-        assert "aarch64" in script and "arm64" in script
+        assert "LDFLAGS=" in script
+        assert "-fuse-ld=gold" not in script
+
+    def test_pinned_to_release_tag(self):
+        """Arasan must be pinned to a tagged release, not track master.
+
+        Why this test exists: master's NEON path has regressed (the nnue/simd.h
+        calcNnzData rewrite fails to compile), so an unpinned clone builds or fails
+        depending on the day. Pinning to a verified release tag makes installs
+        reproducible.
+
+        How the regression manifests: clearing git_ref reverts to cloning master,
+        reintroducing the intermittent compile failure.
+        """
+        assert ENGINES["arasan"].git_ref == "v25.4"
+
+    def test_clones_submodules(self):
+        """Arasan must clone with submodules.
+
+        Why this test exists: the Syzygy probing code (syzygy/src/tbprobe.h) and the
+        NNUE network live in git submodules. Without them the build dies at
+        "syzygy/src/tbprobe.h: No such file or directory".
+
+        How the regression manifests: setting clone_with_submodules False omits the
+        submodules and the build fails compiling syzygy.cpp.
+        """
+        assert ENGINES["arasan"].clone_with_submodules is True
+
+    def test_installs_nnue_network_by_glob(self):
+        """The NNUE network must be staged and installed beside the binary via glob.
+
+        Why this test exists: Arasan loads its network from the executable's own
+        directory and embeds an exact, version-specific filename; without the file
+        it refuses to evaluate ("failed to open network file"). The build copies the
+        network to the repo root and extra_files installs it next to the engine. A
+        glob (not a hardcoded name) is required so the tag picker can build any
+        release -- a different tag ships a differently-named network.
+
+        How the regression manifests: hardcoding a specific filename would let only
+        that one release build (other tags' cp would match nothing and the engine
+        would install without a network); dropping the cp/extra_files entirely
+        installs a binary that cannot load its network.
+        """
+        engine = ENGINES["arasan"]
+        assert ARASAN_NNUE_GLOB in engine.extra_files
+        # The build must stage *.nnue from the submodule's network/ dir so whatever
+        # network the checked-out ref ships lands beside the binary.
+        assert "network/*.nnue" in _build_script("arasan")
+
+    def test_requires_clang_not_bc_gawk(self):
+        """Dependencies must include clang and must not include bc/gawk.
+
+        Why this test exists: clang is required to compile (see test_builds_with_clang).
+        bc/gawk are only used by the Makefile's g++ branch (to compute the gcc
+        version); with clang they are unnecessary, and a missing bc previously
+        produced a confusing "No 'bc' found" Makefile error on boards where apt was
+        wedged. Keeping the dependency list accurate avoids installing tools the
+        clang build never uses.
+
+        How the regression manifests: re-adding bc/gawk reintroduces unused deps
+        whose install failure could abort the build; dropping clang makes the build
+        fail to find a usable compiler.
+        """
+        deps = ENGINES["arasan"].dependencies
+        assert "clang" in deps
+        assert "bc" not in deps
+        assert "gawk" not in deps
 
 
 class TestDemolitoBuildCommand:

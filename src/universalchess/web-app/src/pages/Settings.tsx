@@ -6,7 +6,7 @@ import { EngineProfileEditor } from '../components/EngineProfileEditor';
 import type { FieldValue } from '../components/CatalogField';
 import { LoginDialog } from '../components/LoginDialog';
 import { MenuIcon } from '../components/MenuIcon';
-import type { EngineDefinition } from '../types/game';
+import type { EngineDefinition, EngineRef, EngineRefsResponse } from '../types/game';
 import type { MenuCatalog, MenuOption, MenuCondition, MenuNode } from '../types/menuCatalog';
 import { fieldById, fieldsForSection } from '../types/menuCatalog';
 import { apiFetch, buildApiUrl, getStoredCredentials, encodeBasicAuth, storeCredentials } from '../utils/api';
@@ -193,6 +193,13 @@ export function Settings() {
   // interrupted-install Resume/Cancel controls. Null when nothing relevant is in
   // progress or pending.
   const [installStatus, setInstallStatus] = useState<EngineInstallStatus | null>(null);
+  // The engine whose install this client is actively tracking. Set when an
+  // install is observed active (from any client) or started/resumed here; used by
+  // the status watcher to detect the active->inactive transition exactly once
+  // (refresh + surface result) without re-acting on the finished state the status
+  // endpoint keeps returning afterwards. A ref (not state) so the watcher reads
+  // the latest value without re-subscribing.
+  const installTrackRef = useRef<string | null>(null);
   // Engine action error, scoped to the engine it concerns so it can be rendered
   // in that engine's card (below its action button) instead of at the top of the
   // list, where it is easy to miss while scrolling/installing.
@@ -447,40 +454,63 @@ export function Settings() {
     return enginesData;
   }, []);
 
-  // Poll the shared install-status endpoint until the in-progress install
-  // finishes, then refresh the engine list. The install runs in a background
-  // thread on the board, so the status singleton (GET /api/engines/status) is
-  // the source of truth -- this is reused both when an install is started from
-  // this session and when the page loads while one is already running, so the
-  // progress and any failure survive a page reload.
-  const pollEngineInstall = useCallback((engineName: string) => {
-    const checkStatus = async () => {
+  // Continuously mirror the shared install status onto the engine cards.
+  //
+  // The board installs one engine at a time on a background thread; GET
+  // /api/engines/status is the single source of truth shared by all clients. A
+  // chained-timeout poll (like the background-activity banner) keeps EVERY open
+  // client's cards in sync -- crucially including a client that was already on
+  // this page when an install was started from a different browser, which the
+  // previous one-shot/self-terminating poll never noticed.
+  //
+  // `installTrackRef` records the engine being tracked so the active->inactive
+  // transition refreshes the list and surfaces a failure exactly once; the status
+  // endpoint keeps returning the finished state afterwards, which must not
+  // re-trigger. Polls quickly while an install is in flight and backs off when
+  // idle to limit load on the (often busy) board.
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+
+    const tick = async () => {
       try {
         const status: EngineInstallStatus = await apiFetch('/api/engines/status').then((r) => r.json());
-        if (status.active) {
-          setInstallStatus(status);
-          setInstallingEngine(status.engine ?? engineName);
-          setTimeout(checkStatus, 2000);
-          return;
-        }
-        // Install finished (or was reconciled away). Refresh the list and clear
-        // the in-progress UI; surface any failure via the error card.
-        const enginesData = await refreshEngines();
-        setInstallingEngine(null);
-        setInstallStatus(null);
-        const result = status.result;
-        if (result && result.success === false) {
-          const label = enginesData.find((e) => e.name === engineName)?.display_name ?? engineName;
-          setEngineError({ engine: engineName, message: `Failed to install ${label}.${result.error ? ` ${result.error}` : ''}` });
+        if (!cancelled) {
+          if (status.active && status.engine) {
+            installTrackRef.current = status.engine;
+            setInstallingEngine(status.engine);
+            setInstallStatus(status);
+          } else if (installTrackRef.current) {
+            // active -> inactive: the install we were tracking just finished.
+            const finishedEngine = installTrackRef.current;
+            installTrackRef.current = null;
+            const enginesData = await refreshEngines();
+            setInstallingEngine(null);
+            setInstallStatus(null);
+            const result = status.result;
+            if (result && result.success === false) {
+              const label = enginesData.find((e) => e.name === finishedEngine)?.display_name ?? finishedEngine;
+              setEngineError({ engine: finishedEngine, message: `Failed to install ${label}.${result.error ? ` ${result.error}` : ''}` });
+            }
+          } else if (status.interrupted && status.engine) {
+            // An install was running before the last restart; offer Resume/Cancel.
+            setInstallStatus(status);
+          }
         }
       } catch (e) {
+        // Best-effort: a failed poll keeps the last known card state and retries.
         console.error('Failed to poll engine install status:', e);
-        setInstallingEngine(null);
-        setInstallStatus(null);
-        setEngineError({ engine: engineName, message: 'Lost connection while installing. Reload to see the current status.' });
+      }
+      if (!cancelled) {
+        timer = window.setTimeout(tick, installTrackRef.current ? 2000 : 5000);
       }
     };
-    setTimeout(checkStatus, 1500);
+
+    void tick();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   }, [refreshEngines]);
 
   // Resume an install that was interrupted by a process/board restart. The
@@ -497,6 +527,9 @@ export function Settings() {
         setEngineError({ engine: engineName, message: data.error || `Failed to resume installing ${engineName}.` });
         return;
       }
+      // Track this engine so the status watcher owns the in-progress UI and the
+      // completion handling; show an immediate optimistic state until it polls.
+      installTrackRef.current = engineName;
       setInstallingEngine(engineName);
       setInstallStatus({
         ...installStatus,
@@ -507,12 +540,11 @@ export function Settings() {
         message: 'Resuming install...',
         percent: 0,
       });
-      pollEngineInstall(engineName);
     } catch (e) {
       console.error('Failed to resume engine install:', e);
       setEngineError({ engine: engineName, message: `Failed to resume installing ${engineName}. Check the connection and try again.` });
     }
-  }, [installStatus, pollEngineInstall]);
+  }, [installStatus]);
 
   // Dismiss an interrupted install: clears the persisted state so the banner
   // does not reappear on the next poll or reload.
@@ -541,15 +573,19 @@ export function Settings() {
   // engine name in the JSON body (matching the legacy configure page). Install
   // runs asynchronously and is tracked via /api/engines/status; uninstall
   // completes synchronously in the request.
-  const toggleEngine = useCallback(async (engineName: string, install: boolean) => {
+  const toggleEngine = useCallback(async (engineName: string, install: boolean, ref?: string) => {
     setEngineError(null);
     setInstallingEngine(engineName);
     const endpoint = install ? 'install' : 'uninstall';
     try {
+      // Only source-built installs carry a ref; uninstall and ref-less installs
+      // send just the engine name (the backend treats a missing ref as canonical).
+      const body: { engine: string; ref?: string } = { engine: engineName };
+      if (install && ref) body.ref = ref;
       const response = await apiFetch(`/api/engines/${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ engine: engineName }),
+        body: JSON.stringify(body),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.success === false) {
@@ -558,7 +594,21 @@ export function Settings() {
         return;
       }
       if (install) {
-        pollEngineInstall(engineName);
+        // Hand off to the status watcher: track this engine and show an immediate
+        // optimistic progress state so the initiating client does not wait a full
+        // poll interval. The watcher refines it and handles completion/failure.
+        installTrackRef.current = engineName;
+        setInstallStatus({
+          active: true,
+          installing: true,
+          engine: engineName,
+          display_name: null,
+          stage: 'starting',
+          message: 'Starting...',
+          percent: 0,
+          interrupted: false,
+          result: null,
+        });
       } else {
         await refreshEngines();
         setInstallingEngine(null);
@@ -568,31 +618,8 @@ export function Settings() {
       setInstallingEngine(null);
       setEngineError({ engine: engineName, message: `Failed to ${endpoint} ${engineName}. Check the connection and try again.` });
     }
-  }, [pollEngineInstall, refreshEngines]);
+  }, [refreshEngines]);
 
-  // Resume an install that is already running on the board (started before this
-  // page loaded, from another client, or surviving a reload). Without this, a
-  // reload mid-install would drop the "Installing..." button/notice even though
-  // the background install is still running. Runs once on mount; the poll then
-  // clears itself and refreshes the engine list when the install finishes.
-  useEffect(() => {
-    void (async () => {
-      try {
-        const status: EngineInstallStatus = await apiFetch('/api/engines/status').then((r) => r.json());
-        if (status.active && status.engine) {
-          setInstallStatus(status);
-          setInstallingEngine(status.engine);
-          pollEngineInstall(status.engine);
-        } else if (status.interrupted && status.engine) {
-          // An install was running before the last restart. Surface it with
-          // Resume/Cancel; do nothing until the user chooses.
-          setInstallStatus(status);
-        }
-      } catch (e) {
-        console.error('Failed to read engine install status on load:', e);
-      }
-    })();
-  }, [pollEngineInstall]);
 
   if (loading) {
     return (
@@ -1166,7 +1193,7 @@ function EnginesList({
   installingEngine: string | null;
   installStatus: EngineInstallStatus | null;
   engineError: { engine: string; message: string } | null;
-  onToggle: (name: string, install: boolean) => void;
+  onToggle: (name: string, install: boolean, ref?: string) => void;
   onResume: () => void;
   onCancel: () => void;
   onConfigureProfiles: (engine: EngineDefinition) => void;
@@ -1241,7 +1268,7 @@ function EngineCard({
   // Action error message for this engine, rendered below its button; null when
   // there is no error for this card.
   error: string | null;
-  onToggle: (name: string, install: boolean) => void;
+  onToggle: (name: string, install: boolean, ref?: string) => void;
   onResume: () => void;
   onCancel: () => void;
   onConfigureProfiles: (engine: EngineDefinition) => void;
@@ -1249,6 +1276,30 @@ function EngineCard({
   const isSystem = engine.name === 'stockfish'; // Stockfish is a system package
   const isActiveInstall = status?.active === true;
   const isInterrupted = status?.interrupted === true;
+
+  // Release (git ref) picker state. Only source-built engines expose it. Tags are
+  // fetched lazily -- on first interaction with the select -- so the engine list
+  // does not fire a GitHub request per card on page load. Until then the select
+  // shows just the recommended ref. `selectedRef` starts at the recommended ref
+  // (the canonical pin/default), so a plain Install keeps the prior behavior.
+  const showRefPicker = !isSystem && engine.source_installable && !engine.installed;
+  const [refs, setRefs] = useState<EngineRef[] | null>(null);
+  const [refsLoading, setRefsLoading] = useState(false);
+  const [selectedRef, setSelectedRef] = useState<string>(engine.recommended_ref ?? '');
+
+  const loadRefs = useCallback(async () => {
+    if (refs !== null || refsLoading) return; // fetch once per card
+    setRefsLoading(true);
+    try {
+      const data: EngineRefsResponse = await apiFetch(`/api/engines/${engine.name}/refs`).then((r) => r.json());
+      setRefs(data.refs);
+    } catch (e) {
+      console.error(`Failed to load refs for ${engine.name}:`, e);
+      setRefs([]); // empty list: the picker falls back to the recommended option
+    } finally {
+      setRefsLoading(false);
+    }
+  }, [engine.name, refs, refsLoading]);
 
   // During an install the engine is not yet installed; during an uninstall it
   // still is. This distinguishes the two in-flight labels for this card.
@@ -1260,6 +1311,25 @@ function EngineCard({
       : engine.installed
         ? 'Uninstall'
         : 'Install';
+
+  // The default-branch sentinel is shown by a human label, not the raw "default".
+  const refDisplayLabel = (value: string | null): string =>
+    !value ? '' : value === 'default' ? 'default branch' : value;
+
+  // Picker options. Before the lazy fetch resolves, show just the recommended ref
+  // so the control is populated and a plain Install still works; once loaded, list
+  // every selectable ref with markers for known-working / pinned / installed.
+  const refOptions = (refs && refs.length > 0)
+    ? refs.map((r) => ({
+        value: r.ref,
+        label:
+          r.label +
+          (r.is_pin ? ' — known good (pinned)' : r.known_working ? ' — known good' : '') +
+          (r.installed ? ' — installed' : ''),
+      }))
+    : engine.recommended_ref
+      ? [{ value: engine.recommended_ref, label: `${refDisplayLabel(engine.recommended_ref)} — recommended` }]
+      : [];
 
   return (
     <div className="engine-card">
@@ -1283,6 +1353,13 @@ function EngineCard({
           {engine.has_prebuilt && ' (pre-built available)'}
         </p>
       )}
+      {/* Show which release is installed so the device's actual version is known
+          (and which release the picker should default to re-selecting). */}
+      {!isSystem && engine.installed && engine.source_installable && engine.installed_ref && (
+        <p className="engine-installed-ref">
+          Installed release: <strong>{refDisplayLabel(engine.installed_ref)}</strong>
+        </p>
+      )}
       {!isSystem && (
         <div className="engine-card-actions">
           {isInterrupted ? (
@@ -1295,17 +1372,40 @@ function EngineCard({
               </Button>
             </>
           ) : (
-            <Button
-              variant={engine.installed ? 'danger' : 'primary'}
-              size="sm"
-              // Block installing an engine the device can't build/run. Uninstall
-              // stays available so an engine installed before a support change
-              // can still be removed.
-              disabled={installInProgress || (!engine.installed && !engine.supported)}
-              onClick={() => onToggle(engine.name, !engine.installed)}
-            >
-              {buttonLabel}
-            </Button>
+            <>
+              {/* Release picker, to the left of Install, for source-built engines
+                  only. Lets a newer (or older) tag be tried; the recommended pin
+                  is the default and is marked "known good". */}
+              {showRefPicker && (
+                <Select
+                  className="engine-ref-select"
+                  aria-label={`Release for ${engine.display_name}`}
+                  disabled={installInProgress || !engine.supported || refsLoading}
+                  options={refOptions}
+                  value={selectedRef}
+                  onMouseDown={loadRefs}
+                  onFocus={loadRefs}
+                  onChange={(e) => setSelectedRef(e.target.value)}
+                />
+              )}
+              <Button
+                variant={engine.installed ? 'danger' : 'primary'}
+                size="sm"
+                // Block installing an engine the device can't build/run. Uninstall
+                // stays available so an engine installed before a support change
+                // can still be removed.
+                disabled={installInProgress || (!engine.installed && !engine.supported)}
+                // Forward the chosen ref only when installing a source engine; a
+                // ref-less call (or uninstall) keeps the canonical behavior.
+                onClick={() => onToggle(
+                  engine.name,
+                  !engine.installed,
+                  showRefPicker ? (selectedRef || undefined) : undefined,
+                )}
+              >
+                {buttonLabel}
+              </Button>
+            </>
           )}
           {/* Profile editor entry point: only for installed engines that expose
               an editable parameter schema (currently Rodent IV). */}

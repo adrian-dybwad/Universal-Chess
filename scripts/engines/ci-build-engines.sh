@@ -28,6 +28,11 @@
 #     fails to compile on both armv7l and aarch64. It is marked unsupported in the
 #     engine catalog (supported_archs=frozenset()) and the install button is
 #     disabled, so there is nothing for the archive to ship.
+#   - Arasan is 64-bit-only and pinned to a release tag. It requires clang (g++
+#     rejects its NEON vector-type conversions) and BUILD_TYPE=neon (its non-SIMD
+#     NNUE path is disabled by a static_assert), drops the Makefile's gold linker
+#     (removed from binutils 2.44), and ships its NNUE network beside the binary.
+#     32-bit ARM has no SIMD path in Arasan, so it builds only for arm64.
 #   - Rodent IV needs -latomic on 32-bit ARM (8-byte std::atomic lowers to
 #     libatomic calls); forced in with --no-as-needed because the recipe places
 #     LDFLAGS before the objects.
@@ -120,18 +125,28 @@ smallbrain_build() {
 }
 
 arasan_build() {
-	git clone --depth 1 https://github.com/jdart1/arasan-chess.git /tmp/arasan
+	# arm64-only (see gating below). Pinned to a tagged release: master's NEON path
+	# has regressed and won't compile. Submodules carry the Syzygy probing code and
+	# the NNUE network, both required.
+	git clone --depth 1 --branch v25.4 --recurse-submodules --shallow-submodules \
+		https://github.com/jdart1/arasan-chess.git /tmp/arasan
 	cd /tmp/arasan/src
-	# Arasan writes to ../bin and names the exe arasanx-<bits> unless EXE is set;
-	# EXE=arasan fixes the name/location to ../bin/arasan (matches the device
-	# binary_path). NEON only on 64-bit ARM (the Makefile defines NEON flags for
-	# arm64/aarch64 only); armhf falls back to the scalar NNUE path.
-	local arasan_args="EXE=arasan"
-	if [ "${ARCH}" = "arm64" ]; then
-		arasan_args="${arasan_args} BUILD_TYPE=neon"
-	fi
-	make -j2 ${arasan_args}
+	# CC=clang++   : g++ rejects Arasan's NEON vector-type conversions; clang is the
+	#                compiler doc/BUILD.md requires for ARM.
+	# BUILD_TYPE=neon: mandatory -- the non-SIMD NNUE path is disabled by a
+	#                static_assert, and neon is the only ARM SIMD path.
+	# LDFLAGS=...   : drops the Makefile's hardcoded -fuse-ld=gold (gold was removed
+	#                from binutils 2.44 / Trixie); the default bfd linker is used.
+	# EXE=arasan    : fixes the output to ../bin/arasan (else arasanx-64).
+	make -j2 CC=clang++ EXE=arasan BUILD_TYPE=neon LDFLAGS="-O3 -fno-rtti -DNDEBUG"
 	cp ../bin/arasan "${OUT}/"
+	# Ship the NNUE network beside the binary. The device's prebuilt installer copies
+	# <arch>/<extra_files> next to the engine; the catalog lists the network as the
+	# glob *.nnue. Without it Arasan fails at runtime ("failed to open network
+	# file"). Copy by glob (not a fixed name) so bumping the pinned tag ships
+	# whatever network the new release embeds with no edit here. Each release's
+	# network/ dir holds exactly the one network its binary expects.
+	cp ../network/*.nnue "${OUT}/"
 }
 
 zahak_build() {
@@ -164,19 +179,22 @@ maia_build() {
 	wget -q -O t1-256x10.pb.gz "https://training.lczero.org/get_network?sha=00af53b081e80147172e6f281c01571016924e9aac89cdf6666a1cc3a4ecf5bf"
 }
 
-# Berserk and Weiss are 64-bit-only (both use `__int128`, absent on 32-bit ARM:
-# Berserk in its NNUE/eval, Weiss in TTIndex's Lemire reduction). Koivisto is
-# excluded entirely (no working ARM build). All other engines build on both.
+# Berserk, Weiss and Arasan are 64-bit-only. Berserk and Weiss use `__int128`
+# (absent on 32-bit ARM: Berserk in its NNUE/eval, Weiss in TTIndex's Lemire
+# reduction). Arasan requires SIMD (its non-SIMD NNUE path is disabled by a
+# static_assert) and defines NEON flags only for arm64/aarch64, so there is no
+# 32-bit ARM build. Koivisto is excluded entirely (no working ARM build). All
+# other engines build on both.
 if [ "${ARCH}" = "arm64" ]; then
 	build_engine berserk
 	build_engine weiss
+	build_engine arasan
 fi
 build_engine ethereal
 build_engine demolito
 build_engine rodentIV
 build_engine ct800
 build_engine smallbrain
-build_engine arasan
 build_engine zahak
 build_engine maia
 

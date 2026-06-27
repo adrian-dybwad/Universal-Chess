@@ -73,6 +73,54 @@ export interface EngineDefinition {
    * Null when the engine is supported.
    */
   unsupported_reason: string | null;
+  /**
+   * Whether this engine is built from source and therefore supports the release
+   * (git ref) picker. False for the Stockfish system package and any bundled
+   * engine without a repository. When false the UI omits the picker.
+   */
+  source_installable: boolean;
+  /**
+   * The canonical ref an unspecified install builds: the catalog pin for pinned
+   * engines, or the default-branch sentinel ("default") for unpinned engines.
+   * Null for non-source engines. This is the picker's default selection.
+   */
+  recommended_ref: string | null;
+  /**
+   * The git ref the engine is currently installed from (a tag, a branch, or the
+   * "default" sentinel), or null when not installed / not recorded.
+   */
+  installed_ref: string | null;
+}
+
+/**
+ * One selectable git ref for a source-built engine, from
+ * GET /api/engines/{name}/refs.
+ */
+export interface EngineRef {
+  /** Value sent back to the install endpoint ("default" for the default branch). */
+  ref: string;
+  /** Human-readable label (the branch name for the default entry, else the ref). */
+  label: string;
+  /** "branch" for the default-branch entry, otherwise "tag". */
+  kind: 'branch' | 'tag';
+  /** The catalog pin or a ref that has ever built successfully on this device. */
+  known_working: boolean;
+  /** This is the catalog's verified pin. */
+  is_pin: boolean;
+  /** This is the ref currently installed. */
+  installed: boolean;
+}
+
+/**
+ * Payload from GET /api/engines/{name}/refs driving the release picker.
+ */
+export interface EngineRefsResponse {
+  engine: string;
+  source_installable: boolean;
+  installed_ref: string | null;
+  recommended_ref: string | null;
+  default_branch: string | null;
+  refs: EngineRef[];
 }
 
 /**
