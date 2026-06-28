@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Button, Card, CardHeader, FormRow, Input, Select, Toggle, Badge, ProgressBar } from '../components/ui';
 import { CatalogField } from '../components/CatalogField';
 import { EngineProfileEditor } from '../components/EngineProfileEditor';
@@ -43,6 +44,22 @@ interface EngineInstallStatus {
 // separate sibling sections (right after Game), mirroring the board menu.
 // 'accounts' is intentionally excluded -- it lives on the Connectivity page.
 const SETTINGS_TAB_IDS: SettingsTab[] = ['players', 'game', 'display', 'sound', 'engines', 'system'];
+
+// The sub-nav tab is persisted in the URL (e.g. /settings?tab=game) so a page
+// refresh or a shared/bookmarked link restores the same section instead of
+// falling back to the parent (first) tab. This is the canonical query key and
+// the default used when the param is absent or names an unknown section.
+const SETTINGS_TAB_PARAM = 'tab';
+const DEFAULT_SETTINGS_TAB: SettingsTab = 'players';
+
+/**
+ * Resolve the active tab from a raw query-param value, tolerating absent or
+ * unrecognised values by falling back to the default tab. An unknown tab in the
+ * URL must not render a blank content pane, so it is coerced rather than trusted.
+ */
+function parseSettingsTab(value: string | null): SettingsTab {
+  return SETTINGS_TAB_IDS.includes(value as SettingsTab) ? (value as SettingsTab) : DEFAULT_SETTINGS_TAB;
+}
 
 interface PlayerSettings {
   type: string;
@@ -175,7 +192,21 @@ function parseRawSettings(data: SettingsData): FormSettings {
  * Settings page with tabbed navigation matching the Flask version.
  */
 export function Settings() {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('players');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = parseSettingsTab(searchParams.get(SETTINGS_TAB_PARAM));
+  // Switch sub-nav via the URL so the selection survives a refresh and is
+  // shareable. A history push (not replace) lets the browser Back button step
+  // between visited tabs as users expect from in-page navigation.
+  const setActiveTab = (tab: SettingsTab) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set(SETTINGS_TAB_PARAM, tab);
+        return next;
+      },
+      { replace: false }
+    );
+  };
   const [catalog, setCatalog] = useState<MenuCatalog | null>(null);
   const [, setRawSettings] = useState<SettingsData>({});
   const [formSettings, setFormSettings] = useState<FormSettings>(defaultFormSettings);
