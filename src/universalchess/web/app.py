@@ -3379,12 +3379,18 @@ def api_save_engine_profile(engine_name, profile_name):
         return jsonify({"success": False, "error": "Invalid engine"}), 400
     body = request.get_json(silent=True) or {}
     values = body.get("values", {})
-    try:
-        engine_profiles.write_profile(
-            config_path, profile_name, values, groups, _defaults_uci_path(engine_name)
-        )
-    except engine_profiles.ProfileValidationError as e:
-        return jsonify({"success": False, "error": str(e)}), 400
+    # Validate up front and surface the message as a returned value. Catching
+    # ProfileValidationError and returning str(e) would route a caught
+    # exception's text into the response (CodeQL py/stack-trace-exposure); the
+    # value-based checks below carry the same user-facing messages without that.
+    if not engine_profiles.is_valid_profile_name(profile_name):
+        return jsonify({"success": False, "error": "Invalid profile name"}), 400
+    value_error = engine_profiles.validation_error(groups, values)
+    if value_error is not None:
+        return jsonify({"success": False, "error": value_error}), 400
+    engine_profiles.write_profile(
+        config_path, profile_name, values, groups, _defaults_uci_path(engine_name)
+    )
     return jsonify({"success": True})
 
 
@@ -3401,12 +3407,14 @@ def api_delete_engine_profile(engine_name, profile_name):
     config_path = _config_uci_path(engine_name)
     if config_path is None:
         return jsonify({"success": False, "error": "Invalid engine"}), 400
-    try:
-        removed = engine_profiles.delete_profile(
-            config_path, profile_name, _defaults_uci_path(engine_name)
-        )
-    except engine_profiles.ProfileValidationError as e:
-        return jsonify({"success": False, "error": str(e)}), 400
+    # Reject the reserved section by value rather than catching the exception
+    # delete_profile would raise and echoing it back (CodeQL py/stack-trace-exposure).
+    blocked = engine_profiles.delete_blocked_reason(profile_name)
+    if blocked is not None:
+        return jsonify({"success": False, "error": blocked}), 400
+    removed = engine_profiles.delete_profile(
+        config_path, profile_name, _defaults_uci_path(engine_name)
+    )
     if not removed:
         return jsonify({"success": False, "error": "Profile not found"}), 404
     return jsonify({"success": True})

@@ -239,6 +239,74 @@ def test_validate_rejects_multiline_text(groups):
 
 
 # ---------------------------------------------------------------------------
+# Value-returning validation (used by HTTP handlers to avoid exposing a caught
+# exception's text in the response -- CodeQL py/stack-trace-exposure)
+# ---------------------------------------------------------------------------
+
+
+def test_validation_error_returns_none_for_valid_values(groups):
+    """validation_error returns None when every value passes the schema.
+
+    Why: the HTTP handler treats None as "ok, proceed to write". If it returned
+    a truthy string for valid input, every save would be rejected with a bogus
+    400.
+    """
+    assert ep.validation_error(groups, {
+        "UCI_Elo": 1500,
+        "UCI_LimitStrength": True,
+        "Description": "  Sharp  ",
+    }) is None
+
+
+@pytest.mark.parametrize("values,needle", [
+    ({"NotAReal": 1}, "NotAReal"),       # unknown key echoed back
+    ({"UCI_Elo": 2801}, "UCI_Elo"),      # above max
+    ({"UCI_Elo": "fast"}, "UCI_Elo"),    # non-numeric
+    ({"PrimaryPstStyle": 9}, "PrimaryPstStyle"),  # invalid select
+    ({"UCI_LimitStrength": "maybe"}, "UCI_LimitStrength"),  # bad bool
+    ("not-a-dict", "object"),            # non-dict payload
+])
+def test_validation_error_returns_message_naming_the_problem(groups, values, needle):
+    """validation_error returns a message (not None) that names the offending field.
+
+    Why: this is the exact message the editor shows. It must match what the
+    raising path produces and identify the field/problem. How a regression
+    manifests: a refactor that desynced the value-based and raising paths would
+    return None here (silently accepting bad input) or a message missing the
+    field name -- both caught by asserting the needle is present.
+    """
+    message = ep.validation_error(groups, values)
+    assert message is not None
+    assert needle in message
+
+
+def test_validation_error_matches_raising_path(groups):
+    """The value-based and raising entry points share one message source.
+
+    Why: validate_profile_values (raising) and validation_error (value) must not
+    drift, or the API and any direct caller would report different text for the
+    same input. Asserts the raised exception's text equals validation_error's
+    return for the same invalid value.
+    """
+    bad = {"UCI_Elo": 99999}
+    with pytest.raises(ep.ProfileValidationError) as exc_info:
+        ep.validate_profile_values(groups, bad)
+    assert ep.validation_error(groups, bad) == str(exc_info.value)
+
+
+def test_delete_blocked_reason_blocks_default_and_allows_others():
+    """delete_blocked_reason flags the reserved DEFAULT section, else None.
+
+    Why: the delete handler uses this to reject DEFAULT by value instead of
+    catching delete_profile's exception. Regression: returning None for DEFAULT
+    would let the handler attempt to delete engine-wide settings; returning a
+    message for a normal name would block legitimate deletes.
+    """
+    assert ep.delete_blocked_reason("DEFAULT") is not None
+    assert ep.delete_blocked_reason("Attacker") is None
+
+
+# ---------------------------------------------------------------------------
 # Profile name validation
 # ---------------------------------------------------------------------------
 

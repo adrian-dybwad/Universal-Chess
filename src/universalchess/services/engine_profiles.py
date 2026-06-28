@@ -410,8 +410,40 @@ def validate_profile_values(
     by the engine, so both are rejected here rather than coerced/clamped, which
     would hide the user's mistake.
     """
+    error, coerced = _validate_and_coerce(groups, values)
+    if error is not None:
+        raise ProfileValidationError(error)
+    return coerced
+
+
+def validation_error(
+    groups: Tuple[ProfileGroup, ...], values: Dict[str, object]
+) -> Optional[str]:
+    """Return the first schema problem as a user-facing message, or None if valid.
+
+    This is the value-returning counterpart to :func:`validate_profile_values`.
+    The message is built directly here (never derived from a raised/caught
+    exception) so HTTP handlers can surface it by returning a plain value, rather
+    than funnelling a caught exception's text into the response -- the latter is
+    flagged by static analysis as information exposure (CodeQL
+    py/stack-trace-exposure) because exception text can leak internal detail.
+    """
+    return _validate_and_coerce(groups, values)[0]
+
+
+def _validate_and_coerce(
+    groups: Tuple[ProfileGroup, ...], values: Dict[str, object]
+) -> Tuple[Optional[str], Dict[str, str]]:
+    """Single source of truth for validation: returns ``(error, coerced)``.
+
+    On the first problem ``error`` is the message and ``coerced`` is empty; on
+    success ``error`` is None and ``coerced`` holds the ready-to-write strings.
+    Returning the message (instead of raising) lets both the raising and the
+    value-returning public entry points share one implementation, so the
+    messages have exactly one definition.
+    """
     if not isinstance(values, dict):
-        raise ProfileValidationError("values must be an object")
+        return "values must be an object", {}
 
     index = _field_index(groups)
     coerced: Dict[str, str] = {}
@@ -419,72 +451,69 @@ def validate_profile_values(
     for key, raw in values.items():
         field = index.get(key)
         if field is None:
-            raise ProfileValidationError(f"unknown parameter '{key}'")
+            return f"unknown parameter '{key}'", {}
 
         if field.type in ("int", "select"):
-            coerced[key] = _coerce_int(field, raw)
+            error, value = _coerce_int(field, raw)
         elif field.type == "bool":
-            coerced[key] = _coerce_bool(field, raw)
+            error, value = _coerce_bool(field, raw)
         elif field.type == "text":
-            coerced[key] = _coerce_text(field, raw)
+            error, value = _coerce_text(field, raw)
         else:  # pragma: no cover - schema is fixed and exhaustively typed
-            raise ProfileValidationError(
-                f"unsupported field type '{field.type}' for '{key}'"
-            )
+            return f"unsupported field type '{field.type}' for '{key}'", {}
 
-    return coerced
+        if error is not None:
+            return error, {}
+        coerced[key] = value
+
+    return None, coerced
 
 
-def _coerce_int(field: ProfileField, raw: object) -> str:
+def _coerce_int(field: ProfileField, raw: object) -> Tuple[Optional[str], str]:
+    """Return ``(error, decimal_string)``; ``error`` is set iff invalid."""
     if isinstance(raw, bool):  # bool is an int subclass; reject to avoid surprises
-        raise ProfileValidationError(f"'{field.key}' must be a number")
+        return f"'{field.key}' must be a number", ""
     try:
         value = int(raw)  # type: ignore[arg-type]
     except (TypeError, ValueError):
-        raise ProfileValidationError(f"'{field.key}' must be a number")
+        return f"'{field.key}' must be a number", ""
 
     if field.type == "select":
         allowed = {value_ for value_, _ in (field.options or ())}
         if value not in allowed:
-            raise ProfileValidationError(
-                f"'{field.key}' must be one of {sorted(allowed)}"
-            )
-        return str(value)
+            return f"'{field.key}' must be one of {sorted(allowed)}", ""
+        return None, str(value)
 
     if field.minimum is not None and value < field.minimum:
-        raise ProfileValidationError(
-            f"'{field.key}' must be >= {field.minimum}"
-        )
+        return f"'{field.key}' must be >= {field.minimum}", ""
     if field.maximum is not None and value > field.maximum:
-        raise ProfileValidationError(
-            f"'{field.key}' must be <= {field.maximum}"
-        )
-    return str(value)
+        return f"'{field.key}' must be <= {field.maximum}", ""
+    return None, str(value)
 
 
-def _coerce_bool(field: ProfileField, raw: object) -> str:
+def _coerce_bool(field: ProfileField, raw: object) -> Tuple[Optional[str], str]:
+    """Return ``(error, 'true'|'false')``; ``error`` is set iff not boolean-like."""
     if isinstance(raw, bool):
-        return "true" if raw else "false"
+        return None, ("true" if raw else "false")
     if isinstance(raw, str):
         low = raw.strip().lower()
         if low in ("true", "false"):
-            return low
-    raise ProfileValidationError(f"'{field.key}' must be true or false")
+            return None, low
+    return f"'{field.key}' must be true or false", ""
 
 
-def _coerce_text(field: ProfileField, raw: object) -> str:
+def _coerce_text(field: ProfileField, raw: object) -> Tuple[Optional[str], str]:
+    """Return ``(error, single_line_text)``; ``error`` is set iff invalid."""
     if raw is None:
-        return ""
+        return None, ""
     if not isinstance(raw, str):
-        raise ProfileValidationError(f"'{field.key}' must be text")
+        return f"'{field.key}' must be text", ""
     text = raw.strip()
     if len(text) > _MAX_TEXT_LEN:
-        raise ProfileValidationError(
-            f"'{field.key}' must be at most {_MAX_TEXT_LEN} characters"
-        )
+        return f"'{field.key}' must be at most {_MAX_TEXT_LEN} characters", ""
     if "\n" in text or "\r" in text:
-        raise ProfileValidationError(f"'{field.key}' must be a single line")
-    return text
+        return f"'{field.key}' must be a single line", ""
+    return None, text
 
 
 def _new_parser() -> configparser.ConfigParser:
@@ -579,6 +608,19 @@ def write_profile(
     # Assigning a fresh mapping replaces the section's local keys wholesale.
     parser[name] = dict(coerced)
     _atomic_write(parser, uci_path)
+
+
+def delete_blocked_reason(name: str) -> Optional[str]:
+    """Return why ``name`` may not be deleted, or None if deletion is allowed.
+
+    The value-returning counterpart to the guard inside :func:`delete_profile`,
+    so an HTTP handler can reject the request by returning a plain message
+    instead of catching :class:`ProfileValidationError` and echoing its text into
+    the response (flagged as information exposure by static analysis).
+    """
+    if name == _DEFAULTS_SECTION:
+        return "cannot delete the DEFAULT section"
+    return None
 
 
 def delete_profile(
