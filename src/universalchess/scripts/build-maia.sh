@@ -35,8 +35,13 @@ INSTALL_DIR="${1:-/opt/universalchess/engines/maia}"
 # Build on disk, never under /tmp. On a Pi /tmp is a small tmpfs (e.g. 208 MB on
 # a 512 MB board) and RAM-backed, so it can hold neither the lc0 checkout+build
 # tree nor any useful swap. Place the build beside the install dir on the SD
-# card: <install_dir>/../../tmp/maia-build-<pid> (e.g. /opt/universalchess/tmp).
-BUILD_DIR="$(dirname "$(dirname "$INSTALL_DIR")")/tmp/maia-build-$$"
+# card: <install_dir>/../../tmp/maia-build (e.g. /opt/universalchess/tmp).
+#
+# The path is STABLE (no PID suffix) and the tree is preserved on failure so a
+# re-run resumes the incremental ninja build instead of recompiling all ~259
+# units from scratch. lc0 takes 30-60 min single-threaded on a Pi Zero 2 W, so a
+# near-complete build that is interrupted must not be thrown away.
+BUILD_DIR="$(dirname "$(dirname "$INSTALL_DIR")")/tmp/maia-build"
 
 # Maia weights to download
 MAIA_WEIGHTS=(
@@ -81,21 +86,27 @@ log_warn() {
 
 cleanup() {
     local exit_code=$?
-    
+
     log "Cleaning up..."
-    
-    # Remove build directory
-    if [[ -d "$BUILD_DIR" ]]; then
-        log "Removing build directory..."
-        rm -rf "$BUILD_DIR"
-    fi
-    
+
     if [[ $exit_code -eq 0 ]]; then
+        # Success: the binary and weights are now installed, so the build tree is
+        # dead weight -- reclaim the disk.
+        if [[ -d "$BUILD_DIR" ]]; then
+            log "Removing build directory..."
+            rm -rf "$BUILD_DIR"
+        fi
         log "Build completed successfully!"
     else
+        # Failure or interruption: KEEP the build tree. ninja only records a target
+        # as done after it completes, so a re-run rebuilds just the interrupted
+        # target and the remainder -- the previously compiled units are reused. A
+        # fresh restart from 0/259 would otherwise waste the 30-60 min already
+        # spent. The tree is removed on the next successful build (above).
         log_error "Build failed with exit code $exit_code"
+        log "Build directory kept for resume: $BUILD_DIR"
     fi
-    
+
     exit $exit_code
 }
 
@@ -197,34 +208,53 @@ clone_lc0() {
     
     mkdir -p "$BUILD_DIR"
     cd "$BUILD_DIR"
-    
-    if [[ -d "lc0" ]]; then
-        log "lc0 directory exists, removing..."
-        rm -rf lc0
+
+    # Reuse an existing checkout of the pinned version so a resumed build skips
+    # re-cloning (and, more importantly, keeps the compiled build/ tree intact for
+    # ninja). Only our own prior clone of LC0_VERSION is trusted; anything else
+    # (missing, wrong tag, or a clone interrupted before the tag was fetched) is
+    # wiped and re-cloned to avoid building stale or partial source.
+    local existing_tag=""
+    if [[ -d "lc0/.git" ]]; then
+        existing_tag="$(git -C lc0 describe --tags --always 2>/dev/null || true)"
     fi
-    
-    log "Cloning lc0 ${LC0_VERSION}..."
-    git clone --depth 1 --branch "$LC0_VERSION" --recurse-submodules \
-        https://github.com/LeelaChessZero/lc0.git
-    
+    if [[ "$existing_tag" == "$LC0_VERSION" ]]; then
+        log "Reusing existing lc0 checkout at ${LC0_VERSION}"
+        # A previous run may have been interrupted mid-submodule-fetch; make sure
+        # submodules are complete before building. This is a no-op when they are.
+        git -C lc0 submodule update --init --recursive
+    else
+        if [[ -d "lc0" ]]; then
+            log "Existing checkout is '${existing_tag:-not a git repo}', need ${LC0_VERSION}; removing..."
+            rm -rf lc0
+        fi
+        log "Cloning lc0 ${LC0_VERSION}..."
+        git clone --depth 1 --branch "$LC0_VERSION" --recurse-submodules \
+            https://github.com/LeelaChessZero/lc0.git
+    fi
+
     cd lc0
-    log "Clone complete. Working directory: $(pwd)"
+    log "Source ready. Working directory: $(pwd)"
 }
 
 configure_build() {
     log_step "Configuring meson build"
     
     cd "$BUILD_DIR/lc0"
-    
-    # Remove any existing build directory to ensure clean configuration
-    if [[ -d "build/release" ]]; then
-        log "Removing existing build directory..."
-        rm -rf build/release
-    fi
-    
+
     # Use clang for better ARM optimization
     export CC=clang
     export CXX=clang++
+
+    # Reuse an existing meson configuration so a resumed build keeps the compiled
+    # objects and ninja picks up where it stopped. build.ninja is written only
+    # once meson setup completes, so its presence means the configure step
+    # finished; an interrupted configure leaves it absent and we set up cleanly.
+    if [[ -f "build/release/build.ninja" ]]; then
+        log "Reusing existing meson configuration (resuming incremental build)"
+        log "Configuration complete"
+        return 0
+    fi
     
     log "Compiler: CC=$CC, CXX=$CXX"
     

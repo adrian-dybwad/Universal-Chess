@@ -442,6 +442,28 @@ class TestMaiaBuildCommand:
         assert "mkswap" not in content
         assert "swapon" not in content
 
+    def test_build_is_resumable_across_interruptions(self):
+        """build-maia.sh must reuse its build tree so a resumed install is incremental.
+
+        Why this test exists: lc0 takes 30-60 min single-threaded on a Pi Zero 2 W.
+        The script used a PID-suffixed build dir (``maia-build-$$``) and removed the
+        whole tree on every exit, so an install interrupted near the end (e.g.
+        250/259) restarted from 0/259 on the next attempt. A stable build dir that
+        reuses the existing checkout and meson configuration lets ninja -- which
+        records a target as done only after it completes -- pick up where it stopped.
+
+        How the regression manifests: reintroducing a PID suffix, or an
+        unconditional ``rm -rf $BUILD_DIR`` on failure, brings back the full restart
+        -- which only surfaces as wasted hours on-device, so the script text is the
+        deterministic level to guard it.
+        """
+        content = (SCRIPTS_DIR / "build-maia.sh").read_text()
+        # Stable build dir: no per-process suffix that would orphan the prior tree.
+        assert "maia-build-$$" not in content
+        # The resume paths must exist: reuse an existing checkout and meson config.
+        assert "Reusing existing lc0 checkout" in content
+        assert "Reusing existing meson configuration" in content
+
     def test_build_script_passes_no_removed_nvcc_meson_option(self):
         """build-maia.sh must not pass the ``-Dnvcc`` meson option.
 
