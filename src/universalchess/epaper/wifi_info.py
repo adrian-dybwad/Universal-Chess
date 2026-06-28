@@ -108,8 +108,8 @@ def get_wifi_status() -> dict:
                 ips = result.stdout.strip().split()
                 if ips:
                     status['ip_address'] = ips[0]
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("[WiFi] hostname -I IP fallback failed: %s", e)
     
     # Get gateway
     try:
@@ -280,7 +280,10 @@ def _notify_subscribers(status: dict) -> None:
         try:
             _subscribers.remove(callback)
         except ValueError:
-            pass
+            # Already gone (e.g. a concurrent unsubscribe between notify and
+            # this cleanup). Safe to ignore, but log so an unexpected double
+            # removal is visible rather than silently swallowed.
+            log.debug("[WiFi] Failed subscriber already removed before cleanup")
 
 
 def _monitor_loop() -> None:
@@ -372,7 +375,10 @@ def unsubscribe(callback: Callable[[dict], None]) -> None:
         _subscribers.remove(callback)
         log.debug(f"[WiFi] Subscriber removed, remaining: {len(_subscribers)}")
     except ValueError:
-        pass  # Callback wasn't subscribed
+        # Unsubscribe for a callback that was never subscribed. Not fatal, but
+        # worth a debug line since it usually means a caller lifecycle bug
+        # (double-unsubscribe, or unsubscribing something never registered).
+        log.debug("[WiFi] unsubscribe() for a callback that was not subscribed")
     
     # Stop monitor thread if no subscribers
     if len(_subscribers) == 0 and _monitor_running:

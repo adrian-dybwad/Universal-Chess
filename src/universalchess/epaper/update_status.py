@@ -99,8 +99,8 @@ class UpdateStatusWidget(Widget):
             from universalchess.services.update_service import get_update_service
             service = get_update_service()
             service.remove_listener(self._on_update_event)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("Update-status widget failed to unregister listener: %s", e)
     
     def _draw_download_icon(self, draw: ImageDraw.Draw):
         """Draw a download arrow icon."""

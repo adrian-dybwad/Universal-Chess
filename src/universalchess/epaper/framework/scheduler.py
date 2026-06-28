@@ -2,6 +2,7 @@
 Refresh scheduler that uses Waveshare DisplayPartial directly.
 """
 
+import contextlib
 import threading
 import queue
 import time
@@ -180,14 +181,14 @@ class Scheduler:
         with self._queue_lock:
             # If queue is full, drop oldest item to make room
             if self._queue.full():
-                try:
+                # queue.Empty -> another thread drained it between full() and
+                # get_nowait(); there is simply nothing to evict, which is fine.
+                with contextlib.suppress(queue.Empty):
                     old_item = self._queue.get_nowait()
                     old_future = old_item[1]
                     if not old_future.done():
                         old_future.set_result("evicted")
                     log.warning("Scheduler.submit(): Queue full, evicted oldest item to make room for new update")
-                except queue.Empty:
-                    pass  # Queue was emptied by another thread, that's fine
             
             try:
                 self._queue.put_nowait((full, future, image, red_image))

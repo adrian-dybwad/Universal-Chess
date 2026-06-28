@@ -5,6 +5,7 @@ Displays a QR code for support, app name, version, and a dismiss instruction.
 This is a full-screen modal widget that blocks until user dismisses it.
 """
 
+import contextlib
 import threading
 from PIL import Image, ImageDraw
 from .framework.widget import Widget
@@ -116,14 +117,13 @@ class AboutWidget(Widget):
             draw.text((64, self.VERSION_Y), f"v{self._version}", 
                       font=version_font, fill=0, anchor="mm")
         
-        # Draw incomplete shutdown warning if detected
-        try:
+        # Draw incomplete shutdown warning if detected. The main module may not
+        # be importable (e.g. widget previews) or may lack the attribute.
+        with contextlib.suppress(ImportError, AttributeError):
             import universalchess.main as universal_module
             if universal_module.incomplete_shutdown:
                 draw.text((64, self.WARNING_Y), "Incomplete shutdown", 
                           font=version_font, fill=0, anchor="mm")
-        except (ImportError, AttributeError):
-            pass
         
         # Draw dismiss instruction
         draw.text((64, self.INSTRUCTION_Y), "Press any button", 

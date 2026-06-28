@@ -27,6 +27,7 @@
 # THE SOFTWARE.
 #
 
+import contextlib
 import os
 import logging
 import sys
@@ -157,10 +158,8 @@ class RaspberryPi:
             # eventually failed with OSError [Errno 24] Too many open files,
             # wedging the panel until the process/board was power-cycled. close()
             # on a not-open handle is a no-op-or-raises, so it is guarded.
-            try:
+            with contextlib.suppress(Exception):
                 self.SPI.close()
-            except Exception:
-                pass
             self.SPI.open(1, 0)
             self.SPI.max_speed_hz = 4000000
             self.SPI.mode = 0b00

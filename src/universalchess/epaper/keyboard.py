@@ -26,6 +26,32 @@ except ImportError:
     log = logging.getLogger(__name__)
 
 
+# Cached, optional handle to the board hardware module. The board package pulls
+# in the serial/hardware stack and is absent off-board (e.g. unit tests import
+# this widget), so it is resolved lazily and treated as optional.
+_board = None
+_board_unavailable = False
+
+
+def _beep() -> None:
+    """Emit the general UI beep, if the board hardware module is available.
+
+    The board module is resolved once and cached, so this is a plain attribute
+    lookup on every keypress after the first call (no repeated import work).
+    When the board package cannot be imported (off-board), the beep is skipped.
+    """
+    global _board, _board_unavailable
+    if _board is None and not _board_unavailable:
+        try:
+            from universalchess.board import board as resolved_board
+        except ImportError:
+            _board_unavailable = True
+        else:
+            _board = resolved_board
+    if _board is not None:
+        _board.beep(_board.SOUND_GENERAL)
+
+
 # Module-level resource loader, set by application at startup
 _resource_loader: "ResourceLoader" = None
 
@@ -254,11 +280,7 @@ class KeyboardWidget(Widget):
         if len(self.text) >= self.max_length:
             return False
         self.text += ch
-        try:
-            from universalchess.board import board
-            board.beep(board.SOUND_GENERAL)
-        except ImportError:
-            pass
+        _beep()
         self.invalidate_and_update()
         return True
 
@@ -284,11 +306,7 @@ class KeyboardWidget(Widget):
             char = self._field_to_char(field)
             if char and len(self.text) < self.max_length:
                 self.text += char
-                try:
-                    from universalchess.board import board
-                    board.beep(board.SOUND_GENERAL)
-                except ImportError:
-                    pass
+                _beep()
                 self.invalidate_and_update()
                 return True
         

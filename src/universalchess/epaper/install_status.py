@@ -7,6 +7,7 @@ Displays engine installation progress in the status bar:
 - Brief flash on completion
 """
 
+import contextlib
 from PIL import Image, ImageDraw
 from .framework.widget import Widget
 
@@ -159,8 +160,9 @@ class InstallStatusWidget(Widget):
         
         # Draw count (just for counts 2-9, otherwise just show filled dot)
         if 2 <= count <= 9:
-            # Use built-in font for tiny text
-            try:
+            # Use built-in font for tiny text. Skip the count display if font
+            # loading/measurement fails rather than breaking the whole render.
+            with contextlib.suppress(Exception):
                 from PIL import ImageFont
                 font = ImageFont.load_default()
                 text = str(count)
@@ -169,6 +171,4 @@ class InstallStatusWidget(Widget):
                 tw = bbox[2] - bbox[0]
                 th = bbox[3] - bbox[1]
                 draw.text((bx - tw // 2, by - th // 2 - 1), text, fill=255, font=font)
-            except Exception:
-                pass  # Skip count display if font fails
 

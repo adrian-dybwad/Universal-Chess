@@ -5,10 +5,11 @@ Clock widget displaying current time.
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime
 from .framework.widget import Widget
-import os
 import threading
 import time
 from typing import Optional
+
+from universalchess.resources import get_resource_loader
 
 try:
     from universalchess.board.logging import log
@@ -87,36 +88,23 @@ class ClockWidget(Widget):
     
     
     def _load_font(self):
-        """Load font with fallbacks."""
+        """Resolve the clock font via the app-wide ResourceLoader.
+
+        Resolution, caching, and the fallback-to-default all live in
+        ResourceLoader.get_font, so font error handling exists in one place. A
+        custom font_path is honoured when supplied; otherwise the loader
+        resolves the bundled Font.ttc. With no configured size, or before a
+        loader is registered (e.g. off-board), PIL's built-in default font is
+        used.
+        """
         if self._font is not None:
             return self._font
-        
-        # If font_path and font_size are specified, use them
-        if self.font_path and self.font_size:
-            if os.path.exists(self.font_path):
-                try:
-                    self._font = ImageFont.truetype(self.font_path, self.font_size)
-                    return self._font
-                except:
-                    pass
-        
-        # Try default font paths if font_size is specified
-        if self.font_size:
-            font_paths = [
-                '/opt/universalchess/resources/Font.ttc',
-                'resources/Font.ttc',
-                '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-            ]
-            for path in font_paths:
-                if os.path.exists(path):
-                    try:
-                        self._font = ImageFont.truetype(path, self.font_size)
-                        return self._font
-                    except:
-                        pass
-        
-        # Fallback to default font
-        self._font = ImageFont.load_default()
+
+        loader = get_resource_loader()
+        if self.font_size and loader is not None:
+            self._font = loader.get_font(self.font_size, self.font_path)
+        else:
+            self._font = ImageFont.load_default()
         return self._font
     
     def render(self, sprite: Image.Image) -> None:
