@@ -11,7 +11,11 @@ export function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
 
-  const isActive = (path: string) => location.pathname === path;
+  // Match the route exactly or any of its sub-paths so a nested route (e.g.
+  // /settings/game) still highlights its top-level nav item. The trailing-slash
+  // check avoids prefix false positives like "/positions" matching "/post".
+  const isActive = (path: string) =>
+    location.pathname === path || location.pathname.startsWith(`${path}/`);
 
   return (
     <nav className="navbar" role="navigation" aria-label="main navigation">

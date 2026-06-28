@@ -35,6 +35,7 @@ function App() {
               <Route path="/positions" element={<Positions />} />
               <Route path="/connectivity" element={<Connectivity />} />
               <Route path="/settings" element={<Settings />} />
+              <Route path="/settings/:tab" element={<Settings />} />
               <Route path="/licenses" element={<Licenses />} />
               <Route path="/support" element={<Support />} />
             </Routes>

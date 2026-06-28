@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Button, Card, CardHeader, FormRow, Input, Select, Toggle, Badge, ProgressBar } from '../components/ui';
 import { CatalogField } from '../components/CatalogField';
 import { EngineProfileEditor } from '../components/EngineProfileEditor';
@@ -45,19 +45,18 @@ interface EngineInstallStatus {
 // 'accounts' is intentionally excluded -- it lives on the Connectivity page.
 const SETTINGS_TAB_IDS: SettingsTab[] = ['players', 'game', 'display', 'sound', 'engines', 'system'];
 
-// The sub-nav tab is persisted in the URL (e.g. /settings?tab=game) so a page
-// refresh or a shared/bookmarked link restores the same section instead of
-// falling back to the parent (first) tab. This is the canonical query key and
-// the default used when the param is absent or names an unknown section.
-const SETTINGS_TAB_PARAM = 'tab';
+// The sub-nav tab lives in the URL path (e.g. /settings/game) so a page refresh
+// or a shared/bookmarked link restores the same section instead of falling back
+// to the parent (first) tab. This is the default used when the path has no tab
+// segment or names an unknown section.
 const DEFAULT_SETTINGS_TAB: SettingsTab = 'players';
 
 /**
- * Resolve the active tab from a raw query-param value, tolerating absent or
+ * Resolve the active tab from the URL path param, tolerating absent or
  * unrecognised values by falling back to the default tab. An unknown tab in the
  * URL must not render a blank content pane, so it is coerced rather than trusted.
  */
-function parseSettingsTab(value: string | null): SettingsTab {
+function parseSettingsTab(value: string | undefined): SettingsTab {
   return SETTINGS_TAB_IDS.includes(value as SettingsTab) ? (value as SettingsTab) : DEFAULT_SETTINGS_TAB;
 }
 
@@ -192,20 +191,14 @@ function parseRawSettings(data: SettingsData): FormSettings {
  * Settings page with tabbed navigation matching the Flask version.
  */
 export function Settings() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = parseSettingsTab(searchParams.get(SETTINGS_TAB_PARAM));
+  const { tab: tabParam } = useParams();
+  const navigate = useNavigate();
+  const activeTab = parseSettingsTab(tabParam);
   // Switch sub-nav via the URL so the selection survives a refresh and is
   // shareable. A history push (not replace) lets the browser Back button step
   // between visited tabs as users expect from in-page navigation.
   const setActiveTab = (tab: SettingsTab) => {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.set(SETTINGS_TAB_PARAM, tab);
-        return next;
-      },
-      { replace: false }
-    );
+    navigate(`/settings/${tab}`);
   };
   const [catalog, setCatalog] = useState<MenuCatalog | null>(null);
   const [, setRawSettings] = useState<SettingsData>({});
