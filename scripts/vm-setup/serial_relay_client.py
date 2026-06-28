@@ -4,6 +4,7 @@ Serial Port Relay Client
 Runs on VM, creates virtual serial port and forwards to Pi server.
 """
 
+import contextlib
 import serial
 import socket
 import threading
@@ -27,15 +28,11 @@ def signal_handler(sig, frame):
     print("\nShutting down serial relay client...")
     running = False
     if server_socket:
-        try:
+        with contextlib.suppress(OSError):
             server_socket.close()
-        except:
-            pass
     if serial_conn:
-        try:
+        with contextlib.suppress(OSError):
             serial_conn.close()
-        except:
-            pass
     sys.exit(0)
 
 def setup_virtual_serial():
@@ -150,7 +147,7 @@ def main():
         while running:
             time.sleep(0.1)
     except KeyboardInterrupt:
-        pass
+        print("Interrupted; shutting down.")
     
     # Cleanup
     running = False

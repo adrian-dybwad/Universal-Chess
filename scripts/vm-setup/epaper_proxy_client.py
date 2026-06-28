@@ -5,6 +5,7 @@ Runs on VM, intercepts epaper display calls and forwards to Pi server.
 This replaces the epaper driver in the VM environment.
 """
 
+import contextlib
 import socket
 import sys
 import signal
@@ -24,10 +25,8 @@ def signal_handler(sig, frame):
     print("\nShutting down epaper proxy client...")
     running = False
     if server_socket:
-        try:
+        with contextlib.suppress(OSError):
             server_socket.close()
-        except:
-            pass
     sys.exit(0)
 
 def send_display_update(image):
@@ -138,12 +137,12 @@ def main():
             if server_socket:
                 try:
                     server_socket.send(b'')  # Test connection
-                except:
+                except OSError:
                     print("Server disconnected, attempting reconnect...")
                     if not connect_to_server(args.server_ip, args.port):
                         break
     except KeyboardInterrupt:
-        pass
+        print("Interrupted; shutting down.")
     
     # Cleanup
     running = False
