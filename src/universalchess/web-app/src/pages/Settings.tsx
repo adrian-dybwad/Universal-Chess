@@ -210,6 +210,12 @@ export function Settings() {
   const [loginDialogOpen, setLoginDialogOpen] = useState(false);
   const [loginError, setLoginError] = useState<string | undefined>();
   const [pendingAction, setPendingAction] = useState<'save' | 'apply' | null>(null);
+  // "Retry after login" for engine install/uninstall, which (unlike the
+  // string-based save/apply pendingAction) carry arguments. The arguments are
+  // stashed -- not a callback that closes over toggleEngine, which would access
+  // it before declaration and trip the react-hooks immutability rule -- and
+  // re-applied by handleLoginSuccess once the login dialog succeeds.
+  const pendingEngineActionRef = useRef<{ engineName: string; install: boolean; ref?: string } | null>(null);
   const hasChangesRef = useRef(hasChanges);
 
   // Keep ref in sync with state (for use in SSE callback)
@@ -429,7 +435,17 @@ export function Settings() {
   const handleLoginSuccess = async () => {
     setLoginDialogOpen(false);
     setLoginError(undefined);
-    
+
+    // Engine install/uninstall retry (carries args, so it is stashed separately
+    // from the save/apply string). Runs first and returns; pendingAction is null
+    // for these, so the save/apply branches below never fire here.
+    if (pendingEngineActionRef.current) {
+      const { engineName, install, ref } = pendingEngineActionRef.current;
+      pendingEngineActionRef.current = null;
+      await toggleEngine(engineName, install, ref);
+      return;
+    }
+
     if (pendingAction === 'save') {
       setPendingAction(null);
       await saveSettings();
@@ -586,7 +602,19 @@ export function Settings() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        requiresAuth: true,
       });
+      // install/uninstall are @requires_auth (they mutate the system). On 401,
+      // open the shared login dialog and queue this exact action to re-run after
+      // a successful login -- otherwise the user sees only a red "auth required"
+      // message with no way to authenticate.
+      if (response.status === 401) {
+        setInstallingEngine(null);
+        setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
+        pendingEngineActionRef.current = { engineName, install, ref };
+        setLoginDialogOpen(true);
+        return;
+      }
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.success === false) {
         setInstallingEngine(null);
@@ -741,6 +769,7 @@ export function Settings() {
         onClose={() => {
           setLoginDialogOpen(false);
           setPendingAction(null);
+          pendingEngineActionRef.current = null;
         }}
         onSuccess={handleLoginSuccess}
         errorMessage={loginError}
@@ -1999,19 +2028,24 @@ function formatEventTimestamp(ts: string): string {
 // opens the shared login dialog and retries, matching DebugCard.
 function LogViewer() {
   const [events, setEvents] = useState<EventLogEntry[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Starts true because the mount effect loads immediately. loadEvents does NOT
+  // set loading synchronously (every state update happens after the awaited
+  // fetch) so the on-mount effect triggers no synchronous render cascade -- the
+  // pattern the page's main loader uses, enforced by react-hooks/set-state-in-effect.
+  // The Refresh button flips it back to true from its (allowed) event handler.
+  const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showLoginDialog, setShowLoginDialog] = useState(false);
-  const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
 
   const loadEvents = useCallback(async () => {
-    setLoading(true);
-    setError(null);
     try {
       const response = await apiFetch('/api/system/event-log?limit=200', { requiresAuth: true });
       if (response.status === 401) {
-        pendingActionRef.current = loadEvents;
+        // The only action this card performs is loading events, so the login
+        // dialog's onSuccess simply re-runs loadEvents -- no need to stash a
+        // self-referential callback (which the react-hooks immutability rule
+        // rejects as accessing loadEvents before it is declared).
         setShowLoginDialog(true);
         return;
       }
@@ -2020,6 +2054,7 @@ function LogViewer() {
         return;
       }
       const data = await response.json().catch(() => ({ events: [] }));
+      setError(null);
       setEvents(Array.isArray(data.events) ? data.events : []);
       setLoaded(true);
     } catch {
@@ -2029,27 +2064,30 @@ function LogViewer() {
     }
   }, []);
 
+  const handleRefresh = () => {
+    setLoading(true);
+    void loadEvents();
+  };
+
+  // Wrapped in an inline async function (the same shape the page's main loader
+  // uses) so the load is an async boundary: every setState inside loadEvents
+  // runs after the awaited fetch, not synchronously in the effect tick.
   useEffect(() => {
-    loadEvents();
+    void (async () => {
+      await loadEvents();
+    })();
   }, [loadEvents]);
 
   const handleLoginSuccess = async () => {
     setShowLoginDialog(false);
-    if (pendingActionRef.current) {
-      const action = pendingActionRef.current;
-      pendingActionRef.current = null;
-      await action();
-    }
+    await loadEvents();
   };
 
   return (
     <>
       <LoginDialog
         isOpen={showLoginDialog}
-        onClose={() => {
-          setShowLoginDialog(false);
-          pendingActionRef.current = null;
-        }}
+        onClose={() => setShowLoginDialog(false)}
         onSuccess={handleLoginSuccess}
       />
       <Card className="mb-6">
@@ -2065,7 +2103,7 @@ function LogViewer() {
           </Card>
         )}
         <div className="mb-4">
-          <Button variant="secondary" onClick={loadEvents} disabled={loading}>
+          <Button variant="secondary" onClick={handleRefresh} disabled={loading}>
             {loading ? 'Refreshing...' : 'Refresh'}
           </Button>
         </div>
