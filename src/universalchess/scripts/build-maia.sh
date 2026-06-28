@@ -299,25 +299,49 @@ build_lc0() {
     log_step "Building lc0 (this will take 30-60 minutes)"
     
     cd "$BUILD_DIR/lc0"
-    
-    # Get number of compilation units
-    local total_units
-    total_units=$(ninja -C build/release -t targets all 2>/dev/null | wc -l || echo "unknown")
-    log "Total compilation units: ~$total_units"
-    
+
+    # Cumulative progress across resumes.
+    #
+    # ninja's "[current/total]" is per-invocation: "total" is the number of edges
+    # it still needs to build *this run*, and "current" restarts at 0. So a resume
+    # that already compiled 14 of 259 units reports "[x/245]" starting at 0/245 --
+    # correct work, but it looks like a restart. Persist the full total (captured
+    # on the first clean build, where remaining == full) so resumes can render the
+    # cumulative count: already_done = full_total - remaining_this_run, displayed
+    # as [already_done + current / full_total]. The file lives with the build tree,
+    # so it is created once, reused by every resume, and removed on success when
+    # the tree is cleaned.
+    local total_file="$BUILD_DIR/lc0/.uc-build-total"
+    local full_total=""
+    if [[ -f "$total_file" ]]; then
+        full_total="$(cat "$total_file" 2>/dev/null || true)"
+    fi
+
     # Build with -j1 to minimize memory usage
     # The Pi has limited RAM and lc0+abseil compilation is memory-intensive
     log "Starting build with -j1 (single-threaded to avoid OOM)..."
-    log "Progress will be shown as [current/total]"
+    log "Progress will be shown as [completed/total], continuing across resumes"
     
     # Run ninja with verbose output to show progress
     if ! ninja -C build/release -j1 -v 2>&1 | while IFS= read -r line; do
         # Extract progress from ninja output like [123/456]
         if [[ "$line" =~ ^\[([0-9]+)/([0-9]+)\] ]]; then
             local current="${BASH_REMATCH[1]}"
-            local total="${BASH_REMATCH[2]}"
-            local percent=$((current * 100 / total))
-            echo -ne "\r$LOG_PREFIX Progress: [$current/$total] ($percent%)     "
+            local remaining="${BASH_REMATCH[2]}"
+            # First clean build (no persisted total): remaining == the full total.
+            # Capture and persist it for future resumes. Pre-loading from the file
+            # above prevents a resume from mistaking its smaller "remaining" for the
+            # full total.
+            if [[ -z "$full_total" ]]; then
+                full_total="$remaining"
+                echo "$full_total" > "$total_file"
+            fi
+            local already=$((full_total - remaining))
+            if ((already < 0)); then already=0; fi
+            local completed=$((already + current))
+            if ((completed > full_total)); then completed=$full_total; fi
+            local percent=$((completed * 100 / full_total))
+            echo -ne "\r$LOG_PREFIX Progress: [$completed/$full_total] ($percent%)     "
         fi
     done; then
         echo ""

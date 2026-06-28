@@ -464,6 +464,26 @@ class TestMaiaBuildCommand:
         assert "Reusing existing lc0 checkout" in content
         assert "Reusing existing meson configuration" in content
 
+    def test_resume_progress_is_cumulative_not_per_invocation(self):
+        """Resumed Maia builds must show cumulative progress, not ninja's per-run count.
+
+        Why this test exists: ninja's "[current/total]" is per-invocation -- on a
+        resume that already compiled 14 of 259 units it prints "[x/245]" starting at
+        0/245. Raw, that looks like a restart from scratch even though the 14 units
+        are reused. The script persists the full total and renders
+        ``already_done + current`` of the full total so the bar continues (e.g.
+        14/259) on resume.
+
+        How the regression manifests: dropping the persisted-total file or the
+        ``full_total - remaining`` computation reverts the display to ninja's raw
+        "[0/245]", which is the exact confusing behavior this guards against.
+        """
+        content = (SCRIPTS_DIR / "build-maia.sh").read_text()
+        # Full total is persisted with the build tree so resumes can read it back.
+        assert ".uc-build-total" in content
+        # already-completed is derived as full_total - remaining-this-run.
+        assert "full_total - remaining" in content
+
     def test_build_script_passes_no_removed_nvcc_meson_option(self):
         """build-maia.sh must not pass the ``-Dnvcc`` meson option.
 
