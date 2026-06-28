@@ -251,7 +251,6 @@ configure_build() {
         # Disable optional features
         "-Dgtest=false"
         "-Donnx=false"
-        "-Dnvcc=false"
         "-Dpython_bindings=false"
     )
     

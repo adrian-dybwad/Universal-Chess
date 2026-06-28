@@ -442,6 +442,22 @@ class TestMaiaBuildCommand:
         assert "mkswap" not in content
         assert "swapon" not in content
 
+    def test_build_script_passes_no_removed_nvcc_meson_option(self):
+        """build-maia.sh must not pass the ``-Dnvcc`` meson option.
+
+        Why this test exists: the script pins lc0 ``v0.32.1``, whose
+        meson_options.txt has no boolean ``nvcc`` option (it was superseded by
+        ``nvcc_ccbin``/``cc_cuda``). Passing ``-Dnvcc=false`` makes ``meson setup``
+        abort immediately with ``Unknown options: "nvcc"``, so the build never
+        starts -- a configure-time failure that only reproduces on-device.
+
+        How the regression manifests: re-adding ``-Dnvcc`` (e.g. by copying an
+        older option list) reintroduces the meson configure abort for the pinned
+        lc0 version.
+        """
+        content = (SCRIPTS_DIR / "build-maia.sh").read_text()
+        assert "-Dnvcc" not in content
+
     def test_script_path_has_no_engines_component(self):
         """The build script must not sit under any directory named ``engines``.
 
