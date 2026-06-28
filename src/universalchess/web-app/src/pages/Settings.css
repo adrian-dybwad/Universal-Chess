@@ -5,28 +5,17 @@
  * Uses shared components and tokens from the design system.
  */
 
+/* No page padding here: the outer .section wrapper (styles/base.css) already
+   supplies the responsive page padding for every route. Repeating it here
+   doubled the space above the first heading. The sticky save bar's bottom
+   clearance is still added per-breakpoint below. */
 .settings-layout {
   display: grid;
   grid-template-columns: 220px 1fr;
   gap: var(--space-8);
   max-width: var(--container-xl);
   margin: 0 auto;
-  padding: 3rem 1.5rem;
   min-height: calc(100vh - 120px);
-}
-
-/* Responsive padding - tablet */
-@media screen and (max-width: 768px) {
-  .settings-layout {
-    padding: 2rem 1rem;
-  }
-}
-
-/* Responsive padding - mobile */
-@media screen and (max-width: 480px) {
-  .settings-layout {
-    padding: 1rem 0.5rem;
-  }
 }
 
 .settings-sidebar {
@@ -490,7 +479,8 @@
 @media (max-width: 768px) {
   .settings-layout {
     grid-template-columns: 48px 1fr;
-    /* padding is set in earlier 768px block - just add bottom for sticky bar */
+    /* Outer .section owns the page padding; only the sticky save bar's bottom
+       clearance is layout-specific. */
     padding-bottom: 100px;
     gap: var(--space-4);
   }
@@ -543,7 +533,7 @@
 /* Responsive - mobile */
 @media (max-width: 480px) {
   .settings-layout {
-    /* padding is set in earlier 480px block - just ensure grid and bottom padding */
+    /* Outer .section owns the page padding; keep the sticky save bar clearance. */
     padding-bottom: 100px;
     gap: var(--space-3);
   }
