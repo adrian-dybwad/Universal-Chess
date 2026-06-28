@@ -7,10 +7,13 @@ regression can be guarded.
 """
 
 import re
+from pathlib import Path
 
+import universalchess.managers.engine_manager as engine_manager_module
 from universalchess.managers.engine_manager import (
     _BUILD_PARALLELISM_ENV,
     ENGINES,
+    SCRIPTS_DIR,
     _build_env,
     _build_parallelism,
 )
@@ -362,6 +365,72 @@ class TestZahakBuildCommand:
         the "Binary not found" check.
         """
         assert ENGINES["zahak"].binary_path == "bin/zahak"
+
+
+class TestMaiaBuildCommand:
+    """Guards Maia's build-script path against the dev-vs-installed layout bug.
+
+    Maia is the one engine that shells out to a bundled build script instead of
+    cloning and compiling inline, so its command embeds a filesystem path. That
+    path must resolve on an *installed board*, not just in a dev checkout.
+    """
+
+    def test_invokes_packaged_build_script_that_exists(self):
+        """The command must invoke ``{SCRIPTS_DIR}/build-maia.sh`` and that file
+        must exist.
+
+        Why this test exists: the command previously used a REPO_ROOT computed as
+        four parents up from engine_manager.py. That assumes a dev checkout
+        (src/universalchess/managers/...). On a board the package is flattened to
+        /opt/universalchess, so engine_manager.py sits two levels down and four
+        parents overshoot to "/", producing the literal install failure
+        "sudo: //scripts/engines/build-maia.sh: command not found". Worse, the
+        script lived at the repo root (scripts/engines/) which is never packaged.
+
+        How the regression manifests: reverting to a repo-root path makes
+        SCRIPTS_DIR/build-maia.sh either point outside the package or not exist;
+        this asserts the command names a real file inside the packaged scripts
+        dir -- the only location both the .deb and deploy-to-pi.sh actually ship.
+        """
+        script_path = SCRIPTS_DIR / "build-maia.sh"
+        command = _build_script("maia")
+        assert str(script_path) in command
+        assert script_path.is_file()
+
+    def test_build_script_lives_inside_the_packaged_tree(self):
+        """SCRIPTS_DIR must be the package's own scripts dir so the script ships.
+
+        Why this test exists: the .deb tars src/universalchess into
+        /opt/universalchess and deploy-to-pi.sh rsyncs the same tree; a script
+        outside that tree (e.g. the repo-root scripts/) is absent on-device. The
+        package dir is two parents up from engine_manager.py (managers ->
+        universalchess), and its scripts/ subdir is where runtime helpers
+        (uc-build-memory, bluez-selfheal) already live.
+
+        How the regression manifests: pointing SCRIPTS_DIR at the repo root again
+        moves it outside the package; this asserts the build script is a
+        descendant of the package dir that gets deployed.
+        """
+        package_dir = Path(engine_manager_module.__file__).resolve().parent.parent
+        assert SCRIPTS_DIR == package_dir / "scripts"
+        script_path = SCRIPTS_DIR / "build-maia.sh"
+        assert package_dir in script_path.parents
+
+    def test_script_path_has_no_engines_component(self):
+        """The build script must not sit under any directory named ``engines``.
+
+        Why this test exists: deploy-to-pi.sh rsyncs with ``--exclude='engines'``
+        (unanchored) to protect the installed engine-binaries dir. That pattern
+        matches an ``engines`` path component at any depth, so a build script
+        under scripts/engines/ would be silently dropped by deploy while still
+        shipping in the .deb -- an install that works one way and not the other.
+
+        How the regression manifests: relocating build-maia.sh back under an
+        ``engines/`` subdir reintroduces the exclude collision; this guards that
+        no ``engines`` component appears in the script path.
+        """
+        script_path = SCRIPTS_DIR / "build-maia.sh"
+        assert "engines" not in script_path.parts
 
 
 # Matches a hard-coded parallelism flag in a build command: -j2 / -j 2 /

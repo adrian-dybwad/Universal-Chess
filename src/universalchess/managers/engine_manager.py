@@ -133,9 +133,15 @@ def _build_env(parallelism: Optional[int] = None) -> dict:
     env["GOFLAGS"] = f"-p={n}"
     return env
 
-# Repository root (for build scripts)
-# Detect from this file's location: src/universalchess/managers/engine_manager.py -> repo root
-REPO_ROOT = str(Path(__file__).resolve().parent.parent.parent.parent)
+# Directory of the installed universalchess package, and its bundled scripts.
+# engine_manager.py lives at <pkg>/managers/engine_manager.py, so two parents
+# reach <pkg>: /opt/universalchess on a board (the .deb and deploy-to-pi.sh both
+# flatten src/universalchess into it) and src/universalchess in a dev checkout.
+# Runtime build helpers ship under <pkg>/scripts/, so referencing them this way
+# resolves in both layouts. A repo-root path (four parents) does NOT exist on a
+# board -- it overshoots to "/", which is what produced the
+# "sudo //scripts/engines/build-maia.sh: command not found" install failure.
+SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 
 # GitHub release URL for pre-built engine binaries.
 GITHUB_REPO = "adrian-dybwad/Universal-Chess"
@@ -774,7 +780,7 @@ ENGINES = {
             # - Single-threaded build to avoid OOM
             # - Correct meson options for ARM
             # - Weight downloads
-            f"sudo {REPO_ROOT}/scripts/engines/build-maia.sh {ENGINES_DIR}/maia",
+            f"sudo {SCRIPTS_DIR}/build-maia.sh {ENGINES_DIR}/maia",
         ],
         binary_path="lc0",  # Script installs to ENGINES_DIR/maia/lc0
         is_system_package=False,

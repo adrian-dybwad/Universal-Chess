@@ -107,7 +107,7 @@ the shared `menu.json` catalog changed (the web reads the catalog via
 
 | Directory | Purpose |
 |-----------|---------|
-| `engines/` | Engine build scripts (build-maia.sh, etc.) |
+| `engines/` | Build-time engine scripts (build-lc0.sh prebuilds lc0 into the .deb; ci-build-engines.sh). The runtime Maia source build (build-maia.sh) lives in the packaged tree at `src/universalchess/scripts/` so the installed app can invoke it. |
 | `vm-setup/` | VM development environment setup |
 | `config/` | Build configuration |
 | `releases/` | Built .deb artifacts (gitignored) |
