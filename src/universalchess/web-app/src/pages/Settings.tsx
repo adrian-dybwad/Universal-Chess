@@ -1336,7 +1336,9 @@ function EngineCard({
   // does not fire a GitHub request per card on page load. Until then the select
   // shows just the recommended ref. `selectedRef` starts at the recommended ref
   // (the canonical pin/default), so a plain Install keeps the prior behavior.
-  const showRefPicker = !isSystem && engine.source_installable && !engine.installed;
+  // Unsupported engines cannot be installed here, so the release picker (which
+  // only feeds an install) is omitted along with the Install button below.
+  const showRefPicker = !isSystem && engine.source_installable && !engine.installed && engine.supported;
   const [refs, setRefs] = useState<EngineRef[] | null>(null);
   const [refsLoading, setRefsLoading] = useState(false);
   const [selectedRef, setSelectedRef] = useState<string>(engine.recommended_ref ?? '');
@@ -1394,6 +1396,10 @@ function EngineCard({
             <Badge variant="success">System Package</Badge>
           ) : engine.installed ? (
             <Badge variant="success">Installed</Badge>
+          ) : !engine.supported ? (
+            // An engine the device cannot build/run shows its own terminal state
+            // instead of "Not Installed", since it cannot be installed here.
+            <Badge variant="danger">Not Supported</Badge>
           ) : (
             <Badge variant="default">Not Installed</Badge>
           )}
@@ -1442,23 +1448,27 @@ function EngineCard({
                   onChange={(e) => setSelectedRef(e.target.value)}
                 />
               )}
-              <Button
-                variant={engine.installed ? 'danger' : 'primary'}
-                size="sm"
-                // Block installing an engine the device can't build/run. Uninstall
-                // stays available so an engine installed before a support change
-                // can still be removed.
-                disabled={installInProgress || (!engine.installed && !engine.supported)}
-                // Forward the chosen ref only when installing a source engine; a
-                // ref-less call (or uninstall) keeps the canonical behavior.
-                onClick={() => onToggle(
-                  engine.name,
-                  !engine.installed,
-                  showRefPicker ? (selectedRef || undefined) : undefined,
-                )}
-              >
-                {buttonLabel}
-              </Button>
+              {/* Hide the action entirely for an engine the device can't
+                  build/run and that is not already installed: there is nothing
+                  to install and nothing to uninstall. An unsupported engine that
+                  is still installed (installed before a support change) keeps its
+                  Uninstall button so it can be removed. */}
+              {(engine.installed || engine.supported) && (
+                <Button
+                  variant={engine.installed ? 'danger' : 'primary'}
+                  size="sm"
+                  disabled={installInProgress}
+                  // Forward the chosen ref only when installing a source engine; a
+                  // ref-less call (or uninstall) keeps the canonical behavior.
+                  onClick={() => onToggle(
+                    engine.name,
+                    !engine.installed,
+                    showRefPicker ? (selectedRef || undefined) : undefined,
+                  )}
+                >
+                  {buttonLabel}
+                </Button>
+              )}
             </>
           )}
           {/* Profile editor entry point: only for installed engines that expose
