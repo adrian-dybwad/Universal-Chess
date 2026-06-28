@@ -7,7 +7,7 @@ WiFi information for display in menus.
 Supports subscribing to WiFi status changes via callbacks.
 """
 
-import subprocess
+import subprocess  # nosec B404  # trusted, fixed-arg network tool invocations below
 import threading
 import os
 import re
@@ -59,7 +59,7 @@ def get_wifi_status() -> dict:
     
     # Check rfkill status
     try:
-        result = subprocess.run(['rfkill', 'list', 'wifi'],
+        result = subprocess.run(['rfkill', 'list', 'wifi'],  # noqa: S607  # nosec B603 B607
                                capture_output=True, text=True, timeout=5)
         # If "Soft blocked: no" is in output, WiFi is enabled
         status['enabled'] = 'Soft blocked: no' in result.stdout
@@ -68,7 +68,7 @@ def get_wifi_status() -> dict:
     
     # Get SSID
     try:
-        result = subprocess.run(['iwgetid', '-r'],
+        result = subprocess.run(['iwgetid', '-r'],  # noqa: S607  # nosec B603 B607
                                capture_output=True, text=True, timeout=5)
         if result.returncode == 0 and result.stdout.strip():
             status['ssid'] = result.stdout.strip()
@@ -79,7 +79,7 @@ def get_wifi_status() -> dict:
     # Get IP address and netmask via ip command
     if status['connected']:
         try:
-            result = subprocess.run(['ip', '-o', '-4', 'addr', 'show', 'wlan0'],
+            result = subprocess.run(['ip', '-o', '-4', 'addr', 'show', 'wlan0'],  # noqa: S607  # nosec B603 B607
                                    capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
                 # Parse output like: "3: wlan0    inet 192.168.1.100/24 brd 192.168.1.255 scope global wlan0"
@@ -103,7 +103,7 @@ def get_wifi_status() -> dict:
         # Fallback to hostname -I if ip command didn't work
         if not status['ip_address']:
             try:
-                result = subprocess.run(['hostname', '-I'],
+                result = subprocess.run(['hostname', '-I'],  # noqa: S607  # nosec B603 B607
                                        capture_output=True, text=True, timeout=5)
                 ips = result.stdout.strip().split()
                 if ips:
@@ -113,7 +113,7 @@ def get_wifi_status() -> dict:
     
     # Get gateway
     try:
-        result = subprocess.run(['ip', 'route', 'show', 'default'],
+        result = subprocess.run(['ip', 'route', 'show', 'default'],  # noqa: S607  # nosec B603 B607
                                capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             # Parse output like: "default via 192.168.1.1 dev wlan0"
@@ -128,7 +128,7 @@ def get_wifi_status() -> dict:
     # Get signal strength and frequency via iwconfig
     if status['connected']:
         try:
-            result = subprocess.run(['iwconfig', 'wlan0'],
+            result = subprocess.run(['iwconfig', 'wlan0'],  # noqa: S607  # nosec B603 B607
                                    capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
                 output = result.stdout
@@ -156,7 +156,7 @@ def get_wifi_status() -> dict:
     
     # Get MAC address
     try:
-        result = subprocess.run(['cat', '/sys/class/net/wlan0/address'],
+        result = subprocess.run(['cat', '/sys/class/net/wlan0/address'],  # noqa: S607  # nosec B603 B607
                                capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             status['mac_address'] = result.stdout.strip().upper()
@@ -207,7 +207,7 @@ def enable_wifi() -> bool:
         True if command succeeded, False otherwise
     """
     try:
-        subprocess.run(['sudo', 'rfkill', 'unblock', 'wifi'], timeout=5)
+        subprocess.run(['sudo', 'rfkill', 'unblock', 'wifi'], timeout=5)  # noqa: S607  # nosec B603 B607
         log.info("[WiFi] Enabled via rfkill")
         return True
     except Exception as e:
@@ -222,7 +222,7 @@ def disable_wifi() -> bool:
         True if command succeeded, False otherwise
     """
     try:
-        subprocess.run(['sudo', 'rfkill', 'block', 'wifi'], timeout=5)
+        subprocess.run(['sudo', 'rfkill', 'block', 'wifi'], timeout=5)  # noqa: S607  # nosec B603 B607
         log.info("[WiFi] Disabled via rfkill")
         return True
     except Exception as e:

@@ -7,6 +7,7 @@ Runs on VM, creates virtual serial port and forwards to Pi server.
 import contextlib
 import serial
 import socket
+import subprocess  # nosec B404  # rewritten from os.system to shell-free subprocess calls below
 import threading
 import time
 import sys
@@ -15,7 +16,7 @@ import argparse
 import os
 
 # Configuration
-VIRTUAL_SERIAL_PORT = "/tmp/vm_serial"
+VIRTUAL_SERIAL_PORT = "/tmp/vm_serial"  # noqa: S108  # nosec B108  # fixed, well-known path the /dev/serial0 symlink and centaur must agree on; not a tempfile
 RELAY_PORT = 8888
 
 running = True
@@ -38,12 +39,12 @@ def signal_handler(sig, frame):
 def setup_virtual_serial():
     """Create virtual serial port using socat"""
     # Kill any existing socat processes
-    os.system("pkill -f 'socat.*vm_serial' 2>/dev/null")
+    subprocess.run(["pkill", "-f", "socat.*vm_serial"], stderr=subprocess.DEVNULL)  # noqa: S607  # nosec B603 B607
     time.sleep(0.5)
-    
-    # Create virtual serial port pair
-    cmd = f"socat -d -d pty,raw,echo=0,link={VIRTUAL_SERIAL_PORT} pty,raw,echo=0,link=/tmp/vm_serial_monitor &"
-    os.system(cmd)
+
+    # Create virtual serial port pair. Popen (no .wait()) returns immediately,
+    # mirroring the old trailing `&`; socat is reaped via pkill on shutdown.
+    subprocess.Popen(["socat", "-d", "-d", f"pty,raw,echo=0,link={VIRTUAL_SERIAL_PORT}", "pty,raw,echo=0,link=/tmp/vm_serial_monitor"])  # noqa: S603, S607  # nosec B603 B607
     time.sleep(2)
     
     if not os.path.exists(VIRTUAL_SERIAL_PORT):
@@ -126,8 +127,8 @@ def main():
     # Create symlink for centaur to use
     try:
         if os.path.exists("/dev/serial0"):
-            os.system("sudo mv /dev/serial0 /dev/serial0.backup 2>/dev/null")
-        os.system(f"sudo ln -sf {virtual_port} /dev/serial0")
+            subprocess.run(["sudo", "mv", "/dev/serial0", "/dev/serial0.backup"], stderr=subprocess.DEVNULL)  # noqa: S607  # nosec B603 B607
+        subprocess.run(["sudo", "ln", "-sf", virtual_port, "/dev/serial0"])  # noqa: S603, S607  # nosec B603 B607
         print("Created /dev/serial0 symlink")
     except Exception as e:
         print(f"Warning: Could not create /dev/serial0 symlink: {e}")
@@ -155,8 +156,8 @@ def main():
         server_socket.close()
     if serial_conn:
         serial_conn.close()
-    os.system("pkill -f 'socat.*vm_serial' 2>/dev/null")
-    
+    subprocess.run(["pkill", "-f", "socat.*vm_serial"], stderr=subprocess.DEVNULL)  # noqa: S607  # nosec B603 B607
+
     print("Serial relay client stopped.")
     return 0
 

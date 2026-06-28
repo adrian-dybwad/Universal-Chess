@@ -30,9 +30,9 @@
 import contextlib
 import os
 import logging
+import struct
 import sys
 import time
-import subprocess
 
 from ctypes import *
 
@@ -135,7 +135,11 @@ class RaspberryPi:
             ]
             self.DEV_SPI = None
             for find_dir in find_dirs:
-                val = int(os.popen('getconf LONG_BIT').read())
+                # Pointer width of the running interpreter selects the matching
+                # native lib. This is more correct than shelling to `getconf
+                # LONG_BIT` (the OS default), which can mismatch a 32-bit Python
+                # running on a 64-bit OS, and avoids a shell subprocess entirely.
+                val = struct.calcsize("P") * 8
                 logging.debug("System is %d bit"%val)
                 if val == 64:
                     so_filename = os.path.join(find_dir, 'DEV_Config_64.so')
