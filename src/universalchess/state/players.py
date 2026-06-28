@@ -8,7 +8,10 @@ The actual Player objects and game logic remain in PlayerManager -
 this state object provides an observable interface for the UI layer.
 """
 
+import logging
 from typing import Optional, Callable, List
+
+log = logging.getLogger(__name__)
 
 
 class PlayersState:
@@ -89,7 +92,7 @@ class PlayersState:
             try:
                 callback(self._white_name, self._black_name)
             except Exception:
-                pass
+                log.exception("Player-name observer callback failed")
     
     # -------------------------------------------------------------------------
     # State mutations (called by PlayerManager)

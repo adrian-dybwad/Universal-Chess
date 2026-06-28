@@ -13,7 +13,10 @@ while ``snapshot()`` exposes the full per-device list for callers that can show
 more than one (the web UI and the board's Chromecast menu).
 """
 
+import logging
 from typing import Optional, Callable, List, Dict
+
+log = logging.getLogger(__name__)
 
 
 # Streaming states
@@ -150,12 +153,17 @@ class ChromecastState:
             self._observers.remove(callback)
 
     def _notify(self) -> None:
-        """Notify all observers; observer errors are swallowed by design."""
+        """Notify all observers.
+
+        A failing observer is logged and skipped so one bad observer cannot
+        break notification of the others (previously the error was swallowed
+        silently, hiding observer bugs).
+        """
         for callback in self._observers:
             try:
                 callback()
             except Exception:
-                pass
+                log.exception("Chromecast observer callback failed")
 
     # -------------------------------------------------------------------------
     # State mutations (called by the chromecast service, per device)

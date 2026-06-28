@@ -7,7 +7,10 @@ and hardware interaction is handled elsewhere (board module, network utils).
 Widgets observe this state to display status indicators in the status bar.
 """
 
+import logging
 from typing import Optional, Callable, List
+
+log = logging.getLogger(__name__)
 
 
 # WiFi state constants
@@ -182,7 +185,7 @@ class SystemState:
             try:
                 callback()
             except Exception:
-                pass
+                log.exception("Battery state observer callback failed")
     
     def _notify_wifi(self) -> None:
         """Notify WiFi observers."""
@@ -190,7 +193,7 @@ class SystemState:
             try:
                 callback()
             except Exception:
-                pass
+                log.exception("WiFi state observer callback failed")
     
     def _notify_bluetooth(self) -> None:
         """Notify Bluetooth observers."""
@@ -198,7 +201,7 @@ class SystemState:
             try:
                 callback()
             except Exception:
-                pass
+                log.exception("Bluetooth state observer callback failed")
     
     # -------------------------------------------------------------------------
     # State mutations

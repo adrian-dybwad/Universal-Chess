@@ -7,7 +7,10 @@ The actual analysis engine and worker thread are managed elsewhere.
 Widgets observe this state to display evaluation bar and history graph.
 """
 
+import logging
 from typing import Optional, Callable, List, Tuple
+
+log = logging.getLogger(__name__)
 
 
 class AnalysisState:
@@ -123,7 +126,7 @@ class AnalysisState:
             try:
                 callback()
             except Exception:
-                pass
+                log.exception("Score observer callback failed")
     
     def _notify_history(self) -> None:
         """Notify history change observers."""
@@ -131,7 +134,7 @@ class AnalysisState:
             try:
                 callback()
             except Exception:
-                pass
+                log.exception("History observer callback failed")
     
     # -------------------------------------------------------------------------
     # State mutations
