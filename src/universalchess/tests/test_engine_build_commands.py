@@ -416,6 +416,32 @@ class TestMaiaBuildCommand:
         script_path = SCRIPTS_DIR / "build-maia.sh"
         assert package_dir in script_path.parents
 
+    def test_build_script_does_not_use_tmpfs_or_self_manage_swap(self):
+        """build-maia.sh must build on disk and must not create its own swap.
+
+        Why this test exists: on a 512 MB Pi /tmp is a ~208 MB RAM-backed tmpfs.
+        The script originally placed both a 2 GB swapfile (/tmp/maia-build-swap)
+        and the lc0 checkout/build tree (/tmp/maia-build-$$) there, so the install
+        failed with "No space left on device" -- the swapfile write aborted
+        outright, and once the caller already provisioned swap the clone filled the
+        tiny tmpfs (the build's cleanup logged "Removing build directory"). Build
+        headroom now comes solely from the caller (uc-build-memory), and the build
+        directory lives on the SD card beside the install dir.
+
+        How the regression manifests: reintroducing an absolute ``/tmp`` build dir
+        or an in-script ``mkswap``/``swapon`` brings back the tmpfs space failure on
+        low-RAM boards -- which only reproduces on-device, so the script text is the
+        highest deterministic level to guard it.
+        """
+        content = (SCRIPTS_DIR / "build-maia.sh").read_text()
+        # No absolute /tmp build dir (the disk path is <install>/../../tmp, derived
+        # via dirname, which is fine -- only a leading "/tmp is the tmpfs).
+        assert 'BUILD_DIR="/tmp' not in content
+        assert "/tmp/maia-build-swap" not in content
+        # Swap is provisioned by the caller (uc-build-memory), not here.
+        assert "mkswap" not in content
+        assert "swapon" not in content
+
     def test_script_path_has_no_engines_component(self):
         """The build script must not sit under any directory named ``engines``.
 

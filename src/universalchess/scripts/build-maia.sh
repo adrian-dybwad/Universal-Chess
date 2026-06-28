@@ -3,22 +3,27 @@
 # Build script for Maia (lc0 with human-like neural network weights)
 # Designed for Raspberry Pi ARM64 with limited RAM
 #
-# This script builds lc0 with BLAS backend for CPU-only operation.
-# It handles memory constraints by using single-threaded compilation
-# and adding swap space if needed.
+# This script builds lc0 with BLAS backend for CPU-only operation, using
+# single-threaded compilation to keep peak memory low on RAM-constrained boards.
 #
 # Usage: ./build-maia.sh [install_dir]
 #   install_dir: Where to place the built binary (default: /opt/universalchess/engines/maia)
 #
 # The script will:
 #   1. Install build dependencies
-#   2. Add swap if system has < 4GB total memory
-#   3. Clone lc0 and configure for ARM with BLAS backend
-#   4. Build with -j1 to avoid OOM kills
-#   5. Download Maia weights
-#   6. Install binary and weights to install_dir
+#   2. Clone lc0 and configure for ARM with BLAS backend
+#   3. Build with -j1 to avoid OOM kills
+#   4. Download Maia weights
+#   5. Install binary and weights to install_dir
 #
-# Run as root or with sudo for swap and apt operations.
+# Memory: this script does NOT provision swap. The caller (the app's engine
+# installer) brings up a zram + SD-card swap tier via uc-build-memory around the
+# whole build. The build directory is placed on disk beside the install dir,
+# never under /tmp -- on a Pi /tmp is a small RAM-backed tmpfs that cannot hold
+# the lc0 checkout/build tree (the build previously failed there with "No space
+# left on device").
+#
+# Run as root or with sudo for apt operations and writing to the install dir.
 # =============================================================================
 
 set -euo pipefail
@@ -27,9 +32,11 @@ SCRIPT_NAME="$(basename "$0")"
 LOG_PREFIX="[Maia Build]"
 LC0_VERSION="v0.32.1"
 INSTALL_DIR="${1:-/opt/universalchess/engines/maia}"
-BUILD_DIR="/tmp/maia-build-$$"
-SWAP_FILE="/tmp/maia-build-swap"
-SWAP_SIZE_MB=2048
+# Build on disk, never under /tmp. On a Pi /tmp is a small tmpfs (e.g. 208 MB on
+# a 512 MB board) and RAM-backed, so it can hold neither the lc0 checkout+build
+# tree nor any useful swap. Place the build beside the install dir on the SD
+# card: <install_dir>/../../tmp/maia-build-<pid> (e.g. /opt/universalchess/tmp).
+BUILD_DIR="$(dirname "$(dirname "$INSTALL_DIR")")/tmp/maia-build-$$"
 
 # Maia weights to download
 MAIA_WEIGHTS=(
@@ -77,13 +84,6 @@ cleanup() {
     
     log "Cleaning up..."
     
-    # Remove swap if we created it
-    if [[ -f "$SWAP_FILE" ]]; then
-        log "Removing temporary swap file..."
-        swapoff "$SWAP_FILE" 2>/dev/null || true
-        rm -f "$SWAP_FILE"
-    fi
-    
     # Remove build directory
     if [[ -d "$BUILD_DIR" ]]; then
         log "Removing build directory..."
@@ -130,48 +130,32 @@ check_architecture() {
     esac
 }
 
-check_memory() {
+report_memory() {
     log_step "Checking system memory"
-    
-    local total_mem_kb
+
+    local total_mem_kb total_swap_kb
     total_mem_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-    local total_mem_mb=$((total_mem_kb / 1024))
-    local total_swap_kb
     total_swap_kb=$(grep SwapTotal /proc/meminfo | awk '{print $2}')
+    local total_mem_mb=$((total_mem_kb / 1024))
     local total_swap_mb=$((total_swap_kb / 1024))
     local total_available=$((total_mem_mb + total_swap_mb))
-    
+
     log "RAM: ${total_mem_mb}MB"
     log "Swap: ${total_swap_mb}MB"
     log "Total available: ${total_available}MB"
-    
-    # lc0 compilation needs at least 2GB to compile safely with -j1
+
+    # This script intentionally does NOT add its own swap. The caller provisions a
+    # zram + SD-card swap tier via uc-build-memory around the whole build, so the
+    # headroom is already in place. The previous self-managed 2 GB swapfile wrote
+    # to /tmp (a small RAM-backed tmpfs), which failed with "No space left on
+    # device" and could not have added real headroom regardless.
     if [[ $total_available -lt 2048 ]]; then
-        log_warn "Less than 2GB total memory available"
-        log "Adding ${SWAP_SIZE_MB}MB temporary swap file..."
-        add_swap
+        log_warn "Only ${total_available}MB RAM+swap visible; lc0 wants ~2GB to build"
+        log_warn "with -j1. If the build is OOM-killed, ensure the caller acquired"
+        log_warn "build swap (uc-build-memory) before invoking this script."
     else
         log "Memory appears sufficient for build"
     fi
-}
-
-add_swap() {
-    if [[ -f "$SWAP_FILE" ]]; then
-        log "Swap file already exists, removing old one..."
-        swapoff "$SWAP_FILE" 2>/dev/null || true
-        rm -f "$SWAP_FILE"
-    fi
-    
-    log "Creating ${SWAP_SIZE_MB}MB swap file at $SWAP_FILE..."
-    dd if=/dev/zero of="$SWAP_FILE" bs=1M count=$SWAP_SIZE_MB status=progress
-    chmod 600 "$SWAP_FILE"
-    mkswap "$SWAP_FILE"
-    swapon "$SWAP_FILE"
-    
-    local new_swap_kb
-    new_swap_kb=$(grep SwapTotal /proc/meminfo | awk '{print $2}')
-    local new_swap_mb=$((new_swap_kb / 1024))
-    log "Swap now: ${new_swap_mb}MB"
 }
 
 # =============================================================================
@@ -455,7 +439,7 @@ main() {
     log "lc0 version: $LC0_VERSION"
     
     check_architecture
-    check_memory
+    report_memory
     install_dependencies
     clone_lc0
     configure_build

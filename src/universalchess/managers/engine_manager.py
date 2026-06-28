@@ -776,10 +776,12 @@ ENGINES = {
         repo_url=None,  # Using custom build script instead of git clone
         build_commands=[
             # Use the standalone build script that handles:
-            # - Swap file creation if memory is low
-            # - Single-threaded build to avoid OOM
-            # - Correct meson options for ARM
-            # - Weight downloads
+            # - Single-threaded (-j1) build to keep peak memory low
+            # - Correct meson options for ARM (BLAS-only, no GPU/x86 paths)
+            # - Weight downloads (Maia + a small Leela net)
+            # Swap headroom is provided by the build_memory() wrapper around this
+            # install (uc-build-memory), not by the script. The script builds on
+            # disk under /opt/universalchess/tmp, never the small /tmp tmpfs.
             f"sudo {SCRIPTS_DIR}/build-maia.sh {ENGINES_DIR}/maia",
         ],
         binary_path="lc0",  # Script installs to ENGINES_DIR/maia/lc0
