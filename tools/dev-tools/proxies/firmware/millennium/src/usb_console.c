@@ -98,10 +98,22 @@ void usb_console_log_traffic(traffic_dir_t dir, const uint8_t *data, size_t len)
     
     /* Format: [HH:MM:SS.mmm] DIR: xx xx xx ... */
     int pos = snprintf(output_buf, OUTPUT_BUF_SIZE, "[%s] %s:", timestamp, dir_str);
+    /* snprintf returns the length it WOULD have written; clamp so a truncated
+     * header can't push pos past the buffer when it is used as an index below. */
+    if (pos < 0) {
+        pos = 0;
+    } else if (pos > OUTPUT_BUF_SIZE - 1) {
+        pos = OUTPUT_BUF_SIZE - 1;
+    }
     
-    /* Append hex bytes */
-    for (size_t i = 0; i < len && pos < OUTPUT_BUF_SIZE - 4; i++) {
-        pos += snprintf(output_buf + pos, OUTPUT_BUF_SIZE - pos, " %02x", data[i]);
+    /* Append hex bytes. Check each return value so OUTPUT_BUF_SIZE - pos can
+     * never underflow into a huge size (CodeQL cpp/overflowing-snprintf). */
+    for (size_t i = 0; i < len; i++) {
+        int n = snprintf(output_buf + pos, OUTPUT_BUF_SIZE - pos, " %02x", data[i]);
+        if (n < 0 || n >= OUTPUT_BUF_SIZE - pos) {
+            break;  /* buffer full or encoding error */
+        }
+        pos += n;
     }
     
     /* Add newline */

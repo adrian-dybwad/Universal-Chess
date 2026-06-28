@@ -11,11 +11,41 @@
 #include "usb_console.h"
 
 #include <zephyr/logging/log.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
 
 LOG_MODULE_REGISTER(protocol, LOG_LEVEL_INF);
+
+/**
+ * Append printf-formatted text to a fixed buffer at *pos, advancing *pos.
+ *
+ * snprintf returns the length it WOULD have written; accumulating that return
+ * unchecked (pos += snprintf(buf + pos, cap - pos, ...)) lets pos run past cap,
+ * after which `cap - pos` underflows (size_t) and a later call is handed a huge
+ * size -- a potential buffer overflow (CWE-190; CodeQL cpp/overflowing-snprintf).
+ * This bounds every write: it no-ops once full and clamps pos to the truncation
+ * point, so `cap - *pos` can never underflow.
+ */
+static void buf_appendf(char *buf, size_t cap, size_t *pos, const char *fmt, ...)
+{
+    if (*pos >= cap) {
+        return;
+    }
+    va_list args;
+    va_start(args, fmt);
+    int written = vsnprintf(buf + *pos, cap - *pos, fmt, args);
+    va_end(args);
+    if (written < 0) {
+        return;  /* encoding error: leave buffer/pos unchanged */
+    }
+    if ((size_t)written >= cap - *pos) {
+        *pos = cap - 1;  /* truncated: buffer is now full */
+    } else {
+        *pos += (size_t)written;
+    }
+}
 
 /**
  * Decode and log a Millennium protocol message.
@@ -37,7 +67,7 @@ void protocol_decode_and_log(traffic_dir_t dir, const uint8_t *data, size_t len)
     }
     
     char msg[256];
-    int pos = 0;
+    size_t pos = 0;
     
     /* Extract command byte (strip parity) */
     uint8_t cmd = data[0] & 0x7F;
@@ -45,9 +75,9 @@ void protocol_decode_and_log(traffic_dir_t dir, const uint8_t *data, size_t len)
     /* Check if this looks like a Millennium protocol message */
     if (!isprint(cmd) && cmd != '\r' && cmd != '\n') {
         /* Not ASCII - just show raw hex */
-        pos = snprintf(msg, sizeof(msg), "RAW[%zu]: ", len);
-        for (size_t i = 0; i < len && pos < (int)sizeof(msg) - 4; i++) {
-            pos += snprintf(msg + pos, sizeof(msg) - pos, "%02x ", data[i]);
+        buf_appendf(msg, sizeof(msg), &pos, "RAW[%zu]: ", len);
+        for (size_t i = 0; i < len; i++) {
+            buf_appendf(msg, sizeof(msg), &pos, "%02x ", data[i]);
         }
         usb_console_log_decoded(dir, msg);
         return;
@@ -81,19 +111,19 @@ void protocol_decode_and_log(traffic_dir_t dir, const uint8_t *data, size_t len)
     case 's':
         /* Board state response - 64 chars for squares */
         if (len >= 66) {  /* 's' + 64 squares + crc */
-            pos = snprintf(msg, sizeof(msg), "RESP: BOARD STATE\n");
+            buf_appendf(msg, sizeof(msg), &pos, "RESP: BOARD STATE\n");
             
             /* Format as 8x8 board */
             for (int rank = 7; rank >= 0; rank--) {
-                pos += snprintf(msg + pos, sizeof(msg) - pos, "    %d: ", rank + 1);
+                buf_appendf(msg, sizeof(msg), &pos, "    %d: ", rank + 1);
                 for (int file = 0; file < 8; file++) {
                     int idx = rank * 8 + file + 1;  /* +1 for 's' prefix */
                     char sq = data[idx] & 0x7F;
-                    pos += snprintf(msg + pos, sizeof(msg) - pos, "%c ", sq);
+                    buf_appendf(msg, sizeof(msg), &pos, "%c ", sq);
                 }
-                pos += snprintf(msg + pos, sizeof(msg) - pos, "\n");
+                buf_appendf(msg, sizeof(msg), &pos, "\n");
             }
-            pos += snprintf(msg + pos, sizeof(msg) - pos, "       a b c d e f g h");
+            buf_appendf(msg, sizeof(msg), &pos, "       a b c d e f g h");
         } else {
             snprintf(msg, sizeof(msg), "RESP: BOARD STATE (%zu bytes, expected 66)", len);
         }
@@ -143,21 +173,21 @@ void protocol_decode_and_log(traffic_dir_t dir, const uint8_t *data, size_t len)
     default:
         /* Unknown command - show ASCII and hex */
         if (isprint(cmd)) {
-            pos = snprintf(msg, sizeof(msg), "CMD: '%c' (0x%02x) [", cmd, cmd);
+            buf_appendf(msg, sizeof(msg), &pos, "CMD: '%c' (0x%02x) [", cmd, cmd);
         } else {
-            pos = snprintf(msg, sizeof(msg), "CMD: 0x%02x [", cmd);
+            buf_appendf(msg, sizeof(msg), &pos, "CMD: 0x%02x [", cmd);
         }
         
         /* Show payload as ASCII where printable */
-        for (size_t i = 0; i < len && pos < (int)sizeof(msg) - 4; i++) {
+        for (size_t i = 0; i < len; i++) {
             char c = data[i] & 0x7F;
             if (isprint(c)) {
-                pos += snprintf(msg + pos, sizeof(msg) - pos, "%c", c);
+                buf_appendf(msg, sizeof(msg), &pos, "%c", c);
             } else {
-                pos += snprintf(msg + pos, sizeof(msg) - pos, "\\x%02x", data[i]);
+                buf_appendf(msg, sizeof(msg), &pos, "\\x%02x", data[i]);
             }
         }
-        pos += snprintf(msg + pos, sizeof(msg) - pos, "]");
+        buf_appendf(msg, sizeof(msg), &pos, "]");
         break;
     }
     
