@@ -32,7 +32,7 @@ Specialty Engines:
 import os
 import re
 import signal
-import subprocess
+import subprocess  # nosec B404  # subprocess use is intentional; individual calls are justified/suppressed below
 import shutil
 import threading
 import platform
@@ -187,6 +187,72 @@ def find_prebuilt_archive_url(releases: list, archive_name: str) -> Optional[str
             if asset.get("name") == archive_name:
                 return asset.get("browser_download_url")
     return None
+
+
+def _is_within_directory(directory: Path, target: Path) -> bool:
+    """Return True if ``target`` resolves to ``directory`` or a path beneath it.
+
+    Containment primitive used to reject tar members that would escape the
+    extraction root via ``..`` segments or an absolute path (the path-traversal
+    vector ruff S202 / CodeQL flag). Both arguments are resolved (normalized,
+    symlink-free) before comparison so ``..`` cannot slip past.
+    """
+    directory = directory.resolve()
+    target = target.resolve()
+    return directory == target or directory in target.parents
+
+
+def _assert_tar_members_safe(tar: tarfile.TarFile, dest: Path) -> None:
+    """Raise if any member of ``tar`` would extract outside ``dest``.
+
+    Manual equivalent of the stdlib ``data`` extraction filter's traversal
+    guard, for interpreters that predate the ``filter=`` parameter (e.g.
+    Raspberry Pi OS bookworm ships Python 3.11.2, before the 3.11.4 backport).
+    Rejects members whose resolved path -- or, for links, whose resolved link
+    target -- escapes ``dest``.
+
+    Raises:
+        tarfile.TarError: on the first member that escapes ``dest``. TarError is
+            chosen so the caller's existing ``except tarfile.TarError`` treats a
+            malicious archive as an ordinary extraction failure.
+    """
+    dest = dest.resolve()
+    for member in tar.getmembers():
+        target = (dest / member.name).resolve()
+        if not _is_within_directory(dest, target):
+            raise tarfile.TarError(
+                f"Refusing to extract '{member.name}': escapes {dest}"
+            )
+        if member.issym() or member.islnk():
+            link_target = (target.parent / member.linkname).resolve()
+            if not _is_within_directory(dest, link_target):
+                raise tarfile.TarError(
+                    f"Refusing to extract link '{member.name}' -> "
+                    f"'{member.linkname}': escapes {dest}"
+                )
+
+
+def _safe_extract_tar(tar: tarfile.TarFile, dest: Path) -> None:
+    """Extract ``tar`` into ``dest`` without allowing path traversal.
+
+    Prefers the stdlib ``data`` filter (Python 3.12+ and the
+    3.8.17+/3.9.17+/3.10.12+/3.11.4+ backports), which blocks ``..``/absolute
+    paths and also strips setuid bits and escaping links. On older interpreters
+    that lack the ``filter=`` parameter -- where passing it raises ``TypeError``
+    -- it validates members explicitly via :func:`_assert_tar_members_safe`
+    before a plain extract, enforcing the same no-escape invariant. Without the
+    version fallback the kwarg would raise on the deployment target (Pi OS
+    3.11.2) and silently break every prebuilt engine install.
+    """
+    try:
+        tar.extractall(dest, filter="data")
+        return
+    except TypeError:
+        # Interpreter predates the ``filter=`` parameter (e.g. Pi OS 3.11.2);
+        # fall through to explicit per-member validation below.
+        log.debug("tarfile extractall(filter=) unsupported; validating members manually")
+    _assert_tar_members_safe(tar, dest)
+    tar.extractall(dest)  # noqa: S202  # nosec B202  # members validated by _assert_tar_members_safe above
 
 
 @dataclass
@@ -1290,10 +1356,7 @@ class EngineManager:
 
         # Update package list
         log.debug("[EngineManager] _install_system_package: Running apt-get update")
-        result = subprocess.run(
-            ["sudo", "apt-get", "update", "-qq"],
-            capture_output=True, text=True, timeout=120
-        )
+        result = subprocess.run(["sudo", "apt-get", "update", "-qq"], capture_output=True, text=True, timeout=120)  # noqa: S607  # nosec B603 B607
         if result.returncode != 0:
             log.warning(f"[EngineManager] _install_system_package: apt-get update returned non-zero ({result.returncode})")
             log.warning(f"[EngineManager] _install_system_package: apt-get update stderr: {result.stderr.strip()}")
@@ -1303,10 +1366,7 @@ class EngineManager:
         # Install package
         update_progress(f"Installing {engine.package_name}...")
         log.info(f"[EngineManager] _install_system_package: Running apt-get install -y {engine.package_name}")
-        result = subprocess.run(
-            ["sudo", "apt-get", "install", "-y", engine.package_name],
-            capture_output=True, text=True, timeout=300
-        )
+        result = subprocess.run(["sudo", "apt-get", "install", "-y", engine.package_name], capture_output=True, text=True, timeout=300)  # noqa: S603, S607  # nosec B603 B607
         if result.returncode != 0:
             self._install_error = result.stderr.strip() or f"apt-get install failed with code {result.returncode}"
             log.error(f"[EngineManager] _install_system_package: apt-get install failed with code {result.returncode}")
@@ -1372,10 +1432,7 @@ class EngineManager:
         """
         missing: List[str] = []
         for pkg in packages:
-            result = subprocess.run(
-                ["dpkg-query", "-W", "-f=${Status}", pkg],
-                capture_output=True, text=True,
-            )
+            result = subprocess.run(["dpkg-query", "-W", "-f=${Status}", pkg], capture_output=True, text=True)  # noqa: S603, S607  # nosec B603 B607
             if result.returncode != 0 or "install ok installed" not in result.stdout:
                 missing.append(pkg)
         return missing
@@ -1525,7 +1582,7 @@ class EngineManager:
             extract_dir.mkdir(parents=True, exist_ok=True)
             
             with tarfile.open(tmp_archive, 'r:gz') as tar:
-                tar.extractall(extract_dir)
+                _safe_extract_tar(tar, extract_dir)
             
             # Find and copy the engine binary
             # For most engines: arch/engine_name (single binary)
@@ -1547,7 +1604,7 @@ class EngineManager:
                 # Make binaries executable
                 for binary in dest_path.glob('*'):
                     if binary.is_file() and not binary.suffix:
-                        os.chmod(binary, 0o755)
+                        os.chmod(binary, 0o755)  # noqa: S103  # nosec B103  # engine binary must be world-executable to run
                 
                 log.info(f"[EngineManager] _try_install_prebuilt: Installed directory '{engine.name}'")
             elif source_path.exists():
@@ -1557,7 +1614,7 @@ class EngineManager:
                 
                 update_progress(f"Installing {engine.display_name}...", InstallStage.INSTALLING_FILES)
                 shutil.copy2(source_path, dest_path)
-                os.chmod(dest_path, 0o755)
+                os.chmod(dest_path, 0o755)  # noqa: S103  # nosec B103  # engine binary must be world-executable to run
 
                 # Install any extra files shipped alongside the binary in the archive
                 # (e.g. Arasan's NNUE network, Rodent IV's personalities/books). The
@@ -1626,7 +1683,7 @@ class EngineManager:
         message (stdout and stderr are merged so the real error -- e.g. the OOM
         "compile: signal: killed" line -- is captured regardless of stream).
         """
-        proc = subprocess.Popen(
+        proc = subprocess.Popen(  # noqa: S602  # nosec B602  # cmd is from the static in-module engine registry (build_commands), never user input; shell is required for the &&/pipes/redirects in build steps
             cmd,
             shell=True,
             cwd=str(cwd),
@@ -1658,7 +1715,8 @@ class EngineManager:
                 raise subprocess.TimeoutExpired(cmd, timeout)
             try:
                 item = line_q.get(timeout=min(remaining, 1.0))
-            except Empty:
+            except Empty:  # noqa: S112  # nosec B112  # expected hot path; logging each empty <=1s poll slice would flood logs during a multi-minute silent compile
+                # No build output within this poll slice; re-check deadline and re-poll.
                 continue
             if item is None:
                 break
@@ -1753,7 +1811,7 @@ class EngineManager:
                 return False
             deps = " ".join(engine.dependencies)
             log.info(f"[EngineManager] _install_from_source: Installing dependencies: {deps}")
-            result = subprocess.run(
+            result = subprocess.run(  # noqa: S602  # nosec B602  # deps joined from the static engine registry (dependencies), never user input; fixed apt-get shell string
                 f"sudo apt-get install -y {deps}",
                 shell=True, capture_output=True, text=True, timeout=300
             )
@@ -1798,10 +1856,7 @@ class EngineManager:
         elif repo_dir.exists():
             update_progress(f"Updating {engine.display_name} source...", InstallStage.CLONING)
             log.info(f"[EngineManager] _install_from_source: Repo exists, running git pull in {repo_dir}")
-            result = subprocess.run(
-                ["git", "pull"],
-                cwd=repo_dir, capture_output=True, text=True, timeout=120
-            )
+            result = subprocess.run(["git", "pull"], cwd=repo_dir, capture_output=True, text=True, timeout=120)  # noqa: S607  # nosec B603 B607
             if result.returncode != 0:
                 log.warning(f"[EngineManager] _install_from_source: git pull failed ({result.returncode}): {result.stderr.strip()}")
                 # Try to continue anyway - maybe just network issue
@@ -1812,10 +1867,7 @@ class EngineManager:
             if engine.clone_with_submodules:
                 update_progress(f"Updating submodules...", InstallStage.CLONING)
                 log.info(f"[EngineManager] _install_from_source: Updating submodules")
-                result = subprocess.run(
-                    ["git", "submodule", "update", "--init", "--recursive"],
-                    cwd=repo_dir, capture_output=True, text=True, timeout=300
-                )
+                result = subprocess.run(["git", "submodule", "update", "--init", "--recursive"], cwd=repo_dir, capture_output=True, text=True, timeout=300)  # noqa: S607  # nosec B603 B607
                 if result.returncode != 0:
                     log.warning(f"[EngineManager] _install_from_source: submodule update failed: {result.stderr.strip()}")
         else:
@@ -1834,10 +1886,8 @@ class EngineManager:
             clone_cmd.extend([engine.repo_url, str(repo_dir)])
             
             log.info(f"[EngineManager] _install_from_source: Clone command: {' '.join(clone_cmd)}")
-            result = subprocess.run(
-                clone_cmd,
-                capture_output=True, text=True, timeout=600  # Longer timeout for submodules
-            )
+            # Longer timeout (600s) accommodates submodule checkouts.
+            result = subprocess.run(clone_cmd, capture_output=True, text=True, timeout=600)  # noqa: S603  # nosec B603 B607
             if result.returncode != 0:
                 self._install_error = f"Clone failed: {result.stderr.strip()}"
                 log.error(f"[EngineManager] _install_from_source: git clone failed ({result.returncode})")
@@ -1927,7 +1977,7 @@ class EngineManager:
         dst_binary = self.engines_dir / engine.name
         log.info(f"[EngineManager] _install_from_source: Copying binary {src_binary} -> {dst_binary}")
         shutil.copy2(src_binary, dst_binary)
-        os.chmod(dst_binary, 0o755)
+        os.chmod(dst_binary, 0o755)  # noqa: S103  # nosec B103  # engine binary must be world-executable to run
         log.info(f"[EngineManager] _install_from_source: Binary installed and made executable")
         
         # Copy extra files (personalities, books, weights, NNUE networks, etc.).
@@ -1939,10 +1989,7 @@ class EngineManager:
         
         # Set ownership
         log.debug(f"[EngineManager] _install_from_source: Setting ownership to pi:pi on {self.engines_dir}")
-        result = subprocess.run(
-            ["sudo", "chown", "-R", "pi:pi", str(self.engines_dir)],
-            capture_output=True, timeout=30
-        )
+        result = subprocess.run(["sudo", "chown", "-R", "pi:pi", str(self.engines_dir)], capture_output=True, timeout=30)  # noqa: S603, S607  # nosec B603 B607
         if result.returncode != 0:
             log.warning(f"[EngineManager] _install_from_source: chown failed ({result.returncode})")
         
