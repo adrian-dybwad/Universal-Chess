@@ -1874,6 +1874,13 @@ def _start_game_mode(
         
         In 2-player mode, result can be 'resign_white' or 'resign_black' to
         indicate which side is resigning.
+
+        Resign/draw do NOT return to the menu here. The DisplayManager has
+        already rebuilt the board (with a live GameOverWidget) before invoking
+        this callback, so recording the result makes the end-of-game screen
+        appear over the board - exactly like checkmate. The game stays on screen
+        so the final position can be pondered; the user leaves later via PLAY
+        (which tears the finished game down) or BACK.
         """
         # Reset the kings-in-center menu flag (in case this was triggered by that menu)
         game_manager.reset_kings_in_center_menu()
@@ -1889,18 +1896,14 @@ def _start_game_mode(
             resign_color = get_chess_game().turn
             game_manager.handle_resign(resign_color)
             _notify_players_resign(resign_color)
-            _return_to_menu("Resigned")
         elif result == "resign_white":
             game_manager.handle_resign(chess.WHITE)
             _notify_players_resign(chess.WHITE)
-            _return_to_menu("White Resigned")
         elif result == "resign_black":
             game_manager.handle_resign(chess.BLACK)
             _notify_players_resign(chess.BLACK)
-            _return_to_menu("Black Resigned")
         elif result == "draw":
             game_manager.handle_draw()
-            _return_to_menu("Draw")
         elif result == "exit":
             cleanup_and_exit(reason="User selected 'exit' from game menu", system_shutdown=True)
         # cancel is handled by DisplayManager (restores display)
@@ -2038,7 +2041,14 @@ def _start_game_mode(
     # King-lift resign gesture - works in any game mode for human player's king
     # When king is held off board for 3+ seconds, show resign confirmation
     def _on_king_lift_resign_result(result: str):
-        """Handle result from king-lift resign menu."""
+        """Handle result from king-lift resign menu.
+
+        Like the BACK menu resign, this does NOT return to the menu. The
+        DisplayManager rebuilt the board (with a live GameOverWidget) before
+        invoking this callback, so recording the resignation shows the
+        end-of-game screen over the board, leaving the final position on screen
+        to be pondered. The user leaves later via PLAY or BACK.
+        """
         # Reset the menu flag
         game_manager.reset_king_lift_resign_menu()
         
@@ -2054,15 +2064,12 @@ def _start_game_mode(
             if king_color is not None:
                 game_manager.handle_resign(king_color)
                 _notify_players_resign(king_color)
-                color_name = "White" if king_color == chess.WHITE else "Black"
-                _return_to_menu(f"{color_name} Resigned")
             else:
                 # Fallback - shouldn't happen but handle gracefully
                 from universalchess.state import get_chess_game
                 resign_color = get_chess_game().turn
                 game_manager.handle_resign(resign_color)
                 _notify_players_resign(resign_color)
-                _return_to_menu("Resigned")
         # cancel is handled by DisplayManager (restores display)
     
     def _on_king_lift_resign(king_color):

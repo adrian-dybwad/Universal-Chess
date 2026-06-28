@@ -703,6 +703,51 @@ class DisplayManager:
         log.info(f"[DisplayManager] Promotion selected: {selected_piece[0]}")
         return selected_piece[0]
     
+    def _finalize_menu_selection(self, menu, *, shutdown_result: str) -> None:
+        """Finalize a non-blocking game menu after the user makes a selection.
+
+        Shared completion path for the BACK menu and the king-lift resign menu.
+        Deactivates the menu, maps the special BACK/SHUTDOWN keys to result
+        strings, rebuilds the board, then invokes the stored result callback.
+
+        The board is rebuilt for every outcome that returns to the board (all
+        results except the shutdown "exit"), and the rebuild happens BEFORE the
+        result callback runs. This ordering is the fix for menu-driven game
+        endings: a resign/draw selection sets the game result inside its
+        callback, and the rebuilt board carries a GameOverWidget freshly
+        subscribed to the game state, so it catches the game_over event and
+        shows the end-of-game screen over the board - mirroring the natural
+        checkmate flow (where the board, and its GameOverWidget, is already on
+        screen). If the board were not rebuilt first (the previous behaviour,
+        which restored it only for "cancel"), resign/draw would set the result
+        while no GameOverWidget existed, so the end screen never appeared.
+
+        Args:
+            menu: The active menu widget that produced the selection.
+            shutdown_result: Result to report when the SHUTDOWN key was pressed.
+                "exit" powers the device off (BACK menu); "cancel" ignores it
+                (king-lift resign menu, which must never trigger a shutdown).
+        """
+        result = menu._selection_result or "BACK"
+        log.info(f"[DisplayManager] Menu result: {result}")
+
+        self._menu_active = False
+        menu.deactivate()
+        self._current_menu = None
+
+        if result == "BACK":
+            result = "cancel"
+        elif result == "SHUTDOWN":
+            result = shutdown_result
+
+        # Rebuild the board (and its GameOverWidget) before the callback for
+        # every on-board outcome; only a shutdown skips it. See docstring.
+        if result != "exit":
+            self._init_widgets()
+
+        if self._menu_result_callback:
+            self._menu_result_callback(result)
+
     def show_back_menu(self, on_result: callable, is_two_player: bool = False):
         """Show the back button menu (resign/draw/cancel).
         
@@ -762,29 +807,8 @@ class DisplayManager:
         def wait_for_result():
             try:
                 back_menu._selection_event.wait()
-                result = back_menu._selection_result or "BACK"
-                
-                log.info(f"[DisplayManager] Back menu result: {result}")
-                
-                # Cleanup
-                self._menu_active = False
-                back_menu.deactivate()
-                self._current_menu = None
-                
-                # Map special keys
-                if result == "BACK":
-                    result = "cancel"
-                elif result == "SHUTDOWN":
-                    result = "exit"
-                
-                # Restore display for cancel, or let caller handle for resign/draw
-                if result == "cancel":
-                    self._init_widgets()
-                
-                # Call result callback
-                if self._menu_result_callback:
-                    self._menu_result_callback(result)
-                    
+                # SHUTDOWN powers the device off from the BACK menu.
+                self._finalize_menu_selection(back_menu, shutdown_result="exit")
             except Exception as e:
                 log.error(f"[DisplayManager] Error in back menu: {e}")
                 import traceback
@@ -862,29 +886,9 @@ class DisplayManager:
         def wait_for_result():
             try:
                 resign_menu._selection_event.wait()
-                result = resign_menu._selection_result or "BACK"
-                
-                log.info(f"[DisplayManager] King-lift resign menu result: {result}")
-                
-                # Cleanup
-                self._menu_active = False
-                resign_menu.deactivate()
-                self._current_menu = None
-                
-                # Map special keys
-                if result == "BACK":
-                    result = "cancel"
-                elif result == "SHUTDOWN":
-                    result = "cancel"  # Don't shutdown from this menu
-                
-                # Restore display for cancel, or let caller handle for resign
-                if result == "cancel":
-                    self._init_widgets()
-                
-                # Call result callback
-                if self._menu_result_callback:
-                    self._menu_result_callback(result)
-                    
+                # This menu must never power the device off, so SHUTDOWN is
+                # treated as cancel rather than exit.
+                self._finalize_menu_selection(resign_menu, shutdown_result="cancel")
             except Exception as e:
                 log.error(f"[DisplayManager] Error in king-lift resign menu: {e}")
                 import traceback
