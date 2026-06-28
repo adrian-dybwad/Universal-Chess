@@ -11,13 +11,12 @@ Usage:
     result = keyboard.wait_for_input()  # Returns password string or None
 """
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 from .framework.widget import Widget
-from typing import Optional, Callable, TYPE_CHECKING
+from typing import Optional, Callable
 import threading
 
-if TYPE_CHECKING:
-    from universalchess.resources import ResourceLoader
+from universalchess.resources import get_font
 
 try:
     from universalchess.board.logging import log
@@ -50,19 +49,6 @@ def _beep() -> None:
             _board = resolved_board
     if _board is not None:
         _board.beep(_board.SOUND_GENERAL)
-
-
-# Module-level resource loader, set by application at startup
-_resource_loader: "ResourceLoader" = None
-
-
-def set_resource_loader(loader: "ResourceLoader") -> None:
-    """Set the module-level resource loader for fonts.
-    
-    Called once at application startup.
-    """
-    global _resource_loader
-    _resource_loader = loader
 
 
 # Display dimensions
@@ -151,15 +137,14 @@ class KeyboardWidget(Widget):
         self._load_fonts()
     
     def _load_fonts(self):
-        """Load fonts from module-level resource loader."""
-        if _resource_loader is not None:
-            self._font = _resource_loader.get_font(16)
-            self._font_small = _resource_loader.get_font(12)
-            self._font_tiny = _resource_loader.get_font(10)
-        else:
-            self._font = ImageFont.load_default()
-            self._font_small = self._font
-            self._font_tiny = self._font
+        """Resolve fonts via the app-wide ResourceLoader (shared font cache).
+
+        resources.get_font falls back to PIL's default font when no loader has
+        been registered (e.g. off-board), so all three sizes are always set.
+        """
+        self._font = get_font(16)
+        self._font_small = get_font(12)
+        self._font_tiny = get_font(10)
     
     def _get_chars(self) -> str:
         """Get character set for current page."""

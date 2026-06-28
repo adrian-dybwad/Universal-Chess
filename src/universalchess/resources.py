@@ -20,9 +20,12 @@ Usage:
 
 from PIL import Image, ImageFont
 from typing import Dict, Optional, Tuple
+import logging
 import os
 
 from universalchess.utils.safe_path import safe_under_base
+
+log = logging.getLogger(__name__)
 
 
 class ResourceLoader:
@@ -111,8 +114,13 @@ class ResourceLoader:
         if path and os.path.exists(path):
             try:
                 font = ImageFont.truetype(path, size)
-            except Exception:
-                pass
+            except Exception as e:
+                # The file exists but failed to load (corrupt/unsupported format):
+                # fall through to the default font below. Log it - silently
+                # dropping to the bitmap default makes a broken bundled font hard
+                # to diagnose. Broad except is intentional: get_font must always
+                # return a usable font, so no load error may escape here.
+                log.warning("Failed to load font '%s' at size %d: %s", path, size, e)
         
         if font is None:
             font = ImageFont.load_default()
@@ -171,7 +179,11 @@ class ResourceLoader:
                 continue
             try:
                 names = os.listdir(directory)
-            except OSError:
+            except OSError as e:
+                # One unreadable resource dir must not abort discovery of the
+                # others; skip it but record which, so a misconfigured path is
+                # visible rather than silently yielding fewer sheets.
+                log.debug("Skipping unreadable resource directory '%s': %s", directory, e)
                 continue
             for name in names:
                 if name.startswith(self._SPRITE_SHEET_PREFIX) and name.endswith(self._SPRITE_SHEET_SUFFIX):
@@ -346,3 +358,25 @@ def set_resource_loader(loader: ResourceLoader) -> None:
 def get_resource_loader() -> Optional[ResourceLoader]:
     """Get the application-wide ResourceLoader, or None if not yet set."""
     return _resource_loader
+
+
+def get_font(size: int, path: str = None) -> ImageFont.FreeTypeFont:
+    """Resolve a font via the app-wide ResourceLoader, or PIL's default font.
+
+    Single acquisition point for widgets. When a loader has been registered
+    (set_resource_loader, done once at startup), resolution, caching and the
+    fallback-to-default all happen inside it, so every caller shares one loader
+    and its font cache. When no loader is registered (e.g. off-board or in
+    tests) PIL's built-in default font is returned so rendering still works.
+
+    Args:
+        size: Font size in points.
+        path: Optional explicit font path; defaults to the bundled Font.ttc.
+
+    Returns:
+        A PIL ImageFont, never None.
+    """
+    loader = get_resource_loader()
+    if loader is not None:
+        return loader.get_font(size, path)
+    return ImageFont.load_default()

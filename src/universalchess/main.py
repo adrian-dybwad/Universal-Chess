@@ -209,11 +209,9 @@ def _initialize_resources():
     try:
         from universalchess.resources import ResourceLoader
         from universalchess.paths import RESOURCES_DIR, USER_RESOURCES_DIR
-        from universalchess.epaper import text as text_module
         from universalchess.epaper import chess_board as chess_board_module
         from universalchess.epaper import splash_screen as splash_screen_module
         from universalchess.epaper import icon_button as icon_button_module
-        from universalchess.epaper import keyboard as keyboard_module
         
         # Create resource loader using paths (supports both installed and dev environments)
         loader = ResourceLoader(RESOURCES_DIR, USER_RESOURCES_DIR)
@@ -222,10 +220,6 @@ def _initialize_resources():
         # and the DisplayManager's hot-reload reuse this loader (and its caches).
         from universalchess import resources as resources_module
         resources_module.set_resource_loader(loader)
-        
-        # Set resource loader on modules that need fonts
-        text_module.set_resource_loader(loader)
-        keyboard_module.set_resource_loader(loader)
         
         # Load and set the chess sprite sheet selected in settings (falls back to default).
         # Read via Settings.read (not _game_settings_dict, which is defined later in

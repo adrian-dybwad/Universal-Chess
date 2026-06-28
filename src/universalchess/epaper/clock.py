@@ -9,7 +9,7 @@ import threading
 import time
 from typing import Optional
 
-from universalchess.resources import get_resource_loader
+from universalchess.resources import get_font
 
 try:
     from universalchess.board.logging import log
@@ -100,9 +100,8 @@ class ClockWidget(Widget):
         if self._font is not None:
             return self._font
 
-        loader = get_resource_loader()
-        if self.font_size and loader is not None:
-            self._font = loader.get_font(self.font_size, self.font_path)
+        if self.font_size:
+            self._font = get_font(self.font_size, self.font_path)
         else:
             self._font = ImageFont.load_default()
         return self._font

@@ -9,6 +9,7 @@ it once pairing completes or is cancelled.
 
 from PIL import Image, ImageDraw
 from .framework.widget import Widget
+from universalchess.resources import get_font
 
 try:
     from universalchess.board.logging import log
@@ -38,14 +39,6 @@ class PasskeyWidget(Widget):
         super().__init__(0, 0, 128, 296, update_callback)
         self._passkey = passkey
         self._device_name = device_name
-        self._font_loader = None
-
-    def _get_font_loader(self):
-        if self._font_loader is None:
-            from universalchess.resources import ResourceLoader
-            from universalchess.paths import RESOURCES_DIR, USER_RESOURCES_DIR
-            self._font_loader = ResourceLoader(RESOURCES_DIR, USER_RESOURCES_DIR)
-        return self._font_loader
 
     def set_passkey(self, passkey: str) -> None:
         """Update the displayed passkey and refresh the screen."""
@@ -56,11 +49,10 @@ class PasskeyWidget(Widget):
         """Render the passkey screen onto the sprite."""
         self.draw_background_on_sprite(sprite)
         draw = ImageDraw.Draw(sprite)
-        loader = self._get_font_loader()
 
-        title_font = loader.get_font(14)
-        passkey_font = loader.get_font(28)
-        body_font = loader.get_font(11)
+        title_font = get_font(14)
+        passkey_font = get_font(28)
+        body_font = get_font(11)
 
         draw.text((64, self.TITLE_Y), "Pair Keyboard",
                   font=title_font, fill=0, anchor="mm")

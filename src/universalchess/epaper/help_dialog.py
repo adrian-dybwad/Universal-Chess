@@ -12,6 +12,7 @@ from typing import Optional
 from PIL import Image, ImageDraw
 
 from .framework.widget import Widget
+from universalchess.resources import get_font
 
 try:
     from universalchess.board.logging import log
@@ -45,14 +46,6 @@ class HelpDialogWidget(Widget):
         self._title = " ".join((title or "").split())
         self._body = body or ""
         self._dismissed = threading.Event()
-        self._font_loader = None
-
-    def _get_font_loader(self):
-        if self._font_loader is None:
-            from universalchess.resources import ResourceLoader
-            from universalchess.paths import RESOURCES_DIR, USER_RESOURCES_DIR
-            self._font_loader = ResourceLoader(RESOURCES_DIR, USER_RESOURCES_DIR)
-        return self._font_loader
 
     def _wrap(self, draw: ImageDraw.ImageDraw, text: str, font, max_width: int):
         """Word-wrap ``text`` to ``max_width`` pixels, returning a list of lines.
@@ -81,11 +74,10 @@ class HelpDialogWidget(Widget):
         """Render the help dialog onto the sprite."""
         self.draw_background_on_sprite(sprite)
         draw = ImageDraw.Draw(sprite)
-        loader = self._get_font_loader()
 
-        title_font = loader.get_font(14)
-        body_font = loader.get_font(12)
-        instr_font = loader.get_font(10)
+        title_font = get_font(14)
+        body_font = get_font(12)
+        instr_font = get_font(10)
 
         if self._title:
             draw.text((64, self.TITLE_Y), self._title,

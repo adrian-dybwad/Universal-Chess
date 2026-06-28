@@ -5,10 +5,8 @@ Text display widget.
 from PIL import Image, ImageDraw, ImageFont
 from .framework.widget import Widget, DITHER_PATTERNS
 from enum import Enum
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from universalchess.resources import ResourceLoader
+from universalchess.resources import get_font
 
 
 class Justify(Enum):
@@ -16,19 +14,6 @@ class Justify(Enum):
     LEFT = "left"
     CENTER = "center"
     RIGHT = "right"
-
-
-# Module-level resource loader, set by application at startup
-_resource_loader: "ResourceLoader" = None
-
-
-def set_resource_loader(loader: "ResourceLoader") -> None:
-    """Set the module-level resource loader.
-    
-    Called once at application startup to provide font loading capability.
-    """
-    global _resource_loader
-    _resource_loader = loader
 
 
 class TextWidget(Widget):
@@ -97,13 +82,13 @@ class TextWidget(Widget):
         self._sprite_cache_key = None  # Hash of settings that affect sprite rendering
     
     def _load_font(self):
-        """Load font from the module-level resource loader.
-        
-        Falls back to PIL default font if no loader is configured.
+        """Resolve the widget font via the app-wide ResourceLoader.
+
+        Delegates to resources.get_font, which shares one loader and font cache
+        across all widgets and falls back to PIL's default font when no loader
+        has been registered.
         """
-        if _resource_loader is not None:
-            return _resource_loader.get_font(self.font_size)
-        return ImageFont.load_default()
+        return get_font(self.font_size)
     
     def _get_sprite_cache_key(self) -> tuple:
         """Get a hashable key representing all settings that affect sprite rendering.

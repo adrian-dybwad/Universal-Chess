@@ -11,6 +11,8 @@ from PIL import Image, ImageDraw
 from .framework.widget import Widget
 from typing import Optional
 
+from universalchess.resources import get_font
+
 try:
     from universalchess.board.logging import log
 except ImportError:
@@ -58,15 +60,6 @@ class AboutWidget(Widget):
         self._qr_image = qr_image
         self._version = version
         self._dismissed = threading.Event()
-        self._font_loader = None
-    
-    def _get_font_loader(self):
-        """Lazy-load the font loader."""
-        if self._font_loader is None:
-            from universalchess.resources import ResourceLoader
-            from universalchess.paths import RESOURCES_DIR, USER_RESOURCES_DIR
-            self._font_loader = ResourceLoader(RESOURCES_DIR, USER_RESOURCES_DIR)
-        return self._font_loader
     
     def render(self, sprite: Image.Image) -> None:
         """Render the about widget onto the sprite.
@@ -78,11 +71,9 @@ class AboutWidget(Widget):
         self.draw_background_on_sprite(sprite)
         
         draw = ImageDraw.Draw(sprite)
-        loader = self._get_font_loader()
-        
-        # Load fonts
-        title_font = loader.get_font(12)
-        version_font = loader.get_font(10)
+
+        title_font = get_font(12)
+        version_font = get_font(10)
         
         # Draw title
         draw.text((64, self.TITLE_Y), "Get Support", 
