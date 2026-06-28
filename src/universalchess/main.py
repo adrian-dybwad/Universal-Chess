@@ -99,7 +99,7 @@ def _check_previous_shutdown_early():
     - Shutdown/reboot history from wtmp via 'last -x'
     - Previous boot's final journal messages
     """
-    import subprocess
+    import subprocess  # nosec B404 - used only for fixed, trusted system tools below
     
     log.info("=" * 70)
     log.info("[Startup] PREVIOUS SHUTDOWN ANALYSIS - Checking OS indicators")
@@ -110,10 +110,9 @@ def _check_previous_shutdown_early():
     # when the filesystem cleans up files that were open during previous shutdown.
     # Only actual ERRORS indicate problems.
     try:
-        result = subprocess.run(
-            ["dmesg"],
-            capture_output=True, text=True, timeout=5
-        )
+        # dmesg is a fixed, trusted system tool and the service runs with a
+        # controlled PATH; the partial-path / no-shell findings are accepted.
+        result = subprocess.run(["dmesg"], capture_output=True, text=True, timeout=5)  # noqa: S607  # nosec B603 B607
         if result.returncode == 0:
             dmesg_output = result.stdout
             error_indicators = []
@@ -141,10 +140,7 @@ def _check_previous_shutdown_early():
     
     # 2. Check journalctl for boot list
     try:
-        result = subprocess.run(
-            ["journalctl", "--list-boots", "-n", "5"],
-            capture_output=True, text=True, timeout=5
-        )
+        result = subprocess.run(["journalctl", "--list-boots", "-n", "5"], capture_output=True, text=True, timeout=5)  # noqa: S607  # nosec B603 B607
         if result.returncode == 0:
             log.info("[Startup] JOURNALCTL: Recent boots:")
             for line in result.stdout.strip().split('\n')[:5]:
@@ -155,10 +151,7 @@ def _check_previous_shutdown_early():
     
     # 3. Check last -x for shutdown/reboot/crash entries
     try:
-        result = subprocess.run(
-            ["last", "-x", "-n", "10"],
-            capture_output=True, text=True, timeout=5
-        )
+        result = subprocess.run(["last", "-x", "-n", "10"], capture_output=True, text=True, timeout=5)  # noqa: S607  # nosec B603 B607
         if result.returncode == 0:
             log.info("[Startup] LAST -x: Recent shutdown/reboot entries:")
             for line in result.stdout.strip().split('\n')[:10]:
@@ -169,10 +162,7 @@ def _check_previous_shutdown_early():
     
     # 4. Check previous boot's final messages
     try:
-        result = subprocess.run(
-            ["journalctl", "-b", "-1", "-n", "20", "--no-pager"],
-            capture_output=True, text=True, timeout=10
-        )
+        result = subprocess.run(["journalctl", "-b", "-1", "-n", "20", "--no-pager"], capture_output=True, text=True, timeout=10)  # noqa: S607  # nosec B603 B607
         if result.returncode == 0 and result.stdout.strip():
             log.info("[Startup] JOURNALCTL: Last 20 messages from PREVIOUS boot:")
             for line in result.stdout.strip().split('\n'):
@@ -2736,8 +2726,8 @@ def _prompt_player_name(player_num: int) -> None:
     if promise:
         try:
             promise.result(timeout=2.0)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("Keyboard widget render wait failed (continuing): %s", e)
 
     try:
         result = keyboard.wait_for_input(timeout=300.0)
@@ -2901,14 +2891,9 @@ def _get_installed_version() -> str:
     Returns:
         Version string (e.g., "2.0.0") or empty string if not found.
     """
-    import subprocess
+    import subprocess  # nosec B404 - fixed, trusted 'dpkg' query below
     try:
-        result = subprocess.run(
-            ["dpkg", "-l"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
+        result = subprocess.run(["dpkg", "-l"], capture_output=True, text=True, timeout=5)  # noqa: S607  # nosec B603 B607
         if result.returncode == 0:
             for line in result.stdout.split('\n'):
                 if 'universal-chess' in line:
@@ -3554,8 +3539,8 @@ def _wifi_no_networks_splash():
     if promise:
         try:
             promise.result(timeout=2.0)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("'No networks found' splash render wait failed (continuing): %s", e)
     time.sleep(2)
 
 
@@ -4177,31 +4162,40 @@ def _run_centaur():
     if promise:
         try:
             promise.result(timeout=10.0)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("Loading splash render wait failed (continuing): %s", e)
     
     # Pause events and cleanup
     board.pauseEvents()
     board.cleanup(leds_off=True)
     time.sleep(1)
     
+    # subprocess launches Centaur and stops this service below without a shell;
+    # the commands are fixed constants run via sudo (NOPASSWD on the Pi).
+    import subprocess  # nosec B404
+    
     if os.path.exists(CENTAUR_SOFTWARE):
-        # Ensure file is executable
+        # 0o755 is the conventional mode for an executable program (not data);
+        # the launcher runs it via sudo below.
         try:
-            os.chmod(CENTAUR_SOFTWARE, 0o755)
+            os.chmod(CENTAUR_SOFTWARE, 0o755)  # noqa: S103  # nosec B103
         except Exception as e:
             log.warning(f"Could not set execute permissions on centaur: {e}")
         
-        # Change to centaur directory and run
-        os.chdir(os.path.dirname(CENTAUR_SOFTWARE))
-        os.system("sudo ./centaur")
+        # Run Centaur from its own directory, without a shell. The command is a
+        # fixed constant, so this runs the identical program with the same
+        # inherited stdio/cwd as the previous os.system call, minus /bin/sh.
+        # sudo/./centaur are trusted, controlled-PATH paths (S607/B607 accepted).
+        centaur_dir = os.path.dirname(CENTAUR_SOFTWARE)
+        os.chdir(centaur_dir)
+        subprocess.run(["sudo", "./centaur"], cwd=centaur_dir, check=False)  # noqa: S607  # nosec B603 B607
     else:
         log.error(f"Centaur executable not found at {CENTAUR_SOFTWARE}")
         return False
     
     # Once Centaur starts, we cannot return - stop the service and exit
     time.sleep(3)
-    os.system("sudo systemctl stop universal-chess.service")
+    subprocess.run(["sudo", "systemctl", "stop", "universal-chess.service"], check=False)  # noqa: S607  # nosec B603 B607
     sys.exit()
 
 
@@ -4573,8 +4567,8 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
                                    intensity=LED_INTENSITY_DEFAULT,
                                    speed=LED_SPEED_NORMAL,
                                    repeat=0)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("Update-install LED pattern failed (non-critical): %s", e)
                 
                 import time
                 time.sleep(2)
@@ -4615,11 +4609,8 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
             
             log.info("[Cleanup] Stopping fallback service...")
             try:
-                import subprocess
-                subprocess.run(
-                    ["sudo", "systemctl", "stop", "universal-chess-stop-controller.service"],
-                    capture_output=True, timeout=5
-                )
+                import subprocess  # nosec B404 - fixed, trusted 'systemctl' call below
+                subprocess.run(["sudo", "systemctl", "stop", "universal-chess-stop-controller.service"], capture_output=True, timeout=5)  # noqa: S607  # nosec B603 B607
             except Exception as e:
                 log.debug(f"[Cleanup] Could not stop fallback service: {e}")
             
@@ -4729,8 +4720,8 @@ def _handle_unhandled_key(key_id, reason: str):
         # Beep to indicate recovery
         try:
             board.beep(board.SOUND_GENERAL, event_type='system')
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("Recovery beep failed (non-critical): %s", e)
 
 
 def key_callback(key_id):
@@ -5184,8 +5175,8 @@ def main():
             if promise:
                 try:
                     promise.result(timeout=5.0)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("Startup splash render wait failed (continuing): %s", e)
     
     log.info("=" * 60)
     log.info("Universal Chess Starting")
