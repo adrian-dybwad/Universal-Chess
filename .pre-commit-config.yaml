@@ -40,3 +40,13 @@ repos:
         language: script
         pass_filenames: false
         types: [python]
+
+      # Frontend security gate: only the XSS rules (no-unsanitized +
+      # react/no-danger), mirroring the Python `ruff --select S` split. The full
+      # `npm run lint` (style + react-hooks) has a backlog and is not gated here.
+      - id: eslint-security
+        name: eslint (frontend security rules)
+        entry: bash -c 'cd src/universalchess/web-app && npm run --silent lint:security'
+        language: system
+        pass_filenames: false
+        files: ^src/universalchess/web-app/.*\.(ts|tsx)$

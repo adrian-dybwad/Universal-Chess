@@ -1,0 +1,52 @@
+rules:
+  - id: flask-stack-trace-exposure
+    languages: [python]
+    severity: ERROR
+    message: >
+      Information exposure through an exception. A caught exception's text
+      (str(e), repr(e), e.args, or an f-string interpolating it) flows into an
+      HTTP response. This leaks internal details - file paths, library internals,
+      SQL, stack context - that aid an attacker and is reported by CodeQL as
+      py/stack-trace-exposure. Log the exception server-side and return a fixed,
+      user-facing message instead (validate by value up front so the error text
+      is a constant string, not the exception).
+    metadata:
+      category: security
+      cwe: "CWE-209: Generation of Error Message Containing Sensitive Information"
+      owasp: "A04:2021 - Insecure Design"
+      references:
+        - https://cwe.mitre.org/data/definitions/209.html
+    mode: taint
+    pattern-sources:
+      # The exception object bound by an `except ... as $E` handler is tainted.
+      - patterns:
+          - pattern: $E
+          - pattern-inside: |
+              try:
+                ...
+              except $EXC as $E:
+                ...
+    pattern-sanitizers:
+      # A constant/known-safe message derived independently of the exception is
+      # not the exception text. Project value-based validation helpers return
+      # fixed strings, so a literal in the response is never tainted by $E.
+      - pattern: "\"...\""
+    pattern-sinks:
+      # Flask response builders that serialise their argument into the body.
+      - patterns:
+          - pattern: jsonify(...)
+      - patterns:
+          - pattern: flask.jsonify(...)
+      - patterns:
+          - pattern: make_response(...)
+      - patterns:
+          - pattern: flask.make_response(...)
+      - patterns:
+          - pattern: Response(...)
+      - patterns:
+          - pattern: flask.Response(...)
+      - patterns:
+          - pattern: abort(..., description=$D, ...)
+          - focus-metavariable: $D
+      - patterns:
+          - pattern: render_template_string(...)

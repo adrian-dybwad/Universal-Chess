@@ -3,7 +3,8 @@
 # Universal-Chess local static-analysis runner
 # ============================================================================
 #
-# Runs the local static-analysis toolchain over the application source.
+# Runs the local static-analysis toolchain over the application source
+# (src/universalchess) and the standalone helper scripts (scripts/).
 #
 # BLOCKING (these decide the exit code - the CI gate / pre-commit fails on them):
 #   1. ruff --select S  - security lint subset (flake8-bandit rules)
@@ -27,6 +28,9 @@
 # Environment:
 #   SEMGREP_OFFLINE=1   Skip the registry rule packs (network); run only the
 #                       local rules in .semgrep/. Useful with no internet.
+#   ANALYZE_FILES=...   Whitespace-separated list of files. When set, ruff-sec
+#                       and bandit scan only those (CI changed-files gate);
+#                       semgrep still runs whole-tree. Empty = whole tree.
 #
 # Setup (once):
 #   .venv/bin/python -m pip install -r requirements-dev.txt
@@ -45,6 +49,29 @@ BANDIT="${VENV_BIN}/bandit";   [[ -x "${BANDIT}" ]]  || BANDIT="bandit"
 SEMGREP="${VENV_BIN}/semgrep"; [[ -x "${SEMGREP}" ]] || SEMGREP="semgrep"
 
 SRC="src/universalchess"
+# Python lives in two trees: the application source and the standalone helper
+# scripts under scripts/ (VM-setup relays/proxies). Both are scanned so findings
+# like B104 "binding to all interfaces" in scripts/ are gated, not just in src/.
+SCAN_PATHS=("${SRC}" "scripts")
+
+# Optional changed-files mode. When ANALYZE_FILES is set to a whitespace-
+# separated list of paths (CI exports the files changed in the push/PR), all
+# blocking linters - ruff (security subset), bandit, and semgrep - scan ONLY
+# those files. This gates NEW findings without being blocked by the large
+# pre-existing whole-tree backlog. Unset/empty ANALYZE_FILES preserves the
+# whole-tree behaviour (used by on-demand local runs and the report-only job).
+# Detect whether ANALYZE_FILES is *set at all* (even to an empty string), not
+# merely non-empty: CI always exports it, and an empty value means "changed-files
+# mode, but nothing Python changed" -> scan nothing (pass), NOT the whole tree.
+PY_TARGETS=("${SCAN_PATHS[@]}")
+if [[ -n "${ANALYZE_FILES+set}" ]]; then
+    PY_TARGETS=()
+    for f in ${ANALYZE_FILES}; do
+        # Drop non-Python and deleted/renamed-away paths so the linters get a
+        # clean target list (a missing path would abort the whole run).
+        [[ "${f}" == *.py && -f "${f}" ]] && PY_TARGETS+=("${f}")
+    done
+fi
 
 # Keep semgrep's settings/cache inside the repo (gitignored) and silence the
 # network version-check + telemetry so runs are deterministic and offline-safe.
@@ -91,9 +118,9 @@ _run_semgrep() {
         --exclude=web-app --exclude=dist --exclude=.venv --exclude=react-app)
     if [[ "${SEMGREP_OFFLINE:-0}" == "1" ]]; then
         echo "(SEMGREP_OFFLINE=1: local .semgrep rules only)"
-        "${SEMGREP}" "${local_cfg[@]}" "${common[@]}" "${SRC}"
+        "${SEMGREP}" "${local_cfg[@]}" "${common[@]}" "${PY_TARGETS[@]}"
     else
-        "${SEMGREP}" "${SEMGREP_PACKS[@]}" "${local_cfg[@]}" "${common[@]}" "${SRC}"
+        "${SEMGREP}" "${SEMGREP_PACKS[@]}" "${local_cfg[@]}" "${common[@]}" "${PY_TARGETS[@]}"
     fi
 }
 
@@ -103,29 +130,44 @@ for tool in "${TOOLS[@]}"; do
             echo "============================================================"
             echo ">>> ruff --select S (security, BLOCKING)"
             echo "============================================================"
-            "${RUFF}" check --select S "${SRC}"
-            _record_block "ruff-sec" "$?"
+            if [[ ${#PY_TARGETS[@]} -eq 0 ]]; then
+                echo "(no Python files to scan; skipped)"
+                _record_block "ruff-sec" 0
+            else
+                "${RUFF}" check --select S "${PY_TARGETS[@]}"
+                _record_block "ruff-sec" "$?"
+            fi
             ;;
         bandit)
             echo "============================================================"
             echo ">>> bandit (all severities, BLOCKING)"
             echo "============================================================"
-            "${BANDIT}" -c pyproject.toml -r "${SRC}"
-            _record_block "bandit" "$?"
+            if [[ ${#PY_TARGETS[@]} -eq 0 ]]; then
+                echo "(no Python files to scan; skipped)"
+                _record_block "bandit" 0
+            else
+                "${BANDIT}" -c pyproject.toml -r "${PY_TARGETS[@]}"
+                _record_block "bandit" "$?"
+            fi
             ;;
         semgrep)
             echo "============================================================"
             echo ">>> semgrep (path-injection + security packs, BLOCKING)"
             echo "============================================================"
-            _run_semgrep
-            _record_block "semgrep" "$?"
+            if [[ ${#PY_TARGETS[@]} -eq 0 ]]; then
+                echo "(no Python files to scan; skipped)"
+                _record_block "semgrep" 0
+            else
+                _run_semgrep
+                _record_block "semgrep" "$?"
+            fi
             ;;
         ruff-all)
             echo "============================================================"
             echo ">>> ruff (ALL rules, REPORT-ONLY)"
             echo "============================================================"
             # Report-only: print findings but never fail the build.
-            "${RUFF}" check "${SRC}" --statistics || true
+            "${RUFF}" check "${SCAN_PATHS[@]}" --statistics || true
             _record_report "ruff-all (informational; not gated)"
             ;;
         *)

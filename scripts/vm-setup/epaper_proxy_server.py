@@ -4,6 +4,7 @@ Epaper Proxy Server
 Runs on Raspberry Pi, receives display updates from VM and forwards to hardware.
 """
 
+import contextlib
 import os
 import socket
 import sys
@@ -22,7 +23,9 @@ except ImportError:
 
 PROXY_PORT = 8889
 # Must bind to a routable address so VM guests on a virtual bridge can connect.
-BIND_ADDRESS = os.environ.get("PROXY_BIND_ADDRESS", "0.0.0.0")  # noqa: S104
+# Binding broadly is the intended deployment (override via PROXY_BIND_ADDRESS);
+# the bind-all warning is consciously accepted here. noqa=ruff, nosec=bandit.
+BIND_ADDRESS = os.environ.get("PROXY_BIND_ADDRESS", "0.0.0.0")  # noqa: S104  # nosec B104
 
 running = True
 client_socket = None
@@ -33,10 +36,8 @@ def signal_handler(sig, frame):
     print("\nShutting down epaper proxy server...")
     running = False
     if client_socket:
-        try:
+        with contextlib.suppress(OSError):
             client_socket.close()
-        except:
-            pass
     sys.exit(0)
 
 def handle_display_update(data):
@@ -127,7 +128,7 @@ def main():
                     break
                     
     except KeyboardInterrupt:
-        pass
+        print("Interrupted; shutting down.")
     except Exception as e:
         print(f"Error receiving data: {e}")
     

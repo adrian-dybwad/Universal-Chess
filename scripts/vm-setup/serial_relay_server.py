@@ -4,6 +4,7 @@ Serial Port Relay Server
 Runs on Raspberry Pi, forwards serial data between hardware and VM client.
 """
 
+import contextlib
 import os
 import serial
 import socket
@@ -16,7 +17,9 @@ import signal
 REAL_SERIAL_PORT = "/dev/ttyS0"
 RELAY_PORT = 8888
 # Must bind to a routable address so VM guests on a virtual bridge can connect.
-BIND_ADDRESS = os.environ.get("RELAY_BIND_ADDRESS", "0.0.0.0")  # noqa: S104
+# Binding broadly is the intended deployment (override via RELAY_BIND_ADDRESS);
+# the bind-all warning is consciously accepted here. noqa=ruff, nosec=bandit.
+BIND_ADDRESS = os.environ.get("RELAY_BIND_ADDRESS", "0.0.0.0")  # noqa: S104  # nosec B104
 BAUDRATE = 1000000
 
 running = True
@@ -29,15 +32,11 @@ def signal_handler(sig, frame):
     print("\nShutting down serial relay server...")
     running = False
     if client_socket:
-        try:
+        with contextlib.suppress(OSError):
             client_socket.close()
-        except:
-            pass
     if serial_conn:
-        try:
+        with contextlib.suppress(OSError):
             serial_conn.close()
-        except:
-            pass
     sys.exit(0)
 
 def relay_serial_to_client(ser, sock):
@@ -130,11 +129,11 @@ def main():
             if client_socket:
                 try:
                     client_socket.send(b'')  # Test connection
-                except:
+                except OSError:
                     print("Client disconnected")
                     break
     except KeyboardInterrupt:
-        pass
+        print("Interrupted; shutting down.")
     
     # Cleanup
     running = False

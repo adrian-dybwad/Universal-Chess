@@ -13,12 +13,15 @@ permissions: {}
 
 jobs:
   analyze:
-    name: ruff + bandit + semgrep
+    name: ruff + bandit + semgrep (changed files)
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # Full history so the push/PR base commit is available for the diff.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -30,5 +33,66 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
-      - name: Run static analysis (ruff, bandit, semgrep)
+      - name: Determine changed Python files
+        id: changed
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_REF"
+            base="origin/$BASE_REF"
+          else
+            base="$BEFORE"
+          fi
+          # New branch / unavailable base (e.g. all-zero SHA): fall back to the
+          # previous commit so the gate still scans this push's changes.
+          if ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
+            base="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+          fi
+          files="$(git diff --name-only --diff-filter=ACMR "$base" HEAD -- '*.py' | tr '\n' ' ')"
+          echo "Changed Python files: ${files:-<none>}"
+          echo "files=$files" >> "$GITHUB_OUTPUT"
+
+      # Blocking gate: scoped to the files changed in this push/PR so a NEW
+      # security finding fails the build, while the pre-existing whole-tree
+      # backlog does not. (Editing a legacy file surfaces that file's existing
+      # findings too - "clean up what you touch" - matching the pre-commit hooks.)
+      - name: Static analysis - changed files (blocking)
+        env:
+          ANALYZE_FILES: ${{ steps.changed.outputs.files }}
         run: ./scripts/analyze.sh
+
+      # Report-only: full-tree scan for visibility into the existing backlog.
+      # Never fails the build (the blocking gate above is the enforcement point).
+      - name: Static analysis - full tree (report only)
+        if: always()
+        continue-on-error: true
+        run: ./scripts/analyze.sh
+
+  frontend-security:
+    name: eslint (frontend security rules)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: src/universalchess/web-app/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: src/universalchess/web-app
+        run: npm ci
+
+      # Security-only gate: no-unsanitized (DOM "reinterpreted as HTML" XSS) +
+      # react/no-danger. The full developer lint is intentionally not gated.
+      - name: Run frontend security lint
+        working-directory: src/universalchess/web-app
+        run: npm run lint:security
