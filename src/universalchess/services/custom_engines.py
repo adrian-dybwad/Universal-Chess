@@ -27,6 +27,7 @@ hardening (pinning the resolved IP for the fetch) is a deliberate follow-up.
 from __future__ import annotations
 
 import ipaddress
+import logging
 import os
 import re
 import shutil
@@ -36,6 +37,8 @@ import tempfile
 from pathlib import Path
 from typing import Callable, Optional, Tuple
 from urllib.parse import urlsplit
+
+log = logging.getLogger(__name__)
 
 # Engine id: lowercase, starts with an alphanumeric, then alphanumerics / '_' /
 # '-', at most 32 chars. It becomes a filename directly under the engines dir, so
@@ -109,7 +112,10 @@ def validate_binary_arch(path, expected_arch) -> Optional[str]:
         with open(path, "rb") as f:
             header = f.read(_ELF_HEADER_READ)
     except OSError as e:
-        return f"Could not read engine binary: {e}"
+        # The raw OSError can carry a filesystem path; keep it in the server log
+        # and return a generic message so it is not exposed to the HTTP client.
+        log.warning("Could not read engine binary at %s: %s", path, e)
+        return "Could not read the engine binary."
     arch = detect_elf_arch(header)
     if arch is None:
         return "File is not a recognized ARM ELF executable."
@@ -225,7 +231,10 @@ def _install_archive(source_path, dest_path, expected_arch, safe_extract) -> Opt
                 # extractor expects a Path for its pre-3.11.4 fallback branch.
                 safe_extract(tar, Path(tmpdir))
         except tarfile.TarError as e:
-            return f"Could not extract archive: {e}"
+            # TarError detail can include member paths; log it and return a
+            # generic message rather than leaking internals to the client.
+            log.warning("Could not extract custom engine archive: %s", e)
+            return "Could not extract the archive; it may be corrupt or not a valid .tar.gz."
         located, err = locate_engine_binary_in_dir(tmpdir, expected_arch)
         if err:
             return err
@@ -240,5 +249,8 @@ def _place_binary(source_path, dest_path) -> Optional[str]:
         shutil.copyfile(source_path, dest_path)
         os.chmod(dest_path, 0o755)
     except OSError as e:
-        return f"Could not install engine binary: {e}"
+        # OSError can carry filesystem paths; log the detail and return a generic
+        # message so it is not exposed to the HTTP client.
+        log.warning("Could not install engine binary to %s: %s", dest_path, e)
+        return "Could not install the engine binary."
     return None

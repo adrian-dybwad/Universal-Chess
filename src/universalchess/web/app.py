@@ -3514,8 +3514,10 @@ def api_get_all_engines():
         # (upload vs url) drives the description. They expose no ref picker or
         # profiles and are always uninstallable.
         for custom in _custom_engine_store.list():
-            binary = os.path.join(_ENGINES_DIR, custom.id)
-            installed = os.path.exists(binary) and os.access(binary, os.X_OK)
+            # Resolve under the engines dir via the containment guard so the
+            # path built from the (registry-stored) id cannot escape it.
+            binary = safe_under_base(_ENGINES_DIR, custom.id)
+            installed = binary is not None and os.path.exists(binary) and os.access(binary, os.X_OK)
             description = (
                 "Uploaded engine binary."
                 if custom.source == "upload"
@@ -3662,8 +3664,8 @@ def _remove_custom_engine_files(engine_id: str) -> bool:
     though ids are validated at add time (defense in depth). Returns False if the
     target would escape the engines dir.
     """
-    target = os.path.join(_ENGINES_DIR, engine_id)
-    if os.path.realpath(os.path.dirname(target)) != os.path.realpath(_ENGINES_DIR):
+    target = safe_under_base(_ENGINES_DIR, engine_id)
+    if target is None:
         return False
     if os.path.exists(target):
         os.remove(target)
@@ -3696,7 +3698,13 @@ def _run_custom_url_install(engine_id: str, display_name: str, url: str):
             return
 
         _engine_install_store.update(InstallStage.INSTALLING_FILES, f"Installing {display_name}...")
-        dest_path = os.path.join(_ENGINES_DIR, engine_id)
+        # Resolve the destination through the containment guard before it reaches
+        # any filesystem operation (the id is validated, but this is the barrier
+        # static analysis recognizes against path injection).
+        dest_path = safe_under_base(_ENGINES_DIR, engine_id)
+        if dest_path is None:
+            _engine_install_store.finish(success=False, error="Invalid engine id.")
+            return
         err = _custom_engines.install_binary_payload(
             source_path=tmp_path,
             is_archive=_looks_like_gzip(tmp_path),
@@ -3863,7 +3871,11 @@ def api_upload_engine():
             if copied is None:
                 return jsonify({"success": False, "error": "Uploaded file is too large."}), 413
 
-            dest_path = os.path.join(_ENGINES_DIR, engine_id)
+            # Resolve under the engines dir via the containment guard before the
+            # path reaches any filesystem operation (path-injection barrier).
+            dest_path = safe_under_base(_ENGINES_DIR, engine_id)
+            if dest_path is None:
+                return jsonify({"success": False, "error": "Invalid engine id."}), 400
             err = _custom_engines.install_binary_payload(
                 source_path=tmp_path,
                 is_archive=is_archive,
