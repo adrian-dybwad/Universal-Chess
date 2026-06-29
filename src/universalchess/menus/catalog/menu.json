@@ -8,6 +8,7 @@
     { "id": "game", "label": "Game", "icon": "timer_checked" },
     { "id": "display", "label": "Display", "icon": "display" },
     { "id": "sound", "label": "Sound", "icon": "sound" },
+    { "id": "connectivity", "label": "Connectivity", "icon": "wifi" },
     { "id": "accounts", "label": "Accounts", "icon": "account" },
     { "id": "engines", "label": "Engines", "icon": "engine" },
     { "id": "system", "label": "System", "icon": "system" }

@@ -139,10 +139,23 @@ def test_web_sections_present_in_expected_order():
 
     The React Settings sidebar renders these tabs in order. A missing or
     reordered section would move/remove a settings tab; this guards the set.
+    Connectivity sits before System (after Sound), matching the board's Settings
+    submenu order, so that the web Connectivity tab and the board's Connectivity
+    submenu appear in the same position. 'accounts' remains its own section
+    because it is rendered as a card inside the Connectivity panel.
     """
     catalog = load_catalog()
     section_ids = [s["id"] for s in catalog.sections()]
-    assert section_ids == ["players", "game", "display", "sound", "accounts", "engines", "system"]
+    assert section_ids == [
+        "players",
+        "game",
+        "display",
+        "sound",
+        "connectivity",
+        "accounts",
+        "engines",
+        "system",
+    ]
 
 
 def test_web_implemented_submenus_are_enabled_for_web():

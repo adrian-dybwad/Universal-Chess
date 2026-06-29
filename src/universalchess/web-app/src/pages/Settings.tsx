@@ -7,6 +7,7 @@ import { EngineProfileEditor } from '../components/EngineProfileEditor';
 import type { FieldValue } from '../components/CatalogField';
 import { LoginDialog } from '../components/LoginDialog';
 import { MenuIcon } from '../components/MenuIcon';
+import { ConnectivityPanel } from './Connectivity';
 import type { EngineDefinition, EngineRef, EngineRefsResponse } from '../types/game';
 import type { MenuCatalog, MenuOption, MenuCondition, MenuNode } from '../types/menuCatalog';
 import { fieldById, fieldsForSection } from '../types/menuCatalog';
@@ -19,7 +20,7 @@ interface SettingsData {
   };
 }
 
-type SettingsTab = 'players' | 'game' | 'display' | 'sound' | 'engines' | 'system';
+type SettingsTab = 'players' | 'game' | 'display' | 'sound' | 'connectivity' | 'engines' | 'system';
 
 // Structured engine-install status from GET /api/engines/status. The backend
 // owns this state on disk so it survives a page reload and a board restart;
@@ -42,8 +43,10 @@ interface EngineInstallStatus {
 // from the catalog (menu.json) at runtime; this list only declares which
 // sections belong to the Settings page and their order. Display and Sound are
 // separate sibling sections (right after Game), mirroring the board menu.
-// 'accounts' is intentionally excluded -- it lives on the Connectivity page.
-const SETTINGS_TAB_IDS: SettingsTab[] = ['players', 'game', 'display', 'sound', 'engines', 'system'];
+// Connectivity sits before System, matching the board's Settings submenu order;
+// its 'accounts' subsection is rendered inside the Connectivity panel rather
+// than as its own tab.
+const SETTINGS_TAB_IDS: SettingsTab[] = ['players', 'game', 'display', 'sound', 'connectivity', 'engines', 'system'];
 
 // The sub-nav tab lives in the URL path (e.g. /settings/game) so a page refresh
 // or a shared/bookmarked link restores the same section instead of falling back
@@ -1123,6 +1126,9 @@ export function Settings() {
             </Card>
           </section>
         )}
+
+        {/* CONNECTIVITY TAB */}
+        {activeTab === 'connectivity' && <ConnectivityPanel />}
 
         {/* ENGINES TAB */}
         {activeTab === 'engines' && (

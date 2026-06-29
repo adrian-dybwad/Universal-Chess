@@ -122,18 +122,21 @@ interface CastStatus {
 }
 
 /**
- * Connectivity page.
+ * Connectivity panel.
  *
  * Manages the board's outward connections from the web UI. WiFi is implemented
  * here (status, scan/join, saved/forget) against /api/connectivity/wifi/*, which
  * runs the same connectivity.wifi core the board menu uses. Privileged actions
  * (scan/connect/forget/enable) require auth and reuse the LoginDialog flow.
  *
- * Bluetooth, Chromecast, and Accounts cards are added in later phases.
+ * Rendered as a tab inside the Settings page (matching the board menu, where
+ * Connectivity is a child of Settings). It carries its own heading and renders
+ * the WiFi, Bluetooth, Chromecast, and Accounts cards; each card self-saves, so
+ * the panel does not participate in the Settings page's bulk Save & Apply bar.
  */
-export function Connectivity() {
+export function ConnectivityPanel() {
   return (
-    <div className="page container--lg">
+    <section>
       <h2 className="page-title">
         <MenuIcon name="wifi" size={24} style={{ verticalAlign: 'text-bottom', marginRight: 8 }} />
         Connectivity
@@ -143,7 +146,7 @@ export function Connectivity() {
       <BluetoothCard />
       <ChromecastCard />
       <AccountsCard />
-    </div>
+    </section>
   );
 }
 

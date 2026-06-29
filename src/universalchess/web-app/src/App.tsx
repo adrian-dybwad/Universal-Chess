@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, Navigate } from 'react-router-dom';
 import { BackgroundActivityBanner } from './components/BackgroundActivityBanner';
 import { Navbar } from './components/Navbar';
 import { GameStateProvider } from './components/GameStateProvider';
@@ -7,7 +7,6 @@ import { BoardControl } from './pages/BoardControl';
 import { Games } from './pages/Games';
 import { Analyze } from './pages/Analyze';
 import { Positions } from './pages/Positions';
-import { Connectivity } from './pages/Connectivity';
 import { Settings } from './pages/Settings';
 import { Licenses } from './pages/Licenses';
 import { Support } from './pages/Support';
@@ -33,7 +32,10 @@ function App() {
               <Route path="/games" element={<Games />} />
               <Route path="/analyze/:gameId" element={<Analyze />} />
               <Route path="/positions" element={<Positions />} />
-              <Route path="/connectivity" element={<Connectivity />} />
+              {/* Connectivity moved under Settings (matches the board's menu IA).
+                  Redirect the old top-level path to the new Settings tab so
+                  existing links and bookmarks keep working. */}
+              <Route path="/connectivity" element={<Navigate to="/settings/connectivity" replace />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/settings/:tab" element={<Settings />} />
               <Route path="/licenses" element={<Licenses />} />

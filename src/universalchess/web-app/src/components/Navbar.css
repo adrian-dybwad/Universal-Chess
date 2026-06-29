@@ -175,6 +175,27 @@
   background: rgba(255, 255, 255, 0.2);
 }
 
+/* Icon-only nav items (e.g. Board Control). On desktop these collapse to a
+   square button showing just the glyph; the text label is kept in the DOM for
+   accessibility and shown in the mobile (stacked) menu where rows are full
+   width. */
+.navbar-item--icon {
+  gap: 0.5rem;
+}
+
+@media screen and (min-width: 1024px) {
+  .navbar-item--icon {
+    justify-content: center;
+    width: 3rem;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .navbar-item--icon .navbar-item-label {
+    display: none;
+  }
+}
+
 /* Mobile responsive */
 @media screen and (max-width: 1023px) {
   .navbar {

@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { ConnectionStatus } from './ConnectionStatus';
 import { BatteryIndicator } from './BatteryIndicator';
+import { CastButton } from './CastButton';
+import { MenuIcon } from './MenuIcon';
 import './Navbar.css';
 
 /**
@@ -41,6 +43,7 @@ export function Navbar() {
           </button>
           <div className="navbar-item navbar-item--mobile-status">
             <BatteryIndicator compact />
+            <CastButton compact />
             <ConnectionStatus compact />
           </div>
         </div>
@@ -57,10 +60,13 @@ export function Navbar() {
           </Link>
           <Link
             to="/control"
-            className={`navbar-item ${isActive('/control') ? 'is-active' : ''}`}
+            className={`navbar-item navbar-item--icon ${isActive('/control') ? 'is-active' : ''}`}
             onClick={() => setMenuOpen(false)}
+            title="Board Control"
+            aria-label="Board Control"
           >
-            Board Control
+            <MenuIcon name="tune" size={22} />
+            <span className="navbar-item-label">Board Control</span>
           </Link>
           <Link
             to="/games"
@@ -75,13 +81,6 @@ export function Navbar() {
             onClick={() => setMenuOpen(false)}
           >
             Positions
-          </Link>
-          <Link
-            to="/connectivity"
-            className={`navbar-item ${isActive('/connectivity') ? 'is-active' : ''}`}
-            onClick={() => setMenuOpen(false)}
-          >
-            Connectivity
           </Link>
           <Link
             to="/settings"
@@ -106,9 +105,10 @@ export function Navbar() {
           >
             Licenses
           </Link>
-          {/* Desktop: battery + full connection status in navbar-end */}
+          {/* Desktop: battery + cast + full connection status in navbar-end */}
           <div className="navbar-item navbar-item--desktop-status">
             <BatteryIndicator />
+            <CastButton />
             <ConnectionStatus />
           </div>
         </div>
