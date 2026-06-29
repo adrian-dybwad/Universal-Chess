@@ -16,10 +16,40 @@ import signal
 # Configuration
 REAL_SERIAL_PORT = "/dev/ttyS0"
 RELAY_PORT = 8888
-# Must bind to a routable address so VM guests on a virtual bridge can connect.
-# Binding broadly is the intended deployment (override via RELAY_BIND_ADDRESS);
-# the bind-all warning is consciously accepted here. noqa=ruff, nosec=bandit.
-BIND_ADDRESS = os.environ.get("RELAY_BIND_ADDRESS", "0.0.0.0")  # noqa: S104  # nosec B104
+
+
+def _primary_lan_ip() -> str:
+    """Return this host's primary LAN IPv4 for use as the bind address.
+
+    The relay binds to this concrete interface address rather than the
+    ``0.0.0.0`` wildcard so it does not also listen on unrelated interfaces
+    (loopback, a VPN, a second NIC). The UDP ``connect`` only selects the
+    egress interface for the default route -- no packets are sent -- and
+    ``getsockname`` then yields this host's IP on that interface. The VM-guest
+    client dials the Pi's LAN IP, which is exactly this address, so binding
+    here does not change reachability for the documented setup.
+
+    Raises RuntimeError when no default route exists (cannot auto-detect an
+    address); set RELAY_BIND_ADDRESS explicitly in that case. Failing loudly is
+    preferred over silently binding the wildcard, which both re-opens the
+    bind-all finding and listens far more broadly than intended.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("8.8.8.8", 80))
+        return probe.getsockname()[0]
+    except OSError as exc:
+        raise RuntimeError(
+            "Could not auto-detect a LAN IP to bind to; "
+            "set RELAY_BIND_ADDRESS to this host's LAN address."
+        ) from exc
+    finally:
+        probe.close()
+
+
+# Bind to the auto-detected primary LAN IP (override via RELAY_BIND_ADDRESS for
+# multi-NIC hosts where the guest connects over a non-default interface).
+BIND_ADDRESS = os.environ.get("RELAY_BIND_ADDRESS") or _primary_lan_ip()
 BAUDRATE = 1000000
 
 running = True

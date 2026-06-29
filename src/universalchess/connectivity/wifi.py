@@ -15,7 +15,7 @@ operation.
 
 import logging
 import re
-import subprocess
+import subprocess  # nosec B404  # trusted, fixed-arg nmcli/iwlist/iwgetid calls below
 from typing import List, Optional, Tuple
 
 _DEFAULT_LOG = logging.getLogger(__name__)
@@ -55,12 +55,7 @@ def scan_networks(log: Optional[logging.Logger] = None) -> List[dict]:
     log = _resolve_log(log)
     networks: List[dict] = []
     try:
-        result = subprocess.run(
-            ["sudo", "iwlist", WLAN_INTERFACE, "scan"],
-            capture_output=True,
-            text=True,
-            timeout=_SCAN_TIMEOUT_SECONDS,
-        )
+        result = subprocess.run(["sudo", "iwlist", WLAN_INTERFACE, "scan"], capture_output=True, text=True, timeout=_SCAN_TIMEOUT_SECONDS)  # noqa: S603, S607  # nosec B603 B607
     except subprocess.TimeoutExpired:
         log.error("[WiFi] Network scan timed out")
         return networks
@@ -116,9 +111,7 @@ def get_active_ssid(log: Optional[logging.Logger] = None) -> Optional[str]:
     """Return the SSID currently associated, or None if not connected."""
     log = _resolve_log(log)
     try:
-        result = subprocess.run(
-            ["iwgetid", "-r"], capture_output=True, text=True, timeout=5
-        )
+        result = subprocess.run(["iwgetid", "-r"], capture_output=True, text=True, timeout=5)  # noqa: S607  # nosec B603 B607
     except Exception as e:  # noqa: BLE001
         log.warning(f"[WiFi] Failed to get active SSID: {e}")
         return None
@@ -137,12 +130,7 @@ def list_saved_networks(log: Optional[logging.Logger] = None) -> List[dict]:
     active_ssid = get_active_ssid(log)
     saved: List[dict] = []
     try:
-        listing = subprocess.run(
-            ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"],
-            capture_output=True,
-            text=True,
-            timeout=_NMCLI_TIMEOUT_SECONDS,
-        )
+        listing = subprocess.run(["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"], capture_output=True, text=True, timeout=_NMCLI_TIMEOUT_SECONDS)  # noqa: S607  # nosec B603 B607
     except Exception as e:  # noqa: BLE001
         log.warning(f"[WiFi] Could not list saved networks: {e}")
         return saved
@@ -179,12 +167,7 @@ def remove_profiles(ssid: str, log: Optional[logging.Logger] = None) -> int:
     log = _resolve_log(log)
     deleted = 0
     try:
-        listing = subprocess.run(
-            ["nmcli", "-t", "-f", "UUID,NAME,TYPE", "connection", "show"],
-            capture_output=True,
-            text=True,
-            timeout=_NMCLI_TIMEOUT_SECONDS,
-        )
+        listing = subprocess.run(["nmcli", "-t", "-f", "UUID,NAME,TYPE", "connection", "show"], capture_output=True, text=True, timeout=_NMCLI_TIMEOUT_SECONDS)  # noqa: S607  # nosec B603 B607
     except subprocess.TimeoutExpired:
         log.warning("[WiFi] Timed out listing profiles to remove")
         return deleted
@@ -206,12 +189,7 @@ def remove_profiles(ssid: str, log: Optional[logging.Logger] = None) -> int:
         if name == ssid and "wireless" in conn_type:
             log.info(f"[WiFi] Removing profile for '{ssid}' (uuid={uuid})")
             try:
-                proc = subprocess.run(
-                    ["sudo", "nmcli", "connection", "delete", "uuid", uuid],
-                    capture_output=True,
-                    text=True,
-                    timeout=_NMCLI_TIMEOUT_SECONDS,
-                )
+                proc = subprocess.run(["sudo", "nmcli", "connection", "delete", "uuid", uuid], capture_output=True, text=True, timeout=_NMCLI_TIMEOUT_SECONDS)  # noqa: S603, S607  # nosec B603 B607
                 if proc.returncode == 0:
                     deleted += 1
             except Exception as e:  # noqa: BLE001
@@ -243,15 +221,25 @@ def connect_network(
 
     remove_profiles(ssid, log)
 
-    command = ["sudo", "nmcli", "device", "wifi", "connect", ssid]  # noqa: S603
+    # SECURITY INVARIANT (do not break): user-supplied ssid/password are passed
+    # only as individual argv elements with shell=False. This is what makes the
+    # CodeQL py/command-line-injection finding a false positive and is why a
+    # leading-dash SSID is safe:
+    #   * shell=False + list form -> each value is exactly one argv slot; it
+    #     cannot word-split into extra arguments or nmcli keywords.
+    #   * nmcli global dash-options must precede the object word ("device"), so a
+    #     dash-leading ssid in the `connect` positional is not reparsed as an
+    #     option, and `wifi connect` has no dangerous dash-option.
+    #   * password is the value of the `password` keyword, never an option.
+    # If this is ever changed to shell=True or a string-built command, the
+    # injection becomes real again -- re-open the finding rather than suppress it.
+    command = ["sudo", "nmcli", "device", "wifi", "connect", ssid]
     if password:
         command += ["password", password]
 
     try:
-        result = subprocess.run(  # noqa: S603
-            command, capture_output=True, text=True, timeout=_CONNECT_TIMEOUT_SECONDS,
-            shell=False,  # list-form: no shell injection
-        )
+        # shell=False (see SECURITY INVARIANT above): each value is one argv slot.
+        result = subprocess.run(command, capture_output=True, text=True, timeout=_CONNECT_TIMEOUT_SECONDS, shell=False)  # noqa: S603  # nosec B603
     except subprocess.TimeoutExpired:
         log.error("[WiFi] Connection timed out")
         remove_profiles(ssid, log)

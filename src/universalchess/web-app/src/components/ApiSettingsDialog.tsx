@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getApiUrl, setApiUrl, resetApiUrl, getDefaultApiUrl } from '../utils/api';
+import { getApiUrl, setApiUrl, resetApiUrl, getDefaultApiUrl, sanitizeApiUrl } from '../utils/api';
 import './ApiSettingsDialog.css';
 
 interface ApiSettingsDialogProps {
@@ -26,14 +26,10 @@ export function ApiSettingsDialog({ isOpen, onClose, onSave }: ApiSettingsDialog
     }
   }, [isOpen]);
 
-  const validateUrl = (input: string): boolean => {
-    try {
-      new URL(input);
-      return true;
-    } catch {
-      return false;
-    }
-  };
+  // Require a well-formed http(s) URL. Uses the same sanitizer as storage so a
+  // value the dialog accepts is exactly a value setApiUrl will store (e.g. a
+  // javascript:/data: URL parses via new URL() but is rejected here).
+  const validateUrl = (input: string): boolean => sanitizeApiUrl(input) !== null;
 
   const handleTest = async () => {
     if (!validateUrl(url)) {
@@ -92,11 +88,18 @@ export function ApiSettingsDialog({ isOpen, onClose, onSave }: ApiSettingsDialog
 
   const handleSave = () => {
     if (!validateUrl(url)) {
-      setError('Please enter a valid URL');
+      setError('Please enter a valid http(s) URL');
       return;
     }
 
-    setApiUrl(url);
+    try {
+      setApiUrl(url);
+    } catch {
+      // Defensive: validateUrl already guarantees validity, but keep the UI
+      // responsive if setApiUrl's own sanitizer ever rejects the value.
+      setError('Please enter a valid http(s) URL');
+      return;
+    }
     onSave();
     onClose();
   };

@@ -12,6 +12,34 @@ declare const __API_TARGET__: string;
 const API_URL_KEY = 'universal-chess-api-url';
 
 /**
+ * Validate and normalize an API base URL.
+ *
+ * The stored API URL originates from localStorage / user input, both of which
+ * are untrusted DOM-text sources. This base URL flows into every `fetch()` call
+ * and into `<img src>` attributes, so it must be constrained to a well-formed
+ * http(s) origin before use. Rebuilding the string from the parsed `URL`
+ * components (rather than returning the raw input) guarantees that only a
+ * sanitized origin+path can reach those sinks -- a `javascript:`/`data:` URL,
+ * a malformed string, or anything carrying markup can never pass through.
+ *
+ * @returns the normalized `origin + pathname` (trailing slash stripped), or
+ *          `null` if the input is not a valid http(s) URL.
+ */
+export function sanitizeApiUrl(raw: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    // new URL() throws TypeError on malformed input; treat as invalid.
+    return null;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return null;
+  }
+  return `${parsed.origin}${parsed.pathname}`.replace(/\/+$/, '');
+}
+
+/**
  * Get the default API URL.
  * In development, this is the Vite proxy target (e.g., http://dgt.local).
  * In production, this is the origin the app was served from.
@@ -37,18 +65,27 @@ export function getApiUrl(): string {
   const defaultUrl = getDefaultApiUrl();
   
   if (stored) {
+    const safe = sanitizeApiUrl(stored);
+    if (!safe) {
+      // Stored value is malformed or non-http(s) (corrupted or tampered).
+      // Discard it and fall back to the trusted default so a bad value can
+      // never reach fetch()/<img src>.
+      localStorage.setItem(API_URL_KEY, defaultUrl);
+      return defaultUrl;
+    }
+
     // If stored is localhost but we have a real API target configured,
     // update to use the configured target
-    const isStoredLocalhost = stored.includes('localhost') || stored.includes('127.0.0.1');
+    const isStoredLocalhost = safe.includes('localhost') || safe.includes('127.0.0.1');
     const isDefaultNotLocalhost = !defaultUrl.includes('localhost') && !defaultUrl.includes('127.0.0.1');
-    
+
     if (isStoredLocalhost && isDefaultNotLocalhost) {
       // User likely ran in dev mode first, now has proper config
       localStorage.setItem(API_URL_KEY, defaultUrl);
       return defaultUrl;
     }
-    
-    return stored;
+
+    return safe;
   }
   
   // First time - save the default API URL
@@ -58,11 +95,17 @@ export function getApiUrl(): string {
 
 /**
  * Set a new API URL.
+ *
+ * @throws Error if `url` is not a valid http(s) URL. Callers that accept user
+ *         input should validate first (see `sanitizeApiUrl`) and surface the
+ *         error to the user rather than letting it propagate.
  */
 export function setApiUrl(url: string): void {
-  // Normalize the URL - remove trailing slash
-  const normalized = url.replace(/\/+$/, '');
-  localStorage.setItem(API_URL_KEY, normalized);
+  const safe = sanitizeApiUrl(url);
+  if (!safe) {
+    throw new Error('Invalid API URL: must be a valid http(s) URL');
+  }
+  localStorage.setItem(API_URL_KEY, safe);
 }
 
 /**
