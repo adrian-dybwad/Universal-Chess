@@ -85,9 +85,12 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
           BUILT_TIMESTAMP: ${{ github.event.head_commit.timestamp }}
         run: |
-          # The current run's tag does not exist yet, so the most recent existing
-          # nightly tag is the previous build. Summarise commits since then.
-          PREV_TAG=$(git tag -l 'nightly-*' --sort=-creatordate | head -n 1)
+          # Published nightlies are pruned to one per day (see the day-prune
+          # step below), so the changelog must diff against the most recent
+          # nightly from a PRIOR day. Same-day builds are excluded here because
+          # baselining on an intra-day tag that the prune step then deletes
+          # leaves a near-empty changelog that references a now-missing tag.
+          PREV_TAG=$(git tag -l 'nightly-*' --sort=-creatordate | grep -v "^nightly-${DATE_TAG}-" | head -n 1)
           if [ -n "$PREV_TAG" ]; then
             CHANGES=$(git log "${PREV_TAG}..${COMMIT_SHA}" --no-merges --pretty=format:'- %s')
             CHANGES_HEADING="### Changes since ${PREV_TAG}"
