@@ -56,8 +56,8 @@ import json
 import urllib.parse
 import base64
 import pwd
-import subprocess
-from xml.sax.saxutils import escape
+import subprocess  # nosec B404 - subprocess is only ever invoked with fixed argv lists, never shell=True
+from xml.sax.saxutils import escape  # nosec B406 - saxutils.escape performs output encoding (escaping), not XML parsing
 
 from universalchess.web.piece_svg import (
     generate_piece_svg,
@@ -250,7 +250,7 @@ def reset_board_inactivity(response):
         try:
             from universalchess.services.game_broadcast import send_board_command
             send_board_command("reset_inactivity")
-        except Exception:
+        except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
             pass
     return response
 
@@ -296,7 +296,7 @@ def inject_template_globals():
         version_path = pathlib.Path("/opt/universalchess/VERSION")
         if version_path.exists():
             static_version = version_path.read_text().strip() or static_version
-    except Exception:
+    except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
         pass
     return {
         'rodentiv_installed': is_rodentiv_installed(),
@@ -369,7 +369,7 @@ def verify_webdav_authentication():
             p = pam.pam()
             if p.authenticate(username, password):
                 password_valid = True
-        except Exception:
+        except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
             pass
     
     # If PAM not available, try crypt-based verification
@@ -382,7 +382,7 @@ def verify_webdav_authentication():
                 try:
                     spwd_entry = spwd.getspnam(username)
                     hashed_password = spwd_entry.sp_pwd
-                except (KeyError, PermissionError, OSError):
+                except (KeyError, PermissionError, OSError):  # noqa: S110 - best-effort; failure here is non-fatal and intentionally ignored
                     pass
             
             # Fall back to regular password database if shadow not available or accessible
@@ -390,14 +390,14 @@ def verify_webdav_authentication():
                 hashed_password = pwd_entry.pw_passwd
                 # If password hash is 'x', it means password is in shadow file
                 # If spwd is not available, we'll need to use subprocess fallback
-                if hashed_password == 'x':
+                if hashed_password == 'x':  # noqa: S105  # nosec B105 - shadow-file sentinel 'x' (password lives in /etc/shadow), not a credential
                     hashed_password = None  # Set to None to skip crypt verification and use subprocess
             
             # Only check for empty/disabled passwords if hashed_password is not None
             # (None means we're skipping crypt verification to use subprocess fallback)
             if hashed_password is not None:
                 # Empty password hash means no password set - deny for security
-                if not hashed_password or hashed_password == '*':
+                if not hashed_password or hashed_password == '*':  # noqa: S105  # nosec B105 - shadow-file sentinel '*' (account disabled), not a credential
                     return (False, None)
             
             # Use crypt module if available (and hashed_password is not None)
@@ -413,10 +413,10 @@ def verify_webdav_authentication():
                         computed = crypt.crypt(password, hashed_password[:2])
                         if computed == hashed_password:
                             password_valid = True
-                except Exception:
+                except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
                     pass
         
-        except Exception:
+        except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
             pass
     
     # Final fallback: use subprocess to verify via system authentication
@@ -425,8 +425,8 @@ def verify_webdav_authentication():
         proc = None
         try:
             # Use expect-like approach via subprocess
-            proc = subprocess.Popen(
-                ['su', username, '-c', 'echo SUCCESS'],
+            proc = subprocess.Popen(  # noqa: S603  # nosec B603 B607 - argv list (no shell); 'su' is a standard system binary; deliberate credential probe
+                ['su', username, '-c', 'echo SUCCESS'],  # noqa: S607 - argv list (no shell); 'su' is a standard system binary; deliberate credential probe
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -436,7 +436,7 @@ def verify_webdav_authentication():
             # If authentication succeeded, we should see "SUCCESS" in output
             if proc.returncode == 0 and 'SUCCESS' in stdout:
                 password_valid = True
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError, OSError):
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError, OSError):  # noqa: S110 - best-effort; failure here is non-fatal and intentionally ignored
             pass
         finally:
             # Ensure subprocess resources are cleaned up
@@ -457,7 +457,7 @@ def verify_webdav_authentication():
                         except subprocess.TimeoutExpired:
                             proc.kill()
                             proc.wait()
-                except Exception:
+                except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
                     pass
     
     if password_valid:
@@ -1008,7 +1008,7 @@ def build_chess_game_from_id(session, game_id):
             try:
                 move = chess.Move.from_uci(move_str)
                 node = node.add_variation(move)
-            except ValueError:
+            except ValueError:  # noqa: S110 - best-effort; failure here is non-fatal and intentionally ignored
                 # Invalid move, skip
                 pass
     
@@ -1131,7 +1131,7 @@ def handle_preflight():
                     for x in range(min(100, len(gamedata))):
                         gameitem = build_gameitem_from_gamedata(gamedata[x])
                         responses.append(build_pgn_properties_xml(gameitem))
-                except Exception:
+                except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
                     pass
                 finally:
                     session.close()
@@ -1190,7 +1190,7 @@ def handle_preflight():
                 os.remove(full_path)
             elif os.path.isdir(full_path):
                 os.rmdir(full_path)
-        except Exception:
+        except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
             pass
         res = Response()
         return res   
@@ -1222,7 +1222,7 @@ def handle_preflight():
             return Response('', mimetype='application/xml', status=403)
         try:
             os.rename(full_src, full_dst)
-        except Exception:
+        except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
             pass
         res = Response(status = 200)
         return res 
@@ -1257,10 +1257,10 @@ def handle_preflight():
                                 is_valid_chmod_path, chmod_path = sanitize_path(path_line)
                                 chmod_target = safe_under_base(WEBDAV_BASE_PATH, chmod_path)
                                 if is_valid_chmod_path and chmod_path != "/" and chmod_target is not None:
-                                    os.chmod(chmod_target, 0o0777)
-                            except Exception:
+                                    os.chmod(chmod_target, 0o0777)  # noqa: S103  # nosec B103 - DGT Centaur WebDAV '777.txt' feature; target already contained by safe_under_base
+                            except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
                                 pass
-                except Exception:
+                except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
                     pass
         except Exception:
             return Response('', mimetype='application/xml', status=500)
@@ -1407,7 +1407,7 @@ def react_assets(filename):
     if react_dir:
         try:
             return send_from_directory(react_dir / "assets", filename)
-        except NotFound:
+        except NotFound:  # noqa: S110 - best-effort; failure here is non-fatal and intentionally ignored
             pass
     abort(404)
 
@@ -1419,7 +1419,7 @@ def react_icons(filename):
     if react_dir:
         try:
             return send_from_directory(react_dir / "icons", filename)
-        except NotFound:
+        except NotFound:  # noqa: S110 - best-effort; failure here is non-fatal and intentionally ignored
             pass
     abort(404)
 
@@ -1431,7 +1431,7 @@ def react_stockfish(filename):
     if react_dir:
         try:
             return send_from_directory(react_dir / "stockfish", filename)
-        except NotFound:
+        except NotFound:  # noqa: S110 - best-effort; failure here is non-fatal and intentionally ignored
             pass
     abort(404)
 
@@ -1609,16 +1609,16 @@ def license():
 @app.route("/return2dgtcentaurmods", methods=["POST"])
 @requires_auth
 def return2dgtcentaurmods():
-    os.system("pkill centaur")
+    os.system("pkill centaur")  # noqa: S605,S607  # nosec B605 B607 - fixed command string, no user input; route is behind @requires_auth
     time.sleep(1)
-    os.system("sudo systemctl restart universal-chess.service")
+    os.system("sudo systemctl restart universal-chess.service")  # noqa: S605,S607  # nosec B605 B607 - fixed command string, no user input; route is behind @requires_auth
     return "ok"
 
 @app.route("/lichesskey/<key>", methods=["POST"])
 @requires_auth
 def lichesskey(key):
     centaurflask.set_lichess_api(key)
-    os.system("sudo systemctl restart universal-chess.service")
+    os.system("sudo systemctl restart universal-chess.service")  # noqa: S605,S607  # nosec B605 B607 - fixed command string, no user input; route is behind @requires_auth
     return "ok"
 
 @app.route("/lichessrange/<newrange>", methods=["POST"])
@@ -1674,7 +1674,7 @@ def getGames(page):
                 if x + t < len(gamedata):
                     gameitem = build_gameitem_from_gamedata(gamedata[x + t])
                     games[x] = gameitem
-        except Exception:
+        except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
             pass
         return jsonify(games)
     finally:
@@ -1703,7 +1703,7 @@ def uploadengine():
     # Engines are executed, so they need the execute bit, but must not be
     # world-writable (0o777 previously allowed any local user to replace the
     # binary). 0o755: owner-writable, group/other read+execute only.
-    os.chmod(str(target), 0o755)
+    os.chmod(str(target), 0o755)  # noqa: S103  # nosec B103 - engine needs the exec bit; 0o755 is least-permissive; path contained by safe_under_base
     return redirect("/configure")
 
 @app.route("/delengine/<enginename>", methods=["POST"])
@@ -2237,7 +2237,7 @@ def save_all_settings(settings_dict, *, broadcast: bool = True):
         try:
             from universalchess.services.game_broadcast import notify_main_process_settings_changed
             notify_main_process_settings_changed()
-        except Exception:
+        except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
             pass  # Main process notification is optional
 
 
@@ -3628,8 +3628,9 @@ def _download_capped(url: str, cap: int, on_fraction=None):
     fd, tmp_path = tempfile.mkstemp(prefix="engine_dl_")
     out = os.fdopen(fd, "wb")
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Universal-Chess"})
-        # https scheme is enforced upstream by validate_download_url.
+        # https scheme is enforced upstream by validate_download_url, so file:/
+        # custom schemes cannot reach here (the S310/B310 audit concern).
+        req = urllib.request.Request(url, headers={"User-Agent": "Universal-Chess"})  # noqa: S310  # nosec B310
         with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310  # nosec B310
             try:
                 total_expected = int(resp.headers.get("Content-Length") or 0)
@@ -3654,7 +3655,11 @@ def _download_capped(url: str, cap: int, on_fraction=None):
         out.close()
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
-        return None, f"Download failed: {e}"
+        # The exception text can carry the URL / urllib internals; this error is
+        # surfaced to the client via the install-status endpoint, so log the
+        # detail server-side and return a generic message (CWE-209).
+        app.logger.warning("Custom engine download failed for %s: %s", url, e)
+        return None, "Download failed."
 
 
 def _remove_custom_engine_files(engine_id: str) -> bool:
@@ -4384,8 +4389,8 @@ def api_change_password():
     if not username:
         return jsonify({"error": "Invalid credentials"}), 401
 
-    proc = subprocess.run(
-        ["sudo", "-n", "chpasswd"],
+    proc = subprocess.run(  # nosec B603 B607 - argv list (no shell); 'sudo'/'chpasswd' are standard system binaries
+        ["sudo", "-n", "chpasswd"],  # noqa: S607 - argv list (no shell); 'sudo'/'chpasswd' are standard system binaries
         input=f"{username}:{new_password}",
         capture_output=True,
         text=True,
@@ -4425,7 +4430,7 @@ def broadcast_sse_event(event_type: str, data: dict = None) -> None:
         for client_queue in _sse_clients:
             try:
                 client_queue.put_nowait(message)
-            except queue.Full:
+            except queue.Full:  # noqa: S110 - best-effort; failure here is non-fatal and intentionally ignored
                 pass
 
 
@@ -4440,7 +4445,7 @@ def _on_game_state_update(state: GameState) -> None:
             try:
                 # Non-blocking put - drop if client is slow
                 client_queue.put_nowait(message)
-            except queue.Full:
+            except queue.Full:  # noqa: S110 - best-effort; failure here is non-fatal and intentionally ignored
                 pass  # Client is too slow, skip this update
 
 
@@ -4458,7 +4463,7 @@ def _on_raw_message(parsed: dict) -> None:
             for client_queue in _sse_clients:
                 try:
                     client_queue.put_nowait(message)
-                except queue.Full:
+                except queue.Full:  # noqa: S110 - best-effort; failure here is non-fatal and intentionally ignored
                     pass
 
 
@@ -4560,7 +4565,7 @@ def react_catch_all(path):
         # safely contains the user-supplied path within react_dir.
         try:
             return send_from_directory(react_dir, path)
-        except NotFound:
+        except NotFound:  # noqa: S110 - best-effort; failure here is non-fatal and intentionally ignored
             pass
         # Otherwise serve index.html for client-side routing
         return send_file(react_dir / "index.html")

@@ -36,8 +36,11 @@ repos:
     hooks:
       - id: semgrep-path-injection
         name: semgrep (path-injection + security, local rules)
+        # language: system runs the entry as argv (so /usr/bin/env applies the
+        # offline flag and execs analyze.sh). language: script would instead try
+        # to execute the first token ("env") as a repo-relative file and fail.
         entry: env SEMGREP_OFFLINE=1 scripts/analyze.sh semgrep
-        language: script
+        language: system
         pass_filenames: false
         types: [python]
 

@@ -191,7 +191,7 @@ def locate_engine_binary_in_dir(root, expected_arch) -> Tuple[Optional[str], Opt
             try:
                 with open(full, "rb") as f:
                     header = f.read(_ELF_HEADER_READ)
-            except OSError:
+            except OSError:  # noqa: S112 - an unreadable archive member is simply not a candidate binary; nothing to log
                 continue
             if detect_elf_arch(header) == expected_arch:
                 matches.append(full)
@@ -247,7 +247,9 @@ def _place_binary(source_path, dest_path) -> Optional[str]:
     try:
         os.makedirs(os.path.dirname(dest_path) or ".", exist_ok=True)
         shutil.copyfile(source_path, dest_path)
-        os.chmod(dest_path, 0o755)
+        # A UCI engine must be executable to be launched; 0o755 (no group/other
+        # write) is the least-permissive mode that allows exec for the service.
+        os.chmod(dest_path, 0o755)  # noqa: S103  # nosec B103 - engine binary must be executable
     except OSError as e:
         # OSError can carry filesystem paths; log the detail and return a generic
         # message so it is not exposed to the HTTP client.

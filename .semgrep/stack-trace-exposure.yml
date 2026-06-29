@@ -50,3 +50,59 @@ rules:
           - focus-metavariable: $D
       - patterns:
           - pattern: render_template_string(...)
+
+  # Companion to the rule above for the cross-file case it cannot see. The leak
+  # that motivated this (custom_engines.py returning f"...{e}", jsonify'd by a
+  # caller in app.py) escapes the rule above because OSS semgrep taint is
+  # intra-file: the `except` and the `jsonify` were in different modules. This
+  # rule catches the exception text at its SOURCE -- any function in the HTTP
+  # request path (web/ + services/) that RETURNS exception-derived text -- so the
+  # leak is blocked at commit time without needing interprocedural analysis.
+  #
+  # Scoped to web/ + services/ because returning exception text from
+  # board/hardware internals (managers/, board/, players/) is not HTTP-exposed
+  # and is a different concern. Sanitized by `_internal_error(...)` (the project
+  # helper that logs server-side and returns a generic 500) and by a literal
+  # message, so the common safe patterns do not trip it.
+  - id: exception-text-returned
+    languages: [python]
+    severity: ERROR
+    paths:
+      include:
+        # Leading slash = anchored to the repo root (Semgrepignore v2 / gitignore
+        # semantics), scoping the rule to the HTTP request path.
+        - "/src/universalchess/web/"
+        - "/src/universalchess/services/"
+    message: >
+      A caught exception's text is returned as a string from this request-path
+      function. If it reaches an HTTP response through a caller it leaks internal
+      details - file paths, library internals, URLs (CWE-209, reported by CodeQL
+      as py/stack-trace-exposure). OSS semgrep cannot trace the return across
+      files, so the leak is caught here at its source. Log the exception
+      server-side (e.g. via _internal_error, or app.logger.warning) and return a
+      fixed, user-facing message; never interpolate the exception into the
+      returned string.
+    metadata:
+      category: security
+      cwe: "CWE-209: Generation of Error Message Containing Sensitive Information"
+      owasp: "A04:2021 - Insecure Design"
+      references:
+        - https://cwe.mitre.org/data/definitions/209.html
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern: $E
+          - pattern-inside: |
+              try:
+                ...
+              except $EXC as $E:
+                ...
+    pattern-sanitizers:
+      # A constant/known-safe message is not the exception text.
+      - pattern: "\"...\""
+      # The project's exception sink: logs server-side, returns a generic body.
+      - pattern: _internal_error(...)
+    pattern-sinks:
+      - patterns:
+          - pattern: return $RET
+          - focus-metavariable: $RET
