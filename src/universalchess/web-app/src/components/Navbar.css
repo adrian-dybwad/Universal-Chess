@@ -175,25 +175,28 @@
   background: rgba(255, 255, 255, 0.2);
 }
 
-/* Icon-only nav items (e.g. Board Control). On desktop these collapse to a
-   square button showing just the glyph; the text label is kept in the DOM for
-   accessibility and shown in the mobile (stacked) menu where rows are full
-   width. */
-.navbar-item--icon {
-  gap: 0.5rem;
+/* Board Control icon button, sized to match the adjacent status tags (battery,
+   cast, connection) in the right-hand cluster. Icon-only with an accessible
+   label/title; lives beside the cast button rather than in the main nav. */
+.navbar-control-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2em;
+  height: 2em;
+  border-radius: 4px;
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.15s ease;
 }
 
-@media screen and (min-width: 1024px) {
-  .navbar-item--icon {
-    justify-content: center;
-    width: 3rem;
-    padding-left: 0;
-    padding-right: 0;
-  }
+.navbar-control-icon:hover {
+  background: rgba(255, 255, 255, 0.15);
+  text-decoration: none;
+}
 
-  .navbar-item--icon .navbar-item-label {
-    display: none;
-  }
+.navbar-control-icon.is-active {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 /* Mobile responsive */

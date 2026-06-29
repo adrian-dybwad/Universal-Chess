@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Button, Card, CardHeader, Input, Toggle } from '../components/ui';
-import { LoginDialog } from '../components/LoginDialog';
 import { MenuIcon } from '../components/MenuIcon';
-import { apiFetch, buildApiUrl, getStoredCredentials } from '../utils/api';
+import { useAuthedAction } from '../components/useAuthedAction';
+import { apiFetch, buildApiUrl } from '../utils/api';
 import '../components/ApiSettingsDialog.css';
 import './Connectivity.css';
 
@@ -148,36 +148,6 @@ export function ConnectivityPanel() {
       <AccountsCard />
     </section>
   );
-}
-
-/** Run an authenticated action, opening the login dialog on 401 and retrying. */
-function useAuthedAction() {
-  const [loginOpen, setLoginOpen] = useState(false);
-  const [loginError, setLoginError] = useState<string | undefined>();
-  const pending = useRef<(() => void | Promise<void>) | null>(null);
-
-  const onUnauthorized = useCallback((retry: () => void | Promise<void>) => {
-    pending.current = retry;
-    setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
-    setLoginOpen(true);
-  }, []);
-
-  const dialog = (
-    <LoginDialog
-      isOpen={loginOpen}
-      onClose={() => setLoginOpen(false)}
-      onSuccess={() => {
-        setLoginOpen(false);
-        setLoginError(undefined);
-        const retry = pending.current;
-        pending.current = null;
-        if (retry) void retry();
-      }}
-      errorMessage={loginError}
-    />
-  );
-
-  return { dialog, onUnauthorized };
 }
 
 function signalLabel(signal: number): string {

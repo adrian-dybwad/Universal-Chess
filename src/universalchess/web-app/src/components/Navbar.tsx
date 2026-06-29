@@ -19,6 +19,22 @@ export function Navbar() {
   const isActive = (path: string) =>
     location.pathname === path || location.pathname.startsWith(`${path}/`);
 
+  // Board Control lives in the right-hand status cluster (left of the cast
+  // button) rather than the main nav, grouped with the other live device
+  // controls. The same element is rendered in both the desktop and mobile
+  // clusters so it stays reachable when the main nav collapses behind the burger.
+  const boardControl = (
+    <Link
+      to="/control"
+      className={`navbar-control-icon ${isActive('/control') ? 'is-active' : ''}`}
+      onClick={() => setMenuOpen(false)}
+      title="Board Control"
+      aria-label="Board Control"
+    >
+      <MenuIcon name="remote" size={18} />
+    </Link>
+  );
+
   return (
     <nav className="navbar" role="navigation" aria-label="main navigation">
       <div className="navbar-brand">
@@ -43,6 +59,7 @@ export function Navbar() {
           </button>
           <div className="navbar-item navbar-item--mobile-status">
             <BatteryIndicator compact />
+            {boardControl}
             <CastButton compact />
             <ConnectionStatus compact />
           </div>
@@ -57,16 +74,6 @@ export function Navbar() {
             onClick={() => setMenuOpen(false)}
           >
             Live Board
-          </Link>
-          <Link
-            to="/control"
-            className={`navbar-item navbar-item--icon ${isActive('/control') ? 'is-active' : ''}`}
-            onClick={() => setMenuOpen(false)}
-            title="Board Control"
-            aria-label="Board Control"
-          >
-            <MenuIcon name="tune" size={22} />
-            <span className="navbar-item-label">Board Control</span>
           </Link>
           <Link
             to="/games"
@@ -105,9 +112,10 @@ export function Navbar() {
           >
             Licenses
           </Link>
-          {/* Desktop: battery + cast + full connection status in navbar-end */}
+          {/* Desktop: battery + board control + cast + full connection status */}
           <div className="navbar-item navbar-item--desktop-status">
             <BatteryIndicator />
+            {boardControl}
             <CastButton />
             <ConnectionStatus />
           </div>
