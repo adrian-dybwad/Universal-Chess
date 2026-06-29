@@ -460,9 +460,34 @@ class TestMaiaBuildCommand:
         content = (SCRIPTS_DIR / "build-maia.sh").read_text()
         # Stable build dir: no per-process suffix that would orphan the prior tree.
         assert "maia-build-$$" not in content
-        # The resume paths must exist: reuse an existing checkout and meson config.
+        # The resume paths must exist: reuse an existing checkout, and reapply meson
+        # options to the existing build dir (--reconfigure keeps unaffected objects
+        # while still picking up recipe changes such as the LTO toggle).
         assert "Reusing existing lc0 checkout" in content
-        assert "Reusing existing meson configuration" in content
+        assert "meson setup --reconfigure" in content
+
+    def test_lto_disabled_on_32bit_to_avoid_linker_segfault(self):
+        """build-maia.sh must disable LTO on 32-bit ARM, where the LTO link segfaults.
+
+        Why this test exists: lc0 pins ``b_lto=true``, so the release build does a
+        whole-program LTO link of lc0 + abseil. On 32-bit (arm-linux-gnueabihf) that
+        link exhausts the ~3 GB virtual address-space ceiling and clang's linker
+        dies with a Segmentation fault -- every unit compiles, only the final link
+        fails, and swap cannot help an address-space limit. The fix gates
+        ``-Db_lto=false`` on a non-aarch64 ``uname -m``; 64-bit keeps LTO.
+
+        How the regression manifests: dropping the gate (or the b_lto override)
+        restores ``-flto`` on 32-bit and the install fails at "[1/1] Linking target
+        lc0" with "linker command failed due to signal", after a full ~30-60 min
+        compile -- the worst possible place to fail.
+        """
+        content = (SCRIPTS_DIR / "build-maia.sh").read_text()
+        # LTO is gated on the 32-bit (non-aarch64) architecture, not unconditional.
+        assert '"$(uname -m)" != "aarch64"' in content
+        # Both the main project and the abseil subproject must drop LTO so no LTO
+        # bitcode survives in abseil's archives to re-trigger LTO codegen at link.
+        assert "-Db_lto=false" in content
+        assert "-Dabseil-cpp:b_lto=false" in content
 
     def test_resume_progress_is_cumulative_not_per_invocation(self):
         """Resumed Maia builds must show cumulative progress, not ninja's per-run count.

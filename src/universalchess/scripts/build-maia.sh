@@ -245,19 +245,8 @@ configure_build() {
     # Use clang for better ARM optimization
     export CC=clang
     export CXX=clang++
-
-    # Reuse an existing meson configuration so a resumed build keeps the compiled
-    # objects and ninja picks up where it stopped. build.ninja is written only
-    # once meson setup completes, so its presence means the configure step
-    # finished; an interrupted configure leaves it absent and we set up cleanly.
-    if [[ -f "build/release/build.ninja" ]]; then
-        log "Reusing existing meson configuration (resuming incremental build)"
-        log "Configuration complete"
-        return 0
-    fi
-    
     log "Compiler: CC=$CC, CXX=$CXX"
-    
+
     # Build options for ARM with BLAS-only backend (CPU)
     # Disable all GPU backends and x86-specific features
     local meson_opts=(
@@ -283,14 +272,41 @@ configure_build() {
         "-Donnx=false"
         "-Dpython_bindings=false"
     )
-    
+
+    # Disable LTO on 32-bit ARM.
+    #
+    # lc0's meson.build pins b_lto=true, so the release build does a whole-program
+    # LTO link of lc0 + abseil. On 32-bit (arm-linux-gnueabihf) that link exhausts
+    # the process's ~3 GB virtual address-space ceiling and clang's linker dies
+    # with a Segmentation fault -- NOT an OOM kill, so swap cannot help (the limit
+    # is address space, not RAM). Every translation unit compiles fine; only the
+    # final link fails. 64-bit (aarch64) has the address space, so LTO stays on
+    # there. abseil inherits the global b_lto, but set it explicitly too so no LTO
+    # bitcode survives in its archives to re-trigger LTO codegen at link time.
+    if [[ "$(uname -m)" != "aarch64" ]]; then
+        log "32-bit ARM ($(uname -m)) detected; disabling LTO to avoid linker segfault"
+        meson_opts+=("-Db_lto=false" "-Dabseil-cpp:b_lto=false")
+    fi
+
     log "Meson options:"
     for opt in "${meson_opts[@]}"; do
         log "  $opt"
     done
-    
-    log "Running meson setup..."
-    meson setup build/release "${meson_opts[@]}"
+
+    # Apply options with --reconfigure when a build dir already exists so a resumed
+    # build picks up any option change (e.g. the LTO toggle above) instead of
+    # silently keeping the old configuration. For unchanged options --reconfigure
+    # only regenerates build.ninja; ninja then sees identical commands and keeps
+    # every already-compiled object, so a plain resume loses no progress. (An LTO
+    # change does invalidate all objects -- that is correct, the flag affects every
+    # compile -- but the build remains resumable from then on.)
+    if [[ -f "build/release/build.ninja" ]]; then
+        log "Reconfiguring existing meson build (applies current options, keeps unaffected objects)"
+        meson setup --reconfigure build/release "${meson_opts[@]}"
+    else
+        log "Running meson setup..."
+        meson setup build/release "${meson_opts[@]}"
+    fi
     
     log "Configuration complete"
 }
