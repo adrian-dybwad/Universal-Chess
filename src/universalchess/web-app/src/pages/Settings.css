@@ -299,6 +299,35 @@
   border-radius: var(--radius-md, 8px);
 }
 
+/* Custom engines panel (operator-supplied uploads / URL installs) */
+.custom-engine-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--color-gray-100);
+}
+
+.custom-engine-row:last-child {
+  border-bottom: none;
+}
+
+.custom-engine-name {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.custom-engine-meta {
+  font-size: var(--text-sm);
+  word-break: break-all;
+}
+
+.custom-engine-mode-toggle {
+  display: flex;
+  gap: var(--space-2);
+}
+
 /* Engine profile editor (Rodent IV personality tuner) */
 .profile-editor-toolbar {
   display: flex;

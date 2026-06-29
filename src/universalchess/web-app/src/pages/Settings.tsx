@@ -267,6 +267,15 @@ export function Settings() {
   // it before declaration and trip the react-hooks immutability rule -- and
   // re-applied by handleLoginSuccess once the login dialog succeeds.
   const pendingEngineActionRef = useRef<{ engineName: string; install: boolean; ref?: string } | null>(null);
+  // Adding a custom engine (upload / install-from-URL) is also auth-gated. Unlike
+  // the catalog install above, the action carries a File and/or free-form fields,
+  // so the retry is stored as a closure that recaptures them rather than as a
+  // plain argument record. Re-run by handleLoginSuccess after a successful login.
+  const pendingCustomActionRef = useRef<(() => Promise<unknown>) | null>(null);
+  // Busy/error for the custom-engine add forms. URL installs hand off to the
+  // shared install-status watcher; uploads complete in-request and refresh.
+  const [customEngineBusy, setCustomEngineBusy] = useState(false);
+  const [customEngineError, setCustomEngineError] = useState<string | null>(null);
   const hasChangesRef = useRef(hasChanges);
 
   // Keep ref in sync with state (for use in SSE callback)
@@ -497,6 +506,15 @@ export function Settings() {
       return;
     }
 
+    // Custom-engine add retry (upload / install-from-URL): stored as a closure
+    // that recaptures the File/fields.
+    if (pendingCustomActionRef.current) {
+      const run = pendingCustomActionRef.current;
+      pendingCustomActionRef.current = null;
+      await run();
+      return;
+    }
+
     if (pendingAction === 'save') {
       setPendingAction(null);
       await saveSettings();
@@ -699,6 +717,91 @@ export function Settings() {
     }
   }, [refreshEngines]);
 
+  // Upload a custom engine binary or .tar.gz. The endpoint is @requires_auth and
+  // completes in-request (no install thread), so on success the engine list is
+  // refreshed immediately. On 401 the action is re-queued and re-run after login,
+  // mirroring toggleEngine's flow. Returns true on success so the form can clear.
+  const uploadCustomEngine = useCallback(async (id: string, displayName: string, file: File): Promise<boolean> => {
+    setCustomEngineError(null);
+    setCustomEngineBusy(true);
+    try {
+      const form = new FormData();
+      form.append('id', id);
+      form.append('display_name', displayName);
+      // Browser sets the multipart Content-Type (with boundary); do not set it.
+      form.append('file', file);
+      const response = await apiFetch('/api/engines/upload', { method: 'POST', body: form, requiresAuth: true });
+      if (response.status === 401) {
+        setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
+        pendingCustomActionRef.current = () => uploadCustomEngine(id, displayName, file);
+        setLoginDialogOpen(true);
+        return false;
+      }
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.success === false) {
+        setCustomEngineError(data.error || 'Upload failed.');
+        return false;
+      }
+      await refreshEngines();
+      return true;
+    } catch (e) {
+      console.error('Failed to upload custom engine:', e);
+      setCustomEngineError('Upload failed. Check the connection and try again.');
+      return false;
+    } finally {
+      setCustomEngineBusy(false);
+    }
+  }, [refreshEngines]);
+
+  // Install a custom engine from an HTTPS URL. The endpoint is @requires_auth and
+  // dispatches an async download/install tracked by the shared install-status
+  // watcher, so on success this hands off (optimistic status) exactly like a
+  // catalog install rather than refreshing here. Returns true so the form clears.
+  const installCustomEngineFromUrl = useCallback(async (id: string, displayName: string, url: string): Promise<boolean> => {
+    setCustomEngineError(null);
+    setCustomEngineBusy(true);
+    try {
+      const response = await apiFetch('/api/engines/install-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, display_name: displayName, url }),
+        requiresAuth: true,
+      });
+      if (response.status === 401) {
+        setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
+        pendingCustomActionRef.current = () => installCustomEngineFromUrl(id, displayName, url);
+        setLoginDialogOpen(true);
+        return false;
+      }
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.success === false) {
+        setCustomEngineError(data.error || 'Install failed.');
+        return false;
+      }
+      // Hand off to the status watcher with an immediate optimistic state.
+      installTrackRef.current = id;
+      setInstallingEngine(id);
+      setInstallStatus({
+        active: true,
+        installing: true,
+        engine: id,
+        display_name: displayName,
+        stage: 'starting',
+        message: 'Starting...',
+        percent: 0,
+        interrupted: false,
+        result: null,
+      });
+      return true;
+    } catch (e) {
+      console.error('Failed to install custom engine from URL:', e);
+      setCustomEngineError('Install failed. Check the connection and try again.');
+      return false;
+    } finally {
+      setCustomEngineBusy(false);
+    }
+  }, []);
+
 
   if (loading) {
     return (
@@ -824,6 +927,7 @@ export function Settings() {
           setLoginDialogOpen(false);
           setPendingAction(null);
           pendingEngineActionRef.current = null;
+          pendingCustomActionRef.current = null;
         }}
         onSuccess={handleLoginSuccess}
         errorMessage={loginError}
@@ -1181,6 +1285,16 @@ export function Settings() {
                   onCancel={cancelInstall}
                   onConfigureProfiles={setProfileEngine}
                 />
+
+                <CustomEnginesPanel
+                  customEngines={engines.filter((e) => e.is_custom)}
+                  installingEngine={installingEngine}
+                  busy={customEngineBusy}
+                  error={customEngineError}
+                  onUpload={uploadCustomEngine}
+                  onInstallUrl={installCustomEngineFromUrl}
+                  onUninstall={(name) => toggleEngine(name, false)}
+                />
               </>
             )}
           </section>
@@ -1272,6 +1386,135 @@ export function Settings() {
 
 // Helper Components
 
+// Add/manage operator-supplied engines: upload a binary/.tar.gz or install one
+// from an HTTPS URL, and uninstall existing ones. Catalog engines are handled by
+// EnginesList; this panel only ever deals with engines flagged `is_custom`.
+type CustomEngineMode = 'upload' | 'url';
+
+function CustomEnginesPanel({
+  customEngines,
+  installingEngine,
+  busy,
+  error,
+  onUpload,
+  onInstallUrl,
+  onUninstall,
+}: {
+  customEngines: EngineDefinition[];
+  installingEngine: string | null;
+  busy: boolean;
+  error: string | null;
+  onUpload: (id: string, displayName: string, file: File) => Promise<boolean>;
+  onInstallUrl: (id: string, displayName: string, url: string) => Promise<boolean>;
+  onUninstall: (name: string) => void;
+}) {
+  const [mode, setMode] = useState<CustomEngineMode>('upload');
+  const [id, setId] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [url, setUrl] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  // Bumped after a successful upload to reset the uncontrolled file input (its
+  // value cannot be cleared by React state alone).
+  const [fileInputKey, setFileInputKey] = useState(0);
+
+  const resetForm = () => {
+    setId('');
+    setDisplayName('');
+    setUrl('');
+    setFile(null);
+    setFileInputKey((k) => k + 1);
+  };
+
+  const canSubmit =
+    !busy &&
+    id.trim() !== '' &&
+    displayName.trim() !== '' &&
+    (mode === 'upload' ? file !== null : url.trim() !== '');
+
+  const handleSubmit = async () => {
+    if (!canSubmit) return;
+    const ok =
+      mode === 'upload'
+        ? await onUpload(id.trim(), displayName.trim(), file as File)
+        : await onInstallUrl(id.trim(), displayName.trim(), url.trim());
+    if (ok) resetForm();
+  };
+
+  return (
+    <Card className="mb-6">
+      <CardHeader title="Custom Engines" />
+      <p className="text-muted mb-4">
+        Add your own UCI engine by uploading a binary (or a <code>.tar.gz</code> containing one) or by
+        installing it from an HTTPS URL. The binary must match this device's CPU architecture.
+      </p>
+
+      {customEngines.length > 0 && (
+        <div className="engines-grid mb-6">
+          {customEngines.map((engine) => (
+            <div key={engine.name} className="custom-engine-row">
+              <div>
+                <div className="custom-engine-name">{engine.display_name}</div>
+                <div className="text-muted custom-engine-meta">
+                  {engine.name} &middot; {engine.description}
+                </div>
+              </div>
+              <Button
+                variant="danger"
+                onClick={() => onUninstall(engine.name)}
+                disabled={installingEngine !== null}
+              >
+                Uninstall
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="custom-engine-mode-toggle mb-4">
+        <Button variant={mode === 'upload' ? 'primary' : 'secondary'} onClick={() => setMode('upload')}>
+          Upload binary
+        </Button>
+        <Button variant={mode === 'url' ? 'primary' : 'secondary'} onClick={() => setMode('url')}>
+          From URL
+        </Button>
+      </div>
+
+      <FormRow label="Engine ID" help="Lowercase letters, digits, '-' or '_'. Used as the filename.">
+        <Input value={id} placeholder="my-engine" onChange={(e) => setId(e.target.value)} />
+      </FormRow>
+      <FormRow label="Display name" help="Shown in the engine and player menus.">
+        <Input value={displayName} placeholder="My Engine" onChange={(e) => setDisplayName(e.target.value)} />
+      </FormRow>
+
+      {mode === 'upload' ? (
+        <FormRow label="Engine file" help="A UCI binary, or a .tar.gz containing exactly one binary.">
+          <input
+            key={fileInputKey}
+            type="file"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          />
+        </FormRow>
+      ) : (
+        <FormRow label="Download URL" help="An https:// link to a binary or .tar.gz.">
+          <Input
+            value={url}
+            placeholder="https://example.com/engine.tar.gz"
+            onChange={(e) => setUrl(e.target.value)}
+          />
+        </FormRow>
+      )}
+
+      {error && <div className="error mt-2">{error}</div>}
+
+      <div className="mt-4">
+        <Button variant="success" onClick={handleSubmit} disabled={!canSubmit}>
+          {busy ? 'Working...' : mode === 'upload' ? 'Upload engine' : 'Install from URL'}
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 function EnginesList({
   engines,
   installingEngine,
@@ -1299,6 +1542,11 @@ function EnginesList({
   };
 
   engines.forEach((engine) => {
+    // Custom engines render in their own panel (CustomEnginesPanel), not in the
+    // catalog tiers.
+    if (engine.is_custom) {
+      return;
+    }
     if (['stockfish', 'berserk', 'koivisto', 'ethereal'].includes(engine.name)) {
       tiers.top.engines.push(engine);
     } else if (['demolito', 'weiss', 'arasan', 'smallbrain'].includes(engine.name)) {

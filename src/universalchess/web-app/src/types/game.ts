@@ -90,6 +90,12 @@ export interface EngineDefinition {
    * "default" sentinel), or null when not installed / not recorded.
    */
   installed_ref: string | null;
+  /**
+   * Whether this is an operator-added (custom) engine -- one uploaded as a
+   * binary or installed from a URL rather than shipped in the catalog. Custom
+   * engines are rendered in their own section and have no tier/refs/profiles.
+   */
+  is_custom?: boolean;
 }
 
 /**

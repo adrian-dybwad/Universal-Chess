@@ -48,6 +48,8 @@ import pathlib
 import io
 import functools
 import threading
+import tempfile
+import datetime
 import chess
 import chess.pgn
 import json
@@ -3504,6 +3506,38 @@ def api_get_all_engines():
                 "source_installable": source_installable,
                 "recommended_ref": canonical_ref(engine_def) if source_installable else None,
                 "installed_ref": engine_manager.get_installed_ref(name) if source_installable else None,
+                "is_custom": False,
+            })
+
+        # Operator-added engines are appended after the catalog. They are
+        # "installed" when their binary exists and is executable; their source
+        # (upload vs url) drives the description. They expose no ref picker or
+        # profiles and are always uninstallable.
+        for custom in _custom_engine_store.list():
+            binary = os.path.join(_ENGINES_DIR, custom.id)
+            installed = os.path.exists(binary) and os.access(binary, os.X_OK)
+            description = (
+                "Uploaded engine binary."
+                if custom.source == "upload"
+                else f"Installed from {custom.url}"
+            )
+            engines_list.append({
+                "name": custom.id,
+                "display_name": custom.display_name,
+                "summary": "Custom engine",
+                "description": description,
+                "installed": installed,
+                "is_system_package": False,
+                "can_uninstall": True,
+                "estimated_install_minutes": 0,
+                "has_prebuilt": False,
+                "has_profiles": False,
+                "supported": True,
+                "unsupported_reason": None,
+                "source_installable": False,
+                "recommended_ref": None,
+                "installed_ref": None,
+                "is_custom": True,
             })
 
         return jsonify(engines_list)
@@ -3520,6 +3554,176 @@ def api_get_all_engines():
 from universalchess.services import engine_install_state
 _engine_install_store = engine_install_state.STORE
 _engine_install_store.reconcile_interrupted()
+
+
+# Custom (operator-added) engines: a binary uploaded from the browser or fetched
+# from an HTTPS URL. These are not in the hardcoded ENGINES catalog; the registry
+# records them and the binary lives at ENGINES_DIR/<id> exactly like a catalog
+# single-binary engine, so installed-checks and runtime path resolution treat
+# them identically. The engine_manager helpers (arch detection / safe tar
+# extraction) are reused. The names below are module globals so tests can point
+# them at temp locations (mirroring _engine_install_store / CONFIG_DIR).
+from universalchess.managers.engine_manager import get_current_arch, _safe_extract_tar
+from universalchess.services import custom_engines as _custom_engines
+from universalchess.services.custom_engine_registry import (
+    CustomEngine,
+    CUSTOM_ENGINE_STORE as _custom_engine_store,
+)
+
+_ENGINES_DIR = ENGINES_DIR
+# Cap for an uploaded or downloaded engine payload. Engine binaries (even with a
+# bundled NNUE) are well under this; the cap bounds memory/disk for a hostile or
+# accidental oversized upload/download.
+_MAX_ENGINE_PAYLOAD_BYTES = 256 * 1024 * 1024
+
+
+def _now_iso() -> str:
+    """UTC ISO-8601 timestamp for recording when a custom engine was added."""
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def _looks_like_gzip(path: str) -> bool:
+    """Whether a file begins with the gzip magic bytes (a .tar.gz payload).
+
+    Used to classify a downloaded payload as archive-vs-raw-binary by content
+    rather than trusting the URL's extension.
+    """
+    try:
+        with open(path, "rb") as f:
+            return f.read(2) == b"\x1f\x8b"
+    except OSError:
+        return False
+
+
+def _save_capped(src, dst, cap: int) -> Optional[int]:
+    """Copy ``src`` to ``dst`` in chunks, returning the byte count or None if over ``cap``.
+
+    Returning None (rather than raising) lets the caller surface a clean 413 for
+    an oversized upload without writing the whole stream first.
+    """
+    total = 0
+    while True:
+        chunk = src.read(64 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > cap:
+            return None
+        dst.write(chunk)
+    return total
+
+
+def _download_capped(url: str, cap: int, on_fraction=None):
+    """Stream an HTTPS URL to a temp file under a size cap.
+
+    Returns ``(temp_path, None)`` on success or ``(None, error)`` on failure /
+    oversize. The URL is assumed already validated by
+    ``custom_engines.validate_download_url`` (HTTPS, non-private target).
+    """
+    import urllib.request
+    import urllib.error
+
+    fd, tmp_path = tempfile.mkstemp(prefix="engine_dl_")
+    out = os.fdopen(fd, "wb")
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Universal-Chess"})
+        # https scheme is enforced upstream by validate_download_url.
+        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310  # nosec B310
+            try:
+                total_expected = int(resp.headers.get("Content-Length") or 0)
+            except (TypeError, ValueError):
+                total_expected = 0
+            downloaded = 0
+            while True:
+                chunk = resp.read(64 * 1024)
+                if not chunk:
+                    break
+                downloaded += len(chunk)
+                if downloaded > cap:
+                    out.close()
+                    os.unlink(tmp_path)
+                    return None, "Downloaded file is too large."
+                out.write(chunk)
+                if on_fraction and total_expected > 0:
+                    on_fraction(min(downloaded / total_expected, 1.0))
+        out.close()
+        return tmp_path, None
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        out.close()
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        return None, f"Download failed: {e}"
+
+
+def _remove_custom_engine_files(engine_id: str) -> bool:
+    """Delete a custom engine's binary at ENGINES_DIR/<id>.
+
+    Defends against an id that would resolve outside the engines directory even
+    though ids are validated at add time (defense in depth). Returns False if the
+    target would escape the engines dir.
+    """
+    target = os.path.join(_ENGINES_DIR, engine_id)
+    if os.path.realpath(os.path.dirname(target)) != os.path.realpath(_ENGINES_DIR):
+        return False
+    if os.path.exists(target):
+        os.remove(target)
+    return True
+
+
+def _run_custom_url_install(engine_id: str, display_name: str, url: str):
+    """Background worker: download a custom engine from ``url`` and install it.
+
+    Streams the (already-validated) HTTPS URL to a temp file under a size cap,
+    classifies it as raw-binary vs gzip archive by content, places exactly one
+    validated, arch-matching binary at ENGINES_DIR/<id>, registers it, and
+    records the structured result through the shared install-state store so the
+    UI progress bar and activity banner reflect it.
+    """
+    from universalchess.services.engine_install_state import InstallStage
+
+    tmp_path = None
+    try:
+        _engine_install_store.update(InstallStage.DOWNLOADING, f"Downloading {display_name}...")
+        tmp_path, dl_err = _download_capped(
+            url,
+            _MAX_ENGINE_PAYLOAD_BYTES,
+            lambda frac: _engine_install_store.update(
+                InstallStage.DOWNLOADING, f"Downloading {display_name}...", frac
+            ),
+        )
+        if dl_err:
+            _engine_install_store.finish(success=False, error=dl_err)
+            return
+
+        _engine_install_store.update(InstallStage.INSTALLING_FILES, f"Installing {display_name}...")
+        dest_path = os.path.join(_ENGINES_DIR, engine_id)
+        err = _custom_engines.install_binary_payload(
+            source_path=tmp_path,
+            is_archive=_looks_like_gzip(tmp_path),
+            dest_path=dest_path,
+            expected_arch=get_current_arch(),
+            safe_extract=_safe_extract_tar,
+        )
+        if err:
+            _engine_install_store.finish(success=False, error=err)
+            return
+
+        _custom_engine_store.add(
+            CustomEngine(
+                id=engine_id,
+                display_name=display_name,
+                source="url",
+                url=url,
+                created_at=_now_iso(),
+            )
+        )
+        _engine_install_store.finish(success=True, error=None)
+    except Exception as e:
+        app.logger.exception("Custom URL engine install failed: %s", e)
+        _engine_install_store.finish(success=False, error="Installation failed")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 def _run_engine_install(engine_name: str, ref: Optional[str] = None):
@@ -3620,6 +3824,121 @@ def api_install_engine():
         return _internal_error(e)
 
 
+@app.route("/api/engines/upload", methods=["POST"])
+@requires_auth
+def api_upload_engine():
+    """Upload a custom UCI engine binary or .tar.gz. Requires authentication.
+
+    The uploaded file becomes an executable the board will launch, so this is
+    gated like install. The id is validated to a filesystem-safe token that
+    cannot collide with the catalog, the upload is staged to a size-capped temp
+    file, and the binary's architecture must match this device. A .tar.gz must
+    resolve to exactly one matching-arch binary.
+    """
+    try:
+        engine_id = (request.form.get("id") or "").strip()
+        display_name = (request.form.get("display_name") or "").strip()
+
+        from universalchess.managers.engine_manager import ENGINES
+        existing_ids = {e.id for e in _custom_engine_store.list()}
+        id_err = _custom_engines.validate_engine_id(
+            engine_id, builtin_ids=set(ENGINES), existing_ids=existing_ids
+        )
+        if id_err:
+            return jsonify({"success": False, "error": id_err}), 400
+        name_err = _custom_engines.validate_display_name(display_name)
+        if name_err:
+            return jsonify({"success": False, "error": name_err}), 400
+
+        uploaded = request.files.get("file")
+        if uploaded is None or not uploaded.filename:
+            return jsonify({"success": False, "error": "No file uploaded"}), 400
+
+        is_archive = uploaded.filename.endswith(".tar.gz") or uploaded.filename.endswith(".tgz")
+
+        tmp_fd, tmp_path = tempfile.mkstemp(prefix="engine_upload_")
+        try:
+            with os.fdopen(tmp_fd, "wb") as tmp:
+                copied = _save_capped(uploaded.stream, tmp, _MAX_ENGINE_PAYLOAD_BYTES)
+            if copied is None:
+                return jsonify({"success": False, "error": "Uploaded file is too large."}), 413
+
+            dest_path = os.path.join(_ENGINES_DIR, engine_id)
+            err = _custom_engines.install_binary_payload(
+                source_path=tmp_path,
+                is_archive=is_archive,
+                dest_path=dest_path,
+                expected_arch=get_current_arch(),
+                safe_extract=_safe_extract_tar,
+            )
+            if err:
+                return jsonify({"success": False, "error": err}), 400
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+        _custom_engine_store.add(
+            CustomEngine(
+                id=engine_id,
+                display_name=display_name,
+                source="upload",
+                url=None,
+                created_at=_now_iso(),
+            )
+        )
+        return jsonify({"success": True, "message": f"Uploaded {display_name}"})
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/engines/install-url", methods=["POST"])
+@requires_auth
+def api_install_engine_from_url():
+    """Install a custom engine by downloading it from an HTTPS URL. Requires auth.
+
+    The URL is restricted to HTTPS and may not resolve to a private/loopback/
+    link-local address (SSRF guard). The download, architecture validation, and
+    placement run asynchronously through the shared install-state store so the UI
+    shows progress; only one install may run at a time.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        engine_id = (data.get("id") or "").strip()
+        display_name = (data.get("display_name") or "").strip()
+        url = (data.get("url") or "").strip()
+
+        from universalchess.managers.engine_manager import ENGINES
+        existing_ids = {e.id for e in _custom_engine_store.list()}
+        id_err = _custom_engines.validate_engine_id(
+            engine_id, builtin_ids=set(ENGINES), existing_ids=existing_ids
+        )
+        if id_err:
+            return jsonify({"success": False, "error": id_err}), 400
+        name_err = _custom_engines.validate_display_name(display_name)
+        if name_err:
+            return jsonify({"success": False, "error": name_err}), 400
+        url_err = _custom_engines.validate_download_url(url)
+        if url_err:
+            return jsonify({"success": False, "error": url_err}), 400
+
+        if _engine_install_store.status_dict()["active"]:
+            return jsonify({
+                "success": False,
+                "error": f"Already installing {_engine_install_store.status_dict()['engine']}",
+            }), 409
+
+        _engine_install_store.start(engine_id, display_name, estimated_seconds=120)
+        thread = threading.Thread(
+            target=_run_custom_url_install,
+            args=(engine_id, display_name, url),
+            daemon=True,
+        )
+        thread.start()
+        return jsonify({"success": True, "message": f"Installing {display_name}"})
+    except Exception as e:
+        return _internal_error(e)
+
+
 @app.route("/api/engines/uninstall", methods=["POST"])
 @requires_auth
 def api_uninstall_engine():
@@ -3632,7 +3951,16 @@ def api_uninstall_engine():
             return jsonify({"success": False, "error": "No engine specified"}), 400
         
         from universalchess.managers.engine_manager import EngineManager, ENGINES
-        
+
+        # Custom (operator-added) engines are not in the catalog: remove the
+        # binary and the registry entry directly. Checked before the catalog
+        # membership test so a custom id is not rejected as "Unknown engine".
+        custom = _custom_engine_store.get(engine_name)
+        if custom is not None:
+            _remove_custom_engine_files(engine_name)
+            _custom_engine_store.remove(engine_name)
+            return jsonify({"success": True})
+
         if engine_name not in ENGINES:
             return jsonify({"success": False, "error": f"Unknown engine: {engine_name}"}), 400
         
