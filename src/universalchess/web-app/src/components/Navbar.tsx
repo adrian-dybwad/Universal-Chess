@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { ConnectionStatus } from './ConnectionStatus';
 import { BatteryIndicator } from './BatteryIndicator';
+import { ConnectivityIndicators } from './ConnectivityIndicators';
 import { CastButton } from './CastButton';
 import { MenuIcon } from './MenuIcon';
 import './Navbar.css';
@@ -58,9 +59,10 @@ export function Navbar() {
             <span aria-hidden="true" />
           </button>
           <div className="navbar-item navbar-item--mobile-status">
+            <ConnectivityIndicators />
             <BatteryIndicator compact />
             {boardControl}
-            <CastButton compact />
+            <CastButton />
             <ConnectionStatus compact />
           </div>
         </div>
@@ -98,22 +100,11 @@ export function Navbar() {
           </Link>
         </div>
         <div className="navbar-end">
-          <Link
-            to="/support"
-            className={`navbar-item ${isActive('/support') ? 'is-active' : ''}`}
-            onClick={() => setMenuOpen(false)}
-          >
-            Support
-          </Link>
-          <Link
-            to="/licenses"
-            className={`navbar-item ${isActive('/licenses') ? 'is-active' : ''}`}
-            onClick={() => setMenuOpen(false)}
-          >
-            Licenses
-          </Link>
-          {/* Desktop: battery + board control + cast + full connection status */}
+          {/* Support and Licenses now live under Settings (beneath System); the
+              global footer still links to their standalone pages. */}
+          {/* Desktop: battery + board control + cast + connection status */}
           <div className="navbar-item navbar-item--desktop-status">
+            <ConnectivityIndicators />
             <BatteryIndicator />
             {boardControl}
             <CastButton />

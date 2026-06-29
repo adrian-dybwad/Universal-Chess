@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Button, Card, CardHeader, Input, Toggle } from '../components/ui';
 import { MenuIcon } from '../components/MenuIcon';
 import { useAuthedAction } from '../components/useAuthedAction';
@@ -135,6 +136,17 @@ interface CastStatus {
  * the panel does not participate in the Settings page's bulk Save & Apply bar.
  */
 export function ConnectivityPanel() {
+  // The navbar Wi-Fi/Bluetooth glyphs deep-link here with a #wifi / #bluetooth
+  // hash. React Router does not scroll to hash targets on its own, so bring the
+  // referenced card into view once it has rendered. Re-runs on hash change so
+  // switching directly between the two anchors (while already on this tab) works.
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (!hash) return;
+    const el = document.getElementById(hash.slice(1));
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [hash]);
+
   return (
     <section>
       <h2 className="page-title">
@@ -142,8 +154,12 @@ export function ConnectivityPanel() {
         Connectivity
       </h2>
       <p className="text-muted mb-6">Manage the board's network and device connections.</p>
-      <WifiCard />
-      <BluetoothCard />
+      <div id="wifi" className="conn-anchor">
+        <WifiCard />
+      </div>
+      <div id="bluetooth" className="conn-anchor">
+        <BluetoothCard />
+      </div>
       <ChromecastCard />
       <AccountsCard />
     </section>

@@ -1,24 +1,15 @@
 /**
  * Cast button + quick-cast popover.
  *
- * The trigger reuses the shared `.tag` / `.tag-button` look from ConnectionStatus
- * so it sits consistently beside the connection-status and battery indicators.
- * The popover is a self-contained light-surface menu anchored under the trigger.
+ * The trigger is an icon-only square in the shared `.navbar-control-icon` style
+ * (matching the Board Control button), highlighted via `.is-active` while
+ * streaming. The popover is a self-contained light-surface menu anchored under
+ * the trigger.
  */
 
 .cast-wrapper {
   position: relative;
   display: inline-flex;
-}
-
-.cast-button {
-  gap: 0.35em;
-}
-
-/* In compact (mobile) mode the tag collapses to a circle; keep the glyph
-   centered and drop the extra inline gap so the icon stays visually centered. */
-.cast-button.tag-compact {
-  gap: 0;
 }
 
 .cast-popover {

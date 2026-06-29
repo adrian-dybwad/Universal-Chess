@@ -2,13 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { MenuIcon } from './MenuIcon';
 import { useAuthedAction } from './useAuthedAction';
 import { apiFetch, buildApiUrl } from '../utils/api';
-import './ConnectionStatus.css';
 import './CastButton.css';
-
-interface CastButtonProps {
-  /** When true, shows only the cast glyph without text (for mobile). */
-  compact?: boolean;
-}
 
 type CastStateName = 'idle' | 'connecting' | 'streaming' | 'reconnecting' | 'error';
 
@@ -42,7 +36,7 @@ const ACTIVE_STATES: ReadonlySet<CastStateName> = new Set(['connecting', 'stream
  * discover, so an unauthenticated user is prompted to log in (via the shared
  * login-and-retry flow) the moment they press Cast.
  */
-export function CastButton({ compact = false }: CastButtonProps) {
+export function CastButton() {
   const [open, setOpen] = useState(false);
   const [streaming, setStreaming] = useState<CastDevice[]>([]);
   const [discovered, setDiscovered] = useState<string[] | null>(null);
@@ -164,16 +158,9 @@ export function CastButton({ compact = false }: CastButtonProps) {
   }, [discover]);
 
   const activeDevices = streaming.filter((d) => ACTIVE_STATES.has(d.state));
-  const hasError = streaming.some((d) => d.state === 'error');
   const isStreaming = activeDevices.length > 0;
   const activeNames = new Set(streaming.map((d) => d.name));
 
-  const statusClass = isStreaming ? 'is-success' : hasError ? 'is-danger' : 'is-light';
-  const statusText = isStreaming
-    ? activeDevices.length === 1
-      ? activeDevices[0].name
-      : `Casting (${activeDevices.length})`
-    : 'Cast';
   const title = isStreaming
     ? `Streaming to ${activeDevices.map((d) => d.name).join(', ')}`
     : 'Cast to a Chromecast device';
@@ -184,15 +171,15 @@ export function CastButton({ compact = false }: CastButtonProps) {
     <div className="cast-wrapper" ref={wrapperRef}>
       {dialog}
       <button
-        className={`tag tag-button ${statusClass} ${compact ? 'tag-compact' : ''} cast-button`}
+        type="button"
+        className={`navbar-control-icon cast-trigger ${isStreaming ? 'is-active' : ''}`}
         onClick={toggleOpen}
         title={title}
         aria-label={title}
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        <MenuIcon name="cast" size={16} />
-        {!compact && <span className="status-text">{statusText}</span>}
+        <MenuIcon name="cast" size={18} />
       </button>
 
       {open && (

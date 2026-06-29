@@ -8,6 +8,8 @@ import type { FieldValue } from '../components/CatalogField';
 import { LoginDialog } from '../components/LoginDialog';
 import { MenuIcon } from '../components/MenuIcon';
 import { ConnectivityPanel } from './Connectivity';
+import { Support } from './Support';
+import { Licenses } from './Licenses';
 import type { EngineDefinition, EngineRef, EngineRefsResponse } from '../types/game';
 import type { MenuCatalog, MenuOption, MenuCondition, MenuNode } from '../types/menuCatalog';
 import { fieldById, fieldsForSection } from '../types/menuCatalog';
@@ -20,7 +22,16 @@ interface SettingsData {
   };
 }
 
-type SettingsTab = 'players' | 'game' | 'display' | 'sound' | 'connectivity' | 'engines' | 'system';
+type SettingsTab =
+  | 'players'
+  | 'game'
+  | 'display'
+  | 'sound'
+  | 'connectivity'
+  | 'engines'
+  | 'system'
+  | 'support'
+  | 'licenses';
 
 // Structured engine-install status from GET /api/engines/status. The backend
 // owns this state on disk so it survives a page reload and a board restart;
@@ -48,6 +59,19 @@ interface EngineInstallStatus {
 // than as its own tab.
 const SETTINGS_TAB_IDS: SettingsTab[] = ['players', 'game', 'display', 'sound', 'connectivity', 'engines', 'system'];
 
+// Web-only Settings tabs, appended beneath the catalog-backed sections. Support
+// and Licenses are informational web pages, not board menu sections, so they are
+// declared here with web-defined labels/icons instead of in the shared catalog
+// (which is mirrored on the e-paper board). 'info' (help) and 'document' (a
+// page/doc glyph) are existing MenuIcon ids.
+const WEB_ONLY_TABS: { id: SettingsTab; label: string; icon: string }[] = [
+  { id: 'support', label: 'Support', icon: 'info' },
+  { id: 'licenses', label: 'Licenses', icon: 'document' },
+];
+
+// Every id the sub-nav accepts: catalog-backed sections plus the web-only tabs.
+const VALID_SETTINGS_TABS: SettingsTab[] = [...SETTINGS_TAB_IDS, ...WEB_ONLY_TABS.map((t) => t.id)];
+
 // The sub-nav tab lives in the URL path (e.g. /settings/game) so a page refresh
 // or a shared/bookmarked link restores the same section instead of falling back
 // to the parent (first) tab. This is the default used when the path has no tab
@@ -60,7 +84,7 @@ const DEFAULT_SETTINGS_TAB: SettingsTab = 'players';
  * URL must not render a blank content pane, so it is coerced rather than trusted.
  */
 function parseSettingsTab(value: string | undefined): SettingsTab {
-  return SETTINGS_TAB_IDS.includes(value as SettingsTab) ? (value as SettingsTab) : DEFAULT_SETTINGS_TAB;
+  return VALID_SETTINGS_TABS.includes(value as SettingsTab) ? (value as SettingsTab) : DEFAULT_SETTINGS_TAB;
 }
 
 interface PlayerSettings {
@@ -721,10 +745,13 @@ export function Settings() {
   // Tabs are the catalog sections this page owns, rendered in the page's declared
   // order. Labels and icons come from the catalog; SETTINGS_TAB_IDS only selects
   // which sections belong here and their order.
-  const tabs = SETTINGS_TAB_IDS.flatMap((id) => {
-    const section = catalog.sections.find((s) => s.id === id);
-    return section ? [{ id, label: section.label, icon: section.icon }] : [];
-  });
+  const tabs = [
+    ...SETTINGS_TAB_IDS.flatMap((id) => {
+      const section = catalog.sections.find((s) => s.id === id);
+      return section ? [{ id, label: section.label, icon: section.icon }] : [];
+    }),
+    ...WEB_ONLY_TABS,
+  ];
 
   const optionSet = (name: string): MenuOption[] => catalog.optionSets[name] ?? [];
   const playerTypeOptions = optionSet('player_type');
@@ -1218,6 +1245,12 @@ export function Settings() {
             <SystemActions />
           </section>
         )}
+
+        {/* SUPPORT TAB (web-only) */}
+        {activeTab === 'support' && <Support />}
+
+        {/* LICENSES TAB (web-only) */}
+        {activeTab === 'licenses' && <Licenses />}
       </main>
 
       {/* Apply Settings Bar */}

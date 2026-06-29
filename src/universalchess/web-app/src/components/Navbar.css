@@ -184,6 +184,9 @@
   justify-content: center;
   width: 2em;
   height: 2em;
+  padding: 0;
+  border: none;
+  background: transparent;
   border-radius: 4px;
   color: #fff;
   cursor: pointer;

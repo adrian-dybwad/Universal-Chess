@@ -1,3 +1,9 @@
+/* Deep-link anchors for the navbar Wi-Fi/Bluetooth glyphs. The offset keeps the
+   scrolled-to card clear of the sticky navbar instead of tucked beneath it. */
+.conn-anchor {
+  scroll-margin-top: 90px;
+}
+
 .conn-status {
   display: flex;
   flex-direction: column;

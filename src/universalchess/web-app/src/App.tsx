@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Link, Navigate } from 'react-router-dom';
 import { BackgroundActivityBanner } from './components/BackgroundActivityBanner';
 import { Navbar } from './components/Navbar';
+import { DocumentTitle } from './components/DocumentTitle';
 import { GameStateProvider } from './components/GameStateProvider';
 import { LiveBoard } from './pages/LiveBoard';
 import { BoardControl } from './pages/BoardControl';
@@ -20,6 +21,7 @@ function App() {
   return (
     <BrowserRouter>
       <GameStateProvider>
+        <DocumentTitle />
         <div className="app">
           <BackgroundActivityBanner />
           <Navbar />

@@ -1,0 +1,12 @@
+/**
+ * Wi-Fi / Bluetooth navbar status glyphs.
+ *
+ * The base square + hover/active styling is shared with the Board Control and
+ * Cast buttons via `.navbar-control-icon` (Navbar.css). These rules only add the
+ * "muted" tier used for the off/unknown states; the connected tier reuses the
+ * existing `.is-active` highlight.
+ */
+
+.conn-ind--muted {
+  color: rgba(255, 255, 255, 0.4);
+}
