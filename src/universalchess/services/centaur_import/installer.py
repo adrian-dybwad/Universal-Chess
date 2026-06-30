@@ -30,7 +30,9 @@ DEFAULT_MOUNT_ROOT = os.path.join(TMP_DIR, "centaur-mnt")
 
 # UC artifacts in CENTAUR_HOME that are not part of the SD app and must survive a
 # re-import (the install wipes the destination before copying the fresh app).
-_PRESERVE_ON_REINSTALL = ("spishim.so",)
+# The shim's source-hash stamp is preserved alongside the shim itself so a
+# re-import does not orphan the stamp and force a needless rebuild on next launch.
+_PRESERVE_ON_REINSTALL = ("spishim.so", "spishim.so.srchash")
 
 # Relative path of the marker Centaur writes when its one-time factory hardware-
 # test + field-calibration sequence completes (see ``ensure_factory_marker``).

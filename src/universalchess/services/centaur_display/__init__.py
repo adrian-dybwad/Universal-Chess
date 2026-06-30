@@ -11,6 +11,7 @@ Modules:
     decoder: Pure per-controller SPI-stream -> framebuffer-image decoder.
     protocol: Wire format (DC-tagged records) between the shim and the gateway.
     gateway: Socket endpoint that decodes the stream and renders each frame.
+    shim_builder: Compiles the LD_PRELOAD shim on-device from shipped source.
 """
 
 from .decoder import (
@@ -26,6 +27,12 @@ from .gateway import (
     ThreadedGatewayServer,
     DEFAULT_SOCKET_PATH,
 )
+
+# NOTE: ``shim_builder`` is intentionally NOT re-exported here. It is a
+# provisioning concern (compiling the LD_PRELOAD shim on-device), not part of the
+# render API, and it is invoked as ``python -m ...centaur_display.shim_builder``
+# from the deb postinst -- eager-importing it in this package __init__ makes that
+# ``-m`` run warn (module already in sys.modules). Import it from the submodule.
 
 __all__ = [
     "CentaurDisplayDecoder",

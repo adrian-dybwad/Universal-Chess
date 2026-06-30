@@ -18,7 +18,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SRC="${SCRIPT_DIR}/spishim.c"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# Canonical shim source lives in the package so it ships with the code (deb +
+# deploy-to-pi). This dev script and the production builder
+# (universalchess.services.centaur_display.shim_builder) compile the SAME source
+# with the SAME flags; keep the flags below in sync with that module.
+SRC="${REPO_ROOT}/src/universalchess/services/centaur_display/shim/spishim.c"
 OUT="${SCRIPT_DIR}/spishim.so"
 
 CC="${CC:-gcc}"

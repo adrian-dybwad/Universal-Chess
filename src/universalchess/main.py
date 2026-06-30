@@ -4236,6 +4236,34 @@ def _run_centaur_translate():
       does), so DC tracking -- and thus command/data tagging -- would be dead.
       The service already runs as ``pi``, so a plain launch keeps it non-root.
     """
+    from universalchess.services.centaur_display.shim_builder import (
+        ShimBuildError,
+        ensure_display_shim,
+    )
+
+    # Translate mode LD_PRELOADs the display shim into centaur. The shim is a
+    # natively-compiled .so that is never shipped as a binary (it must match
+    # centaur's 32-bit ARM ABI), so build it from the shipped source if it is
+    # missing or stale. Do this BEFORE any teardown so a failure leaves UC fully
+    # intact. If it fails we must NOT launch: an un-shimmed centaur silently
+    # drives the real panel (no interception) -- the exact failure this path
+    # exists to prevent -- so fail loudly and stay in Universal Chess.
+    try:
+        ensure_display_shim()
+    except ShimBuildError as e:
+        log.error(f"Centaur display shim unavailable; aborting translate launch: {e}")
+        board.display_manager.clear_widgets(addStatusBar=False)
+        err = board.display_manager.add_widget(
+            SplashScreen(board.display_manager.update, message="Shim build failed",
+                         leave_room_for_status_bar=False))
+        if err:
+            try:
+                err.result(timeout=10.0)
+            except Exception as ex:
+                log.debug("Error splash render wait failed (continuing): %s", ex)
+        time.sleep(3)
+        return False
+
     board.display_manager.clear_widgets(addStatusBar=False)
     promise = board.display_manager.add_widget(
         SplashScreen(board.display_manager.update, message="Loading",

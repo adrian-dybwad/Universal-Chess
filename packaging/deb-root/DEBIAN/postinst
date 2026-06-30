@@ -534,6 +534,28 @@ if [ -f "$REQ_VENV" ]; then
   fi
 fi
 
+# Build the Centaur display "translate" shim now if Centaur is already installed.
+# The shim (spishim.so) is LD_PRELOADed into centaur to virtualize its panel and
+# forward its frames to UC; it must be compiled natively (32-bit ARM ABI), so it
+# is built on-device from the shipped source and never prebuilt. Built here as
+# the service user so it lands in that user's ~/centaur owned by them (where the
+# launcher reads it). Skipped when Centaur is not yet imported -- the translate
+# launch path builds it on demand after a later import. Non-fatal: a missing
+# toolchain or compile error must not fail the package install; the launch path
+# rebuilds and reports loudly if the shim is still absent.
+echo -e "::: Building Centaur display shim (translate mode)"
+if [ -f "${CENTAUR}centaur" ]; then
+    if command -v runuser >/dev/null 2>&1; then
+        runuser -u "$PRIMARY_USER" -- env PYTHONPATH="$PACKAGES_PATH" \
+            "$VENV_DIR/bin/python" -m universalchess.services.centaur_display.shim_builder \
+            || echo -e "::: Warning: Centaur display shim build failed (translate mode will rebuild on launch)"
+    else
+        echo -e "::: Warning: runuser unavailable; skipping shim prebuild (built on first translate launch)"
+    fi
+else
+    echo -e "::: Centaur not installed yet; display shim will be built on first translate launch"
+fi
+
 # Note: Additional engines (ct800, rodentIV, zahak, maia) can be installed
 # from the Engine Manager in Settings -> Engine Manager on the board.
 # They will be built from source for the correct architecture.
