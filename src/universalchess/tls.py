@@ -60,7 +60,12 @@ SERVER_KEY_FILENAME = "server-key.pem"
 
 MDNS_SUFFIX = ".local"
 _DEFAULT_CONFIG_DIR = "/opt/universalchess/config"
-_MKCERT_TIMEOUT_SECONDS = 30
+# First-time generation on a slow ARM board creates an RSA-3072 CA key plus the
+# leaf key, which can take well over the old 30s cap when entropy/CPU are scarce
+# (the field timeout that aborted the package install). 180s is generous enough
+# that legitimate slow generation always completes while still bounding a true
+# hang.
+_MKCERT_TIMEOUT_SECONDS = 180
 
 
 def get_ca_cert_path(config_dir: Path) -> Path:
