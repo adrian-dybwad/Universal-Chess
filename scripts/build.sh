@@ -105,7 +105,10 @@ function stage {
     # serve them on-device.
     if [ -d "${REPO_ROOT}/tools/centaur-import" ]; then
       mkdir -p "${STAGE_DIR}${INSTALLDIR}/tools/centaur-import"
+      # Ship both the macOS/Linux (.sh) and Windows (.ps1) image generators so
+      # the web UI can offer each platform its own download.
       cp "${REPO_ROOT}/tools/centaur-import/"*.sh "${STAGE_DIR}${INSTALLDIR}/tools/centaur-import/" 2>/dev/null || true
+      cp "${REPO_ROOT}/tools/centaur-import/"*.ps1 "${STAGE_DIR}${INSTALLDIR}/tools/centaur-import/" 2>/dev/null || true
     fi
 
     # Set Architecture to 'all' for multi-arch package

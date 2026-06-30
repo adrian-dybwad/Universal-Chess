@@ -3018,42 +3018,64 @@ def api_system_return_to_universal():
         return _internal_error(e)
 
 
-def _resolve_centaur_import_script():
-    """Locate the Centaur SD image-generator script to offer for download.
+def _resolve_centaur_import_script(filename):
+    """Locate a Centaur SD image-generator script to offer for download.
 
     Prefers the packaged copy under /opt/universalchess/tools (installed by the
-    build) and falls back to the repo tools/ dir for development. Returns the
-    path string, or None if neither exists.
+    build) and falls back to the repo tools/ dir for development. ``filename`` is
+    one of the allow-listed script names (never user-controlled path input), so
+    this cannot be used to read arbitrary files. Returns the path, or None if
+    neither location has it.
     """
     from universalchess.paths import BASE_DIR
 
-    candidates = [
-        os.path.join(BASE_DIR, "tools", "centaur-import", "make-centaur-image.sh"),
-        str(pathlib.Path(__file__).resolve().parents[3] / "tools" / "centaur-import" / "make-centaur-image.sh"),
+    bases = [
+        os.path.join(BASE_DIR, "tools", "centaur-import"),
+        str(pathlib.Path(__file__).resolve().parents[3] / "tools" / "centaur-import"),
     ]
-    for candidate in candidates:
-        if os.path.isfile(candidate):
+    for base in bases:
+        # safe_under_base resolves filename under base and enforces containment,
+        # returning None on any escape. filename comes from a fixed allow-list, so
+        # this is defense in depth (and keeps the path provably contained).
+        candidate = safe_under_base(base, filename)
+        if candidate is not None and os.path.isfile(candidate):
             return candidate
     return None
 
 
 @app.route("/api/system/centaur-import-script", methods=["GET"])
 def api_system_centaur_import_script():
-    """Serve the make-centaur-image.sh helper as a download.
+    """Serve a make-centaur-image helper as a download.
 
     The user runs this on the computer holding the original SD card to produce
-    the uploadable image. Read-only and unauthenticated like the other GET
-    helpers: it is a fixed, secret-free shell script. Served as an attachment so
-    the browser saves it rather than rendering it.
+    the uploadable image. ``?platform=unix`` (default, the shell script) or
+    ``?platform=windows`` (the PowerShell script) selects which. The OS reads the
+    raw ext4 partition differently (dd on macOS/Linux, raw PhysicalDrive on
+    Windows) but both emit the same centaur-sd.img.gz. Read-only and
+    unauthenticated like the other GET helpers: these are fixed, secret-free
+    scripts. Served as an attachment so the browser saves rather than renders.
+
+    The platform is resolved to a script name with explicit branches assigning
+    constant literals (not a dict lookup keyed by the request value), so no
+    request-derived data flows into the served path.
     """
-    script_path = _resolve_centaur_import_script()
+    platform = request.args.get("platform", "unix")
+    if platform == "windows":
+        filename = "make-centaur-image.ps1"
+        mimetype = "text/plain"
+    elif platform == "unix":
+        filename = "make-centaur-image.sh"
+        mimetype = "text/x-shellscript"
+    else:
+        return jsonify({"success": False, "error": "Unknown platform."}), 400
+    script_path = _resolve_centaur_import_script(filename)
     if script_path is None:
         return jsonify({"success": False, "error": "Import script not found."}), 404
     return send_file(
         script_path,
-        mimetype="text/x-shellscript",
+        mimetype=mimetype,
         as_attachment=True,
-        download_name="make-centaur-image.sh",
+        download_name=filename,
     )
 
 

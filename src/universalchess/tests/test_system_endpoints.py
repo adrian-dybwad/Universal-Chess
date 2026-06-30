@@ -439,3 +439,58 @@ def test_centaur_engine_post_rejects_non_object_options(client, monkeypatch):
 
     assert resp.status_code == 400
     assert saved == {}
+
+
+# --- Centaur SD image-generator script download (per platform) ----------------
+
+
+def test_centaur_import_script_defaults_to_unix_shell_script(client):
+    """No platform arg serves the macOS/Linux shell helper, as an attachment.
+
+    Why this test exists: the import flow's first step is downloading this
+    generator; the default (no query) must remain the .sh so existing links and
+    the macOS/Linux button keep working. Asserts the attachment filename so a
+    regression that serves the wrong script (or inline) is caught.
+
+    How a regression manifests: the default changes or the file is served inline
+    (no attachment), so the browser renders text instead of saving the script.
+    """
+    resp = client.get("/api/system/centaur-import-script")
+
+    assert resp.status_code == 200
+    assert "make-centaur-image.sh" in resp.headers.get("Content-Disposition", "")
+    assert b"make-centaur-image" in resp.data
+
+
+def test_centaur_import_script_serves_windows_powershell_script(client):
+    """platform=windows serves the PowerShell helper named .ps1.
+
+    Why this test exists: Windows users cannot run the .sh; the whole point of
+    the new script is that platform=windows yields the .ps1. Asserts the served
+    attachment is the PowerShell file (the Windows imaging path).
+
+    How a regression manifests: the platform arg is ignored and the .sh is
+    served to Windows users, who then have no runnable imager.
+    """
+    resp = client.get("/api/system/centaur-import-script?platform=windows")
+
+    assert resp.status_code == 200
+    assert "make-centaur-image.ps1" in resp.headers.get("Content-Disposition", "")
+    # The PowerShell script's distinctive raw-device read confirms it is the .ps1.
+    assert b"PhysicalDrive" in resp.data
+
+
+def test_centaur_import_script_rejects_unknown_platform(client):
+    """An unrecognized platform is a 400, never a path lookup.
+
+    Why this test exists: the platform maps through a fixed allow-list so the
+    served filename is never derived from user input (no path traversal). A bad
+    value must be refused, not fall through to a file read.
+
+    How a regression manifests: the endpoint stops validating and either 404s on
+    a derived path or, worse, serves an attacker-named file.
+    """
+    resp = client.get("/api/system/centaur-import-script?platform=../etc/passwd")
+
+    assert resp.status_code == 400
+    assert json.loads(resp.data)["success"] is False

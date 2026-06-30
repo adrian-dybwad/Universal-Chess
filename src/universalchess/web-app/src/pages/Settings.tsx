@@ -3018,12 +3018,14 @@ function SystemActions() {
     }
   };
 
-  // Download the SD image-generator script. It is served as an attachment, so a
-  // synthetic anchor click triggers the browser download without leaving the page.
-  const downloadImportScript = () => {
+  // Download the SD image-generator script for the given platform. Served as an
+  // attachment, so a synthetic anchor click triggers the download without
+  // leaving the page. 'unix' is the macOS/Linux shell script; 'windows' is the
+  // PowerShell script (both emit the same centaur-sd.img.gz).
+  const downloadImportScript = (platform: 'unix' | 'windows') => {
     const a = document.createElement('a');
-    a.href = buildApiUrl('/api/system/centaur-import-script');
-    a.download = 'make-centaur-image.sh';
+    a.href = buildApiUrl(`/api/system/centaur-import-script?platform=${platform}`);
+    a.download = platform === 'windows' ? 'make-centaur-image.ps1' : 'make-centaur-image.sh';
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -3098,7 +3100,8 @@ function SystemActions() {
       <ol className="text-muted text-sm list-decimal ml-5 space-y-1">
         <li>
           On the computer holding your original Centaur SD card, download and run the
-          image script. It reads the card (read-only) and writes <code>centaur-sd.img.gz</code>.
+          image script for that computer's OS (macOS/Linux or Windows). It reads the card
+          (read-only) and writes <code>centaur-sd.img.gz</code>.
         </li>
         <li>
           Upload that <code>centaur-sd.img.gz</code> here. It is loop-mounted and the app is
@@ -3106,8 +3109,11 @@ function SystemActions() {
         </li>
       </ol>
       <div className="flex flex-wrap gap-3 items-center">
-        <Button variant="secondary" disabled={importBusy} onClick={downloadImportScript}>
-          Download image script
+        <Button variant="secondary" disabled={importBusy} onClick={() => downloadImportScript('unix')}>
+          Download script (macOS/Linux)
+        </Button>
+        <Button variant="secondary" disabled={importBusy} onClick={() => downloadImportScript('windows')}>
+          Download script (Windows)
         </Button>
         <input
           ref={importInputRef}
