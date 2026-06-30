@@ -40,8 +40,10 @@ def run_proxy(
     *,
     tracker: Optional[PositionTracker] = None,
     recorder=None,
+    publisher=None,
     inject_options: Iterable[str] = (),
     log_fn: Optional[Callable[[str], None]] = None,
+    debug: bool = False,
 ) -> None:
     """Forward UCI between Centaur and the engine, recording the game.
 
@@ -50,10 +52,18 @@ def run_proxy(
     - the configured options are injected once, immediately before the first
       ``go`` (valid UCI: after Centaur's own setoptions, so the clamped/config
       values win and the memory floor holds);
-    - each ``position`` is parsed and folded into the tracker/recorder; a
-      recording failure is logged and swallowed so it never breaks play;
+    - each ``position`` is parsed and folded into the tracker/recorder, then the
+      reconstructed board is mirrored to the web via ``publisher`` (fen.log +
+      broadcast); a recording or publish failure is logged and swallowed so it
+      never breaks play;
     - Centaur's ``setoption`` lines are rewritten to the memory floor before
       forwarding; everything else passes through verbatim.
+
+    When ``debug`` is set, every ``position`` command and the resulting tracker
+    classification (new-game / appended moves / total / FEN) is logged via
+    ``log_fn``. It is off by default (it is per-move noise) and exists to validate
+    Centaur's position-stream forms -- e.g. takebacks -- against the tracker
+    without redeploying; enable it with ``UC_CENTAUR_PROXY_DEBUG`` (see ``main``).
 
     Returns when Centaur closes its input; the engine's stdin is then closed so
     it exits, and the pump thread is drained.
@@ -78,6 +88,11 @@ def run_proxy(
                 _write_line(engine_in, option_line)
             injected = True
 
+        if lowered.startswith("ucinewgame") and tracker is not None:
+            # Explicit new-game delimiter: the next position starts a fresh game
+            # rather than being read as a takeback to the opening of this one.
+            tracker.mark_new_game()
+
         if lowered.startswith("position") and tracker is not None:
             parsed = parse_position_command(stripped)
             if parsed is not None:
@@ -85,6 +100,15 @@ def run_proxy(
                     update = tracker.update(*parsed)
                     if recorder is not None:
                         recorder.apply(update)
+                    if publisher is not None:
+                        publisher.publish(tracker.board)
+                    if debug and log_fn and tracker.board is not None:
+                        log_fn(
+                            f"centaur-proxy[debug] {stripped} -> "
+                            f"newgame={update.is_new_game} "
+                            f"added={[m for m, _ in update.moves_added]} "
+                            f"total={update.total_moves} fen={tracker.board.fen()}"
+                        )
                 except Exception as exc:  # noqa: BLE001 - recording must never break play
                     if log_fn:
                         log_fn(f"centaur-proxy: recording error: {exc}")
@@ -127,6 +151,7 @@ def main(argv: Optional[list] = None) -> int:
     if it cannot be set up, the proxy still forwards UCI (play is never blocked by
     a recording problem).
     """
+    import os
     import subprocess  # nosec B404 - launches the resolved UC engine path only
 
     from universalchess.board.settings import Settings
@@ -134,6 +159,13 @@ def main(argv: Optional[list] = None) -> int:
 
     def log_fn(message: str) -> None:
         print(message, file=sys.stderr, flush=True)
+
+    # Opt-in per-move position-stream trace (off by default; see run_proxy). Set
+    # UC_CENTAUR_PROXY_DEBUG=1 in Centaur's launch env to capture the stream for
+    # validating tracker behavior (e.g. takebacks) without code changes.
+    debug = os.environ.get("UC_CENTAUR_PROXY_DEBUG", "").strip().lower() in (
+        "1", "true", "on", "yes",
+    )
 
     config = load_proxy_config(Settings.read)
     engine_cmd = _resolve_engine_command(config)
@@ -151,6 +183,7 @@ def main(argv: Optional[list] = None) -> int:
 
     tracker = PositionTracker()
     recorder = _build_recorder(log_fn)
+    publisher = _build_publisher(log_fn)
     inject_options = build_config_setoptions(config.options)
 
     try:
@@ -161,8 +194,10 @@ def main(argv: Optional[list] = None) -> int:
             proc.stdout,
             tracker=tracker,
             recorder=recorder,
+            publisher=publisher,
             inject_options=inject_options,
             log_fn=log_fn,
+            debug=debug,
         )
     finally:
         proc.wait()
@@ -185,4 +220,25 @@ def _build_recorder(log_fn):
         return GameRecorder(session, source="centaur")
     except Exception as exc:  # noqa: BLE001 - recording is optional
         log_fn(f"centaur-proxy: recording disabled ({exc})")
+        return None
+
+
+def _build_publisher(log_fn):
+    """Build the web-state publisher, or None if its sinks cannot be wired.
+
+    Mirrors recording: pushing live state to the web is best-effort, so a setup
+    problem yields None and the proxy forwards UCI without web updates. The two
+    sinks (fen.log writer and the broadcast socket function) are UC's own, the
+    same ones ChessGameService uses for normal play.
+    """
+    try:
+        from universalchess.paths import write_fen_log
+        from universalchess.services.centaur_engine_proxy.web_publisher import (
+            CentaurStatePublisher,
+        )
+        from universalchess.services.game_broadcast import broadcast_game_state
+
+        return CentaurStatePublisher(write_fen_log, broadcast_game_state, log_fn=log_fn)
+    except Exception as exc:  # noqa: BLE001 - web mirroring is optional
+        log_fn(f"centaur-proxy: web state disabled ({exc})")
         return None

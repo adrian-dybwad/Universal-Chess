@@ -31,8 +31,9 @@ class GameRecorder:
     One recorder instance follows one Centaur session: it opens a new ``game``
     row on each new-game update (with an initial empty-move row carrying the
     start FEN, matching how UC records games), appends a ``gameMove`` per move
-    with the FEN after it, and stamps the ``result`` once the game ends. The
-    session is injected so tests can bind it to an in-memory database.
+    with the FEN after it, deletes the trailing move rows a takeback removed, and
+    stamps the ``result`` once the game ends. The session is injected so tests can
+    bind it to an in-memory database.
     """
 
     def __init__(self, session, *, source: str = "centaur", models=None) -> None:
@@ -64,6 +65,24 @@ class GameRecorder:
 
         if self._game_id is None:
             return
+
+        # A takeback shortened the line: delete the trailing move rows it removed.
+        # Ordered by id descending and limited so only the most recent moves go;
+        # the initial empty-move row (move == "") carries the start FEN and is
+        # excluded so it always survives a full rewind to the opening.
+        if update.moves_removed:
+            stale = (
+                self._session.query(models.GameMove)
+                .filter(
+                    models.GameMove.gameid == self._game_id,
+                    models.GameMove.move != "",
+                )
+                .order_by(models.GameMove.id.desc())
+                .limit(update.moves_removed)
+                .all()
+            )
+            for row in stale:
+                self._session.delete(row)
 
         for uci, fen_after in update.moves_added:
             self._session.add(

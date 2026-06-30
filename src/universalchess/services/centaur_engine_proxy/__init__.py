@@ -24,6 +24,9 @@ from universalchess.services.centaur_engine_proxy.tracker import (
     PositionTracker,
     parse_position_command,
 )
+from universalchess.services.centaur_engine_proxy.web_publisher import (
+    CentaurStatePublisher,
+)
 
 __all__ = [
     "ProxyConfig",
@@ -38,4 +41,5 @@ __all__ = [
     "GameUpdate",
     "PositionTracker",
     "parse_position_command",
+    "CentaurStatePublisher",
 ]

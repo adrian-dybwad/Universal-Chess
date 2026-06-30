@@ -30,13 +30,30 @@ def render_launcher(python_bin: str = DEFAULT_PYTHON_BIN, pythonpath: str = DEFA
     ``exec`` so the proxy replaces the shell (Centaur's signals reach it
     directly). PYTHONPATH is set so the package resolves regardless of Centaur's
     own cwd/environment.
+
+    Two env adjustments are essential because Centaur execs this from inside its
+    own install dir (``nice -n 10 engines/stockfish_pi`` with cwd ``~/centaur``):
+
+    - ``PYTHONSAFEPATH=1`` stops Python from prepending that cwd to ``sys.path``.
+      ``~/centaur`` is full of the original Centaur app's Python 3.5 C-extension
+      ``.so`` files (``_sqlite3.so`` etc.). Without this, ``import sqlite3`` loads
+      Centaur's 3.5 ``_sqlite3.so`` into our 3.x venv, failing with an undefined
+      symbol -- which silently disabled the proxy's DB recording (it caught the
+      import error and ran without a recorder). It also shadows any other stdlib
+      extension, so the fix must be the broad cwd-exclusion, not a sqlite patch.
+    - ``env -u LD_PRELOAD`` drops the display shim that translate mode preloads
+      into Centaur. The shim virtualizes Centaur's e-paper SPI traffic only; it
+      has no business in the engine or this proxy, and its frames inherit into
+      every child. Stripping it keeps the engine/proxy on plain libc.
     """
     return (
         "#!/bin/sh\n"
         "# Universal Chess Centaur engine proxy launcher. Installed over the\n"
         "# engine path Centaur execs so its UCI traffic routes through the proxy\n"
         "# (any UC engine, memory-safe options, games recorded in UC's database).\n"
-        f'exec env PYTHONPATH="{pythonpath}" "{python_bin}" -m {PROXY_MODULE}\n'
+        "# PYTHONSAFEPATH keeps Centaur's cwd (full of py3.5 .so files) off\n"
+        "# sys.path; -u LD_PRELOAD drops the display shim meant only for Centaur.\n"
+        f'exec env -u LD_PRELOAD PYTHONPATH="{pythonpath}" PYTHONSAFEPATH=1 "{python_bin}" -m {PROXY_MODULE}\n'
     )
 
 
