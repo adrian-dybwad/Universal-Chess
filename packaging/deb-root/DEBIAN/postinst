@@ -352,6 +352,30 @@ else
     echo -e "::: Warning: build-memory helper not found at $BUILD_MEM_HELPER"
 fi
 
+# Allow the service user to loop-mount an uploaded Centaur SD image read-only
+# during import. `mount` is a general primitive (any device/target/options), so
+# granting it directly would let the service mount arbitrary filesystems
+# anywhere. As with bt-admin and the updater, grant passwordless sudo to exactly
+# one pinned helper that mounts only a caller-supplied image -- read-only,
+# nodev/nosuid/noexec -- at one fixed mountpoint and unmounts it; its `case` plus
+# path allow-list are the boundary. Without this grant the SD import cannot read
+# the ext4 image and Original Centaur stays uninstallable.
+echo -e "::: Configuring sudoers for Centaur import"
+CENTAUR_MOUNT_HELPER="${DGTCM_PATH}/scripts/centaur-import-mount"
+if [ -f "$CENTAUR_MOUNT_HELPER" ]; then
+    chmod +x "$CENTAUR_MOUNT_HELPER"
+    CENTAUR_MOUNT_SUDOERS_FILE="/etc/sudoers.d/universal-chess-centaur-import"
+    echo "$PRIMARY_USER ALL=(root) NOPASSWD: $CENTAUR_MOUNT_HELPER" > "$CENTAUR_MOUNT_SUDOERS_FILE"
+    chmod 440 "$CENTAUR_MOUNT_SUDOERS_FILE"
+    # Validate before it can take effect; a malformed drop-in can lock out sudo.
+    if ! visudo -cf "$CENTAUR_MOUNT_SUDOERS_FILE" >/dev/null 2>&1; then
+        echo -e "::: Warning: centaur-import sudoers entry invalid; removing"
+        rm -f "$CENTAUR_MOUNT_SUDOERS_FILE"
+    fi
+else
+    echo -e "::: Warning: centaur-import helper not found at $CENTAUR_MOUNT_HELPER"
+fi
+
 # Persistent application event log (services.event_log). Pre-create the log dir
 # and file owned by the service user so: (a) the app (running as that user)
 # can append AND rotate it (rotation renames within the dir, needing dir

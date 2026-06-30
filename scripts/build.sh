@@ -99,6 +99,15 @@ function stage {
         && tar --exclude="__pycache__" --exclude="*.pyc" -cf - .
     ) | (cd "${STAGE_DIR}${INSTALLDIR}" && tar -xf -)
 
+    # Ship the user-facing helper tools (e.g. the Centaur SD image generator the
+    # web UI offers for download). They live in repo tools/ (not the python
+    # package), so copy them under /opt/universalchess/tools so the web app can
+    # serve them on-device.
+    if [ -d "${REPO_ROOT}/tools/centaur-import" ]; then
+      mkdir -p "${STAGE_DIR}${INSTALLDIR}/tools/centaur-import"
+      cp "${REPO_ROOT}/tools/centaur-import/"*.sh "${STAGE_DIR}${INSTALLDIR}/tools/centaur-import/" 2>/dev/null || true
+    fi
+
     # Set Architecture to 'all' for multi-arch package
     python3 - <<PY
 from pathlib import Path

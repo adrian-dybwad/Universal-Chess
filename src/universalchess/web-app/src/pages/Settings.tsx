@@ -13,7 +13,7 @@ import { Licenses } from './Licenses';
 import type { EngineDefinition, EngineRef, EngineRefsResponse } from '../types/game';
 import type { MenuCatalog, MenuOption, MenuCondition, MenuNode } from '../types/menuCatalog';
 import { fieldById, fieldsForSection } from '../types/menuCatalog';
-import { apiFetch, buildApiUrl, getStoredCredentials, encodeBasicAuth, storeCredentials } from '../utils/api';
+import { apiFetch, buildApiUrl, getStoredCredentials, encodeBasicAuth, storeCredentials, isCrossOriginApi } from '../utils/api';
 import './Settings.css';
 
 interface SettingsData {
@@ -2838,11 +2838,34 @@ function DisplayTuningCard() {
 
 function SystemActions() {
   const [centaurAvailable, setCentaurAvailable] = useState(false);
+  const [centaurRunning, setCentaurRunning] = useState(false);
+  const [directMode, setDirectMode] = useState(false);
+  const [directBusy, setDirectBusy] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showLoginDialog, setShowLoginDialog] = useState(false);
   const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
+
+  // Import-from-SD state. The image is large (~200 MB), so the upload uses XHR
+  // (for upload progress) rather than fetch. showImport reveals the importer for
+  // a re-import when Centaur is already installed.
+  const [importBusy, setImportBusy] = useState(false);
+  const [importProgress, setImportProgress] = useState(0);
+  // Import outcome shown inline next to the upload button (not the page-top
+  // banner) so the success/error is visible right where the action happened.
+  const [importResult, setImportResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [showImport, setShowImport] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
+
+  // Centaur engine-proxy config: which UC engine Centaur drives (translate mode)
+  // and a few common options. Hash is clamped to the memory floor server-side.
+  const [engineList, setEngineList] = useState<{ value: string; label: string }[]>([]);
+  const [centaurEngine, setCentaurEngine] = useState('stockfish');
+  const [centaurElo, setCentaurElo] = useState('');
+  const [centaurThreads, setCentaurThreads] = useState('');
+  const [centaurHash, setCentaurHash] = useState('');
+  const [engineBusy, setEngineBusy] = useState(false);
 
   useEffect(() => {
     fetch(buildApiUrl('/api/system/info'))
@@ -2855,7 +2878,136 @@ function SystemActions() {
       .catch(() => {
         // Capability probe is best-effort; default to hiding the Centaur action.
       });
+    fetch(buildApiUrl('/api/system/centaur-mode'))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && typeof data.direct_mode === 'boolean') setDirectMode(data.direct_mode);
+      })
+      .catch(() => {
+        // Best-effort; the toggle defaults to off (translate mode) if unavailable.
+      });
+    fetch(buildApiUrl('/api/engines/all'))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setEngineList(
+            data
+              .filter((e) => e.installed)
+              .map((e) => ({ value: e.name, label: e.display_name || e.name }))
+          );
+        }
+      })
+      .catch(() => {
+        // Best-effort; the selector falls back to showing the stored engine name.
+      });
+    fetch(buildApiUrl('/api/system/centaur-engine'))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data) return;
+        if (data.engine) setCentaurEngine(data.engine);
+        const o = data.options || {};
+        if (o.UCI_Elo != null) setCentaurElo(String(o.UCI_Elo));
+        if (o.Threads != null) setCentaurThreads(String(o.Threads));
+        if (o.Hash != null) setCentaurHash(String(o.Hash));
+      })
+      .catch(() => {
+        // Best-effort; fields default to engine defaults if unavailable.
+      });
   }, []);
+
+  // Poll whether centaur is currently running so the Original Centaur card shows
+  // a single state-aware control: "Switch to Original Centaur" when stopped and
+  // "Return to Universal Chess" when running. The web service stays up while
+  // centaur runs (only the board's main process is handed over), so this poll
+  // keeps working and flips the button after a start or a return completes.
+  useEffect(() => {
+    let active = true;
+    const poll = () => {
+      fetch(buildApiUrl('/api/system/centaur-status'))
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (active && data && typeof data.running === 'boolean') setCentaurRunning(data.running);
+        })
+        .catch(() => {
+          // Best-effort; keep the last known state on a transient failure (e.g.
+          // the brief window while the board service restarts).
+        });
+    };
+    poll();
+    const id = setInterval(poll, 3000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  // Persist the Direct Mode toggle. On 401 reuse the card's login-retry plumbing
+  // so the change resumes after a successful login.
+  const updateDirectMode = async (next: boolean) => {
+    setDirectBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await apiFetch('/api/system/centaur-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ direct_mode: next }),
+        requiresAuth: true,
+      });
+      if (response.status === 401) {
+        pendingActionRef.current = () => updateDirectMode(next);
+        setShowLoginDialog(true);
+        return;
+      }
+      if (!response.ok) {
+        setError('Failed to update the Centaur mode setting.');
+        return;
+      }
+      setDirectMode(next);
+    } catch {
+      setError('Network error');
+    } finally {
+      setDirectBusy(false);
+    }
+  };
+
+  // Persist the Centaur engine + options. Empty fields mean "engine default" and
+  // are omitted. Elo additionally enables UCI_LimitStrength so it takes effect.
+  // On 401, reuse the login-retry plumbing like the other card actions.
+  const saveCentaurEngine = async () => {
+    setEngineBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const options: Record<string, unknown> = {};
+      if (centaurElo.trim()) {
+        options.UCI_LimitStrength = true;
+        options.UCI_Elo = Number(centaurElo);
+      }
+      if (centaurThreads.trim()) options.Threads = Number(centaurThreads);
+      if (centaurHash.trim()) options.Hash = Number(centaurHash);
+      const response = await apiFetch('/api/system/centaur-engine', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ engine: centaurEngine, options }),
+        requiresAuth: true,
+      });
+      if (response.status === 401) {
+        pendingActionRef.current = () => saveCentaurEngine();
+        setShowLoginDialog(true);
+        return;
+      }
+      if (!response.ok) {
+        setError('Failed to save the Centaur engine settings.');
+        return;
+      }
+      setMessage('Centaur engine settings saved. They apply the next time Centaur launches.');
+    } catch {
+      setError('Network error');
+    } finally {
+      setEngineBusy(false);
+    }
+  };
 
   const handleLoginSuccess = async () => {
     setShowLoginDialog(false);
@@ -2865,6 +3017,129 @@ function SystemActions() {
       await action();
     }
   };
+
+  // Download the SD image-generator script. It is served as an attachment, so a
+  // synthetic anchor click triggers the browser download without leaving the page.
+  const downloadImportScript = () => {
+    const a = document.createElement('a');
+    a.href = buildApiUrl('/api/system/centaur-import-script');
+    a.download = 'make-centaur-image.sh';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  // Upload a centaur-sd.img.gz image and install it. Uses XHR for upload
+  // progress on the large image. On 401 (no/expired credentials) the login
+  // dialog opens and the upload retries after login, mirroring runAction.
+  const uploadCentaurImage = (file: File) => {
+    const credentials = getStoredCredentials();
+    if (!credentials) {
+      pendingActionRef.current = async () => uploadCentaurImage(file);
+      setShowLoginDialog(true);
+      return;
+    }
+    setImportBusy(true);
+    setImportProgress(0);
+    setImportResult(null);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', buildApiUrl('/api/system/import-centaur'));
+    xhr.setRequestHeader('Authorization', `Basic ${credentials}`);
+    if (isCrossOriginApi()) xhr.withCredentials = true;
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) setImportProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      setImportBusy(false);
+      if (xhr.status === 401) {
+        pendingActionRef.current = async () => uploadCentaurImage(file);
+        setShowLoginDialog(true);
+        return;
+      }
+      let data: { success?: boolean; error?: string; file_count?: number } = {};
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        // Non-JSON body (e.g. proxy error page); fall through to a generic error.
+      }
+      if (xhr.status >= 200 && xhr.status < 300 && data.success) {
+        setImportResult({
+          ok: true,
+          text: `Imported ${data.file_count ?? 0} files. Original Centaur is ready to launch.`,
+        });
+        setCentaurAvailable(true);
+        // After install the layout switches to the "installed" branch where the
+        // panel is gated by showImport; keep it open so this success stays shown.
+        setShowImport(true);
+      } else if (xhr.status === 413) {
+        // Reverse proxy rejected the body before it reached the app.
+        setImportResult({ ok: false, text: 'Image too large for the server to accept.' });
+      } else {
+        setImportResult({ ok: false, text: data.error || `Import failed (HTTP ${xhr.status}).` });
+      }
+    };
+    xhr.onerror = () => {
+      setImportBusy(false);
+      setImportResult({ ok: false, text: 'Network error during upload.' });
+    };
+
+    const form = new FormData();
+    form.append('image', file);
+    xhr.send(form);
+  };
+
+  // The importer UI: download the generator script, then upload its output.
+  // Reused for the initial install (Centaur absent) and re-import (Centaur
+  // present). The upload is disabled while centaur is running, since a re-import
+  // would replace files in use.
+  const importPanel = (
+    <div className="mt-2 space-y-3">
+      <ol className="text-muted text-sm list-decimal ml-5 space-y-1">
+        <li>
+          On the computer holding your original Centaur SD card, download and run the
+          image script. It reads the card (read-only) and writes <code>centaur-sd.img.gz</code>.
+        </li>
+        <li>
+          Upload that <code>centaur-sd.img.gz</code> here. It is loop-mounted and the app is
+          extracted automatically.
+        </li>
+      </ol>
+      <div className="flex flex-wrap gap-3 items-center">
+        <Button variant="secondary" disabled={importBusy} onClick={downloadImportScript}>
+          Download image script
+        </Button>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept=".gz"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = '';
+            if (f) uploadCentaurImage(f);
+          }}
+        />
+        <Button
+          variant="primary"
+          disabled={importBusy || centaurRunning}
+          onClick={() => importInputRef.current?.click()}
+        >
+          {importBusy ? 'Uploading...' : 'Upload SD image'}
+        </Button>
+      </div>
+      {importBusy && <ProgressBar percent={importProgress} label="Uploading image" />}
+      {importResult && (
+        <p
+          className={`text-sm ${importResult.ok ? 'text-success' : 'text-danger'}`}
+          role={importResult.ok ? undefined : 'alert'}
+        >
+          {importResult.ok ? null : <strong>Error: </strong>}
+          {importResult.text}
+        </p>
+      )}
+    </div>
+  );
 
   // Holds the latest runAction so the post-login retry can re-invoke it without
   // the callback referencing its own binding before it is declared (which the
@@ -2992,30 +3267,128 @@ function SystemActions() {
         </div>
       </Card>
 
-      {centaurAvailable && (
-        <Card className="mb-6">
-          <CardHeader title="Original Centaur Software" />
-          <p className="text-muted mb-4">
-            Switch back to the original DGT Centaur software. This stops Universal
-            Chess and the web interface will become unavailable until you switch
-            back from the board.
-          </p>
-          <Button
-            variant="danger"
-            disabled={busy !== null}
-            onClick={() =>
-              runAction(
-                'centaur',
-                'run-centaur',
-                'Switch to the original DGT Centaur software? This stops Universal Chess and the web interface will become unavailable until you switch back from the board.',
-                'Launching the original Centaur software. The web interface is now unavailable.'
-              )
-            }
-          >
-            {busy === 'centaur' ? 'Switching...' : 'Switch to Original Centaur'}
-          </Button>
-        </Card>
-      )}
+      <Card className="mb-6">
+        <CardHeader title="Original Centaur Software" />
+        {centaurAvailable ? (
+          <>
+            <p className="text-muted mb-4">
+              Hand the board over to the original DGT Centaur software. Universal
+              Chess stops and Centaur takes over the board, but this web interface
+              stays available{centaurRunning ? ' — use the button below to return to Universal Chess.' : ', so you can return to Universal Chess here at any time.'}
+            </p>
+            <Toggle
+              label="Direct Mode"
+              help="Off (default): Universal Chess translates Centaur's display so it works on whatever panel is fitted. On: Centaur drives the panel directly, which is only correct when the fitted panel matches the one Centaur expects."
+              checked={directMode}
+              onChange={(v) => updateDirectMode(v)}
+              disabled={directBusy || busy !== null || centaurRunning}
+            />
+            <div className="mt-4">
+              {centaurRunning ? (
+                <Button
+                  variant="primary"
+                  disabled={busy !== null}
+                  onClick={() =>
+                    runAction(
+                      'return',
+                      'return-to-universal',
+                      'Return to Universal Chess? This stops the original Centaur software and restarts Universal Chess on the board.',
+                      'Returning to Universal Chess. The board will restart momentarily.'
+                    )
+                  }
+                >
+                  {busy === 'return' ? 'Returning...' : 'Return to Universal Chess'}
+                </Button>
+              ) : (
+                <Button
+                  variant="danger"
+                  disabled={busy !== null}
+                  onClick={() =>
+                    runAction(
+                      'centaur',
+                      'run-centaur',
+                      'Switch to the original DGT Centaur software? This stops Universal Chess on the board; this web interface stays available so you can return to Universal Chess from here.',
+                      'Launching the original Centaur software. Use Return to Universal Chess to come back.'
+                    )
+                  }
+                >
+                  {busy === 'centaur' ? 'Switching...' : 'Switch to Original Centaur'}
+                </Button>
+              )}
+            </div>
+            <div className="mt-6">
+              <CardHeader title="Engine" />
+              <p className="text-muted mb-4">
+                In translate mode, Centaur plays through Universal Chess's engine
+                proxy, so you can use any installed engine and its games are
+                recorded in your database. Hash is capped to a memory-safe value
+                on the board regardless of what you set here.
+              </p>
+              <FormRow label="Engine">
+                <Select
+                  value={centaurEngine}
+                  options={engineList.length ? engineList : [{ value: centaurEngine, label: centaurEngine }]}
+                  onChange={(e) => setCentaurEngine(e.target.value)}
+                  disabled={engineBusy || centaurRunning}
+                />
+              </FormRow>
+              <FormRow label="Elo" help="Optional. Limits engine strength (enables UCI_LimitStrength). Leave blank for full strength.">
+                <Input
+                  type="number"
+                  value={centaurElo}
+                  placeholder="engine default"
+                  onChange={(e) => setCentaurElo(e.target.value)}
+                  disabled={engineBusy || centaurRunning}
+                />
+              </FormRow>
+              <FormRow label="Threads" help="Optional. Number of CPU threads the engine may use.">
+                <Input
+                  type="number"
+                  value={centaurThreads}
+                  placeholder="engine default"
+                  onChange={(e) => setCentaurThreads(e.target.value)}
+                  disabled={engineBusy || centaurRunning}
+                />
+              </FormRow>
+              <FormRow label="Hash (MB)" help="Optional. Transposition table size; capped to a memory-safe value on the board.">
+                <Input
+                  type="number"
+                  value={centaurHash}
+                  placeholder="engine default"
+                  onChange={(e) => setCentaurHash(e.target.value)}
+                  disabled={engineBusy || centaurRunning}
+                />
+              </FormRow>
+              <Button
+                variant="secondary"
+                disabled={engineBusy || centaurRunning}
+                onClick={saveCentaurEngine}
+              >
+                {engineBusy ? 'Saving...' : 'Save engine settings'}
+              </Button>
+            </div>
+            <div className="mt-4">
+              <button
+                type="button"
+                className="text-sm text-muted underline"
+                disabled={importBusy || centaurRunning}
+                onClick={() => setShowImport((s) => !s)}
+              >
+                {showImport ? 'Hide re-import' : 'Re-import from SD'}
+              </button>
+              {showImport && importPanel}
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-muted mb-4">
+              The original DGT Centaur software is not installed yet. Import it from
+              your original Centaur SD card to enable handing the board over to it.
+            </p>
+            {importPanel}
+          </>
+        )}
+      </Card>
     </>
   );
 }

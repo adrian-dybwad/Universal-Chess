@@ -2500,7 +2500,7 @@ def _process_pending_board_command() -> None:
     elif command == "run_centaur":
         # Same handoff as the main menu's Original Centaur action.
         log.info("[App] Web run_centaur")
-        _run_centaur()
+        _launch_original_centaur()
     else:
         log.warning(f"[App] Unknown board command: {command}")
 
@@ -2976,7 +2976,12 @@ def _build_main_menu_context():
 
     def main_get(key):
         if key == "centaur_available":
-            return os.path.exists(CENTAUR_SOFTWARE)
+            # Require a complete install (executable + engines/ + fonts/), not just
+            # the executable: a partial import would launch Centaur into a splash
+            # that hangs with no engine/fonts. Shared gate with the web UI.
+            from universalchess.services.centaur_import import centaur_app_installed
+
+            return centaur_app_installed()
         raise KeyError(f"unknown main store key: {key!r}")
 
     def main_set(key, value):
@@ -4173,30 +4178,160 @@ def _run_centaur():
     # subprocess launches Centaur and stops this service below without a shell;
     # the commands are fixed constants run via sudo (NOPASSWD on the Pi).
     import subprocess  # nosec B404
-    
-    if os.path.exists(CENTAUR_SOFTWARE):
+    from universalchess.services.power import perform_centaur_handoff
+
+    centaur_dir = os.path.dirname(CENTAUR_SOFTWARE)
+
+    def _launch_centaur(software_path: str) -> None:
         # 0o755 is the conventional mode for an executable program (not data);
         # the launcher runs it via sudo below.
         try:
-            os.chmod(CENTAUR_SOFTWARE, 0o755)  # noqa: S103  # nosec B103
+            os.chmod(software_path, 0o755)  # noqa: S103  # nosec B103
         except Exception as e:
             log.warning(f"Could not set execute permissions on centaur: {e}")
-        
         # Run Centaur from its own directory, without a shell. The command is a
         # fixed constant, so this runs the identical program with the same
         # inherited stdio/cwd as the previous os.system call, minus /bin/sh.
         # sudo/./centaur are trusted, controlled-PATH paths (S607/B607 accepted).
-        centaur_dir = os.path.dirname(CENTAUR_SOFTWARE)
         os.chdir(centaur_dir)
         subprocess.run(["sudo", "./centaur"], cwd=centaur_dir, check=False)  # noqa: S607  # nosec B603 B607
-    else:
+
+    def _stop_service() -> None:
+        # Centaur has exited; stop this service. Brief settle first.
+        time.sleep(3)
+        subprocess.run(["sudo", "systemctl", "stop", "universal-chess.service"], check=False)  # noqa: S607  # nosec B603 B607
+
+    # The handoff releases the e-paper (SPI fd + GPIO lines) BEFORE launching
+    # centaur so the two processes do not contend for the panel. board.cleanup()
+    # above released only the serial port.
+    launched = perform_centaur_handoff(
+        display_manager=board.display_manager,
+        software_path=CENTAUR_SOFTWARE,
+        launch_fn=_launch_centaur,
+        stop_service_fn=_stop_service,
+    )
+    if not launched:
         log.error(f"Centaur executable not found at {CENTAUR_SOFTWARE}")
         return False
-    
-    # Once Centaur starts, we cannot return - stop the service and exit
+
+    sys.exit()
+
+
+def _run_centaur_translate():
+    """Launch original DGT Centaur in "translate" mode (display routed via UC).
+
+    Unlike :func:`_run_centaur` (direct mode, which releases the panel so centaur
+    drives it natively), translate mode keeps UC's renderer alive and owning the
+    panel. centaur runs under the LD_PRELOAD shim, which virtualizes its panel:
+    it never touches the real SPI/GPIO and instead streams its DC-tagged SPI
+    bytes to UC's gateway, which decodes them and re-renders each frame through
+    UC's driver stack onto whatever panel is fitted. This is what lets a
+    UC8151D-speaking centaur display correctly on, e.g., an SSD1680 panel.
+
+    Two constraints are load-bearing and were verified on hardware:
+    - The serial board is released (``board.cleanup``) so centaur owns it, but
+      the e-paper is NOT released -- UC keeps rendering it.
+    - centaur is launched WITHOUT sudo. As root, ``RPi.GPIO`` maps ``/dev/mem``
+      (which the shim does not intercept) instead of ``/dev/gpiomem`` (which it
+      does), so DC tracking -- and thus command/data tagging -- would be dead.
+      The service already runs as ``pi``, so a plain launch keeps it non-root.
+    """
+    board.display_manager.clear_widgets(addStatusBar=False)
+    promise = board.display_manager.add_widget(
+        SplashScreen(board.display_manager.update, message="Loading",
+                     leave_room_for_status_bar=False))
+    if promise:
+        try:
+            promise.result(timeout=10.0)
+        except Exception as e:
+            log.debug("Loading splash render wait failed (continuing): %s", e)
+
+    # Release the serial board (centaur takes it) but keep the e-paper alive.
+    board.pauseEvents()
+    board.cleanup(leds_off=True)
+    time.sleep(1)
+
+    import subprocess  # nosec B404
+    from universalchess.paths import CENTAUR_DISPLAY_SHIM
+    from universalchess.services.power import perform_centaur_translate_handoff
+    from universalchess.services.centaur_display import (
+        CentaurDisplayGateway,
+        ThreadedGatewayServer,
+        DEFAULT_SOCKET_PATH,
+    )
+
+    centaur_dir = os.path.dirname(CENTAUR_SOFTWARE)
+    gateway = CentaurDisplayGateway(render_fn=board.display_manager.display_frame)
+    server = ThreadedGatewayServer(gateway, socket_path=DEFAULT_SOCKET_PATH)
+
+    def _start_gateway() -> None:
+        # Clear UC's widgets so only centaur's frames render, then start serving.
+        board.display_manager.clear_widgets(addStatusBar=False)
+        server.start()
+
+    def _launch_centaur(software_path: str) -> None:
+        try:
+            os.chmod(software_path, 0o755)  # noqa: S103  # nosec B103
+        except Exception as e:
+            log.warning(f"Could not set execute permissions on centaur: {e}")
+        # Launch as the current (pi) user -- NOT via sudo -- so RPi.GPIO uses
+        # /dev/gpiomem (intercepted by the shim). LD_PRELOAD injects the shim;
+        # the socket env tells it where to forward frames.
+        env = dict(os.environ)
+        env["LD_PRELOAD"] = CENTAUR_DISPLAY_SHIM
+        env["UC_CENTAUR_DISPLAY_SOCK"] = DEFAULT_SOCKET_PATH
+        env["UC_CENTAUR_BUSY_IDLE_HIGH"] = "1"
+        subprocess.run(["./centaur"], cwd=centaur_dir, env=env, check=False)  # noqa: S607  # nosec B603 B607
+
+    launched = perform_centaur_translate_handoff(
+        software_path=CENTAUR_SOFTWARE,
+        start_gateway_fn=_start_gateway,
+        launch_fn=_launch_centaur,
+        stop_gateway_fn=server.stop,
+    )
+    if not launched:
+        log.error(f"Centaur executable not found at {CENTAUR_SOFTWARE}")
+        return False
+
+    # centaur has exited; stop this service. Brief settle first.
     time.sleep(3)
     subprocess.run(["sudo", "systemctl", "stop", "universal-chess.service"], check=False)  # noqa: S607  # nosec B603 B607
     sys.exit()
+
+
+def _launch_original_centaur():
+    """Launch the original Centaur software in the user-selected mode.
+
+    Both the on-board "Original Centaur" menu action and the web action funnel
+    through here so they behave identically. The mode is the ``[centaur]
+    direct_mode`` setting (exposed as the System card's "Direct Mode" toggle):
+
+    - default / unchecked -> translate mode (:func:`_run_centaur_translate`):
+      centaur runs under the display shim and UC re-renders its frames onto
+      whatever panel is fitted, so it works regardless of the panel centaur
+      expects.
+    - checked -> direct mode (:func:`_run_centaur`): UC releases the panel and
+      centaur drives it natively (only correct when the fitted panel matches the
+      controller centaur's build speaks).
+
+    Both modes stop Universal Chess once centaur exits.
+    """
+    from universalchess.board.settings import Settings
+    from universalchess.services.centaur_import import ensure_factory_marker
+    from universalchess.services.power import centaur_direct_mode_enabled
+
+    # Without settings/factory.info, centaur boots into its factory hardware-test +
+    # calibration "Test Screen" (and never leaves, since that calibration does not
+    # complete in this integration). Seed the marker so it boots to play, for both
+    # the on-board and web launch paths that funnel through here.
+    try:
+        ensure_factory_marker()
+    except OSError as e:
+        log.warning(f"Could not ensure centaur factory marker: {e}")
+
+    if centaur_direct_mode_enabled(Settings.read):
+        return _run_centaur()
+    return _run_centaur_translate()
 
 
 # ============================================================================
@@ -5564,8 +5699,8 @@ def main():
 
                     elif result == "Centaur":
                         ctx.clear()
-                        _run_centaur()
-                        # Note: _run_centaur() exits the process
+                        _launch_original_centaur()
+                        # Note: the launch exits the process when centaur ends
 
                     elif result in ("Universal", "PLAY", "CLIENT_CONNECTED", "PIECE_MOVED"):
                         # Start a new game or resume the suspended one. _enter_game()

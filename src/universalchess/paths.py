@@ -41,7 +41,7 @@ BASE_DIR = "/opt/universalchess"
 DB_DIR = f"{BASE_DIR}/db"
 CONFIG_DIR = f"{BASE_DIR}/config"
 ENGINES_DIR = f"{BASE_DIR}/engines"
-TMP_DIR = f"{BASE_DIR}/tmp"
+TMP_DIR = f"{BASE_DIR}/tmp"  # noqa: S108  # nosec B108 - app subdir under BASE_DIR, not world-writable /tmp
 WEB_DIR = f"{BASE_DIR}/web"
 WEB_STATIC_DIR = f"{WEB_DIR}/static"
 SCRIPTS_DIR = f"{BASE_DIR}/scripts"
@@ -72,10 +72,23 @@ FEN_LOG = f"{TMP_DIR}/fen.log"
 EPAPER_STATIC_JPG = f"{WEB_STATIC_DIR}/epaper.jpg"
 DEFAULT_DB_FILE = f"{DB_DIR}/centaur.db"
 
+# Managed install location for the original DGT Centaur software. This is the
+# single canonical directory the SD import writes to and that the launcher,
+# the web availability check, and the display shim all read from. Centralizing
+# it here removes the previous dependence on ad-hoc paths (/home/pi/centaur and
+# /opt/DGTCentaurMods) that had to be created by hand.
+CENTAUR_HOME = os.path.join(_HOME, "centaur")
+
 # Original DGT Centaur software executable. Shared so the board (which launches
 # it) and the web UI (which only offers the action when it exists) agree on the
 # path without the web process importing board/hardware modules.
-CENTAUR_SOFTWARE = os.path.join(_HOME, "centaur", "centaur")
+CENTAUR_SOFTWARE = os.path.join(CENTAUR_HOME, "centaur")
+
+# LD_PRELOAD shim for centaur "translate" mode: it virtualizes centaur's panel
+# (fakes the BUSY handshake, absorbs its SPI/GPIO) and forwards the DC-tagged SPI
+# stream to UC's display gateway, so centaur renders on whatever panel is fitted.
+# Shipped alongside the centaur binary.
+CENTAUR_DISPLAY_SHIM = os.path.join(CENTAUR_HOME, "spishim.so")
 
 
 def get_resource_path(resource_file: str) -> str:

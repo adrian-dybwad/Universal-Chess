@@ -438,6 +438,47 @@ class Manager:
             return red_canvas
         return red_canvas.rotate(-epdconfig.ROTATION, expand=False)
     
+    def display_frame(self, image: Image.Image, red_image: Image.Image = None) -> Future:
+        """Render an externally-produced frame, bypassing the widget stack.
+
+        Injection point for frames produced outside the widget pipeline (e.g. the
+        original-Centaur display-translation gateway, which reconstructs centaur's
+        framebuffer and renders it through whatever panel is installed).
+
+        The refresh is requested as **partial and batched** (``full=False,
+        immediate=False``), not full+immediate. Original centaur drives its own
+        panel with incremental partial updates -- reserving full refreshes for
+        specific actions (its back/options buttons) -- and emits frames faster
+        than an e-paper full refresh completes. Forcing a full, immediate refresh
+        per frame made the panel flash on every update and thrash (each refresh
+        'interrupted by newer data'). Partial avoids the full-refresh flash;
+        batched lets the scheduler coalesce a rapid frame burst down to the latest
+        frame. The scheduler establishes the white baseline on the first partial
+        (its ``_baseline_established`` Clear()), so no priming full refresh is
+        needed here. Trade-off: pure partial refreshing accumulates ghosting over
+        time; mapping centaur's own full-refresh triggers to a full refresh is
+        deferred follow-up work.
+
+        The panel rotation is applied exactly as ``FrameBuffer.snapshot`` applies
+        it (``rotate(-ROTATION)``), so an upright logical frame lands correctly on
+        a rotated-mount panel. A ``red_image`` (mask: 0 = red, 255 = not red) is
+        forwarded for three-color panels; pass ``None`` for mono frames.
+
+        Args:
+            image: PIL image in logical (un-rotated) panel coordinates. Mode is
+                normalized by the driver's ``getbuffer`` when it is rendered.
+            red_image: Optional RED-plane mask for three-color panels.
+
+        Returns:
+            The refresh ``Future`` from the scheduler, so callers can await paint.
+        """
+        rotation = epdconfig.ROTATION
+        frame = image if rotation == 0 else image.rotate(-rotation, expand=False)
+        red = red_image
+        if red is not None and rotation != 0:
+            red = red.rotate(-rotation, expand=False)
+        return self._scheduler.submit(full=False, immediate=False, image=frame, red_image=red)
+
     def cleanup(self, for_shutdown: bool = False) -> None:
         """Clean up display resources.
         
@@ -478,3 +519,38 @@ class Manager:
             self._epd.sleep()
         except Exception as e:
             log.error(f"Error during shutdown: {e}")
+
+    def release_hardware(self) -> None:
+        """Fully release the panel hardware so a foreign process can own it.
+
+        Used by the original-DGT-Centaur handoff. Stops the refresh scheduler (so
+        no thread touches the panel after release), settles the panel into deep
+        sleep, then closes the SPI fd AND releases the gpiozero RST/DC/BUSY lines
+        via ``module_exit(cleanup=True)``.
+
+        This differs from ``shutdown()``/``sleep()``, which call
+        ``module_exit(cleanup=False)`` and leave the GPIO lines claimed. Leaving
+        them claimed makes the original Centaur software's own panel driver
+        collide with ours on ``/dev/spidev1.0`` and BCM 12/16/7: centaur's first
+        frame shows but the panel never updates (board input still works because
+        the serial port is released separately). Order matters -- the scheduler is
+        stopped before SPI/GPIO are closed so a queued refresh cannot run against
+        a closed device. The panel settle is best-effort: an unresponsive panel
+        must not prevent the hardware from being freed.
+        """
+        self._shutting_down = True
+
+        for widget in self._widgets:
+            try:
+                widget.stop()
+            except Exception as e:
+                log.debug(f"Error stopping widget {widget.__class__.__name__}: {e}")
+
+        self._scheduler.stop()
+
+        try:
+            self._epd.idle_sleep()
+        except Exception as e:
+            log.debug(f"Panel settle before centaur handoff failed (continuing): {e}")
+
+        epdconfig.module_exit(cleanup=True)

@@ -1,0 +1,106 @@
+#!/bin/sh
+# Root helper for the one privileged step of the Centaur SD import: loop-mounting
+# the uploaded ext4 image read-only, and unmounting it afterwards. Everything
+# else (decompress, detect, copy, set perms) the service does unprivileged.
+#
+# Invoked by the web app through a single pinned, passwordless sudo grant the
+# package postinst installs:
+#
+#   <service-user> ALL=(root) NOPASSWD: /opt/universalchess/scripts/centaur-import-mount
+#
+# Why a fixed helper instead of NOPASSWD on mount/umount directly: `mount` is a
+# general primitive (any device, any target, any options) and granting it would
+# let the service mount arbitrary filesystems anywhere. This helper narrows the
+# grant to exactly: mount one caller-supplied image *read-only* at one *fixed*
+# mountpoint under the service tmp dir, and unmount that one mountpoint. The
+# `case` plus the path allow-list are the security boundary -- do not add a
+# passthrough branch or relax the read-only/loop options.
+#
+# Callers use `sudo -n` so a missing grant fails fast rather than hanging on a
+# password prompt.
+set -u
+
+# The only mountpoint this helper will ever touch, and the only directory an
+# image may live in. Both are fixed so the grant cannot be used to mount over an
+# arbitrary directory or loop-mount an attacker-named file elsewhere. They are
+# read from the environment with these production defaults purely so the tests
+# can point them at a scratch dir: the sudoers grant relies on sudo's default
+# env_reset, which strips caller-set variables, so under the real grant these
+# overrides never arrive and the fixed defaults always apply.
+MNT="${CENTAUR_IMPORT_MNT:-/opt/universalchess/tmp/centaur-mnt}"
+ALLOWED_IMG_DIR="${CENTAUR_IMPORT_IMG_DIR:-/opt/universalchess/tmp}"
+
+usage() {
+	echo "usage: centaur-import-mount {mount <image>|stage <src> <dst>|umount}" >&2
+	exit 2
+}
+
+[ "$#" -ge 1 ] || usage
+
+case "$1" in
+	mount)
+		[ "$#" -eq 2 ] || usage
+		img="$2"
+		# Reject anything outside the allowed dir, and any traversal token, before
+		# touching it. The realpath check defends against symlinks pointing out.
+		case "$img" in
+			"$ALLOWED_IMG_DIR"/*) ;;
+			*) echo "refused: image must be under $ALLOWED_IMG_DIR" >&2; exit 3 ;;
+		esac
+		case "$img" in
+			*..*) echo "refused: path traversal" >&2; exit 3 ;;
+		esac
+		[ -f "$img" ] || { echo "no such image: $img" >&2; exit 4; }
+		mkdir -p "$MNT"
+		# Read-only loop mount: the SD image is never modified, and ro keeps a
+		# corrupt/hostile filesystem from being written back. nodev/nosuid/noexec
+		# stop the mounted tree from carrying device nodes or setuid/exec payloads.
+		exec mount -o ro,loop,nodev,nosuid,noexec "$img" "$MNT"
+		;;
+	stage)
+		# Copy the detected app dir (which lives under the read-only mount) into the
+		# service tmp dir as root, then make it world-readable. The SD app's
+		# engines/fonts/books dirs are commonly mode 0700 or owned by another uid,
+		# so the unprivileged service user cannot read into them directly off the
+		# mount; staging as root and relaxing read bits lets the subsequent
+		# unprivileged copy (which applies cruft-stripping policy) read every entry.
+		# Both endpoints are path-restricted -- src must be inside the fixed
+		# mountpoint and dst inside the allowed tmp dir -- so this cannot become a
+		# general root copy primitive.
+		[ "$#" -eq 3 ] || usage
+		src="$2"
+		dst="$3"
+		case "$src" in
+			"$MNT"/*) ;;
+			*) echo "refused: source must be under $MNT" >&2; exit 3 ;;
+		esac
+		case "$dst" in
+			"$ALLOWED_IMG_DIR"/*) ;;
+			*) echo "refused: destination must be under $ALLOWED_IMG_DIR" >&2; exit 3 ;;
+		esac
+		case "$src$dst" in
+			*..*) echo "refused: path traversal" >&2; exit 3 ;;
+		esac
+		[ -d "$src" ] || { echo "no such source dir: $src" >&2; exit 4; }
+		rm -rf -- "$dst"
+		mkdir -p -- "$dst"
+		# -a preserves the tree; the chmod then grants read+search to all so the
+		# unprivileged copy can recurse in. Ownership is left as root: the staged
+		# copy is a throwaway the service reads once and deletes.
+		cp -a "$src/." "$dst/" || { echo "stage copy failed" >&2; exit 5; }
+		chmod -R a+rX "$dst" || { echo "stage chmod failed" >&2; exit 5; }
+		exit 0
+		;;
+	umount)
+		[ "$#" -eq 1 ] || usage
+		# -l (lazy) detaches even if a copy still holds a handle; the loop device
+		# is released with the mount. A non-mounted point is not an error here.
+		if mountpoint -q "$MNT"; then
+			exec umount -l "$MNT"
+		fi
+		exit 0
+		;;
+	*)
+		usage
+		;;
+esac

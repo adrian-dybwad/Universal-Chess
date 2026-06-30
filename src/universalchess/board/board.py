@@ -263,9 +263,12 @@ def _extract_and_store_board_meta():
     log.debug(f"[board._extract_and_store_board_meta] Extracted {len(board_meta_properties)} properties")
 
 def cleanup(leds_off: bool = True):
+    # Releases the board controller (serial port + listener thread). The e-paper
+    # subsystem is intentionally NOT released here: callers that need the panel
+    # released (e.g. the Original Centaur handoff) call
+    # display_manager.release_hardware() explicitly, while normal shutdown leaves
+    # the panel settled by the scheduler's idle-sleep.
     controller.cleanup(leds_off=True)
-    #display_manager.shutdown()
-    #display_manager = None
 
 def wait_for_key_up(timeout=None, accept=None):
     """Wait for a key up event from the board"""

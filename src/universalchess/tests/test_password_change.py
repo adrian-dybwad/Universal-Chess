@@ -136,6 +136,58 @@ class TestInputValidation:
         assert b"at least" in resp.data
 
 
+class TestChpasswdRecordInjection:
+    """Reject inputs that could break out of the single chpasswd stdin record."""
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "newpassword\nroot:pwned",   # newline = chpasswd record separator
+            "newpassword\rroot:pwned",   # CR is also treated as a line break
+            "newpassword\x00root:pwned",  # NUL can truncate/confuse parsing
+        ],
+    )
+    def test_rejects_record_separator_in_new_password(self, client, authed, payload):
+        """A newline/CR/NUL in new_password must be rejected before chpasswd runs.
+
+        Why: chpasswd reads newline-delimited "user:password" records from stdin
+        and offers no escaping. Interpolating new_password lets an authenticated
+        caller append a second record (e.g. "root:pwned") and change another
+        account's password - privilege escalation.
+        How a regression shows: without the guard the request reaches chpasswd
+        (mock_run called) and returns 200 instead of 400.
+        """
+        with patch("universalchess.web.app.subprocess.run") as mock_run:
+            resp = _change_password_request(client, new_password=payload)
+            assert resp.status_code == 400
+            mock_run.assert_not_called()
+
+    def test_rejects_record_separator_in_username(self, client, authed):
+        """A newline in the basic-auth username must also be rejected.
+
+        Why: the username is interpolated into the same chpasswd record, so a
+        newline in it is the same injection vector even with a clean password.
+        The username is taken from the Authorization header (not the authed
+        fixture's return), so a crafted header reaches the chpasswd call.
+        How a regression shows: without the guard chpasswd is invoked with a
+        two-line payload and the endpoint returns 200 instead of 401.
+        """
+        crafted = base64.b64encode(b"testuser\nroot:oldpass").decode()
+        headers = {
+            "Authorization": f"Basic {crafted}",
+            "X-Forwarded-Proto": "https",
+            "Content-Type": "application/json",
+        }
+        with patch("universalchess.web.app.subprocess.run") as mock_run:
+            resp = client.post(
+                "/api/system/change-password",
+                json={"current_password": "oldpass", "new_password": "newpassword"},
+                headers=headers,
+            )
+            assert resp.status_code == 401
+            mock_run.assert_not_called()
+
+
 class TestPasswordChange:
     """Successful password change calls chpasswd correctly."""
 

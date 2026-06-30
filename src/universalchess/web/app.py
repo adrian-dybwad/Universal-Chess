@@ -33,7 +33,7 @@ from universalchess.utils.safe_path import safe_under_base
 from universalchess.db import models
 from universalchess.paths import get_current_fen, get_current_placement, get_resource_path
 from universalchess.services.game_broadcast import get_subscriber, GameState
-from universalchess.paths import EPAPER_STATIC_JPG, CENTAUR_SOFTWARE, CONFIG_DIR
+from universalchess.paths import EPAPER_STATIC_JPG, CONFIG_DIR
 from .chessboard import LiveBoard
 from . import centaurflask
 from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
@@ -258,7 +258,6 @@ def reset_board_inactivity(response):
 # System paths for conditional features
 ENGINES_DIR = "/opt/universalchess/engines"
 RODENTIV_PATH = os.path.join(ENGINES_DIR, "rodentIV")
-CENTAUR_SOFTWARE_PATH = os.path.join(str(pathlib.Path.home()), "centaur", "centaur")
 
 # WebDAV security constants
 WEBDAV_BASE_PATH = str(pathlib.Path.home())
@@ -281,8 +280,17 @@ def is_rodentiv_installed() -> bool:
 
 
 def is_centaur_software_installed() -> bool:
-    """Check if original DGT Centaur software is installed."""
-    return os.path.isfile(CENTAUR_SOFTWARE_PATH) and os.access(CENTAUR_SOFTWARE_PATH, os.X_OK)
+    """Check if a complete original DGT Centaur install is present.
+
+    Delegates to ``centaur_app_installed`` (the shared gate) so the template
+    flag, the /api/system/info probe, the on-board menu, and the launcher all
+    agree on one definition: the executable *plus* engines/ and fonts/. Requiring
+    the full set means a partial import is never offered for launch (it would
+    hang on the splash with no engine/fonts).
+    """
+    from universalchess.services.centaur_import import centaur_app_installed
+
+    return centaur_app_installed()
 
 
 @app.context_processor
@@ -2468,13 +2476,17 @@ def api_system_info():
     """Return read-only system capabilities for the web UI.
 
     ``centaur_available`` mirrors the board's own check (the on-board menu hides
-    the Original Centaur entry when the executable is absent), so the web UI can
-    do the same without importing board/hardware modules.
+    the Original Centaur entry when the install is incomplete), so the web UI can
+    do the same without importing board/hardware modules. "Available" means a
+    complete install (executable + engines/ + fonts/), not just the executable --
+    a partial import is not launchable.
     """
+    from universalchess.services.centaur_import import centaur_app_installed
+
     try:
         system_user = pwd.getpwuid(os.getuid()).pw_name
         return jsonify({
-            "centaur_available": os.path.exists(CENTAUR_SOFTWARE),
+            "centaur_available": centaur_app_installed(),
             "username": system_user,
         })
     except Exception as e:
@@ -2846,9 +2858,272 @@ def api_system_run_centaur():
     """Hand control to the original DGT Centaur software. Requires authentication.
 
     Runs the same handoff as the main menu's Original Centaur action, which stops
-    Universal Chess (and this web server). The UI warns before calling this.
+    Universal Chess (and this web server). The board chooses translate vs direct
+    mode from [centaur] direct_mode (set via the endpoints below). The UI warns
+    before calling this.
     """
     return _system_board_action("run_centaur", "Launching original Centaur software")
+
+
+@app.route("/api/system/centaur-mode", methods=["GET"])
+def api_get_centaur_mode():
+    """Report whether Original Centaur launches in direct mode.
+
+    Read-only and unauthenticated like the other GET probes; it exposes only a
+    single boolean. The Original Centaur card uses it to show the Direct Mode
+    toggle's current state on load. direct_mode=false means translate mode (the
+    default), where centaur's display is routed through UC's gateway.
+    """
+    try:
+        from universalchess.board.settings import Settings
+        from universalchess.services.power import centaur_direct_mode_enabled
+        return jsonify({"direct_mode": centaur_direct_mode_enabled(Settings.read)})
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/centaur-mode", methods=["POST"])
+@requires_auth
+def api_set_centaur_mode():
+    """Set Original Centaur's launch mode. Requires authentication.
+
+    Persists [centaur] direct_mode via save_all_settings so the board process is
+    notified like any other settings change and reads the new value at the next
+    launch. Body: {"direct_mode": bool}. False (translate mode) is the default:
+    centaur runs under the display shim and UC re-renders its frames onto the
+    fitted panel; True (direct mode) lets centaur drive the panel natively.
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        direct_mode = bool(body.get("direct_mode"))
+        save_all_settings({"centaur": {"direct_mode": direct_mode}})
+        return jsonify({"success": True, "direct_mode": direct_mode})
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/centaur-engine", methods=["GET"])
+def api_get_centaur_engine():
+    """Report the engine and UCI options the Centaur proxy will use.
+
+    Read-only and unauthenticated like the other GET probes. The Original Centaur
+    card uses this to populate the engine selector and option fields. direct_mode
+    aside, this only affects translate-mode play, where Centaur's engine path is
+    the UC proxy. Options are returned as an object (parsed from the stored JSON).
+    """
+    try:
+        from universalchess.board.settings import Settings
+        from universalchess.services.centaur_engine_proxy.config import load_proxy_config
+
+        config = load_proxy_config(Settings.read)
+        return jsonify({"engine": config.engine_name, "options": config.options})
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/centaur-engine", methods=["POST"])
+@requires_auth
+def api_set_centaur_engine():
+    """Set the engine and UCI options the Centaur proxy uses. Requires auth.
+
+    Body: {"engine": str, "options": {name: value}}. Persists [centaur_engine]
+    via save_all_settings (options as a JSON string), so the proxy reads the new
+    values at the next launch. The proxy still clamps Hash/MultiPV to the memory
+    floor, so options here cannot push the board into an OOM.
+    """
+    try:
+        from universalchess.services.centaur_engine_proxy.config import (
+            DEFAULT_ENGINE,
+            ENGINE_KEY,
+            OPTIONS_KEY,
+            CONFIG_SECTION,
+        )
+
+        body = request.get_json(silent=True) or {}
+        engine = str(body.get("engine") or DEFAULT_ENGINE).strip() or DEFAULT_ENGINE
+        options = body.get("options") or {}
+        if not isinstance(options, dict):
+            return jsonify({"success": False, "error": "options must be an object"}), 400
+        save_all_settings({
+            CONFIG_SECTION: {ENGINE_KEY: engine, OPTIONS_KEY: json.dumps(options)},
+        })
+        return jsonify({"success": True, "engine": engine, "options": options})
+    except Exception as e:
+        return _internal_error(e)
+
+
+def _centaur_is_running() -> bool:
+    """Whether the original Centaur software is currently running.
+
+    Detection matches the centaur main process by exact name. This is robust
+    across both launch modes -- translate runs ``./centaur`` as the pi user and
+    direct runs ``sudo ./centaur`` (root), but the process name is ``centaur`` in
+    both, while its engine subprocess has a different name and is not matched.
+    Process names under ``/proc`` are world-readable, so the (non-root) web
+    process can see a root-owned direct-mode centaur too.
+    """
+    import subprocess  # nosec B404 - fixed, trusted 'pgrep' invocation, no user input
+    result = subprocess.run(  # nosec B603 B607
+        ["pgrep", "-x", "centaur"], capture_output=True, timeout=5  # noqa: S607
+    )
+    return result.returncode == 0
+
+
+@app.route("/api/system/centaur-status", methods=["GET"])
+def api_get_centaur_status():
+    """Report whether the original Centaur software is currently running.
+
+    Read-only and unauthenticated like the other GET probes. The Original Centaur
+    card polls this so its single action button stays state-aware: it offers
+    "Switch to Original Centaur" when stopped and "Return to Universal Chess"
+    when running.
+    """
+    try:
+        return jsonify({"running": _centaur_is_running()})
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/return-to-universal", methods=["POST"])
+@requires_auth
+def api_system_return_to_universal():
+    """Stop the original Centaur software and bring Universal Chess back up.
+
+    Requires authentication. Counterpart to run-centaur, used when centaur is
+    running. While centaur runs, the Universal Chess main process is blocked
+    inside its ``subprocess.run(centaur)`` handoff and cannot service board
+    actions, so -- unlike run-centaur, which routes through the board -- this runs
+    entirely in the independent web process:
+
+    1. Signal the centaur main process to exit. It is a child in the
+       universal-chess.service control group in both translate and direct modes.
+    2. Restart universal-chess.service. The restart's control-group stop reaps any
+       stragglers (e.g. centaur's engine subprocess), and the fresh start has
+       Universal Chess reclaim the serial board and the e-paper panel.
+
+    The brief pause lets centaur exit on the signal so the restart is prompt
+    instead of waiting on systemd's stop timeout. ``pkill``/``systemctl`` are
+    fixed commands with no user input, behind ``@requires_auth``.
+    """
+    try:
+        import subprocess  # nosec B404 - fixed, trusted commands below, no user input
+        subprocess.run(["pkill", "-x", "centaur"], check=False, timeout=5)  # noqa: S607  # nosec B603 B607
+        time.sleep(1)
+        subprocess.run(  # nosec B603 B607
+            ["sudo", "systemctl", "restart", "universal-chess.service"],  # noqa: S607
+            check=False, timeout=30,
+        )
+        return jsonify({"success": True})
+    except Exception as e:
+        return _internal_error(e)
+
+
+def _resolve_centaur_import_script():
+    """Locate the Centaur SD image-generator script to offer for download.
+
+    Prefers the packaged copy under /opt/universalchess/tools (installed by the
+    build) and falls back to the repo tools/ dir for development. Returns the
+    path string, or None if neither exists.
+    """
+    from universalchess.paths import BASE_DIR
+
+    candidates = [
+        os.path.join(BASE_DIR, "tools", "centaur-import", "make-centaur-image.sh"),
+        str(pathlib.Path(__file__).resolve().parents[3] / "tools" / "centaur-import" / "make-centaur-image.sh"),
+    ]
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+@app.route("/api/system/centaur-import-script", methods=["GET"])
+def api_system_centaur_import_script():
+    """Serve the make-centaur-image.sh helper as a download.
+
+    The user runs this on the computer holding the original SD card to produce
+    the uploadable image. Read-only and unauthenticated like the other GET
+    helpers: it is a fixed, secret-free shell script. Served as an attachment so
+    the browser saves it rather than rendering it.
+    """
+    script_path = _resolve_centaur_import_script()
+    if script_path is None:
+        return jsonify({"success": False, "error": "Import script not found."}), 404
+    return send_file(
+        script_path,
+        mimetype="text/x-shellscript",
+        as_attachment=True,
+        download_name="make-centaur-image.sh",
+    )
+
+
+@app.route("/api/system/import-centaur", methods=["POST"])
+@requires_auth
+def api_system_import_centaur():
+    """Install the original Centaur software from an uploaded SD image.
+
+    Accepts a multipart upload (field ``image``) of the gzip ext4 image produced
+    by tools/centaur-import/make-centaur-image.sh. The file is streamed to the
+    service tmp dir (the dir the mount helper allow-lists), then the import
+    service loop-mounts it read-only, extracts the app to the managed
+    CENTAUR_HOME, strips debug cruft, and validates the file set. On success the
+    Original Centaur Switch/Return controls become available.
+
+    Returns 400 with an actionable message when the upload is missing/misnamed or
+    the image lacks a complete Centaur app, and 500 on unexpected errors. The
+    CentaurImportError text is author-written and path-free, so it is safe to
+    surface to the client. The uploaded image is always removed afterwards so a
+    ~200 MB artifact does not accumulate in tmp.
+    """
+    from universalchess.paths import TMP_DIR
+    from universalchess.services.centaur_import import (
+        CentaurImportError,
+        install_from_image,
+    )
+
+    upload = request.files.get("image")
+    if upload is None or not upload.filename:
+        return jsonify({"success": False, "error": "No image file was uploaded."}), 400
+
+    safe = secure_filename(upload.filename)
+    # Only the gzip image artifact is accepted; a wrong file is user error (400),
+    # not a server fault.
+    if not safe.endswith(".gz"):
+        return (
+            jsonify({
+                "success": False,
+                "error": "Upload must be the .img.gz image produced by make-centaur-image.sh.",
+            }),
+            400,
+        )
+
+    os.makedirs(TMP_DIR, exist_ok=True)
+    # Contain the save path inside TMP_DIR; this is also the dir the mount helper
+    # restricts images to, so a path that escapes it would be refused downstream.
+    target = safe_under_base(TMP_DIR, safe)
+    if target is None:
+        return jsonify({"success": False, "error": "Invalid image filename."}), 400
+
+    try:
+        # FileStorage.save streams the body to disk in chunks rather than holding
+        # the ~200 MB image in memory.
+        upload.save(str(target))
+        result = install_from_image(target)
+        return jsonify({
+            "success": True,
+            "installed_path": result.installed_path,
+            "file_count": result.file_count,
+        })
+    except CentaurImportError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception as e:
+        return _internal_error(e)
+    finally:
+        try:
+            if os.path.exists(str(target)):
+                os.remove(str(target))
+        except OSError:  # noqa: S110  # nosec B110 - best-effort tmp cleanup; failure is non-fatal
+            pass
 
 
 # ============================================================================
@@ -4341,6 +4616,10 @@ def ca_download():
 # -----------------------------------------------------------------------------
 
 _MIN_PASSWORD_LENGTH = 4
+# Characters that act as record/field separators in chpasswd(8) stdin. Any of
+# these in the username or password could inject an additional "user:password"
+# record, so they are rejected before the value is passed to chpasswd.
+_CHPASSWD_FORBIDDEN_CHARS = ("\n", "\r", "\0")
 
 
 @app.route("/api/system/change-password", methods=["POST"])
@@ -4375,6 +4654,12 @@ def api_change_password():
         return jsonify({
             "error": f"New password must be at least {_MIN_PASSWORD_LENGTH} characters"
         }), 400
+    # chpasswd(8) reads newline-delimited "user:password" records from stdin and
+    # offers no escaping. A newline/CR/NUL in the password would append a second
+    # record, letting an authenticated caller set another account's password
+    # (e.g. root) - privilege escalation. Reject these outright.
+    if any(c in new_password for c in _CHPASSWD_FORBIDDEN_CHARS):
+        return jsonify({"error": "New password contains invalid characters"}), 400
 
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Basic "):
@@ -4387,6 +4672,10 @@ def api_change_password():
         return jsonify({"error": "Invalid credentials"}), 401
 
     if not username:
+        return jsonify({"error": "Invalid credentials"}), 401
+    # The username is interpolated into the same chpasswd record, so a newline in
+    # it is the same record-injection vector as the password above.
+    if any(c in username for c in _CHPASSWD_FORBIDDEN_CHARS):
         return jsonify({"error": "Invalid credentials"}), 401
 
     proc = subprocess.run(  # nosec B603 B607 - argv list (no shell); 'sudo'/'chpasswd' are standard system binaries

@@ -47,8 +47,10 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Tests legitimately use assert, fixtures, and looser typing/docstrings.
-"**/tests/**" = ["S101", "ANN", "D", "PLR2004", "INP001"]
+# Tests legitimately use assert, fixtures, and looser typing/docstrings. The
+# hardcoded-password checks (S105/S106/S107) are also noise in tests, which use
+# dummy credentials as fixtures and arguments by design.
+"**/tests/**" = ["S101", "S105", "S106", "S107", "ANN", "D", "PLR2004", "INP001"]
 
 [tool.ruff.lint.flake8-bandit]
 # Surface every security finding; do not suppress by check id.

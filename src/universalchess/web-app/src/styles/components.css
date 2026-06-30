@@ -473,6 +473,8 @@
 
 .text-center { text-align: center; }
 .text-muted { color: var(--color-text-muted); }
+.text-success { color: var(--color-success-dark); }
+.text-danger { color: var(--color-danger-dark); }
 .text-mono { font-family: var(--font-mono); }
 
 .mt-4 { margin-top: var(--space-4); }
