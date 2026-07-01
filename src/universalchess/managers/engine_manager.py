@@ -1810,11 +1810,18 @@ class EngineManager:
             if not self._recover_dpkg_or_abort(f"install {engine.display_name}"):
                 return False
             deps = " ".join(engine.dependencies)
+
+            def run_apt_install():
+                """Run the dependency install. Isolated so the fix-broken retry
+                reuses the exact command (one shell string, one static-input
+                annotation) instead of duplicating it."""
+                return subprocess.run(  # noqa: S602  # nosec B602  # deps joined from the static engine registry (dependencies), never user input; fixed apt-get shell string
+                    f"sudo apt-get install -y {deps}",
+                    shell=True, capture_output=True, text=True, timeout=300
+                )
+
             log.info(f"[EngineManager] _install_from_source: Installing dependencies: {deps}")
-            result = subprocess.run(  # noqa: S602  # nosec B602  # deps joined from the static engine registry (dependencies), never user input; fixed apt-get shell string
-                f"sudo apt-get install -y {deps}",
-                shell=True, capture_output=True, text=True, timeout=300
-            )
+            result = run_apt_install()
             if result.returncode != 0:
                 log.warning(f"[EngineManager] _install_from_source: Dependency install returned non-zero ({result.returncode})")
                 log.warning(f"[EngineManager] _install_from_source: Dependency stderr: {result.stderr.strip()}")
@@ -1823,9 +1830,34 @@ class EngineManager:
 
             missing = self._missing_packages(engine.dependencies)
             if missing:
-                # Surface the apt error (truncated) so the real cause -- not just the
-                # symptom -- is visible to the user in the install-error UI.
-                apt_err = (result.stderr.strip() or result.stdout.strip())[:200]
+                # apt may have aborted because the system already held broken
+                # dependencies ("E: Unmet dependencies. Try 'apt --fix-broken
+                # install'..." -- the Zahak golang failure). Run apt's own
+                # recommended remedy once and retry before giving up. attempt_fix_broken
+                # never claims the specific package was resolved, so a genuinely
+                # unsatisfiable environment still surfaces the real error below.
+                fix_outcome = apt_recovery.attempt_fix_broken()
+                if fix_outcome is RecoveryOutcome.DEFERRED_RESTART:
+                    self._install_error = (
+                        "Fixing incomplete install of Universal Chess. "
+                        f"You will need to install {engine.display_name} after the service restarts."
+                    )
+                    log.warning(
+                        "[EngineManager] _install_from_source: fix-broken deferred to a service "
+                        f"restart; aborting install of {engine.display_name}"
+                    )
+                    return False
+                if fix_outcome is RecoveryOutcome.PROCEEDED:
+                    log.info("[EngineManager] _install_from_source: retrying dependency install after 'apt-get install -f'")
+                    result = run_apt_install()
+                    missing = self._missing_packages(engine.dependencies)
+
+            if missing:
+                # Surface the salient apt diagnostic lines (the offending package and
+                # unmet relationship) so the real cause -- not just apt's generic
+                # advice -- is visible in the install-error UI. Full output is in the
+                # log above.
+                apt_err = apt_recovery.summarize_apt_error(result.stderr, result.stdout)
                 self._install_error = (
                     f"Could not install required build dependencies: {', '.join(missing)}. "
                     f"apt error: {apt_err}" if apt_err else
