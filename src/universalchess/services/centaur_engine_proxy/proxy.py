@@ -59,20 +59,68 @@ def run_proxy(
     - Centaur's ``setoption`` lines are rewritten to the memory floor before
       forwarding; everything else passes through verbatim.
 
+    The engine's ``bestmove`` is also watched: when it ends the game (the player
+    is about to make the mating/stalemating move and Centaur will send no further
+    ``position``), that final move is committed to the tracker/recorder/publisher
+    so it is recorded and shown -- otherwise the last move of a Centaur-won game
+    is lost. Mid-game bestmoves are ignored (they re-arrive via the next
+    ``position``). Engine output is read on the pump thread while ``position`` is
+    read on the main thread, so a lock serializes all tracker/recorder/publisher
+    access between them.
+
     When ``debug`` is set, every ``position`` command and the resulting tracker
-    classification (new-game / appended moves / total / FEN) is logged via
-    ``log_fn``. It is off by default (it is per-move noise) and exists to validate
-    Centaur's position-stream forms -- e.g. takebacks -- against the tracker
-    without redeploying; enable it with ``UC_CENTAUR_PROXY_DEBUG`` (see ``main``).
+    classification (new-game / appended / removed moves / total / FEN) is logged
+    via ``log_fn``. It is off by default (it is per-move noise) and exists to
+    validate Centaur's position-stream forms -- e.g. takebacks -- against the
+    tracker without redeploying; enable it with ``UC_CENTAUR_PROXY_DEBUG`` (see
+    ``main``).
 
     Returns when Centaur closes its input; the engine's stdin is then closed so
     it exits, and the pump thread is drained.
     """
     inject_options = list(inject_options)
+    state_lock = threading.Lock()
+
+    def commit_update(update, source_desc: str) -> None:
+        """Fan one tracker update out to the recorder, publisher, and debug log.
+
+        Shared by the ``position`` path and the terminal-``bestmove`` path so both
+        record, mirror to the web, and trace identically. Callers hold
+        ``state_lock``; a recording/publish failure is logged and swallowed so it
+        never breaks play.
+        """
+        try:
+            if recorder is not None:
+                recorder.apply(update)
+            if publisher is not None:
+                publisher.publish(tracker.board)
+            if debug and log_fn and tracker.board is not None:
+                log_fn(
+                    f"centaur-proxy[debug] {source_desc} -> "
+                    f"newgame={update.is_new_game} "
+                    f"added={[m for m, _ in update.moves_added]} "
+                    f"removed={update.moves_removed} "
+                    f"total={update.total_moves} fen={tracker.board.fen()}"
+                )
+        except Exception as exc:  # noqa: BLE001 - recording must never break play
+            if log_fn:
+                log_fn(f"centaur-proxy: recording error: {exc}")
 
     def pump_engine() -> None:
         for line in engine_out:
-            _write_line(centaur_out, line.rstrip("\n"))
+            text = line.rstrip("\n")
+            _write_line(centaur_out, text)
+            if tracker is None:
+                continue
+            lowered_out = text.strip().lower()
+            if lowered_out.startswith("bestmove"):
+                parts = text.split()
+                # "bestmove <uci> [ponder <uci>]"; "(none)"/"0000" mean no move.
+                if len(parts) >= 2 and parts[1] not in ("(none)", "0000"):
+                    with state_lock:
+                        update = tracker.apply_terminal_engine_move(parts[1])
+                        if update is not None:
+                            commit_update(update, f"bestmove {parts[1]} (terminal)")
 
     pump = threading.Thread(target=pump_engine, name="centaur-proxy-engine-pump", daemon=True)
     pump.start()
@@ -91,27 +139,21 @@ def run_proxy(
         if lowered.startswith("ucinewgame") and tracker is not None:
             # Explicit new-game delimiter: the next position starts a fresh game
             # rather than being read as a takeback to the opening of this one.
-            tracker.mark_new_game()
+            with state_lock:
+                tracker.mark_new_game()
 
         if lowered.startswith("position") and tracker is not None:
             parsed = parse_position_command(stripped)
             if parsed is not None:
-                try:
-                    update = tracker.update(*parsed)
-                    if recorder is not None:
-                        recorder.apply(update)
-                    if publisher is not None:
-                        publisher.publish(tracker.board)
-                    if debug and log_fn and tracker.board is not None:
-                        log_fn(
-                            f"centaur-proxy[debug] {stripped} -> "
-                            f"newgame={update.is_new_game} "
-                            f"added={[m for m, _ in update.moves_added]} "
-                            f"total={update.total_moves} fen={tracker.board.fen()}"
-                        )
-                except Exception as exc:  # noqa: BLE001 - recording must never break play
-                    if log_fn:
-                        log_fn(f"centaur-proxy: recording error: {exc}")
+                with state_lock:
+                    try:
+                        update = tracker.update(*parsed)
+                    except Exception as exc:  # noqa: BLE001 - must never break play
+                        update = None
+                        if log_fn:
+                            log_fn(f"centaur-proxy: recording error: {exc}")
+                    if update is not None:
+                        commit_update(update, stripped)
 
         out_line = rewrite_setoption_line(line) if lowered.startswith("setoption") else line
         _write_line(engine_in, out_line)
@@ -209,14 +251,33 @@ def _build_recorder(log_fn):
 
     Recording is best-effort: a DB problem must not stop Centaur from playing, so
     a failure here yields None and the proxy forwards UCI without recording.
+
+    The session uses a dedicated engine rather than the shared ``models.engine``
+    because the proxy records from two threads -- Centaur's position stream (main
+    thread) and the engine's terminal bestmove (pump thread), serialized by
+    run_proxy's state_lock. A SQLite connection is thread-affine
+    (``check_same_thread``), so a single connection reused across those threads
+    (StaticPool + check_same_thread=False) is what lets the game-ending move be
+    recorded from the pump thread. Access is lock-serialized, never concurrent.
+    The flags apply only to SQLite; any other configured backend is left as-is.
     """
     try:
+        from sqlalchemy import create_engine
         from sqlalchemy.orm import Session
+        from sqlalchemy.pool import StaticPool
 
-        from universalchess.db import models
+        from universalchess.db.uri import get_database_uri
         from universalchess.services.centaur_engine_proxy.recorder import GameRecorder
 
-        session = Session(bind=models.engine)
+        uri = get_database_uri()
+        engine_kwargs = {}
+        if uri.startswith("sqlite"):
+            engine_kwargs = {
+                "connect_args": {"check_same_thread": False},
+                "poolclass": StaticPool,
+            }
+        engine = create_engine(uri, **engine_kwargs)
+        session = Session(bind=engine)
         return GameRecorder(session, source="centaur")
     except Exception as exc:  # noqa: BLE001 - recording is optional
         log_fn(f"centaur-proxy: recording disabled ({exc})")

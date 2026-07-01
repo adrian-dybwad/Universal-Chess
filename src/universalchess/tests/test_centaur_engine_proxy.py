@@ -11,6 +11,7 @@ Centaur/engine streams) using a transcript shaped like Centaur's real output.
 
 import io
 import json
+import threading
 
 import pytest
 
@@ -393,10 +394,20 @@ def db(monkeypatch):
     monkeypatch.setattr(uri, "get_database_uri", lambda: "sqlite:///:memory:")
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session
+    from sqlalchemy.pool import StaticPool
 
     from universalchess.db import models
 
-    engine = create_engine("sqlite:///:memory:")
+    # StaticPool + check_same_thread=False so a single in-memory database is
+    # shared across threads (the default per-thread pool would hand each thread
+    # its own empty DB). This mirrors the proxy's recorder, whose game state is
+    # mutated from the position (main) thread and the terminal-bestmove (pump)
+    # thread, serialized by run_proxy's lock -- never truly concurrent.
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     models.Base.metadata.create_all(engine)
     session = Session(bind=engine)
     yield session, models
@@ -851,3 +862,124 @@ def test_run_proxy_debug_traces_position_stream_only_when_enabled():
     assert "position startpos moves e2e4" in traces[0]
     assert "added=['e2e4']" in traces[0]
     assert "total=1" in traces[0]
+
+
+# ---------------------------------------------------------------------------
+# Terminal engine move (the game-ending bestmove that gets no follow-up position)
+# ---------------------------------------------------------------------------
+
+
+def test_tracker_commits_engine_bestmove_only_when_it_ends_game():
+    """A bestmove is committed to the mainline only if it ends the game.
+
+    Why this test exists: this is the exact bug reported on hardware -- the
+    engine's mating move (the player's final M1) was missing from the live board
+    and the DB. Centaur sends no ``position`` after a game-ending move, so the
+    tracker must commit that move from the engine's ``bestmove`` instead. A
+    non-terminal bestmove must NOT be committed (it re-arrives in the next
+    ``position``; committing early would diverge and double-count). Uses Fool's
+    mate: after 1.f3 e5 2.g4 it is Black to move with Qh4#.
+
+    How a regression manifests: the mating bestmove returns None (final move lost
+    again) or a non-terminal bestmove is committed (total jumps / record diverges
+    from the confirmed position stream).
+    """
+    tracker = PositionTracker()
+    tracker.update(None, ["f2f3", "e7e5", "g2g4"])  # Black to move, Qh4 is mate
+
+    # A legal but non-terminal reply must be ignored (handled via position stream).
+    non_terminal = tracker.apply_terminal_engine_move("b8c6")
+    assert non_terminal is None
+    assert [m.uci() for m in tracker.board.move_stack] == ["f2f3", "e7e5", "g2g4"]
+
+    # An illegal move (wrong side / not legal here) is ignored, not raised.
+    assert tracker.apply_terminal_engine_move("e2e4") is None
+    # A null/no-move token from the engine is ignored.
+    assert tracker.apply_terminal_engine_move("0000") is None
+
+    # The mating move ends the game, so it is committed with result/termination.
+    mate = tracker.apply_terminal_engine_move("d8h4")
+    assert mate is not None
+    assert mate.is_new_game is False
+    assert [m for m, _ in mate.moves_added] == ["d8h4"]
+    assert mate.moves_removed == 0
+    assert mate.total_moves == 4
+    assert mate.result == "0-1"
+    assert mate.termination == "checkmate"
+    assert [m.uci() for m in tracker.board.move_stack] == ["f2f3", "e7e5", "g2g4", "d8h4"]
+
+
+def test_tracker_apply_terminal_engine_move_noop_before_any_game():
+    """Before a game starts, a bestmove cannot be committed (no board to apply to).
+
+    Why this test exists: the pump thread may read engine output before the first
+    position is processed; apply_terminal_engine_move must be a safe no-op then,
+    not raise or fabricate a board.
+
+    How a regression manifests: an AttributeError on the None board, or a spurious
+    game being created from a stray bestmove.
+    """
+    tracker = PositionTracker()
+    assert tracker.apply_terminal_engine_move("e2e4") is None
+    assert tracker.board is None
+
+
+def test_run_proxy_records_and_publishes_engine_mate(db):
+    """run_proxy records + publishes the engine's mating move (no trailing position).
+
+    Why this test exists: the end-to-end guard for the reported bug. Centaur sends
+    the position before the mate and ``go``, the engine returns the mating
+    ``bestmove``, and NO further position arrives (the game is over). The proxy
+    must still record the final move and publish the terminal board. The engine
+    stream is gated so the bestmove is only emitted after ``go`` is pulled (which
+    happens only after the preceding position is fully processed), reproducing the
+    real ordering deterministically without a sleep.
+
+    How a regression manifests: the DB game stops at g2g4 (mate lost) exactly as
+    reported, or no game-over broadcast is published to the web.
+    """
+    session, models = db
+    tracker = PositionTracker()
+    recorder = GameRecorder(session, source="centaur", models=models)
+    cap = _PublishCapture()
+    publisher = CentaurStatePublisher(cap.write_fen_log, cap.broadcast)
+
+    go_pulled = threading.Event()
+
+    def centaur_stream():
+        yield "position startpos moves f2f3 e7e5 g2g4\n"
+        # Reached only when the loop pulls the next line, i.e. after the position
+        # above has been fully processed (tracker updated, recorded, published).
+        go_pulled.set()
+        yield "go movetime 10\n"
+
+    def engine_stream():
+        # Hold the mating bestmove until the position has been processed, matching
+        # Centaur: the engine only answers a go that follows the position.
+        assert go_pulled.wait(timeout=5)
+        yield "bestmove d8h4\n"
+
+    centaur_out = _Capture()
+    run_proxy(
+        centaur_stream(),
+        centaur_out,
+        _Capture(),
+        engine_stream(),
+        tracker=tracker,
+        recorder=recorder,
+        publisher=publisher,
+    )
+
+    # One game, ending on the engine's mate, with the result stamped.
+    games = session.query(models.Game).all()
+    assert len(games) == 1
+    assert games[0].result == "0-1"
+    moves = session.query(models.GameMove).order_by(models.GameMove.id).all()
+    assert [m.move for m in moves] == ["", "f2f3", "e7e5", "g2g4", "d8h4"]
+
+    # The terminal board is published to the web as game over.
+    assert cap.broadcasts[-1]["last_move"] == "d8h4"
+    assert cap.broadcasts[-1]["game_over"] is True
+    assert cap.broadcasts[-1]["result"] == "0-1"
+    # The bestmove is still forwarded to Centaur (recording is a side channel).
+    assert "bestmove d8h4" in centaur_out.text()

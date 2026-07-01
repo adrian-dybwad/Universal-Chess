@@ -194,6 +194,39 @@ class PositionTracker:
 
         return self._reconcile(rejoin, move_objs)
 
+    def apply_terminal_engine_move(self, uci: str) -> Optional["GameUpdate"]:
+        """Commit an engine ``bestmove`` to the mainline, but only if it ends the game.
+
+        Centaur issues ``go`` solely to obtain the move for the side to move, then
+        guides the player to physically make exactly that ``bestmove``. For every
+        non-final move that move re-enters the proxy inside the *next* ``position``
+        command, so the tracker must ignore ``bestmove`` mid-game -- committing it
+        early would let a speculative move diverge from the confirmed stream and
+        double-count. But when the move ends the game (checkmate/stalemate/draw)
+        Centaur sends no further ``position`` (the game is over), so that final
+        move would otherwise never be recorded or shown on the web. This commits
+        exactly that one move.
+
+        Returns the ``GameUpdate`` for the committed terminal move, or None when
+        there is no game in progress, the move is unparsable/illegal for the
+        current board, or the move does not end the game (the normal mid-game case,
+        which the ``position`` stream already handles).
+        """
+        if not self._started or self._board is None:
+            return None
+        try:
+            move = chess.Move.from_uci(uci)
+        except ValueError:
+            return None
+        if move not in self._board.legal_moves:
+            return None
+        probe = self._board.copy(stack=False)
+        probe.push(move)
+        if probe.outcome(claim_draw=True) is None:
+            return None
+        added = self._push_all([move])
+        return self._build_update(is_new_game=False, added=added)
+
     def _reconcile(self, rejoin: int, move_objs: List[chess.Move]) -> GameUpdate:
         """Merge a command rejoining the mainline at ply ``rejoin`` into the game.
 
