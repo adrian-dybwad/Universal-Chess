@@ -2,9 +2,12 @@
 
 In "translate" mode the original centaur binary is launched with the shim
 ``LD_PRELOAD``ed so it virtualizes centaur's panel and forwards its SPI stream
-to UC's gateway. The shim is a small C shared object that MUST be compiled
-natively on the Pi to match centaur's 32-bit ARM ABI, so it cannot be prebuilt
-off-device and shipped in the package.
+to UC's gateway. The shim is a small C shared object that MUST match centaur's
+32-bit armhf ABI (the linker refuses to preload a differently-typed object), so
+it is built on-device rather than shipped as a binary. On a 32-bit ARM host the
+native ``gcc`` produces armhf directly; on a 64-bit ``aarch64`` host it must be
+cross-compiled with the armhf toolchain (see ``_resolve_compiler``), which the
+package pulls in via ``Recommends: gcc-arm-linux-gnueabihf``.
 
 Nothing else builds it: the SD import only preserves an existing ``spishim.so``,
 and the package ships the *source* (next to this module) but not a binary. So
@@ -22,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import platform
 import subprocess  # nosec B404 - runs the configured C compiler on shipped source only
 import tempfile
 from pathlib import Path
@@ -33,8 +37,40 @@ from universalchess.paths import CENTAUR_DISPLAY_SHIM
 # (both the .deb and the deploy-to-pi rsync include src/universalchess).
 SHIM_SOURCE = Path(__file__).resolve().parent / "shim" / "spishim.c"
 
-# Default C compiler. Raspbian's gcc already targets 32-bit ARM natively.
-DEFAULT_COMPILER = "gcc"
+# armhf cross compiler, needed on 64-bit hosts (see _resolve_compiler).
+ARMHF_CROSS_COMPILER = "arm-linux-gnueabihf-gcc"
+
+# Native compiler, correct only on a 32-bit ARM host.
+NATIVE_COMPILER = "gcc"
+
+# Back-compat alias (was the hard-coded default); resolution now happens in
+# _resolve_compiler so a 64-bit host does not silently try to build armhf with
+# an aarch64 gcc.
+DEFAULT_COMPILER = NATIVE_COMPILER
+
+
+def _resolve_compiler(compiler: Optional[str]) -> str:
+    """Pick a compiler that emits centaur's 32-bit armhf ABI.
+
+    centaur is a 32-bit ARM (armhf) binary and the shim is ``LD_PRELOAD``ed into
+    it, so the shim MUST also be armhf. On a 32-bit ARM host the native ``gcc``
+    already targets armhf. On a 64-bit ``aarch64`` host the native ``gcc`` targets
+    aarch64 and physically cannot emit armhf (the compile fails on armhf-only
+    ``mcontext_t.arm_*`` fields and rejects ``_TIME_BITS=32`` under 64-bit
+    glibc), so an armhf cross compiler is required.
+
+    An explicit ``compiler`` argument or the ``UC_CENTAUR_SHIM_CC`` environment
+    variable always wins (for boards with a differently named toolchain).
+    """
+    if compiler:
+        return compiler
+    override = os.environ.get("UC_CENTAUR_SHIM_CC")
+    if override:
+        return override
+    machine = platform.machine().lower()
+    if machine in ("aarch64", "arm64"):
+        return ARMHF_CROSS_COMPILER
+    return NATIVE_COMPILER
 
 
 class ShimBuildError(Exception):
@@ -87,15 +123,18 @@ def build_shim(
     out_path,
     *,
     source_path=SHIM_SOURCE,
-    compiler: str = DEFAULT_COMPILER,
+    compiler: Optional[str] = None,
     runner: Callable = subprocess.run,
 ) -> None:
     """Compile the shim source to ``out_path``; raise ShimBuildError on failure.
 
     Compiles to a temp file in the destination directory and atomically moves it
     into place, so an interrupted or failed build never leaves a partial ``.so``
-    that would then be ``LD_PRELOAD``ed. ``runner`` is injected for tests.
+    that would then be ``LD_PRELOAD``ed. ``runner`` is injected for tests. The
+    compiler defaults to an ABI-appropriate choice (see :func:`_resolve_compiler`)
+    -- an armhf cross compiler on a 64-bit host.
     """
+    compiler = _resolve_compiler(compiler)
     source_path = Path(source_path)
     out_path = Path(out_path)
     if not source_path.is_file():
@@ -110,8 +149,12 @@ def build_shim(
         try:
             result = runner(cmd, capture_output=True, text=True, timeout=120)
         except FileNotFoundError as e:
-            # gcc absent: a clear, actionable message beats a raw OSError.
-            raise ShimBuildError(f"compiler '{compiler}' not found") from e
+            # Compiler absent: a clear, actionable message beats a raw OSError.
+            # On a 64-bit host the armhf cross compiler is the usual miss.
+            hint = ""
+            if compiler == ARMHF_CROSS_COMPILER:
+                hint = " (install it with: sudo apt install gcc-arm-linux-gnueabihf)"
+            raise ShimBuildError(f"compiler '{compiler}' not found{hint}") from e
         except OSError as e:
             raise ShimBuildError(f"could not run compiler '{compiler}': {e}") from e
 
@@ -141,7 +184,7 @@ def ensure_display_shim(
     shim_path=CENTAUR_DISPLAY_SHIM,
     *,
     source_path=SHIM_SOURCE,
-    compiler: str = DEFAULT_COMPILER,
+    compiler: Optional[str] = None,
     runner: Callable = subprocess.run,
 ) -> bool:
     """Ensure ``spishim.so`` exists and is built from the current shipped source.

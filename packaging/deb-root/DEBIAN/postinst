@@ -376,6 +376,29 @@ else
     echo -e "::: Warning: centaur-import helper not found at $CENTAUR_MOUNT_HELPER"
 fi
 
+# Grant the pinned armhf-runtime helper. The imported Centaur binary is a 32-bit
+# armhf ELF; on a 64-bit (arm64) host it cannot exec -- and the armhf display shim
+# cannot be loaded into it -- until the armhf foreign architecture is enabled and
+# libc6:armhf is installed. That is a system reconfiguration apt cannot do while
+# resolving package Depends, so the SD import performs it at import time via this
+# helper. The helper hard-codes the architecture and package set (no caller input),
+# so the grant cannot become a general apt-install primitive.
+echo -e "::: Configuring sudoers for armhf runtime setup"
+ARMHF_RUNTIME_HELPER="${DGTCM_PATH}/scripts/armhf-runtime-setup"
+if [ -f "$ARMHF_RUNTIME_HELPER" ]; then
+    chmod +x "$ARMHF_RUNTIME_HELPER"
+    ARMHF_RUNTIME_SUDOERS_FILE="/etc/sudoers.d/universal-chess-armhf-runtime"
+    echo "$PRIMARY_USER ALL=(root) NOPASSWD: $ARMHF_RUNTIME_HELPER" > "$ARMHF_RUNTIME_SUDOERS_FILE"
+    chmod 440 "$ARMHF_RUNTIME_SUDOERS_FILE"
+    # Validate before it can take effect; a malformed drop-in can lock out sudo.
+    if ! visudo -cf "$ARMHF_RUNTIME_SUDOERS_FILE" >/dev/null 2>&1; then
+        echo -e "::: Warning: armhf-runtime sudoers entry invalid; removing"
+        rm -f "$ARMHF_RUNTIME_SUDOERS_FILE"
+    fi
+else
+    echo -e "::: Warning: armhf-runtime helper not found at $ARMHF_RUNTIME_HELPER"
+fi
+
 # Persistent application event log (services.event_log). Pre-create the log dir
 # and file owned by the service user so: (a) the app (running as that user)
 # can append AND rotate it (rotation renames within the dir, needing dir

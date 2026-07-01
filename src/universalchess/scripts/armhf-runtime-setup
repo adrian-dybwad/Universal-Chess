@@ -1,0 +1,87 @@
+#!/bin/sh
+# Root helper that installs the 32-bit armhf runtime so the imported Centaur
+# binary (a 32-bit armhf ELF) can execute on a 64-bit (arm64) host, and so the
+# armhf display shim can be loaded into it.
+#
+# Invoked by the Centaur SD import through a single pinned, passwordless sudo
+# grant the package postinst installs:
+#
+#   <service-user> ALL=(root) NOPASSWD: /opt/universalchess/scripts/armhf-runtime-setup
+#
+# Why a fixed helper instead of NOPASSWD on apt/dpkg directly: apt-get install is
+# a general primitive (any package) and granting it would be equivalent to
+# unrestricted root. This helper narrows the grant to exactly: enable the armhf
+# foreign architecture and install the fixed package set below -- nothing the
+# caller can influence. The hard-coded architecture + package list are the
+# security boundary; do NOT add a package argument or a passthrough branch.
+#
+# This is done here, at import time, rather than as a package Depends because
+# libc6:armhf is not installable until `dpkg --add-architecture armhf` has been
+# run and the armhf index fetched -- a system reconfiguration apt cannot perform
+# while resolving its own dependencies. Import time is also when the apt lock is
+# free (no dpkg transaction in flight) and the network is typically up.
+#
+# Callers use `sudo -n` so a missing grant fails fast rather than hanging on a
+# password prompt. Idempotent and a no-op on a native 32-bit ARM host.
+set -u
+
+# The armhf loader the Centaur binary names as its ELF interpreter. Its presence
+# is the definitive "runtime installed" signal, so the helper short-circuits when
+# it already exists (idempotent re-import / already-provisioned board).
+ARMHF_LOADER="/lib/ld-linux-armhf.so.3"
+
+# Fixed package set. libc6:armhf pulls the loader plus the core C library (and,
+# on glibc >= 2.34, the merged libdl/libpthread/libm the shim links against).
+# Additional armhf libraries Centaur may need surface later as a clear
+# "cannot open shared object" and can be appended here; this is the minimal set
+# that lets the binary exec at all.
+ARMHF_PACKAGES="libc6:armhf"
+
+log() { echo "armhf-runtime: $*"; }
+
+# Only 64-bit (arm64) hosts need the foreign architecture. On a native armhf host
+# the runtime is already present, so this is a clean no-op.
+host_arch="$(dpkg --print-architecture 2>/dev/null || echo unknown)"
+if [ "$host_arch" != "arm64" ]; then
+	log "host arch '$host_arch' needs no armhf runtime; nothing to do"
+	exit 0
+fi
+
+if [ -e "$ARMHF_LOADER" ]; then
+	log "armhf runtime already present ($ARMHF_LOADER); nothing to do"
+	exit 0
+fi
+
+# sudoers env_reset strips caller env, so set the frontend here to keep apt fully
+# non-interactive under the grant.
+export DEBIAN_FRONTEND=noninteractive
+
+# Wait (bounded) for any in-flight dpkg/apt transaction to release the frontend
+# lock, so this cannot collide with a concurrent package operation.
+i=0
+while command -v fuser >/dev/null 2>&1 && \
+      fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && \
+      [ "$i" -lt 60 ]; do
+	sleep 2
+	i=$((i + 1))
+done
+
+if ! dpkg --print-foreign-architectures 2>/dev/null | grep -qx armhf; then
+	log "enabling armhf foreign architecture"
+	dpkg --add-architecture armhf || { log "add-architecture failed"; exit 1; }
+fi
+
+log "updating package lists"
+apt-get update || log "apt-get update failed (continuing; a cached index may suffice)"
+
+log "installing armhf runtime: $ARMHF_PACKAGES"
+# shellcheck disable=SC2086 - ARMHF_PACKAGES is a fixed, space-separated literal
+apt-get install -y --no-install-recommends $ARMHF_PACKAGES || { log "install failed"; exit 1; }
+
+if [ ! -e "$ARMHF_LOADER" ]; then
+	log "install reported success but $ARMHF_LOADER is still missing"
+	exit 1
+fi
+
+log "armhf runtime installed"
+exit 0

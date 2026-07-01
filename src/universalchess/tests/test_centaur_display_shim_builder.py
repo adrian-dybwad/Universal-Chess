@@ -21,8 +21,11 @@ import subprocess
 import pytest
 
 from universalchess.services.centaur_display.shim_builder import (
+    ARMHF_CROSS_COMPILER,
+    NATIVE_COMPILER,
     ShimBuildError,
     _compile_command,
+    _resolve_compiler,
     _stamp_path,
     build_shim,
     ensure_display_shim,
@@ -51,6 +54,86 @@ def _fake_compiler(record, *, returncode=0, stderr="", write_output=True):
                 fh.write(b"\x7fELF-stub")
         return subprocess.CompletedProcess(cmd, returncode, stdout="", stderr=stderr)
     return _run
+
+
+# --- _resolve_compiler --------------------------------------------------------
+
+
+def test_resolve_compiler_uses_armhf_cross_on_aarch64(monkeypatch):
+    """On a 64-bit host the builder must select the armhf cross compiler.
+
+    Why this test exists: the shim is LD_PRELOADed into a 32-bit armhf centaur,
+    so it must be armhf; a native aarch64 gcc cannot emit armhf and the compile
+    fails (armhf-only mcontext_t.arm_* fields, _TIME_BITS=32 rejected under
+    64-bit glibc). This is the exact "building shim failed" regression on a CM5.
+    Manifests as gcc being chosen on aarch64, reintroducing the build failure.
+    """
+    monkeypatch.delenv("UC_CENTAUR_SHIM_CC", raising=False)
+    monkeypatch.setattr("platform.machine", lambda: "aarch64")
+    assert _resolve_compiler(None) == ARMHF_CROSS_COMPILER
+
+
+def test_resolve_compiler_uses_native_gcc_on_32bit_arm(monkeypatch):
+    """On a 32-bit ARM host the native gcc already targets armhf.
+
+    Why this test exists: pulling in a cross compiler where the native one is
+    correct would be needless (and the cross package may not even exist for an
+    armhf host). Manifests as the cross compiler being demanded on armv7l/armv6l.
+    """
+    monkeypatch.delenv("UC_CENTAUR_SHIM_CC", raising=False)
+    monkeypatch.setattr("platform.machine", lambda: "armv7l")
+    assert _resolve_compiler(None) == NATIVE_COMPILER
+
+
+def test_resolve_compiler_honors_explicit_and_env_override(monkeypatch):
+    """An explicit argument or UC_CENTAUR_SHIM_CC overrides arch detection.
+
+    Why this test exists: boards with a differently named toolchain must be able
+    to override without a code change; the explicit argument must take priority
+    over the env var, which takes priority over arch detection. Manifests as an
+    override being ignored (arch default used instead).
+    """
+    monkeypatch.setattr("platform.machine", lambda: "aarch64")
+    monkeypatch.setenv("UC_CENTAUR_SHIM_CC", "my-gcc")
+    assert _resolve_compiler(None) == "my-gcc"  # env beats arch default
+    assert _resolve_compiler("explicit-gcc") == "explicit-gcc"  # arg beats env
+
+
+def test_build_shim_invokes_cross_compiler_on_aarch64(monkeypatch, tmp_path, shim_source):
+    """build_shim compiles with the armhf cross compiler when on aarch64.
+
+    Why this test exists: guards the wiring from _resolve_compiler through to the
+    actual compile invocation, not just the resolver in isolation. Manifests as
+    the compile being invoked with plain gcc on a 64-bit host (build fails on
+    hardware).
+    """
+    monkeypatch.delenv("UC_CENTAUR_SHIM_CC", raising=False)
+    monkeypatch.setattr("platform.machine", lambda: "aarch64")
+    calls = []
+
+    build_shim(tmp_path / "spishim.so", source_path=shim_source, runner=_fake_compiler(calls))
+
+    assert calls[0][0] == ARMHF_CROSS_COMPILER
+
+
+def test_build_shim_missing_cross_compiler_hints_package(monkeypatch, tmp_path, shim_source):
+    """A missing armhf cross compiler yields an install hint, not a bare error.
+
+    Why this test exists: on a fresh 64-bit board without the toolchain the user
+    must get an actionable message naming the package to install. Manifests as a
+    generic "not found" with no remediation, leaving translate mode unfixable by
+    a non-expert.
+    """
+    monkeypatch.delenv("UC_CENTAUR_SHIM_CC", raising=False)
+    monkeypatch.setattr("platform.machine", lambda: "aarch64")
+
+    def _missing(cmd, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", cmd[0])
+
+    with pytest.raises(ShimBuildError) as exc:
+        build_shim(tmp_path / "spishim.so", source_path=shim_source, runner=_missing)
+
+    assert "gcc-arm-linux-gnueabihf" in str(exc.value)
 
 
 # --- _compile_command ---------------------------------------------------------
