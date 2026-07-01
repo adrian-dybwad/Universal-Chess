@@ -25,9 +25,9 @@ from universalchess.services.centaur_import import (
     validate_app_dir,
 )
 from universalchess.services.centaur_import.installer import (
-    ARMHF_RUNTIME_HELPER,
+    ARMHF_SETUP_HELPER,
     MOUNT_HELPER,
-    ensure_armhf_runtime,
+    ensure_armhf_support,
 )
 
 # Debug artifacts the managed copy must never carry over from the SD image.
@@ -408,18 +408,19 @@ def test_ensure_factory_marker_creates_empty_marker_when_missing(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# armhf runtime provisioning (sudo helper injected)
+# armhf support provisioning (sudo helper injected)
 # ---------------------------------------------------------------------------
 
 
-def test_install_from_image_provisions_armhf_runtime_with_import_runner(tmp_path):
-    """Import must provision the armhf runtime, passing it the same sudo runner.
+def test_install_from_image_provisions_armhf_support_with_import_runner(tmp_path):
+    """Import must provision armhf support, passing it the same sudo runner.
 
     The imported binary is a 32-bit armhf ELF; on a 64-bit host it cannot exec
-    until the runtime is installed. If this step were dropped, an imported board
-    would fail to launch Centaur ("cannot execute binary" / missing loader) with
-    no hint why. Asserts the step ran exactly once and received the injected
-    runner (so the real call goes through the pinned sudo helper, not a shell).
+    until the runtime is installed, and its shim cannot be built until the cross
+    toolchain is installed. If this step were dropped, an imported board would
+    fail to launch Centaur (missing loader) or fail the shim build with no hint
+    why. Asserts the step ran exactly once and received the injected runner (so
+    the real call goes through the pinned sudo helper, not a shell).
     """
     seen = []
 
@@ -431,24 +432,25 @@ def test_install_from_image_provisions_armhf_runtime_with_import_runner(tmp_path
     assert seen[0] is runner
 
 
-def test_install_from_image_fails_when_armhf_runtime_step_fails(tmp_path):
-    """A runtime-provisioning failure must fail the whole import.
+def test_install_from_image_fails_when_armhf_support_step_fails(tmp_path):
+    """An armhf-provisioning failure must fail the whole import.
 
-    Centaur is a 32-bit armhf binary that cannot run without the armhf runtime, so
-    an install that copied the files but could not provision the runtime is not
-    usable. Returning success there would hand back an install that fails to launch
-    with no explanation. Asserts the runtime error propagates as CentaurImportError
-    so the web layer surfaces it (400) and the user retries.
+    Centaur is a 32-bit armhf binary that cannot run without the armhf runtime and
+    cannot build its shim without the cross toolchain, so an install that copied
+    the files but could not provision these is not usable. Returning success there
+    would hand back an install that fails to launch with no explanation. Asserts
+    the error propagates as CentaurImportError so the web layer surfaces it (400)
+    and the user retries.
     """
     def failing_runtime(_runner):
-        raise CentaurImportError("runtime install failed")
+        raise CentaurImportError("armhf support install failed")
 
     with pytest.raises(CentaurImportError):
         _install(tmp_path, ensure_runtime=failing_runtime)
 
 
-def test_ensure_armhf_runtime_invokes_pinned_helper_via_sudo_n(tmp_path):
-    """The runtime helper must be invoked as `sudo -n <pinned helper>`, no args.
+def test_ensure_armhf_support_invokes_pinned_helper_via_sudo_n(tmp_path):
+    """The helper must be invoked as `sudo -n <pinned helper>`, no args.
 
     The security boundary is a passwordless sudo grant to exactly this fixed
     helper. `sudo -n` fails fast if the grant is missing (rather than hanging on
@@ -464,33 +466,33 @@ def test_ensure_armhf_runtime_invokes_pinned_helper_via_sudo_n(tmp_path):
         return types.SimpleNamespace(returncode=0)
 
     # A zero exit is the success path: must return normally (no exception).
-    ensure_armhf_runtime(runner)
-    assert seen["cmd"] == ["sudo", "-n", ARMHF_RUNTIME_HELPER]
+    ensure_armhf_support(runner)
+    assert seen["cmd"] == ["sudo", "-n", ARMHF_SETUP_HELPER]
     # capture_output keeps helper chatter out of the app log; a bounded timeout
     # stops a wedged apt from hanging the web request forever.
     assert seen["kwargs"].get("capture_output") is True
     assert seen["kwargs"].get("timeout")
 
 
-def test_ensure_armhf_runtime_raises_on_nonzero_exit(tmp_path):
+def test_ensure_armhf_support_raises_on_nonzero_exit(tmp_path):
     """A non-zero helper exit must raise CentaurImportError, not return quietly.
 
-    The runtime is required, so a failed install must abort the import rather than
-    be swallowed. Asserts the raise so the required-step contract holds and the
-    user is told to retry.
+    The armhf support is required, so a failed install must abort the import rather
+    than be swallowed. Asserts the raise so the required-step contract holds and
+    the user is told to retry.
     """
     def runner(cmd, *a, **k):
         return types.SimpleNamespace(returncode=1)
 
     with pytest.raises(CentaurImportError):
-        ensure_armhf_runtime(runner)
+        ensure_armhf_support(runner)
 
 
-def test_ensure_armhf_runtime_raises_when_sudo_missing(tmp_path):
+def test_ensure_armhf_support_raises_when_sudo_missing(tmp_path):
     """A missing sudo binary (OSError) must raise CentaurImportError.
 
     On a host without sudo, or if the helper path is absent, the subprocess call
-    raises OSError. That is still a failure to provision the required runtime, so
+    raises OSError. That is still a failure to provision the required support, so
     it must surface as a CentaurImportError (with a clean message) rather than a
     raw OSError leaking to the client. Asserts the translated exception type.
     """
@@ -498,7 +500,7 @@ def test_ensure_armhf_runtime_raises_when_sudo_missing(tmp_path):
         raise FileNotFoundError("sudo")
 
     with pytest.raises(CentaurImportError):
-        ensure_armhf_runtime(runner)
+        ensure_armhf_support(runner)
 
 
 def test_ensure_factory_marker_is_idempotent_and_preserves_content(tmp_path):

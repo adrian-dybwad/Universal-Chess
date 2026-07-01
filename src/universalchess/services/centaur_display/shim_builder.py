@@ -6,8 +6,10 @@ to UC's gateway. The shim is a small C shared object that MUST match centaur's
 32-bit armhf ABI (the linker refuses to preload a differently-typed object), so
 it is built on-device rather than shipped as a binary. On a 32-bit ARM host the
 native ``gcc`` produces armhf directly; on a 64-bit ``aarch64`` host it must be
-cross-compiled with the armhf toolchain (see ``_resolve_compiler``), which the
-package pulls in via ``Recommends: gcc-arm-linux-gnueabihf``.
+cross-compiled with the armhf toolchain (see ``_resolve_compiler``). That
+toolchain is provisioned deterministically at Centaur-import time by the
+``centaur-armhf-setup`` helper (the package also lists it under ``Recommends``
+for the first full-apt install), so it is present before this module runs.
 
 Nothing else builds it: the SD import only preserves an existing ``spishim.so``,
 and the package ships the *source* (next to this module) but not a binary. So

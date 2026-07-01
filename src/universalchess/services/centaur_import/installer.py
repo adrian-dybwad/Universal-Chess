@@ -24,10 +24,11 @@ from universalchess.services.centaur_import.detection import (
 # mountpoint (see scripts/centaur-import-mount and the postinst sudoers grant).
 MOUNT_HELPER = os.path.join(SCRIPTS_DIR, "centaur-import-mount")
 
-# Pinned root helper that enables the armhf foreign architecture and installs the
-# 32-bit runtime so the imported (armhf) Centaur binary can execute on a 64-bit
-# host (see scripts/armhf-runtime-setup and the postinst sudoers grant).
-ARMHF_RUNTIME_HELPER = os.path.join(SCRIPTS_DIR, "armhf-runtime-setup")
+# Pinned root helper that provisions armhf support for the imported (armhf)
+# Centaur binary on a 64-bit host: the armhf runtime (so it can execute) and the
+# armhf cross toolchain (so the display shim can be built for its ABI). See
+# scripts/centaur-armhf-setup and the postinst sudoers grant.
+ARMHF_SETUP_HELPER = os.path.join(SCRIPTS_DIR, "centaur-armhf-setup")
 
 # Fixed read-only mountpoint the helper uses; kept under TMP_DIR so it shares the
 # service-owned, writable tree and matches the helper's own path allow-list.
@@ -127,35 +128,37 @@ def ensure_factory_marker(app_dir=CENTAUR_HOME) -> bool:
     return True
 
 
-def ensure_armhf_runtime(runner: Callable = subprocess.run) -> None:
-    """Install the armhf runtime the imported Centaur binary needs to execute.
+def ensure_armhf_support(runner: Callable = subprocess.run) -> None:
+    """Provision the armhf runtime + shim toolchain the imported Centaur needs.
 
     The Centaur program is a 32-bit armhf ELF. On a 64-bit (arm64) host it cannot
-    execute -- and the armhf display shim cannot be loaded into it -- until the
-    armhf foreign architecture is enabled and ``libc6:armhf`` (the loader) is
-    installed. This invokes the pinned ``armhf-runtime-setup`` helper via
-    ``sudo -n``; the helper is arch-guarded and idempotent, so it is a fast no-op
-    (exit 0) on a native armhf host or an already-provisioned board.
+    execute until the armhf foreign architecture is enabled and ``libc6:armhf`` is
+    installed, and its display "translate" shim cannot be built until the armhf
+    cross toolchain (``gcc-arm-linux-gnueabihf`` + ``libc6-dev-armhf-cross``) is
+    present -- the native aarch64 ``gcc`` physically cannot emit centaur's armhf
+    ABI. This invokes the pinned ``centaur-armhf-setup`` helper via ``sudo -n``;
+    the helper is arch-guarded and installs only what is missing, so it is a fast
+    no-op (exit 0) on a native armhf host or an already-provisioned board.
 
-    This is a required step, not best-effort: Centaur will not run at all without
-    the runtime, so a failure raises CentaurImportError to fail the whole import.
-    Reporting success on a half-provisioned system would hand back an install that
-    cannot launch; failing loudly makes the user retry (a re-import wipes and
-    redoes the tree). The message is author-written and path-free, so it is safe
-    to surface to the client.
+    This is a required step, not best-effort: Centaur will neither run nor build
+    its shim without these, so a failure raises CentaurImportError to fail the
+    whole import. Reporting success on a half-provisioned system would hand back
+    an install that cannot launch; failing loudly makes the user retry (a
+    re-import wipes and redoes the tree). The message is author-written and
+    path-free, so it is safe to surface to the client.
     """
-    cmd = ["sudo", "-n", ARMHF_RUNTIME_HELPER]
+    cmd = ["sudo", "-n", ARMHF_SETUP_HELPER]
     try:
         result = runner(cmd, capture_output=True, timeout=600)
     except OSError as exc:
         raise CentaurImportError(
-            "Could not install the 32-bit runtime Centaur needs to run on this "
-            "system. Check that it is online and try the import again."
+            "Could not install the 32-bit armhf support Centaur needs to run on "
+            "this system. Check that it is online and try the import again."
         ) from exc
     if getattr(result, "returncode", 0) != 0:
         raise CentaurImportError(
-            "Could not install the 32-bit runtime Centaur needs to run on this "
-            "system. Check network connectivity and try the import again."
+            "Could not install the 32-bit armhf support Centaur needs to run on "
+            "this system. Check network connectivity and try the import again."
         )
 
 
@@ -169,7 +172,7 @@ def install_from_image(
     decompress: Callable = _gunzip_to,
     copytree: Callable = shutil.copytree,
     install_hook: Callable = None,
-    ensure_runtime: Callable = ensure_armhf_runtime,
+    ensure_runtime: Callable = ensure_armhf_support,
 ) -> InstallResult:
     """Install the Centaur app from a gzip ext4 image into ``dest``.
 
@@ -183,11 +186,11 @@ def install_from_image(
     defaults to the real one. Routing Centaur's engine through the proxy is part
     of producing a ready-to-use install, so it happens here.
 
-    ``ensure_runtime`` installs the 32-bit armhf runtime the imported binary needs
-    to execute on a 64-bit host (injected for tests). It runs after the binary is
-    in place and raises CentaurImportError on failure -- Centaur cannot run
-    without it, so a runtime failure fails the whole import. See
-    ``ensure_armhf_runtime``.
+    ``ensure_runtime`` provisions the 32-bit armhf runtime + shim toolchain the
+    imported binary needs on a 64-bit host (injected for tests). It runs after the
+    binary is in place and raises CentaurImportError on failure -- Centaur cannot
+    run or build its shim without it, so a failure fails the whole import. See
+    ``ensure_armhf_support``.
     """
     if install_hook is None:
         from universalchess.services.centaur_engine_proxy.hook import install_engine_hook
@@ -248,10 +251,11 @@ def install_from_image(
             shutil.rmtree(staging, ignore_errors=True)
 
     _apply_exec_bits(dest)
-    # The imported binary is a 32-bit armhf ELF; on a 64-bit host it cannot exec
-    # until the armhf runtime is installed. Do it now, having just confirmed and
-    # made the binary executable. Required, not optional: this raises and fails
-    # the import if the runtime cannot be installed (Centaur would not run).
+    # The imported binary is a 32-bit armhf ELF; on a 64-bit host it cannot exec,
+    # and its display shim cannot be built, until the armhf runtime and cross
+    # toolchain are installed. Do it now, having just confirmed and made the binary
+    # executable. Required, not optional: this raises and fails the import if the
+    # support cannot be installed (Centaur would not run or would launch un-shimmed).
     ensure_runtime(runner)
     # Route Centaur's engine through the UC proxy (any UC engine + game recording).
     install_hook(dest / "engines")
