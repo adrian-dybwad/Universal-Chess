@@ -14,16 +14,22 @@
  *           (BUSY) and writes (DC/RST/CS) of the GPSET0/GPCLR0/GPLEV0 registers.
  *
  * This shim:
- *   0. Virtualizes /proc/cpuinfo and /dev/gpiomem for Pi 5 / CM5-class hardware
- *      ONLY (gated by `compat_spoof`; see shim_init). centaur's bundled
- *      RPi/_GPIO.so (an old armhf build) refuses to initialize unless it
- *      recognizes the board, and it does not know the CM5 / Pi 5 (BCM2712), so
- *      it raises "This module can only be run on a Raspberry Pi!" at import --
- *      before any GPIO access -- and centaur exits. On such hosts the shim
- *      presents a synthetic cpuinfo (see fopen hook) and a substitute for the
- *      RP1-era missing /dev/gpiomem (see open hook). On every earlier Pi,
- *      including the Pi Zero the original DGT board ships, both are inert and the
- *      hooks pass straight through, so native hardware is unaffected.
+ *   0. Virtualizes /proc/cpuinfo and /dev/gpiomem when the host needs it, gated
+ *      by TWO INDEPENDENT flags decided once at load (see shim_init):
+ *        - `spoof_cpuinfo` presents a synthetic cpuinfo (see fopen hook) when the
+ *          real /proc/cpuinfo lacks a "Hardware :" line. centaur's bundled
+ *          RPi/_GPIO.so (an old armhf build) identifies the SoC from that line
+ *          and raises "This module can only be run on a Raspberry Pi!" at import
+ *          if it is absent. A 64-bit Raspberry Pi OS kernel drops the line, so
+ *          this is needed on EVERY arm64 host -- the Pi Zero 2 W and Pi 4 just as
+ *          much as the CM5 / Pi 5 -- even those with a legacy /dev/gpiomem.
+ *        - `spoof_gpiomem` substitutes for a missing /dev/gpiomem (see open hook)
+ *          only on the RP1 boards (Pi 5 / CM5) that removed the legacy device.
+ *      They are decoupled because the two conditions do not coincide: the Zero 2
+ *      W has a legacy /dev/gpiomem (no substitute needed) but a 64-bit cpuinfo
+ *      (synthetic cpuinfo needed). On a native 32-bit host the kernel includes
+ *      the Hardware line and the legacy /dev/gpiomem, so both flags stay off and
+ *      the fopen/open hooks pass straight through -- native hardware unaffected.
  *   1. Virtualizes /dev/gpiomem: centaur's mmap is redirected to a private
  *      shadow page, so its DC/RST/CS writes never reach the real pins (no
  *      contention with UC, which keeps driving the real panel) and its BUSY
@@ -104,15 +110,15 @@ static volatile uint32_t *gpio_shadow = NULL; /* base of the shadow page */
 static size_t gpio_shadow_len = 0;
 static long   page_size = 4096;
 
-/* Whether the board-compatibility spoofs (synthetic /proc/cpuinfo and the
- * /dev/gpiomem substitute) are needed. They exist only for Pi 5 / CM5-class
- * hardware, where the RP1 removed the legacy /dev/gpiomem and the bundled
- * RPi.GPIO does not recognize the SoC. On every earlier Pi -- including the Pi
- * Zero the original DGT board ships -- the legacy /dev/gpiomem is present and
- * both mechanisms work natively, so this stays 0 and the fopen/open hooks fall
- * straight through to libc with only a single branch of overhead. Decided once
- * at load (see shim_init); /dev/gpiomem presence is the RP1 boundary marker. */
-static int compat_spoof = 0;
+/* The two board-compatibility spoofs, gated INDEPENDENTLY (see shim_init for the
+ * rationale and detection). Each stays 0 on a host that does not need it, so the
+ * corresponding hook falls straight through to libc with one branch of overhead.
+ *   spoof_cpuinfo: present a synthetic /proc/cpuinfo (fopen hook) -- set when the
+ *                  real cpuinfo lacks a "Hardware :" line (any 64-bit RPi kernel).
+ *   spoof_gpiomem: substitute for a missing /dev/gpiomem (open hook) -- set when
+ *                  the legacy device is absent (the RP1 Pi 5 / CM5 boundary). */
+static int spoof_cpuinfo = 0;
+static int spoof_gpiomem = 0;
 
 /* Tracked virtual pin levels (only the four we drive matter). */
 static uint32_t pin_levels = 0;     /* bit N = level of BCM pin N */
@@ -401,12 +407,13 @@ void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
 /* -------------------------------------------------------------------------
  * /proc/cpuinfo virtualization (board-detection spoof)
  *
- * The bundled RPi/_GPIO.so decodes the "Revision" line of /proc/cpuinfo to
- * identify the board and set the GPIO peripheral base. It only knows processors
- * up to BCM2711 (Pi 4); the CM5 / Pi 5 report BCM2712 (processor id 4, e.g.
- * revision b041a0), which it rejects with "This module can only be run on a
- * Raspberry Pi!" at import -- before any GPIO access -- so centaur never reaches
- * the gpiomem path this shim virtualizes.
+ * The bundled RPi/_GPIO.so identifies the SoC from the "Hardware : BCM<n>" line
+ * of /proc/cpuinfo and raises "This module can only be run on a Raspberry Pi!"
+ * at import -- before any GPIO access -- when it cannot. A 64-bit Raspberry Pi
+ * OS kernel omits that line entirely (it keeps Revision/Serial/Model but drops
+ * Hardware), so the module fails on EVERY arm64 host, from the Pi Zero 2 W to
+ * the CM5 / Pi 5, regardless of whether a legacy /dev/gpiomem is present. That
+ * missing line is what `spoof_cpuinfo` detects (see shim_init).
  *
  * Present a synthetic cpuinfo reporting a Pi 3B (BCM2837, revision a02082): a
  * board the bundled RPi.GPIO recognizes AND whose GPIO register layout matches
@@ -453,7 +460,7 @@ int open(const char *path, int flags, ...) {
         va_list ap; va_start(ap, flags); mode = (mode_t)va_arg(ap, int); va_end(ap);
     }
     if (!real_open) real_open = dlsym(RTLD_NEXT, "open");
-    if (compat_spoof && is_gpiomem_path(path)) return open_gpiomem_substitute();
+    if (spoof_gpiomem && is_gpiomem_path(path)) return open_gpiomem_substitute();
     return real_open(path, flags, mode);
 }
 
@@ -463,19 +470,19 @@ int open64(const char *path, int flags, ...) {
         va_list ap; va_start(ap, flags); mode = (mode_t)va_arg(ap, int); va_end(ap);
     }
     if (!real_open64) real_open64 = dlsym(RTLD_NEXT, "open64");
-    if (compat_spoof && is_gpiomem_path(path)) return open_gpiomem_substitute();
+    if (spoof_gpiomem && is_gpiomem_path(path)) return open_gpiomem_substitute();
     return real_open64(path, flags, mode);
 }
 
 FILE *fopen(const char *path, const char *mode) {
     if (!real_fopen) real_fopen = dlsym(RTLD_NEXT, "fopen");
-    if (compat_spoof && is_cpuinfo_path(path)) return open_fake_cpuinfo();
+    if (spoof_cpuinfo && is_cpuinfo_path(path)) return open_fake_cpuinfo();
     return real_fopen(path, mode);
 }
 
 FILE *fopen64(const char *path, const char *mode) {
     if (!real_fopen64) real_fopen64 = dlsym(RTLD_NEXT, "fopen64");
-    if (compat_spoof && is_cpuinfo_path(path)) return open_fake_cpuinfo();
+    if (spoof_cpuinfo && is_cpuinfo_path(path)) return open_fake_cpuinfo();
     return real_fopen64(path, mode);
 }
 
@@ -533,24 +540,42 @@ int ioctl(int fd, unsigned long request, ...) {
     return real_ioctl(fd, request, argp);
 }
 
+/* Decide whether the synthetic cpuinfo is needed by reading the REAL
+ * /proc/cpuinfo and checking for a line beginning with "Hardware". The bundled
+ * (old, armhf) RPi.GPIO requires that line to identify the SoC; a 64-bit
+ * Raspberry Pi OS kernel omits it (keeping Revision/Serial/Model), which is why
+ * the module fails on every arm64 host. A 32-bit kernel always includes it, so
+ * native boards read as present and are left untouched -- decoupling this from
+ * the /dev/gpiomem (RP1) question, which the Zero 2 W would otherwise fail: it
+ * has a legacy /dev/gpiomem yet a Hardware-less 64-bit cpuinfo.
+ *
+ * Uses the resolved real_open (set before this runs) plus raw read/close, none
+ * of which re-enter our hooks, so it is safe to call from the constructor. If
+ * the file cannot be read, returns 0 (assume native) so a probe failure never
+ * spoofs cpuinfo on a host that does not need it. */
+static int real_cpuinfo_lacks_hardware_line(void) {
+    int fd = real_open ? real_open("/proc/cpuinfo", O_RDONLY)
+                       : open("/proc/cpuinfo", O_RDONLY);
+    if (fd < 0) return 0;
+    char buf[16384];
+    size_t total = 0;
+    ssize_t r;
+    while (total < sizeof(buf) - 1 &&
+           (r = read(fd, buf + total, sizeof(buf) - 1 - total)) > 0) {
+        total += (size_t)r;
+    }
+    close(fd);
+    buf[total] = '\0';
+    if (strncmp(buf, "Hardware", 8) == 0) return 0;   /* Hardware is the first line */
+    return strstr(buf, "\nHardware") == NULL;
+}
+
 __attribute__((constructor))
 static void shim_init(void) {
     for (int i = 0; i < MAX_FAKE_GPIOMEM_FDS; i++) fake_gpiomem_fds[i] = -1;
-    /* Enable the board-compatibility spoofs only when the legacy /dev/gpiomem is
-     * absent -- the Pi 5 / CM5 (RP1) marker. On the Pi Zero / 3 / 4 the device
-     * exists, so both spoofs stay off and the fopen/open hooks are transparent
-     * (native cpuinfo, native gpiomem), keeping performance unaffected. */
-    compat_spoof = (access("/dev/gpiomem", F_OK) != 0);
-    page_size = sysconf(_SC_PAGESIZE);
-    if (page_size <= 0) page_size = 4096;
-    const char *bih = getenv("UC_CENTAUR_BUSY_IDLE_HIGH");
-    if (bih && *bih) busy_idle_high = atoi(bih) != 0;
-    const char *dbg = getenv("UC_CENTAUR_SHIM_DEBUG");
-    if (dbg && *dbg) {
-        dbg_fd = open(dbg, O_WRONLY | O_CREAT | O_APPEND, 0644);
-        dbg_emit(compat_spoof ? "[shim] loaded (compat spoofs ON: no legacy /dev/gpiomem)\n"
-                              : "[shim] loaded (compat spoofs OFF: native /dev/gpiomem)\n");
-    }
+
+    /* Resolve the real entry points first: real_cpuinfo_lacks_hardware_line()
+     * below reads /proc/cpuinfo through real_open. */
     real_write   = dlsym(RTLD_NEXT, "write");
     real_writev  = dlsym(RTLD_NEXT, "writev");
     real_ioctl   = dlsym(RTLD_NEXT, "ioctl");
@@ -559,4 +584,23 @@ static void shim_init(void) {
     real_fopen64 = dlsym(RTLD_NEXT, "fopen64");
     real_open    = dlsym(RTLD_NEXT, "open");
     real_open64  = dlsym(RTLD_NEXT, "open64");
+
+    /* Two independent gates (see the flag declarations and the top-of-file note).
+     * cpuinfo spoof: needed on any 64-bit kernel (missing "Hardware" line).
+     * gpiomem substitute: needed only where the legacy device is absent (RP1). */
+    spoof_cpuinfo = real_cpuinfo_lacks_hardware_line();
+    spoof_gpiomem = (access("/dev/gpiomem", F_OK) != 0);
+
+    page_size = sysconf(_SC_PAGESIZE);
+    if (page_size <= 0) page_size = 4096;
+    const char *bih = getenv("UC_CENTAUR_BUSY_IDLE_HIGH");
+    if (bih && *bih) busy_idle_high = atoi(bih) != 0;
+    const char *dbg = getenv("UC_CENTAUR_SHIM_DEBUG");
+    if (dbg && *dbg) {
+        dbg_fd = open(dbg, O_WRONLY | O_CREAT | O_APPEND, 0644);
+        char b[96];
+        snprintf(b, sizeof(b), "[shim] loaded (spoof_cpuinfo=%d spoof_gpiomem=%d)\n",
+                 spoof_cpuinfo, spoof_gpiomem);
+        dbg_emit(b);
+    }
 }
