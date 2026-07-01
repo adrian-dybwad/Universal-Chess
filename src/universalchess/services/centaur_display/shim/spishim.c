@@ -14,6 +14,13 @@
  *           (BUSY) and writes (DC/RST/CS) of the GPSET0/GPCLR0/GPLEV0 registers.
  *
  * This shim:
+ *   0. Virtualizes /proc/cpuinfo: centaur's bundled RPi/_GPIO.so (an old armhf
+ *      build) refuses to initialize unless it recognizes the board, and it does
+ *      not know the CM5 / Pi 5 (BCM2712), so it raises "This module can only be
+ *      run on a Raspberry Pi!" at import -- before any GPIO access -- and centaur
+ *      exits. The shim presents a synthetic cpuinfo reporting a board it does
+ *      recognize (see fopen hook) so detection succeeds and the rest of the shim
+ *      can run.
  *   1. Virtualizes /dev/gpiomem: centaur's mmap is redirected to a private
  *      shadow page, so its DC/RST/CS writes never reach the real pins (no
  *      contention with UC, which keeps driving the real panel) and its BUSY
@@ -80,6 +87,10 @@ static ssize_t (*real_write)(int, const void *, size_t);
 static ssize_t (*real_writev)(int, const struct iovec *, int);
 static int     (*real_ioctl)(int, unsigned long, ...);
 static void   *(*real_mmap)(void *, size_t, int, int, int, off_t);
+static FILE   *(*real_fopen)(const char *, const char *);
+static FILE   *(*real_fopen64)(const char *, const char *);
+static int     (*real_open)(const char *, int, ...);
+static int     (*real_open64)(const char *, int, ...);
 
 /* ---- shim state --------------------------------------------------------- */
 static pthread_mutex_t lk = PTHREAD_MUTEX_INITIALIZER;
@@ -92,6 +103,35 @@ static long   page_size = 4096;
 
 /* Tracked virtual pin levels (only the four we drive matter). */
 static uint32_t pin_levels = 0;     /* bit N = level of BCM pin N */
+
+/* fds returned in place of /dev/gpiomem. The legacy /dev/gpiomem does not exist
+ * on the Pi 5 / CM5 (only per-bank /dev/gpiomemN for the RP1), so centaur's
+ * open("/dev/gpiomem") gets ENOENT and RPi.GPIO falls back to /dev/mem, which
+ * needs root and fails ("No access to /dev/mem"). The open hook below satisfies
+ * that open with a mappable substitute (/dev/zero) and records the fd here so
+ * the mmap hook shadows it -- readlink would show the substitute, not
+ * /dev/gpiomem, so path detection alone would miss it. Only the first gpiomem
+ * mmap matters (see the gpio_shadow guard in mmap), so a few slots suffice. */
+#define MAX_FAKE_GPIOMEM_FDS 8
+static int fake_gpiomem_fds[MAX_FAKE_GPIOMEM_FDS];
+
+static void fake_gpiomem_add(int fd) {
+    pthread_mutex_lock(&lk);
+    for (int i = 0; i < MAX_FAKE_GPIOMEM_FDS; i++) {
+        if (fake_gpiomem_fds[i] < 0) { fake_gpiomem_fds[i] = fd; break; }
+    }
+    pthread_mutex_unlock(&lk);
+}
+
+static int fake_gpiomem_has(int fd) {
+    int found = 0;
+    pthread_mutex_lock(&lk);
+    for (int i = 0; i < MAX_FAKE_GPIOMEM_FDS; i++) {
+        if (fake_gpiomem_fds[i] == fd) { found = 1; break; }
+    }
+    pthread_mutex_unlock(&lk);
+    return found;
+}
 
 /* ---- opt-in debug (UC_CENTAUR_SHIM_DEBUG=/path) ------------------------- */
 static int  dbg_fd = -1;            /* debug log fd, -1 if disabled */
@@ -180,6 +220,7 @@ static int is_spidev_fd(int fd) {
 }
 
 static int is_gpiomem_fd(int fd) {
+    if (fake_gpiomem_has(fd)) return 1;    /* substitute fd (see open hook) */
     char p[64], target[256];
     snprintf(p, sizeof(p), "/proc/self/fd/%d", fd);
     ssize_t r = readlink(p, target, sizeof(target) - 1);
@@ -344,6 +385,87 @@ void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
     return real_mmap(addr, length, prot, flags, fd, offset);
 }
 
+/* -------------------------------------------------------------------------
+ * /proc/cpuinfo virtualization (board-detection spoof)
+ *
+ * The bundled RPi/_GPIO.so decodes the "Revision" line of /proc/cpuinfo to
+ * identify the board and set the GPIO peripheral base. It only knows processors
+ * up to BCM2711 (Pi 4); the CM5 / Pi 5 report BCM2712 (processor id 4, e.g.
+ * revision b041a0), which it rejects with "This module can only be run on a
+ * Raspberry Pi!" at import -- before any GPIO access -- so centaur never reaches
+ * the gpiomem path this shim virtualizes.
+ *
+ * Present a synthetic cpuinfo reporting a Pi 3B (BCM2837, revision a02082): a
+ * board the bundled RPi.GPIO recognizes AND whose GPIO register layout matches
+ * this shim's fixed GPSET0/GPCLR0/GPLEV0 word indices. The real peripheral base
+ * is irrelevant because /dev/gpiomem is shadowed, so detection only needs to
+ * succeed with a layout-compatible board. Every other path opens the real file.
+ * Both fopen and fopen64 are hooked because a 32-bit LFS build of _GPIO.so links
+ * the plain fopen or the 64-bit alias depending on its compile flags.
+ * ---------------------------------------------------------------------- */
+static const char FAKE_CPUINFO[] =
+    "Hardware\t: BCM2835\n"
+    "Revision\t: a02082\n"
+    "Serial\t\t: 0000000000000000\n"
+    "Model\t\t: Raspberry Pi 3 Model B Rev 1.2\n";
+
+static int is_cpuinfo_path(const char *path) {
+    return path && strcmp(path, "/proc/cpuinfo") == 0;
+}
+
+/* fmemopen over a static buffer: read-only, so the const cast is safe, and the
+ * buffer outlives any FILE the caller fcloses (static storage). */
+static FILE *open_fake_cpuinfo(void) {
+    return fmemopen((void *)FAKE_CPUINFO, sizeof(FAKE_CPUINFO) - 1, "r");
+}
+
+/* Satisfy open("/dev/gpiomem") with a mappable substitute so RPi.GPIO does not
+ * fall back to /dev/mem (see fake_gpiomem_fds). /dev/zero is always present,
+ * world-rw and mmap-able; the shim replaces the mapping with a private shadow,
+ * so the backing content is never used -- only a valid, mappable fd is needed. */
+static int open_gpiomem_substitute(void) {
+    if (!real_open) real_open = dlsym(RTLD_NEXT, "open");
+    int fd = real_open("/dev/zero", O_RDWR);
+    if (fd >= 0) fake_gpiomem_add(fd);
+    return fd;
+}
+
+static int is_gpiomem_path(const char *path) {
+    return path && strcmp(path, "/dev/gpiomem") == 0;
+}
+
+int open(const char *path, int flags, ...) {
+    mode_t mode = 0;
+    if (flags & O_CREAT) {
+        va_list ap; va_start(ap, flags); mode = (mode_t)va_arg(ap, int); va_end(ap);
+    }
+    if (!real_open) real_open = dlsym(RTLD_NEXT, "open");
+    if (is_gpiomem_path(path)) return open_gpiomem_substitute();
+    return real_open(path, flags, mode);
+}
+
+int open64(const char *path, int flags, ...) {
+    mode_t mode = 0;
+    if (flags & O_CREAT) {
+        va_list ap; va_start(ap, flags); mode = (mode_t)va_arg(ap, int); va_end(ap);
+    }
+    if (!real_open64) real_open64 = dlsym(RTLD_NEXT, "open64");
+    if (is_gpiomem_path(path)) return open_gpiomem_substitute();
+    return real_open64(path, flags, mode);
+}
+
+FILE *fopen(const char *path, const char *mode) {
+    if (!real_fopen) real_fopen = dlsym(RTLD_NEXT, "fopen");
+    if (is_cpuinfo_path(path)) return open_fake_cpuinfo();
+    return real_fopen(path, mode);
+}
+
+FILE *fopen64(const char *path, const char *mode) {
+    if (!real_fopen64) real_fopen64 = dlsym(RTLD_NEXT, "fopen64");
+    if (is_cpuinfo_path(path)) return open_fake_cpuinfo();
+    return real_fopen64(path, mode);
+}
+
 ssize_t write(int fd, const void *buf, size_t n) {
     if (!real_write) real_write = dlsym(RTLD_NEXT, "write");
     if (n && is_spidev_fd(fd)) {
@@ -400,6 +522,7 @@ int ioctl(int fd, unsigned long request, ...) {
 
 __attribute__((constructor))
 static void shim_init(void) {
+    for (int i = 0; i < MAX_FAKE_GPIOMEM_FDS; i++) fake_gpiomem_fds[i] = -1;
     page_size = sysconf(_SC_PAGESIZE);
     if (page_size <= 0) page_size = 4096;
     const char *bih = getenv("UC_CENTAUR_BUSY_IDLE_HIGH");
@@ -413,4 +536,8 @@ static void shim_init(void) {
     real_writev  = dlsym(RTLD_NEXT, "writev");
     real_ioctl   = dlsym(RTLD_NEXT, "ioctl");
     real_mmap    = dlsym(RTLD_NEXT, "mmap");
+    real_fopen   = dlsym(RTLD_NEXT, "fopen");
+    real_fopen64 = dlsym(RTLD_NEXT, "fopen64");
+    real_open    = dlsym(RTLD_NEXT, "open");
+    real_open64  = dlsym(RTLD_NEXT, "open64");
 }
