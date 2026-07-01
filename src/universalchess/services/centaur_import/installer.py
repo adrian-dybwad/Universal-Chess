@@ -19,6 +19,7 @@ from universalchess.services.centaur_import.detection import (
     ignore_cruft,
     validate_app_dir,
 )
+from universalchess.services.centaur_import.import_state import ImportStage
 
 # Pinned root helper that loop-mounts/unmounts the image read-only at a fixed
 # mountpoint (see scripts/centaur-import-mount and the postinst sudoers grant).
@@ -173,6 +174,7 @@ def install_from_image(
     copytree: Callable = shutil.copytree,
     install_hook: Callable = None,
     ensure_runtime: Callable = ensure_armhf_support,
+    stage_callback: Callable = None,
 ) -> InstallResult:
     """Install the Centaur app from a gzip ext4 image into ``dest``.
 
@@ -191,7 +193,20 @@ def install_from_image(
     binary is in place and raises CentaurImportError on failure -- Centaur cannot
     run or build its shim without it, so a failure fails the whole import. See
     ``ensure_armhf_support``.
+
+    ``stage_callback`` (optional) is called ``callback(ImportStage, message)`` at
+    the start of each phase so a caller running this on a background thread can
+    surface live progress to the web UI. It is null-safe: ``None`` (the default)
+    means no reporting, so callers that do not track progress are unaffected. The
+    long, otherwise-silent phase on a 64-bit host is INSTALLING_ARMHF (the apt run
+    inside ``ensure_runtime``); it is reported before that call.
     """
+    def report(stage, message):
+        # Progress reporting is additive: a caller that passes no callback (every
+        # non-web caller and the existing tests) must be unaffected.
+        if stage_callback is not None:
+            stage_callback(stage, message)
+
     if install_hook is None:
         from universalchess.services.centaur_engine_proxy.hook import install_engine_hook
 
@@ -210,6 +225,7 @@ def install_from_image(
     # read-only mount and copytree fails with EPERM. Staging as root sidesteps
     # that without giving the copy step any privilege.
     staging = tmp_dir / "centaur-stage"
+    report(ImportStage.DECOMPRESSING, "Decompressing image...")
     decompress(image_path, raw_image)
 
     try:
@@ -219,11 +235,13 @@ def install_from_image(
         # is where this process reads the mounted tree from, not an argument to
         # the helper. Passing it to the helper pushes its token count past the
         # `$# -eq 2` check and the mount silently fails.
+        report(ImportStage.MOUNTING, "Mounting SD image...")
         _run_helper(runner, "mount", str(raw_image))
         try:
             # Detection/validation only need to *see* the centaur file and stat
             # engines/fonts (search on the parent), which the service user can do
             # off the mount; reading *into* the restricted dirs is what needs root.
+            report(ImportStage.VALIDATING, "Validating Centaur files...")
             app_dir = detect_app_dir(mount_root)
             if app_dir is None:
                 raise CentaurImportError(
@@ -236,6 +254,7 @@ def install_from_image(
                     "The uploaded image is missing required Centaur files: "
                     + ", ".join(validation.missing)
                 )
+            report(ImportStage.STAGING, "Reading image contents...")
             _run_helper(runner, "stage", str(app_dir), str(staging))
         finally:
             # umount takes no argument -- the helper unmounts its fixed MNT.
@@ -243,6 +262,7 @@ def install_from_image(
 
         # The mount is released; the staged copy is service-readable. Apply the
         # cruft-stripping / shim-preserving copy from staging into the install dir.
+        report(ImportStage.INSTALLING_FILES, "Installing Centaur software...")
         _install_app_dir(staging, dest, copytree)
     finally:
         if raw_image.exists():
@@ -256,12 +276,17 @@ def install_from_image(
     # toolchain are installed. Do it now, having just confirmed and made the binary
     # executable. Required, not optional: this raises and fails the import if the
     # support cannot be installed (Centaur would not run or would launch un-shimmed).
+    # This is the long, otherwise-silent phase on a 64-bit host (apt), so it is
+    # reported before the call; on a native armhf host it is a fast no-op.
+    report(ImportStage.INSTALLING_ARMHF, "Installing 32-bit support...")
     ensure_runtime(runner)
     # Route Centaur's engine through the UC proxy (any UC engine + game recording).
+    report(ImportStage.CONFIGURING, "Configuring engine proxy...")
     install_hook(dest / "engines")
     # A freshly imported tree has no settings/factory.info, so Centaur would boot
     # into the factory Test Screen. Seed the marker so the import yields a board
     # that boots straight to play (see ensure_factory_marker for the full why).
+    report(ImportStage.FINALIZING, "Finalizing...")
     ensure_factory_marker(dest)
     file_count = sum(1 for p in dest.rglob("*") if p.is_file())
     return InstallResult(app_dir=str(app_dir), installed_path=str(dest), file_count=file_count)

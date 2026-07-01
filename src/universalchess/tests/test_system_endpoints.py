@@ -259,60 +259,86 @@ def _upload(client, *, filename="centaur-sd.img.gz", field="image", content=b"\x
     )
 
 
-def test_import_centaur_installs_and_reports_result(client, monkeypatch, tmp_path):
-    """A valid upload streams to tmp, runs the import, and reports the install.
+@pytest.fixture
+def fresh_import_store(monkeypatch, tmp_path):
+    """Bind the app's Centaur-import store to a temp-file instance for isolation.
 
-    Why this test exists: this is the whole point of the import flow -- a gzip
-    image arrives, the service installs it, and the UI needs installed_path +
-    file_count to confirm success. install_from_image is the injected boundary
-    (it loop-mounts as root); here it is faked to assert the endpoint streams the
-    upload to the allow-listed tmp dir, passes that path to the service, returns
-    the result, and deletes the uploaded image afterwards.
+    The real store is a module singleton; a test that leaves it active would leak
+    into others' concurrency guard. Each test gets its own store so state is
+    deterministic (mirrors how the engine-endpoint tests inject a fresh store).
+    """
+    from universalchess.services.centaur_import.import_state import ImportStateStore
 
-    How a regression manifests: the saved path is not the file passed to the
-    service, the result fields are dropped, or the ~200 MB upload is left behind.
+    store = ImportStateStore(tmp_path / "centaur_import_state.json")
+    monkeypatch.setattr(webapp, "_centaur_import_store", store)
+    return store
+
+
+def test_import_centaur_starts_background_install_and_accepts(client, monkeypatch, tmp_path, fresh_import_store):
+    """A valid upload streams to tmp and starts the import on a background thread.
+
+    Why this test exists: the import is async so the long post-upload work does
+    not block the request (and so the UI can poll progress). The endpoint must
+    stream the ~200 MB upload to the allow-listed tmp dir, hand THAT path to the
+    background starter, and return 202 "started" -- not the finished result. The
+    starter is the injected boundary here so no real thread runs.
+
+    How a regression manifests: a non-202 status (reverting to synchronous), or
+    the starter receiving a path other than the streamed file, would trip these.
     """
     monkeypatch.setattr("universalchess.paths.TMP_DIR", str(tmp_path))
     seen = {}
 
-    def fake_install(image_path, *a, **k):
+    def fake_start(image_path):
         seen["image_path"] = str(image_path)
         seen["existed_at_call"] = os.path.exists(str(image_path))
-        return types.SimpleNamespace(
-            app_dir="/mnt/home/pi/centaur",
-            installed_path="/home/tester/centaur",
-            file_count=42,
-        )
 
-    monkeypatch.setattr(_centaur_import, "install_from_image", fake_install)
+    monkeypatch.setattr(webapp, "_start_centaur_import", fake_start)
 
     resp = _upload(client)
 
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     body = json.loads(resp.data)
     assert body["success"] is True
-    assert body["installed_path"] == "/home/tester/centaur"
-    assert body["file_count"] == 42
-    # The service was handed the streamed file, which existed when called...
+    assert body["status"] == "started"
+    # The starter was handed the streamed file, which existed when called.
     assert seen["existed_at_call"] is True
     assert seen["image_path"] == str(tmp_path / "centaur-sd.img.gz")
-    # ...and is removed afterwards so it does not accumulate.
-    assert not (tmp_path / "centaur-sd.img.gz").exists()
 
 
-def test_import_centaur_rejects_missing_file(client, monkeypatch, tmp_path):
-    """No uploaded file is a 400 user error, and the service is never invoked.
+def test_import_centaur_rejects_second_concurrent_import(client, monkeypatch, tmp_path, fresh_import_store):
+    """A second import while one is active is a 409, and no new import starts.
+
+    Why this test exists: two imports would race on the same CENTAUR_HOME and the
+    shared mountpoint, corrupting the install. The board does one at a time; the
+    guard must reject the second before saving another 200 MB file or spawning a
+    second thread.
+
+    How a regression manifests: dropping the active-check would start a concurrent
+    import (fake_start called) and return success instead of 409.
+    """
+    monkeypatch.setattr("universalchess.paths.TMP_DIR", str(tmp_path))
+    fresh_import_store.start()  # an import is already running
+    called = []
+    monkeypatch.setattr(webapp, "_start_centaur_import", lambda p: called.append(p))
+
+    resp = _upload(client)
+
+    assert resp.status_code == 409
+    assert json.loads(resp.data)["success"] is False
+    assert called == []
+
+
+def test_import_centaur_rejects_missing_file(client, monkeypatch, tmp_path, fresh_import_store):
+    """No uploaded file is a 400 user error, and no import is started.
 
     Why this test exists: the endpoint must distinguish a malformed request from
-    a server fault. If it fell through to install_from_image with no file it
-    would 500 (or worse, act on a stale path).
+    a server fault. If it fell through with no file it would spawn a thread that
+    acts on a stale/absent path.
     """
     monkeypatch.setattr("universalchess.paths.TMP_DIR", str(tmp_path))
     called = []
-    monkeypatch.setattr(
-        _centaur_import, "install_from_image",
-        lambda *a, **k: called.append(True),
-    )
+    monkeypatch.setattr(webapp, "_start_centaur_import", lambda p: called.append(p))
 
     resp = client.post("/api/system/import-centaur", data={}, content_type="multipart/form-data")
 
@@ -321,8 +347,8 @@ def test_import_centaur_rejects_missing_file(client, monkeypatch, tmp_path):
     assert called == []
 
 
-def test_import_centaur_rejects_non_gzip_filename(client, monkeypatch, tmp_path):
-    """A non-.gz upload is rejected before the service runs.
+def test_import_centaur_rejects_non_gzip_filename(client, monkeypatch, tmp_path, fresh_import_store):
+    """A non-.gz upload is rejected before any import starts.
 
     Why this test exists: the import only understands the gzip image artifact;
     accepting some other file would either fail confusingly deep in the service
@@ -330,10 +356,7 @@ def test_import_centaur_rejects_non_gzip_filename(client, monkeypatch, tmp_path)
     """
     monkeypatch.setattr("universalchess.paths.TMP_DIR", str(tmp_path))
     called = []
-    monkeypatch.setattr(
-        _centaur_import, "install_from_image",
-        lambda *a, **k: called.append(True),
-    )
+    monkeypatch.setattr(webapp, "_start_centaur_import", lambda p: called.append(p))
 
     resp = _upload(client, filename="notes.txt")
 
@@ -341,18 +364,60 @@ def test_import_centaur_rejects_non_gzip_filename(client, monkeypatch, tmp_path)
     assert called == []
 
 
-def test_import_centaur_surfaces_validation_error_as_400(client, monkeypatch, tmp_path):
-    """A CentaurImportError becomes a 400 with the actionable message surfaced.
+def test_run_centaur_import_records_success_and_cleans_up(monkeypatch, tmp_path, fresh_import_store):
+    """The worker installs, records a success result, and deletes the upload.
+
+    Why this test exists: the async worker is where the real outcome is produced
+    now that the route returns early. It must call install_from_image with a
+    stage callback (so progress is reported), mark the store COMPLETED with a
+    success result the poll surfaces, and always remove the ~200 MB upload.
+    install_from_image is the injected boundary (it loop-mounts as root).
+
+    How a regression manifests: not finishing the store would leave the bar
+    "active" forever; leaving the file would accumulate 200 MB per import; a
+    missing stage callback would revert to the silent-100% behaviour this fixes.
+    """
+    from universalchess.services.centaur_import.import_state import ImportStage
+
+    fresh_import_store.start()  # _start_centaur_import always starts before the worker runs
+    image = tmp_path / "centaur-sd.img.gz"
+    image.write_bytes(b"\x1f\x8bDATA")
+    seen = {}
+
+    def fake_install(image_path, *a, stage_callback=None, **k):
+        seen["path"] = str(image_path)
+        seen["has_callback"] = stage_callback is not None
+        # Drive one stage so the callback path is exercised end to end.
+        if stage_callback:
+            stage_callback(ImportStage.INSTALLING_ARMHF, "Installing 32-bit support...")
+        return types.SimpleNamespace(app_dir="/mnt", installed_path="/home/tester/centaur", file_count=42)
+
+    monkeypatch.setattr(_centaur_import, "install_from_image", fake_install)
+
+    webapp._run_centaur_import(image)
+
+    status = fresh_import_store.status_dict()
+    assert status["stage"] == "completed"
+    assert status["active"] is False
+    assert status["result"] == {"success": True, "error": None}
+    assert seen["has_callback"] is True
+    assert not image.exists()
+
+
+def test_run_centaur_import_records_validation_failure_and_cleans_up(monkeypatch, tmp_path, fresh_import_store):
+    """A CentaurImportError is recorded as a failed result with its message.
 
     Why this test exists: when the image is missing required files the user must
-    see exactly what is wrong ("missing required Centaur files: fonts"), not a
-    generic 500. The error type is author-written and path-free, so surfacing its
-    text is safe; the uploaded image must still be cleaned up.
+    see exactly what is wrong ("missing required Centaur files: fonts") via the
+    status poll, since the route already returned. The error type is author-written
+    and path-free, so surfacing its text is safe; the upload must still be removed.
 
-    How a regression manifests: the error escapes as a 500 (opaque to the user)
-    or the message is swallowed, or the temp upload is left behind on failure.
+    How a regression manifests: swallowing the error would leave the store active
+    (perpetual bar), and leaking a generic message would hide the actionable cause.
     """
-    monkeypatch.setattr("universalchess.paths.TMP_DIR", str(tmp_path))
+    fresh_import_store.start()
+    image = tmp_path / "centaur-sd.img.gz"
+    image.write_bytes(b"\x1f\x8bDATA")
 
     def fake_install(image_path, *a, **k):
         raise _centaur_import.CentaurImportError(
@@ -361,13 +426,40 @@ def test_import_centaur_surfaces_validation_error_as_400(client, monkeypatch, tm
 
     monkeypatch.setattr(_centaur_import, "install_from_image", fake_install)
 
-    resp = _upload(client)
+    webapp._run_centaur_import(image)
 
-    assert resp.status_code == 400
+    status = fresh_import_store.status_dict()
+    assert status["stage"] == "failed"
+    assert status["active"] is False
+    assert status["result"]["success"] is False
+    assert "missing required Centaur files: fonts" in status["result"]["error"]
+    assert "missing required Centaur files: fonts" in status["message"]
+    assert not image.exists()
+
+
+def test_centaur_import_status_endpoint_reports_store_state(client, fresh_import_store):
+    """GET /api/system/centaur-import/status returns the live store snapshot.
+
+    Why this test exists: this endpoint is what the frontend polls to render the
+    stage text and percent after the upload finishes. It must reflect the store's
+    active state and stage so the UI shows real progress.
+
+    How a regression manifests: returning a static/empty payload would leave the
+    UI unable to advance past the upload phase -- the exact bug being fixed.
+    """
+    from universalchess.services.centaur_import.import_state import ImportStage
+
+    fresh_import_store.start()
+    fresh_import_store.update(ImportStage.INSTALLING_ARMHF, "Installing 32-bit support...")
+
+    resp = client.get("/api/system/centaur-import/status")
+
+    assert resp.status_code == 200
     body = json.loads(resp.data)
-    assert body["success"] is False
-    assert "missing required Centaur files: fonts" in body["error"]
-    assert not (tmp_path / "centaur-sd.img.gz").exists()
+    assert body["active"] is True
+    assert body["stage"] == "installing_armhf"
+    assert body["message"] == "Installing 32-bit support..."
+    assert 0 < body["percent"] < 100
 
 
 # --- Centaur engine proxy config ---------------------------------------------

@@ -26,8 +26,10 @@ from universalchess.managers.bluez_patch_status import (
 )
 from universalchess.services.background_activity import (
     ACTIVITY_BLUEZ_SELFHEAL,
+    ACTIVITY_CENTAUR_IMPORT,
     ACTIVITY_ENGINE_INSTALL,
     KIND_BLUEZ_SELFHEAL,
+    KIND_CENTAUR_IMPORT,
     KIND_ENGINE_INSTALL,
     activity_snapshot,
     build_activities,
@@ -61,6 +63,33 @@ def _idle_engine_status():
         "message": "",
         "percent": 0,
         "interrupted": False,
+        "result": None,
+    }
+
+
+def _centaur_import_status(active=True, message="Installing 32-bit support...",
+                           percent=60, interrupted=False):
+    """A Centaur-import status dict shaped like import_state.status_dict."""
+    return {
+        "active": active,
+        "stage": "installing_armhf",
+        "message": message,
+        "percent": percent,
+        "interrupted": interrupted,
+        "started_at": 1.0,
+        "result": None,
+    }
+
+
+def _idle_centaur_import_status():
+    """No import running: the shape import_state.status_dict returns when empty."""
+    return {
+        "active": False,
+        "stage": None,
+        "message": "",
+        "percent": 0,
+        "interrupted": False,
+        "started_at": None,
         "result": None,
     }
 
@@ -100,6 +129,53 @@ def test_interrupted_install_is_not_surfaced():
     status["active"] = False
     status["interrupted"] = True
     assert build_activities(status, make_progress(running=False)) == []
+
+
+def test_active_centaur_import_surfaces_one_row():
+    # A running Centaur import must produce exactly one banner row carrying the
+    # headline label, the live stage message (e.g. "Installing 32-bit support..."),
+    # and the server-computed percent -- the whole point of this feature is that
+    # the long post-upload install is visible, not a bar frozen at 100%.
+    activities = build_activities(
+        _idle_engine_status(), make_progress(running=False),
+        _centaur_import_status(percent=60),
+    )
+    assert activities == [{
+        "id": ACTIVITY_CENTAUR_IMPORT,
+        "kind": KIND_CENTAUR_IMPORT,
+        "label": "Importing original Centaur",
+        "message": "Installing 32-bit support...",
+        "percent": 60,
+    }]
+
+
+def test_interrupted_centaur_import_is_not_surfaced():
+    # An import interrupted by a restart (active False, interrupted True) is no
+    # longer running; surfacing it would falsely claim an import is in progress.
+    status = _centaur_import_status(active=False, interrupted=True)
+    assert build_activities(_idle_engine_status(), make_progress(running=False), status) == []
+
+
+def test_idle_centaur_import_is_not_surfaced():
+    # The idle import shape must contribute no row, so a completed/never-run import
+    # does not pin a permanent banner.
+    activities = build_activities(
+        _idle_engine_status(), make_progress(running=False), _idle_centaur_import_status()
+    )
+    assert activities == []
+
+
+def test_all_three_active_keep_fixed_order():
+    # With engine install, Centaur import, and self-heal all running, the rows
+    # appear in a fixed order so the banner does not reorder between polls. Count
+    # check catches a dropped row; id-order check catches reordering.
+    progress = make_progress(running=True, phase=HEAL_BUILDING, started_at="2026-06-27T06:54:56Z")
+    activities = build_activities(_engine_status(), progress, _centaur_import_status())
+    assert [a["id"] for a in activities] == [
+        ACTIVITY_ENGINE_INSTALL,
+        ACTIVITY_CENTAUR_IMPORT,
+        ACTIVITY_BLUEZ_SELFHEAL,
+    ]
 
 
 def test_running_selfheal_surfaces_indeterminate_row():

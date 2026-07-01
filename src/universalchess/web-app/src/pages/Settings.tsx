@@ -50,6 +50,21 @@ interface EngineInstallStatus {
   result: { success: boolean; error: string | null } | null;
 }
 
+// Progress of a Centaur SD import running on the server background thread. The
+// upload bar tracks bytes on the wire; once the upload finishes the client polls
+// /api/system/centaur-import/status for this, so the bar shows the live install
+// stage (decompress -> mount -> ... -> install 32-bit support) instead of sitting
+// frozen at 100%. Mirrors the engine install status shape.
+interface CentaurImportStatus {
+  active: boolean;
+  stage: string | null;
+  message: string;
+  percent: number;
+  interrupted: boolean;
+  started_at: number | null;
+  result: { success: boolean; error: string | null } | null;
+}
+
 // Section ids this page renders, in display order. Labels and icons are sourced
 // from the catalog (menu.json) at runtime; this list only declares which
 // sections belong to the Settings page and their order. Display and Sound are
@@ -2860,6 +2875,13 @@ function SystemActions() {
   const [importResult, setImportResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [showImport, setShowImport] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
+  // Post-upload install progress. Non-null once the upload finishes and the
+  // background install begins; drives the progress bar's stage text/percent
+  // (polled) until the import reaches a terminal result. Null during the upload
+  // phase (the bar then shows upload bytes) and when idle.
+  const [importStatus, setImportStatus] = useState<{ message: string; percent: number } | null>(null);
+  const importPollTimerRef = useRef<number | null>(null);
+  const importPollCancelRef = useRef(false);
 
   // Centaur engine-proxy config: which UC engine Centaur drives (translate mode)
   // and a few common options. Hash is clamped to the memory floor server-side.
@@ -3036,6 +3058,56 @@ function SystemActions() {
     a.remove();
   };
 
+  // Poll the server-side import progress after the upload completes. The install
+  // runs on a background thread (decompress/mount/copy plus, on a 64-bit host, an
+  // armhf apt install), so the bar switches from upload bytes to the live stage
+  // message the backend reports, advancing until the import reaches a terminal
+  // result. A chained setTimeout (cancelled on unmount) keeps it lightweight.
+  const pollImportStatus = useCallback(() => {
+    importPollCancelRef.current = false;
+    const tick = async () => {
+      try {
+        const s: CentaurImportStatus = await apiFetch('/api/system/centaur-import/status').then((r) => r.json());
+        if (importPollCancelRef.current) return;
+        if (s.active) {
+          setImportStatus({ message: s.message || 'Working...', percent: s.percent ?? 0 });
+        } else if (s.result) {
+          // Terminal: the import finished. Stop polling and surface the outcome.
+          setImportStatus(null);
+          setImportBusy(false);
+          if (s.result.success) {
+            setImportResult({ ok: true, text: 'Imported successfully. Original Centaur is ready to launch.' });
+            setCentaurAvailable(true);
+            setShowImport(true);
+          } else {
+            setImportResult({ ok: false, text: s.result.error || 'Import failed.' });
+          }
+          return;
+        } else if (s.interrupted) {
+          // The process/board restarted mid-import; there is no resume.
+          setImportStatus(null);
+          setImportBusy(false);
+          setImportResult({ ok: false, text: 'Import was interrupted. Please try again.' });
+          return;
+        }
+        // Not active yet and no result: the store was just started; keep waiting.
+      } catch {
+        // Best-effort: a failed poll retries; the import keeps running server-side.
+      }
+      if (!importPollCancelRef.current) {
+        importPollTimerRef.current = window.setTimeout(tick, 1500);
+      }
+    };
+    void tick();
+  }, []);
+
+  // Cancel any in-flight import poll when the page unmounts so the chained
+  // timeout does not fire against a torn-down component.
+  useEffect(() => () => {
+    importPollCancelRef.current = true;
+    if (importPollTimerRef.current !== null) window.clearTimeout(importPollTimerRef.current);
+  }, []);
+
   // Upload a centaur-sd.img.gz image and install it. Uses XHR for upload
   // progress on the large image. On 401 (no/expired credentials) the login
   // dialog opens and the upload retries after login, mirroring runAction.
@@ -3049,6 +3121,7 @@ function SystemActions() {
     setImportBusy(true);
     setImportProgress(0);
     setImportResult(null);
+    setImportStatus(null);
 
     const xhr = new XMLHttpRequest();
     xhr.open('POST', buildApiUrl('/api/system/import-centaur'));
@@ -3058,36 +3131,36 @@ function SystemActions() {
       if (e.lengthComputable) setImportProgress(Math.round((e.loaded / e.total) * 100));
     };
     xhr.onload = () => {
-      setImportBusy(false);
       if (xhr.status === 401) {
+        setImportBusy(false);
         pendingActionRef.current = async () => uploadCentaurImage(file);
         setShowLoginDialog(true);
         return;
       }
-      let data: { success?: boolean; error?: string; file_count?: number } = {};
+      let data: { success?: boolean; error?: string; status?: string } = {};
       try {
         data = JSON.parse(xhr.responseText);
       } catch {
         // Non-JSON body (e.g. proxy error page); fall through to a generic error.
       }
       if (xhr.status >= 200 && xhr.status < 300 && data.success) {
-        setImportResult({
-          ok: true,
-          text: `Imported ${data.file_count ?? 0} files. Original Centaur is ready to launch.`,
-        });
-        setCentaurAvailable(true);
-        // After install the layout switches to the "installed" branch where the
-        // panel is gated by showImport; keep it open so this success stays shown.
-        setShowImport(true);
+        // Upload finished; the server has started the import on a background
+        // thread. Switch from the upload bar to polling the install progress,
+        // keeping importBusy true so the controls stay disabled through install.
+        setImportStatus({ message: 'Starting import...', percent: 0 });
+        pollImportStatus();
       } else if (xhr.status === 413) {
         // Reverse proxy rejected the body before it reached the app.
+        setImportBusy(false);
         setImportResult({ ok: false, text: 'Image too large for the server to accept.' });
       } else {
+        setImportBusy(false);
         setImportResult({ ok: false, text: data.error || `Import failed (HTTP ${xhr.status}).` });
       }
     };
     xhr.onerror = () => {
       setImportBusy(false);
+      setImportStatus(null);
       setImportResult({ ok: false, text: 'Network error during upload.' });
     };
 
@@ -3136,10 +3209,14 @@ function SystemActions() {
           disabled={importBusy || centaurRunning}
           onClick={() => importInputRef.current?.click()}
         >
-          {importBusy ? 'Uploading...' : 'Upload SD image'}
+          {importBusy ? (importStatus ? 'Installing...' : 'Uploading...') : 'Upload SD image'}
         </Button>
       </div>
-      {importBusy && <ProgressBar percent={importProgress} label="Uploading image" />}
+      {importBusy && (
+        importStatus
+          ? <ProgressBar percent={importStatus.percent} label={importStatus.message} />
+          : <ProgressBar percent={importProgress} label="Uploading image" />
+      )}
       {importResult && (
         <p
           className={`text-sm ${importResult.ok ? 'text-success' : 'text-danger'}`}

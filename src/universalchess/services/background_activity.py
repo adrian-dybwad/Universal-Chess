@@ -2,9 +2,11 @@
 
 The web UI shows a top-of-screen banner whenever the board is doing background
 work the operator should know about. Today that is an engine install (a heavy,
-minutes-long source build) and the BlueZ advertising self-heal (rebuilds
-``bluetoothd``, also minutes). Both already own structured status elsewhere --
-:mod:`universalchess.services.engine_install_state` and
+minutes-long source build), a Centaur SD import (decompress/mount/copy plus, on a
+64-bit host, an armhf ``apt`` install), and the BlueZ advertising self-heal
+(rebuilds ``bluetoothd``, also minutes). Each already owns structured status
+elsewhere -- :mod:`universalchess.services.engine_install_state`,
+:mod:`universalchess.services.centaur_import.import_state`, and
 :mod:`universalchess.managers.bluez_patch_status` -- so this module's only job is
 to turn those into a single uniform list the banner renders. Adding a new
 background task later means appending one branch here; the frontend never
@@ -23,9 +25,11 @@ from universalchess.managers.bluez_patch_status import heal_label
 # Stable activity ids (also the React keys) and kinds (closed set). Kept as
 # constants so the endpoint, tests, and any future consumer agree on the tokens.
 ACTIVITY_ENGINE_INSTALL = "engine-install"
+ACTIVITY_CENTAUR_IMPORT = "centaur-import"
 ACTIVITY_BLUEZ_SELFHEAL = "bluez-selfheal"
 
 KIND_ENGINE_INSTALL = "engine_install"
+KIND_CENTAUR_IMPORT = "centaur_import"
 KIND_BLUEZ_SELFHEAL = "bluez_selfheal"
 
 
@@ -60,6 +64,26 @@ def _engine_activity(engine_status: Optional[dict]) -> Optional[dict]:
     }
 
 
+def _centaur_import_activity(import_status: Optional[dict]) -> Optional[dict]:
+    """Banner row for an *active* Centaur import, or ``None`` when none runs.
+
+    Only an active import is surfaced. Interrupted/failed/completed states are not
+    "going on in the background" -- the Settings import panel owns their result and
+    retry UI -- so showing them here would misreport finished work as still running.
+    The label is fixed (the import has no per-engine name); the message carries the
+    live stage text so the banner reads e.g. "Installing 32-bit support...".
+    """
+    if not import_status or not import_status.get("active"):
+        return None
+    return {
+        "id": ACTIVITY_CENTAUR_IMPORT,
+        "kind": KIND_CENTAUR_IMPORT,
+        "label": "Importing original Centaur",
+        "message": import_status.get("message") or None,
+        "percent": _coerce_percent(import_status.get("percent")),
+    }
+
+
 def _bluez_activity(bluez_progress: Optional[dict]) -> Optional[dict]:
     """Banner row for a running BlueZ self-heal, or ``None`` when idle.
 
@@ -80,22 +104,31 @@ def _bluez_activity(bluez_progress: Optional[dict]) -> Optional[dict]:
 
 
 def build_activities(engine_status: Optional[dict],
-                     bluez_progress: Optional[dict]) -> List[dict]:
+                     bluez_progress: Optional[dict],
+                     centaur_import_status: Optional[dict] = None) -> List[dict]:
     """Return the ordered list of active background activities.
 
-    Order is fixed (engine install, then self-heal) so the banner is stable
-    across polls instead of reordering as sources flip. An empty list means no
-    background work -- the banner renders nothing.
+    Order is fixed (engine install, Centaur import, then self-heal) so the banner
+    is stable across polls instead of reordering as sources flip. An empty list
+    means no background work -- the banner renders nothing.
+
+    ``centaur_import_status`` defaults to ``None`` (treated as idle) so callers
+    that predate the Centaur-import source keep working unchanged.
     """
     activities: List[dict] = []
-    for item in (_engine_activity(engine_status), _bluez_activity(bluez_progress)):
+    for item in (
+        _engine_activity(engine_status),
+        _centaur_import_activity(centaur_import_status),
+        _bluez_activity(bluez_progress),
+    ):
         if item is not None:
             activities.append(item)
     return activities
 
 
 def activity_snapshot(engine_status: Optional[dict],
-                      bluez_progress: Optional[dict]) -> dict:
+                      bluez_progress: Optional[dict],
+                      centaur_import_status: Optional[dict] = None) -> dict:
     """Banner-ready snapshot: the activity list plus a top-level ``active`` flag."""
-    activities = build_activities(engine_status, bluez_progress)
+    activities = build_activities(engine_status, bluez_progress, centaur_import_status)
     return {"active": bool(activities), "activities": activities}

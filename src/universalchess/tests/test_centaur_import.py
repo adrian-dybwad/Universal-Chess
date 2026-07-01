@@ -432,6 +432,52 @@ def test_install_from_image_provisions_armhf_support_with_import_runner(tmp_path
     assert seen[0] is runner
 
 
+def test_install_from_image_reports_ordered_progress_stages(tmp_path):
+    """Import must emit each stage in order so the UI can show what it is doing.
+
+    Why this test exists: the feature that motivated this is a progress bar that
+    froze at 100% because the post-upload install emitted nothing. install_from_image
+    must call the injected ``stage_callback`` once per phase, in pipeline order, so
+    the polled status reflects decompress -> mount -> ... -> 32-bit support ->
+    finalize. INSTALLING_ARMHF must be reported even though the runtime step is a
+    no-op here, because on arm64 that is the long, previously-silent phase.
+
+    How the regression manifests: dropping a callback at any step (or emitting them
+    out of order) changes this list -- e.g. omitting INSTALLING_ARMHF would leave
+    the bar stuck on "Installing Centaur software..." through the long apt run,
+    the exact confusion this feature removes.
+    """
+    from universalchess.services.centaur_import.import_state import ImportStage
+
+    stages = []
+    _install(tmp_path, stage_callback=lambda stage, _message: stages.append(stage))
+
+    assert stages == [
+        ImportStage.DECOMPRESSING,
+        ImportStage.MOUNTING,
+        ImportStage.VALIDATING,
+        ImportStage.STAGING,
+        ImportStage.INSTALLING_FILES,
+        ImportStage.INSTALLING_ARMHF,
+        ImportStage.CONFIGURING,
+        ImportStage.FINALIZING,
+    ]
+
+
+def test_install_from_image_without_callback_still_installs(tmp_path):
+    """A None stage_callback (the default) must not break the install.
+
+    Why this test exists: stage reporting is additive; callers that do not care
+    about progress (and every existing test) must keep working with no callback.
+    Guards that the emission points are null-safe.
+
+    How the regression manifests: calling ``stage_callback(...)`` without a None
+    guard would raise TypeError here and abort every import that omits the arg.
+    """
+    _, result = _install(tmp_path, stage_callback=None)
+    assert Path(result.installed_path).joinpath("centaur").is_file()
+
+
 def test_install_from_image_fails_when_armhf_support_step_fails(tmp_path):
     """An armhf-provisioning failure must fail the whole import.
 

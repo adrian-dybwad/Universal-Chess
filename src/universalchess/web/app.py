@@ -3079,29 +3079,77 @@ def api_system_centaur_import_script():
     )
 
 
-@app.route("/api/system/import-centaur", methods=["POST"])
-@requires_auth
-def api_system_import_centaur():
-    """Install the original Centaur software from an uploaded SD image.
+def _run_centaur_import(image_path):
+    """Background worker: install the Centaur app from the saved image.
 
-    Accepts a multipart upload (field ``image``) of the gzip ext4 image produced
-    by tools/centaur-import/make-centaur-image.sh. The file is streamed to the
-    service tmp dir (the dir the mount helper allow-lists), then the import
-    service loop-mounts it read-only, extracts the app to the managed
-    CENTAUR_HOME, strips debug cruft, and validates the file set. On success the
-    Original Centaur Switch/Return controls become available.
+    Runs on a daemon thread so the upload POST can return immediately and the UI
+    can poll ``/api/system/centaur-import/status`` for live progress -- the whole
+    reason this is async is that the post-upload work (decompress/mount/copy plus,
+    on a 64-bit host, an armhf ``apt`` install) can take minutes, during which the
+    old synchronous flow left the bar frozen at 100%. Each stage is forwarded into
+    the shared import store via the callback; the terminal result is recorded with
+    ``finish``. The uploaded ~200 MB image is always deleted afterwards.
 
-    Returns 400 with an actionable message when the upload is missing/misnamed or
-    the image lacks a complete Centaur app, and 500 on unexpected errors. The
-    CentaurImportError text is author-written and path-free, so it is safe to
-    surface to the client. The uploaded image is always removed afterwards so a
-    ~200 MB artifact does not accumulate in tmp.
+    The CentaurImportError message is author-written and path-free, so it is safe
+    to store for the client; an unexpected error is logged server-side and
+    reported generically (no exception text leaks to the UI).
     """
-    from universalchess.paths import TMP_DIR
     from universalchess.services.centaur_import import (
         CentaurImportError,
         install_from_image,
     )
+
+    try:
+        install_from_image(
+            image_path,
+            stage_callback=lambda stage, message: _centaur_import_store.update(stage, message),
+        )
+        _centaur_import_store.finish(success=True)
+    except CentaurImportError as e:
+        _centaur_import_store.finish(success=False, error=str(e))
+    except Exception as e:
+        app.logger.exception("Centaur import failed: %s", e)
+        _centaur_import_store.finish(success=False, error="Import failed")
+    finally:
+        try:
+            if os.path.exists(str(image_path)):
+                os.remove(str(image_path))
+        except OSError:  # noqa: S110  # nosec B110 - best-effort tmp cleanup; failure is non-fatal
+            pass
+
+
+def _start_centaur_import(image_path):
+    """Initialize the persisted import state and spawn the install thread.
+
+    Caller is responsible for validating the upload and that no import is already
+    active (mirrors _start_engine_install).
+    """
+    _centaur_import_store.start()
+    thread = threading.Thread(target=_run_centaur_import, args=(image_path,), daemon=True)
+    thread.start()
+
+
+@app.route("/api/system/import-centaur", methods=["POST"])
+@requires_auth
+def api_system_import_centaur():
+    """Start installing the original Centaur software from an uploaded SD image.
+
+    Accepts a multipart upload (field ``image``) of the gzip ext4 image produced
+    by tools/centaur-import/make-centaur-image.sh. The file is streamed to the
+    service tmp dir (the dir the mount helper allow-lists), then the import runs on
+    a background thread (decompress -> loop-mount read-only -> extract to the
+    managed CENTAUR_HOME with debug cruft stripped -> validate -> provision armhf
+    support on 64-bit -> hook the engine proxy). The endpoint returns 202
+    immediately; the client polls ``/api/system/centaur-import/status`` for stage,
+    percent, and the terminal result. On success the Original Centaur
+    Switch/Return controls become available.
+
+    Returns 400 when the upload is missing/misnamed, 409 when an import is already
+    running, and 202 once the background install has started. Failures inside the
+    install (e.g. a missing-files image) surface through the status endpoint's
+    result, not this response.
+    """
+    from universalchess.paths import TMP_DIR
 
     upload = request.files.get("image")
     if upload is None or not upload.filename:
@@ -3119,6 +3167,9 @@ def api_system_import_centaur():
             400,
         )
 
+    if _centaur_import_store.status_dict()["active"]:
+        return jsonify({"success": False, "error": "A Centaur import is already in progress."}), 409
+
     os.makedirs(TMP_DIR, exist_ok=True)
     # Contain the save path inside TMP_DIR; this is also the dir the mount helper
     # restricts images to, so a path that escapes it would be refused downstream.
@@ -3128,24 +3179,26 @@ def api_system_import_centaur():
 
     try:
         # FileStorage.save streams the body to disk in chunks rather than holding
-        # the ~200 MB image in memory.
+        # the ~200 MB image in memory. The background worker owns cleanup of the
+        # saved file (it must outlive this request).
         upload.save(str(target))
-        result = install_from_image(target)
-        return jsonify({
-            "success": True,
-            "installed_path": result.installed_path,
-            "file_count": result.file_count,
-        })
-    except CentaurImportError as e:
-        return jsonify({"success": False, "error": str(e)}), 400
-    except Exception as e:
+    except OSError as e:
         return _internal_error(e)
-    finally:
-        try:
-            if os.path.exists(str(target)):
-                os.remove(str(target))
-        except OSError:  # noqa: S110  # nosec B110 - best-effort tmp cleanup; failure is non-fatal
-            pass
+
+    _start_centaur_import(target)
+    return jsonify({"success": True, "status": "started"}), 202
+
+
+@app.route("/api/system/centaur-import/status", methods=["GET"])
+def api_system_centaur_import_status():
+    """Get current Centaur SD-import progress.
+
+    Returns the structured state (stage, message, derived percent, active,
+    interrupted, result). Percent is computed at read time so the long armhf-apt
+    stage creeps between polls without the backend ticking. Unauthenticated like
+    the engine status poll -- it exposes only progress, no control.
+    """
+    return jsonify(_centaur_import_store.status_dict())
 
 
 # ============================================================================
@@ -3854,6 +3907,16 @@ from universalchess.services import engine_install_state
 _engine_install_store = engine_install_state.STORE
 _engine_install_store.reconcile_interrupted()
 
+# Centaur SD-import progress is owned by centaur_import.import_state.STORE, the
+# same pattern as engine installs: the import runs on a background thread after
+# the upload, writing structured stage/percent state the UI polls. On startup an
+# import left `active` by a killed process is reconciled to `interrupted` so the
+# banner/panel stop waiting on a dead install (there is no resume; the operator
+# re-imports).
+from universalchess.services.centaur_import import import_state as centaur_import_state
+_centaur_import_store = centaur_import_state.STORE
+_centaur_import_store.reconcile_interrupted()
+
 
 # Custom (operator-added) engines: a binary uploaded from the browser or fetched
 # from an HTTPS URL. These are not in the hardcoded ENGINES catalog; the registry
@@ -4308,11 +4371,12 @@ def api_engine_status():
 def api_system_activity():
     """Aggregate active background tasks for the top-of-screen web banner.
 
-    Combines the structured engine-install state with the BlueZ self-heal
-    progress record into one uniform list (see services/background_activity) so
-    the banner can render any background work generically. ``read_progress`` and
-    ``status_dict`` never raise, so a missing marker/state degrades to "idle"
-    rather than erroring the poll. Returns ``{"active": bool, "activities": []}``.
+    Combines the structured engine-install state, the Centaur SD-import state, and
+    the BlueZ self-heal progress record into one uniform list (see
+    services/background_activity) so the banner can render any background work
+    generically. ``read_progress`` and ``status_dict`` never raise, so a missing
+    marker/state degrades to "idle" rather than erroring the poll. Returns
+    ``{"active": bool, "activities": []}``.
     """
     from universalchess.managers.bluez_patch_status import read_progress
     from universalchess.services.background_activity import activity_snapshot
@@ -4320,6 +4384,7 @@ def api_system_activity():
     return jsonify(activity_snapshot(
         _engine_install_store.status_dict(),
         read_progress(),
+        _centaur_import_store.status_dict(),
     ))
 
 
