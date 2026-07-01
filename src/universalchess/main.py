@@ -4287,10 +4287,83 @@ def _run_centaur_translate():
         ThreadedGatewayServer,
         DEFAULT_SOCKET_PATH,
     )
+    from universalchess.services.centaur_serial import (
+        SerialTap,
+        ThreadedSerialTap,
+        PieceInHandTracker,
+    )
 
     centaur_dir = os.path.dirname(CENTAUR_SOFTWARE)
     gateway = CentaurDisplayGateway(render_fn=board.display_manager.display_frame)
     server = ThreadedGatewayServer(gateway, socket_path=DEFAULT_SOCKET_PATH)
+
+    # Serial tap: a transparent PTY man-in-the-middle on the board port so UC can
+    # observe lift/place and key events while centaur drives the board, and so a
+    # held BACK returns control to UC. The node centaur opens is a device-specific
+    # detail (verification item); UC's own driver uses /dev/serial0, so default to
+    # that and allow an override without a code change.
+    serial_device = os.environ.get("UC_CENTAUR_SERIAL_DEVICE", "/dev/serial0")
+
+    def _stop_centaur() -> None:
+        # Exit gesture: terminating centaur unblocks the blocking launch_fn, which
+        # runs the normal teardown (restore port, stop gateway) and then stops the
+        # UC service so systemd restarts UC.
+        log.info("[centaur-serial] exit chord detected; terminating centaur")
+        subprocess.run(["sudo", "pkill", "centaur"], check=False)  # noqa: S607  # nosec B603 B607
+
+    # Piece-in-hand overlay (display-only) is gated behind a flag: it re-broadcasts
+    # a lightweight pending-move overlay from this process, whereas the
+    # authoritative position/PGN comes from the UCI proxy in a separate process.
+    # It is left off by default until relay latency is validated on hardware (the
+    # plan's Phase 1), then can be enabled with UC_CENTAUR_SERIAL_WEB_FEEDBACK=1.
+    def _publish_pending(pending: Optional[str]) -> None:
+        from universalchess.services.game_broadcast import (
+            broadcast_game_state,
+            set_pending_move,
+        )
+        from universalchess.paths import get_current_fen
+        import chess
+
+        set_pending_move(pending)
+        fen = get_current_fen()
+        probe = chess.Board(fen)
+        broadcast_game_state(
+            fen=fen,
+            turn="w" if probe.turn == chess.WHITE else "b",
+            move_number=probe.fullmove_number,
+            pending_move=pending,
+        )
+
+    piece_tracker = (
+        PieceInHandTracker(_publish_pending)
+        if os.environ.get("UC_CENTAUR_SERIAL_WEB_FEEDBACK") == "1"
+        else None
+    )
+
+    def _on_serial_event(event: object) -> None:
+        if piece_tracker is not None:
+            piece_tracker.observe(event)
+
+    serial_tap = ThreadedSerialTap(
+        SerialTap(device=serial_device),
+        on_event=_on_serial_event if piece_tracker is not None else None,
+        stop_centaur_fn=_stop_centaur,
+    )
+
+    def _start_serial() -> None:
+        # Best-effort: the tap is an enhancement, not required for translate mode.
+        # A failure restores the port (ThreadedSerialTap.start guarantees it) and
+        # is logged; centaur still runs on the real port.
+        try:
+            serial_tap.start()
+        except Exception as e:
+            log.warning(f"[centaur-serial] tap failed to start; continuing without it: {e}")
+
+    def _stop_serial() -> None:
+        try:
+            serial_tap.stop()
+        except Exception as e:
+            log.warning(f"[centaur-serial] tap stop error: {e}")
 
     def _start_gateway() -> None:
         # Clear UC's widgets so only centaur's frames render, then start serving.
@@ -4316,6 +4389,8 @@ def _run_centaur_translate():
         start_gateway_fn=_start_gateway,
         launch_fn=_launch_centaur,
         stop_gateway_fn=server.stop,
+        start_serial_fn=_start_serial,
+        stop_serial_fn=_stop_serial,
     )
     if not launched:
         log.error(f"Centaur executable not found at {CENTAUR_SOFTWARE}")

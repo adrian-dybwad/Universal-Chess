@@ -224,6 +224,57 @@ def test_translate_handoff_stops_gateway_even_if_launch_raises():
     stop_gateway_fn.assert_called_once()
 
 
+def test_translate_handoff_starts_serial_and_gateway_before_launch_stops_both_after():
+    """The serial tap starts first and stops last, wrapping the gateway + launch.
+
+    Why this test exists: the tap owns the physical port, so it must be swapped in
+    before centaur opens the board and restored only after centaur exits and the
+    gateway is down. Asserts the exact nesting order. Regression manifests as the
+    port being restored before the gateway stops, or the tap starting after
+    launch (centaur would open the un-swapped port and the tap would see nothing).
+    """
+    order = []
+    result = perform_centaur_translate_handoff(
+        software_path="/home/pi/centaur/centaur",
+        start_gateway_fn=lambda: order.append("start_gateway"),
+        launch_fn=lambda path: order.append("launch"),
+        stop_gateway_fn=lambda: order.append("stop_gateway"),
+        start_serial_fn=lambda: order.append("start_serial"),
+        stop_serial_fn=lambda: order.append("stop_serial"),
+        path_exists_fn=lambda p: True,
+    )
+
+    assert result is True
+    assert order == ["start_serial", "start_gateway", "launch", "stop_gateway", "stop_serial"]
+
+
+def test_translate_handoff_stops_serial_and_gateway_even_if_launch_raises():
+    """Both the gateway and the serial tap are torn down if launch raises.
+
+    Why this test exists: a leaked serial tap leaves the port swapped (board
+    unusable); a leaked gateway holds the socket. Asserts both stops run, in the
+    right order, despite launch throwing. Regression manifests as the port never
+    being restored after a failed launch.
+    """
+    order = []
+
+    def _boom(path):
+        raise RuntimeError("launch failed")
+
+    with pytest.raises(RuntimeError):
+        perform_centaur_translate_handoff(
+            software_path="/home/pi/centaur/centaur",
+            start_gateway_fn=lambda: order.append("start_gateway"),
+            launch_fn=_boom,
+            stop_gateway_fn=lambda: order.append("stop_gateway"),
+            start_serial_fn=lambda: order.append("start_serial"),
+            stop_serial_fn=lambda: order.append("stop_serial"),
+            path_exists_fn=lambda p: True,
+        )
+
+    assert order == ["start_serial", "start_gateway", "stop_gateway", "stop_serial"]
+
+
 def test_translate_handoff_does_nothing_when_binary_absent():
     """Missing binary: do not start the gateway or launch.
 

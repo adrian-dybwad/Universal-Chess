@@ -117,12 +117,18 @@ def perform_centaur_handoff(
     return True
 
 
+def _noop() -> None:
+    """Default no-op lifecycle hook (used when the serial tap is not wired)."""
+
+
 def perform_centaur_translate_handoff(
     software_path: str,
     start_gateway_fn: Callable[[], None],
     launch_fn: Callable[[str], None],
     stop_gateway_fn: Callable[[], None],
     *,
+    start_serial_fn: Callable[[], None] = _noop,
+    stop_serial_fn: Callable[[], None] = _noop,
     path_exists_fn: Callable[[str], bool] = os.path.exists,
 ) -> bool:
     """Hand control to centaur in "translate" mode (display routed through UC).
@@ -134,26 +140,38 @@ def perform_centaur_translate_handoff(
     -- which renders them through UC's driver stack onto whatever panel is
     installed (the point of the feature).
 
-    Order: the gateway is started (listening) BEFORE centaur launches, so the
-    first frames are not lost; it is stopped after centaur exits.
+    Order: the serial tap and gateway are both started BEFORE centaur launches --
+    the tap so the port swap is in place when centaur opens the board, the gateway
+    so the first frames are not lost -- and both are torn down after centaur exits.
+    The serial tap starts first and stops last (it owns the physical port); the
+    gateway is nested inside so it is stopped before the port is restored. Both
+    stops run even if launch (or the gateway start) raises, so neither the gateway
+    server nor the swapped port is ever leaked.
 
     Args:
         software_path: Absolute path to the centaur executable.
         start_gateway_fn: Starts the display gateway (socket server + render).
         launch_fn: Launches centaur (blocking) with LD_PRELOAD/socket env set.
         stop_gateway_fn: Stops the gateway after centaur exits.
+        start_serial_fn: Starts the serial tap (PTY swap + relay). Defaults to a
+            no-op so translate mode still works when the tap is not wired.
+        stop_serial_fn: Stops the serial tap and restores the port.
         path_exists_fn: Existence check for the binary (injectable for tests).
 
     Returns:
-        True if centaur was launched; False (without starting the gateway or
+        True if centaur was launched; False (without starting the gateway/tap or
         launching) when the binary is absent.
     """
     if not path_exists_fn(software_path):
         return False
 
-    start_gateway_fn()
+    start_serial_fn()
     try:
-        launch_fn(software_path)
+        start_gateway_fn()
+        try:
+            launch_fn(software_path)
+        finally:
+            stop_gateway_fn()
     finally:
-        stop_gateway_fn()
+        stop_serial_fn()
     return True
