@@ -14,10 +14,13 @@ from universalchess.services.centaur_serial.decoder import (
     rotate_field,
 )
 from universalchess.services.centaur_serial.relay import (
+    DEFAULT_DEVICE,
     SerialTap,
     ThreadedSerialTap,
+    heal_swapped_serial_node,
     pump_commands,
     pump_events,
+    resolve_tap_device,
 )
 from universalchess.services.centaur_serial.web_feedback import PieceInHandTracker
 
@@ -27,9 +30,12 @@ __all__ = [
     "KeyEvent",
     "PieceEvent",
     "rotate_field",
+    "DEFAULT_DEVICE",
     "SerialTap",
     "ThreadedSerialTap",
+    "heal_swapped_serial_node",
     "pump_commands",
     "pump_events",
+    "resolve_tap_device",
     "PieceInHandTracker",
 ]

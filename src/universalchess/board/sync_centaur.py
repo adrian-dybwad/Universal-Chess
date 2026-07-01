@@ -27,7 +27,10 @@ log = logging.getLogger(__name__)
 
 
 from universalchess.board import time_utils
-from universalchess.services.centaur_serial.relay import heal_swapped_serial_node
+from universalchess.services.centaur_serial.relay import (
+    heal_swapped_serial_node,
+    resolve_tap_device,
+)
 
 # Unified command registry
 @dataclass(frozen=True)
@@ -283,13 +286,16 @@ class SyncCentaur:
     def _initialize(self):
         """Open serial connection based on mode.
 
-        Before opening the real board port, self-heal a serial node the Centaur
-        translate-mode serial tap may have left swapped aside. That tap parks the
-        real device at ``/dev/serial0.real`` behind a PTY; if its teardown is
-        interrupted (e.g. this service is killed mid-restore on return from
-        Centaur), ``/dev/serial0`` is left missing and the open below would retry
-        forever. :func:`heal_swapped_serial_node` moves the real node back in that
-        case and is a no-op otherwise. See services/centaur_serial/relay.py.
+        Before opening the board port, self-heal a serial node the Centaur
+        translate-mode serial tap may have left swapped aside. The tap parks the
+        real device at ``<tap-node>.real`` behind a PTY, where ``<tap-node>`` is
+        the node Centaur opens (``/dev/ttyS0`` on the Zero, see
+        :func:`resolve_tap_device`) -- NOT ``/dev/serial0``. If the tap teardown
+        is interrupted (e.g. this service is killed mid-restore on return from
+        Centaur), that node is left as a dead PTY symlink; because
+        ``/dev/serial0`` chains through it, UC's open below would then fail and
+        retry forever. :func:`heal_swapped_serial_node` restores the tap node in
+        that case and is a no-op otherwise. See services/centaur_serial/relay.py.
         """
         if self.developer_mode:
             log.debug("Developer mode enabled - setting up virtual serial port")
@@ -297,7 +303,7 @@ class SyncCentaur:
             time.sleep(10)
             self.ser = serial.Serial("/dev/pts/2", baudrate=1000000, timeout=5.0)
         else:
-            heal_swapped_serial_node(self.SERIAL_DEVICE)
+            heal_swapped_serial_node(resolve_tap_device())
             self.ser = serial.Serial(self.SERIAL_DEVICE, baudrate=1000000, timeout=5.0)
         
     def _listener_thread(self):

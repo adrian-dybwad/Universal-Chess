@@ -4291,6 +4291,7 @@ def _run_centaur_translate():
         SerialTap,
         ThreadedSerialTap,
         PieceInHandTracker,
+        resolve_tap_device,
     )
 
     centaur_dir = os.path.dirname(CENTAUR_SOFTWARE)
@@ -4299,10 +4300,13 @@ def _run_centaur_translate():
 
     # Serial tap: a transparent PTY man-in-the-middle on the board port so UC can
     # observe lift/place and key events while centaur drives the board, and so a
-    # held BACK returns control to UC. The node centaur opens is a device-specific
-    # detail (verification item); UC's own driver uses /dev/serial0, so default to
-    # that and allow an override without a code change.
-    serial_device = os.environ.get("UC_CENTAUR_SERIAL_DEVICE", "/dev/serial0")
+    # held BACK returns control to UC. The tap must swap the EXACT node centaur
+    # opens (verified by strace): /dev/ttyS0 on the Zero/Zero2W, matching the
+    # reference proxy tools/dev-tools/proxies/centaur.py. It must NOT be tapped on
+    # /dev/serial0 -- centaur never opens serial0, so tapping it left centaur on
+    # the real UART while the tap also held it, starving centaur until it hung.
+    # See resolve_tap_device() for the default and the per-hardware override.
+    serial_device = resolve_tap_device()
 
     def _stop_centaur() -> None:
         # Exit gesture: terminating centaur unblocks the blocking launch_fn, which

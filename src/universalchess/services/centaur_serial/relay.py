@@ -183,6 +183,27 @@ def _default_serial_open(device: str, baud: int) -> SerialLike:
     return serial.Serial(device, baudrate=baud, timeout=0.2)
 
 
+def resolve_tap_device() -> str:
+    """The serial node the Centaur binary opens -- and therefore the node to tap.
+
+    The tap only works if it swaps the *exact* node Centaur opens: Centaur is then
+    handed the PTY and the tap becomes the sole opener of the real UART. Get this
+    wrong and Centaur opens the real UART directly while the tap also holds it,
+    and the two fight over the board's replies (Centaur hangs before it draws).
+
+    Defaults to ``/dev/ttyS0`` -- the mini-UART on the Pi Zero / Zero 2W GPIO
+    header that the Centaur binary opens directly, exactly as the reference proxy
+    ``tools/dev-tools/proxies/centaur.py`` does. Overridable via
+    ``UC_CENTAUR_SERIAL_DEVICE`` for hardware where Centaur opens a different node
+    (verify on-device with strace/lsof first): e.g. the CM5/Pi5 has no
+    ``/dev/ttyS0`` and Centaur falls back to ``/dev/ttyAMA0``.
+
+    Note this is distinct from UC's own board node (``/dev/serial0``); Centaur
+    never opens ``/dev/serial0``, which is why it must not be tapped.
+    """
+    return os.environ.get("UC_CENTAUR_SERIAL_DEVICE", DEFAULT_DEVICE)
+
+
 def heal_swapped_serial_node(
     device: str,
     *,

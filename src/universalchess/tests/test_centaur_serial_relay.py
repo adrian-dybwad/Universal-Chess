@@ -28,6 +28,7 @@ from universalchess.services.centaur_serial.relay import (
     heal_swapped_serial_node,
     pump_commands,
     pump_events,
+    resolve_tap_device,
 )
 
 
@@ -221,6 +222,36 @@ def test_restore_moves_real_back_even_if_symlink_removal_raises():
     tap.restore()  # must not raise
 
     assert ["sudo", "mv", "/dev/ttyS0.real", "/dev/ttyS0"] in calls
+
+
+# ---------------------------------------------------------------------------
+# Tap device selection (must be the node Centaur actually opens)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_tap_device_defaults_to_proxy_node(monkeypatch):
+    """Absent an override, the tap targets the reference proxy's /dev/ttyS0.
+
+    Why this test exists: the Centaur binary opens /dev/ttyS0 directly on the
+    Zero/Zero2W (confirmed by strace, and matching tools/dev-tools/proxies/
+    centaur.py). A prior default of /dev/serial0 -- a node Centaur never opens --
+    made the tap swap the wrong node: Centaur grabbed the real UART directly while
+    the tap also held it, starving Centaur of board replies so it hung before
+    drawing. Regression manifests as a default other than /dev/ttyS0.
+    """
+    monkeypatch.delenv("UC_CENTAUR_SERIAL_DEVICE", raising=False)
+    assert resolve_tap_device() == "/dev/ttyS0"
+
+
+def test_resolve_tap_device_honors_override(monkeypatch):
+    """UC_CENTAUR_SERIAL_DEVICE overrides the node for other hardware.
+
+    Why this test exists: on CM5/Pi5 there is no /dev/ttyS0 and Centaur falls back
+    to /dev/ttyAMA0, so the tap must be pointable at a different node without a
+    code change. Regression manifests as the override being ignored.
+    """
+    monkeypatch.setenv("UC_CENTAUR_SERIAL_DEVICE", "/dev/ttyAMA0")
+    assert resolve_tap_device() == "/dev/ttyAMA0"
 
 
 # ---------------------------------------------------------------------------
