@@ -2842,8 +2842,11 @@ function SystemActions() {
   const [directMode, setDirectMode] = useState(false);
   const [directBusy, setDirectBusy] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Outcome of a card action (reset / power / centaur / engine), tagged with the
+  // scope that produced it so it renders inline beside that control instead of in
+  // a single page-top banner detached from its source. Mirrors importResult,
+  // which already scopes the import outcome to the upload button.
+  const [actionOutcome, setActionOutcome] = useState<{ scope: string; ok: boolean; text: string } | null>(null);
   const [showLoginDialog, setShowLoginDialog] = useState(false);
   const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
 
@@ -2945,8 +2948,7 @@ function SystemActions() {
   // so the change resumes after a successful login.
   const updateDirectMode = async (next: boolean) => {
     setDirectBusy(true);
-    setError(null);
-    setMessage(null);
+    setActionOutcome(null);
     try {
       const response = await apiFetch('/api/system/centaur-mode', {
         method: 'POST',
@@ -2960,12 +2962,12 @@ function SystemActions() {
         return;
       }
       if (!response.ok) {
-        setError('Failed to update the Centaur mode setting.');
+        setActionOutcome({ scope: 'centaur', ok: false, text: 'Failed to update the Centaur mode setting.' });
         return;
       }
       setDirectMode(next);
     } catch {
-      setError('Network error');
+      setActionOutcome({ scope: 'centaur', ok: false, text: 'Network error' });
     } finally {
       setDirectBusy(false);
     }
@@ -2976,8 +2978,7 @@ function SystemActions() {
   // On 401, reuse the login-retry plumbing like the other card actions.
   const saveCentaurEngine = async () => {
     setEngineBusy(true);
-    setError(null);
-    setMessage(null);
+    setActionOutcome(null);
     try {
       const options: Record<string, unknown> = {};
       if (centaurElo.trim()) {
@@ -2998,12 +2999,16 @@ function SystemActions() {
         return;
       }
       if (!response.ok) {
-        setError('Failed to save the Centaur engine settings.');
+        setActionOutcome({ scope: 'engine', ok: false, text: 'Failed to save the Centaur engine settings.' });
         return;
       }
-      setMessage('Centaur engine settings saved. They apply the next time Centaur launches.');
+      setActionOutcome({
+        scope: 'engine',
+        ok: true,
+        text: 'Centaur engine settings saved. They apply the next time Centaur launches.',
+      });
     } catch {
-      setError('Network error');
+      setActionOutcome({ scope: 'engine', ok: false, text: 'Network error' });
     } finally {
       setEngineBusy(false);
     }
@@ -3152,35 +3157,35 @@ function SystemActions() {
   // recursive `() => runAction(...)` form does). The ref is kept current by the
   // effect below.
   const runActionRef = useRef<
-    ((key: string, endpoint: string, confirmText: string, successText: string) => Promise<void>) | null
+    ((scope: string, key: string, endpoint: string, confirmText: string, successText: string) => Promise<void>) | null
   >(null);
 
-  // Run a system action: confirm, POST, and surface the outcome. On 401 the
-  // login dialog opens and the action is retried (via the ref) after a
-  // successful login.
+  // Run a system action: confirm, POST, and surface the outcome. ``scope`` tags
+  // where the outcome renders (see actionOutcome) so it appears next to the
+  // control that triggered it. On 401 the login dialog opens and the action is
+  // retried (via the ref) after a successful login.
   const runAction = useCallback(
-    async (key: string, endpoint: string, confirmText: string, successText: string) => {
+    async (scope: string, key: string, endpoint: string, confirmText: string, successText: string) => {
       if (!confirm(confirmText)) return;
       setBusy(key);
-      setError(null);
-      setMessage(null);
+      setActionOutcome(null);
       try {
         const response = await apiFetch(`/api/system/${endpoint}`, { method: 'POST', requiresAuth: true });
         if (response.status === 401) {
           pendingActionRef.current = async () => {
-            await runActionRef.current?.(key, endpoint, confirmText, successText);
+            await runActionRef.current?.(scope, key, endpoint, confirmText, successText);
           };
           setShowLoginDialog(true);
           return;
         }
         const data = await response.json().catch(() => ({}));
         if (response.ok && data.success) {
-          setMessage(successText);
+          setActionOutcome({ scope, ok: true, text: successText });
         } else {
-          setError(data.error || 'Action failed');
+          setActionOutcome({ scope, ok: false, text: data.error || 'Action failed' });
         }
       } catch {
-        setError('Network error');
+        setActionOutcome({ scope, ok: false, text: 'Network error' });
       } finally {
         setBusy(null);
       }
@@ -3192,6 +3197,16 @@ function SystemActions() {
     runActionRef.current = runAction;
   }, [runAction]);
 
+  // Inline outcome banner for a single card action. Renders only for the scope
+  // that produced the current outcome, so each control reports its own result in
+  // place rather than in one detached page-top banner.
+  const renderOutcome = (scope: string) =>
+    actionOutcome && actionOutcome.scope === scope ? (
+      <Card variant={actionOutcome.ok ? 'primary' : 'danger'} className="mt-4">
+        {actionOutcome.ok ? actionOutcome.text : <><strong>Error:</strong> {actionOutcome.text}</>}
+      </Card>
+    ) : null;
+
   return (
     <>
       <LoginDialog
@@ -3202,17 +3217,6 @@ function SystemActions() {
         }}
         onSuccess={handleLoginSuccess}
       />
-
-      {message && (
-        <Card variant="primary" className="mb-6">
-          {message}
-        </Card>
-      )}
-      {error && (
-        <Card variant="danger" className="mb-6">
-          <strong>Error:</strong> {error}
-        </Card>
-      )}
 
       <Card className="mb-6">
         <CardHeader title="Reset" />
@@ -3226,6 +3230,7 @@ function SystemActions() {
             runAction(
               'reset',
               'reset',
+              'reset',
               'Reset all settings to their defaults? This cannot be undone.',
               'Settings reset to defaults.'
             )
@@ -3233,6 +3238,7 @@ function SystemActions() {
         >
           {busy === 'reset' ? 'Resetting...' : 'Reset Settings'}
         </Button>
+        {renderOutcome('reset')}
       </Card>
 
       <Card className="mb-6">
@@ -3247,6 +3253,7 @@ function SystemActions() {
             disabled={busy !== null}
             onClick={() =>
               runAction(
+                'power',
                 'shutdown',
                 'shutdown',
                 'Shut down the board? The web interface will become unavailable.',
@@ -3261,6 +3268,7 @@ function SystemActions() {
             disabled={busy !== null}
             onClick={() =>
               runAction(
+                'power',
                 'reboot',
                 'reboot',
                 'Reboot the board? The web interface will be unavailable until it restarts.',
@@ -3271,6 +3279,7 @@ function SystemActions() {
             {busy === 'reboot' ? 'Rebooting...' : 'Reboot'}
           </Button>
         </div>
+        {renderOutcome('power')}
       </Card>
 
       <Card className="mb-6">
@@ -3296,6 +3305,7 @@ function SystemActions() {
                   disabled={busy !== null}
                   onClick={() =>
                     runAction(
+                      'centaur',
                       'return',
                       'return-to-universal',
                       'Return to Universal Chess? This stops the original Centaur software and restarts Universal Chess on the board.',
@@ -3312,6 +3322,7 @@ function SystemActions() {
                   onClick={() =>
                     runAction(
                       'centaur',
+                      'centaur',
                       'run-centaur',
                       'Switch to the original DGT Centaur software? This stops Universal Chess on the board; this web interface stays available so you can return to Universal Chess from here.',
                       'Launching the original Centaur software. Use Return to Universal Chess to come back.'
@@ -3322,6 +3333,7 @@ function SystemActions() {
                 </Button>
               )}
             </div>
+            {renderOutcome('centaur')}
             <div className="mt-6">
               <CardHeader title="Engine" />
               <p className="text-muted mb-4">
@@ -3372,6 +3384,7 @@ function SystemActions() {
               >
                 {engineBusy ? 'Saving...' : 'Save engine settings'}
               </Button>
+              {renderOutcome('engine')}
             </div>
             <div className="mt-4">
               <button
