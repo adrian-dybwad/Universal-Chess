@@ -25,6 +25,7 @@ from universalchess.services.centaur_serial.decoder import (
 from universalchess.services.centaur_serial.relay import (
     SerialTap,
     ThreadedSerialTap,
+    heal_swapped_serial_node,
     pump_commands,
     pump_events,
 )
@@ -154,6 +155,42 @@ def test_restore_removes_symlink_and_moves_real_back():
     ]
 
 
+def test_restore_is_noop_when_not_swapped():
+    """restore() touches no device node when ``.real`` is absent.
+
+    Why this test exists: guards the switch-back regression that stranded the
+    board. ``/dev/ttyS0`` is normally a udev symlink to the real UART, so the old
+    restore -- which removed it whenever it was *any* symlink -- would delete the
+    restored node on a second (idempotent) restore call, leaving UC with no port
+    to open and retrying forever. With ``.real`` absent (already restored / never
+    swapped) restore must issue no rm and no mv. Regression manifests as an
+    ``rm``/``mv`` appearing here, i.e. the real device being deleted.
+    """
+    tap, run_log, _ = make_tap(real_exists=False, is_link=True)
+    run_log.clear()
+
+    tap.restore()
+
+    assert run_log == []
+
+
+def test_restore_heals_when_device_missing_but_real_present():
+    """restore() moves ``.real`` back even when our symlink is already gone.
+
+    Why this test exists: a teardown interrupted after the symlink was removed
+    (device missing) but before the move-back leaves the real device parked at
+    ``.real``. Re-running restore must complete the move-back and must NOT try to
+    rm the (nonexistent) device. Regression manifests as a spurious ``rm`` or the
+    ``mv`` being skipped, leaving the board unusable until reboot.
+    """
+    tap, run_log, _ = make_tap(real_exists=True, is_link=False)
+    run_log.clear()
+
+    tap.restore()
+
+    assert run_log == [["sudo", "mv", "/dev/ttyS0.real", "/dev/ttyS0"]]
+
+
 def test_restore_moves_real_back_even_if_symlink_removal_raises():
     """A failure removing the symlink must not prevent moving ``.real`` back.
 
@@ -184,6 +221,69 @@ def test_restore_moves_real_back_even_if_symlink_removal_raises():
     tap.restore()  # must not raise
 
     assert ["sudo", "mv", "/dev/ttyS0.real", "/dev/ttyS0"] in calls
+
+
+# ---------------------------------------------------------------------------
+# Swapped-node self-heal (called by UC's board controller before opening)
+# ---------------------------------------------------------------------------
+
+
+def _exists_map(present):
+    """Return an exists_fn that reports True only for paths in ``present``."""
+    return lambda path: path in present
+
+
+def test_heal_moves_real_back_when_device_missing():
+    """When the device is gone but ``.real`` remains, the real node is moved back.
+
+    Why this test exists: this is the switch-back recovery. If a tap teardown was
+    interrupted (UC killed mid-restore), /dev/serial0 is missing while
+    /dev/serial0.real holds the hardware; UC must move it back before opening or
+    it retries the open forever. Asserts the exact mv and a True (healed) result.
+    Regression manifests as no mv issued (board never reconnects) or a wrong path.
+    """
+    calls = []
+    healed = heal_swapped_serial_node(
+        "/dev/serial0",
+        exists_fn=_exists_map({"/dev/serial0.real"}),
+        run_cmd=calls.append,
+    )
+    assert healed is True
+    assert calls == [["sudo", "mv", "/dev/serial0.real", "/dev/serial0"]]
+
+
+def test_heal_is_noop_when_device_present():
+    """A present device is left untouched (the normal, non-swapped case).
+
+    Why this test exists: the heal must never disturb a healthy node. With the
+    device present, no command may run and the result is False. Regression
+    manifests as a spurious mv that would clobber the live port.
+    """
+    calls = []
+    healed = heal_swapped_serial_node(
+        "/dev/serial0",
+        exists_fn=_exists_map({"/dev/serial0", "/dev/serial0.real"}),
+        run_cmd=calls.append,
+    )
+    assert healed is False
+    assert calls == []
+
+
+def test_heal_is_noop_when_nothing_to_restore():
+    """No device and no ``.real`` -> nothing to do (not a swapped state).
+
+    Why this test exists: absent both nodes, there is no parked real device to
+    restore, so heal must not fabricate a move. Regression manifests as an mv of
+    a nonexistent ``.real`` that would fail or create a broken node.
+    """
+    calls = []
+    healed = heal_swapped_serial_node(
+        "/dev/serial0",
+        exists_fn=_exists_map(set()),
+        run_cmd=calls.append,
+    )
+    assert healed is False
+    assert calls == []
 
 
 # ---------------------------------------------------------------------------

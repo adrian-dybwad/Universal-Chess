@@ -183,6 +183,43 @@ def _default_serial_open(device: str, baud: int) -> SerialLike:
     return serial.Serial(device, baudrate=baud, timeout=0.2)
 
 
+def heal_swapped_serial_node(
+    device: str,
+    *,
+    exists_fn: Callable[[str], bool] = os.path.exists,
+    run_cmd: Callable[[List[str]], None] = _default_run_cmd,
+) -> bool:
+    """Move a real serial node back if the tap left it swapped aside.
+
+    The tap parks the real device at ``{device}.real`` while a PTY stands in at
+    ``device``. :meth:`SerialTap.restore` normally undoes that, but it can only
+    run if the launching process survives to call it -- if the Universal Chess
+    service is killed mid-teardown, ``device`` is left missing (its symlink
+    removed) while ``{device}.real`` still holds the hardware. The next process
+    to open the board (UC's controller at startup) then finds no port and retries
+    the open indefinitely, which looks like a hang on return from Centaur.
+
+    This heal detects exactly that state -- ``device`` absent while
+    ``{device}.real`` present -- and moves the real node back before the open. It
+    is a no-op in the normal case (``device`` present), so it is safe to call
+    unconditionally at startup. Best-effort: any failure surfaces on the
+    subsequent open rather than here. Returns True iff a move was issued.
+
+    Complements (does not replace) :meth:`SerialTap.restore`, which self-heals
+    only when it actually gets to run.
+    """
+    real = f"{device}.real"
+    if not exists_fn(device) and exists_fn(real):
+        log.warning(
+            "[SerialTap] %s missing but %s present; restoring swapped serial node",
+            device,
+            real,
+        )
+        run_cmd(["sudo", "mv", real, device])
+        return True
+    return False
+
+
 class SerialTap:
     """Owns the /dev/ttyS0 <-> PTY swap and the real-device handle.
 
@@ -288,13 +325,21 @@ class SerialTap:
                     log.debug("[SerialTap] fd close during restore failed: %s", exc)
                 setattr(self, fd_attr, None)
 
-        # Remove our symlink, then move the real device back into place. Each is
-        # guarded independently so a failure removing the symlink still attempts
-        # the (more important) move-back; leaving the real device stranded behind
-        # a symlink would break the board until reboot.
-        if self._islink_fn(self._device):
-            self._run_node_cmd(["sudo", "rm", "-f", self._device])
+        # Restore the device nodes ONLY when the real device is actually parked
+        # at ``.real`` -- that presence is the marker that we are in the swapped
+        # state. If ``.real`` is absent (never swapped, or a prior restore already
+        # completed) do nothing: in that state ``self._device`` is the real device
+        # itself (a udev symlink to the UART), and removing it would strand the
+        # board until reboot. Gating on ``.real`` this way makes restore
+        # idempotent (safe to call more than once -- the second call is a no-op
+        # instead of deleting the just-restored node) and lets it self-heal a
+        # half-torn-down state: if the symlink was already removed (device
+        # missing) but ``.real`` remains, the move-back still runs. The rm is
+        # attempted before the mv but guarded independently so its failure does
+        # not skip the (more important) move-back.
         if self._exists_fn(self._real):
+            if self._islink_fn(self._device):
+                self._run_node_cmd(["sudo", "rm", "-f", self._device])
             self._run_node_cmd(["sudo", "mv", self._real, self._device])
 
     def _run_node_cmd(self, cmd: List[str]) -> None:

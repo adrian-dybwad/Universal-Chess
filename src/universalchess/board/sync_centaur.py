@@ -27,6 +27,7 @@ log = logging.getLogger(__name__)
 
 
 from universalchess.board import time_utils
+from universalchess.services.centaur_serial.relay import heal_swapped_serial_node
 
 # Unified command registry
 @dataclass(frozen=True)
@@ -146,7 +147,12 @@ class SyncCentaur:
         centaur.wait_ready()
         payload = centaur.request_response("DGT_BUS_SEND_CHANGES", timeout=1.5)
     """
-    
+
+    # The board's primary UART on the Pi. ``/dev/serial0`` is the udev-managed
+    # symlink to the active UART; the Centaur translate-mode serial tap swaps it
+    # aside to ``/dev/serial0.real`` while running, so _initialize self-heals it.
+    SERIAL_DEVICE = "/dev/serial0"
+
     def __init__(self, developer_mode=False, auto_init=True):
         """
         Initialize serial connection to the board.
@@ -275,19 +281,24 @@ class SyncCentaur:
         return self.ready
     
     def _initialize(self):
-        """Open serial connection based on mode"""
+        """Open serial connection based on mode.
+
+        Before opening the real board port, self-heal a serial node the Centaur
+        translate-mode serial tap may have left swapped aside. That tap parks the
+        real device at ``/dev/serial0.real`` behind a PTY; if its teardown is
+        interrupted (e.g. this service is killed mid-restore on return from
+        Centaur), ``/dev/serial0`` is left missing and the open below would retry
+        forever. :func:`heal_swapped_serial_node` moves the real node back in that
+        case and is a no-op otherwise. See services/centaur_serial/relay.py.
+        """
         if self.developer_mode:
             log.debug("Developer mode enabled - setting up virtual serial port")
-            os.system("socat -d -d pty,raw,echo=0 pty,raw,echo=0 &")
+            os.system("socat -d -d pty,raw,echo=0 pty,raw,echo=0 &")  # noqa: S605,S607  # nosec B605 B607 - dev-only fixed command
             time.sleep(10)
             self.ser = serial.Serial("/dev/pts/2", baudrate=1000000, timeout=5.0)
         else:
-            try:
-                self.ser = serial.Serial("/dev/serial0", baudrate=1000000, timeout=5.0)
-                self.ser.isOpen()
-            except:
-                self.ser.close()
-                self.ser.open()
+            heal_swapped_serial_node(self.SERIAL_DEVICE)
+            self.ser = serial.Serial(self.SERIAL_DEVICE, baudrate=1000000, timeout=5.0)
         
     def _listener_thread(self):
         """Continuously listen for data on the serial port.
@@ -432,7 +443,7 @@ class SyncCentaur:
                                 log.error(
                                     f"[SyncCentaur] checksum mismatch: {' '.join(f'{b:02x}' for b in self.response_buffer)}"
                                 )
-                            except Exception:
+                            except Exception:  # noqa: S110 - log handlers may be closed during shutdown  # nosec B110
                                 pass
                             # Check if there's a waiting request for this packet type
                             # Deliver failure response to unblock waiting request
@@ -730,7 +741,7 @@ class SyncCentaur:
                         # Both queues empty - wait briefly on main queue
                         try:
                             request = self._request_queue.get(timeout=0.05)
-                        except queue.Empty:
+                        except queue.Empty:  # noqa: S112 - idle poll; loop again
                             continue
                 
                 if request is None:
@@ -744,8 +755,8 @@ class SyncCentaur:
                     # Remove the oldest occurrence if it exists
                     try:
                         self._last_n_commands.remove(command_name)
-                    except ValueError:
-                        pass  # Not in deque (shouldn't happen, but safe)
+                    except ValueError:  # noqa: S110 - not in deque (shouldn't happen, but safe)
+                        pass
                 
                 try:
                     # Check if serial port is still valid before executing
@@ -1258,7 +1269,7 @@ class SyncCentaur:
         """Turn off LEDs"""
         try:
             self.ledsOff()
-        except Exception:
+        except Exception:  # noqa: S110 - best-effort teardown  # nosec B110
             pass
     
     def _cleanup_waiters(self):
@@ -1266,7 +1277,7 @@ class SyncCentaur:
         try:
             with self._waiter_lock:
                 self._response_waiter = None
-        except Exception:
+        except Exception:  # noqa: S110 - best-effort teardown  # nosec B110
             pass
     
     def _cleanup_serial(self):
@@ -1274,7 +1285,7 @@ class SyncCentaur:
         try:
             log.info(f"Clearing response buffer in _cleanup_serial")
             self.response_buffer = bytearray()
-        except Exception:
+        except Exception:  # noqa: S110 - best-effort teardown  # nosec B110
             pass
         try:
             if self.ser:
@@ -1289,9 +1300,9 @@ class SyncCentaur:
                     except Exception:
                         try:
                             self.ser.read(10000)
-                        except Exception:
+                        except Exception:  # noqa: S110 - best-effort drain  # nosec B110
                             pass
-        except Exception:
+        except Exception:  # noqa: S110 - best-effort drain  # nosec B110
             pass
         
         self.ready = False
@@ -1300,7 +1311,7 @@ class SyncCentaur:
                 self.ser.close()
                 self.ser = None
                 log.info("Serial port closed")
-        except Exception:
+        except Exception:  # noqa: S110 - best-effort close  # nosec B110
             pass
     
     def beep(self, sound_name: str):
