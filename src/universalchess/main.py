@@ -4785,47 +4785,17 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
         else:
             log.info("[Cleanup] Mainloop was None")
         
-        # For system shutdown (not reboot), check for pending update first,
-        # then display splash, call board.shutdown() for visual feedback (beep, LEDs)
-        # and to send the sleep command to the controller. This prevents battery drain.
-        # For reboot, we skip the sleep command as the board will restart anyway.
-        # For SIGINT/normal exit, we don't shutdown the controller.
+        # For system shutdown (not reboot), display splash, call board.shutdown()
+        # for visual feedback (beep, LEDs) and send the sleep command to the
+        # controller. This prevents battery drain. For reboot, we skip the sleep
+        # command as the board will restart anyway. For SIGINT/normal exit, we
+        # don't shutdown the controller.
+        #
+        # Updates are never installed here: auto-update stages a build at startup
+        # and the user installs it explicitly from Settings -> System (which runs
+        # the detached install and restarts onto the new version). Shutdown stays
+        # a pure power-down path.
         if system_shutdown and not reboot:
-            # Check for pending update - if present, install it instead of shutdown
-            from universalchess.services.update_service import get_update_service
-            update_service = get_update_service()
-            
-            if update_service.has_pending_update():
-                log.info('[Cleanup] Pending update found - installing instead of shutdown')
-                board.beep(board.SOUND_POWER_OFF)
-                
-                # Display update splash
-                _show_shutdown_splash("Installing\nupdate...", timeout=5.0)
-                
-                # All LEDs for update install
-                try:
-                    from universalchess.utils.led import LED_SPEED_NORMAL, LED_INTENSITY_DEFAULT
-                    board.ledArray([0,1,2,3,4,5,6,7],
-                                   intensity=LED_INTENSITY_DEFAULT,
-                                   speed=LED_SPEED_NORMAL,
-                                   repeat=0)
-                except Exception as e:
-                    log.debug("Update-install LED pattern failed (non-critical): %s", e)
-                
-                import time
-                time.sleep(2)
-
-                # The install runs in a transient systemd unit and the
-                # package postinst restarts this service onto the new
-                # version. install_pending_update returns once the install
-                # is launched; do not power the controller down here, or the
-                # in-progress install would be interrupted.
-                if update_service.install_pending_update():
-                    log.info("[Cleanup] Update launched - board will restart on new version")
-                else:
-                    log.error("[Cleanup] Update install failed to launch")
-                return
-            
             # Display shutdown splash screen
             log.info("[Cleanup] Displaying shutdown splash screen...")
             _show_shutdown_splash("Press [\u25b6]", timeout=5.0, show_battery=True)
@@ -5270,16 +5240,18 @@ def main():
         log.error(f"[Main] Failed to load game settings: {e}", exc_info=True)
         # Continue anyway - settings are not critical
 
-    # Check for pending update from previous download
+    # Auto-update runs at startup only, and only ever *stages* an update -- it
+    # checks the channel and downloads the newest build in the background, never
+    # installing (an install restarts the services and would interrupt play). A
+    # toolbar indicator then invites the user to install it from Settings ->
+    # System. Gated on the auto-update setting; a no-op when it is off. The
+    # download is backgrounded, so a slow/absent network never delays boot.
     try:
         from universalchess.services.update_service import get_update_service
-        update_service = get_update_service()
-        if update_service.has_pending_update():
-            log.info("[Main] Pending update detected - will install on shutdown")
-            # We don't install on startup to avoid interrupting boot
-            # Instead, show a status indicator and install on next shutdown
+        outcome = get_update_service().run_startup_update_check()
+        log.info(f"[Main] Auto-update startup check: {outcome}")
     except Exception as e:
-        log.debug(f"[Main] Update service check failed: {e}")
+        log.debug(f"[Main] Auto-update startup check failed: {e}")
 
     try:
         log.info("[Main] Initializing MenuManager...")

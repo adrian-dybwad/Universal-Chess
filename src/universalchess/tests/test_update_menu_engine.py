@@ -110,12 +110,12 @@ def test_auto_update_toggle_icon_and_label_track_state():
 
     on_ctx = _update_ctx(auto_update=True)
     on_row = {r.key: r for r in build_rows("updates", on_ctx, platform="board", catalog=catalog)}["AutoUpdate"]
-    assert on_row.label == "Auto-Update\nEnabled"
+    assert on_row.label == "Auto Download\nEnabled"
     assert resolve_icon(node, on_ctx) == "checkbox_checked"
 
     off_ctx = _update_ctx(auto_update=False)
     off_row = {r.key: r for r in build_rows("updates", off_ctx, platform="board", catalog=catalog)}["AutoUpdate"]
-    assert off_row.label == "Auto-Update\nDisabled"
+    assert off_row.label == "Auto Download\nDisabled"
     assert resolve_icon(node, off_ctx) == "checkbox_empty"
 
     dispatch(node, off_ctx)

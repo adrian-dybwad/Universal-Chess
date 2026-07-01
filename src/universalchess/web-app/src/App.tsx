@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Link, Navigate } from 'react-router-dom';
 import { BackgroundActivityBanner } from './components/BackgroundActivityBanner';
+import { UpdateBanner } from './components/UpdateBanner';
 import { Navbar } from './components/Navbar';
 import { DocumentTitle } from './components/DocumentTitle';
 import { GameStateProvider } from './components/GameStateProvider';
@@ -23,6 +24,7 @@ function App() {
       <GameStateProvider>
         <DocumentTitle />
         <div className="app">
+          <UpdateBanner />
           <BackgroundActivityBanner />
           <Navbar />
         

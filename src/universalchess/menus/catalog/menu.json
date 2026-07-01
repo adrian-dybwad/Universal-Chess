@@ -752,9 +752,9 @@
       "id": "updates.auto",
       "key": "AutoUpdate",
       "type": "toggle",
-      "label": "Auto-Update",
-      "boardLabel": "Auto-Update\n{fn:auto_update_state}",
-      "help": "Automatically download updates when available.",
+      "label": "Auto Download",
+      "boardLabel": "Auto Download\n{fn:auto_update_state}",
+      "help": "Automatically download updates in the background; install them yourself when ready.",
       "bind": { "store": "update", "key": "auto_update" },
       "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
       "platforms": ["board"]
@@ -1089,8 +1089,8 @@
     {
       "id": "field.system.auto_update",
       "type": "toggle",
-      "label": "Auto-Update",
-      "help": "Automatically download updates when available",
+      "label": "Auto Download Updates",
+      "help": "Automatically download new versions in the background so they are ready to install. Updates are never installed on their own; you choose when to install.",
       "section": "system",
       "platforms": ["web"]
     },

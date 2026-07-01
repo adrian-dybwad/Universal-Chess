@@ -16,7 +16,7 @@ The update state is stored in /opt/universalchess/update-state.json and includes
 """
 
 import json
-import subprocess
+import subprocess  # nosec B404 - only runs fixed, trusted argv lists (dpkg-query/curl/wget/systemctl and the pinned install helper); no shell, no user input
 import threading
 import time
 from dataclasses import dataclass, field, asdict
@@ -201,19 +201,22 @@ class UpdateService:
         if VERSION_FILE.exists():
             try:
                 return VERSION_FILE.read_text().strip()
-            except Exception:
-                pass
+            except OSError as e:
+                # Fall through to the dpkg query; log so a persistent read/permission
+                # problem on the VERSION file is diagnosable.
+                log.debug(f"[UpdateService] Could not read {VERSION_FILE}: {e}")
         
         # Fallback to dpkg
         try:
-            result = subprocess.run(
-                ["dpkg-query", "-W", "-f=${Version}", "universal-chess"],
+            result = subprocess.run(  # noqa: S603, S607  # nosec B603 B607 - fixed argv, no shell
+                ["dpkg-query", "-W", "-f=${Version}", "universal-chess"],  # noqa: S607
                 capture_output=True, text=True, timeout=5
             )
             if result.returncode == 0 and result.stdout.strip():
                 return result.stdout.strip()
-        except Exception:
-            pass
+        except (OSError, subprocess.SubprocessError) as e:
+            # dpkg-query missing or timed out; version stays "unknown".
+            log.debug(f"[UpdateService] dpkg-query for version failed: {e}")
         
         return "unknown"
     
@@ -235,12 +238,42 @@ class UpdateService:
     def is_auto_update_enabled(self) -> bool:
         """Check if auto-update is enabled."""
         return self._state.auto_update
-    
+
     def set_auto_update(self, enabled: bool) -> None:
         """Enable or disable auto-update."""
         self._state.auto_update = enabled
         self._save_state()
         log.info(f"[UpdateService] Auto-update {'enabled' if enabled else 'disabled'}")
+
+    def run_startup_update_check(self) -> str:
+        """Auto-update step, run once at board startup.
+
+        Deliberately never installs: on a chess board an update must not be
+        applied on its own, because the install restarts the services and would
+        interrupt play. Auto-update only *stages* a build -- it checks the
+        release channel and downloads the newest one in the background -- and a
+        toolbar indicator then invites the user to install it from Settings ->
+        System at their convenience.
+
+        Gated on the auto-update preference (a no-op when off, so manual users
+        keep full control). When an update is already downloaded and waiting to
+        be installed, startup leaves it in place rather than re-downloading over
+        it. The download runs on a background thread so a slow or absent network
+        never stalls boot.
+
+        Returns a short status token for logging and tests:
+          - "disabled": auto-update is off; nothing done.
+          - "pending":  an update is already staged; left for the user to install.
+          - "checking": a background check+download was started.
+        """
+        if not self.is_auto_update_enabled():
+            return "disabled"
+        if self.has_pending_update():
+            log.info("[UpdateService] Auto-update: an update is already staged; awaiting user install")
+            return "pending"
+        log.info("[UpdateService] Auto-update: checking and downloading in background")
+        self.check_and_download_async()
+        return "checking"
     
     # =========================================================================
     # Update Checking
@@ -312,8 +345,8 @@ class UpdateService:
     def _fetch_releases(self) -> List[ReleaseInfo]:
         """Fetch releases from GitHub API."""
         try:
-            result = subprocess.run(
-                ["curl", "-s", "-H", "Accept: application/vnd.github+json", GITHUB_API_URL],
+            result = subprocess.run(  # noqa: S603, S607  # nosec B603 B607 - fixed argv to a constant GitHub API URL, no shell
+                ["curl", "-s", "-H", "Accept: application/vnd.github+json", GITHUB_API_URL],  # noqa: S607
                 capture_output=True, text=True, timeout=30
             )
             
@@ -490,8 +523,8 @@ class UpdateService:
             
             log.info(f"[UpdateService] Downloading {release.download_url}")
             
-            result = subprocess.run(
-                ["wget", "-q", "-O", str(deb_path), release.download_url],
+            result = subprocess.run(  # noqa: S603, S607  # nosec B603 B607 - fixed argv; URL comes from the release metadata this service fetched, no shell
+                ["wget", "-q", "-O", str(deb_path), release.download_url],  # noqa: S607
                 capture_output=True, text=True, timeout=600
             )
             
@@ -522,15 +555,27 @@ class UpdateService:
     # =========================================================================
     
     def has_pending_update(self) -> bool:
-        """Check if there's a pending update to install."""
-        if self._state.pending_deb:
-            return Path(self._state.pending_deb).exists()
-        return False
-    
+        """Whether a downloaded update is staged and ready to install.
+
+        Reads the persisted state fresh so the answer is correct across
+        processes: auto-update downloads run in the board process while the web
+        process (which serves the "install" action and the navbar indicator)
+        holds its own in-memory state. Returns True only if the recorded .deb
+        still exists on disk.
+        """
+        return self.get_pending_update_path() is not None
+
     def get_pending_update_path(self) -> Optional[Path]:
-        """Get path to pending update .deb."""
-        if self._state.pending_deb:
-            path = Path(self._state.pending_deb)
+        """Path to the staged pending .deb, or None if nothing is staged.
+
+        Sourced from the persisted state (not this instance's in-memory copy) so
+        a build downloaded by another process is visible here. The .deb must
+        still exist on disk; a marker pointing at a missing file reads as no
+        pending update.
+        """
+        pending_deb = self._load_state().pending_deb
+        if pending_deb:
+            path = Path(pending_deb)
             if path.exists():
                 return path
         return None
@@ -542,24 +587,31 @@ class UpdateService:
             if path.exists():
                 try:
                     path.unlink()
-                except Exception:
-                    pass
+                except OSError as e:
+                    # Best-effort cleanup of the staged .deb; a leftover file is
+                    # harmless (it is overwritten on the next download).
+                    log.debug(f"[UpdateService] Could not remove staged update {path}: {e}")
         self._state.pending_deb = None
         self._save_state()
     
     def install_pending_update(self) -> bool:
         """Install the pending (already downloaded) update.
 
+        The pending .deb is resolved from the persisted state, so this installs a
+        build staged by another process too -- e.g. the web "Install" action
+        installing what auto-update downloaded in the board process.
+
         Returns:
             True if the install was launched, False if there is no pending
             update or the launch failed. See ``install_update`` for the
             meaning of "launched".
         """
-        if not self.has_pending_update():
+        pending = self.get_pending_update_path()
+        if pending is None:
             log.error("[UpdateService] No pending update")
             return False
 
-        return self.install_update(Path(self._state.pending_deb))
+        return self.install_update(pending)
 
     def install_update(self, deb_path: Path) -> bool:
         """Install an update from a .deb file.
@@ -620,8 +672,8 @@ class UpdateService:
         """
         try:
             log.info(f"[UpdateService] Launching install helper for {deb_path}")
-            result = subprocess.run(
-                ["sudo", "-n", INSTALL_HELPER, str(deb_path)],
+            result = subprocess.run(  # noqa: S603, S607  # nosec B603 B607 - fixed argv to a pinned helper path under a locked-down sudo grant, no shell
+                ["sudo", "-n", INSTALL_HELPER, str(deb_path)],  # noqa: S607
                 capture_output=True, text=True, timeout=30,
             )
 
@@ -709,36 +761,47 @@ class UpdateService:
         so the systemd unit is the only source of truth shared across both.
         """
         try:
-            result = subprocess.run(
-                ["systemctl", "is-active", INSTALL_UNIT],
+            result = subprocess.run(  # noqa: S603, S607  # nosec B603 B607 - fixed argv, no shell
+                ["systemctl", "is-active", INSTALL_UNIT],  # noqa: S607
                 capture_output=True, text=True, timeout=5,
             )
             if result.stdout.strip() == "active":
                 return True
-        except Exception:
-            pass
+        except (OSError, subprocess.SubprocessError) as e:
+            # systemctl unavailable/timed out; fall back to the in-process flag.
+            log.debug(f"[UpdateService] systemctl is-active check failed: {e}")
         return self._installing
     
     def get_status_dict(self) -> dict:
         """Get status as dictionary (for API/UI).
 
-        ``is_installing`` is taken from :meth:`is_installing` (which queries the
-        transient install unit), NOT the in-memory ``self._installing`` flag.
-        The install runs detached in a systemd unit and may be launched by the
-        board process while the web process serves this status; the in-memory
-        flag is per-process and never reflects an install started elsewhere or
-        before a page refresh. Reading the unit makes the in-progress state
-        correct cross-process and after a reload, so the UI can show "installing"
-        instead of re-offering an Install button that collides with the running
-        install.
+        The persisted fields (channel, auto_update, pending/available, last_check)
+        are read from a FRESH on-disk snapshot rather than this instance's
+        in-memory ``self._state``. The board process and the web process each
+        hold their own UpdateService singleton, and either may change the
+        persisted state -- notably the board process stages an auto-update
+        download at startup while the web process serves this status for the
+        navbar's "update ready" indicator. Reading the snapshot makes the status
+        reflect a change made by the other process without waiting for a service
+        restart. The read is non-destructive (it does not replace ``self._state``)
+        so it cannot clobber an in-flight download/check mutating this instance.
+
+        ``is_installing`` is likewise cross-process: it queries the transient
+        install unit (see :meth:`is_installing`), not the per-process
+        ``self._installing`` flag. The volatile progress flags
+        (``is_checking``/``is_downloading``) are intentionally per-process --
+        they report activity in THIS process only.
         """
+        persisted = self._load_state()
+        pending_deb = persisted.pending_deb
+        has_pending = bool(pending_deb) and Path(pending_deb).exists()
         return {
-            "channel": self._state.channel,
-            "auto_update": self._state.auto_update,
-            "current_version": self._state.current_version or self.get_current_version(),
-            "available_version": self._state.available_version,
-            "has_pending_update": self.has_pending_update(),
-            "last_check": self._state.last_check,
+            "channel": persisted.channel,
+            "auto_update": persisted.auto_update,
+            "current_version": persisted.current_version or self.get_current_version(),
+            "available_version": persisted.available_version,
+            "has_pending_update": has_pending,
+            "last_check": persisted.last_check,
             "is_checking": self._checking,
             "is_downloading": self._downloading,
             "is_installing": self.is_installing(),
@@ -755,23 +818,4 @@ def get_update_service() -> UpdateService:
     if _update_service is None:
         _update_service = UpdateService()
     return _update_service
-
-
-def install_pending_update_on_startup() -> bool:
-    """Check for and install a pending update.
-
-    The install runs in a transient systemd unit (see install_update), so
-    it is safe to call from any context -- it is not killed when the
-    services are restarted by the postinst.
-
-    Returns:
-        True if an install was launched, False otherwise.
-    """
-    service = get_update_service()
-    
-    if service.has_pending_update():
-        log.info("[UpdateService] Pending update found - installing")
-        return service.install_pending_update()
-    
-    return False
 

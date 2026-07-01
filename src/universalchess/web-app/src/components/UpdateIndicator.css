@@ -1,0 +1,23 @@
+/* The update indicator reuses the navbar control-icon layout but stands out with
+ * an accent color and a gentle pulse, so a downloaded-and-ready update is easy to
+ * notice without adding a persistent badge. */
+.navbar-update-icon {
+  color: var(--update-ready, #2e8b57);
+  animation: navbar-update-pulse 2s ease-in-out infinite;
+}
+
+@keyframes navbar-update-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .navbar-update-icon {
+    animation: none;
+  }
+}

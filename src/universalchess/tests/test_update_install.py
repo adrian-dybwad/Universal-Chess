@@ -24,6 +24,7 @@ would manifest if the install path reverted to running the installer inline,
 in a setsid child, via bare dpkg, or with a broad sudo grant.
 """
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -294,9 +295,38 @@ class TestInstallPending:
     def test_installs_pending_deb(self, service, tmp_path):
         """A present pending .deb must be handed to install_update. Regression:
         a broken hand-off leaves a downloaded update that can never install.
+
+        The pending marker is persisted (not just set in memory) because the
+        install path resolves it from disk -- see the cross-process test below.
         """
         deb = _make_deb(tmp_path)
         service._state.pending_deb = str(deb)
+        service._save_state()
+
+        with patch.object(service, "install_update", return_value=True) as mock_install:
+            assert service.install_pending_update() is True
+            mock_install.assert_called_once_with(deb)
+
+    def test_pending_downloaded_by_other_process_is_visible(self, service, tmp_path):
+        """A .deb staged by ANOTHER process (recorded only in the on-disk state,
+        not this instance's memory) must be seen as pending and be installable.
+
+        This is the auto-update path: the board process downloads and records the
+        pending .deb, while the web process -- a separate UpdateService instance --
+        serves the navbar indicator and the Install action. Regression: if these
+        read the in-memory _state instead of disk, the web process's stale state
+        (pending_deb=None) would hide the update, so the indicator never appears
+        and Install refuses -- the feature would silently do nothing.
+        """
+        deb = _make_deb(tmp_path)
+        # Simulate the other process: write the marker to disk WITHOUT touching
+        # this instance's in-memory state.
+        state_on_disk = us.UpdateState(pending_deb=str(deb))
+        us.STATE_FILE.write_text(json.dumps(state_on_disk.to_dict()))
+        assert service._state.pending_deb is None  # in-memory copy is stale
+
+        assert service.has_pending_update() is True
+        assert service.get_status_dict()["has_pending_update"] is True
 
         with patch.object(service, "install_update", return_value=True) as mock_install:
             assert service.install_pending_update() is True
@@ -311,6 +341,60 @@ class TestInstallLocalDeb:
         passing a bad path to systemd-run fails silently in the background.
         """
         assert service.install_local_deb("/does/not/exist.deb") is False
+
+
+class TestStartupUpdateCheck:
+    """run_startup_update_check stages an update at boot without ever installing.
+
+    The product decision for a chess appliance: auto-update NEVER installs on its
+    own (a surprise restart could interrupt play). Startup only checks the channel
+    and downloads the newest build in the background; a toolbar icon then signals
+    the user, who installs it manually from Settings -> System. These tests pin
+    that contract so a future change cannot silently reintroduce an auto-install.
+    """
+
+    def test_disabled_does_nothing(self, service):
+        """With auto-update off, startup must not check, download, or install.
+        Regression: if the gate is dropped, every boot would hit the network and
+        stage updates the user never asked to auto-manage.
+        """
+        service._state.auto_update = False
+        with patch.object(service, "check_and_download_async") as mock_dl, \
+             patch.object(service, "install_pending_update") as mock_install:
+            assert service.run_startup_update_check() == "disabled"
+            mock_dl.assert_not_called()
+            mock_install.assert_not_called()
+
+    def test_enabled_without_pending_downloads_in_background(self, service):
+        """Auto-update on, nothing staged yet: startup kicks off a background
+        check+download so the update is ready to install later. Regression: if
+        this did a blocking check, boot would stall on a slow/absent network; if
+        it did nothing, auto-update would never stage anything.
+        """
+        service._state.auto_update = True
+        service._state.pending_deb = None
+        with patch.object(service, "check_and_download_async") as mock_dl, \
+             patch.object(service, "install_pending_update") as mock_install:
+            assert service.run_startup_update_check() == "checking"
+            mock_dl.assert_called_once()
+            mock_install.assert_not_called()
+
+    def test_enabled_with_pending_does_not_reinstall_or_redownload(self, service, tmp_path):
+        """Auto-update on with an update already downloaded: startup must NOT
+        install it (no auto-install, ever) and must NOT re-download over it (the
+        staged build is already waiting for the user). Regression: auto-installing
+        here is exactly the surprise-restart behavior this feature removed; re-
+        downloading would churn the pending .deb the user is about to install.
+        """
+        service._state.auto_update = True
+        deb = _make_deb(tmp_path)
+        service._state.pending_deb = str(deb)
+        service._save_state()  # pending is resolved from disk (cross-process truth)
+        with patch.object(service, "check_and_download_async") as mock_dl, \
+             patch.object(service, "install_pending_update") as mock_install:
+            assert service.run_startup_update_check() == "pending"
+            mock_dl.assert_not_called()
+            mock_install.assert_not_called()
 
 
 class TestNightlyVersionComparison:

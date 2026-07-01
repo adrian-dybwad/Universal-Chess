@@ -5,6 +5,7 @@ import { BatteryIndicator } from './BatteryIndicator';
 import { ConnectivityIndicators } from './ConnectivityIndicators';
 import { CastButton } from './CastButton';
 import { MenuIcon } from './MenuIcon';
+import { UpdateIndicator } from './UpdateIndicator';
 import './Navbar.css';
 
 /**
@@ -59,6 +60,7 @@ export function Navbar() {
             <span aria-hidden="true" />
           </button>
           <div className="navbar-item navbar-item--mobile-status">
+            <UpdateIndicator />
             <ConnectivityIndicators />
             <BatteryIndicator compact />
             {boardControl}
@@ -104,6 +106,7 @@ export function Navbar() {
               global footer still links to their standalone pages. */}
           {/* Desktop: battery + board control + cast + connection status */}
           <div className="navbar-item navbar-item--desktop-status">
+            <UpdateIndicator />
             <ConnectivityIndicators />
             <BatteryIndicator />
             {boardControl}

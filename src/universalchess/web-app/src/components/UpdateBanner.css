@@ -1,0 +1,47 @@
+/* Top-of-page install prompt for a downloaded update (auto-download case).
+ *
+ * Rendered above the navbar in normal document flow so it sits at the very top.
+ * Uses a green accent (matching the "success"/ready-to-install language elsewhere
+ * in the update UI) so it reads as an actionable, positive prompt rather than a
+ * warning. The busy variant drops the accent to a neutral tone while the install
+ * runs. */
+.update-banner {
+  --color-update: #2e8b57;
+
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3, 12px);
+  padding: var(--space-3, 12px) var(--space-4, 16px);
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #1a1a1a);
+  border-bottom: 1px solid var(--color-border, rgba(0, 0, 0, 0.1));
+  border-left: 4px solid var(--color-update);
+}
+
+.update-banner--busy {
+  --color-update: #0d9488;
+}
+
+.update-banner__text {
+  font-weight: var(--font-semibold, 600);
+  font-size: var(--font-sm, 0.9rem);
+}
+
+.update-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 12px);
+}
+
+.update-banner__link {
+  font-size: var(--font-sm, 0.9rem);
+  color: var(--color-update);
+  text-decoration: underline;
+}
+
+.update-banner__error {
+  color: var(--color-danger, #d9534f);
+  font-size: var(--font-sm, 0.9rem);
+}
