@@ -14,13 +14,16 @@
  *           (BUSY) and writes (DC/RST/CS) of the GPSET0/GPCLR0/GPLEV0 registers.
  *
  * This shim:
- *   0. Virtualizes /proc/cpuinfo: centaur's bundled RPi/_GPIO.so (an old armhf
- *      build) refuses to initialize unless it recognizes the board, and it does
- *      not know the CM5 / Pi 5 (BCM2712), so it raises "This module can only be
- *      run on a Raspberry Pi!" at import -- before any GPIO access -- and centaur
- *      exits. The shim presents a synthetic cpuinfo reporting a board it does
- *      recognize (see fopen hook) so detection succeeds and the rest of the shim
- *      can run.
+ *   0. Virtualizes /proc/cpuinfo and /dev/gpiomem for Pi 5 / CM5-class hardware
+ *      ONLY (gated by `compat_spoof`; see shim_init). centaur's bundled
+ *      RPi/_GPIO.so (an old armhf build) refuses to initialize unless it
+ *      recognizes the board, and it does not know the CM5 / Pi 5 (BCM2712), so
+ *      it raises "This module can only be run on a Raspberry Pi!" at import --
+ *      before any GPIO access -- and centaur exits. On such hosts the shim
+ *      presents a synthetic cpuinfo (see fopen hook) and a substitute for the
+ *      RP1-era missing /dev/gpiomem (see open hook). On every earlier Pi,
+ *      including the Pi Zero the original DGT board ships, both are inert and the
+ *      hooks pass straight through, so native hardware is unaffected.
  *   1. Virtualizes /dev/gpiomem: centaur's mmap is redirected to a private
  *      shadow page, so its DC/RST/CS writes never reach the real pins (no
  *      contention with UC, which keeps driving the real panel) and its BUSY
@@ -100,6 +103,16 @@ static int   busy_idle_high = 1;    /* BUSY idle logic level             */
 static volatile uint32_t *gpio_shadow = NULL; /* base of the shadow page */
 static size_t gpio_shadow_len = 0;
 static long   page_size = 4096;
+
+/* Whether the board-compatibility spoofs (synthetic /proc/cpuinfo and the
+ * /dev/gpiomem substitute) are needed. They exist only for Pi 5 / CM5-class
+ * hardware, where the RP1 removed the legacy /dev/gpiomem and the bundled
+ * RPi.GPIO does not recognize the SoC. On every earlier Pi -- including the Pi
+ * Zero the original DGT board ships -- the legacy /dev/gpiomem is present and
+ * both mechanisms work natively, so this stays 0 and the fopen/open hooks fall
+ * straight through to libc with only a single branch of overhead. Decided once
+ * at load (see shim_init); /dev/gpiomem presence is the RP1 boundary marker. */
+static int compat_spoof = 0;
 
 /* Tracked virtual pin levels (only the four we drive matter). */
 static uint32_t pin_levels = 0;     /* bit N = level of BCM pin N */
@@ -440,7 +453,7 @@ int open(const char *path, int flags, ...) {
         va_list ap; va_start(ap, flags); mode = (mode_t)va_arg(ap, int); va_end(ap);
     }
     if (!real_open) real_open = dlsym(RTLD_NEXT, "open");
-    if (is_gpiomem_path(path)) return open_gpiomem_substitute();
+    if (compat_spoof && is_gpiomem_path(path)) return open_gpiomem_substitute();
     return real_open(path, flags, mode);
 }
 
@@ -450,19 +463,19 @@ int open64(const char *path, int flags, ...) {
         va_list ap; va_start(ap, flags); mode = (mode_t)va_arg(ap, int); va_end(ap);
     }
     if (!real_open64) real_open64 = dlsym(RTLD_NEXT, "open64");
-    if (is_gpiomem_path(path)) return open_gpiomem_substitute();
+    if (compat_spoof && is_gpiomem_path(path)) return open_gpiomem_substitute();
     return real_open64(path, flags, mode);
 }
 
 FILE *fopen(const char *path, const char *mode) {
     if (!real_fopen) real_fopen = dlsym(RTLD_NEXT, "fopen");
-    if (is_cpuinfo_path(path)) return open_fake_cpuinfo();
+    if (compat_spoof && is_cpuinfo_path(path)) return open_fake_cpuinfo();
     return real_fopen(path, mode);
 }
 
 FILE *fopen64(const char *path, const char *mode) {
     if (!real_fopen64) real_fopen64 = dlsym(RTLD_NEXT, "fopen64");
-    if (is_cpuinfo_path(path)) return open_fake_cpuinfo();
+    if (compat_spoof && is_cpuinfo_path(path)) return open_fake_cpuinfo();
     return real_fopen64(path, mode);
 }
 
@@ -523,6 +536,11 @@ int ioctl(int fd, unsigned long request, ...) {
 __attribute__((constructor))
 static void shim_init(void) {
     for (int i = 0; i < MAX_FAKE_GPIOMEM_FDS; i++) fake_gpiomem_fds[i] = -1;
+    /* Enable the board-compatibility spoofs only when the legacy /dev/gpiomem is
+     * absent -- the Pi 5 / CM5 (RP1) marker. On the Pi Zero / 3 / 4 the device
+     * exists, so both spoofs stay off and the fopen/open hooks are transparent
+     * (native cpuinfo, native gpiomem), keeping performance unaffected. */
+    compat_spoof = (access("/dev/gpiomem", F_OK) != 0);
     page_size = sysconf(_SC_PAGESIZE);
     if (page_size <= 0) page_size = 4096;
     const char *bih = getenv("UC_CENTAUR_BUSY_IDLE_HIGH");
@@ -530,7 +548,8 @@ static void shim_init(void) {
     const char *dbg = getenv("UC_CENTAUR_SHIM_DEBUG");
     if (dbg && *dbg) {
         dbg_fd = open(dbg, O_WRONLY | O_CREAT | O_APPEND, 0644);
-        dbg_emit("[shim] loaded\n");
+        dbg_emit(compat_spoof ? "[shim] loaded (compat spoofs ON: no legacy /dev/gpiomem)\n"
+                              : "[shim] loaded (compat spoofs OFF: native /dev/gpiomem)\n");
     }
     real_write   = dlsym(RTLD_NEXT, "write");
     real_writev  = dlsym(RTLD_NEXT, "writev");
