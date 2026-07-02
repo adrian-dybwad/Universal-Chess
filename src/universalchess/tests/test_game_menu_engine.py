@@ -21,16 +21,17 @@ from universalchess.menus.catalog.loader import load_catalog
 from universalchess.menus.engine import MenuRow, build_rows, dispatch, resolve_icon
 
 
-def _game_ctx(*, mode=False, engine="stockfish", time_control=0):
+def _game_ctx(*, mode=False, engine="stockfish", time_control=0, notation="figurine"):
     """Board context mirroring main._build_game_menu_context over fake stores.
 
     The ``analysis`` store's ``mode`` is read/written (the toggle persists it)
     and ``engine`` is read/written (the analysis-engine select persists the
-    pick). The ``game`` store backs Time Control, and ``time_control`` is its
-    concise computed label. The ``installed_engines`` provider backs the
-    Analysis Engine select so its dispatch can be asserted without the real flow.
+    pick). The ``game`` store backs Time Control and Move Notation, and
+    ``time_control`` is its concise computed label. The ``installed_engines``
+    provider backs the Analysis Engine select so its dispatch can be asserted
+    without the real flow.
     """
-    state = {"mode": mode, "engine": engine, "time_control": time_control}
+    state = {"mode": mode, "engine": engine, "time_control": time_control, "notation": notation}
 
     ctx = BoardMenuContext()
     ctx.register_store("analysis", lambda k: state[k], lambda k, v: state.__setitem__(k, v))
@@ -62,13 +63,14 @@ def test_game_menu_rows_and_engine_visibility():
     analysis toggle always, and reveal the Analysis Engine row only when Live
     Analysis is on (via ``visibleWhen``). How a regression manifests: an item is
     dropped/reordered, the Engine row shows while analysis is off (dead row), or
-    never shows while on.
+    never shows while on. Move Notation always shows between Time Control and the
+    analysis toggle.
     """
     _, off_rows = _rows(mode=False)
-    assert [r.key for r in off_rows] == ["TimeControl", "enabled"]
+    assert [r.key for r in off_rows] == ["TimeControl", "Notation", "enabled"]
 
     _, on_rows = _rows(mode=True)
-    assert [r.key for r in on_rows] == ["TimeControl", "enabled", "engine"]
+    assert [r.key for r in on_rows] == ["TimeControl", "Notation", "enabled", "engine"]
 
 
 def test_time_control_row_label_and_icon_track_value():

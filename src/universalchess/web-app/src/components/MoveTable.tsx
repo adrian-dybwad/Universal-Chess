@@ -1,10 +1,44 @@
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { Chess } from 'chess.js';
+import { formatMove, isFigurineGlyph, DEFAULT_NOTATION, type Notation } from '../utils/notation';
 import './MoveTable.css';
+
+/**
+ * Render a move string, wrapping figurine piece glyphs in a styled span so the
+ * pieces show larger and bolder than the surrounding coordinates. Non-figurine
+ * notations contain no glyphs, so the string renders unchanged.
+ */
+function renderMoveText(text: string): ReactNode {
+  const parts: ReactNode[] = [];
+  let run = '';
+  let glyphKey = 0;
+  const flushRun = () => {
+    if (run) {
+      parts.push(run);
+      run = '';
+    }
+  };
+  for (const ch of text) {
+    if (isFigurineGlyph(ch)) {
+      flushRun();
+      parts.push(
+        <span key={`glyph-${glyphKey++}`} className="figurine-piece">
+          {ch}
+        </span>
+      );
+    } else {
+      run += ch;
+    }
+  }
+  flushRun();
+  return parts;
+}
 
 interface MoveTableProps {
   pgn: string;
   currentMoveIndex: number;
+  /** Notation used to render each move. Defaults to figurine. */
+  notation?: Notation;
   /** Evaluation history: array where index corresponds to move number (1-indexed) */
   evalHistory?: (number | null)[];
   onMoveClick?: (moveIndex: number) => void;
@@ -12,19 +46,19 @@ interface MoveTableProps {
 
 interface MoveRow {
   moveNumber: number;
-  whiteSan: string;
+  whiteText: string;
   whitePly: number;
   whiteEval: number | null;
-  blackSan: string | null;
+  blackText: string | null;
   blackPly: number | null;
   blackEval: number | null;
 }
 
 /**
- * Move table component showing game moves in standard notation.
+ * Move table component showing game moves in the selected chess notation.
  * Clicking a move navigates to that position.
  */
-export function MoveTable({ pgn, currentMoveIndex, evalHistory = [], onMoveClick }: MoveTableProps) {
+export function MoveTable({ pgn, currentMoveIndex, notation = DEFAULT_NOTATION, evalHistory = [], onMoveClick }: MoveTableProps) {
   const rows = useMemo(() => {
     if (!pgn) return [];
 
@@ -35,8 +69,12 @@ export function MoveTable({ pgn, currentMoveIndex, evalHistory = [], onMoveClick
       return [];
     }
 
-    const moves = chess.history();
+    // Verbose history carries the fields (from/to/piece/promotion/flags) that
+    // formatMove needs to build LAN/UCI, not just the SAN string.
+    const moves = chess.history({ verbose: true });
     if (moves.length === 0) return [];
+
+    const text = (ply: number): string => formatMove(moves[ply], notation);
 
     const result: MoveRow[] = [];
 
@@ -47,17 +85,17 @@ export function MoveTable({ pgn, currentMoveIndex, evalHistory = [], onMoveClick
 
       result.push({
         moveNumber,
-        whiteSan: moves[ply],
+        whiteText: text(ply),
         whitePly,
         whiteEval: evalHistory[whitePly] ?? null,
-        blackSan: moves[ply + 1] ?? null,
+        blackText: moves[ply + 1] ? text(ply + 1) : null,
         blackPly: moves[ply + 1] ? blackPly : null,
         blackEval: moves[ply + 1] ? (evalHistory[blackPly] ?? null) : null,
       });
     }
 
     return result;
-  }, [pgn, evalHistory]);
+  }, [pgn, notation, evalHistory]);
 
   const formatEval = (cp: number | null): string => {
     if (cp === null) return '';
@@ -88,7 +126,7 @@ export function MoveTable({ pgn, currentMoveIndex, evalHistory = [], onMoveClick
                 className={`move-cell ${currentMoveIndex === row.whitePly ? 'current-move' : ''}`}
                 onClick={() => handleClick(row.whitePly)}
               >
-                {row.whiteSan}
+                {renderMoveText(row.whiteText)}
                 {row.whiteEval !== null && (
                   <span className="move-eval">{formatEval(row.whiteEval)}</span>
                 )}
@@ -97,7 +135,7 @@ export function MoveTable({ pgn, currentMoveIndex, evalHistory = [], onMoveClick
                 className={`move-cell ${row.blackPly && currentMoveIndex === row.blackPly ? 'current-move' : ''}`}
                 onClick={() => row.blackPly && handleClick(row.blackPly)}
               >
-                {row.blackSan || ''}
+                {row.blackText ? renderMoveText(row.blackText) : ''}
                 {row.blackEval !== null && (
                   <span className="move-eval">{formatEval(row.blackEval)}</span>
                 )}

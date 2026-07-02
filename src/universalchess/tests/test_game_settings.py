@@ -45,3 +45,33 @@ def test_load_reads_stored_chess_sprites(monkeypatch):
     settings = GameSettings.load("game", {"chess_sprites": "default"})
     assert settings.chess_sprites == "staunton"
     assert settings.to_dict()["chess_sprites"] == "staunton"
+
+
+def test_notation_defaults_to_figurine():
+    # The move-history notation must default to figurine so a fresh install shows
+    # figurine glyphs on both the board and web without any explicit config. A
+    # missing field or wrong default would surface as SAN/absent notation.
+    settings = GameSettings(section="game")
+    assert settings.to_dict()["notation"] == "figurine"
+
+
+def test_to_dict_includes_selected_notation():
+    # Guards the to_dict() round-trip the menu/web read the current notation
+    # through. Without the field this raises TypeError on construction; a broken
+    # to_dict() KeyErrors here.
+    settings = GameSettings(section="game", notation="lan")
+    assert settings.to_dict()["notation"] == "lan"
+
+
+def test_load_reads_stored_notation(monkeypatch):
+    # load() must surface a persisted notation; otherwise the widget and web
+    # always re-read the default and the user's choice is silently ignored.
+    def fake_load_section(section, defaults):
+        data = dict(defaults)
+        data["notation"] = "uci"
+        return data
+
+    monkeypatch.setattr(settings_mod, "load_section", fake_load_section)
+    settings = GameSettings.load("game", {"notation": "figurine"})
+    assert settings.notation == "uci"
+    assert settings.to_dict()["notation"] == "uci"

@@ -124,6 +124,7 @@ interface FormSettings {
     led_brightness: number;
     pegasus_override_brightness: boolean;
     chess_sprites: string;
+    notation: string;
   };
   lichess: {
     api_token: string;
@@ -156,6 +157,7 @@ const defaultFormSettings: FormSettings = {
     led_brightness: 5,
     pegasus_override_brightness: true,
     chess_sprites: 'default',
+    notation: 'figurine',
   },
   lichess: { api_token: '', range: '' },
   sound: { enabled: true, key_press: true, game_events: true, piece_events: true, errors: true },
@@ -210,6 +212,7 @@ function parseRawSettings(data: SettingsData): FormSettings {
       led_brightness: parseInt(data.game?.led_brightness || '5'),
       pegasus_override_brightness: parseConfigBool(data.game?.pegasus_override_brightness, true),
       chess_sprites: data.game?.chess_sprites || 'default',
+      notation: data.game?.notation || 'figurine',
     },
     lichess: {
       api_token: data.lichess?.api_token || '',
@@ -879,6 +882,7 @@ export function Settings() {
   const handBrainModeOptions = optionSet('hand_brain_mode');
   const timeControlOptions = optionSet('time_control');
   const sleepTimerOptions = optionSet('sleep_timer');
+  const notationOptions = optionSet('notation');
 
   // Field label/help come from the catalog (the single source of truth). Rich
   // help that needs JSX (links, <code>) is rendered inline at the call site; the
@@ -1149,6 +1153,16 @@ export function Settings() {
                 value={formSettings.game.analysis_engine}
                 options={providerOptions(analysisEngineNode)}
                 onChange={(v) => updateFormSettings('game', { analysis_engine: String(v) })}
+              />
+            </Card>
+
+            <Card className="mb-6">
+              <CardHeader title="Move History" />
+              <CatalogField
+                node={fieldById(catalog, 'settings.notation')!}
+                value={formSettings.game.notation}
+                options={notationOptions}
+                onChange={(v) => updateFormSettings('game', { notation: String(v) })}
               />
             </Card>
           </section>

@@ -51,6 +51,12 @@
       { "value": "900", "label": "15 min" },
       { "value": "1800", "label": "30 min" },
       { "value": "3600", "label": "1 hour" }
+    ],
+    "notation": [
+      { "value": "figurine", "label": "Figurine (\u2658f3)" },
+      { "value": "san", "label": "Standard (Nf3)" },
+      { "value": "lan", "label": "Long (Ng1-f3)" },
+      { "value": "uci", "label": "Coordinate (g1f3)" }
     ]
   },
 
@@ -173,7 +179,21 @@
       "help": "Time control and live position analysis.",
       "section": "game",
       "epaper": { "font_size": 12, "height_ratio": 0.8 },
-      "children": ["settings.timecontrol", "analysis.enabled", "analysis.engine"]
+      "children": ["settings.timecontrol", "settings.notation", "analysis.enabled", "analysis.engine"]
+    },
+    {
+      "id": "settings.notation",
+      "key": "Notation",
+      "type": "select",
+      "label": "Move Notation",
+      "boardLabel": "Notation\n{value}",
+      "icon": "settings",
+      "help": "Chess notation used for the move history on the board and web.",
+      "section": "game",
+      "bind": { "store": "game", "key": "notation" },
+      "optionSet": "notation",
+      "platforms": ["board", "web"],
+      "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },
     {
       "id": "settings.timecontrol",

@@ -5095,6 +5095,16 @@ def key_callback(key_id):
             _suspend_game()
             _reset_unhandled_key_count()
             return
+
+        if key_id in (board.Key.UP, board.Key.DOWN) and display_manager:
+            # UP/DOWN page the analysis widget's move history (page 1 = the
+            # eval/graph view, pages 2..N the move list), wrapping around. Only
+            # consume the key when the analysis widget is visible; otherwise fall
+            # through so the arrows still reach the game manager as before.
+            direction = -1 if key_id == board.Key.UP else 1
+            if display_manager.page_analysis(direction):
+                _reset_unhandled_key_count()
+                return
         
         # Route through controller manager or protocol_manager
         if controller_manager:

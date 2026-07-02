@@ -1,7 +1,9 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { ChessBoard } from '../components/ChessBoard';
 import { Analysis } from '../components/Analysis';
+import { MoveTable } from '../components/MoveTable';
 import { useGameStore } from '../stores/gameStore';
+import { useNotation } from '../hooks/useNotation';
 import './LiveBoard.css';
 
 const SHOW_BEST_MOVE_KEY = 'universalChess.showBestMove';
@@ -24,6 +26,13 @@ export function LiveBoard() {
   const [playedMove, setPlayedMove] = useState<{ from: string; to: string } | null>(null);
   const [pgnExpanded, setPgnExpanded] = useState(false);
   const [isAtLatestMove, setIsAtLatestMove] = useState(true);
+  const [currentMoveIndex, setCurrentMoveIndex] = useState(0);
+  const [evalHistory, setEvalHistory] = useState<(number | null)[]>([]);
+  const notation = useNotation();
+
+  // Lets the move list drive the Analysis component's position (click a move to
+  // view it). Exposed by Analysis via goToMoveRef.
+  const goToMoveRef = useRef<((index: number) => void) | null>(null);
   
   // Best move visibility for latest position - defaults to hidden, persisted in localStorage
   const [showBestMoveEnabled, setShowBestMoveEnabled] = useState<boolean>(() => {
@@ -51,6 +60,17 @@ export function LiveBoard() {
 
   const handlePlayedMoveChange = useCallback((move: { from: string; to: string } | null) => {
     setPlayedMove(move);
+  }, []);
+
+  const handleMoveDataChange = useCallback((moveIndex: number, evals: (number | null)[]) => {
+    setCurrentMoveIndex(moveIndex);
+    setEvalHistory(evals);
+  }, []);
+
+  const handleMoveTableClick = useCallback((moveIndex: number) => {
+    if (goToMoveRef.current) {
+      goToMoveRef.current(moveIndex);
+    }
   }, []);
 
   const currentFen = displayFen || gameState?.fen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
@@ -152,8 +172,22 @@ export function LiveBoard() {
             onPositionChange={handlePositionChange}
             onBestMoveChange={handleBestMoveChange}
             onPlayedMoveChange={handlePlayedMoveChange}
+            onMoveDataChange={handleMoveDataChange}
+            goToMoveRef={goToMoveRef}
             showBestMoveForLatest={showBestMoveEnabled}
             onToggleShowBestMove={toggleShowBestMove}
+          />
+        </div>
+
+        {/* Move History Box */}
+        <div className="box" style={{ marginTop: '1rem' }}>
+          <h3 className="title is-5 box-title">Moves</h3>
+          <MoveTable
+            pgn={currentPgn}
+            currentMoveIndex={currentMoveIndex}
+            notation={notation}
+            evalHistory={evalHistory}
+            onMoveClick={handleMoveTableClick}
           />
         </div>
 

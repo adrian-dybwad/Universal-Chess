@@ -141,6 +141,9 @@ class DisplayManager:
         self._show_board = show_board
         self._show_clock = show_clock
         self._show_graph = show_graph
+        # Move-history notation for the analysis widget's paged move list;
+        # refreshed from settings in _reload_display_settings before each rebuild.
+        self._notation = "figurine"
         
         # Widgets
         self.chess_board_widget = None
@@ -228,6 +231,7 @@ class DisplayManager:
         self._show_clock = load_bool('show_clock', True)
         self._show_analysis = load_bool('show_analysis', True)
         self._show_graph = load_bool('show_graph', True)
+        self._notation = Settings.read('game', 'notation', 'figurine')
 
         # Re-apply the selected chess sprite sheet so the board widget rebuilt by
         # _init_widgets() reflects a sprite change made in the display menu (hot
@@ -373,7 +377,9 @@ class DisplayManager:
             self.analysis_widget = _GameAnalysisWidget(
                 0, analysis_y, 128, analysis_height if analysis_height > 0 else 80, board.display_manager.update,
                 bottom_color=bottom_color,
-                show_graph=self._show_graph
+                show_graph=self._show_graph,
+                notation=self._notation,
+                game_state=self._game_state,
             )
             
             if not self._show_analysis:
@@ -466,6 +472,25 @@ class DisplayManager:
             self.alert_widget.show_hint(move_text, from_sq, to_sq)
             log.info(f"[DisplayManager] Showing hint: {move_text}")
     
+    def page_analysis(self, direction: int) -> bool:
+        """Page the analysis widget's move history via the UP/DOWN keys.
+
+        Page 0 is the eval/graph view; pages 1..N are the move-history list. UP
+        (direction -1) and DOWN (direction +1) wrap around. No-op (returns False)
+        when there is no analysis widget or it is hidden, so the caller can fall
+        back to the normal key routing in that case.
+
+        Args:
+            direction: -1 to page up, +1 to page down.
+
+        Returns:
+            True if the key was consumed by paging, False otherwise.
+        """
+        if self.analysis_widget is None or not self.analysis_widget.visible:
+            return False
+        self.analysis_widget.turn_page(direction)
+        return True
+
     def set_clock_times(self, white_seconds: int, black_seconds: int) -> None:
         """Set the chess clock times for both players.
         
@@ -679,8 +704,11 @@ class DisplayManager:
             if future:
                 try:
                     future.result(timeout=2.0)
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Rendering the promotion menu is best-effort; a timeout or
+                    # render failure must not block the move flow. Log for
+                    # diagnostics rather than surfacing to the player.
+                    log.debug(f"[DisplayManager] Promotion menu render wait failed: {e}")
         
         # Route keys to menu
         self._original_key_callback = self._key_callback
@@ -942,8 +970,10 @@ class DisplayManager:
                 if future:
                     try:
                         future.result(timeout=2.0)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        # Splash render is best-effort; a timeout or render
+                        # failure must not block startup/shutdown flow.
+                        log.debug(f"[DisplayManager] Splash render wait failed: {e}")
         except Exception as e:
             log.debug(f"[DisplayManager] Error showing splash: {e}")
     

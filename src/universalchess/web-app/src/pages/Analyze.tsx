@@ -5,6 +5,7 @@ import { Analysis } from '../components/Analysis';
 import { MoveTable } from '../components/MoveTable';
 import { Card, CardHeader } from '../components/ui';
 import { apiFetch } from '../utils/api';
+import { useNotation } from '../hooks/useNotation';
 import './Analyze.css';
 
 /**
@@ -12,6 +13,7 @@ import './Analyze.css';
  */
 export function Analyze() {
   const { gameId } = useParams<{ gameId: string }>();
+  const notation = useNotation();
   const [pgn, setPgn] = useState('');
   const [currentFen, setCurrentFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR');
   const [bestMove, setBestMove] = useState<{ from: string; to: string } | null>(null);
@@ -113,6 +115,7 @@ export function Analyze() {
             <MoveTable
               pgn={pgn}
               currentMoveIndex={currentMoveIndex}
+              notation={notation}
               evalHistory={evalHistory}
               onMoveClick={handleMoveTableClick}
             />

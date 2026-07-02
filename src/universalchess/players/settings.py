@@ -144,6 +144,8 @@ class GameSettings:
             Display > Board > Sprites selector can read the current selection via
             to_dict() and persist changes via set(); otherwise the menu always
             reads the default and cycling never advances.
+        notation: Chess notation used for move history on the board and web
+            ("figurine", "san", "lan", or "uci"). Defaults to figurine.
     """
 
     section: str
@@ -157,6 +159,7 @@ class GameSettings:
     led_brightness: int = 5  # LED brightness 1-10
     pegasus_override_brightness: bool = True
     chess_sprites: str = "default"
+    notation: str = "figurine"
     _log: Optional[Any] = field(default=None, repr=False)
 
     def save(self, key: str) -> None:
@@ -200,6 +203,7 @@ class GameSettings:
             "led_brightness": self.led_brightness,
             "pegasus_override_brightness": self.pegasus_override_brightness,
             "chess_sprites": self.chess_sprites,
+            "notation": self.notation,
         }
 
     @classmethod
@@ -235,6 +239,7 @@ class GameSettings:
                 defaults.get("pegasus_override_brightness", True),
             ),
             chess_sprites=data.get("chess_sprites", defaults.get("chess_sprites", "default")),
+            notation=data.get("notation", defaults.get("notation", "figurine")),
             _log=log,
         )
 
