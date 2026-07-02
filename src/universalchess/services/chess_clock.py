@@ -20,6 +20,12 @@ except ImportError:
 
 from universalchess.state import get_chess_clock as get_clock_state
 
+# How often the countdown thread re-checks for the clock resuming while it is
+# stopped/paused. Short enough that a resume starts counting promptly, long
+# enough to avoid a busy spin. Idle wall-time is never charged to a player (the
+# anchor is reset while not counting), so this only affects resume latency.
+_IDLE_POLL_SECONDS = 0.25
+
 
 def _elapsed_whole_seconds(last_anchor: float, now: float) -> tuple:
     """Return (whole_seconds_elapsed, advanced_anchor) since last_anchor.
@@ -43,6 +49,79 @@ def _elapsed_whole_seconds(last_anchor: float, now: float) -> tuple:
         return 0, last_anchor
     whole = int(now - last_anchor)
     return whole, last_anchor + whole
+
+
+def _rephased_anchor(last_anchor: Optional[float], last_active: Optional[str],
+                     active: Optional[str], now: float) -> float:
+    """Return the tick anchor for this cycle, re-phasing on a turn switch.
+
+    Returns ``now`` (a fresh phase) when there is no anchor yet (the first
+    counting cycle) or the active color changed since the last cycle -- i.e. a
+    move switched whose turn it is. Otherwise the existing ``last_anchor`` is
+    kept so the current player's per-second cadence is preserved.
+
+    Why this exists: ``active_color`` is read from the game turn and flips
+    white<->black on every move but never goes ``None``, so the countdown loop's
+    stopped/paused/none re-anchor never fired on a plain turn switch. The newly
+    active player then inherited the previous player's tick phase, and the loop
+    -- already asleep waiting on the previous player's next second boundary --
+    emitted that player's boundary tick against the new player less than a second
+    after their clock started. That off-cadence first tick is the visible clock
+    "stutter" seen at the moment a move is played (the same moment the from/to
+    move LEDs light). Anchoring the new segment at the switch makes the newly
+    active player's first whole second elapse a full second after the move.
+    """
+    if last_anchor is None or active != last_active:
+        return now
+    return last_anchor
+
+
+def _seconds_until_next_boundary(last_anchor: Optional[float], now: float,
+                                 period_seconds: float = 1.0) -> float:
+    """Return how long to wait until the next whole-second tick boundary.
+
+    Phase-locks the countdown to boundaries anchored at ``last_anchor`` instead
+    of waiting a fixed ``period_seconds`` from the top of each loop cycle. A fixed
+    wait makes every cycle span ``period + body_time`` (the body being
+    tick -> observer notify -> render -> submit), so the monotonic anchor's
+    whole-second accounting periodically emits a double tick to stay accurate --
+    the visible "clock jumps two seconds" erratic cadence. Subtracting the body
+    time already consumed since the anchor keeps decrements landing at a steady
+    one-per-second rhythm under normal load; genuine cycle overruns are still
+    handled by :func:`_elapsed_whole_seconds`, so total time stays accurate.
+
+    Args:
+        last_anchor: Monotonic time of the last counted boundary, or ``None`` on
+            the first counting cycle (no reference yet).
+        now: Current monotonic time.
+        period_seconds: Tick period (one second).
+
+    Returns:
+        Seconds to wait, clamped to ``0.0``. Zero when the anchor is unset, the
+        boundary is already due, or a cycle overran it -- in every zero case the
+        caller should tick immediately.
+    """
+    if last_anchor is None:
+        return 0.0
+    delay = (last_anchor + period_seconds) - now
+    return delay if delay > 0.0 else 0.0
+
+
+def _bounded_wait(delay: float, poll_seconds: float = _IDLE_POLL_SECONDS) -> float:
+    """Cap the boundary wait so a turn switch is noticed within ``poll_seconds``.
+
+    The countdown loop only re-reads the active color when it wakes. Sleeping the
+    full (up to ~1s) time to the next boundary would let a move's turn switch go
+    unnoticed until the boundary, so the newly active player's first tick could
+    land up to a second late (they'd get up to a second of uncounted time on
+    their first move). Capping each wait keeps the loop re-checking the active
+    color promptly so it re-phases (see :func:`_rephased_anchor`) shortly after
+    the move, while still sleeping exactly to the boundary when that is nearer
+    than a poll. Returns ``0.0`` for a non-positive delay (boundary already due).
+    """
+    if delay <= 0.0:
+        return 0.0
+    return delay if delay < poll_seconds else poll_seconds
 
 
 class ChessClockService:
@@ -249,30 +328,60 @@ class ChessClockService:
         the clock to drift slow. The anchor is reset whenever the clock is not
         actively counting (stopped, paused, or no active colour) so paused/idle
         wall-time is never charged to a player.
+
+        Waits are phase-locked to the next whole-second boundary (see
+        :func:`_seconds_until_next_boundary`) rather than a fixed one second per
+        cycle. A fixed wait makes every cycle span one second plus the body time
+        (tick -> notify -> render -> submit), which the anchor then corrects with
+        a periodic double tick -- the visible two-second jump the display showed.
+        Compensating for the body time keeps decrements landing at a steady
+        one-per-second cadence while :func:`_elapsed_whole_seconds` preserves
+        total accuracy under genuine overruns.
+
+        The tick phase is also re-anchored on a turn switch (see
+        :func:`_rephased_anchor`): ``active_color`` flips on every move but never
+        goes ``None``, so without this the newly active player inherited the
+        previous player's boundary phase and took an off-cadence first tick right
+        after the move -- the stutter observed as the from/to move LEDs light.
+        The per-cycle wait is bounded (:func:`_bounded_wait`) so a switch is
+        noticed and re-phased promptly rather than only when the old boundary
+        finally arrives.
         """
         last_anchor = None
+        last_active = None
         while not self._stop_event.is_set():
-            # Wait for ~1 second (interruptible)
-            if self._stop_event.wait(timeout=1.0):
-                break
-            
-            # Re-anchor when not actively counting so idle/paused time is not charged.
+            active = self._state.active_color
+            # Re-anchor when not actively counting so idle/paused time is not
+            # charged, and poll (interruptibly) for the clock to resume.
             if (not self._state._is_running
                     or self._state._is_paused
-                    or self._state.active_color is None):
+                    or active is None):
                 last_anchor = None
+                last_active = None
+                if self._stop_event.wait(timeout=_IDLE_POLL_SECONDS):
+                    break
                 continue
-            
-            now = time.monotonic()
-            if last_anchor is None:
-                # First counting cycle establishes the reference point.
-                last_anchor = now
-                continue
-            
-            ticks, last_anchor = _elapsed_whole_seconds(last_anchor, now)
-            # Decrement the state once per elapsed whole second (notifies observers).
+
+            # Establish the phase (first cycle) or restart it at a turn switch so
+            # the newly active player's first whole second is measured from the
+            # move, not inherited from the previous player's boundary phase.
+            last_anchor = _rephased_anchor(last_anchor, last_active, active,
+                                           time.monotonic())
+            last_active = active
+
+            # Decrement once per whole second elapsed on the current segment.
+            # Doing this before the wait means a switch detected at the top of the
+            # cycle re-phases first, so waking on the previous player's boundary
+            # never emits a tick against the new player (ticks is 0 that cycle).
+            ticks, last_anchor = _elapsed_whole_seconds(last_anchor, time.monotonic())
             for _ in range(ticks):
                 self._state.tick()
+
+            # Sleep until the next boundary, capped so a turn switch is seen soon.
+            delay = _seconds_until_next_boundary(last_anchor, time.monotonic())
+            wait_for = _bounded_wait(delay)
+            if wait_for > 0.0 and self._stop_event.wait(timeout=wait_for):
+                break
 
 
 # -----------------------------------------------------------------------------
