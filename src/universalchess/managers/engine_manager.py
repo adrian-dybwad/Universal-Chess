@@ -1355,13 +1355,7 @@ class EngineManager:
             return False
 
         # Update package list
-        log.debug("[EngineManager] _install_system_package: Running apt-get update")
-        result = subprocess.run(["sudo", "apt-get", "update", "-qq"], capture_output=True, text=True, timeout=120)  # noqa: S607  # nosec B603 B607
-        if result.returncode != 0:
-            log.warning(f"[EngineManager] _install_system_package: apt-get update returned non-zero ({result.returncode})")
-            log.warning(f"[EngineManager] _install_system_package: apt-get update stderr: {result.stderr.strip()}")
-        else:
-            log.debug("[EngineManager] _install_system_package: apt-get update completed successfully")
+        self._apt_update()
         
         # Install package
         update_progress(f"Installing {engine.package_name}...")
@@ -1469,6 +1463,27 @@ class EngineManager:
             )
             return False
         return True
+
+    def _apt_update(self) -> None:
+        """Refresh the apt package index before an install (best-effort).
+
+        A stale index cannot satisfy versioned inter-package dependencies -- e.g.
+        Zahak's ``golang`` metapackage pulls ``golang-1.24 -> golang-1.24-go
+        (>= X)``, and against an out-of-date index apt aborts with "unmet
+        dependencies ... not going to be installed" (which ``apt --fix-broken``
+        cannot repair, since nothing is actually broken). Refreshing first is the
+        real remedy. Non-fatal: a failed update must not block the install, which
+        will surface the genuine apt error itself.
+        """
+        log.debug("[EngineManager] _apt_update: Running apt-get update")
+        result = subprocess.run(["sudo", "apt-get", "update", "-qq"], capture_output=True, text=True, timeout=120)  # noqa: S607  # nosec B603 B607
+        if result.returncode != 0:
+            log.warning(
+                f"[EngineManager] _apt_update: apt-get update returned non-zero "
+                f"({result.returncode}): {result.stderr.strip()}"
+            )
+        else:
+            log.debug("[EngineManager] _apt_update: completed successfully")
 
     def _copy_extra_files(self, src_base: Path, patterns: List[str]) -> None:
         """Install an engine's ``extra_files`` from ``src_base`` into engines_dir.
@@ -1809,6 +1824,12 @@ class EngineManager:
             # below aborts on "dpkg was interrupted" (the Zahak golang failure).
             if not self._recover_dpkg_or_abort(f"install {engine.display_name}"):
                 return False
+            # Refresh the index before installing: source deps like golang are
+            # metapackages with versioned inter-dependencies, and a stale index
+            # makes apt abort with "unmet dependencies ... not going to be
+            # installed" (the observed Zahak failure) -- a resolution error that
+            # fix-broken cannot repair. Mirrors _install_system_package.
+            self._apt_update()
             deps = " ".join(engine.dependencies)
 
             def run_apt_install():

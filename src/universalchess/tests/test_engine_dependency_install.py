@@ -57,6 +57,16 @@ class _FakeProc:
         self.stderr = stderr
 
 
+def _is_apt_update(cmd) -> bool:
+    """True for the ``apt-get update`` index refresh (a list command)."""
+    return isinstance(cmd, list) and cmd[:3] == ["sudo", "apt-get", "update"]
+
+
+def _is_apt_install(cmd) -> bool:
+    """True for the dependency ``apt-get install`` (a single shell string)."""
+    return isinstance(cmd, str) and cmd.startswith("sudo apt-get install")
+
+
 def _make_engine(deps):
     """A throwaway source-built engine carrying the given apt dependencies."""
     return EngineDefinition(
@@ -142,7 +152,7 @@ def test_install_from_source_aborts_when_dependency_missing(monkeypatch, tmp_pat
 
     def fake_run(cmd, **kwargs):
         seen.append(cmd)
-        if isinstance(cmd, str) and cmd.startswith("sudo apt-get install"):
+        if _is_apt_update(cmd) or _is_apt_install(cmd):
             return _FakeProc(returncode=0, stdout="", stderr="")
         raise AssertionError(f"build must not proceed past missing deps; ran: {cmd}")
 
@@ -157,9 +167,13 @@ def test_install_from_source_aborts_when_dependency_missing(monkeypatch, tmp_pat
     assert result is False
     assert manager._install_error is not None
     assert "bc" in manager._install_error
-    # Aborted before cloning: the only subprocess invoked is the apt install.
-    assert len(seen) == 1
-    assert isinstance(seen[0], str) and seen[0].startswith("sudo apt-get install")
+    # Aborted before cloning: an index refresh and exactly one apt install ran
+    # (no git clone), and the refresh preceded the install.
+    installs = [c for c in seen if _is_apt_install(c)]
+    updates = [c for c in seen if _is_apt_update(c)]
+    assert len(installs) == 1
+    assert len(updates) == 1
+    assert seen.index(updates[0]) < seen.index(installs[0])
 
 
 def test_install_from_source_retries_apt_once_after_fix_broken_then_aborts(monkeypatch, tmp_path):
@@ -186,7 +200,7 @@ def test_install_from_source_retries_apt_once_after_fix_broken_then_aborts(monke
 
     def fake_run(cmd, **kwargs):
         seen.append(cmd)
-        if isinstance(cmd, str) and cmd.startswith("sudo apt-get install"):
+        if _is_apt_update(cmd) or _is_apt_install(cmd):
             return _FakeProc(returncode=0, stdout="", stderr="")
         raise AssertionError(f"build must not proceed past missing deps; ran: {cmd}")
 
@@ -200,8 +214,56 @@ def test_install_from_source_retries_apt_once_after_fix_broken_then_aborts(monke
     assert result is False
     assert manager._install_error is not None and "bc" in manager._install_error
     # One initial apt install plus one retry after fix-broken, and no clone.
-    assert len(seen) == 2
-    assert all(isinstance(c, str) and c.startswith("sudo apt-get install") for c in seen)
+    installs = [c for c in seen if _is_apt_install(c)]
+    assert len(installs) == 2
+    # No non-apt command (e.g. a git clone) was reached.
+    assert all(_is_apt_update(c) or _is_apt_install(c) for c in seen)
+
+
+def test_source_build_refreshes_apt_index_before_installing_deps(monkeypatch, tmp_path):
+    """The source-build path runs apt-get update before installing build deps.
+
+    Why this test exists: source dependencies like Zahak's ``golang`` are
+    metapackages with versioned inter-dependencies (golang -> golang-1.24 ->
+    golang-1.24-go (>= X)). Against a stale package index apt cannot satisfy the
+    version constraint and aborts with "unmet dependencies ... not going to be
+    installed" -- the observed Zahak failure -- which ``apt --fix-broken`` cannot
+    repair because nothing is actually broken. Refreshing the index first (as the
+    system-package path already does) is the real remedy.
+
+    How the regression manifests: reverting to a bare ``apt-get install`` leaves
+    no apt-get update in the recorded call order, so the stale-index resolution
+    failure can recur.
+    """
+    _stub_recovery(monkeypatch)
+    manager = EngineManager(engines_dir=str(tmp_path))
+    manager.build_tmp = Path(tmp_path) / "build"
+    engine = _make_engine(["golang", "git"])
+
+    seen = []
+
+    def fake_run(cmd, **kwargs):
+        seen.append(cmd)
+        if _is_apt_update(cmd) or _is_apt_install(cmd):
+            return _FakeProc(returncode=0, stdout="", stderr="")
+        if isinstance(cmd, list) and cmd[:2] == ["git", "clone"]:
+            # All deps present -> execution reaches the clone; stop here.
+            raise RuntimeError("stop after reaching clone")
+        return _FakeProc(returncode=0)
+
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.subprocess.run", fake_run
+    )
+    monkeypatch.setattr(manager, "_missing_packages", lambda pkgs: [])  # deps satisfied
+
+    with pytest.raises(RuntimeError, match="stop after reaching clone"):
+        manager._install_from_source(engine, lambda *a, **k: None)
+
+    updates = [c for c in seen if _is_apt_update(c)]
+    installs = [c for c in seen if _is_apt_install(c)]
+    assert len(updates) == 1
+    assert len(installs) == 1
+    assert seen.index(updates[0]) < seen.index(installs[0])
 
 
 def test_install_from_source_continues_when_dependencies_present(monkeypatch, tmp_path):
@@ -224,7 +286,7 @@ def test_install_from_source_continues_when_dependencies_present(monkeypatch, tm
     reached_clone = {"value": False}
 
     def fake_run(cmd, **kwargs):
-        if isinstance(cmd, str) and cmd.startswith("sudo apt-get install"):
+        if _is_apt_update(cmd) or _is_apt_install(cmd):
             return _FakeProc(returncode=0, stdout="", stderr="")
         if isinstance(cmd, list) and cmd[:2] == ["git", "clone"]:
             reached_clone["value"] = True
