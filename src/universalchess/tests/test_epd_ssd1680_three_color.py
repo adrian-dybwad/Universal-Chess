@@ -10,13 +10,19 @@ Why these tests exist:
       - full color refresh (display_color): B/W -> 0x24, red -> 0x26, OTP
         activation (0x22 = 0xF7);
       - fast B/W refresh (DisplayPartial in three_color, register-LUT profile):
-        B/W -> 0x24 only, the red RAM (0x26) is NEVER written;
+        the mono differential B/W partial -- previous shown (masked) frame ->
+        0x26, new (masked) frame -> 0x24, B/W partial waveform (0x22 = 0x0F).
+        Under the B/W waveform the panel uses Table 6-5 mapping (red-RAM bit
+        ignored, 0x26 = differential baseline), so this does NOT develop red;
+        red pixels masked white are unchanged, get the hold phase, and their
+        bistable red is left undisturbed until the next full display_color;
       - red pixels are forced white in the B/W buffer so a pixel is not driven
         both black and red.
     Mono behaviour must be byte-for-byte unchanged when the switch is off.
 
 How a regression manifests:
-    - Channel regression: a B/W frame lands on 0x26 again -> black bleeds red.
+    - Baseline regression: 0x26 keeps the red mask (or is not re-seeded) ->
+      unchanged pixels get no hold phase and the red fades every tick.
     - Mask regression: a red pixel is also black in the B/W buffer -> muddy red.
     - Activation regression: three_color full refresh does not use 0xF7 -> the OTP
       tri-color (red) waveform never runs and red never develops.
@@ -210,17 +216,46 @@ class DisplayColorChannelTests(unittest.TestCase):
 
 
 class FastBwPartialTests(unittest.TestCase):
-    """In three_color, DisplayPartial updates B/W only; red RAM is left alone."""
+    """In three_color, DisplayPartial runs the mono differential B/W partial.
 
-    def test_register_lut_profile_writes_bw_to_0x24_never_0x26(self):
-        # Register-LUT profile: the new B/W frame goes to 0x24 and the red RAM
-        # (0x26) is NEVER written, so the red layer set by the last display_color
-        # survives. Regression: any 0x26 write here reintroduces the red bleed.
+    Why this is the correct contract (supersedes the earlier "never write 0x26"
+    rule): the fast partial activates with the register B/W partial waveform
+    (0x22=0x0F), under which the panel uses Table 6-5 mapping -- the red-RAM bit
+    is ignored and 0x26 is the differential OLD baseline, not the red plane. So
+    the partial must re-seed 0x26 with the PREVIOUS shown (masked) frame, exactly
+    like the mono partial. A pixel showing red is masked white and unchanged
+    between prev/new, so it gets the LUT's hold phase and its bistable red is left
+    undisturbed. Leaving the red mask in 0x26 (the old behaviour) gave unchanged
+    pixels no clean hold, so every tick pulsed them and the red faded. Red is
+    re-developed only by the next full display_color (0xF7 OTP color waveform).
+    """
+
+    def test_register_lut_profile_diffs_prev_and_new_bw(self):
+        # New B/W frame -> 0x24; previous shown frame (self.buffer, white at
+        # construction) -> 0x26 as the differential baseline. With no red on
+        # screen (blank red_buffer) the masked frame equals the input.
+        # Regression: writing the red mask to 0x26 (or skipping the 0x26 re-seed)
+        # denies unchanged pixels the hold phase and the red fades every tick.
         rec = _RecordingEpd(three_color=True, profile=REGISTER_LUT_PROFILE)
         image = [0x5A] * BUFFER_LEN
         rec.epd.DisplayPartial(image)
         self.assertEqual(rec.data2_after(0x24), image)
-        self.assertIsNone(rec.data2_after(0x26))
+        self.assertEqual(rec.data2_after(0x26), [0xFF] * BUFFER_LEN)
+
+    def test_red_pixels_are_masked_white_and_held(self):
+        # A pixel currently showing red must stay masked white in the NEW B/W
+        # frame (0x24) so the partial never drives it black, and the previous
+        # frame in 0x26 must also be white there so old==new and the pixel gets
+        # the hold phase (red undisturbed). Seed red across byte0 (mask 0x00) and
+        # a previous all-white frame; byte0 of 0x24 must be 0xFF (white).
+        rec = _RecordingEpd(three_color=True, profile=REGISTER_LUT_PROFILE)
+        rec.epd.red_buffer = [0x00] + [0xFF] * (BUFFER_LEN - 1)  # red across px 0-7
+        rec.epd.buffer = [0xFF] * BUFFER_LEN                      # previous: all white
+        rec.epd.DisplayPartial([0x00] * BUFFER_LEN)               # new: all black
+        sent_bw = rec.data2_after(0x24)
+        self.assertEqual(sent_bw[0], 0xFF)                        # red px forced white
+        self.assertTrue(all(b == 0x00 for b in sent_bw[1:]))      # rest driven black
+        self.assertEqual(rec.data2_after(0x26)[0], 0xFF)          # baseline white -> hold
 
     def test_otp_profile_falls_back_to_full_color_refresh(self):
         # An OTP profile has no register partial LUT, so a partial activation has

@@ -56,11 +56,19 @@ EPD_WIDTH = 128
 EPD_HEIGHT = 296
 
 # --- Three-color (red/white/black) mode ------------------------------------
-# Some 2.9" SSD1680 panels are tri-color BWR. On a tri-color SSD1680 panel
-# command 0x24 is the BLACK/WHITE RAM and 0x26 is the RED RAM -- whereas the mono
-# partial path uses 0x24/0x26 as the NEW/OLD black-white banks for the
-# differential waveform. That is the bleed: the mono partial writes the old B/W
-# frame to 0x26, the panel's red RAM, painting the board red.
+# Some 2.9" SSD1680 panels are tri-color BWR. The RAM-to-LUT mapping the panel
+# applies depends on the ACTIVATION waveform, not on init (init is identical in
+# mono and three-color):
+#   - Full color activation (0x22 = 0xF7, OTP color waveform) selects Table 6-4:
+#     any bit set in 0x26 develops RED. display_color uses this, so 0x26 is the
+#     RED plane there. Writing a B/W frame to 0x26 under this waveform is the
+#     bleed that paints the board red.
+#   - B/W partial activation (0x22 = 0x0F, register partial LUT) selects Table
+#     6-5: the red-RAM bit is IGNORED and 0x26 is the differential OLD (B/W)
+#     baseline. So a B/W partial re-seeds 0x26 with the previous B/W frame (as
+#     the mono path always has) WITHOUT developing red, and unchanged pixels --
+#     including masked-white pixels sitting over developed red -- get the LUT
+#     hold phase, leaving the bistable red undisturbed.
 #
 # Red channel polarity. getbuffer_red packs a red pixel as a CLEARED bit (0) with
 # a 0xFF (no-red) baseline, matching the black=0 convention of the B/W plane. The
@@ -113,10 +121,11 @@ class EPD:
         self.width = EPD_WIDTH
         self.height = EPD_HEIGHT
         # Three-color (red/white/black) mode switch. Off by default so a mono V1
-        # panel is byte-for-byte unchanged. When on, init() drives the tri-color
-        # OTP waveform and the refresh paths route B/W -> 0x24 and red -> 0x26 (see
-        # display_color / DisplayPartial); the mono partial's old-frame write to
-        # 0x26 (the red RAM) is never used.
+        # panel is byte-for-byte unchanged. When on, full refreshes go through
+        # display_color (B/W -> 0x24, red -> 0x26, 0xF7 color waveform) and fast
+        # B/W updates go through _display_bw_fast, which runs the same differential
+        # B/W partial as the mono path (0x0F waveform) with red pixels masked
+        # white so developed red is held, not faded.
         self.three_color = three_color
         # Selected waveform profile -- the recipe for how the panel moves pixels:
         # a register full/partial LUT, the panel's own OTP waveform, and/or the
@@ -595,17 +604,24 @@ class EPD:
         self.red_buffer = list(red_buf)
 
     def _display_bw_fast(self, image):
-        """Fast B/W update in three-color mode that never disturbs the red plane.
+        """Fast B/W update in three-color mode that does not fade the red plane.
 
-        The hybrid scheduler only calls this when no red is on screen, so the red
-        RAM (0x26) must be left exactly as the last display_color set it -- writing
-        B/W into 0x26 here is precisely the bleed this feature fixes.
+        The hybrid scheduler only calls this when no NEW red is on screen; any red
+        already developed by the last display_color must survive untouched. Runs
+        the SAME differential B/W partial as the mono path (see
+        _display_partial_register_lut): the previous shown frame -> 0x26, the new
+        frame -> 0x24, B/W partial waveform (0x22 = 0x0F). Under the B/W waveform
+        the panel uses Table 6-5 mapping -- the red-RAM bit is ignored and 0x26 is
+        the differential OLD baseline, NOT the red plane -- so re-seeding 0x26 with
+        the previous B/W frame does not develop red. A pixel showing red is masked
+        white (mask_bw_with_red) and is unchanged between the previous and new
+        frames, so it gets the LUT's hold phase and its bistable red particles are
+        left undisturbed. Leaving the red mask in 0x26 (the previous behaviour)
+        gave unchanged pixels no clean hold, so every partial pulsed them and the
+        red faded tick by tick; the red is re-driven only by a full display_color.
 
-        With a register partial LUT available, re-arm partial mode and write the
-        new frame to 0x24 only, then a partial activation runs the B/W partial
-        waveform; 0x26 is not rewritten, so the red plane is untouched. For a
-        use_otp profile there is no register partial LUT, so fall back to a full
-        tri-color refresh. The fallback must re-send the CURRENT red plane
+        For a use_otp profile there is no register partial LUT, so fall back to a
+        full tri-color refresh. The fallback must re-send the CURRENT red plane
         (self.red_buffer), NOT a blank: this path is the "red unchanged" case, so
         blanking 0x26 would erase on-screen red the scheduler still believes is
         present (it leaves _last_red_buffer unchanged), desyncing panel and
@@ -619,7 +635,31 @@ class EPD:
             self.display_color(image, self.red_buffer)
             return
 
-        log.debug("[EPD SSD1680] three-color fast B/W partial (0x24 only, red RAM untouched)")
+        log.debug("[EPD SSD1680] three-color fast B/W differential partial "
+                  "(prev->0x26, new->0x24; red held by hold phase)")
+        # Force the B/W plane white wherever red ink persists so the partial never
+        # drives a red pixel black. self.buffer (the previous shown frame) is
+        # already masked, so a still-red pixel is white in both old and new frames
+        # -> hold phase -> red undisturbed.
+        masked = mask_bw_with_red(image, self.red_buffer)
+        self._display_partial_register_lut(masked)
+
+    def _display_partial_register_lut(self, image):
+        """Register-LUT differential partial: arm partial mode, diff prev->new, run.
+
+        Shared by the mono partial and the three-color fast B/W partial. Re-arms
+        partial mode (soft-reset pulse + partial LUT + border), loads the
+        differential frame (previous shown -> 0x26, new -> 0x24; see
+        _write_partial_rams for why re-seeding 0x26 every call is mandatory), then
+        runs the B/W partial activation (0x22 = 0x0F via TurnOnDisplayPart).
+
+        On a tri-color panel this same waveform is what lets a B/W update leave the
+        red plane alone: the B/W partial waveform selects Table 6-5 mapping, under
+        which the red-RAM bit is ignored (0x26 is read as the differential B/W
+        baseline, not as red). Do NOT re-route this through the 0xF7 OTP color
+        activation -- that selects Table 6-4, where any 0x26 bit develops red and
+        the previous B/W frame would bleed red across the board.
+        """
         epdconfig.digital_write(self.reset_pin, 0)
         epdconfig.delay_ms(2)
         epdconfig.digital_write(self.reset_pin, 1)
@@ -646,19 +686,9 @@ class EPD:
         self.send_command(0x20)
         self.ReadBusy()
 
-        # B/W only: write the new frame to 0x24 and DO NOT touch 0x26 (red RAM).
-        # Force the B/W plane white wherever red ink persists (from the last
-        # display_color, tracked in self.red_buffer) so this partial does not drive
-        # those pixels black underneath the bistable red -- which would render the
-        # red squares muddy over successive partials. With no red on screen
-        # red_buffer is all-0xFF and this mask is a no-op.
-        masked = mask_bw_with_red(image, self.red_buffer)
-        self.SetWindow(0, 0, self.width - 1, self.height - 1)
-        self.SetCursor(0, 0)
-        self.send_command(0x24)
-        self.send_data2(masked)
+        self._write_partial_rams(image)
         self.TurnOnDisplayPart()
-        self.buffer = list(masked)
+        self.buffer = image.copy() if hasattr(image, 'copy') else list(image)
 
     def display(self, image, should_abort=None):
         """Full refresh, and set the partial-refresh baseline.
@@ -724,9 +754,10 @@ class EPD:
         (correctness over speed -- every update still renders with the OTP
         waveform).
 
-        In three-color mode the scheduler routes here only for red-free frames;
-        _display_bw_fast updates B/W without disturbing the red RAM (full tri-color
-        refreshes go through display_color, not this path).
+        In three-color mode the scheduler routes here only for frames whose red
+        plane is unchanged; _display_bw_fast runs this same differential B/W
+        partial with red pixels masked white, so their bistable red is held by the
+        LUT hold phase (full tri-color refreshes go through display_color).
         """
         if self.three_color:
             self._display_bw_fast(image)
@@ -743,36 +774,7 @@ class EPD:
             self.display(image)
             return
         log.debug("[EPD SSD1680] mono partial refresh (profile=%s)", self.profile.key)
-
-        epdconfig.digital_write(self.reset_pin, 0)
-        epdconfig.delay_ms(2)
-        epdconfig.digital_write(self.reset_pin, 1)
-        epdconfig.delay_ms(2)
-
-        self.SetLut(self.profile.partial_lut)
-        self.send_command(0x37)
-        self.send_data(0x00)
-        self.send_data(0x00)
-        self.send_data(0x00)
-        self.send_data(0x00)
-        self.send_data(0x00)
-        self.send_data(0x40)
-        self.send_data(0x00)
-        self.send_data(0x00)
-        self.send_data(0x00)
-        self.send_data(0x00)
-
-        self.send_command(0x3C)  # border waveform
-        self.send_data(0x80)
-
-        self.send_command(0x22)
-        self.send_data(0xC0)
-        self.send_command(0x20)
-        self.ReadBusy()
-
-        self._write_partial_rams(image)
-        self.TurnOnDisplayPart()
-        self.buffer = image.copy() if hasattr(image, 'copy') else list(image)
+        self._display_partial_register_lut(image)
 
     def _display_partial_il3820(self, image):
         """IL3820 partial refresh (load 30-byte partial LUT, write, activate 0x04).
