@@ -103,8 +103,8 @@ def _make_scheduler(three_color, on_display_updated=None):
     return sched, epd
 
 
-def _item(full, image, red_image):
-    return (full, Future(), image, red_image)
+def _item(full, image, red_image, clock_source=False):
+    return (full, Future(), image, red_image, clock_source)
 
 
 class MonoSchedulerUnchangedTests(unittest.TestCase):
@@ -442,6 +442,48 @@ class InterruptRefreshTests(unittest.TestCase):
         self.assertEqual(item[1].result(), "color")
         self.assertFalse(sched._force_reinit)
         self.assertIsNotNone(sched._last_red_buffer)
+
+    def test_color_refresh_not_interrupted_by_a_queued_clock_frame(self):
+        # The whole point of the experiment: a clock heartbeat frame queued during
+        # the ~14s tri-color full refresh must NOT abort it. Otherwise a once-per-
+        # second clock tick restarts the refresh forever and any red on screen
+        # never finishes developing. Regression (clock frames still interrupt):
+        # the future resolves "interrupted" and _force_reinit is armed instead of
+        # completing as "color".
+        sched, epd = _make_scheduler(three_color=True)
+        sched._queue.put_nowait(_item(False, _bw_image(),
+                                      _red_image(has_red=True), clock_source=True))
+        item = _item(False, _bw_image(), _red_image(has_red=True))
+        sched._process_three_color(item[0], item[1], item[2], item[3])
+        self.assertEqual(item[1].result(), "color")
+        self.assertFalse(sched._force_reinit)
+        self.assertEqual(epd.calls.count("display_color"), 1)
+
+    def test_color_refresh_still_interrupted_by_a_queued_non_clock_frame(self):
+        # The other half of the contract: a real (non-clock) frame -- a move,
+        # overlay or transition -- queued during the full refresh must still
+        # interrupt it so the freshest state wins promptly. Regression (over-broad
+        # suppression): a genuine update is ignored and the stale frame completes.
+        sched, epd = _make_scheduler(three_color=True)
+        sched._queue.put_nowait(_item(False, _bw_image(),
+                                      _red_image(has_red=True), clock_source=False))
+        item = _item(False, _bw_image(), _red_image(has_red=True))
+        sched._process_three_color(item[0], item[1], item[2], item[3])
+        self.assertEqual(item[1].result(), "interrupted")
+        self.assertTrue(sched._force_reinit)
+
+    def test_should_abort_ignores_clock_frames_but_not_real_frames(self):
+        # Directly pin the predicate the driver's BUSY wait consults. A queue of
+        # only clock frames must read as "do not abort"; adding one non-clock
+        # frame flips it to "abort". Regression here is the root cause of the
+        # never-finishing refresh (clock frames counted as interrupting).
+        sched, _ = _make_scheduler(three_color=True)
+        self.assertFalse(sched._refresh_should_abort())  # empty queue
+        sched._queue.put_nowait(_item(False, _bw_image(), None, clock_source=True))
+        sched._queue.put_nowait(_item(False, _bw_image(), None, clock_source=True))
+        self.assertFalse(sched._refresh_should_abort())  # only clock frames
+        sched._queue.put_nowait(_item(False, _bw_image(), None, clock_source=False))
+        self.assertTrue(sched._refresh_should_abort())   # a real frame is waiting
 
 
 class MirrorCallbackTests(unittest.TestCase):

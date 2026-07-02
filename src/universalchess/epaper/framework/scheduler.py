@@ -158,7 +158,7 @@ class Scheduler:
         timer.start()
     
     def submit(self, full: bool = False, immediate: bool = False, image: Optional[Image.Image] = None,
-               red_image: Optional[Image.Image] = None) -> Future:
+               red_image: Optional[Image.Image] = None, clock_source: bool = False) -> Future:
         """Submit a refresh request.
         
         If the queue is full, the oldest item is dropped to make room for the new one.
@@ -173,6 +173,12 @@ class Scheduler:
                    None on mono panels. Drives the hybrid refresh decision: a non-empty or changed
                    red plane forces a full three-color refresh, otherwise the fast B/W partial path
                    is used (see _process_batch).
+            clock_source: True if this frame originates from the clock's tick heartbeat.
+                   Clock frames must NOT interrupt an in-progress full refresh (see
+                   _refresh_should_abort): on a three-color panel a full refresh is
+                   ~14s, and a once-per-second clock tick would abort and restart it
+                   forever so it never completes. Non-clock frames (moves, overlays,
+                   transitions) still interrupt so the freshest state wins promptly.
         """
         if full:
             log.warning(f"Scheduler.submit() called with full=True (will cause flashing refresh)")
@@ -191,7 +197,7 @@ class Scheduler:
                     log.warning("Scheduler.submit(): Queue full, evicted oldest item to make room for new update")
             
             try:
-                self._queue.put_nowait((full, future, image, red_image))
+                self._queue.put_nowait((full, future, image, red_image, clock_source))
                 if immediate:
                     # Wake scheduler thread immediately for urgent updates (e.g., menu arrow)
                     self._wake_event.set()
@@ -204,16 +210,27 @@ class Scheduler:
     def _refresh_should_abort(self) -> bool:
         """Predicate handed to the driver's full-refresh BUSY wait.
 
-        Returns True the instant newer frame data is queued (or shutdown is
-        requested), so an in-flight full refresh aborts immediately and the
-        scheduler restarts with the latest data. By design there is NO livelock
-        guard: a relentless stream of updates keeps restarting the refresh.
-        That is acceptable here because real update bursts are finite (a move
-        settles) and showing the freshest frame is preferred over completing a
-        stale one. Only full refreshes consult this; fast B/W partials are too
-        short to be worth interrupting.
+        Returns True the instant a newer *interrupting* frame is queued (or
+        shutdown is requested), so an in-flight full refresh aborts and the
+        scheduler restarts with the latest data. "Interrupting" excludes clock
+        heartbeat frames (submitted with clock_source=True): on a three-color
+        panel a full refresh is ~14s, so a once-per-second clock tick would abort
+        and restart it forever -- it never completes, and any red on screen stays
+        half-developed. Ignoring clock frames here lets the slow full refresh
+        finish; the queued clock frames are drained (and coalesced) afterwards.
+        Non-clock frames (moves, overlays, transitions) still interrupt so the
+        freshest real state wins promptly. By design there is NO livelock guard
+        for interrupting frames: real update bursts are finite (a move settles)
+        and showing the freshest frame is preferred over completing a stale one.
+        Only full refreshes consult this; fast B/W partials are too short to be
+        worth interrupting.
         """
-        return self._stop_event.is_set() or not self._queue.empty()
+        if self._stop_event.is_set():
+            return True
+        # Peek the pending frames (bounded, QUEUE_MAX_SIZE) under the queue's own
+        # mutex; abort only if a non-clock frame is waiting.
+        with self._queue.mutex:
+            return any(not item[4] for item in self._queue.queue)
 
     def _mark_activity(self) -> None:
         """Record that a refresh just happened, resetting the idle-sleep timer."""
@@ -323,11 +340,11 @@ class Scheduler:
                         item[1].set_result("shutdown")
                 return
             *superseded, last = batch
-            for s_full, s_future, _s_img, _s_red in superseded:
+            for s_full, s_future, _s_img, _s_red, _s_clock in superseded:
                 if not s_future.done():
                     s_future.set_result("coalesced")
             any_full = any(item[0] for item in batch)
-            full, future, image, red_image = last
+            full, future, image, red_image, _clock = last
             self._process_three_color(any_full, future, image, red_image)
             return
 
@@ -343,15 +360,15 @@ class Scheduler:
         # (every intermediate frame drawn).
         if self._batch_updates and len(batch) > 1:
             *superseded, last = batch
-            for s_full, s_future, _s_img, _s_red in superseded:
+            for s_full, s_future, _s_img, _s_red, _s_clock in superseded:
                 if not s_future.done():
                     s_future.set_result("coalesced")
             any_full = any(item[0] for item in batch)
-            batch = [(any_full, last[1], last[2], last[3])]
+            batch = [(any_full, last[1], last[2], last[3], last[4])]
 
         # Process each item separately to ensure all updates are displayed
         for item in batch:
-            full, future, image, red_image = item
+            full, future, image, red_image, _clock = item
 
             if self._stop_event.is_set():
                 if not future.done():

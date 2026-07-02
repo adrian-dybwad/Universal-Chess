@@ -62,8 +62,10 @@ class _FakeScheduler:
         self.calls = []
         self.reinit_count = 0
 
-    def submit(self, full=False, immediate=False, image=None, red_image=None):
-        self.calls.append({"full": full, "immediate": immediate})
+    def submit(self, full=False, immediate=False, image=None, red_image=None,
+               clock_source=False):
+        self.calls.append({"full": full, "immediate": immediate,
+                           "clock_source": clock_source})
         f = Future()
         f.set_result("ok")
         return f

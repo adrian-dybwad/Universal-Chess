@@ -399,7 +399,8 @@ class Manager:
         priority = bool(getattr(widget, "refresh_priority", False)) or widget.is_modal
         return self.update(full, immediate, priority=priority)
 
-    def _render_now(self, full: bool = False, immediate: bool = False) -> Future:
+    def _render_now(self, full: bool = False, immediate: bool = False,
+                    clock_source: bool = False) -> Future:
         """Render the whole widget stack and submit a refresh immediately.
 
         Folds any deferred dirty state into this render (a full-stack render
@@ -407,6 +408,10 @@ class Manager:
         from different threads (the clock heartbeat vs an overlay) never run
         concurrently. Same-thread re-entrancy (a child calling update() during
         draw_on()) is queued and replayed once, not recursed.
+
+        ``clock_source`` marks the submitted frame as originating from the clock
+        tick so the scheduler will not let it interrupt an in-progress full
+        refresh (see Scheduler._refresh_should_abort).
         """
         with self._refresh_state_lock:
             full = full or self._dirty_full
@@ -423,7 +428,7 @@ class Manager:
 
             self._update_in_progress = True
             try:
-                return self._do_update(full, immediate)
+                return self._do_update(full, immediate, clock_source)
             finally:
                 self._update_in_progress = False
                 if self._pending_update:
@@ -458,7 +463,7 @@ class Manager:
         """
         if not self._initialized or self._shutting_down:
             return None
-        return self._render_now(full, immediate=False)
+        return self._render_now(full, immediate=False, clock_source=True)
 
     def set_defer_to_clock(self, enabled: bool) -> None:
         """Enable/disable clock-driven refresh mode.
@@ -476,7 +481,8 @@ class Manager:
         if needs_flush:
             self._render_now(full=False, immediate=False)
     
-    def _do_update(self, full: bool = False, immediate: bool = False) -> Future:
+    def _do_update(self, full: bool = False, immediate: bool = False,
+                   clock_source: bool = False) -> Future:
         """Internal method that performs the actual update rendering.
         
         This should only be called from update() with the re-entrancy guard held.
@@ -484,6 +490,9 @@ class Manager:
         Args:
             full: If True, force a full refresh instead of partial refresh.
             immediate: If True, wake scheduler immediately to bypass batching delay.
+            clock_source: True when this render is driven by the clock's tick
+                heartbeat, so the scheduler tags the frame as non-interrupting (it
+                must not abort an in-progress full/tri-color refresh).
         """
         # Get canvas and render background
         canvas = self._framebuffer.get_canvas()
@@ -531,7 +540,8 @@ class Manager:
 
         # Submit refresh with the captured snapshot and return Future
         # The on_refresh callback is invoked by Scheduler after display update
-        return self._scheduler.submit(full=full, immediate=immediate, image=snapshot, red_image=red_snapshot)
+        return self._scheduler.submit(full=full, immediate=immediate, image=snapshot,
+                                      red_image=red_snapshot, clock_source=clock_source)
 
     def _is_three_color(self) -> bool:
         """Whether the active driver is in three-color (red) mode.

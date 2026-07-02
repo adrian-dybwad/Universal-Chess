@@ -55,7 +55,7 @@ def manager():
 
     render_calls: List[bool] = []
 
-    def _fake_do_update(full=False, immediate=False):
+    def _fake_do_update(full=False, immediate=False, clock_source=False):
         render_calls.append(full)
         return _resolved_future()
 

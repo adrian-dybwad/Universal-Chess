@@ -122,10 +122,12 @@ class _FakeScheduler:
     def __init__(self):
         self.calls = []
 
-    def submit(self, full=False, immediate=False, image=None, red_image=None):
+    def submit(self, full=False, immediate=False, image=None, red_image=None,
+               clock_source=False):
         self.calls.append({
             "full": full, "immediate": immediate,
             "image": image, "red_image": red_image,
+            "clock_source": clock_source,
         })
         f = Future()
         f.set_result("recorded")
