@@ -288,8 +288,21 @@ class GameAnalysisWidget(Widget):
             self.invalidate_and_update()
     
     def _handle_child_update(self, full: bool = False, immediate: bool = False):
-        """Handle update requests from child widgets by forwarding to parent callback."""
-        return self._update_callback(full, immediate)
+        """No-op update callback for the render-only score/annotation text widgets.
+
+        The score and annotation TextWidgets are not autonomous: their set_text()
+        is called only from within this widget's own render(), which already draws
+        the new text. TextWidget.set_text() calls request_update() on a change;
+        forwarding that to the Manager fired a re-entrant second display refresh
+        (Manager defers the re-entrant update and replays it). Because the eval
+        score changes many times a second while the engine analyses, that doubled
+        the analysis refresh rate and saturated the shared e-paper panel --
+        starving other widgets (notably the clock) of timely refreshes. Returning
+        None keeps set_text()'s cache invalidation (so the child re-renders with
+        the new text on the next draw_on) while suppressing the redundant refresh;
+        this widget drives its own single refresh from its state observers.
+        """
+        return None
 
     def _graph_geometry(self) -> dict:
         """Pixel geometry of the history graph, shared by render and render_red.

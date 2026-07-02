@@ -364,6 +364,42 @@ class TestChessClockWidgetVisibility(unittest.TestCase):
 
         widget.stop()
 
+    def test_render_setting_child_text_does_not_request_a_refresh(self):
+        """Rendering the clock must not trigger an extra display refresh.
+
+        The clock's time/label/name TextWidgets are render-only helpers: their
+        set_text() is called inside the clock's own render(), which already draws
+        the new text. TextWidget.set_text() calls request_update(); if those
+        children forwarded that to the Manager it would fire a second, redundant
+        full-screen refresh per tick (Manager defers the re-entrant update and
+        replays it). On the slow e-paper panel that doubled the refresh rate and
+        made the once-per-second clock drift/beat -- the erratic cadence.
+
+        How the regression manifests: a child's set_text() during render() calls
+        the clock's update_callback (Manager.update), so this assertion sees the
+        callback invoked purely as a side effect of rendering a changed time.
+        """
+        from PIL import Image
+
+        widget = self._create_widget(timed_mode=True)
+        # A move makes the timed clock visible, so the child request_update is not
+        # suppressed by a hidden-widget check (which would pass trivially).
+        self.game_state.push_uci('e2e4')
+        self.assertTrue(widget.visible)
+
+        img = Image.new('1', (widget.width, widget.height), 255)
+        widget.render(img)  # first render populates the time text ("05:00")
+
+        # Change both clocks so the next render's set_text() genuinely changes the
+        # text (set_text is a no-op when unchanged, which would hide the bug).
+        self.clock_state.set_times(299, 298)
+        widget._update_callback.reset_mock()
+
+        widget.render(img)
+        widget._update_callback.assert_not_called()
+
+        widget.stop()
+
     def test_cleanup_unsubscribes_from_game_over(self):
         """stop() should unsubscribe from game_over observer.
         

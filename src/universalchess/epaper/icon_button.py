@@ -131,8 +131,18 @@ class IconButtonWidget(Widget):
         self._text_widgets_cache = {}
     
     def _handle_child_update(self, full: bool = False, immediate: bool = False):
-        """Handle update requests from child widgets by forwarding to parent callback."""
-        return self._update_callback(full, immediate)
+        """No-op update callback for the render-only cached text widgets.
+
+        The cached TextWidgets are not autonomous: their set_text() is called only
+        from _render_text_line() during this button's own render(), which then
+        draws the text. TextWidget.set_text() calls request_update() on a change;
+        forwarding that to the Manager fired a re-entrant second display refresh
+        (Manager defers and replays it) on every button repaint -- so a single
+        menu redraw could double its refreshes. Returning None keeps set_text()'s
+        cache invalidation while suppressing the redundant refresh; selection and
+        other real changes drive refreshes via the owning menu, not these helpers.
+        """
+        return None
     
     def _get_cached_text_widget(self, width: int, centered: bool, font_size: int = None, bold: bool = None) -> TextWidget:
         """Get or create a cached TextWidget for the given parameters.

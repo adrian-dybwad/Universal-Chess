@@ -151,8 +151,18 @@ class GameOverWidget(Widget):
             self.black_time = None
     
     def _handle_child_update(self, full: bool = False, immediate: bool = False):
-        """Handle update requests from child widgets by forwarding to parent callback."""
-        return self._update_callback(full, immediate)
+        """No-op update callback for the render-only result text widgets.
+
+        The winner/termination/moves/times TextWidgets are not autonomous: their
+        set_text() is called only from within this widget's own render(), which
+        already draws the new text. TextWidget.set_text() calls request_update()
+        on a change; forwarding that to the Manager fired a re-entrant second
+        display refresh (Manager defers and replays it) each time the game-over
+        panel was populated. Returning None keeps set_text()'s cache invalidation
+        while suppressing the redundant refresh; this widget drives its own single
+        refresh from set_result().
+        """
+        return None
     
     def set_result(self, result: str, termination: str = None, move_count: int = 0,
                    final_times: Optional[Tuple[int, int]] = None) -> None:

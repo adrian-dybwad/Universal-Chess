@@ -52,8 +52,17 @@ class InfoOverlayWidget(Widget):
         )
     
     def _handle_child_update(self, full: bool = False, immediate: bool = False):
-        """Handle update requests from child widgets by forwarding to parent callback."""
-        return self._update_callback(full, immediate)
+        """No-op update callback for the render-only message text widget.
+
+        The message TextWidget is not autonomous: its set_text() is called only
+        from within this widget's own render(), which already draws the new text.
+        TextWidget.set_text() calls request_update() on a change; forwarding that
+        to the Manager fired a re-entrant second display refresh (Manager defers
+        and replays it) each time the overlay message was set. Returning None
+        keeps set_text()'s cache invalidation while suppressing the redundant
+        refresh; this widget drives its own single refresh from show_message().
+        """
+        return None
     
     def show_message(self, message: str, duration_seconds: float = 0) -> None:
         """Show a message, optionally auto-hiding after a duration.

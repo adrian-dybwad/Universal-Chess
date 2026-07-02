@@ -133,8 +133,21 @@ class ChessClockWidget(Widget):
                                            justify=Justify.CENTER, transparent=True)
     
     def _handle_child_update(self, full: bool = False, immediate: bool = False):
-        """Handle update requests from child widgets by forwarding to parent callback."""
-        return self._update_callback(full, immediate)
+        """No-op update callback for the clock's render-only child text widgets.
+
+        The label/name/time/brain-hint TextWidgets are not autonomous: their
+        set_text() is called only from within this widget's own render(), which
+        already draws the new text into the clock sprite. TextWidget.set_text()
+        calls request_update() on a change; forwarding that to the Manager fired a
+        re-entrant second display refresh per clock tick (Manager defers the
+        re-entrant update and replays it), so on the slow e-paper panel every tick
+        produced two full-screen refreshes -- saturating the panel and making the
+        once-per-second clock drift/beat (the erratic cadence). Returning None
+        keeps set_text()'s cache invalidation (so the child re-renders with the
+        new text on the next draw_on) while suppressing the redundant refresh. The
+        clock drives its own single refresh from its tick/state/game observers.
+        """
+        return None
     
     def _on_clock_state_change(self) -> None:
         """Called when ChessClockState changes (times, running state)."""

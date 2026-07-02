@@ -51,6 +51,51 @@ def _game(ucis):
     return state
 
 
+def test_render_score_change_does_not_request_a_refresh():
+    """Rendering a changed eval score must not trigger an extra display refresh.
+
+    The score/annotation TextWidgets are render-only helpers: their set_text() is
+    called only inside the widget's own render(), which already draws the new
+    text. TextWidget.set_text() calls request_update(); if forwarded to the
+    Manager it fires a re-entrant second full-screen refresh (Manager defers and
+    replays it). The engine reports a new score many times a second during
+    analysis, so that doubled the analysis refresh rate and saturated the shared
+    e-paper panel -- starving the clock of timely refreshes (the observed
+    interference).
+
+    How the regression manifests: a child's set_text() during render() calls the
+    widget's update_callback (Manager.update), so this assertion sees the callback
+    invoked purely as a side effect of rendering a changed score.
+    """
+    analysis_state = MagicMock()
+    analysis_state.is_mate = False
+    analysis_state.mate_in = None
+    analysis_state.annotation = ""
+    analysis_state.history = []
+    analysis_state.score = 1.0
+    analysis_state.score_text = "+1.0"
+
+    update_callback = MagicMock()
+    widget = GameAnalysisWidget(
+        0, 216, 128, 80, update_callback,
+        analysis_state=analysis_state,
+        notation="figurine",
+        game_state=_game([]),
+        sprites=None,
+    )
+
+    img = Image.new("1", (widget.width, widget.height), 255)
+    widget.render(img)  # first render sets the score text to "+1.0"
+
+    # Change the score so the next render's set_text() genuinely changes the text
+    # (set_text is a no-op when unchanged, which would hide the bug).
+    analysis_state.score = 2.0
+    update_callback.reset_mock()
+
+    widget.render(img)
+    update_callback.assert_not_called()
+
+
 def test_no_moves_has_single_analysis_page():
     # A fresh game has only the analysis page: no move pages, and paging must not
     # move off page 0 (modulo-1 stays 0). Guards against a divide/blank-page bug
