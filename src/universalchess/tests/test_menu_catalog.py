@@ -268,6 +268,7 @@ def test_web_settings_field_ids_resolve_with_labels():
         "field.display.show_graph",
         "field.display.sprites",
         "field.display.led_brightness",
+        "field.display.pegasus_override_brightness",
         "field.sound.enabled",
         "field.sound.piece_events",
         "field.sound.game_events",

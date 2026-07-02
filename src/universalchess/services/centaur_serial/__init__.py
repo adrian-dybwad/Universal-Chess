@@ -6,6 +6,10 @@ Centaur binary drives the board. See ``relay.py`` (transport/lifecycle) and
 ``decoder.py`` (pure protocol decode).
 """
 
+from universalchess.services.centaur_serial.command_decoder import (
+    LedCommand,
+    LedCommandDecoder,
+)
 from universalchess.services.centaur_serial.decoder import (
     EventDecoder,
     HoldToExitDetector,
@@ -29,6 +33,8 @@ __all__ = [
     "HoldToExitDetector",
     "KeyEvent",
     "PieceEvent",
+    "LedCommand",
+    "LedCommandDecoder",
     "rotate_field",
     "DEFAULT_DEVICE",
     "SerialTap",

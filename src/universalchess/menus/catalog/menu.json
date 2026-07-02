@@ -1003,6 +1003,16 @@
       "range": { "min": 1, "max": 10, "step": 1, "wrap": true }
     },
     {
+      "id": "field.display.pegasus_override_brightness",
+      "type": "toggle",
+      "label": "Override Pegasus Brightness",
+      "help": "The DGT Chess app sends a fixed LED brightness. When on, use the LED Brightness setting above for Pegasus LEDs instead.",
+      "section": "display",
+      "platforms": ["web"],
+      "bind": { "store": "game", "key": "pegasus_override_brightness" },
+      "icon": { "true": "checkbox_checked", "false": "checkbox_empty" }
+    },
+    {
       "id": "field.sound.enabled",
       "type": "toggle",
       "label": "Sound Enabled",

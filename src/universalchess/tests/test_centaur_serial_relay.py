@@ -353,6 +353,42 @@ def test_pump_commands_forwards_bytes_verbatim():
     assert bytes(written) == b"abcde"
 
 
+def test_pump_commands_forwards_verbatim_and_surfaces_led_commands():
+    """The app -> board pump forwards bytes AND decodes LED commands on the side.
+
+    Why this test exists: capturing the stock Centaur software's LED intensity
+    depends on this observer. A LED set frame must be (1) forwarded byte-for-byte
+    to the board and (2) decoded into an LedCommand delivered to on_led, without
+    the observer altering or gating the forward path. Regression manifests as
+    altered forwarded bytes or a missing/incorrect LED command.
+    """
+    from universalchess.services.centaur_serial.command_decoder import (
+        LedCommand,
+        LedCommandDecoder,
+    )
+
+    # A real LED set frame: intensity 7 at square 0x38, speed 3, repeat 0.
+    led_frame = bytes.fromhex("b000" "0b" "3e5e" "0503000738" "1e".replace(" ", ""))
+    # Recompute the checksum so the frame is valid regardless of the literal above.
+    body = led_frame[:-1]
+    led_frame = body + bytes((checksum(body),))
+
+    read_fn, should_stop = _draining_reader([led_frame])
+    written = bytearray()
+    leds: List = []
+    pump_commands(
+        read_fn,
+        written.extend,
+        should_stop,
+        sleep_fn=lambda s: None,
+        led_decoder=LedCommandDecoder(),
+        on_led=leds.append,
+    )
+
+    assert bytes(written) == led_frame  # forwarded unchanged
+    assert leds == [LedCommand(off=False, intensity=7, speed=3, repeat=0, squares=[0x38])]
+
+
 def test_pump_events_forwards_verbatim_and_decodes_and_exits():
     """The board -> app pump forwards bytes, surfaces events, and fires exit.
 

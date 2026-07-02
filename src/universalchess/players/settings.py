@@ -134,6 +134,11 @@ class GameSettings:
         show_analysis: Show analysis widget
         show_graph: Show history graph in analysis widget
         led_brightness: LED brightness level (1-10, default 5)
+        pegasus_override_brightness: When True (default), the Pegasus emulator
+            drives its LEDs from ``led_brightness`` instead of the intensity the
+            DGT Chess app transmits. The app sends a fixed constant (it exposes no
+            brightness control), so honoring it pins Pegasus brightness; the flag
+            lets the app value be honored again if a future app varies it.
         chess_sprites: Identifier of the selected chesssprites_ sheet ("default"
             maps to chesssprites_default.bmp). Must be a real field so the
             Display > Board > Sprites selector can read the current selection via
@@ -150,6 +155,7 @@ class GameSettings:
     show_analysis: bool = True
     show_graph: bool = True
     led_brightness: int = 5  # LED brightness 1-10
+    pegasus_override_brightness: bool = True
     chess_sprites: str = "default"
     _log: Optional[Any] = field(default=None, repr=False)
 
@@ -192,6 +198,7 @@ class GameSettings:
             "show_analysis": self.show_analysis,
             "show_graph": self.show_graph,
             "led_brightness": self.led_brightness,
+            "pegasus_override_brightness": self.pegasus_override_brightness,
             "chess_sprites": self.chess_sprites,
         }
 
@@ -223,6 +230,10 @@ class GameSettings:
             show_analysis=data.get("show_analysis", defaults.get("show_analysis", True)),
             show_graph=data.get("show_graph", defaults.get("show_graph", True)),
             led_brightness=data.get("led_brightness", defaults.get("led_brightness", 5)),
+            pegasus_override_brightness=data.get(
+                "pegasus_override_brightness",
+                defaults.get("pegasus_override_brightness", True),
+            ),
             chess_sprites=data.get("chess_sprites", defaults.get("chess_sprites", "default")),
             _log=log,
         )

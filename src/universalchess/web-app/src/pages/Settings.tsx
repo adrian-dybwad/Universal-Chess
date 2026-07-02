@@ -122,6 +122,7 @@ interface FormSettings {
     show_analysis: boolean;
     show_graph: boolean;
     led_brightness: number;
+    pegasus_override_brightness: boolean;
     chess_sprites: string;
   };
   lichess: {
@@ -153,6 +154,7 @@ const defaultFormSettings: FormSettings = {
     show_analysis: true,
     show_graph: true,
     led_brightness: 5,
+    pegasus_override_brightness: true,
     chess_sprites: 'default',
   },
   lichess: { api_token: '', range: '' },
@@ -206,6 +208,7 @@ function parseRawSettings(data: SettingsData): FormSettings {
       show_analysis: parseConfigBool(data.game?.show_analysis, true),
       show_graph: parseConfigBool(data.game?.show_graph, true),
       led_brightness: parseInt(data.game?.led_brightness || '5'),
+      pegasus_override_brightness: parseConfigBool(data.game?.pegasus_override_brightness, true),
       chess_sprites: data.game?.chess_sprites || 'default',
     },
     lichess: {
@@ -1167,6 +1170,9 @@ export function Settings() {
               <CardHeader title="E-Paper Display" />
               {fieldsForSection(catalog, 'display')
                 .filter((node) => node.type === 'toggle')
+                // LED settings live in the LEDs card below, not among the e-paper
+                // widget-visibility toggles, even though they share the display section.
+                .filter((node) => node.id !== 'field.display.pegasus_override_brightness')
                 .map((node) => {
                   const key = node.bind?.key as keyof FormSettings['game'];
                   return (
@@ -1231,6 +1237,13 @@ export function Settings() {
                 value={formSettings.game.led_brightness}
                 help={`Level: ${formSettings.game.led_brightness}`}
                 onChange={(v) => updateFormSettings('game', { led_brightness: Number(v) })}
+              />
+              <CatalogField
+                node={fieldById(catalog, 'field.display.pegasus_override_brightness')!}
+                value={formSettings.game.pegasus_override_brightness}
+                onChange={(v) =>
+                  updateFormSettings('game', { pegasus_override_brightness: Boolean(v) })
+                }
               />
             </Card>
 

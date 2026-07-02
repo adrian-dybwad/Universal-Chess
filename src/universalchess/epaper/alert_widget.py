@@ -214,7 +214,7 @@ class AlertWidget(Widget):
     def _flash_leds(self, repeat: int = 2) -> None:
         """Flash LEDs from attacker square to target square using hint callback.
         
-        Uses slow speed and dim intensity via the led_from_to_hint callback.
+        Uses slow speed at the standard intensity via the led_from_to_hint callback.
         Does nothing if callback not set.
         """
         if self._attacker_square is None or self._target_square is None:

@@ -17,6 +17,11 @@ from typing import Dict, Optional
 import time
 
 from universalchess.managers.events import EVENT_LIFT_PIECE, EVENT_PLACE_PIECE
+from universalchess.utils.led import (
+    get_led_intensity_from_settings,
+    get_pegasus_override_brightness,
+    resolve_pegasus_intensity,
+)
 
 # Unified command registry
 @dataclass(frozen=True)
@@ -169,16 +174,16 @@ class Pegasus:
                 return (7 - (i // 8)) * 8 + (i % 8)
             fields_board = [hw_to_board(f) for f in fields_hw]
             log.info(f"[Pegasus LED packet] speed_in={ledspeed_in} intensity_in={intensity_in}")
-            # Scale intensity: intensity_in 10-0 maps to intensity 1,2,3,4,5,6,7,8,9,0
-            # Formula: intensity = 11 - intensity_in, with special cases for 0 and 1
-            if intensity_in == 0:
-                intensity = 0
-            elif intensity_in == 1:
-                intensity = 0
-            else:
-                intensity = 11 - intensity_in
-            # Clamp intensity to valid range 0-10
-            intensity = max(0, min(10, intensity))
+            # The DGT Chess app has no LED brightness control and transmits a
+            # fixed intensity_in in every packet, so by default UC drives the LEDs
+            # from its own 1-10 setting (the "override Pegasus brightness" switch).
+            # With the switch off the app value is honored instead.
+            override = get_pegasus_override_brightness()
+            intensity = resolve_pegasus_intensity(
+                app_intensity=intensity_in,
+                override=override,
+                uc_intensity=get_led_intensity_from_settings(),
+            )
             ledspeed = max(1, min(100, ledspeed_in))
             log.info(f"[Pegasus LED packet] speed={ledspeed} mode={mode} intensity={intensity} hw={fields_hw} -> board={fields_board}")
             try:

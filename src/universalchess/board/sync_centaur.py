@@ -81,6 +81,43 @@ DGT_BUS_POLL_KEYS_RESP = COMMANDS["DGT_BUS_POLL_KEYS"].expected_resp_type
 # Export name namespace for commands, e.g. command.LED_CMD -> "LED_CMD"
 command = SimpleNamespace(**{name: name for name in COMMANDS.keys()})
 
+# --- LED brightness translation (logical 1-10 level -> hardware intensity byte) ---
+# The whole application carries a user-facing brightness *level* of 1..10. The DGT
+# controller, however, takes a raw intensity *byte* whose behavior was measured on
+# hardware (a per-square sweep comparing anchor vs test LEDs):
+#   - Only bytes 1..127 are honored. A byte >= 128 is IGNORED (the command is
+#     discarded and the previously lit LED persists); it is NOT an "off". "Off" is
+#     the separate ledsOff command (data 0x00), which carries no intensity byte.
+#   - The scale is inverted and roughly logarithmic: byte 1 is the brightest and
+#     byte 127 the dimmest still-lit value.
+# The mapping is applied at the last moment before the wire (the four LED packet
+# builders below) so every layer above speaks 1..10 and exactly one place knows
+# the hardware curve.
+_LED_LEVEL_MIN = 1
+_LED_LEVEL_MAX = 10
+_LED_BYTE_BRIGHTEST = 1    # level 10
+_LED_BYTE_DIMMEST = 127    # level 1
+
+
+def brightness_to_intensity(level: int) -> int:
+    """Translate a logical LED brightness level (1-10) to the raw intensity byte.
+
+    Maps level 1 -> 127 (dimmest still-lit) up to level 10 -> 1 (brightest) on a
+    geometric curve, so equal user steps are roughly equal perceptual steps given
+    the hardware's inverted, roughly logarithmic response. The result is always
+    within 1..127 and never an ignored (>= 128) or absent (0) byte.
+
+    Levels outside 1..10 are clamped to the nearest end (defense in depth; the
+    settings layer already clamps): a stray value <= 1 yields the dimmest honored
+    byte and a stray value >= 10 the brightest, so no caller can ever produce a
+    byte the firmware would ignore.
+    """
+    clamped = max(_LED_LEVEL_MIN, min(_LED_LEVEL_MAX, int(level)))
+    if clamped >= _LED_LEVEL_MAX:
+        return _LED_BYTE_BRIGHTEST
+    exponent = (_LED_LEVEL_MAX - clamped) / (_LED_LEVEL_MAX - _LED_LEVEL_MIN)
+    return max(_LED_BYTE_BRIGHTEST, round(_LED_BYTE_DIMMEST ** exponent))
+
 DGT_NOTIFY_EVENTS = None # command.DGT_NOTIFY_EVENTS_43
 
 if DGT_NOTIFY_EVENTS is not None:
@@ -1331,7 +1368,7 @@ class SyncCentaur:
         data = bytearray([0x05])
         data.append(speed)
         data.append(repeat)
-        data.append(intensity)
+        data.append(brightness_to_intensity(intensity))
         for i in range(0, len(inarray)):
             data.append(inarray[i])
         self.sendCommand(command.LED_CMD, data)
@@ -1340,7 +1377,7 @@ class SyncCentaur:
         data = bytearray([0x05])
         data.append(speed)
         data.append(repeat)
-        data.append(intensity)
+        data.append(brightness_to_intensity(intensity))
         data.append(lfrom)
         data.append(lto)
         self.sendCommand(command.LED_CMD, data)
@@ -1349,7 +1386,7 @@ class SyncCentaur:
         data = bytearray([0x05])
         data.append(speed)
         data.append(repeat)
-        data.append(intensity)
+        data.append(brightness_to_intensity(intensity))
         data.append(num)
         self.sendCommand(command.LED_CMD, data)
     
@@ -1357,7 +1394,7 @@ class SyncCentaur:
         data = bytearray([0x05]) # , 0x0a, 0x00, 0x01
         data.append(speed)
         data.append(repeat)
-        data.append(intensity)
+        data.append(brightness_to_intensity(intensity))
         self.sendCommand(command.LED_CMD, data)
     
     def sleep(self, retries: int = 3, retry_delay: float = 0.5) -> bool:

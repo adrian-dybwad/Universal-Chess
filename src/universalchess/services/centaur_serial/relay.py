@@ -28,6 +28,10 @@ import threading
 import time
 from typing import Callable, List, Optional, Protocol, Tuple
 
+from universalchess.services.centaur_serial.command_decoder import (
+    LedCommand,
+    LedCommandDecoder,
+)
 from universalchess.services.centaur_serial.decoder import (
     EventDecoder,
     HoldToExitDetector,
@@ -41,6 +45,10 @@ log = logging.getLogger(__name__)
 
 DEFAULT_DEVICE = "/dev/ttyS0"
 DEFAULT_BAUD = 1000000
+# Env flag that turns on passive logging of the LED commands Centaur issues, for
+# calibrating UC's own LED intensity against the stock software. Off by default
+# so normal translate-mode play is not made noisy; set to "1" to capture.
+LED_LOG_ENV_VAR = "UC_LOG_CENTAUR_LED"
 # Read chunk for the hardware side; large enough for a full frame, small enough
 # to keep latency negligible at 1 Mbaud.
 _READ_CHUNK = 4096
@@ -59,6 +67,7 @@ class SerialLike(Protocol):
 
 
 EventCallback = Callable[["PieceEvent | KeyEvent"], None]
+LedCallback = Callable[["LedCommand"], None]
 
 
 def pump_commands(
@@ -67,14 +76,20 @@ def pump_commands(
     should_stop: Callable[[], bool],
     *,
     sleep_fn: Callable[[float], None] = time.sleep,
+    led_decoder: Optional[LedCommandDecoder] = None,
+    on_led: Optional[LedCallback] = None,
 ) -> None:
     """Forward the app -> board direction verbatim until stopped.
 
     This carries Centaur's commands (polls, LED/sound, discovery) to the real
-    board. It is a pure byte relay with no interpretation. ``read_fn`` may return
-    empty bytes when nothing is available (the PTY master is non-blocking); a
-    short sleep then avoids a busy loop. IO errors (fd closed during teardown)
-    end the pump.
+    board. The forward path is a pure byte relay: bytes are written to the board
+    first and unchanged. When ``led_decoder`` and ``on_led`` are supplied, a copy
+    of each chunk is additionally fed to the decoder and each decoded LED command
+    is passed to ``on_led`` -- a passive observer that never gates the forward
+    path (its errors are caught) so Centaur's board link is never stalled by it.
+    ``read_fn`` may return empty bytes when nothing is available (the PTY master
+    is non-blocking); a short sleep then avoids a busy loop. IO errors (fd closed
+    during teardown) end the pump.
     """
     while not should_stop():
         try:
@@ -89,6 +104,14 @@ def pump_commands(
                 write_fn(data)
             except OSError:
                 break
+            if led_decoder is not None and on_led is not None:
+                # Decoding must never break the relay; a decode fault is caught
+                # here so the live board link keeps forwarding regardless.
+                try:
+                    for command in led_decoder.feed(data):
+                        _safe_call(on_led, command)
+                except Exception as exc:  # noqa: BLE001 - observer must not break the pump
+                    log.error("[SerialTap] LED decode error: %s", exc)
         else:
             sleep_fn(_IDLE_SLEEP_SECONDS)
 
@@ -135,6 +158,24 @@ def pump_events(
         if detector is not None and detector.expired(clock_fn()):
             if on_exit is not None:
                 _safe_call(on_exit)
+
+
+def _log_led_command(command: "LedCommand") -> None:
+    """Log one decoded Centaur LED command at INFO (env-gated diagnostic).
+
+    Emits the raw protocol bytes (intensity/speed/repeat and the lit squares) so
+    the stock software's values can be read straight from the service log.
+    """
+    if command.off:
+        log.info("[CentaurLED] off")
+    else:
+        log.info(
+            "[CentaurLED] intensity=%s speed=%s repeat=%s squares=%s",
+            command.intensity,
+            command.speed,
+            command.repeat,
+            command.squares,
+        )
 
 
 def _safe_call(fn: Callable, *args) -> None:
@@ -400,6 +441,7 @@ class ThreadedSerialTap:
         tap: SerialTap,
         *,
         on_event: Optional[EventCallback] = None,
+        on_led: Optional[LedCallback] = None,
         stop_centaur_fn: Optional[Callable[[], None]] = None,
         exit_button: str = "BACK",
         hold_seconds: float = 1.0,
@@ -407,6 +449,7 @@ class ThreadedSerialTap:
     ) -> None:
         self._tap = tap
         self._on_event = on_event
+        self._on_led = on_led
         self._stop_centaur_fn = stop_centaur_fn
         self._exit_button = exit_button
         self._hold_seconds = hold_seconds
@@ -456,9 +499,17 @@ class ThreadedSerialTap:
             serial.write(data)
             serial.flush()
 
+        # Effective LED observer: an explicit on_led callback if provided, else an
+        # env-gated INFO logger so the LED bytes Centaur sends can be captured
+        # without wiring code (see LED_LOG_ENV_VAR).
+        on_led = self._on_led
+        if on_led is None and os.environ.get(LED_LOG_ENV_VAR) == "1":
+            on_led = _log_led_command
+        led_decoder = LedCommandDecoder() if on_led is not None else None
         commands = threading.Thread(
             target=pump_commands,
             args=(read_master, write_real, self._stop.is_set),
+            kwargs={"led_decoder": led_decoder, "on_led": on_led},
             name="centaur-serial-commands",
             daemon=True,
         )
