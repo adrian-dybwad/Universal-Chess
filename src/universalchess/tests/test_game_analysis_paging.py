@@ -118,6 +118,71 @@ def test_last_page_has_lone_white_move_and_uci_notation():
     assert widget.current_page_rows() == [(7, "a4b3", "d7d6")]
 
 
+def test_page_change_callback_fires_on_paging():
+    # The clock widget's compact turn indicator is driven by a page-change
+    # callback; it must fire with the new page index each time the user pages.
+    # A regression that mutated _page without notifying would leave the turn
+    # circle stuck (shown on a move page or hidden on the analysis page).
+    widget = _widget(_game(RUY_LOPEZ_UCI))
+    seen: List[int] = []
+    widget.set_page_change_callback(seen.append)
+
+    widget.turn_page(1)   # 0 -> 1
+    widget.turn_page(1)   # 1 -> 2
+    widget.turn_page(-1)  # 2 -> 1
+    assert seen == [1, 2, 1]
+
+
+def test_page_change_callback_silent_when_page_unchanged():
+    # With no moves there is only the analysis page, so paging is a no-op and the
+    # callback must not fire. Guards against spuriously toggling the turn
+    # indicator (and redrawing the clock) when nothing changed.
+    widget = _widget(_game([]))
+    seen: List[int] = []
+    widget.set_page_change_callback(seen.append)
+
+    widget.turn_page(1)
+    widget.turn_page(-1)
+    assert seen == []
+
+
+def test_page_change_callback_fires_when_new_game_clamps_page():
+    # Paging onto a move page then starting a new game drops the move pages, so
+    # the page clamps back to 0. The callback must fire with 0 so the clock's
+    # turn-indicator circle is restored; without this notification the indicator
+    # would stay hidden (compact) into the new game.
+    game = _game(RUY_LOPEZ_UCI)
+    widget = _widget(game)
+    seen: List[int] = []
+
+    widget.turn_page(-1)  # to the last move page (3)
+    assert widget.page == 3
+    widget.set_page_change_callback(seen.append)
+
+    game.reset()  # new game -> no move pages -> clamp 3 -> 0
+    assert widget.page == 0
+    assert seen == [0]
+
+
+def test_five_rows_fit_the_compact_timed_height():
+    # The compact clock layout gives the analysis widget height 100 in timed
+    # mode; the move list must use that space for five rows per page. Guards the
+    # MOVE_LINE_HEIGHT tuning -- a regression back to 16px would only fit four,
+    # wasting nearly a full row of space.
+    widget = _widget(_game(RUY_LOPEZ_UCI), height=100)
+    assert widget._rows_per_page() == 5
+
+
+def test_taller_widget_fits_more_move_rows_per_page():
+    # The compact clock layout grows the analysis widget; a taller widget must
+    # fit more move rows per page (so the same game needs no more pages). Guards
+    # the "analysis grows -> more moves shown" benefit of the compact layout.
+    short = _widget(_game(RUY_LOPEZ_UCI), height=80)
+    tall = _widget(_game(RUY_LOPEZ_UCI), height=132)
+    assert tall._rows_per_page() > short._rows_per_page()
+    assert tall.num_move_pages() <= short.num_move_pages()
+
+
 def test_render_move_page_draws_something_without_sprites():
     # Rendering a move page with no sprite sheet must not raise and must draw ink
     # (falls back to piece letters). Guards that the figurine fallback path and

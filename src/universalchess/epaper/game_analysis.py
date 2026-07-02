@@ -30,16 +30,6 @@ if TYPE_CHECKING:
     from universalchess.state.analysis import AnalysisState
     from universalchess.state.chess_game import ChessGameState
 
-# Figurine glyph -> piece letter, used to swap the glyph produced by the notation
-# formatter for the matching piece sprite when rendering figurine on the board.
-_FIGURINE_TO_LETTER = {
-    "\u2654": "K",
-    "\u2655": "Q",
-    "\u2656": "R",
-    "\u2657": "B",
-    "\u2658": "N",
-}
-
 try:
     from universalchess.board.logging import log
 except ImportError:
@@ -65,9 +55,11 @@ class GameAnalysisWidget(Widget):
     SCORE_COLUMN_WIDTH = 44  # Score text and annotation
     GRAPH_WIDTH = 82  # History graph
 
-    # Move-history page layout constants
+    # Move-history page layout constants. MOVE_LINE_HEIGHT is 15 (not the font's
+    # natural ~16) so five rows fit the 100px the analysis widget gets in the
+    # compact clock layout: (100 - 2*MOVE_MARGIN - MOVE_HEADER_HEIGHT) // 15 = 5.
     MOVE_FONT_SIZE = 13
-    MOVE_LINE_HEIGHT = 16
+    MOVE_LINE_HEIGHT = 15
     MOVE_MARGIN = 3          # Inner top/left margin for the move list
     MOVE_HEADER_HEIGHT = 15  # Header line ("Moves p/P") above the move rows
     
@@ -99,6 +91,10 @@ class GameAnalysisWidget(Widget):
         self._show_graph = show_graph
         self._notation = normalize_notation(notation)
         self._page = 0  # 0 = analysis; 1..N = move-history pages
+        # Invoked with the new page index whenever the page changes; used to
+        # drive the clock widget's turn-indicator compact mode (see
+        # set_page_change_callback).
+        self._page_change_callback: Optional[callable] = None
         self._sprites = sprites
         
         # Get or use provided analysis state
@@ -154,6 +150,9 @@ class GameAnalysisWidget(Widget):
         A new move can add a move-history page and a new game removes them, so
         clamp the current page into the valid range before redrawing (otherwise a
         page that no longer exists would render blank after a takeback/new game).
+        Clamping goes through _set_page so that if a takeback/new game drops the
+        current move page back to the analysis page, observers (the clock widget's
+        compact turn indicator) are notified and don't stay stuck.
         """
         self._clamp_page()
         self.invalidate_and_update()
@@ -207,10 +206,32 @@ class GameAnalysisWidget(Widget):
     def _clamp_page(self) -> None:
         """Keep the current page within ``[0, total_pages - 1]``."""
         total = self.total_pages()
-        if self._page >= total:
-            self._page = total - 1
-        if self._page < 0:
-            self._page = 0
+        target = self._page
+        if target >= total:
+            target = total - 1
+        if target < 0:
+            target = 0
+        self._set_page(target)
+
+    def _set_page(self, new_page: int) -> None:
+        """Set the current page, notifying observers only on an actual change.
+
+        Centralizes the page mutation so the page-change callback fires from both
+        user paging (turn_page) and automatic clamping (takeback/new game).
+        """
+        if new_page != self._page:
+            self._page = new_page
+            if self._page_change_callback is not None:
+                self._page_change_callback(self._page)
+
+    def set_page_change_callback(self, callback: Optional[callable]) -> None:
+        """Register a callback invoked with the new page index on every change.
+
+        DisplayManager uses this to hide the clock widget's turn-indicator color
+        circle while a move-history page (page != 0) is shown and restore it on
+        the analysis page (page 0).
+        """
+        self._page_change_callback = callback
 
     @property
     def page(self) -> int:
@@ -225,7 +246,7 @@ class GameAnalysisWidget(Widget):
         UP/DOWN paging behavior.
         """
         total = self.total_pages()
-        self._page = (self._page + direction) % total
+        self._set_page((self._page + direction) % total)
         self.invalidate_and_update(immediate=True)
 
     def current_page_rows(self) -> List[Tuple[int, str, Optional[str]]]:
@@ -402,75 +423,23 @@ class GameAnalysisWidget(Widget):
 
     # --- Move-history page rendering --------------------------------------
 
-    # Piece letter -> x offset in the 16px sprite sheet (uppercase = white art,
-    # lowercase = black art), mirroring ChessBoardWidget._piece_x.
-    _PIECE_SPRITE_X = {
-        "P": 16, "R": 32, "N": 48, "B": 64, "Q": 80, "K": 96,
-        "p": 112, "r": 128, "n": 144, "b": 160, "q": 176, "k": 192,
-    }
-
     # Move-list column origins (x) for the move number, white move, black move.
     _NUMBER_COL_X = 3
     _WHITE_COL_X = 26
     _BLACK_COL_X = 78
 
-    def _sprite_sheet(self) -> Optional[Image.Image]:
-        """The piece sprite sheet used for figurine rendering, or None."""
-        if self._sprites is not None:
-            return self._sprites
-        from . import chess_board
-        return chess_board._chess_sprites
-
-    def _piece_glyph_image(self, letter: str, size: int) -> Optional[Image.Image]:
-        """Crop (and scale) the piece sprite for ``letter`` from the light row."""
-        sheet = self._sprite_sheet()
-        if sheet is None:
-            return None
-        x = self._PIECE_SPRITE_X.get(letter)
-        if x is None:
-            return None
-        crop = sheet.crop((x, 0, x + 16, 16))
-        if size != 16:
-            crop = crop.resize((size, size), Image.NEAREST)
-        return crop
-
     def _draw_move_string(self, sprite, draw, x, y, text, white_side, font, glyph_size) -> int:
         """Draw a move string, compositing piece sprites for figurine glyphs.
 
-        Non-figurine notations contain no glyphs, so the whole string draws as one
-        text run. For figurine, each glyph is swapped for the matching piece
-        sprite (white art for white's move, black art for black's) while the
-        surrounding square text is drawn normally. Returns the advanced x.
+        Thin wrapper over the shared move_render helper, passing this widget's
+        sprite sheet (falling back to the app's global sheet). Returns the
+        advanced x.
         """
-        run = ""
-
-        def flush(cur_x: int) -> int:
-            nonlocal run
-            if run:
-                draw.text((cur_x, y), run, font=font, fill=0)
-                cur_x += int(draw.textlength(run, font=font))
-                run = ""
-            return cur_x
-
-        for ch in text:
-            letter = _FIGURINE_TO_LETTER.get(ch)
-            if letter is None:
-                run += ch
-                continue
-            x = flush(x)
-            if not white_side:
-                letter = letter.lower()
-            img = self._piece_glyph_image(letter, glyph_size)
-            if img is not None:
-                sprite.paste(img, (int(x), int(y)))
-                x += glyph_size + 1
-            else:
-                # No sprite sheet available: fall back to the piece letter so the
-                # move is still legible rather than dropping the piece entirely.
-                fallback = letter.upper()
-                draw.text((x, y), fallback, font=font, fill=0)
-                x += int(draw.textlength(fallback, font=font)) + 1
-        return flush(x)
+        from . import move_render
+        sheet = move_render.sprite_sheet(self._sprites)
+        return move_render.draw_move_string(
+            sprite, draw, x, y, text, white_side, font, glyph_size, sheet
+        )
 
     def _render_moves(self, sprite: Image.Image) -> None:
         """Render a move-history page: a header line plus paired move rows."""

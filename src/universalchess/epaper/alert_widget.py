@@ -41,6 +41,9 @@ class AlertWidget(Widget):
     ALERT_CHECK = "check"
     ALERT_QUEEN = "queen"
     ALERT_HINT = "hint"
+
+    # Font (and figurine sprite) size for the hint move text.
+    HINT_FONT_SIZE = 28
     
     def __init__(self, x: int, y: int, width: int, height: int, update_callback,
                  game_state: 'ChessGameState' = None,
@@ -64,7 +67,8 @@ class AlertWidget(Widget):
         self._is_black_threatened = False  # True if black piece is threatened
         self._attacker_square = None  # Square index (0-63) of attacking piece
         self._target_square = None  # Square index (0-63) of threatened piece
-        self._hint_text_value = ""  # Hint move text (e.g., "e2e4")
+        self._hint_text_value = ""  # Hint move text in the selected notation
+        self._hint_white_side = True  # Mover color of the hint (for figurine art)
         self.visible = False  # Hidden by default (uses base class attribute)
         
         # LED callback for hints (slow, dim)
@@ -92,10 +96,6 @@ class AlertWidget(Widget):
                                        text="YOUR\nQUEEN", font_size=18,
                                        justify=Justify.CENTER, wrapText=True,
                                        transparent=True)
-        # HINT: shows the suggested move
-        self._hint_text = TextWidget(0, 0, width, height, self._handle_child_update,
-                                      text="", font_size=28,
-                                      justify=Justify.CENTER, transparent=True)
     
     def cleanup(self) -> None:
         """Unsubscribe from game state when widget is destroyed."""
@@ -178,16 +178,22 @@ class AlertWidget(Widget):
         # CHECK to a QUEEN threat), where Widget.show() alone would not refresh.
         self._show_with_refresh()
     
-    def show_hint(self, move_text: str, from_square: int, to_square: int) -> None:
-        """Show move hint with the suggested move.
+    def show_hint(self, move_text: str, from_square: int, to_square: int,
+                  white_side: bool = True) -> None:
+        """Show move hint with the suggested move in the selected notation.
         
         Args:
-            move_text: Move in readable format (e.g., "e2e4" or "Nf3")
+            move_text: Move in the selected notation (e.g. "e2e4", "Nf3", or the
+                figurine form "\u2658f3"). Figurine glyphs are composited from the
+                piece sprite sheet since the bundled font lacks them.
             from_square: Square index (0-63) of the piece to move
             to_square: Square index (0-63) of the target square
+            white_side: True if the mover is White (selects white/black piece art
+                for any figurine glyph in the move text).
         """
         self._alert_type = self.ALERT_HINT
         self._hint_text_value = move_text
+        self._hint_white_side = white_side
         self._attacker_square = from_square
         self._target_square = to_square
         self._is_black_threatened = False  # Not used for hints
@@ -267,6 +273,29 @@ class AlertWidget(Widget):
         elif self._alert_type == self.ALERT_HINT:
             # Draw hint move text centered - always white bg, black text
             draw.rectangle([(0, 0), (self.width - 1, self.height - 1)], fill=255, outline=0)
-            self._hint_text.set_text(self._hint_text_value)
-            y_offset = (self.height - self._hint_text.height) // 2
-            self._hint_text.draw_on(sprite, 0, y_offset, text_color=0)
+            self._render_hint_move(sprite, draw)
+
+    def _render_hint_move(self, sprite: Image.Image, draw: ImageDraw.Draw) -> None:
+        """Draw the hint move centered, compositing figurine piece sprites.
+
+        Uses the shared move_render helper so figurine hints match the analysis
+        move list. Non-figurine notations (SAN/LAN/UCI) contain no glyphs and draw
+        as plain centered text.
+        """
+        from universalchess.resources import get_font
+        from . import move_render
+
+        text = self._hint_text_value
+        font = get_font(self.HINT_FONT_SIZE)
+        glyph_size = self.HINT_FONT_SIZE
+        sheet = move_render.sprite_sheet()
+
+        width = move_render.measure_move_string(draw, text, font, glyph_size)
+        ascent, descent = font.getmetrics()
+        line_height = max(ascent + descent, glyph_size)
+        x = max(0, (self.width - width) // 2)
+        y = max(0, (self.height - line_height) // 2)
+
+        move_render.draw_move_string(
+            sprite, draw, x, y, text, self._hint_white_side, font, glyph_size, sheet
+        )

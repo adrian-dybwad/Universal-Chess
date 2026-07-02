@@ -53,6 +53,13 @@ class ChessClockWidget(Widget):
         super().__init__(x, y, width, height, update_callback)
         self._timed_mode = timed_mode
         self._flip = flip
+        # Compact turn indicator, driven by the analysis widget's paging so
+        # move-history pages show a smaller clock; restored on the analysis page.
+        # Untimed mode: the large turn-indicator circle is omitted and the
+        # "…'s Turn" text is pulled to the top. Timed mode: the two clock sections
+        # (circles + times kept) are halved and packed into the top of the widget.
+        # See set_hide_turn_indicator.
+        self._hide_turn_circle = False
         
         # Clock state for time management
         self._clock = get_clock_state()
@@ -200,6 +207,36 @@ class ChessClockWidget(Widget):
         if self._timed_mode != value:
             self._timed_mode = value
             self.invalidate_and_update()
+
+    @property
+    def hide_turn_indicator(self) -> bool:
+        """Whether the turn-indicator color circle is currently hidden."""
+        return self._hide_turn_circle
+
+    def set_hide_turn_indicator(self, hide: bool, refresh: bool = True) -> None:
+        """Enable or disable the compact turn indicator (move-history paging).
+
+        Compact makes the clock take less room while the board shows a
+        move-history page; the analysis page restores the normal layout. In
+        untimed mode compact omits the large color circle and centers the turn
+        text in the (DisplayManager-shrunk) widget. In timed mode the sections
+        simply shrink with the widget -- the circles and times are kept.
+
+        No-op when unchanged. When it does change the sprite cache is always
+        invalidated; ``refresh`` controls whether a display refresh is also
+        requested. DisplayManager passes ``refresh=False`` because it resizes
+        both the clock and analysis widgets together and lets the analysis
+        widget's page-change update drive a single coordinated redraw.
+
+        Args:
+            hide: True for the compact indicator, False for the normal layout.
+            refresh: If True, request a display refresh after the change.
+        """
+        if self._hide_turn_circle != hide:
+            self._hide_turn_circle = hide
+            self.invalidate_cache()
+            if refresh:
+                self.request_update()
     
     @property
     def white_time(self) -> int:
@@ -326,7 +363,16 @@ class ChessClockWidget(Widget):
         
         Reads times and active color from ChessClock.
         """
+        # Two equal sections fill the widget, split at the middle. The compact
+        # move-history layout is produced by DisplayManager shrinking the widget
+        # height (not by repacking here), so the sections stay centered and just
+        # get shorter. Player names are drawn only when a section is tall enough
+        # to fit a name line under the color label.
         section_height = (self.height - 4) // 2  # -4 for top/middle separators
+        top_y = 4
+        separator_y = self.height // 2
+        bottom_y = separator_y + 4
+        show_names = section_height >= 28
         
         # Get times from clock state, turn from game state, names from players state
         white_time = self._clock.white_time
@@ -372,9 +418,9 @@ class ChessClockWidget(Widget):
             bottom_hint_widget = self._white_hint_text
         
         # === TOP SECTION ===
-        top_y = 4
-        
-        # Turn indicator circle (always drawn)
+        # Turn indicator circle (always drawn). In timed mode the circle is the
+        # only turn cue next to each clock, so it is kept even on move-history
+        # pages; compact mode shrinks the sections but keeps the circles.
         indicator_size = 12
         indicator_y = top_y + (section_height - indicator_size) // 2
         if active_color == top_color:
@@ -387,8 +433,9 @@ class ChessClockWidget(Widget):
         # Top label using TextWidget - draw directly onto sprite
         top_label.draw_on(sprite, 20, top_y)
         
-        # Top player name (if set) - drawn below the color label
-        if top_name:
+        # Top player name (if set) - drawn below the color label. Dropped when
+        # the section is too short (compact layout) to fit a name line.
+        if top_name and show_names:
             display_name = top_name[:10] if len(top_name) > 10 else top_name
             top_name_widget.set_text(display_name)
             top_name_widget.draw_on(sprite, 20, top_y + 12)
@@ -402,14 +449,11 @@ class ChessClockWidget(Widget):
         top_time_widget.set_text(self._format_time(top_time))
         top_time_widget.draw_on(sprite, self.width - 68, top_y + 6)
         
-        # Horizontal separator
-        separator_y = self.height // 2
+        # Horizontal separator (between the two sections)
         draw.line([(0, separator_y), (self.width, separator_y)], fill=0, width=1)
         
         # === BOTTOM SECTION ===
-        bottom_y = separator_y + 4
-        
-        # Turn indicator circle (always drawn)
+        # Turn indicator circle (always drawn; see top-section note).
         indicator_y = bottom_y + (section_height - indicator_size) // 2
         if active_color == bottom_color:
             draw.ellipse([(4, indicator_y), (4 + indicator_size, indicator_y + indicator_size)], 
@@ -421,8 +465,9 @@ class ChessClockWidget(Widget):
         # Bottom label using TextWidget - draw directly onto sprite
         bottom_label.draw_on(sprite, 20, bottom_y)
         
-        # Bottom player name (if set) - drawn below the color label
-        if bottom_name:
+        # Bottom player name (if set) - drawn below the color label. Dropped when
+        # the section is too short (compact layout) to fit a name line.
+        if bottom_name and show_names:
             display_name = bottom_name[:10] if len(bottom_name) > 10 else bottom_name
             bottom_name_widget.set_text(display_name)
             bottom_name_widget.draw_on(sprite, 20, bottom_y + 12)
@@ -436,6 +481,10 @@ class ChessClockWidget(Widget):
         bottom_time_widget.set_text(self._format_time(bottom_time))
         bottom_time_widget.draw_on(sprite, self.width - 68, bottom_y + 6)
     
+    # Height of the turn-text line (matches self._turn_text height), used to
+    # vertically center the text in the compact (circle-less) layout.
+    _TURN_TEXT_HEIGHT = 20
+
     def _render_compact_mode(self, sprite: Image.Image, draw: ImageDraw.Draw) -> None:
         """
         Render compact mode: large centered turn indicator.
@@ -455,12 +504,21 @@ class ChessClockWidget(Widget):
             # Default to white if None or 'white'
             turn_text = "White's Turn"
             player_name = white_name
-        
-        # Large indicator circle at top center
+
+        # Compact move-history layout: DisplayManager has shrunk the widget, so
+        # drop the circle and player name and center just the turn text in the
+        # reduced height.
+        if self._hide_turn_circle:
+            self._turn_text.set_text(turn_text)
+            text_y = max(0, (self.height - self._TURN_TEXT_HEIGHT) // 2)
+            self._turn_text.draw_on(sprite, 0, text_y)
+            return
+
+        # Large indicator circle at top center.
         indicator_size = 28
         indicator_x = (self.width - indicator_size) // 2
         indicator_y = 8
-        
+
         if active_color == 'black':
             # Filled circle for black
             draw.ellipse([(indicator_x, indicator_y), 
@@ -471,10 +529,10 @@ class ChessClockWidget(Widget):
             draw.ellipse([(indicator_x, indicator_y), 
                          (indicator_x + indicator_size, indicator_y + indicator_size)], 
                         fill=255, outline=0, width=2)
-        
-        # Turn text below indicator using TextWidget (centered) - draw directly
-        self._turn_text.set_text(turn_text)
         text_y = indicator_y + indicator_size + 4
+
+        # Turn text below indicator using TextWidget
+        self._turn_text.set_text(turn_text)
         self._turn_text.draw_on(sprite, 0, text_y)
         
         # Player name below turn text (if set)

@@ -27,6 +27,8 @@ from universalchess.services import get_chess_clock_service
 from universalchess.services.engine_registry import get_engine_registry, EngineHandle
 from universalchess.state import get_chess_clock as get_clock_state
 from universalchess.state import get_chess_game
+from universalchess.managers.game_layout import compute_clock_analysis_layout
+from universalchess.utils.chess_notation import format_move
 
 # Lazy imports for widgets to avoid loading all epaper modules at startup
 _widgets_loaded = False
@@ -337,6 +339,15 @@ class DisplayManager:
         analysis_y = clock_y + clock_height
         
         log.info(f"[DisplayManager] Layout: clock_height={clock_height}, analysis_height={analysis_height}")
+
+        # Store the normal geometry plus the compact move-history geometry so
+        # paging can shrink the clock and grow the analysis widget at runtime
+        # (see _apply_compact_layout). The compact clock height fits two clock
+        # rows in timed mode or a single turn-text line in untimed mode.
+        self._clock_y = clock_y
+        self._normal_clock_height = clock_height
+        self._display_bottom = analysis_y + analysis_height
+        self._compact_clock_height = 52 if self._time_control > 0 else 24
         
         # Create clock widget directly below board
         # Shows times if time_control > 0, otherwise shows turn indicator only
@@ -387,6 +398,15 @@ class DisplayManager:
             
             board.display_manager.add_widget(self.analysis_widget)
             log.info(f"[DisplayManager] Analysis widget initialized (visible={self._show_analysis}, graph={self._show_graph})")
+
+            # While a move-history page is shown (page != 0) shrink the clock and
+            # grow the analysis widget (compact layout); restore the full layout
+            # on the analysis page (page 0). Both widgets are recreated together
+            # on a settings rebuild, so this wires the current pair each time.
+            if self.clock_widget is not None:
+                self.analysis_widget.set_page_change_callback(
+                    lambda page: self._apply_compact_layout(page != 0)
+                )
         else:
             self.analysis_widget = None
             log.info("[DisplayManager] Analysis mode disabled - no analysis widget created")
@@ -464,12 +484,17 @@ class DisplayManager:
             return
         
         if self.alert_widget:
-            # Format move as readable text
-            move_text = move.uci()
+            # Format the hint in the selected notation. format_move needs the
+            # position before the move; the hint is for the current position, so
+            # the authoritative game board is that position and also gives the
+            # mover's color for figurine piece art.
+            board_obj = self._game_state.board
+            move_text = format_move(board_obj, move, self._notation)
+            white_side = board_obj.turn == chess.WHITE
             from_sq = move.from_square
             to_sq = move.to_square
             
-            self.alert_widget.show_hint(move_text, from_sq, to_sq)
+            self.alert_widget.show_hint(move_text, from_sq, to_sq, white_side=white_side)
             log.info(f"[DisplayManager] Showing hint: {move_text}")
     
     def page_analysis(self, direction: int) -> bool:
@@ -490,6 +515,46 @@ class DisplayManager:
             return False
         self.analysis_widget.turn_page(direction)
         return True
+
+    def _apply_compact_layout(self, compact: bool) -> None:
+        """Resize the clock and analysis widgets for the compact page layout.
+
+        Called on every analysis page change: when a move-history page is shown
+        (compact=True) the clock shrinks and the analysis widget grows into the
+        reclaimed space so more moves fit; the analysis page (compact=False)
+        restores the full layout.
+
+        Only geometry is mutated here and caches are invalidated -- no refresh is
+        requested. The refresh is driven by the analysis widget's own
+        page-change update (turn_page/clamp call invalidate_and_update right
+        after this callback), so paging performs a single coordinated redraw that
+        re-renders both resized widgets.
+        """
+        clock = self.clock_widget
+        analysis = self.analysis_widget
+        if clock is None or analysis is None:
+            return
+
+        layout = compute_clock_analysis_layout(
+            compact=compact,
+            clock_y=self._clock_y,
+            normal_clock_height=self._normal_clock_height,
+            compact_clock_height=self._compact_clock_height,
+            display_bottom=self._display_bottom,
+        )
+
+        if clock.height != layout.clock_height:
+            clock.height = layout.clock_height
+            clock.invalidate_cache()
+
+        if analysis.y != layout.analysis_y or analysis.height != layout.analysis_height:
+            analysis.y = layout.analysis_y
+            analysis.height = layout.analysis_height
+            analysis.invalidate_cache()
+
+        # Untimed clock also drops its indicator circle when compact. Suppress its
+        # own refresh; the analysis page-change update repaints both widgets.
+        clock.set_hide_turn_indicator(compact, refresh=False)
 
     def set_clock_times(self, white_seconds: int, black_seconds: int) -> None:
         """Set the chess clock times for both players.

@@ -93,6 +93,45 @@ def test_switch_check_to_queen_while_visible_invalidates_and_updates():
     assert len(updates) >= 1
 
 
+def test_hint_defaults_to_white_mover_and_stores_notation_text():
+    """show_hint keeps the formatted text and defaults the mover to White.
+
+    Why: DisplayManager now formats the hint in the selected notation and passes
+    the mover color for figurine piece art; callers that omit it (and existing
+    behavior) must default to white art rather than crash.
+    """
+    widget, _ = _make_widget()
+
+    widget.show_hint("e2e4", 12, 28)
+
+    assert widget._alert_type == AlertWidget.ALERT_HINT
+    assert widget._hint_text_value == "e2e4"
+    assert widget._hint_white_side is True
+
+
+def test_hint_renders_figurine_text_without_a_sprite_sheet():
+    """A figurine hint renders (falling back to letters) instead of blanking.
+
+    Why: figurine is the default notation, so the hint text can contain a glyph
+    the bundled font cannot draw. render() must composite/letter-fallback the
+    glyph via move_render rather than leave the panel blank or raise.
+
+    How the regression manifests: if the figurine branch were missing, the
+    canvas would stay all-white (extrema (255, 255)) because the glyph draws as
+    nothing.
+    """
+    widget, _ = _make_widget()
+
+    # Black knight-move hint: figurine glyph plus destination square.
+    widget.show_hint("\u2658f3", 6, 21, white_side=False)
+    assert widget._hint_white_side is False
+
+    img = Image.new("1", (widget.width, widget.height), 255)
+    widget.render(img)
+
+    assert img.getextrema() == (0, 255)  # move drawn, not a blank panel
+
+
 def _make_widget_for_state(state):
     """Build an AlertWidget observing the given ChessGameState.
 
