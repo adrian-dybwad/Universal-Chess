@@ -38,7 +38,8 @@ class ChessClockWidget(Widget):
     DEFAULT_HEIGHT = 72
     
     def __init__(self, x: int, y: int, width: int, height: int, update_callback,
-                 timed_mode: bool = True, flip: bool = False):
+                 timed_mode: bool = True, flip: bool = False,
+                 on_tick_refresh: Optional[callable] = None):
         """Initialize chess clock widget.
         
         Args:
@@ -49,10 +50,18 @@ class ChessClockWidget(Widget):
             update_callback: Callback to trigger display updates. Must not be None.
             timed_mode: Whether to show times (True) or just turn indicator (False)
             flip: If True, show Black on top (matching flipped board perspective)
+            on_tick_refresh: Optional heartbeat callback invoked once per clock
+                tick to drive a single full-stack refresh (the Manager's
+                flush_now). When wired, the tick is the sole panel refresher
+                while the clock runs, giving a steady cadence; other widgets'
+                routine changes are deferred by the Manager and fold into it.
+                When None (e.g. tests, untimed play), ticks fall back to the
+                normal deferred update path.
         """
         super().__init__(x, y, width, height, update_callback)
         self._timed_mode = timed_mode
         self._flip = flip
+        self._on_tick_refresh = on_tick_refresh
         # Compact turn indicator, driven by the analysis widget's paging so
         # move-history pages show a smaller clock; restored on the analysis page.
         # Untimed mode: the large turn-indicator circle is omitted and the
@@ -154,7 +163,22 @@ class ChessClockWidget(Widget):
         self.invalidate_and_update()
     
     def _on_clock_tick(self) -> None:
-        """Called every second when clock is running."""
+        """Called every second when the clock is running.
+
+        The tick is the display heartbeat while a timed game runs. It invalidates
+        this widget's cache first (so the new time re-renders), then drives a
+        single full-stack refresh via the heartbeat callback. Routing the
+        once-per-second refresh through here -- rather than each widget refreshing
+        on its own change -- is what gives the clock a steady cadence: other
+        widgets' routine changes are deferred by the Manager and folded into this
+        same refresh, and no move/engine event preempts the beat. Falls back to
+        the normal deferred/coalesced path when no heartbeat is wired.
+        """
+        if self._on_tick_refresh is not None:
+            self.invalidate_cache()
+            if self.visible:
+                self._on_tick_refresh()
+            return
         self.invalidate_and_update()
     
     def _on_game_state_change(self) -> None:

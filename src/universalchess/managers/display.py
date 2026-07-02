@@ -361,9 +361,14 @@ class DisplayManager:
             initial_seconds = self._time_control * 60
             self._clock.set_times(initial_seconds, initial_seconds)
         
+        # The clock's tick drives the display heartbeat (flush_now) so the panel
+        # refreshes on a steady once-per-second cadence while a timed game runs;
+        # other widgets' routine changes are deferred by the Manager and fold
+        # into this refresh instead of preempting it.
         self.clock_widget = _ChessClockWidget(
             0, clock_y, 128, clock_height, board.display_manager.update,
-            timed_mode=timed_mode, flip=self._flip_board
+            timed_mode=timed_mode, flip=self._flip_board,
+            on_tick_refresh=board.display_manager.flush_now
         )
         # Always add clock widget if timed mode, hidden if show_clock=False
         # For untimed mode, only add if show_clock=True
@@ -417,6 +422,10 @@ class DisplayManager:
             0, 144, 128, 40, board.display_manager.update,
             led_from_to_hint_callback=self._led_from_to_hint
         )
+        # Alerts (check/queen/hint) are time-sensitive: they must appear at once
+        # rather than waiting for the next clock tick, so they refresh immediately
+        # even while the clock is the sole refresher for routine updates.
+        self.alert_widget.refresh_priority = True
         board.display_manager.add_widget(self.alert_widget)
         log.info("[DisplayManager] Alert widget initialized (hidden)")
         
@@ -429,6 +438,10 @@ class DisplayManager:
             0, 144, 128, 72, board.display_manager.update,
             led_off_callback=self._led_off
         )
+        # Game over is a terminal, time-sensitive result screen: refresh at once
+        # (the clock is stopped on game over, but this keeps the panel current
+        # even before the defer-to-clock flag is cleared).
+        self.game_over_widget.refresh_priority = True
         board.display_manager.add_widget(self.game_over_widget)
         log.info("[DisplayManager] Game over widget initialized (hidden, observes game state)")
 
@@ -579,6 +592,25 @@ class DisplayManager:
         """
         self._clock.set_times(white_seconds, black_seconds)
     
+    def _sync_clock_refresh_mode(self) -> None:
+        """Point the Manager at clock-driven refresh iff the clock is counting.
+
+        Clock-driven mode (routine widget updates only mark the framebuffer dirty
+        and ride the clock's tick) is correct only while a timed game's clock is
+        actually counting -- i.e. running and not paused, so a tick is guaranteed
+        to flush the deferred content. When the clock is paused, stopped, or the
+        game is untimed, no tick fires, so routine updates must refresh normally
+        (coalesced) to stay responsive. Called after every clock transition; the
+        Manager flushes any pending content when the mode turns off, so pausing
+        never leaves the screen stale.
+        """
+        if not board.display_manager:
+            return
+        counting = (self._time_control > 0
+                    and self._clock.is_running
+                    and not self._clock.is_paused)
+        board.display_manager.set_defer_to_clock(counting)
+
     def start_clock(self) -> None:
         """Start the chess clock countdown.
         
@@ -593,14 +625,17 @@ class DisplayManager:
         if self._time_control > 0:
             # Timed mode: start the countdown
             self._clock.start()
+            self._sync_clock_refresh_mode()
     
     def pause_clock(self) -> None:
         """Pause the chess clock."""
         self._clock.pause()
+        self._sync_clock_refresh_mode()
     
     def stop_clock(self) -> None:
         """Stop the chess clock completely."""
         self._clock.stop()
+        self._sync_clock_refresh_mode()
     
     def reset_clock(self) -> None:
         """Reset the chess clock to initial time and stop it.
@@ -609,6 +644,7 @@ class DisplayManager:
         The clock will not start until the first move is made.
         """
         self._clock.reset()
+        self._sync_clock_refresh_mode()
         log.info(f"[DisplayManager] Clock reset to {self._time_control} min per player")
     
     def suspend(self) -> None:
@@ -621,6 +657,7 @@ class DisplayManager:
         game managers being alive while the menu shows), not by this manager.
         """
         self._clock.pause()
+        self._sync_clock_refresh_mode()
         if self._led_off:
             self._led_off()
         else:
@@ -636,6 +673,7 @@ class DisplayManager:
         """
         self._init_widgets()
         self._clock.resume()
+        self._sync_clock_refresh_mode()
         if self._on_resume_callback:
             try:
                 self._on_resume_callback()

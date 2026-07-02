@@ -2,12 +2,15 @@
 Main display manager coordinating widgets and refresh scheduling.
 """
 
+import functools
+import threading
 import time
 from typing import List
 from concurrent.futures import Future
 from PIL import Image
 from .waveshare.epd2in9d import EPD
 from .framebuffer import FrameBuffer
+from .refresh_policy import RefreshAction, decide_refresh_action
 from .scheduler import Scheduler
 from .widget import Widget
 from .waveshare import epdconfig
@@ -43,6 +46,20 @@ class Manager:
         self._update_in_progress = False  # Re-entrancy guard for update()
         self._pending_update = False  # Whether another update was requested during current update
         self._pending_full = False  # Whether the pending update needs full refresh
+
+        # Refresh coordination (see refresh_policy.py). A render is expensive and
+        # the single panel is a shared, slow resource, so routine widget updates
+        # are not painted synchronously per event. Instead they mark the
+        # framebuffer dirty and are flushed once -- by the clock's tick while a
+        # timed game is running (clock-driven mode), or by a single coalesced
+        # flush otherwise. Priority updates (clock heartbeat, overlays,
+        # transitions) still render immediately.
+        self._render_lock = threading.RLock()  # serialises actual renders across threads
+        self._refresh_state_lock = threading.Lock()  # guards the flags below
+        self._defer_to_clock = False  # True while the clock is the sole refresher
+        self._dirty = False  # a routine update is waiting to be rendered
+        self._dirty_full = False  # a waiting update needs a full refresh
+        self._flush_scheduled = False  # a coalesced flush is already queued
         log.debug(f"Manager.__init__() completed - Manager id: {id(self)}, EPD id: {id(self._epd)}")
     
     def initialize(self) -> Future:
@@ -166,9 +183,12 @@ class Manager:
                     self._widgets.remove(existing)
                     break  # Only one modal should exist
         
-        # Pass scheduler and update callback to widget so it can trigger updates
+        # Pass scheduler and update callback to widget so it can trigger updates.
+        # The callback is wrapped per widget so the widget's own refresh_priority
+        # (and modal status) decides whether its updates refresh immediately or
+        # defer to the clock/coalesced flush -- see _widget_update.
         widget.set_scheduler(self._scheduler)
-        widget.set_update_callback(self.update)
+        widget.set_update_callback(functools.partial(self._widget_update, widget))
         
         self._widgets.append(widget)
         
@@ -202,9 +222,10 @@ class Manager:
                     self._widgets.remove(existing)
                     break
         
-        # Pass scheduler and update callback to widget
+        # Pass scheduler and update callback to widget (see add_widget for why the
+        # callback is wrapped per widget).
         widget.set_scheduler(self._scheduler)
-        widget.set_update_callback(self.update)
+        widget.set_update_callback(functools.partial(self._widget_update, widget))
         
         # Clamp index to valid range and insert
         index = max(0, min(index, len(self._widgets)))
@@ -301,55 +322,159 @@ class Manager:
 
         return None
     
-    def update(self, full: bool = False, immediate: bool = False) -> Future:
+    def update(self, full: bool = False, immediate: bool = False,
+               priority: bool = True) -> Future:
         """Update the display with current widget states.
-        
+
         If any widget has is_modal=True, only that widget is rendered.
         Otherwise, all visible widgets are rendered.
-        
-        This method has re-entrancy protection: if called while an update is
-        already in progress (e.g., from a widget's draw_on method), the request
-        is queued and processed after the current update completes.
-        
+
+        Refresh coordination (see refresh_policy.py). ``priority`` decides whether
+        this request paints the panel now or is folded into a single later paint:
+
+        - ``priority=True`` (the default, used by direct/external callers such as
+          screen transitions and profile changes, and by the clock's heartbeat
+          and time-sensitive overlays) renders and refreshes immediately.
+        - ``priority=False`` (routine widget updates -- board, analysis, status,
+          the clock's turn/state) only marks the framebuffer dirty. While a timed
+          game's clock is running it rides the next clock tick; otherwise a single
+          coalesced flush renders the whole burst once. This is what removes the
+          per-event render burst and stops the running clock stuttering when other
+          widgets change.
+
+        The synchronous render path still has re-entrancy protection: if a child
+        widget calls update() from within draw_on() during a render, that request
+        is queued and replayed after the current render completes.
+
         Args:
             full: If True, force a full refresh instead of partial refresh.
             immediate: If True, wake scheduler immediately to bypass batching delay.
                       Use for time-sensitive UI like menu navigation.
-        
+            priority: If True, render now; if False, defer/coalesce per the policy.
+
         Returns:
-            Future: A Future that completes when the display refresh finishes.
+            Future: completes when the refresh finishes (priority path), or a
+            resolved placeholder for deferred/coalesced requests.
         """
         if full:
-            log.debug(f"Manager.update() called with full=True (will cause flashing refresh)")
-        
+            log.debug("Manager.update() called with full=True (will cause flashing refresh)")
+
         if not self._initialized or self._shutting_down:
-            from concurrent.futures import Future
             future = Future()
             future.set_result("not-initialized")
             return future
-        
-        # Re-entrancy protection: if update is already in progress, queue it
-        if self._update_in_progress:
-            self._pending_update = True
-            self._pending_full = self._pending_full or full  # Full takes priority
-            # Return a placeholder future - the actual update will happen later
-            from concurrent.futures import Future
-            future = Future()
-            future.set_result("queued")
-            return future
-        
-        self._update_in_progress = True
-        try:
-            return self._do_update(full, immediate)
-        finally:
-            self._update_in_progress = False
-            # Process any pending update that was requested during this update
-            if self._pending_update:
-                self._pending_update = False
-                pending_full = self._pending_full
-                self._pending_full = False
-                # Schedule on next tick to avoid deep recursion
-                self._scheduler.submit_deferred(lambda: self.update(pending_full))
+
+        if priority:
+            return self._render_now(full, immediate)
+
+        # Routine update: record that the framebuffer needs rendering and let the
+        # clock tick (clock-driven mode) or a single coalesced flush pick it up.
+        with self._refresh_state_lock:
+            self._dirty = True
+            self._dirty_full = self._dirty_full or full
+            action = decide_refresh_action(
+                priority=False,
+                defer_to_clock=self._defer_to_clock,
+                flush_scheduled=self._flush_scheduled,
+            )
+            schedule_flush = action is RefreshAction.SCHEDULE_FLUSH
+            if schedule_flush:
+                self._flush_scheduled = True
+        if schedule_flush:
+            self._scheduler.submit_deferred(self._flush_deferred)
+        future = Future()
+        future.set_result("deferred")
+        return future
+
+    def _widget_update(self, widget: Widget, full: bool = False,
+                       immediate: bool = False) -> Future:
+        """Per-widget update entry point installed by add_widget().
+
+        Maps a widget's update request onto update()'s ``priority`` flag: a modal
+        or a widget that opts in via ``refresh_priority`` (the clock heartbeat and
+        time-sensitive overlays) refreshes immediately; every other widget's
+        routine change defers/coalesces so one event does not trigger a render
+        per observing widget.
+        """
+        priority = bool(getattr(widget, "refresh_priority", False)) or widget.is_modal
+        return self.update(full, immediate, priority=priority)
+
+    def _render_now(self, full: bool = False, immediate: bool = False) -> Future:
+        """Render the whole widget stack and submit a refresh immediately.
+
+        Folds any deferred dirty state into this render (a full-stack render
+        includes pending routine changes), then renders under a lock so renders
+        from different threads (the clock heartbeat vs an overlay) never run
+        concurrently. Same-thread re-entrancy (a child calling update() during
+        draw_on()) is queued and replayed once, not recursed.
+        """
+        with self._refresh_state_lock:
+            full = full or self._dirty_full
+            self._dirty = False
+            self._dirty_full = False
+
+        with self._render_lock:
+            if self._update_in_progress:
+                self._pending_update = True
+                self._pending_full = self._pending_full or full
+                future = Future()
+                future.set_result("queued")
+                return future
+
+            self._update_in_progress = True
+            try:
+                return self._do_update(full, immediate)
+            finally:
+                self._update_in_progress = False
+                if self._pending_update:
+                    self._pending_update = False
+                    pending_full = self._pending_full
+                    self._pending_full = False
+                    # Replay off-stack to avoid deep recursion.
+                    self._scheduler.submit_deferred(
+                        lambda: self._render_now(pending_full))
+
+    def _flush_deferred(self) -> None:
+        """Run the single coalesced flush for a burst of routine updates.
+
+        Scheduled by the first routine update when not clock-driven; a whole
+        synchronous burst of updates therefore collapses into this one render.
+        Renders only if something is still dirty (a priority render in the
+        interim may have already cleared it).
+        """
+        with self._refresh_state_lock:
+            self._flush_scheduled = False
+            dirty = self._dirty
+        if dirty:
+            self._render_now(full=False, immediate=False)
+
+    def flush_now(self, full: bool = False) -> Future:
+        """Render and refresh now -- the clock tick's heartbeat.
+
+        Called once per tick while a timed game runs. In clock-driven mode it is
+        the sole panel refresher: it renders every widget (picking up any routine
+        changes deferred since the last tick) and submits one refresh, giving the
+        clock a steady once-per-second cadence without other widgets preempting it.
+        """
+        if not self._initialized or self._shutting_down:
+            return None
+        return self._render_now(full, immediate=False)
+
+    def set_defer_to_clock(self, enabled: bool) -> None:
+        """Enable/disable clock-driven refresh mode.
+
+        While enabled (a timed game's clock is running), routine widget updates
+        only mark the framebuffer dirty and are flushed by the clock's tick via
+        flush_now(); priority updates (overlays, transitions) still refresh at
+        once. Disabling it (clock paused/stopped, or untimed play) restores
+        immediate coalesced refreshes and flushes any content deferred while it
+        was enabled, so the screen is never left stale after the clock stops.
+        """
+        with self._refresh_state_lock:
+            self._defer_to_clock = enabled
+            needs_flush = (not enabled) and self._dirty
+        if needs_flush:
+            self._render_now(full=False, immediate=False)
     
     def _do_update(self, full: bool = False, immediate: bool = False) -> Future:
         """Internal method that performs the actual update rendering.

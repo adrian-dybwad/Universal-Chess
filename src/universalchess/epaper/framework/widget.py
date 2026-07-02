@@ -62,6 +62,15 @@ class Widget(ABC):
     # Class-level flag indicating if this widget type is modal.
     # When a modal widget is present, only it is rendered.
     is_modal: bool = False
+
+    # Whether this widget's updates must refresh the panel immediately rather
+    # than being deferred/coalesced by the Manager. Default False: routine
+    # widgets (board, analysis, status, the clock's turn/state) defer so one
+    # event does not trigger a render per observing widget, and while a timed
+    # game runs they ride the clock's tick. Set True for time-sensitive widgets
+    # (check/queen/hint alerts, and the clock heartbeat) that must appear at once.
+    # Modal widgets are always treated as priority regardless of this flag.
+    refresh_priority: bool = False
     
     def __init__(self, x: int, y: int, width: int, height: int, 
                  update_callback: Callable[[bool, bool], object],
