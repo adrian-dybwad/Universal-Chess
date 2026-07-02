@@ -10,6 +10,8 @@ they are not -- before cloning or building.
 
 from pathlib import Path
 
+import pytest
+
 from universalchess.managers.engine_manager import EngineManager, EngineDefinition
 from universalchess.services.apt_recovery import RecoveryOutcome
 
@@ -24,6 +26,24 @@ def _stub_recovery(monkeypatch, outcome=RecoveryOutcome.PROCEEDED):
     """
     monkeypatch.setattr(
         "universalchess.managers.engine_manager.apt_recovery.recover_interrupted_dpkg",
+        lambda *a, **k: outcome,
+    )
+
+
+def _stub_fix_broken(monkeypatch, outcome=RecoveryOutcome.FAILED):
+    """Replace the ``apt-get install -f`` repair with a fixed outcome.
+
+    attempt_fix_broken() shells out to ``sudo apt-get install -f -y``. Left
+    un-mocked, a test that forces packages to stay missing would both run real
+    apt on the host and take an environment-dependent branch: on a Debian CI
+    runner the repair succeeds (PROCEEDED) and the installer retries the
+    dependency install -- a second apt call -- while on a dev box without apt it
+    FAILS and does not retry. That divergence made the apt-call count (and the
+    test) pass locally but fail on CI. Pinning the outcome mocks the boundary and
+    keeps the branch deterministic.
+    """
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.apt_recovery.attempt_fix_broken",
         lambda *a, **k: outcome,
     )
 
@@ -110,6 +130,10 @@ def test_install_from_source_aborts_when_dependency_missing(monkeypatch, tmp_pat
     later, cryptic build error rather than the early, clear dependency error.
     """
     _stub_recovery(monkeypatch)
+    # fix-broken FAILS (its remedy did not help), so there is no retry and the
+    # single apt attempt is asserted below. Mocked so this does not depend on the
+    # host actually having apt (see _stub_fix_broken).
+    _stub_fix_broken(monkeypatch, RecoveryOutcome.FAILED)
     manager = EngineManager(engines_dir=str(tmp_path))
     manager.build_tmp = Path(tmp_path) / "build"
     engine = _make_engine(["build-essential", "git", "bc"])
@@ -136,6 +160,48 @@ def test_install_from_source_aborts_when_dependency_missing(monkeypatch, tmp_pat
     # Aborted before cloning: the only subprocess invoked is the apt install.
     assert len(seen) == 1
     assert isinstance(seen[0], str) and seen[0].startswith("sudo apt-get install")
+
+
+def test_install_from_source_retries_apt_once_after_fix_broken_then_aborts(monkeypatch, tmp_path):
+    """A successful fix-broken triggers exactly one apt retry, then aborts if still missing.
+
+    Why this test exists: apt can abort because the system already holds broken
+    packages ("Try 'apt --fix-broken install'"). The installer runs that remedy
+    and, when it PROCEEDs, retries the dependency install once. If the package is
+    still absent it must abort before cloning rather than loop. This is the exact
+    branch whose environment-dependent behavior (apt present on CI vs. absent
+    locally) surfaced as a CI-only failure when attempt_fix_broken was left
+    un-mocked, so it is pinned deterministically here.
+
+    How the regression manifests: dropping the retry would show one apt call;
+    looping would show more than two; proceeding to clone would hit the sentinel.
+    """
+    _stub_recovery(monkeypatch)
+    _stub_fix_broken(monkeypatch, RecoveryOutcome.PROCEEDED)
+    manager = EngineManager(engines_dir=str(tmp_path))
+    manager.build_tmp = Path(tmp_path) / "build"
+    engine = _make_engine(["build-essential", "git", "bc"])
+
+    seen = []
+
+    def fake_run(cmd, **kwargs):
+        seen.append(cmd)
+        if isinstance(cmd, str) and cmd.startswith("sudo apt-get install"):
+            return _FakeProc(returncode=0, stdout="", stderr="")
+        raise AssertionError(f"build must not proceed past missing deps; ran: {cmd}")
+
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.subprocess.run", fake_run
+    )
+    monkeypatch.setattr(manager, "_missing_packages", lambda pkgs: ["bc"])
+
+    result = manager._install_from_source(engine, lambda *a, **k: None)
+
+    assert result is False
+    assert manager._install_error is not None and "bc" in manager._install_error
+    # One initial apt install plus one retry after fix-broken, and no clone.
+    assert len(seen) == 2
+    assert all(isinstance(c, str) and c.startswith("sudo apt-get install") for c in seen)
 
 
 def test_install_from_source_continues_when_dependencies_present(monkeypatch, tmp_path):
@@ -171,10 +237,10 @@ def test_install_from_source_continues_when_dependencies_present(monkeypatch, tm
     )
     monkeypatch.setattr(manager, "_missing_packages", lambda pkgs: [])
 
-    try:
+    # The fake clone raises this sentinel to stop the build once the dependency
+    # gate has passed; expecting it here keeps the "reached clone" intent explicit.
+    with pytest.raises(RuntimeError, match="stop after reaching clone"):
         manager._install_from_source(engine, lambda *a, **k: None)
-    except RuntimeError:
-        pass
 
     assert reached_clone["value"] is True
 
