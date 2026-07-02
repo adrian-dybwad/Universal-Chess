@@ -207,6 +207,14 @@ class AlertWidget(Widget):
         # changes, where Widget.show() alone would not refresh.
         self._show_with_refresh()
     
+    def is_showing_hint(self) -> bool:
+        """True when a move hint is currently displayed.
+
+        Distinguishes a shown hint from a CHECK/QUEEN alert so the ? key can
+        toggle only the hint off without dismissing a live check/threat alert.
+        """
+        return self.visible and self._alert_type == self.ALERT_HINT
+
     def hide(self) -> None:
         """Hide the alert widget and clear alert state."""
         if self.visible:

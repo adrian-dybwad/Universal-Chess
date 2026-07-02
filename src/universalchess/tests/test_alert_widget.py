@@ -132,6 +132,26 @@ def test_hint_renders_figurine_text_without_a_sprite_sheet():
     assert img.getextrema() == (0, 255)  # move drawn, not a blank panel
 
 
+def test_is_showing_hint_only_true_for_a_visible_hint():
+    """is_showing_hint distinguishes a shown hint from other alerts / hidden.
+
+    Why: the ? key toggles the tip off only when a hint is actually displayed;
+    it must not report a hint for a CHECK/QUEEN alert or when nothing is shown,
+    or the key would dismiss the wrong alert (or no-op incorrectly).
+    """
+    widget, _ = _make_widget()
+    assert widget.is_showing_hint() is False  # nothing shown yet
+
+    widget.show_check(False, 10, 4)
+    assert widget.is_showing_hint() is False  # a CHECK alert is not a hint
+
+    widget.show_hint("e2e4", 12, 28)
+    assert widget.is_showing_hint() is True
+
+    widget.hide()
+    assert widget.is_showing_hint() is False  # hidden hint no longer "showing"
+
+
 def _make_widget_for_state(state):
     """Build an AlertWidget observing the given ChessGameState.
 

@@ -153,7 +153,14 @@ class GameAnalysisWidget(Widget):
         Clamping goes through _set_page so that if a takeback/new game drops the
         current move page back to the analysis page, observers (the clock widget's
         compact turn indicator) are notified and don't stay stuck.
+
+        While a move page is displayed the view follows the live tail: it snaps to
+        the last page (the tail window, newest move on the bottom row) so play is
+        always visible even if the user had paged back. The analysis page (0) is
+        left alone so it is not yanked into the move list on every move.
         """
+        if self._page != 0 and self.num_move_pages() > 0:
+            self._set_page(self.num_move_pages())
         self._clamp_page()
         self.invalidate_and_update()
 
@@ -250,13 +257,25 @@ class GameAnalysisWidget(Widget):
         self.invalidate_and_update(immediate=True)
 
     def current_page_rows(self) -> List[Tuple[int, str, Optional[str]]]:
-        """Move rows visible on the current page ([] on the analysis page)."""
+        """Move rows visible on the current page ([] on the analysis page).
+
+        Pages are anchored to the *end* of the move list so the last page is a
+        full tail window with the newest move on its bottom row (higher page
+        number = newer moves). Only the first page can be partial, holding the
+        oldest moves. This is what lets the live view "scroll" -- following the
+        tail keeps the space filled with the most recent moves, newest at the
+        bottom, rather than stranding a single leftover move on a top-anchored
+        final page.
+        """
         if self._page == 0:
             return []
         pairs = self._move_pairs()
         per_page = self._rows_per_page()
-        start = (self._page - 1) * per_page
-        return pairs[start:start + per_page]
+        # Distance of this page from the last (tail) page: 0 == the tail window.
+        pages_from_end = self.num_move_pages() - self._page
+        end = len(pairs) - pages_from_end * per_page
+        start = max(0, end - per_page)
+        return pairs[start:end]
     
     def set_show_graph(self, show: bool) -> None:
         """Set whether to show the history graph.

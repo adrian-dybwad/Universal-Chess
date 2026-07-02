@@ -5040,6 +5040,13 @@ def key_callback(key_id):
         
         # Handle app-level keys
         if key_id == board.Key.HELP:
+            # Pressing ? while a hint is already displayed toggles it off, so the
+            # same key both shows and dismisses the tip.
+            if display_manager and display_manager.is_hint_showing():
+                display_manager.hide_hint()
+                _reset_unhandled_key_count()
+                return
+
             # Show move hint - behavior depends on game mode
             if display_manager and protocol_manager and protocol_manager.game_manager:
                 from universalchess.state import get_chess_game

@@ -496,7 +496,21 @@ class DisplayManager:
             
             self.alert_widget.show_hint(move_text, from_sq, to_sq, white_side=white_side)
             log.info(f"[DisplayManager] Showing hint: {move_text}")
-    
+
+    def is_hint_showing(self) -> bool:
+        """True when a move hint is currently displayed on the alert widget."""
+        return self.alert_widget is not None and self.alert_widget.is_showing_hint()
+
+    def hide_hint(self) -> None:
+        """Hide a currently displayed move hint (the ? key toggles it off).
+
+        Only hides when a hint is showing, so a concurrent CHECK/QUEEN alert is
+        never dismissed by the ? key.
+        """
+        if self.alert_widget is not None and self.alert_widget.is_showing_hint():
+            self.alert_widget.hide()
+            log.info("[DisplayManager] Hint toggled off")
+
     def page_analysis(self, direction: int) -> bool:
         """Page the analysis widget's move history via the UP/DOWN keys.
 
