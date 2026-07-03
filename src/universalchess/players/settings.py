@@ -146,6 +146,14 @@ class GameSettings:
             reads the default and cycling never advances.
         notation: Chess notation used for move history on the board and web
             ("figurine", "san", "lan", or "uci"). Defaults to figurine.
+        coach_provider: AI coach service ("none", "openai", "anthropic", or
+            "custom"). "none" (default) disables the move-review coach.
+        coach_api_key: API key for the selected coach service. Stored as a
+            secret in centaur.ini (same handling as the Lichess token).
+        coach_model: Model id for the coach service; empty uses the provider
+            default.
+        coach_base_url: Base URL for the "custom" OpenAI-compatible coach
+            endpoint (unused by the built-in providers).
     """
 
     section: str
@@ -160,6 +168,10 @@ class GameSettings:
     pegasus_override_brightness: bool = True
     chess_sprites: str = "default"
     notation: str = "figurine"
+    coach_provider: str = "none"
+    coach_api_key: str = ""
+    coach_model: str = ""
+    coach_base_url: str = ""
     _log: Optional[Any] = field(default=None, repr=False)
 
     def save(self, key: str) -> None:
@@ -204,6 +216,10 @@ class GameSettings:
             "pegasus_override_brightness": self.pegasus_override_brightness,
             "chess_sprites": self.chess_sprites,
             "notation": self.notation,
+            "coach_provider": self.coach_provider,
+            "coach_api_key": self.coach_api_key,
+            "coach_model": self.coach_model,
+            "coach_base_url": self.coach_base_url,
         }
 
     @classmethod
@@ -240,6 +256,10 @@ class GameSettings:
             ),
             chess_sprites=data.get("chess_sprites", defaults.get("chess_sprites", "default")),
             notation=data.get("notation", defaults.get("notation", "figurine")),
+            coach_provider=data.get("coach_provider", defaults.get("coach_provider", "none")),
+            coach_api_key=data.get("coach_api_key", defaults.get("coach_api_key", "")),
+            coach_model=data.get("coach_model", defaults.get("coach_model", "")),
+            coach_base_url=data.get("coach_base_url", defaults.get("coach_base_url", "")),
             _log=log,
         )
 
