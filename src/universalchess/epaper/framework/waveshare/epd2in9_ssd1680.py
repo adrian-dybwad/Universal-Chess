@@ -636,15 +636,39 @@ class EPD:
             return
 
         log.debug("[EPD SSD1680] three-color fast B/W differential partial "
-                  "(prev->0x26, new->0x24; red held by hold phase)")
+                  "(prev->0x26, new->0x24; white->white hold, red undisturbed)")
         # Force the B/W plane white wherever red ink persists so the partial never
         # drives a red pixel black. self.buffer (the previous shown frame) is
         # already masked, so a still-red pixel is white in both old and new frames
-        # -> hold phase -> red undisturbed.
+        # -> the white->white transition (LUT3).
         masked = mask_bw_with_red(image, self.red_buffer)
-        self._display_partial_register_lut(masked)
+        self._display_partial_register_lut(masked, self._red_safe_partial_lut())
 
-    def _display_partial_register_lut(self, image):
+    def _red_safe_partial_lut(self):
+        """The profile partial LUT with the white->white touch-up removed.
+
+        A masked red pixel is white in both the old (0x26) and new (0x24) frames,
+        so it always takes the white->white transition (SSD1680 LUT3, bytes
+        [36:48] of the 153-byte waveform). WF_PARTIAL_2IN9 leaves a 1-frame VSL
+        (drive-white) touch-up there (byte 37 = 0x80). VSL pulls white particles
+        to the surface and pushes the bistable red back a little EVERY partial --
+        the observed per-tick red fade. Zeroing LUT3 makes white->white a true 0V
+        hold, so a still-red pixel is never pulsed; only pixels that actually
+        change (0<->1, e.g. clock digits) are driven, via the untouched LUT1/LUT2.
+        Black->black (LUT0) keeps its touch-up: red pixels are masked white, never
+        black, so LUT0 never covers red, and the touch-up keeps black crisp.
+
+        Returns the profile LUT unchanged if it is too short to carry LUT3 (guards
+        non-SSD1680 formats), so the caller never mangles an unexpected waveform.
+        """
+        lut = list(self.profile.partial_lut)
+        if len(lut) < 48:
+            return self.profile.partial_lut
+        for i in range(36, 48):  # LUT3 = white->white
+            lut[i] = 0x00
+        return tuple(lut)
+
+    def _display_partial_register_lut(self, image, partial_lut=None):
         """Register-LUT differential partial: arm partial mode, diff prev->new, run.
 
         Shared by the mono partial and the three-color fast B/W partial. Re-arms
@@ -659,13 +683,19 @@ class EPD:
         baseline, not as red). Do NOT re-route this through the 0xF7 OTP color
         activation -- that selects Table 6-4, where any 0x26 bit develops red and
         the previous B/W frame would bleed red across the board.
+
+        ``partial_lut`` overrides the profile's partial waveform (the three-color
+        path passes a white->white-hold variant; see _red_safe_partial_lut). The
+        mono path passes None and uses the profile LUT unchanged.
         """
+        if partial_lut is None:
+            partial_lut = self.profile.partial_lut
         epdconfig.digital_write(self.reset_pin, 0)
         epdconfig.delay_ms(2)
         epdconfig.digital_write(self.reset_pin, 1)
         epdconfig.delay_ms(2)
 
-        self.SetLut(self.profile.partial_lut)
+        self.SetLut(partial_lut)
         self.send_command(0x37)
         self.send_data(0x00)
         self.send_data(0x00)

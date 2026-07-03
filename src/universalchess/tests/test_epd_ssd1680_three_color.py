@@ -114,6 +114,19 @@ class _RecordingEpd:
                         break
         return None
 
+    def all_data_after(self, cmd):
+        """Every send_data byte issued after cmd until the next command."""
+        for i, (kind, value) in enumerate(self.ops):
+            if kind == "cmd" and value == cmd:
+                out = []
+                for nxt_kind, nxt_value in self.ops[i + 1:]:
+                    if nxt_kind == "data":
+                        out.append(nxt_value)
+                    elif nxt_kind == "cmd":
+                        break
+                return out
+        return None
+
 
 class ThreeColorFlagTests(unittest.TestCase):
     def test_defaults_to_mono(self):
@@ -256,6 +269,33 @@ class FastBwPartialTests(unittest.TestCase):
         self.assertEqual(sent_bw[0], 0xFF)                        # red px forced white
         self.assertTrue(all(b == 0x00 for b in sent_bw[1:]))      # rest driven black
         self.assertEqual(rec.data2_after(0x26)[0], 0xFF)          # baseline white -> hold
+
+    def test_three_color_partial_zeroes_white_to_white_touch_up(self):
+        # The per-tick red fade came from LUT3 (white->white, LUT bytes [36:48])
+        # carrying a 1-frame VSL drive-white touch-up (byte 37 = 0x80 in
+        # WF_PARTIAL_2IN9): a masked red pixel is white->white every tick, so that
+        # pulse pushed the bistable red back a little each partial. The three-color
+        # partial must send a LUT with LUT3 fully zeroed (true 0V hold) while
+        # LUT1/LUT2 (the change transitions) stay intact. Regression: any nonzero
+        # byte in [36:48] means white->white is driven again and red fades.
+        rec = _RecordingEpd(three_color=True, profile=REGISTER_LUT_PROFILE)
+        rec.epd.DisplayPartial([0x5A] * BUFFER_LEN)
+        lut = rec.all_data_after(0x32)  # 153 waveform bytes written by SetLut
+        self.assertIsNotNone(lut)
+        self.assertGreaterEqual(len(lut), 48)
+        self.assertTrue(all(b == 0x00 for b in lut[36:48]))       # LUT3 held
+        # LUT1 (0->1, bytes [12:24]) must still drive so clock digits update.
+        self.assertTrue(any(b != 0x00 for b in lut[12:24]))
+
+    def test_mono_partial_keeps_the_profile_lut_untouched(self):
+        # The white->white hold is three-color-only. The mono partial must send
+        # the profile's partial LUT byte-for-byte (LUT3 touch-up intact), so a
+        # working mono panel's waveform is unchanged. Regression: the hold LUT
+        # leaking into the mono path alters a verified waveform.
+        rec = _RecordingEpd(three_color=False, profile=REGISTER_LUT_PROFILE)
+        rec.epd.DisplayPartial([0x5A] * BUFFER_LEN)
+        lut = rec.all_data_after(0x32)
+        self.assertEqual(tuple(lut), tuple(REGISTER_LUT_PROFILE.partial_lut[:153]))
 
     def test_otp_profile_falls_back_to_full_color_refresh(self):
         # An OTP profile has no register partial LUT, so a partial activation has
