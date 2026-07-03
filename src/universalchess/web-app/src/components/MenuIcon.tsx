@@ -60,6 +60,16 @@ const ICON_PATHS: Record<string, ReactElement> = {
   tune: <path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z" />,
   remote: <path d="M15 9H9c-.55 0-1 .45-1 1v11c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V10c0-.55-.45-1-1-1zm-3 11c-.83 0-1.5-.67-1.5-1.5S11.17 17 12 17s1.5.67 1.5 1.5S12.83 20 12 20zM7.05 6.05l1.41 1.41C9.37 6.56 10.62 6 12 6s2.63.56 3.54 1.46l1.41-1.41C15.68 4.78 13.93 4 12 4s-3.68.78-4.95 2.05zM12 0C8.96 0 6.21 1.23 4.22 3.22l1.41 1.41C7.26 3.01 9.51 2 12 2s4.74 1.01 6.36 2.64l1.41-1.41C17.79 1.23 15.04 0 12 0z" />,
   document: <path d="M6 2c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6H6zm7 7V3.5L18.5 9H13zM8 13h8v2H8v-2zm0 4h8v2H8v-2z" />,
+  // Three interconnected nodes (a small graph) for the Agents section. Edges are
+  // stroked; the nodes inherit the svg's currentColor fill.
+  agents: (
+    <>
+      <path d="M12 5 5 18M12 5l7 13M5 18h14" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
+      <circle cx="12" cy="5" r="3" />
+      <circle cx="5" cy="18" r="3" />
+      <circle cx="19" cy="18" r="3" />
+    </>
+  ),
 };
 
 // Generic fallback for board-only ids without a dedicated web SVG.

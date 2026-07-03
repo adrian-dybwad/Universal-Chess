@@ -40,16 +40,18 @@ def test_settings_full_entry_order():
     """Settings lists setup first, then appearance, then device groups, in order.
 
     Why this test exists: the dispatch loop keys off these entry keys in this
-    order (Players, Game, the Display/Sound appearance pair, Positions, then
-    Connectivity/System); Time Control and Live Analysis live inside Game (not at
-    top level), Chromecast moved into Connectivity and About into System, so none
-    appear here. How a regression manifests: an item is dropped/reordered, or
-    TimeControl/Chromecast/About reappears, changing this exact list.
+    order (Players, Game, Agents, the Display/Sound appearance pair, Positions,
+    then Connectivity/System); Time Control and Live Analysis live inside Game and
+    the AI coach/agent settings inside Agents (not at top level), Chromecast moved
+    into Connectivity and About into System, so none appear here. How a regression
+    manifests: an item is dropped/reordered, or TimeControl/Chromecast/About
+    reappears, changing this exact list.
     """
     keys = [r.key for r in _rows()]
     assert keys == [
         "Players",
         "Game",
+        "Agents",
         DISPLAY_KEY,
         SOUND_KEY,
         "Positions",

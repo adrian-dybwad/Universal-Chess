@@ -32,8 +32,8 @@ Node behavior schema (fields read here; all optional unless noted):
   by provider-backed ``select`` nodes whose choices are a runtime list (installed
   engines, per-engine ELO levels) rather than a static option set; a ``select``
   carries either ``optionSet`` or ``provider``.
-- ``visibleWhen``: ``{"store", "key", "in": [...] | "equals": <v>}`` gating the row,
-  or ``{"allOf": [<condition>, ...]}`` to require every subcondition (AND).
+- ``visibleWhen``: ``{"store", "key", "in": [...] | "equals": <v> | "notEquals": <v>}``
+  gating the row, or ``{"allOf": [<condition>, ...]}`` to require every subcondition (AND).
 - ``enabledWhen``: same shape as ``visibleWhen``; gates the row's *enabled* flag
   (the row stays visible but is non-selectable when unmet).
 - ``range``: ``{"min", "max", "step"?, "wrap"?}`` for ``range`` cyclers.
@@ -207,7 +207,7 @@ def resolve_label(node: dict, ctx: MenuContext, *, platform: str) -> str:
 
     def _replace(match: "re.Match") -> str:
         token = match.group(1)
-        if token == "value":
+        if token == "value":  # noqa: S105  # nosec B105 - a template placeholder name, not a credential
             return _display_value(node, ctx)
         if token.startswith(_COMPUTE_PREFIX):
             return ctx.compute(token[len(_COMPUTE_PREFIX):], node)
@@ -248,7 +248,7 @@ def is_visible(node: dict, ctx: MenuContext) -> bool:
 
 
 def _condition_met(condition: dict, ctx: MenuContext) -> bool:
-    """Evaluate a ``{store, key, in|equals}`` condition against bound state.
+    """Evaluate a ``{store, key, in|equals|notEquals}`` condition against bound state.
 
     Shared by ``visibleWhen`` and ``enabledWhen`` so the two gates cannot drift.
     A compound ``{"allOf": [<condition>, ...]}`` is satisfied only when *every*
@@ -264,6 +264,8 @@ def _condition_met(condition: dict, ctx: MenuContext) -> bool:
         return value in condition["in"]
     if "equals" in condition:
         return value == condition["equals"]
+    if "notEquals" in condition:
+        return value != condition["notEquals"]
     return True
 
 

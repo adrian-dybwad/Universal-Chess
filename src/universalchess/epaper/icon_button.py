@@ -676,10 +676,47 @@ class IconButtonWidget(Widget):
             self._draw_update_icon(draw, x, y, size, line_color)
         elif icon_name == "undo":
             self._draw_undo_icon(draw, x, y, size, line_color)
+        elif icon_name == "agents":
+            self._draw_agents_icon(draw, x, y, size, line_color)
         else:
             # Default: simple square placeholder
             draw.rectangle([left + 4, top + 4, right - 4, bottom - 4],
                           outline=line_color, width=2)
+
+    def _draw_agents_icon(self, draw: ImageDraw.Draw, x: int, y: int,
+                          size: int, line_color: int) -> None:
+        """Draw three interconnected circles (a small node graph).
+
+        Icon for the Agents settings section. Three nodes arranged in a triangle
+        and joined by edges read as a network of agents even at the small e-paper
+        icon sizes. Edges are drawn first so the filled nodes sit cleanly on top.
+
+        Args:
+            draw: ImageDraw object.
+            x: X center position.
+            y: Y center position.
+            size: Icon size in pixels.
+            line_color: Line color (0 black, 255 white when selected/inverted).
+        """
+        r_ring = max(3, int(size * 0.32))  # circumradius to the node centers
+        r_node = max(2, int(size * 0.15))  # radius of each node
+        edge_width = max(1, size // 16)
+
+        # Vertices (y grows downward): top, bottom-right, bottom-left.
+        angles = (-math.pi / 2.0, math.pi / 6.0, 5.0 * math.pi / 6.0)
+        nodes = [
+            (x + int(round(r_ring * math.cos(a))),
+             y + int(round(r_ring * math.sin(a))))
+            for a in angles
+        ]
+
+        for i in range(len(nodes)):
+            for j in range(i + 1, len(nodes)):
+                draw.line([nodes[i], nodes[j]], fill=line_color, width=edge_width)
+
+        for (nx, ny) in nodes:
+            draw.ellipse([nx - r_node, ny - r_node, nx + r_node, ny + r_node],
+                         outline=line_color, fill=line_color)
 
     def _draw_star_icon(self, draw: ImageDraw.Draw, x: int, y: int, size: int, line_color: int) -> None:
         """Draw a 5-point star icon.

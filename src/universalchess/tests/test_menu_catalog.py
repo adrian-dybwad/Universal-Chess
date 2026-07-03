@@ -100,7 +100,7 @@ def test_settings_order_matches_board_layout():
     """
     catalog = load_catalog()
     keys = [c["key"] for c in catalog.children("settings")]
-    assert keys == ["Players", "Game", "Display", "Sound", "Positions", "Connectivity", "System"]
+    assert keys == ["Players", "Game", "Agents", "Display", "Sound", "Positions", "Connectivity", "System"]
 
 
 def test_display_and_sound_are_separate_settings_nodes():
@@ -149,6 +149,7 @@ def test_web_sections_present_in_expected_order():
     assert section_ids == [
         "players",
         "game",
+        "agents",
         "display",
         "sound",
         "connectivity",
