@@ -151,3 +151,42 @@ def test_after_request_does_not_fire_on_fen_poll(client, capture_commands):
     """
     client.get("/fen")
     assert "reset_inactivity" not in capture_commands
+
+
+@pytest.mark.parametrize("poll_path", [
+    "/api/system/activity",
+    "/api/system/stats",
+    "/api/updates/status",
+    "/api/connectivity/wifi/status",
+    "/api/connectivity/bluetooth/status",
+])
+def test_after_request_does_not_fire_on_background_polls(
+        client, capture_commands, poll_path):
+    """Recurring GET status polls must NOT trigger reset_inactivity.
+
+    Why: these endpoints are polled on timers by always-mounted components
+    (background-activity banner every ~4s, update/connectivity indicators)
+    regardless of user interaction. If they reset the timer, any open browser
+    tab pins the board awake and it never reaches its inactivity power-off.
+
+    How the regression manifests: reset_inactivity appears after a background
+    GET poll, so the board's sleep countdown is continually reset and the
+    device never times out while a tab is open (the reported bug).
+    """
+    client.get(poll_path)
+    assert "reset_inactivity" not in capture_commands
+
+
+def test_after_request_still_fires_on_non_poll_api_get(client, capture_commands):
+    """A user-initiated GET that is NOT a background poll still resets the timer.
+
+    Why: the poll exclusion must be narrow -- opening a settings/game view is
+    real user activity and must keep the board awake. Only the enumerated
+    recurring polls are excluded.
+
+    How the regression manifests: the exclusion is too broad (e.g. matches by
+    prefix) and a genuine user GET stops resetting the timer, so the board can
+    power off mid-use.
+    """
+    client.get("/api/settings")
+    assert "reset_inactivity" in capture_commands

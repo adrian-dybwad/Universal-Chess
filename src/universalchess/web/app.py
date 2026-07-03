@@ -226,10 +226,21 @@ def add_cache_headers(response):
 
 # ---------------------------------------------------------------------------
 # Inactivity timer reset: any user-initiated web request resets the board's
-# sleep countdown.  Fires only for API and legacy action endpoints (POST or
-# GET to /api/*), not for static assets, SSE streams, or the periodic /fen
-# poll.  Best-effort: failures are silently ignored so a broken IPC socket
-# never blocks the web response.
+# sleep countdown.  Fires for API and legacy action endpoints (POST or GET to
+# /api/*), not for static assets, SSE streams, or the periodic /fen poll.
+#
+# Recurring background polls are the exception: several components poll status
+# endpoints on timers regardless of user interaction (e.g. the always-mounted
+# background-activity banner every 4s, the update and connectivity indicators).
+# Those are GET reads that carry no user intent, so they must NOT reset the
+# timer -- otherwise any open browser tab pins the board awake forever and it
+# never reaches its inactivity power-off (the observed "never times out").  They
+# are listed in _INACTIVITY_POLL_PATHS and skipped.  A NEW recurring poll added
+# to the frontend must be added here too, or it will silently defeat the sleep
+# timer.
+#
+# Best-effort: failures are silently ignored so a broken IPC socket never blocks
+# the web response.
 # ---------------------------------------------------------------------------
 _INACTIVITY_RESET_PREFIXES = ("/api/",)
 _INACTIVITY_RESET_EXACT = (
@@ -237,12 +248,26 @@ _INACTIVITY_RESET_EXACT = (
     "/menuoptions/", "/return2dgtcentaurmods",
     "/uploadengine", "/delengine/", "/rodentivtuner",
 )
+# GET status endpoints polled on a timer by the frontend (not user-initiated).
+# Matched exactly against request.path so an unrelated action endpoint sharing a
+# prefix is never accidentally excluded.
+_INACTIVITY_POLL_PATHS = frozenset({
+    "/api/system/activity",              # BackgroundActivityBanner (~4s)
+    "/api/system/stats",                 # Settings system-stats poll
+    "/api/updates/status",               # update indicator/banner
+    "/api/connectivity/wifi/status",     # connectivity indicator/page
+    "/api/connectivity/bluetooth/status",  # connectivity indicator/page
+})
 
 
 @app.after_request
 def reset_board_inactivity(response):
     """Signal user activity to the board so the sleep timer resets."""
     path = request.path
+    # Recurring background polls (GET status endpoints) are not user activity;
+    # skip them so an idle-but-open tab cannot keep the board from powering off.
+    if request.method == "GET" and path in _INACTIVITY_POLL_PATHS:
+        return response
     if any(path.startswith(p) for p in _INACTIVITY_RESET_PREFIXES) or (
         request.method == "POST"
         and any(path.startswith(p) for p in _INACTIVITY_RESET_EXACT)
