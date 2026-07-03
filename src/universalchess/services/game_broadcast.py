@@ -50,7 +50,7 @@ SOCKET_PATH = SOCKET_DIR / "game.sock"
 SETTINGS_SOCKET_PATH = SOCKET_DIR / "settings.sock"
 
 # Fallback for development (when /run isn't available)
-DEV_SOCKET_DIR = Path("/tmp/universalchess")
+DEV_SOCKET_DIR = Path("/tmp/universalchess")  # noqa: S108  # nosec - dev-only fallback socket dir used when /run is unavailable
 DEV_SOCKET_PATH = DEV_SOCKET_DIR / "game.sock"
 DEV_SETTINGS_SOCKET_PATH = DEV_SOCKET_DIR / "settings.sock"
 
@@ -92,6 +92,11 @@ class GameState:
     # Pending move: a move in progress on the physical board (from-to in UCI format)
     # Set when a piece is lifted (from square known) and optionally to square
     pending_move: Optional[str] = None
+    # Database id of the current game, or None before the first move is persisted.
+    # Lets the web live board resolve per-move AI coach statements for this game
+    # (GET /api/coach/statement/<game_id>/<ply>); without it the live coach panel
+    # cannot identify which game's moves it is viewing.
+    game_id: Optional[int] = None
     
     def __post_init__(self):
         if self.timestamp == 0.0:
@@ -228,7 +233,7 @@ class GameBroadcaster:
             if self._socket:
                 try:
                     self._socket.close()
-                except Exception:
+                except Exception:  # noqa: S110  # nosec - best-effort socket close on shutdown
                     pass
                 self._socket = None
             self._connected = False
@@ -361,7 +366,7 @@ class GameSubscriber:
         if self._socket:
             try:
                 self._socket.close()
-            except Exception:
+            except Exception:  # noqa: S110  # nosec - best-effort socket close on shutdown
                 pass
             self._socket = None
         
@@ -370,7 +375,7 @@ class GameSubscriber:
         if socket_path.exists():
             try:
                 socket_path.unlink()
-            except Exception:
+            except Exception:  # noqa: S110  # nosec - best-effort removal of the socket file on shutdown
                 pass
         
         log.info("[GameSubscriber] Stopped")
@@ -426,7 +431,7 @@ class GameSubscriber:
                         except Exception as e:
                             log.error(f"[GameSubscriber] Callback error: {e}")
                 
-            except socket.timeout:
+            except socket.timeout:  # noqa: S112 - normal poll timeout; the loop simply continues
                 # Normal timeout, check if we should continue
                 continue
             except Exception as e:
@@ -462,6 +467,27 @@ def get_subscriber() -> GameSubscriber:
 # Global pending move state - shared between broadcast functions
 _pending_move: Optional[str] = None
 
+# Current game's database id, shared into every broadcast so the web live board
+# can address per-move coach statements. A side channel (like _pending_move)
+# because the position-centric broadcast helper does not otherwise know it; the
+# GameManager mirrors its game_db_id here as games start and reset.
+_current_game_id: Optional[int] = None
+
+
+def set_current_game_id(game_id: Optional[int]) -> None:
+    """Set the current game's database id for subsequent broadcasts.
+
+    Pass None when no game is active (before the first move is persisted or after
+    a reset) so stale ids never leak into a new game's broadcasts.
+    """
+    global _current_game_id
+    _current_game_id = game_id
+
+
+def get_current_game_id() -> Optional[int]:
+    """Return the current game's database id, or None when no game is active."""
+    return _current_game_id
+
 
 def set_pending_move(pending_move: Optional[str]) -> None:
     """Set the pending move (piece lifted, awaiting destination).
@@ -494,6 +520,7 @@ def broadcast_game_state(
     white: str = "White",
     black: str = "Black",
     pending_move: Optional[str] = None,
+    game_id: Optional[int] = None,
 ) -> bool:
     """Convenience function to broadcast game state.
     
@@ -515,6 +542,9 @@ def broadcast_game_state(
     """
     # Use provided pending_move or fall back to global state
     effective_pending_move = pending_move if pending_move is not None else _pending_move
+    # Same fallback for the game id: callers that don't pass it (most do not, since
+    # the position-centric path doesn't know it) get the GameManager-mirrored value.
+    effective_game_id = game_id if game_id is not None else _current_game_id
     
     state = GameState(
         fen=fen,
@@ -528,6 +558,7 @@ def broadcast_game_state(
         white=white,
         black=black,
         pending_move=effective_pending_move,
+        game_id=effective_game_id,
     )
     return get_broadcaster().broadcast(state)
 
@@ -745,7 +776,7 @@ class SettingsPublisher:
             if self._socket:
                 try:
                     self._socket.close()
-                except Exception:
+                except Exception:  # noqa: S110  # nosec - best-effort socket close on shutdown
                     pass
                 self._socket = None
             self._connected = False
@@ -868,7 +899,7 @@ class SettingsSubscriber:
         if self._socket:
             try:
                 self._socket.close()
-            except Exception:
+            except Exception:  # noqa: S110  # nosec - best-effort socket close on shutdown
                 pass
             self._socket = None
         
@@ -876,7 +907,7 @@ class SettingsSubscriber:
         if socket_path.exists():
             try:
                 socket_path.unlink()
-            except Exception:
+            except Exception:  # noqa: S110  # nosec - best-effort removal of the socket file on shutdown
                 pass
         
         log.info("[SettingsSubscriber] Stopped")
@@ -948,7 +979,7 @@ class SettingsSubscriber:
                         except Exception as e:
                             log.error(f"[SettingsSubscriber] Command callback error: {e}")
                 
-            except socket.timeout:
+            except socket.timeout:  # noqa: S112 - normal poll timeout; the loop simply continues
                 continue
             except Exception as e:
                 if self._running:

@@ -560,6 +560,11 @@ rfcomm_server: Optional[RfcommServer] = None  # RFCOMM server for classic Blueto
 ble_manager = None  # BleManager for BLE GATT services
 relay_manager = None  # RelayManager for shadow target connections
 _connection_manager: Optional[ConnectionManager] = None  # Initialized in main()
+# The live game's coach coordinator (created per _start_game_mode). Held so a
+# board-reset new game -- which reuses the same coordinator instead of rebuilding
+# it -- can drop the prior game's cached statements and never coach a new move
+# with an old game's text.
+_coach_coordinator = None
 
 # Menu state - managed by MenuManager singleton
 _menu_manager: Optional[MenuManager] = None  # Initialized in main()
@@ -1001,6 +1006,10 @@ GAME_SETTINGS_DEFAULTS = {
     'show_analysis': True,
     'show_graph': True,
     'chess_sprites': 'default',
+    'coach_provider': 'none',
+    'coach_api_key': '',
+    'coach_model': '',
+    'coach_base_url': '',
 }
 
 # Global settings instance (populated from centaur.ini on startup)
@@ -1907,14 +1916,28 @@ def _start_game_mode(
         app_state = AppState.SETTINGS
 
     def _on_takeback():
-        """Handle takeback - remove last analysis score.
-        
+        """Handle takeback - remove last analysis score and stale coach cache.
+
+        The DB row for the undone move (with its coach statement) is deleted by
+        GameManager; here the in-memory coach cache for that ply is invalidated too.
+        Without this, the next move played into the same ply would show the undone
+        move's coach comment (cached by (game, ply)), coaching a move that is no
+        longer on the board.
+
+        The pop has already been applied to the shared game state by the time this
+        callback runs, so the undone move's 1-based ply is the current move count
+        plus one -- the same ply index the coach coordinator keys on.
+
         Note: Clock active color is updated automatically by DisplayManager._on_position_change
         which observes game state changes. No explicit clock switch needed here.
         """
         from universalchess.services.analysis import get_analysis_service
+        from universalchess.state import get_chess_game
         get_analysis_service().remove_last_score()
-        log.debug("[App] Takeback: removed last analysis score")
+        if _coach_coordinator is not None:
+            removed_ply = len(get_chess_game().board.move_stack) + 1
+            _coach_coordinator.invalidate_ply(removed_ply)
+        log.debug("[App] Takeback: removed last analysis score and coach cache")
     
     # Create GameManager and set LED callbacks
     from universalchess.managers.game import GameManager
@@ -1922,6 +1945,10 @@ def _start_game_mode(
     game_manager.set_led_callbacks(led_callbacks)
     # Drive the e-paper setup status / board preview during Chessnut puzzle setup.
     game_manager.set_setup_display_handler(display_manager.on_setup_display)
+
+    # Wire the AI move-review coach: stepping the analysis widget to a move lazily
+    # fetches/persists and shows that move's coach statement in the board area.
+    _wire_coach_coordinator(display_manager, game_manager)
     
     # Create ProtocolManager with GameManager dependency
     protocol_manager = ProtocolManager(game_manager=game_manager)
@@ -2111,6 +2138,12 @@ def _start_game_mode(
             # Clear brain hints for both players on new game
             display_manager.clear_brain_hint('white')
             display_manager.clear_brain_hint('black')
+            # Drop the previous game's cached coach statements. A board-reset new
+            # game reuses this coordinator (it is only rebuilt via
+            # _start_game_mode), so without this a new move could show an old
+            # game's cached statement for the same ply.
+            if _coach_coordinator is not None:
+                _coach_coordinator.clear_cache()
             # Note: GameOverWidget clears itself via position_change observer
             # Reset clock started flag for new game
             _clock_started = False
@@ -2742,6 +2775,179 @@ def _prompt_player_name(player_num: int) -> None:
     return None
 
 
+def _prompt_game_text(key: str, title: str, max_length: int = 200) -> None:
+    """Open the on-board keyboard to edit a ``game`` string setting, then save it.
+
+    Board-specific interaction backing the ``edit_coach_*`` text actions of the
+    data-driven Game submenu (the web edits the same nodes via text inputs).
+    Saving persists to centaur.ini's ``[game]`` section via the game settings
+    store, mirroring ``_prompt_player_name``. An empty result clears the value.
+    """
+    log.info(f"[Settings] Opening keyboard for game.{key} entry")
+    board.display_manager.clear_widgets(addStatusBar=False)
+
+    current_value = _game_settings_dict().get(key, "")
+    keyboard = KeyboardWidget(board.display_manager.update, title=title, max_length=max_length)
+    keyboard.text = current_value if current_value else ""
+    _set_active_keyboard_widget(keyboard)
+
+    promise = board.display_manager.add_widget(keyboard)
+    if promise:
+        try:
+            promise.result(timeout=2.0)
+        except Exception as e:
+            log.debug("Keyboard widget render wait failed (continuing): %s", e)
+
+    try:
+        result = keyboard.wait_for_input(timeout=300.0)
+        if result is not None:
+            _save_game_setting(key, result)
+            log.info(f"[Settings] game.{key} saved")
+            board.beep(board.SOUND_GENERAL)
+        else:
+            log.info(f"[Settings] game.{key} entry cancelled")
+    finally:
+        _set_active_keyboard_widget(None)
+    return None
+
+
+def _coach_config():
+    """Build a CoachConfig from the current game settings."""
+    from universalchess.services.coach import CoachConfig
+
+    g = _game_settings_dict()
+    return CoachConfig(
+        provider=g.get("coach_provider", "none"),
+        api_key=g.get("coach_api_key", ""),
+        model=g.get("coach_model", ""),
+        base_url=g.get("coach_base_url", ""),
+    )
+
+
+def _build_coach_request(ply: int):
+    """Build a CoachRequest for a 1-based ply from the live game state.
+
+    Reconstructs the position before the move from the in-memory move stack (fast,
+    no DB access on the display thread) so the coach can describe the move. Returns
+    None when the ply is out of range. Eval context is intentionally left unset
+    here to keep move stepping responsive; it is filled in off the display thread
+    by the coordinator's enrichment hook (see ``_wire_coach_coordinator``) before
+    the AI call.
+    """
+    import chess
+    from universalchess.managers.game.move_facts import summarize_move_facts
+    from universalchess.services.coach import CoachRequest
+    from universalchess.state import get_chess_game
+    from universalchess.utils.chess_notation import format_move
+
+    board_obj = get_chess_game().board
+    moves = list(board_obj.move_stack)
+    if ply < 1 or ply > len(moves):
+        return None
+
+    position = board_obj.root()
+    for played in moves[: ply - 1]:
+        position.push(played)
+    move = moves[ply - 1]
+    # Format the move in the user's chosen notation so the coach refers to it the
+    # same way the board move list does. An illegal move (corrupt stack) falls back
+    # to UCI rather than dropping the request.
+    notation = _game_settings_dict().get("notation", "figurine")
+    fen_before = position.fen()
+    move_uci = move.uci()
+    try:
+        move_text = format_move(position, move, notation)
+    except (ValueError, AssertionError):
+        move_text = move_uci
+    side_to_move = "white" if position.turn == chess.WHITE else "black"
+    return CoachRequest(
+        fen_before=fen_before,
+        move_text=move_text,
+        side_to_move=side_to_move,
+        move_number=position.fullmove_number,
+        facts=tuple(summarize_move_facts(fen_before, move_uci)),
+    )
+
+
+def _wire_coach_coordinator(display_manager, game_manager):
+    """Connect analysis-widget move selection to the lazy AI coach fetch.
+
+    Registers a coordinator so selecting a move resolves its statement
+    (cache -> database -> AI service) and shows it in the board area, fetching
+    only moves that have no stored statement. A fresh coordinator per game keeps
+    its in-memory cache scoped to that game.
+    """
+    from dataclasses import replace
+
+    from universalchess.managers.game import coach_models
+    from universalchess.managers.game.coach_coordinator import CoachCoordinator
+    from universalchess.managers.game.coach_persistence import get_move_evals
+
+    # Refresh the model list from the provider on each new game so the Coach Model
+    # dropdown always reflects the account's currently available models (no-op when
+    # no provider/key is configured). Runs on a background thread.
+    coach_models.refresh_models_async(_coach_config())
+
+    def _enrich_with_evals(request, game_db_id, ply):
+        """Attach stored eval scores to a request on the coach worker thread.
+
+        The eval read touches the database, which is why it runs here (off the
+        display thread) rather than in ``_build_coach_request``: the move-review
+        keypress that selects a ply stays responsive while the fetch worker gathers
+        the extra context. Missing evals leave the request's eval fields as None.
+        """
+        eval_before_cp, eval_after_cp = get_move_evals(game_db_id, ply)
+        if eval_before_cp is None and eval_after_cp is None:
+            return request
+        return replace(
+            request,
+            eval_before_cp=eval_before_cp,
+            eval_after_cp=eval_after_cp,
+        )
+
+    coordinator = CoachCoordinator(
+        build_request=_build_coach_request,
+        get_config=_coach_config,
+        get_game_db_id=lambda: game_manager.game_db_id,
+        set_text=display_manager.set_coach_text,
+        enrich_request=_enrich_with_evals,
+    )
+    display_manager.set_coach_selection_callback(coordinator.on_selection)
+    global _coach_coordinator
+    _coach_coordinator = coordinator
+    return coordinator
+
+
+def _show_hint_coach_async(display_manager, fen_before: str, move_uci: str) -> None:
+    """Generate the hinted move's coach statement off-thread and show it.
+
+    The hint itself (LEDs + move text on the alert strip) appears immediately;
+    the coaching remark for the recommended move is fetched on a daemon thread so
+    the ? keypress never blocks on the network, then shown in the board-area coach
+    panel. A repeated identical hint (same position + recommended move) reuses the
+    in-memory cached statement so pressing ? again is free. No-op when the coach
+    is unconfigured or the statement can't be produced.
+    """
+    import threading
+
+    from universalchess.managers.game import coach_tips
+
+    config = _coach_config()
+    if not config.is_configured():
+        return
+
+    notation = _game_settings_dict().get("notation", "figurine")
+
+    def job() -> None:
+        statement = coach_tips.get_tip_statement(
+            config, fen_before, move_uci, notation=notation
+        )
+        if statement:
+            display_manager.show_hint_coach(statement)
+
+    threading.Thread(target=job, daemon=True).start()
+
+
 def _build_players_context():
     """Build the context for the top-level Players menu (settings.players).
 
@@ -2928,6 +3134,13 @@ def _build_game_context():
     def game_set(key, value):
         _save_game_setting(key, value)
         log.info(f"[Settings] game.{key} changed to {value}")
+        if key == "coach_provider":
+            # Model ids are provider-specific, so a model chosen for the previous
+            # provider is invalid for the new one (and would be sent verbatim,
+            # causing a 404). Reset to blank so the provider default (or a fresh
+            # pick from the new provider's list) is used.
+            _save_game_setting("coach_model", "")
+            log.info("[Settings] game.coach_model reset (provider changed)")
 
     ctx = BoardMenuContext()
     ctx.register_store("game", game_get, game_set)
@@ -3227,9 +3440,41 @@ def _build_game_menu_context():
 
         return [MenuRow(key=engine, label=engine, icon="engine") for engine in _get_installed_engines()]
 
+    def coach_models_rows():
+        """Rows for the Coach Model select: a Default entry + the live model list.
+
+        The model list is fetched from the provider (cached, refreshed on each new
+        game); the curated fallback backs it until the first successful fetch. The
+        leading Default row maps to a blank ``coach_model`` (provider default).
+        """
+        from universalchess.managers.game.coach_models import get_models_or_fallback
+        from universalchess.menus.engine import MenuRow
+
+        rows = [MenuRow(key="", label="Default", icon="settings")]
+        rows.extend(
+            MenuRow(key=model_id, label=model_id, icon="engine")
+            for model_id in get_models_or_fallback(_coach_config())
+        )
+        return rows
+
     _register_analysis_store(ctx)
     ctx.register_provider("installed_engines", installed_engines)
+    ctx.register_provider("coach_models", coach_models_rows)
     ctx.register_value("time_control", lambda node: _time_control_label())
+    # The API key is a secret: its board label shows only whether one is set,
+    # never the key itself (the web renders it in a password input).
+    ctx.register_value(
+        "coach_key_status",
+        lambda node: "Set" if _game_settings_dict().get("coach_api_key") else "Not set",
+    )
+    # Blank model reads as "Default" (the provider default) rather than an empty line.
+    ctx.register_value(
+        "coach_model_label",
+        lambda node: _game_settings_dict().get("coach_model") or "Default",
+    )
+    ctx.register_action("edit_coach_api_key", lambda: _prompt_game_text("coach_api_key", "Coach API Key"))
+    ctx.register_action("edit_coach_model", lambda: _prompt_game_text("coach_model", "Coach Model", max_length=60))
+    ctx.register_action("edit_coach_base_url", lambda: _prompt_game_text("coach_base_url", "Coach Base URL"))
     return ctx
 
 
@@ -5066,6 +5311,8 @@ def key_callback(key_id):
                                 # NORMAL mode: show full move (user decides which piece of that type)
                                 display_manager.show_hint(hint_move)
                                 log.info(f"[App] Hand+Brain NORMAL hint: {hint_move.uci()}")
+                                # Add the AI coach's remark about the recommended move.
+                                _show_hint_coach_async(display_manager, game_board.fen(), hint_move.uci())
                             else:
                                 # REVERSE mode: get_hint already lit up piece type squares
                                 # Don't show full move - only piece type is the hint
@@ -5081,6 +5328,8 @@ def key_callback(key_id):
                     # Show hint on display widget and LEDs
                     display_manager.show_hint(hint_move)
                     log.info(f"[App] Hint: {hint_move.uci()}")
+                    # Add the AI coach's remark about the recommended move.
+                    _show_hint_coach_async(display_manager, game_board.fen(), hint_move.uci())
                 else:
                     log.info("[App] No hint available (analysis engine not ready)")
             _reset_unhandled_key_count()
@@ -5104,12 +5353,13 @@ def key_callback(key_id):
             return
 
         if key_id in (board.Key.UP, board.Key.DOWN) and display_manager:
-            # UP/DOWN page the analysis widget's move history (page 1 = the
-            # eval/graph view, pages 2..N the move list), wrapping around. Only
-            # consume the key when the analysis widget is visible; otherwise fall
-            # through so the arrows still reach the game manager as before.
+            # UP/DOWN step the analysis widget's move selection (selection 0 = the
+            # eval/graph view with the board shown, 1..N select a played move and
+            # replace the board with that move's coach statement), wrapping
+            # around. Only consume the key when the analysis widget is visible;
+            # otherwise fall through so the arrows still reach the game manager.
             direction = -1 if key_id == board.Key.UP else 1
-            if display_manager.page_analysis(direction):
+            if display_manager.step_analysis_selection(direction):
                 _reset_unhandled_key_count()
                 return
         

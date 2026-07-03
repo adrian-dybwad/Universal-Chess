@@ -90,11 +90,17 @@ class GameAnalysisWidget(Widget):
         self.bottom_color = bottom_color
         self._show_graph = show_graph
         self._notation = normalize_notation(notation)
-        self._page = 0  # 0 = analysis; 1..N = move-history pages
-        # Invoked with the new page index whenever the page changes; used to
-        # drive the clock widget's turn-indicator compact mode (see
-        # set_page_change_callback).
-        self._page_change_callback: Optional[callable] = None
+        # Selection cursor over [analysis, ply 1 .. ply N]: 0 = the analysis /
+        # eval-graph view (chess board shown); 1..N select an individual played
+        # move (ply), whose row is highlighted in the move list while the board
+        # area is replaced by that move's coach statement. UP/DOWN step this
+        # cursor and it wraps at both ends, so stepping down past the last ply
+        # returns to the analysis view (restoring the board).
+        self._selection = 0
+        # Invoked with the new selection index whenever it changes; drives the
+        # clock widget's compact mode and the board/coach-text swap (see
+        # set_selection_change_callback).
+        self._selection_change_callback: Optional[callable] = None
         self._sprites = sprites
         
         # Get or use provided analysis state
@@ -147,21 +153,22 @@ class GameAnalysisWidget(Widget):
     def _on_position_change(self) -> None:
         """Handle a new move / new game.
 
-        A new move can add a move-history page and a new game removes them, so
-        clamp the current page into the valid range before redrawing (otherwise a
-        page that no longer exists would render blank after a takeback/new game).
-        Clamping goes through _set_page so that if a takeback/new game drops the
-        current move page back to the analysis page, observers (the clock widget's
-        compact turn indicator) are notified and don't stay stuck.
+        A new move adds a ply and a new game removes them, so clamp the current
+        selection into the valid range before redrawing (otherwise a selection
+        that no longer exists would highlight nothing / render blank after a
+        takeback or new game). Clamping goes through _set_selection so that if a
+        takeback/new game drops the selection back to the analysis view,
+        observers (the clock's compact turn indicator and the board/coach swap)
+        are notified and don't stay stuck on a move.
 
-        While a move page is displayed the view follows the live tail: it snaps to
-        the last page (the tail window, newest move on the bottom row) so play is
-        always visible even if the user had paged back. The analysis page (0) is
-        left alone so it is not yanked into the move list on every move.
+        While a move is selected the view follows the live tail: it snaps to the
+        last ply (newest move) so play stays visible even if the user had stepped
+        back. The analysis view (selection 0) is left alone so it is not yanked
+        into the move list on every move.
         """
-        if self._page != 0 and self.num_move_pages() > 0:
-            self._set_page(self.num_move_pages())
-        self._clamp_page()
+        if self._selection != 0 and self.num_plies() > 0:
+            self._set_selection(self.num_plies())
+        self._clamp_selection()
         self.invalidate_and_update()
 
     def set_notation(self, notation: str) -> None:
@@ -171,7 +178,7 @@ class GameAnalysisWidget(Widget):
             self._notation = normalized
             self.invalidate_and_update()
 
-    # --- Paging -----------------------------------------------------------
+    # --- Selection & move list --------------------------------------------
 
     def _move_pairs(self) -> List[Tuple[int, str, Optional[str]]]:
         """Group the formatted move history into (number, white, black) rows.
@@ -200,83 +207,138 @@ class GameAnalysisWidget(Widget):
         return max(1, usable // self.MOVE_LINE_HEIGHT)
 
     def num_move_pages(self) -> int:
-        """Number of move-history pages (0 when there are no moves)."""
+        """Number of move-history pages (0 when there are no moves).
+
+        Retained as the internal unit for laying out the move list into
+        end-anchored windows; the user-facing navigation unit is the ply
+        (see :meth:`num_plies`).
+        """
         pairs = len(self._move_pairs())
         if pairs == 0:
             return 0
         return math.ceil(pairs / self._rows_per_page())
 
-    def total_pages(self) -> int:
-        """Total pages including the analysis page (always at least 1)."""
-        return 1 + self.num_move_pages()
+    def num_plies(self) -> int:
+        """Number of played half-moves (plies) available to select."""
+        pairs = self._move_pairs()
+        if not pairs:
+            return 0
+        # Each pair is (number, white, black); black is None for a lone final
+        # white move, so the last pair may contribute one ply instead of two.
+        last_number, last_white, last_black = pairs[-1]
+        return (len(pairs) - 1) * 2 + (2 if last_black is not None else 1)
 
-    def _clamp_page(self) -> None:
-        """Keep the current page within ``[0, total_pages - 1]``."""
-        total = self.total_pages()
-        target = self._page
-        if target >= total:
-            target = total - 1
+    def total_selections(self) -> int:
+        """Total selectable slots: the analysis view plus one per ply."""
+        return 1 + self.num_plies()
+
+    def _clamp_selection(self) -> None:
+        """Keep the current selection within ``[0, num_plies]``."""
+        target = self._selection
+        max_selection = self.num_plies()
+        if target > max_selection:
+            target = max_selection
         if target < 0:
             target = 0
-        self._set_page(target)
+        self._set_selection(target)
 
-    def _set_page(self, new_page: int) -> None:
-        """Set the current page, notifying observers only on an actual change.
+    def _set_selection(self, new_selection: int) -> None:
+        """Set the selection, notifying observers only on an actual change.
 
-        Centralizes the page mutation so the page-change callback fires from both
-        user paging (turn_page) and automatic clamping (takeback/new game).
+        Centralizes the mutation so the selection-change callback fires from both
+        user stepping (step_selection) and automatic clamping/tail-follow
+        (takeback/new game/new move).
         """
-        if new_page != self._page:
-            self._page = new_page
-            if self._page_change_callback is not None:
-                self._page_change_callback(self._page)
+        if new_selection != self._selection:
+            self._selection = new_selection
+            if self._selection_change_callback is not None:
+                self._selection_change_callback(self._selection)
 
-    def set_page_change_callback(self, callback: Optional[callable]) -> None:
-        """Register a callback invoked with the new page index on every change.
+    def set_selection_change_callback(self, callback: Optional[callable]) -> None:
+        """Register a callback invoked with the new selection on every change.
 
-        DisplayManager uses this to hide the clock widget's turn-indicator color
-        circle while a move-history page (page != 0) is shown and restore it on
-        the analysis page (page 0).
+        DisplayManager uses this to (a) switch the clock to compact mode while a
+        move is selected, (b) hide the chess board and show the coach-text widget
+        for the selected ply (restoring the board on the analysis view), and
+        (c) drive the lazy coach-statement fetch for the selected ply.
         """
-        self._page_change_callback = callback
+        self._selection_change_callback = callback
 
     @property
-    def page(self) -> int:
-        """The currently displayed page (0 = analysis)."""
-        return self._page
+    def selection(self) -> int:
+        """The current selection index (0 = analysis view; 1..N = ply)."""
+        return self._selection
 
-    def turn_page(self, direction: int) -> None:
-        """Advance the page by ``direction`` (+1 down, -1 up), wrapping around.
+    def selected_ply(self) -> Optional[int]:
+        """The selected ply (1-based), or None when the analysis view is shown."""
+        return None if self._selection == 0 else self._selection
 
-        Wrapping makes UP on the analysis page jump to the last move page and
-        DOWN on the last move page return to analysis, matching the requested
-        UP/DOWN paging behavior.
+    def step_selection(self, direction: int) -> None:
+        """Advance the selection by ``direction`` (+1 down, -1 up), wrapping.
+
+        Wrapping makes UP on the analysis view jump to the last ply and DOWN on
+        the last ply return to the analysis view, matching the requested UP/DOWN
+        behavior (stepping past the end reselects the analysis view and restores
+        the board).
         """
-        total = self.total_pages()
-        self._set_page((self._page + direction) % total)
+        total = self.total_selections()
+        self._set_selection((self._selection + direction) % total)
         self.invalidate_and_update(immediate=True)
 
-    def current_page_rows(self) -> List[Tuple[int, str, Optional[str]]]:
-        """Move rows visible on the current page ([] on the analysis page).
+    def _selected_pair_index(self) -> Optional[int]:
+        """Index into ``_move_pairs`` of the selected ply's row, or None."""
+        ply = self.selected_ply()
+        if ply is None:
+            return None
+        return (ply - 1) // 2
 
-        Pages are anchored to the *end* of the move list so the last page is a
-        full tail window with the newest move on its bottom row (higher page
-        number = newer moves). Only the first page can be partial, holding the
-        oldest moves. This is what lets the live view "scroll" -- following the
-        tail keeps the space filled with the most recent moves, newest at the
-        bottom, rather than stranding a single leftover move on a top-anchored
-        final page.
+    def selected_is_white(self) -> Optional[bool]:
+        """Whether the selected ply is the white half-move, or None if analysis."""
+        ply = self.selected_ply()
+        if ply is None:
+            return None
+        return (ply - 1) % 2 == 0
+
+    def _current_page(self) -> int:
+        """1-based move page (end-anchored window) holding the selected ply.
+
+        Returns 0 when the analysis view is selected. Pages are anchored to the
+        end of the move list so the last page is the tail window with the newest
+        move on its bottom row; this maps the selected pair to the page that
+        contains it under that anchoring.
         """
-        if self._page == 0:
-            return []
+        pair_index = self._selected_pair_index()
+        if pair_index is None:
+            return 0
         pairs = self._move_pairs()
         per_page = self._rows_per_page()
-        # Distance of this page from the last (tail) page: 0 == the tail window.
-        pages_from_end = self.num_move_pages() - self._page
+        pages_from_end = (len(pairs) - 1 - pair_index) // per_page
+        return self.num_move_pages() - pages_from_end
+
+    def _page_window(self, page: int) -> Tuple[List[Tuple[int, str, Optional[str]]], int]:
+        """Return ``(rows, start_pair_index)`` for a 1-based end-anchored page."""
+        pairs = self._move_pairs()
+        per_page = self._rows_per_page()
+        pages_from_end = self.num_move_pages() - page
         end = len(pairs) - pages_from_end * per_page
         start = max(0, end - per_page)
-        return pairs[start:end]
-    
+        return pairs[start:end], start
+
+    def visible_rows(self) -> List[Tuple[int, str, Optional[str]]]:
+        """Move rows shown for the current selection ([] on the analysis view)."""
+        if self._selection == 0:
+            return []
+        rows, _start = self._page_window(self._current_page())
+        return rows
+
+    def selected_row_index(self) -> Optional[int]:
+        """Index of the selected ply's row within :meth:`visible_rows`, or None."""
+        pair_index = self._selected_pair_index()
+        if pair_index is None:
+            return None
+        _rows, start = self._page_window(self._current_page())
+        return pair_index - start
+
     def set_show_graph(self, show: bool) -> None:
         """Set whether to show the history graph.
         
@@ -364,13 +426,14 @@ class GameAnalysisWidget(Widget):
         self.cleanup()
     
     def render(self, sprite: Image.Image) -> None:
-        """Render the current page.
+        """Render the current selection.
 
-        Page 0 is the eval score + history graph; pages 1..N are the move-history
-        list. A stale page (e.g. after a takeback) is clamped before rendering.
+        Selection 0 is the eval score + history graph; a selected ply renders the
+        move-history window containing it with that move highlighted. A stale
+        selection (e.g. after a takeback) is clamped before rendering.
         """
-        self._clamp_page()
-        if self._page != 0:
+        self._clamp_selection()
+        if self._selection != 0:
             self._render_moves(sprite)
             return
         self._render_analysis(sprite)
@@ -474,7 +537,12 @@ class GameAnalysisWidget(Widget):
         )
 
     def _render_moves(self, sprite: Image.Image) -> None:
-        """Render a move-history page: a header line plus paired move rows."""
+        """Render the move-history window for the selection, highlighting the ply.
+
+        A header line ("Move k/N") tops the window; the selected ply's half-move
+        is boxed so the user sees exactly which move the coach statement (shown in
+        the board area) refers to.
+        """
         from universalchess.resources import get_font
 
         draw = ImageDraw.Draw(sprite)
@@ -483,14 +551,18 @@ class GameAnalysisWidget(Widget):
 
         font = get_font(self.MOVE_FONT_SIZE)
 
-        header = f"Moves  {self._page}/{self.num_move_pages()}"
+        header = f"Move  {self.selected_ply()}/{self.num_plies()}"
         draw.text((self.MOVE_MARGIN, self.MOVE_MARGIN), header, font=font, fill=0)
         separator_y = self.MOVE_MARGIN + self.MOVE_HEADER_HEIGHT - 2
         draw.line([(2, separator_y), (self.width - 2, separator_y)], fill=0, width=1)
 
+        selected_row = self.selected_row_index()
+        selected_is_white = self.selected_is_white()
+
         glyph_size = self.MOVE_FONT_SIZE + 1
-        y = self.MOVE_MARGIN + self.MOVE_HEADER_HEIGHT
-        for number, white, black in self.current_page_rows():
+        top = self.MOVE_MARGIN + self.MOVE_HEADER_HEIGHT
+        y = top
+        for row_index, (number, white, black) in enumerate(self.visible_rows()):
             draw.text((self._NUMBER_COL_X, y), f"{number}.", font=font, fill=0)
             self._draw_move_string(
                 sprite, draw, self._WHITE_COL_X, y, white, True, font, glyph_size
@@ -499,7 +571,26 @@ class GameAnalysisWidget(Widget):
                 self._draw_move_string(
                     sprite, draw, self._BLACK_COL_X, y, black, False, font, glyph_size
                 )
+            if row_index == selected_row and selected_is_white is not None:
+                self._draw_selection_box(draw, y, selected_is_white)
             y += self.MOVE_LINE_HEIGHT
+
+    def _draw_selection_box(self, draw: 'ImageDraw.ImageDraw', y: int, is_white: bool) -> None:
+        """Outline the selected half-move cell on its row.
+
+        A box (rather than an inverted fill) is used because the move text is
+        composited from piece sprites for figurine glyphs; a box highlights the
+        selected move without having to re-composite those glyphs in inverse.
+        """
+        if is_white:
+            x0 = self._WHITE_COL_X - 2
+            x1 = self._BLACK_COL_X - 3
+        else:
+            x0 = self._BLACK_COL_X - 2
+            x1 = self.width - 3
+        draw.rectangle(
+            [(x0, y - 1), (x1, y + self.MOVE_LINE_HEIGHT - 2)], fill=None, outline=0
+        )
 
     def render_red(self, sprite: Image.Image) -> None:
         """Render the RED overlay: the losing-side (negative) history bars in red.
@@ -507,10 +598,10 @@ class GameAnalysisWidget(Widget):
         Reuses the exact bar geometry from render() (via _iter_graph_bars) and
         fills only the bars whose adjusted score is negative -- i.e. when the
         bottom player is worse off -- with red. Positive bars and the rest of the
-        widget contribute no red. Only the analysis page has a graph, so move
-        pages contribute no red.
+        widget contribute no red. Only the analysis view has a graph, so a
+        selected move contributes no red.
         """
-        if self._page != 0:
+        if self._selection != 0:
             return
         if not self._show_graph:
             return

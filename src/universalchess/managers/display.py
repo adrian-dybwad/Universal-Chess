@@ -41,13 +41,14 @@ _SplashScreen = None
 _GameOverWidget = None
 _AlertWidget = None
 _SetupStatusWidget = None
+_CoachTextWidget = None
 
 
 def _load_widgets():
     """Lazily load widget classes."""
     global _widgets_loaded, _ChessBoardWidget, _GameAnalysisWidget, _ChessClockWidget
     global _IconMenuWidget, _IconMenuEntry, _SplashScreen
-    global _GameOverWidget, _AlertWidget, _SetupStatusWidget
+    global _GameOverWidget, _AlertWidget, _SetupStatusWidget, _CoachTextWidget
     
     if _widgets_loaded:
         return
@@ -58,6 +59,7 @@ def _load_widgets():
         AlertWidget, SetupStatusWidget
     )
     from universalchess.epaper.game_over import GameOverWidget
+    from universalchess.epaper.coach_text import CoachTextWidget
     _ChessBoardWidget = ChessBoardWidget
     _GameAnalysisWidget = GameAnalysisWidget
     _ChessClockWidget = ChessClockWidget
@@ -67,6 +69,7 @@ def _load_widgets():
     _GameOverWidget = GameOverWidget
     _AlertWidget = AlertWidget
     _SetupStatusWidget = SetupStatusWidget
+    _CoachTextWidget = CoachTextWidget
     _widgets_loaded = True
 
 
@@ -95,6 +98,13 @@ class DisplayManager:
         analysis_widget: The game analysis/evaluation widget
         analysis_engine: UCI engine for position analysis
     """
+
+    # Header labels for the shared board-area coach panel, distinguishing a
+    # move-review comment from an on-demand hint tip so the reader knows which is
+    # which when a tip is shown on top of a review.
+    _REVIEW_HEADER = "Coach"
+    _TIP_HEADER = "Coach's Tip"
+
     
     def __init__(self, flip_board: bool = False, show_analysis: bool = True,
                  analysis_engine_path: str = None, on_exit: callable = None,
@@ -143,6 +153,17 @@ class DisplayManager:
         self._show_board = show_board
         self._show_clock = show_clock
         self._show_graph = show_graph
+        # True while a hint's coach statement occupies the board-area coach panel
+        # (board hidden). Kept separate from analysis-review's use of the same
+        # panel so a played move / ? toggle clears only the hint's panel and
+        # restores the board (or the review comment it interrupted). Cleared on
+        # alert-clear (a move resolves the hint).
+        self._hint_coach_active = False
+        # The last move-review statement pushed to the panel. Saved so that a hint
+        # tip shown on top of an active review can restore the review comment when
+        # the tip is dismissed, rather than only the board.
+        self._review_coach_text = ""
+        self._game_state.on_alert_clear(self._on_hint_alert_cleared)
         # Move-history notation for the analysis widget's paged move list;
         # refreshed from settings in _reload_display_settings before each rebuild.
         self._notation = "figurine"
@@ -151,9 +172,13 @@ class DisplayManager:
         self.chess_board_widget = None
         self.clock_widget = None
         self.analysis_widget = None
+        self.coach_text_widget = None
         self._analysis_engine_handle = None  # EngineHandle from registry
         self.alert_widget = None
         self.game_over_widget = None
+        # Invoked with the selected ply (or None) so the coach coordinator can
+        # lazily fetch/show a statement; set via set_coach_selection_callback.
+        self._coach_selection_callback = None
         self.setup_status_widget = None
         
         # Suspend/resume state. The game can be suspended back to the full menu
@@ -404,16 +429,26 @@ class DisplayManager:
             board.display_manager.add_widget(self.analysis_widget)
             log.info(f"[DisplayManager] Analysis widget initialized (visible={self._show_analysis}, graph={self._show_graph})")
 
-            # While a move-history page is shown (page != 0) shrink the clock and
-            # grow the analysis widget (compact layout); restore the full layout
-            # on the analysis page (page 0). Both widgets are recreated together
-            # on a settings rebuild, so this wires the current pair each time.
-            if self.clock_widget is not None:
-                self.analysis_widget.set_page_change_callback(
-                    lambda page: self._apply_compact_layout(page != 0)
-                )
+            # Coach-text widget occupies the board area; shown while a move is
+            # selected (board hidden) and hidden on the analysis view. Created
+            # alongside the analysis widget so the selection callback can swap
+            # them. Starts hidden.
+            self.coach_text_widget = _CoachTextWidget(
+                0, 16, 128, 128, board.display_manager.update
+            )
+            board.display_manager.add_widget(self.coach_text_widget)
+
+            # A move-history selection shrinks the clock and grows the analysis
+            # widget (compact layout), hides the board, and shows the coach text
+            # for the selected ply; the analysis view (selection 0) restores the
+            # full layout and the board. Both widgets are recreated together on a
+            # settings rebuild, so this wires the current pair each time.
+            self.analysis_widget.set_selection_change_callback(
+                self._on_analysis_selection_change
+            )
         else:
             self.analysis_widget = None
+            self.coach_text_widget = None
             log.info("[DisplayManager] Analysis mode disabled - no analysis widget created")
         
         # Create alert widget for CHECK/QUEEN warnings (y=144, overlays clock widget)
@@ -518,30 +553,146 @@ class DisplayManager:
         """Hide a currently displayed move hint (the ? key toggles it off).
 
         Only hides when a hint is showing, so a concurrent CHECK/QUEEN alert is
-        never dismissed by the ? key.
+        never dismissed by the ? key. Also clears the hint's coach panel so the
+        board is restored together with the hint move.
         """
         if self.alert_widget is not None and self.alert_widget.is_showing_hint():
             self.alert_widget.hide()
+            self.hide_hint_coach()
             log.info("[DisplayManager] Hint toggled off")
 
-    def page_analysis(self, direction: int) -> bool:
-        """Page the analysis widget's move history via the UP/DOWN keys.
+    def show_hint_coach(self, text: str) -> None:
+        """Show a hinted move's coach statement in the board-area coach panel.
 
-        Page 0 is the eval/graph view; pages 1..N are the move-history list. UP
-        (direction -1) and DOWN (direction +1) wrap around. No-op (returns False)
-        when there is no analysis widget or it is hidden, so the caller can fall
-        back to the normal key routing in that case.
+        Reuses the coach-text panel (also used for move review) to display the
+        coaching remark for the hinted move, hiding the chess board while shown -
+        the physical board still shows the move via the hint LEDs and the alert
+        strip still shows the move text. The panel header is switched to the tip
+        label so it reads clearly as the hint's tip, distinct from a move-review
+        comment. It is shown even while a move is selected in the analysis review
+        (which shares the panel): the review comment is saved and restored when
+        the tip is dismissed. Thread-safe: the text blit and show are display-safe
+        and this is called from the coach worker thread.
+        """
+        if not text or self.coach_text_widget is None:
+            return
+        self._hint_coach_active = True
+        self.coach_text_widget.set_header(self._TIP_HEADER)
+        self.coach_text_widget.set_text(text)
+        if self.chess_board_widget is not None:
+            self.chess_board_widget.hide()
+        self.coach_text_widget.show()
+
+    def hide_hint_coach(self) -> None:
+        """Hide the hint's coach panel, restoring the board or review comment.
+
+        No-op unless a hint coach panel is active. When an analysis-review
+        selection is active (owns the same panel), the saved review comment is
+        restored under the review header and the board stays hidden. Otherwise
+        the panel is hidden and the board is restored (subject to the board being
+        enabled in settings).
+        """
+        if not self._hint_coach_active:
+            return
+        self._hint_coach_active = False
+        review_active = (
+            self.analysis_widget is not None
+            and self.analysis_widget.selected_ply() is not None
+        )
+        if review_active:
+            # Restore the review comment that the tip interrupted; the review owns
+            # the hidden-board layout, so the panel stays visible.
+            if self.coach_text_widget is not None:
+                self.coach_text_widget.set_header(self._REVIEW_HEADER)
+                self.coach_text_widget.set_text(self._review_coach_text)
+                self.coach_text_widget.show()
+            return
+        if self.coach_text_widget is not None:
+            self.coach_text_widget.set_header(self._REVIEW_HEADER)
+            self.coach_text_widget.hide()
+        if self._show_board and self.chess_board_widget is not None:
+            self.chess_board_widget.show()
+
+    def _on_hint_alert_cleared(self) -> None:
+        """Clear the hint coach panel when the alert is cleared (e.g. a move made).
+
+        The alert widget hides itself on this same event; mirroring it here keeps
+        the hint's coach panel from lingering over the board after the hinted
+        position is left.
+        """
+        self.hide_hint_coach()
+
+    def step_analysis_selection(self, direction: int) -> bool:
+        """Step the analysis widget's move selection via the UP/DOWN keys.
+
+        Selection 0 is the eval/graph view; 1..N select an individual played move
+        (ply), whose row is highlighted while the board area is replaced by that
+        move's coach statement. UP (direction -1) and DOWN (direction +1) wrap
+        around, so stepping past the last move returns to the analysis view and
+        restores the board. No-op (returns False) when there is no analysis
+        widget or it is hidden, so the caller can fall back to normal key routing.
 
         Args:
-            direction: -1 to page up, +1 to page down.
+            direction: -1 to step up, +1 to step down.
 
         Returns:
-            True if the key was consumed by paging, False otherwise.
+            True if the key was consumed by the selection, False otherwise.
         """
         if self.analysis_widget is None or not self.analysis_widget.visible:
             return False
-        self.analysis_widget.turn_page(direction)
+        self.analysis_widget.step_selection(direction)
         return True
+
+    def set_coach_selection_callback(self, callback) -> None:
+        """Register a callback invoked with the selected ply (or None).
+
+        The coach coordinator uses this to lazily fetch/persist and display the
+        coach statement for the selected move. Called with the 1-based ply when a
+        move is selected and with None when the analysis view is selected.
+        """
+        self._coach_selection_callback = callback
+
+    def _on_analysis_selection_change(self, selection: int) -> None:
+        """Swap board/coach and clock layout when the analysis selection changes.
+
+        selection 0 (analysis view): restore the full clock layout and the chess
+        board, hide the coach text. A selected ply: shrink the clock / grow the
+        move list, hide the board, show the coach-text panel, and notify the
+        coach coordinator so it resolves the statement for that ply.
+        """
+        self._apply_compact_layout(selection != 0)
+
+        ply = self.analysis_widget.selected_ply() if self.analysis_widget else None
+        coach = self.coach_text_widget
+        if ply is None:
+            if coach is not None:
+                coach.hide()
+            # Only restore the board if the board is enabled in settings.
+            if self._show_board and self.chess_board_widget is not None:
+                self.chess_board_widget.show()
+        else:
+            if self.chess_board_widget is not None:
+                self.chess_board_widget.hide()
+            if coach is not None:
+                coach.show()
+
+        if self._coach_selection_callback is not None:
+            self._coach_selection_callback(ply)
+
+    def set_coach_text(self, text: str) -> None:
+        """Push a move-review coach statement to the coach-text panel.
+
+        The text is recorded so a hint tip shown on top of the review can restore
+        it on dismiss. While a hint tip occupies the panel the text is only
+        recorded (not blitted) so a late-arriving review result does not overwrite
+        the visible tip; it is restored when the tip is hidden. Thread-safe blit.
+        """
+        self._review_coach_text = text
+        if self._hint_coach_active:
+            return
+        if self.coach_text_widget is not None:
+            self.coach_text_widget.set_header(self._REVIEW_HEADER)
+            self.coach_text_widget.set_text(text)
 
     def _apply_compact_layout(self, compact: bool) -> None:
         """Resize the clock and analysis widgets for the compact page layout.
@@ -1153,6 +1304,13 @@ class DisplayManager:
             except Exception as e:
                 log.debug(f"[DisplayManager] Error cleaning up analysis widget: {e}")
         
+        # Unsubscribe the hint-coach alert-clear observer so a rebuilt manager
+        # does not accumulate stale observers on the game-state singleton.
+        try:
+            self._game_state.remove_observer(self._on_hint_alert_cleared)
+        except Exception as e:
+            log.debug(f"[DisplayManager] Error removing hint-coach observer: {e}")
+
         # Cleanup game over widget (unsubscribe from game state)
         if self.game_over_widget:
             try:

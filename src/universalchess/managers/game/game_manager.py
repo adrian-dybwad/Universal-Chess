@@ -331,6 +331,28 @@ class GameManager:
         if self.event_callback is not None:
             self.event_callback(termination)
     
+    @property
+    def game_db_id(self) -> int:
+        """The current game's database id (-1 when no game is persisted yet)."""
+        return self._game_db_id
+
+    @game_db_id.setter
+    def game_db_id(self, value: int) -> None:
+        """Set the game id and mirror it into the broadcast side channel.
+
+        Mirroring here (rather than at each assignment site) keeps the web live
+        board's game id correct through every lifecycle transition -- creation on
+        first move, reset, and abandonment -- from one place, so the live coach
+        panel always addresses the game actually in view. A negative id (no active
+        game) is broadcast as None.
+        """
+        self._game_db_id = value
+        try:
+            from universalchess.services.game_broadcast import set_current_game_id
+            set_current_game_id(value if value is not None and value >= 0 else None)
+        except Exception as e:  # broadcast is best-effort; never break game flow
+            log.debug(f"[GameManager] Could not mirror game_db_id to broadcast: {e}")
+
     def _broadcast_game_state(self) -> None:
         """Broadcast current game state to web clients.
         
@@ -643,7 +665,7 @@ class GameManager:
                         log.error(f"[GameManager.async] Database error: {db_error}")
                         try:
                             self.database_session.rollback()
-                        except Exception:
+                        except Exception:  # noqa: S110  # nosec - best-effort rollback in an error path; the original DB error is already logged
                             pass
                 
                 # Note: _game_state.push_move() in _execute_move already notified observers
@@ -1238,7 +1260,7 @@ class GameManager:
                 self.led.off()
                 if self.correction_mode.is_active:
                     self._exit_correction_mode()
-            except Exception:
+            except Exception:  # noqa: S110  # nosec - best-effort cleanup on teardown; a secondary failure must not mask the original error
                 pass
     
     def _game_thread(self, event_callback, move_callback, key_callback, takeback_callback):
