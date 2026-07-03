@@ -57,6 +57,10 @@ class GameMove(Base):
     black_clock = Column(Integer, nullable=True)
     # Analysis score in centipawns from white's perspective (nullable for existing databases)
     eval_score = Column(Integer, nullable=True)
+    # AI-generated coach statement about this move (nullable; populated lazily the
+    # first time a user reviews the move with a coach service configured). Stored
+    # so a statement is fetched from the AI service at most once per move.
+    coach_statement = Column(Text, nullable=True)
 
     game = relationship("Game")
 
@@ -83,6 +87,11 @@ try:
         if 'eval_score' not in columns:
             conn.execute(text('ALTER TABLE gameMove ADD COLUMN eval_score INTEGER'))
             conn.commit()
-except Exception:
-    # Migration may fail if table doesn't exist yet (first run) - that's ok
+        if 'coach_statement' not in columns:
+            conn.execute(text('ALTER TABLE gameMove ADD COLUMN coach_statement TEXT'))
+            conn.commit()
+except Exception:  # noqa: BLE001, S110  # nosec B110 - startup migration must never crash import
+    # Migration may fail if the table doesn't exist yet (first run) - that's ok;
+    # create_all() has already built the current schema and any missing legacy
+    # column is retried on the next start. Best-effort, intentionally ignored.
     pass
