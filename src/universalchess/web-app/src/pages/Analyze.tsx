@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { ChessBoard } from '../components/ChessBoard';
 import { Analysis } from '../components/Analysis';
+import { CoachPanel } from '../components/CoachPanel';
 import { MoveTable } from '../components/MoveTable';
 import { Card, CardHeader } from '../components/ui';
 import { apiFetch } from '../utils/api';
@@ -109,6 +110,13 @@ export function Analyze() {
             goToMoveRef={goToMoveRef}
           />
           
+          {/* AI Coach statement for the move currently in view */}
+          <CoachPanel
+            gameId={gameId && /^\d+$/.test(gameId) ? Number(gameId) : null}
+            ply={currentMoveIndex}
+            variant="card"
+          />
+
           {/* Move table */}
           <Card className="mt-4">
             <CardHeader title="Moves" />

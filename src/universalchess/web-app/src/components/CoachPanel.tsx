@@ -1,0 +1,149 @@
+import { useEffect, useRef, useState } from 'react';
+import { Card, CardHeader } from './ui';
+import { apiFetch } from '../utils/api';
+import { renderFigurineText } from '../utils/figurineText';
+import './CoachPanel.css';
+
+interface CoachPanelProps {
+  /** Database id of the game whose move is being viewed, or null if unknown. */
+  gameId: number | null;
+  /** 1-based ply currently viewed (0 = start position, before any move). */
+  ply: number;
+  /**
+   * Identity (e.g. UCI) of the move at the viewed ply. Included in the cache key
+   * so that when a live takeback replaces the move occupying a ply, the cached
+   * coaching for the old move is not shown for the new one -- the changed key
+   * misses the cache and refetches. Omit for static games (no takebacks).
+   */
+  moveKey?: string;
+  /** Container chrome: 'box' matches the live board, 'card' matches Analyze. */
+  variant?: 'box' | 'card';
+}
+
+// Wait this long after the viewed move settles before fetching, so scrubbing
+// quickly through moves does not fire (and bill) a request for every ply.
+const DEBOUNCE_MS = 500;
+
+interface CoachResponse {
+  statement: string | null;
+  cached?: boolean;
+  error: string | null;
+}
+
+type Status =
+  | { kind: 'prompt' }          // no move selected (start position)
+  | { kind: 'loading' }
+  | { kind: 'ready'; text: string }
+  | { kind: 'pending' }         // move not yet stored (e.g. latest live move)
+  | { kind: 'error' };
+
+/**
+ * Shows the AI coach's remark for the currently-viewed move.
+ *
+ * A stored statement is shown instantly; an unstored one is generated after the
+ * move settles (debounced) via GET /api/coach/statement/<gameId>/<ply>, then
+ * cached in memory so revisiting a move never refetches. When no coach provider
+ * is configured the panel hides itself entirely (learned from the endpoint's
+ * ``not_configured`` response) so it never nags a board without a coach set up.
+ */
+export function CoachPanel({ gameId, ply, moveKey, variant = 'box' }: CoachPanelProps) {
+  const [status, setStatus] = useState<Status>({ kind: 'prompt' });
+  // undefined until the first response tells us whether a coach is configured;
+  // false hides the panel for the rest of the session.
+  const [configured, setConfigured] = useState<boolean | undefined>(undefined);
+  const [retryToken, setRetryToken] = useState(0);
+
+  // Per-move statement cache, keyed "gameId:ply". Kept in a ref so it survives
+  // re-renders and navigation without retriggering fetches.
+  const cacheRef = useRef<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    if (gameId === null || ply < 1) {
+      setStatus({ kind: 'prompt' });
+      return;
+    }
+
+    const key = `${gameId}:${ply}:${moveKey ?? ''}`;
+    const cached = cacheRef.current.get(key);
+    if (cached !== undefined) {
+      setStatus({ kind: 'ready', text: cached });
+      return;
+    }
+
+    let cancelled = false;
+    setStatus({ kind: 'loading' });
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await apiFetch(`/api/coach/statement/${gameId}/${ply}`);
+        const data: CoachResponse = await res.json().catch(() => ({ statement: null, error: 'bad_json' }));
+        if (cancelled) return;
+
+        if (data.error === 'not_configured') {
+          setConfigured(false);
+          return;
+        }
+        setConfigured(true);
+
+        if (data.statement) {
+          cacheRef.current.set(key, data.statement);
+          setStatus({ kind: 'ready', text: data.statement });
+        } else if (data.error === 'out_of_range') {
+          setStatus({ kind: 'pending' });
+        } else {
+          setStatus({ kind: 'error' });
+        }
+      } catch {
+        if (!cancelled) setStatus({ kind: 'error' });
+      }
+    }, DEBOUNCE_MS);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [gameId, ply, moveKey, retryToken]);
+
+  // Hidden entirely when there is no game to coach or no coach is configured.
+  if (gameId === null || configured === false) {
+    return null;
+  }
+
+  const body = (() => {
+    switch (status.kind) {
+      case 'prompt':
+        return <p className="coach-panel-muted">Select a move to see coaching.</p>;
+      case 'loading':
+        return <p className="coach-panel-muted">Coaching…</p>;
+      case 'ready':
+        return <p className="coach-panel-text">{renderFigurineText(status.text)}</p>;
+      case 'pending':
+        return <p className="coach-panel-muted">Coaching will appear once the move is saved.</p>;
+      case 'error':
+        return (
+          <p className="coach-panel-muted">
+            Coaching unavailable.{' '}
+            <button className="coach-panel-retry" onClick={() => setRetryToken((t) => t + 1)}>
+              Retry
+            </button>
+          </p>
+        );
+    }
+  })();
+
+  if (variant === 'card') {
+    return (
+      <Card className="mt-4">
+        <CardHeader title="Coach" />
+        <div className="coach-panel-body">{body}</div>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="box coach-panel" style={{ marginTop: '1rem' }}>
+      <h3 className="title is-5 box-title">Coach</h3>
+      <div className="coach-panel-body">{body}</div>
+    </div>
+  );
+}

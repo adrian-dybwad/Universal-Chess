@@ -125,6 +125,10 @@ interface FormSettings {
     pegasus_override_brightness: boolean;
     chess_sprites: string;
     notation: string;
+    coach_provider: string;
+    coach_api_key: string;
+    coach_model: string;
+    coach_base_url: string;
   };
   lichess: {
     api_token: string;
@@ -158,6 +162,10 @@ const defaultFormSettings: FormSettings = {
     pegasus_override_brightness: true,
     chess_sprites: 'default',
     notation: 'figurine',
+    coach_provider: 'none',
+    coach_api_key: '',
+    coach_model: '',
+    coach_base_url: '',
   },
   lichess: { api_token: '', range: '' },
   sound: { enabled: true, key_press: true, game_events: true, piece_events: true, errors: true },
@@ -213,6 +221,10 @@ function parseRawSettings(data: SettingsData): FormSettings {
       pegasus_override_brightness: parseConfigBool(data.game?.pegasus_override_brightness, true),
       chess_sprites: data.game?.chess_sprites || 'default',
       notation: data.game?.notation || 'figurine',
+      coach_provider: data.game?.coach_provider || 'none',
+      coach_api_key: data.game?.coach_api_key || '',
+      coach_model: data.game?.coach_model || '',
+      coach_base_url: data.game?.coach_base_url || '',
     },
     lichess: {
       api_token: data.lichess?.api_token || '',
@@ -236,6 +248,31 @@ function parseRawSettings(data: SettingsData): FormSettings {
 }
 
 /**
+ * Where to obtain an API key for each configurable coach provider. Keyed by the
+ * three providers that require a key (the 'none' option has no key), so a new
+ * provider must add its guidance here rather than silently rendering nothing.
+ * ``url``/``linkLabel`` are omitted for 'custom' because the endpoint is
+ * user-supplied and has no single canonical key page.
+ */
+const COACH_API_KEY_GUIDANCE = {
+  openai: {
+    text: 'Create a secret key in your OpenAI account, then paste it here. It looks like "sk-...".',
+    url: 'https://platform.openai.com/api-keys',
+    linkLabel: 'Get an OpenAI API key',
+  },
+  anthropic: {
+    text: 'Create a key in the Anthropic Console, then paste it here. It looks like "sk-ant-...".',
+    url: 'https://console.anthropic.com/settings/keys',
+    linkLabel: 'Get an Anthropic API key',
+  },
+  custom: {
+    text: 'Use the API key issued by your OpenAI-compatible provider. Find it in that provider\u2019s dashboard, usually under an "API keys" section.',
+    url: undefined,
+    linkLabel: undefined,
+  },
+} satisfies Record<string, { text: string; url?: string; linkLabel?: string }>;
+
+/**
  * Settings page with tabbed navigation matching the Flask version.
  */
 export function Settings() {
@@ -256,6 +293,10 @@ export function Settings() {
   const [installedEngines, setInstalledEngines] = useState<EngineDefinition[]>([]);
   const [engineLevels, setEngineLevels] = useState<{ [key: string]: string[] }>({});
   const [spriteSheets, setSpriteSheets] = useState<string[]>(['default']);
+  // Coach model ids fetched live from the provider (via GET /api/coach/models,
+  // which uses the server-stored API key). Backs the Coach Model dropdown so it
+  // always reflects the account's real models; empty until fetched / for custom.
+  const [coachModels, setCoachModels] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
@@ -417,6 +458,38 @@ export function Settings() {
       if (formSettings.game.analysis_engine) await loadEngineLevels(formSettings.game.analysis_engine);
     })();
   }, [formSettings.player1.engine, formSettings.player2.engine, formSettings.game.analysis_engine, loadEngineLevels]);
+
+  // Fetch the live coach model list for the built-in providers. The endpoint uses
+  // the *saved* API key (server-side), so this refetches when the provider changes
+  // or after a save (originalSettings updates then). Custom keeps a free-text
+  // model field, so no fetch there. Failures leave the list empty; the render
+  // falls back to a Default-only dropdown.
+  useEffect(() => {
+    const provider = formSettings.game.coach_provider;
+    if (provider !== 'openai' && provider !== 'anthropic') {
+      setCoachModels([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await apiFetch('/api/coach/models');
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data.models)) {
+          setCoachModels(data.models.map(String));
+        }
+      } catch {
+        if (!cancelled) setCoachModels([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    formSettings.game.coach_provider,
+    originalSettings.game.coach_api_key,
+    originalSettings.game.coach_base_url,
+  ]);
 
   const updateFormSettings = <T extends keyof FormSettings>(
     section: T,
@@ -883,6 +956,23 @@ export function Settings() {
   const timeControlOptions = optionSet('time_control');
   const sleepTimerOptions = optionSet('sleep_timer');
   const notationOptions = optionSet('notation');
+  const coachProviderOptions = optionSet('coach_provider');
+  // Coach Model dropdown options: a Default entry (blank -> provider default),
+  // then the live-fetched models. A currently-saved model that is not in the live
+  // list is appended so it stays selectable rather than being silently reset.
+  const coachModelOptions: MenuOption[] = [
+    { value: '', label: 'Default (recommended)' },
+    ...coachModels.map((modelId) => ({ value: modelId, label: modelId })),
+  ];
+  if (
+    formSettings.game.coach_model &&
+    !coachModels.includes(formSettings.game.coach_model)
+  ) {
+    coachModelOptions.push({
+      value: formSettings.game.coach_model,
+      label: `${formSettings.game.coach_model} (current)`,
+    });
+  }
 
   // Field label/help come from the catalog (the single source of truth). Rich
   // help that needs JSX (links, <code>) is rendered inline at the call site; the
@@ -1154,6 +1244,90 @@ export function Settings() {
                 options={providerOptions(analysisEngineNode)}
                 onChange={(v) => updateFormSettings('game', { analysis_engine: String(v) })}
               />
+            </Card>
+
+            {/* AI Coach: pick a provider, then supply its key/model (+ base URL
+                for a custom OpenAI-compatible endpoint). The key/model rows only
+                appear once a provider is chosen, and the base URL only for the
+                custom provider -- mirroring the catalog visibleWhen gating the
+                board menu uses. The API key is a secret, so it renders in a
+                password field (like the Lichess token). */}
+            <Card className="mb-6">
+              <CardHeader title="AI Coach" />
+              <CatalogField
+                node={fieldById(catalog, 'coach.provider')!}
+                value={formSettings.game.coach_provider}
+                options={coachProviderOptions}
+                onChange={(v) =>
+                  // Reset the model when the provider changes: model ids are
+                  // provider-specific, so carrying one over would send an invalid
+                  // id (404). Blank falls back to the new provider's default.
+                  updateFormSettings('game', { coach_provider: String(v), coach_model: '' })
+                }
+              />
+              {['openai', 'anthropic', 'custom'].includes(formSettings.game.coach_provider) && (
+                <>
+                  <FormRow
+                    label={fieldLabel('coach.api_key')}
+                    help={fieldHelp('coach.api_key')}
+                  >
+                    <Input
+                      type="password"
+                      autoComplete="off"
+                      placeholder="Enter API key"
+                      value={formSettings.game.coach_api_key}
+                      onChange={(e) => updateFormSettings('game', { coach_api_key: e.target.value })}
+                    />
+                    {(() => {
+                      const guidance =
+                        COACH_API_KEY_GUIDANCE[
+                          formSettings.game.coach_provider as keyof typeof COACH_API_KEY_GUIDANCE
+                        ];
+                      if (!guidance) return null;
+                      return (
+                        <p className="text-muted mt-2" style={{ fontSize: '0.85em' }}>
+                          {guidance.text}
+                          {guidance.url && (
+                            <>
+                              {' '}
+                              <a href={guidance.url} target="_blank" rel="noreferrer">
+                                {guidance.linkLabel}
+                              </a>
+                            </>
+                          )}
+                        </p>
+                      );
+                    })()}
+                  </FormRow>
+                  {formSettings.game.coach_provider === 'custom' ? (
+                    // Custom endpoints have no canonical model list, so keep a
+                    // free-text field (deployment-specific ids).
+                    <CatalogField
+                      node={fieldById(catalog, 'coach.model_custom')!}
+                      value={formSettings.game.coach_model}
+                      onChange={(v) => updateFormSettings('game', { coach_model: String(v) })}
+                    />
+                  ) : (
+                    // OpenAI/Anthropic: dropdown fetched live from the provider so
+                    // only valid, currently-available models can be chosen. A saved
+                    // model no longer in the list is kept as an explicit option so
+                    // it is not silently dropped.
+                    <CatalogField
+                      node={fieldById(catalog, 'coach.model')!}
+                      value={formSettings.game.coach_model}
+                      options={coachModelOptions}
+                      onChange={(v) => updateFormSettings('game', { coach_model: String(v) })}
+                    />
+                  )}
+                </>
+              )}
+              {formSettings.game.coach_provider === 'custom' && (
+                <CatalogField
+                  node={fieldById(catalog, 'coach.base_url')!}
+                  value={formSettings.game.coach_base_url}
+                  onChange={(v) => updateFormSettings('game', { coach_base_url: String(v) })}
+                />
+              )}
             </Card>
 
             <Card className="mb-6">

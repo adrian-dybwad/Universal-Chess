@@ -1,38 +1,8 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo } from 'react';
 import { Chess } from 'chess.js';
-import { formatMove, isFigurineGlyph, DEFAULT_NOTATION, type Notation } from '../utils/notation';
+import { formatMove, DEFAULT_NOTATION, type Notation } from '../utils/notation';
+import { renderFigurineText } from '../utils/figurineText';
 import './MoveTable.css';
-
-/**
- * Render a move string, wrapping figurine piece glyphs in a styled span so the
- * pieces show larger and bolder than the surrounding coordinates. Non-figurine
- * notations contain no glyphs, so the string renders unchanged.
- */
-function renderMoveText(text: string): ReactNode {
-  const parts: ReactNode[] = [];
-  let run = '';
-  let glyphKey = 0;
-  const flushRun = () => {
-    if (run) {
-      parts.push(run);
-      run = '';
-    }
-  };
-  for (const ch of text) {
-    if (isFigurineGlyph(ch)) {
-      flushRun();
-      parts.push(
-        <span key={`glyph-${glyphKey++}`} className="figurine-piece">
-          {ch}
-        </span>
-      );
-    } else {
-      run += ch;
-    }
-  }
-  flushRun();
-  return parts;
-}
 
 interface MoveTableProps {
   pgn: string;
@@ -126,7 +96,7 @@ export function MoveTable({ pgn, currentMoveIndex, notation = DEFAULT_NOTATION, 
                 className={`move-cell ${currentMoveIndex === row.whitePly ? 'current-move' : ''}`}
                 onClick={() => handleClick(row.whitePly)}
               >
-                {renderMoveText(row.whiteText)}
+                {renderFigurineText(row.whiteText)}
                 {row.whiteEval !== null && (
                   <span className="move-eval">{formatEval(row.whiteEval)}</span>
                 )}
@@ -135,7 +105,7 @@ export function MoveTable({ pgn, currentMoveIndex, notation = DEFAULT_NOTATION, 
                 className={`move-cell ${row.blackPly && currentMoveIndex === row.blackPly ? 'current-move' : ''}`}
                 onClick={() => row.blackPly && handleClick(row.blackPly)}
               >
-                {row.blackText ? renderMoveText(row.blackText) : ''}
+                {row.blackText ? renderFigurineText(row.blackText) : ''}
                 {row.blackEval !== null && (
                   <span className="move-eval">{formatEval(row.blackEval)}</span>
                 )}

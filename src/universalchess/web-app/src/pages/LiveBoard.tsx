@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { Chess } from 'chess.js';
 import { ChessBoard } from '../components/ChessBoard';
 import { Analysis } from '../components/Analysis';
+import { CoachPanel } from '../components/CoachPanel';
 import { MoveTable } from '../components/MoveTable';
 import { useGameStore } from '../stores/gameStore';
 import { useNotation } from '../hooks/useNotation';
@@ -75,6 +77,24 @@ export function LiveBoard() {
 
   const currentFen = displayFen || gameState?.fen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
   const currentPgn = gameState?.pgn || '';
+
+  // Per-ply move identities (UCI) parsed from the live PGN. Used only to key the
+  // coach cache so a takeback that replaces the move at a ply refetches coaching
+  // for the new move instead of showing the undone move's cached remark. Memoized
+  // off the PGN so it is stable across renders (no flicker while analysis runs).
+  const moveUcis = useMemo<string[]>(() => {
+    if (!currentPgn) return [];
+    try {
+      const chess = new Chess();
+      chess.loadPgn(currentPgn);
+      return chess
+        .history({ verbose: true })
+        .map((m) => `${m.from}${m.to}${m.promotion ?? ''}`);
+    } catch {
+      return [];
+    }
+  }, [currentPgn]);
+  const currentMoveKey = currentMoveIndex >= 1 ? moveUcis[currentMoveIndex - 1] : undefined;
 
   // Game info - using snake_case property names from backend
   const white = gameState?.white || 'White';
@@ -178,6 +198,9 @@ export function LiveBoard() {
             onToggleShowBestMove={toggleShowBestMove}
           />
         </div>
+
+        {/* AI Coach Box - statement for the move currently in view */}
+        <CoachPanel gameId={gameState?.game_id ?? null} ply={currentMoveIndex} moveKey={currentMoveKey} variant="box" />
 
         {/* Move History Box */}
         <div className="box" style={{ marginTop: '1rem' }}>

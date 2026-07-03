@@ -2318,6 +2318,179 @@ def api_apply_settings():
         return _internal_error(e)
 
 
+def _read_coach_config():
+    """Build a CoachConfig from centaur.ini (server-side, key never sent to client).
+
+    Shared by the coach endpoints so they all resolve the same provider/key/model
+    from settings; the API key stays on the server and is only used to call the
+    provider.
+    """
+    from universalchess.board.settings import Settings
+    from universalchess.services.coach import CoachConfig
+
+    return CoachConfig(
+        provider=Settings.read("game", "coach_provider", "none"),
+        api_key=Settings.read("game", "coach_api_key", ""),
+        model=Settings.read("game", "coach_model", ""),
+        base_url=Settings.read("game", "coach_base_url", ""),
+    )
+
+
+def _read_notation():
+    """Return the user's move notation from centaur.ini, normalized.
+
+    Shared by the coach endpoints so the coach refers to a move in the same
+    notation the board/web move list uses. Unknown/empty values fall back to the
+    product default.
+    """
+    from universalchess.board.settings import Settings
+    from universalchess.utils.chess_notation import DEFAULT_NOTATION, normalize_notation
+
+    return normalize_notation(Settings.read("game", "notation", DEFAULT_NOTATION))
+
+
+@app.route("/api/coach/models", methods=["GET"])
+def api_coach_models():
+    """List available AI-coach models for the configured provider.
+
+    Reads the provider/key/base URL from centaur.ini server-side (the API key is
+    never returned to the client) and queries the provider's list-models endpoint
+    so the Coach Model dropdown reflects the account's real, currently available
+    models. On any failure (not configured, network, bad key) returns the curated
+    fallback plus an ``error`` note so the dropdown still renders rather than
+    breaking the settings page.
+
+    Response: ``{"provider": str, "models": [str], "error": str | null}``.
+    """
+    from universalchess.services.coach import (
+        CoachError,
+        fallback_models,
+        list_models,
+    )
+
+    config = _read_coach_config()
+    provider = config.provider
+
+    if not config.is_configured():
+        return jsonify({
+            "provider": provider,
+            "models": fallback_models(provider),
+            "error": "not_configured",
+        })
+
+    try:
+        models = list_models(config)
+        return jsonify({"provider": provider, "models": models, "error": None})
+    except CoachError as exc:
+        # Log the detail server-side; return a fixed token so the response never
+        # leaks internal error text (paths, URLs, library internals) to the client.
+        app.logger.info(f"Coach model list failed for {provider}: {exc}")
+        return jsonify({
+            "provider": provider,
+            "models": fallback_models(provider),
+            "error": "unavailable",
+        })
+
+
+@app.route("/api/coach/statement/<int:gameid>/<int:ply>", methods=["GET"])
+def api_coach_statement(gameid, ply):
+    """Return the AI coach statement for a played ply, generating it if absent.
+
+    Mirrors the board's per-ply coach flow for the web live-board and analysis
+    views: a stored statement is returned instantly (and marked ``cached``);
+    otherwise the move's coaching prompt is reconstructed from the stored rows
+    (position before + move + eval swing), generated via the configured provider,
+    persisted onto the ply, and returned so the same move is never billed twice.
+
+    Response: ``{"statement": str | null, "cached": bool, "error": str | null}``.
+    ``error`` is ``"not_configured"`` when no provider/key is set (the UI then
+    hides the panel), ``"out_of_range"`` for an unknown ply, or ``"unavailable"``
+    on a generation failure (the UI shows a retry); the underlying error detail is
+    logged server-side and never returned, to avoid leaking internals.
+    """
+    from universalchess.managers.game.coach_persistence import (
+        get_coach_statement,
+        get_move_context,
+        get_move_evals,
+        save_coach_statement_if_absent,
+    )
+    from universalchess.managers.game.coach_request_builder import build_coach_request
+    from universalchess.services.coach import CoachError, generate_coach_statement
+
+    stored = get_coach_statement(gameid, ply)
+    if stored:
+        return jsonify({"statement": stored, "cached": True, "error": None})
+
+    config = _read_coach_config()
+    if not config.is_configured():
+        return jsonify({"statement": None, "cached": False, "error": "not_configured"})
+
+    context = get_move_context(gameid, ply)
+    if context is None:
+        return jsonify({"statement": None, "cached": False, "error": "out_of_range"}), 404
+
+    fen_before, move_uci = context
+    eval_before_cp, eval_after_cp = get_move_evals(gameid, ply)
+    coach_request = build_coach_request(
+        fen_before,
+        move_uci,
+        notation=_read_notation(),
+        eval_before_cp=eval_before_cp,
+        eval_after_cp=eval_after_cp,
+    )
+    if coach_request is None:
+        return jsonify({"statement": None, "cached": False, "error": "bad_move"}), 422
+
+    try:
+        statement = generate_coach_statement(config, coach_request)
+    except CoachError as exc:
+        # Log the detail server-side; return a fixed token so the response never
+        # leaks internal error text to the client (the UI just shows a retry).
+        app.logger.info(f"Coach statement failed for game {gameid} ply {ply}: {exc}")
+        return jsonify({"statement": None, "cached": False, "error": "unavailable"}), 502
+
+    # First-writer-wins: if the board (or a concurrent request) already stored a
+    # statement for this move, adopt it so board and web show identical text rather
+    # than two independent generations. Fall back to ours if nothing was stored.
+    canonical = save_coach_statement_if_absent(gameid, ply, statement)
+    return jsonify(
+        {"statement": canonical or statement, "cached": False, "error": None}
+    )
+
+
+@app.route("/api/coach/tip", methods=["POST"])
+def api_coach_tip():
+    """Return a coaching remark for a *hinted* move (a tip), cached in memory.
+
+    Body: ``{"fen": str, "move": str}`` where ``move`` is the recommended move in
+    UCI. Repeating the same tip (same position + move) returns the in-memory
+    statement without re-billing the AI; a new tip is generated. Tips are not
+    persisted (the recommendation is not a stored ply).
+
+    Response: ``{"statement": str | null, "error": str | null}``. ``error`` is
+    ``"not_configured"`` when no provider/key is set, or ``"unavailable"`` when
+    the move can't be coached or the AI call failed.
+    """
+    from universalchess.managers.game import coach_tips
+
+    body = request.get_json(silent=True) or {}
+    fen = (body.get("fen") or "").strip()
+    move_uci = (body.get("move") or "").strip()
+    if not fen or not move_uci:
+        return jsonify({"statement": None, "error": "missing_fen_or_move"}), 400
+
+    config = _read_coach_config()
+    if not config.is_configured():
+        return jsonify({"statement": None, "error": "not_configured"})
+
+    statement = coach_tips.get_tip_statement(
+        config, fen, move_uci, notation=_read_notation()
+    )
+    if statement is None:
+        return jsonify({"statement": None, "error": "unavailable"})
+    return jsonify({"statement": statement, "error": None})
+
+
 @app.route("/api/sprites", methods=["GET"])
 def api_get_sprites():
     """List available chess sprite-sheet identifiers for the Sprites selector.

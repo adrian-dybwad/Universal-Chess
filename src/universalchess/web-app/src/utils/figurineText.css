@@ -1,0 +1,12 @@
+/* Figurine piece glyphs render smaller and thinner than text at the same font
+   size, so enlarge and embolden just the glyph. A small text-stroke thickens the
+   outline glyphs consistently across fonts, where font-weight alone has little
+   effect on symbol characters. Single source of truth shared by the move list and
+   the coach panel (see figurineText.tsx). */
+.figurine-piece {
+  font-size: 1.35em;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: -0.12em;
+  -webkit-text-stroke: 0.4px currentColor;
+}

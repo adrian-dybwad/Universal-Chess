@@ -1,0 +1,24 @@
+.coach-panel-body {
+  min-height: 2.5rem;
+}
+
+.coach-panel-text {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.coach-panel-muted {
+  margin: 0;
+  color: var(--color-text-muted, #888);
+  font-style: italic;
+}
+
+.coach-panel-retry {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-link, #3273dc);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}

@@ -41,18 +41,6 @@
   font-weight: 600;
 }
 
-/* Figurine piece glyphs render smaller and thinner than text at the same font
-   size, so enlarge and embolden just the glyph. A small text-stroke thickens the
-   outline glyphs consistently across fonts, where font-weight alone has little
-   effect on symbol characters. */
-.move-table .figurine-piece {
-  font-size: 1.35em;
-  font-weight: 700;
-  line-height: 1;
-  vertical-align: -0.12em;
-  -webkit-text-stroke: 0.4px currentColor;
-}
-
 .move-table .move-eval {
   font-size: 0.7rem;
   color: var(--color-gray-400, #9ca3af);
