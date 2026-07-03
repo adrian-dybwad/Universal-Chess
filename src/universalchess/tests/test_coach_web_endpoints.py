@@ -199,10 +199,12 @@ def test_tip_returns_statement(client, monkeypatch):
     _configured(monkeypatch)
     seen = {}
 
-    def fake_tip(config, fen, move, *, notation=None):
+    def fake_tip(config, fen, move, *, notation=None, persona=None, persona_key=""):
         seen["fen"] = fen
         seen["move"] = move
         seen["notation"] = notation
+        seen["persona"] = persona
+        seen["persona_key"] = persona_key
         return "Develops toward the center."
 
     monkeypatch.setattr(coach_tips, "get_tip_statement", fake_tip)
@@ -216,7 +218,29 @@ def test_tip_returns_statement(client, monkeypatch):
         "statement": "Develops toward the center.",
         "error": None,
     }
-    assert seen == {"fen": STARTPOS, "move": "e2e4", "notation": "san"}
+    assert seen["fen"] == STARTPOS
+    assert seen["move"] == "e2e4"
+    assert seen["notation"] == "san"
+    # A coach must be resolved for the tip, so a persona (player-move voice) and a
+    # non-empty coach cache token are passed through; a regression that dropped
+    # persona plumbing would leave these unset.
+    assert seen["persona"]
+    assert seen["persona_key"]
+
+
+def test_coaches_lists_roster_and_resolved(client):
+    # The coach card needs the full roster (for the dropdown), the persisted
+    # selection, and the coach that selection resolves to. A regression would leave
+    # the selector empty or hide which coach Auto picked.
+    resp = client.get("/api/coaches")
+    assert resp.status_code == 200
+    body = json.loads(resp.data)
+    ids = [c["id"] for c in body["coaches"]]
+    assert ids == ["dave", "myron", "sofia", "viktor"]  # weakest-first
+    # Default selection is Auto, which must resolve to a concrete coach with info.
+    assert body["selected"] == "auto"
+    assert body["resolved"] is not None
+    assert body["resolved"]["id"] in ids
 
 
 def test_tip_not_configured(client, monkeypatch):

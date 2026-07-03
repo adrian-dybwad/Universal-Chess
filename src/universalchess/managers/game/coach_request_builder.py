@@ -33,6 +33,8 @@ def build_coach_request(
     eval_before_cp: Optional[int] = None,
     eval_after_cp: Optional[int] = None,
     is_potential_move: bool = False,
+    is_opponent_move: bool = False,
+    persona: Optional[str] = None,
 ) -> Optional[CoachRequest]:
     """Return a :class:`CoachRequest` for a move, or None if it can't be built.
 
@@ -47,6 +49,13 @@ def build_coach_request(
         is_potential_move: True when the move is a hint/tip the player is
             considering rather than a played move, so the prompt is framed as
             "why this would be a good move" instead of critiquing a played move.
+        is_opponent_move: True when the played move was the opponent's, so the
+            prompt tells the coach to explain what the opponent is doing/threatening
+            and address the player about it, rather than critiquing it as the
+            player's own move. Should match the move context used to pick the
+            persona so framing and persona agree.
+        persona: Optional coach persona (from the selected coach) carried onto the
+            request so the service composes it into the system prompt.
 
     Returns None when the FEN or move is invalid/illegal for that position, so
     the caller produces no coach statement rather than prompting the AI with a
@@ -84,6 +93,8 @@ def build_coach_request(
         move_number=board.fullmove_number,
         facts=tuple(summarize_move_facts(fen_before, move_uci)),
         is_potential_move=is_potential_move,
+        is_opponent_move=is_opponent_move,
+        persona=persona,
     )
 
 

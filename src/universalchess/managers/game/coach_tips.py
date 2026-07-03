@@ -33,7 +33,7 @@ from universalchess.utils.chess_notation import DEFAULT_NOTATION
 from .coach_request_builder import build_coach_request
 
 _lock = threading.Lock()
-_cache: Dict[Tuple[str, str, str, str], str] = {}
+_cache: Dict[Tuple[str, str, str, str, str], str] = {}
 
 
 def _signature(config: CoachConfig) -> str:
@@ -48,6 +48,8 @@ def get_tip_statement(
     move_uci: str,
     *,
     notation: str = DEFAULT_NOTATION,
+    persona: Optional[str] = None,
+    persona_key: str = "",
     generate_fn: Optional[Callable[[CoachConfig, object], str]] = None,
     http_post: Optional[Callable] = None,
 ) -> Optional[str]:
@@ -61,6 +63,11 @@ def get_tip_statement(
     :func:`build_coach_request`) and is part of the cache key so switching notation
     regenerates rather than serving a differently-notated statement.
 
+    ``persona`` is the selected coach's persona for a hint (a player-move context);
+    ``persona_key`` is a stable token identifying that coach (e.g. its id) and is
+    part of the cache key so switching coach regenerates rather than serving a
+    statement produced in another coach's voice.
+
     Returns None (and caches nothing) when the coach is not configured, the
     position/move can't be built into a request, or the AI call fails -- the
     caller then shows the plain hint without a coaching remark rather than an
@@ -69,7 +76,7 @@ def get_tip_statement(
     if not config.is_configured():
         return None
 
-    key = (_signature(config), fen, move_uci, notation)
+    key = (_signature(config), fen, move_uci, notation, persona_key)
     with _lock:
         cached = _cache.get(key)
     if cached is not None:
@@ -79,7 +86,7 @@ def get_tip_statement(
     # potential move: the prompt then explains why the move would be good rather
     # than critiquing it as if it were already played.
     request = build_coach_request(
-        fen, move_uci, notation=notation, is_potential_move=True
+        fen, move_uci, notation=notation, is_potential_move=True, persona=persona
     )
     if request is None:
         return None

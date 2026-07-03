@@ -1007,9 +1007,14 @@ GAME_SETTINGS_DEFAULTS = {
     'show_graph': True,
     'chess_sprites': 'default',
     'coach_provider': 'none',
-    'coach_api_key': '',
-    'coach_model': '',
-    'coach_base_url': '',
+    'coach_id': 'auto',
+    'coach_api_key_openai': '',
+    'coach_model_openai': '',
+    'coach_api_key_anthropic': '',
+    'coach_model_anthropic': '',
+    'coach_api_key_custom': '',
+    'coach_model_custom': '',
+    'coach_base_url_custom': '',
 }
 
 # Global settings instance (populated from centaur.ini on startup)
@@ -2640,6 +2645,15 @@ def _handle_settings(initial_selection: str = None):
                 ctx.clear()
                 app_state = AppState.MENU
                 return game_result
+
+        elif result == "Agents":
+            ctx.enter_menu("Agents", 0)
+            agents_result = _handle_agents_menu()
+            ctx.leave_menu()  # Pop Agents, restore to Settings level
+            if is_break_result(agents_result):
+                ctx.clear()
+                app_state = AppState.MENU
+                return agents_result
         
         elif result == "Positions":
             ctx.enter_menu("Positions", 0)
@@ -2812,7 +2826,13 @@ def _prompt_game_text(key: str, title: str, max_length: int = 200) -> None:
 
 
 def _coach_config():
-    """Build a CoachConfig from the current game settings."""
+    """Build a CoachConfig from the current game settings.
+
+    ``enabled`` reflects the Coach selector's master switch: when the coach is set
+    to "Disabled" (coach id ``off``) coaching is off regardless of how well the
+    agent is configured, so is_configured() gates all coach network calls.
+    """
+    from universalchess.coaches import registry as coaches
     from universalchess.services.coach import CoachConfig
 
     g = _game_settings_dict()
@@ -2821,6 +2841,101 @@ def _coach_config():
         api_key=g.get("coach_api_key", ""),
         model=g.get("coach_model", ""),
         base_url=g.get("coach_base_url", ""),
+        enabled=g.get("coach_id", coaches.AUTO) != coaches.OFF,
+    )
+
+
+def _agent_is_configured(agent_id, game):
+    """True when ``agent_id`` has an API key and every required setting.
+
+    Uses the agent's own :meth:`Agent.is_configured` against the credentials stored
+    under its namespaced ``coach_*_<id>`` keys, so the "listable" rule matches the
+    rule that gates coaching rather than being duplicated here.
+    """
+    from universalchess.agents import registry as agents_reg
+    from universalchess.agents.base import AgentConfig
+    from universalchess.managers.game import coach_settings
+
+    agent = agents_reg.get_agent(agent_id)
+    if agent is None:
+        return False
+    ns = coach_settings.namespaced_key
+    cfg = AgentConfig(
+        api_key=game.get(ns(coach_settings.API_KEY_BASE, agent_id), ""),
+        model=game.get(ns(coach_settings.MODEL_BASE, agent_id), ""),
+        base_url=game.get(ns(coach_settings.BASE_URL_BASE, agent_id), ""),
+    )
+    return agent.is_configured(cfg)
+
+
+def _configured_agents():
+    """Return list_agents() info for agents that are fully configured.
+
+    Backs the Game > Agent selector: an agent is offered only once it can actually
+    power the coach (API key present, plus base URL for agents that require one).
+    """
+    from universalchess.agents import registry as agents_reg
+
+    game = _game_settings_dict()
+    return [
+        info for info in agents_reg.list_agents() if _agent_is_configured(info["id"], game)
+    ]
+
+
+def _resolved_coach():
+    """Resolve the active coach from the coach_id setting and the opponent's Elo.
+
+    Returns the Coach instance (built-in or user-provided), or None when no
+    coaches are registered. Used both to supply the persona for prompts and to
+    show which coach is active.
+    """
+    from universalchess.coaches import registry as coaches
+
+    p1 = _player1_settings_dict()
+    p2 = _player2_settings_dict()
+    coach_id = _game_settings_dict().get("coach_id", coaches.AUTO)
+    return coaches.resolve_coach(coach_id, coaches.resolve_opponent_elo(p1, p2))
+
+
+def _coach_selected_label() -> str:
+    """Concise label for the active coach, for the board Coach row.
+
+    For Auto, shows the Elo-resolved coach in parentheses (e.g. "Auto (Myron)");
+    for an explicit selection, the coach's name. Falls back to the raw setting when
+    no coach can be resolved (e.g. no coaches registered).
+    """
+    from universalchess.coaches import registry as coaches
+
+    coach_id = _game_settings_dict().get("coach_id", coaches.AUTO)
+    if coach_id == coaches.OFF:
+        return "Disabled"
+    coach = _resolved_coach()
+    if coach is None:
+        return "Auto" if coach_id == coaches.AUTO else coach_id
+    if coach_id == coaches.AUTO:
+        return f"Auto ({coach.name})"
+    return coach.name
+
+
+def _coach_persona(side_to_move: str, *, is_potential_move: bool):
+    """Resolve the coaching persona for a move in the current game.
+
+    Selects the coach (explicit or Elo-matched) and its persona for the move's
+    context (the human's own move/hint vs. the opponent's move). Returns None when
+    no coach is available, in which case the service falls back to its default
+    voice.
+    """
+    from universalchess.coaches import registry as coaches
+
+    p1 = _player1_settings_dict()
+    p2 = _player2_settings_dict()
+    coach_id = _game_settings_dict().get("coach_id", coaches.AUTO)
+    return coaches.resolve_persona(
+        coach_id,
+        coaches.resolve_opponent_elo(p1, p2),
+        human_color=coaches.resolve_human_color(p1, p2),
+        is_potential_move=is_potential_move,
+        side_to_move=side_to_move,
     )
 
 
@@ -2835,6 +2950,8 @@ def _build_coach_request(ply: int):
     the AI call.
     """
     import chess
+    from universalchess.coaches import registry as coaches
+    from universalchess.coaches.base import MoveContext
     from universalchess.managers.game.move_facts import summarize_move_facts
     from universalchess.services.coach import CoachRequest
     from universalchess.state import get_chess_game
@@ -2860,12 +2977,24 @@ def _build_coach_request(ply: int):
     except (ValueError, AssertionError):
         move_text = move_uci
     side_to_move = "white" if position.turn == chess.WHITE else "black"
+    # Whose move this is decides both the persona and the prompt framing. Derive
+    # both from the same move-context rule so they can never disagree (persona
+    # coaching the opponent while the prompt addresses the player as the mover).
+    human_color = coaches.resolve_human_color(
+        _player1_settings_dict(), _player2_settings_dict()
+    )
+    is_opponent_move = (
+        coaches.select_move_context(False, side_to_move, human_color)
+        is MoveContext.OPPONENT_MOVE
+    )
     return CoachRequest(
         fen_before=fen_before,
         move_text=move_text,
         side_to_move=side_to_move,
         move_number=position.fullmove_number,
         facts=tuple(summarize_move_facts(fen_before, move_uci)),
+        is_opponent_move=is_opponent_move,
+        persona=_coach_persona(side_to_move, is_potential_move=False),
     )
 
 
@@ -2937,10 +3066,23 @@ def _show_hint_coach_async(display_manager, fen_before: str, move_uci: str) -> N
         return
 
     notation = _game_settings_dict().get("notation", "figurine")
+    # A hint is a move the player is considering, so it always uses the player-move
+    # persona. Include the coach id in the cache key so switching coach regenerates.
+    import chess
+
+    side_to_move = "white" if chess.Board(fen_before).turn == chess.WHITE else "black"
+    persona = _coach_persona(side_to_move, is_potential_move=True)
+    resolved = _resolved_coach()
+    persona_key = resolved.id if resolved is not None else ""
 
     def job() -> None:
         statement = coach_tips.get_tip_statement(
-            config, fen_before, move_uci, notation=notation
+            config,
+            fen_before,
+            move_uci,
+            notation=notation,
+            persona=persona,
+            persona_key=persona_key,
         )
         if statement:
             display_manager.show_hint_coach(statement)
@@ -3430,7 +3572,9 @@ def _build_game_menu_context():
     backs the ``settings.game`` container, which groups exactly the settings the
     web shows under its Game tab (Time Control, Live Analysis, Analysis Engine).
     The Analysis Engine row is gated on ``mode`` via the catalog's ``visibleWhen``
-    so it only appears when Live Analysis is enabled.
+    so it only appears when Live Analysis is enabled. AI coach/agent settings live
+    under the sibling ``settings.agents`` container (see
+    :func:`_build_agents_menu_context`).
     """
     ctx = _build_game_context()
 
@@ -3440,41 +3584,195 @@ def _build_game_menu_context():
 
         return [MenuRow(key=engine, label=engine, icon="engine") for engine in _get_installed_engines()]
 
-    def coach_models_rows():
-        """Rows for the Coach Model select: a Default entry + the live model list.
+    def coaches_rows():
+        """Rows for the Coach select: Disabled + Auto + every registered coach.
 
-        The model list is fetched from the provider (cached, refreshed on each new
-        game); the curated fallback backs it until the first successful fetch. The
-        leading Default row maps to a blank ``coach_model`` (provider default).
+        Disabled (key ``off``) is the coaching master switch -- it turns coaching
+        off regardless of the chosen agent. Auto (key ``auto``) picks a coach by
+        the opponent's Elo; the remaining rows are the built-in and user coaches
+        (weakest first), labelled with name and target Elo to keep the e-paper row
+        concise.
         """
-        from universalchess.managers.game.coach_models import get_models_or_fallback
+        from universalchess.coaches import registry as coaches
         from universalchess.menus.engine import MenuRow
 
-        rows = [MenuRow(key="", label="Default", icon="settings")]
+        rows = [
+            MenuRow(key=coaches.OFF, label="Disabled", icon="settings"),
+            MenuRow(key=coaches.AUTO, label="Auto", icon="engine"),
+        ]
         rows.extend(
-            MenuRow(key=model_id, label=model_id, icon="engine")
-            for model_id in get_models_or_fallback(_coach_config())
+            MenuRow(key=info["id"], label=f"{info['name']} ({info['elo']})", icon="engine")
+            for info in coaches.list_coaches()
         )
+        return rows
+
+    def agents_choices():
+        """Rows for the Agent selector: every *fully-configured* registered agent.
+
+        Only agents that have an API key and every required setting (a base URL for
+        agents that need one) are listed, since an unconfigured agent cannot power
+        the coach. There is no Disabled entry here: disabling coaching lives on the
+        Coach selector (Coach = "Disabled"), and this row is greyed out while the
+        coach is disabled. A user-dropped agent module appears automatically once
+        configured.
+        """
+        from universalchess.menus.engine import MenuRow
+
+        rows = []
+        for info in _configured_agents():
+            rows.append(MenuRow(key=info["id"], label=info["name"], icon="agents"))
         return rows
 
     _register_analysis_store(ctx)
     ctx.register_provider("installed_engines", installed_engines)
-    ctx.register_provider("coach_models", coach_models_rows)
+    ctx.register_provider("coaches", coaches_rows)
+    ctx.register_provider("agents_choices", agents_choices)
     ctx.register_value("time_control", lambda node: _time_control_label())
-    # The API key is a secret: its board label shows only whether one is set,
-    # never the key itself (the web renders it in a password input).
+    # Show which coach persona is active: for Auto, the Elo-resolved coach in
+    # parentheses; for an explicit pick, that coach's name (falling back to the id).
+    ctx.register_value("coach_selected_label", lambda node: _coach_selected_label())
+    return ctx
+
+
+def _build_agents_menu_context():
+    """Build the BoardMenuContext for the data-driven Agents submenu.
+
+    Backs the ``settings.agents`` container, which lists every registered AI agent
+    (built-in + user modules). Selecting an agent opens its detail submenu
+    (``agents.detail``) to configure that agent's API key, model, and -- for agents
+    that require one -- base URL, each stored under the agent's own namespaced
+    ``coach_*_<id>`` keys. The coach persona and the choice of which agent powers
+    coaching live under the Game submenu. Mirrors the web Agents tab (which lists
+    all agents and their settings).
+
+    A small transient ``agent_edit`` store carries which agent the detail screen is
+    editing (set when a list row is chosen); its metadata drives the detail rows'
+    visibility (free-text vs. live-select model; base-URL presence) and its
+    api_key/model/base_url keys read/write that agent's namespaced game values.
+    """
+    from universalchess.agents import registry as agents_reg
+    from universalchess.managers.game import coach_settings
+    from universalchess.menus.engine import MenuRow
+
+    ctx = _build_game_context()
+
+    # The agent whose settings the detail screen edits. Populated by agent_select;
+    # metadata fields gate the detail rows, credential fields proxy the namespaced
+    # game values for the selected agent.
+    editing = {"id": "", "name": "", "model_kind": "model", "requires_base_url": False}
+
+    def _agent_value(base):
+        """Current stored value of a base field for the agent being edited."""
+        if not editing["id"]:
+            return ""
+        key = coach_settings.namespaced_key(base, editing["id"])
+        return _game_settings_dict().get(key, "")
+
+    def agent_edit_get(key):
+        if key in editing:
+            return editing[key]
+        if key == "api_key":
+            return _agent_value(coach_settings.API_KEY_BASE)
+        if key == "model":
+            return _agent_value(coach_settings.MODEL_BASE)
+        if key == "base_url":
+            return _agent_value(coach_settings.BASE_URL_BASE)
+        raise NotImplementedError(f"agent_edit store has no key {key!r}")
+
+    def agent_edit_set(key, value):
+        # The model select persists through this store to the agent's namespaced
+        # slot; api_key/base_url are edited via the text actions below. Metadata
+        # keys are set in place (used only for the detail's visibility gates).
+        base = {
+            "api_key": coach_settings.API_KEY_BASE,
+            "model": coach_settings.MODEL_BASE,
+            "base_url": coach_settings.BASE_URL_BASE,
+        }.get(key)
+        if base is not None:
+            if editing["id"]:
+                _save_game_setting(coach_settings.namespaced_key(base, editing["id"]), value)
+            return
+        editing[key] = value
+
+    ctx.register_store("agent_edit", agent_edit_get, agent_edit_set)
+
+    def agents_rows():
+        """Rows for the Agents list: every registered agent + whether it has a key."""
+        rows = []
+        game = _game_settings_dict()
+        for info in agents_reg.list_agents():
+            has_key = bool(
+                game.get(coach_settings.namespaced_key(coach_settings.API_KEY_BASE, info["id"]), "")
+            )
+            rows.append(
+                MenuRow(
+                    key=info["id"],
+                    label=f"{info['name']}\n{'Set' if has_key else 'Not set'}",
+                    icon="agents",
+                )
+            )
+        return rows
+
+    def agent_models_rows():
+        """Rows for the selected agent's Model select: Default + its live model list."""
+        from universalchess.managers.game.coach_models import get_models_or_fallback
+        from universalchess.services.coach import CoachConfig
+
+        config = CoachConfig(
+            provider=editing["id"],
+            api_key=_agent_value(coach_settings.API_KEY_BASE),
+            model=_agent_value(coach_settings.MODEL_BASE),
+            base_url=_agent_value(coach_settings.BASE_URL_BASE),
+        )
+        rows = [MenuRow(key="", label="Default", icon="settings")]
+        rows.extend(
+            MenuRow(key=model_id, label=model_id, icon="engine")
+            for model_id in get_models_or_fallback(config)
+        )
+        return rows
+
+    def agent_select(agent_id):
+        """Open the detail screen for the chosen agent, or ignore an unknown id."""
+        from universalchess.menus.board_context import run_engine_menu
+
+        agent = agents_reg.get_agent(agent_id)
+        if agent is None:
+            return None
+        editing["id"] = agent_id
+        editing["name"] = agent.name
+        editing["model_kind"] = agent.model_field_kind
+        editing["requires_base_url"] = agent.requires_base_url
+        return _signal_from(run_engine_menu("agents.detail", ctx, _menu_manager))
+
+    def _prompt_agent_text(base, title, max_length=200):
+        """Edit a namespaced credential field for the agent being edited."""
+        if editing["id"]:
+            _prompt_game_text(
+                coach_settings.namespaced_key(base, editing["id"]), title, max_length=max_length
+            )
+        return None
+
+    ctx.register_provider("agents", agents_rows)
+    ctx.register_provider("agent_models", agent_models_rows)
+    # The API key is a secret: its board label shows only whether one is set, never
+    # the key itself (the web renders it in a password input).
     ctx.register_value(
-        "coach_key_status",
-        lambda node: "Set" if _game_settings_dict().get("coach_api_key") else "Not set",
+        "agent_key_status",
+        lambda node: "Set" if _agent_value(coach_settings.API_KEY_BASE) else "Not set",
     )
-    # Blank model reads as "Default" (the provider default) rather than an empty line.
+    # Blank model reads as "Default" (the agent default) rather than an empty line.
     ctx.register_value(
-        "coach_model_label",
-        lambda node: _game_settings_dict().get("coach_model") or "Default",
+        "agent_model_label",
+        lambda node: _agent_value(coach_settings.MODEL_BASE) or "Default",
     )
-    ctx.register_action("edit_coach_api_key", lambda: _prompt_game_text("coach_api_key", "Coach API Key"))
-    ctx.register_action("edit_coach_model", lambda: _prompt_game_text("coach_model", "Coach Model", max_length=60))
-    ctx.register_action("edit_coach_base_url", lambda: _prompt_game_text("coach_base_url", "Coach Base URL"))
+    ctx.register_value(
+        "agent_base_url_label",
+        lambda node: _agent_value(coach_settings.BASE_URL_BASE) or "Not set",
+    )
+    ctx.register_action("agent_select", agent_select)
+    ctx.register_action("edit_agent_api_key", lambda: _prompt_agent_text(coach_settings.API_KEY_BASE, "API Key"))
+    ctx.register_action("edit_agent_model", lambda: _prompt_agent_text(coach_settings.MODEL_BASE, "Model", max_length=60))
+    ctx.register_action("edit_agent_base_url", lambda: _prompt_agent_text(coach_settings.BASE_URL_BASE, "Base URL"))
     return ctx
 
 
@@ -3490,6 +3788,22 @@ def _handle_game_menu():
     from universalchess.menus.board_context import run_engine_menu
 
     return run_engine_menu("settings.game", _build_game_menu_context(), _menu_manager)
+
+
+def _handle_agents_menu():
+    """Handle the Agents submenu (AI agent/service configuration), engine-driven.
+
+    Structure and labels come from the ``settings.agents`` catalog container, which
+    lists every registered agent; the board adapter supplies the ``agents`` list
+    provider, the transient ``agent_edit`` selection store, the per-agent model
+    provider, the key/model/base-URL labels, and the edit actions. Selecting an
+    agent opens its ``agents.detail`` submenu. The coach persona and the choice of
+    which agent powers coaching live under the Game submenu. Mirrors the web Agents
+    tab, which lists all agents and their settings.
+    """
+    from universalchess.menus.board_context import run_engine_menu
+
+    return run_engine_menu("settings.agents", _build_agents_menu_context(), _menu_manager)
 
 
 def _update_status_state_and_label():

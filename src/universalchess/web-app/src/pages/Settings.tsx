@@ -25,6 +25,7 @@ interface SettingsData {
 type SettingsTab =
   | 'players'
   | 'game'
+  | 'agents'
   | 'display'
   | 'sound'
   | 'connectivity'
@@ -72,7 +73,7 @@ interface CentaurImportStatus {
 // Connectivity sits before System, matching the board's Settings submenu order;
 // its 'accounts' subsection is rendered inside the Connectivity panel rather
 // than as its own tab.
-const SETTINGS_TAB_IDS: SettingsTab[] = ['players', 'game', 'display', 'sound', 'connectivity', 'engines', 'system'];
+const SETTINGS_TAB_IDS: SettingsTab[] = ['players', 'game', 'agents', 'display', 'sound', 'connectivity', 'engines', 'system'];
 
 // Web-only Settings tabs, appended beneath the catalog-backed sections. Support
 // and Licenses are informational web pages, not board menu sections, so they are
@@ -126,9 +127,7 @@ interface FormSettings {
     chess_sprites: string;
     notation: string;
     coach_provider: string;
-    coach_api_key: string;
-    coach_model: string;
-    coach_base_url: string;
+    coach_id: string;
   };
   lichess: {
     api_token: string;
@@ -163,9 +162,7 @@ const defaultFormSettings: FormSettings = {
     chess_sprites: 'default',
     notation: 'figurine',
     coach_provider: 'none',
-    coach_api_key: '',
-    coach_model: '',
-    coach_base_url: '',
+    coach_id: 'auto',
   },
   lichess: { api_token: '', range: '' },
   sound: { enabled: true, key_press: true, game_events: true, piece_events: true, errors: true },
@@ -222,9 +219,7 @@ function parseRawSettings(data: SettingsData): FormSettings {
       chess_sprites: data.game?.chess_sprites || 'default',
       notation: data.game?.notation || 'figurine',
       coach_provider: data.game?.coach_provider || 'none',
-      coach_api_key: data.game?.coach_api_key || '',
-      coach_model: data.game?.coach_model || '',
-      coach_base_url: data.game?.coach_base_url || '',
+      coach_id: data.game?.coach_id || 'auto',
     },
     lichess: {
       api_token: data.lichess?.api_token || '',
@@ -248,11 +243,11 @@ function parseRawSettings(data: SettingsData): FormSettings {
 }
 
 /**
- * Where to obtain an API key for each configurable coach provider. Keyed by the
- * three providers that require a key (the 'none' option has no key), so a new
- * provider must add its guidance here rather than silently rendering nothing.
- * ``url``/``linkLabel`` are omitted for 'custom' because the endpoint is
- * user-supplied and has no single canonical key page.
+ * Where to obtain an API key for the built-in agents. Keyed by agent id; a user
+ * agent without an entry simply renders no extra guidance (the API-key field and
+ * its "set/unset" status still show). ``url``/``linkLabel`` are omitted for
+ * 'custom' because the endpoint is user-supplied and has no single canonical key
+ * page.
  */
 const COACH_API_KEY_GUIDANCE = {
   openai: {
@@ -271,6 +266,66 @@ const COACH_API_KEY_GUIDANCE = {
     linkLabel: undefined,
   },
 } satisfies Record<string, { text: string; url?: string; linkLabel?: string }>;
+
+/**
+ * Display metadata for a selectable coach, as returned by GET /api/coaches.
+ * Mirrors Coach.get_info() on the backend.
+ */
+interface CoachInfo {
+  id: string;
+  name: string;
+  elo: number;
+  character_type: string;
+  description: string;
+}
+
+/**
+ * A configurable field an agent exposes, as returned in AgentInfo.fields. Mirrors
+ * AgentSettingField on the backend. ``kind`` drives how the web renders the row:
+ * 'secret' -> password input, 'model' -> live model dropdown, 'model_text' ->
+ * free-text model, 'text' -> plain text (e.g. base URL).
+ */
+interface AgentSettingField {
+  key_base: string;
+  label: string;
+  kind: string;
+}
+
+/**
+ * Display/config metadata for a registered AI agent, as returned by GET
+ * /api/agents. Mirrors Agent.get_info() plus the per-agent stored config: the API
+ * key is never sent (only ``api_key_set``), while the non-secret model and base
+ * URL are included so the Agents tab can show the current configuration.
+ */
+interface AgentInfo {
+  id: string;
+  name: string;
+  description: string;
+  requires_base_url: boolean;
+  default_model: string;
+  supports_model_listing: boolean;
+  fields: AgentSettingField[];
+  api_key_set: boolean;
+  // True when the agent has its API key plus every required setting (base URL for
+  // agents that need one), so it can power the coach. Drives which agents the Game
+  // > Agent selector offers.
+  configured: boolean;
+  model: string;
+  base_url: string;
+}
+
+/**
+ * Per-agent form edits held in the Agents tab. ``api_key`` starts blank (the
+ * stored key is never fetched); a blank key on save means "leave unchanged", so
+ * ``api_key_dirty`` records whether the user actually typed a new key. ``model``
+ * and ``base_url`` are seeded from the stored config and always saved.
+ */
+interface AgentEdit {
+  api_key: string;
+  api_key_dirty: boolean;
+  model: string;
+  base_url: string;
+}
 
 /**
  * Settings page with tabbed navigation matching the Flask version.
@@ -293,10 +348,23 @@ export function Settings() {
   const [installedEngines, setInstalledEngines] = useState<EngineDefinition[]>([]);
   const [engineLevels, setEngineLevels] = useState<{ [key: string]: string[] }>({});
   const [spriteSheets, setSpriteSheets] = useState<string[]>(['default']);
-  // Coach model ids fetched live from the provider (via GET /api/coach/models,
-  // which uses the server-stored API key). Backs the Coach Model dropdown so it
-  // always reflects the account's real models; empty until fetched / for custom.
-  const [coachModels, setCoachModels] = useState<string[]>([]);
+  // Every registered AI agent (built-in + user modules) from GET /api/agents,
+  // with its non-secret config (model/base URL) and whether a key is stored. Backs
+  // the Agents tab list and the Game tab's agent selector.
+  const [agents, setAgents] = useState<AgentInfo[]>([]);
+  // Per-agent form edits (API key / model / base URL), keyed by agent id. Held
+  // separately from formSettings because the keys are namespaced per agent
+  // (coach_*_<id>) and the API key is write-only (never fetched back).
+  const [agentEdits, setAgentEdits] = useState<Record<string, AgentEdit>>({});
+  // Live model ids per agent (via GET /api/coach/models?agent=<id>, using each
+  // agent's server-stored key). Backs each agent's Model dropdown; empty until
+  // fetched or for agents that use a free-text model.
+  const [agentModels, setAgentModels] = useState<Record<string, string[]>>({});
+  // Selectable coaches (persona) from the coaches framework, and the coach the
+  // current selection resolves to (so "Auto" can show which coach it picked).
+  // Fetched from GET /api/coaches. Independent of the AI provider/key.
+  const [coaches, setCoaches] = useState<CoachInfo[]>([]);
+  const [resolvedCoach, setResolvedCoach] = useState<CoachInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
@@ -459,36 +527,109 @@ export function Settings() {
     })();
   }, [formSettings.player1.engine, formSettings.player2.engine, formSettings.game.analysis_engine, loadEngineLevels]);
 
-  // Fetch the live coach model list for the built-in providers. The endpoint uses
-  // the *saved* API key (server-side), so this refetches when the provider changes
-  // or after a save (originalSettings updates then). Custom keeps a free-text
-  // model field, so no fetch there. Failures leave the list empty; the render
-  // falls back to a Default-only dropdown.
+  // Fetch every registered agent and seed the per-agent edit forms. Refetches
+  // after a save (originalSettings updates) so a just-saved key flips to "set" and
+  // the model dropdowns reload against the new key. The API key edit starts blank
+  // (write-only); model/base URL are seeded from the stored config. Failures leave
+  // the list empty; the Agents tab then shows nothing to configure.
   useEffect(() => {
-    const provider = formSettings.game.coach_provider;
-    if (provider !== 'openai' && provider !== 'anthropic') {
-      setCoachModels([]);
-      return;
-    }
     let cancelled = false;
     void (async () => {
       try {
-        const res = await apiFetch('/api/coach/models');
+        const res = await apiFetch('/api/agents');
         const data = await res.json();
-        if (!cancelled && Array.isArray(data.models)) {
-          setCoachModels(data.models.map(String));
-        }
+        if (cancelled) return;
+        const list: AgentInfo[] = Array.isArray(data.agents) ? (data.agents as AgentInfo[]) : [];
+        setAgents(list);
+        setAgentEdits((prev) => {
+          const next: Record<string, AgentEdit> = {};
+          for (const agent of list) {
+            // Preserve an in-flight (unsaved) key edit across a refetch so a
+            // background settings_changed does not wipe what the user is typing.
+            const priorDirty = prev[agent.id]?.api_key_dirty ?? false;
+            next[agent.id] = {
+              api_key: priorDirty ? prev[agent.id].api_key : '',
+              api_key_dirty: priorDirty,
+              model: agent.model,
+              base_url: agent.base_url,
+            };
+          }
+          return next;
+        });
       } catch {
-        if (!cancelled) setCoachModels([]);
+        if (!cancelled) {
+          setAgents([]);
+          setAgentEdits({});
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Refetch after a save. coach_provider is included so switching the active
+    // agent (which can be saved) keeps the list's "active" marker in sync.
+  }, [originalSettings.game.coach_provider]);
+
+  // Fetch the live model list for each agent that supports listing and has a key
+  // stored. The endpoint uses each agent's *saved* key (server-side), so this runs
+  // when the agent set/keys change (after a save). Agents without a key or that use
+  // a free-text model get no fetch; their dropdown falls back to Default-only.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const results: Record<string, string[]> = {};
+      await Promise.all(
+        agents
+          .filter((a) => a.supports_model_listing && a.api_key_set)
+          .map(async (agent) => {
+            try {
+              const res = await apiFetch(`/api/coach/models?agent=${encodeURIComponent(agent.id)}`);
+              const data = await res.json();
+              if (Array.isArray(data.models)) {
+                results[agent.id] = data.models.map(String);
+              }
+            } catch {
+              // Leave this agent's list empty; the dropdown still renders Default.
+            }
+          })
+      );
+      if (!cancelled) setAgentModels(results);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [agents]);
+
+  // Fetch the selectable coaches and the coach the current selection resolves to.
+  // The resolved coach depends on the *saved* selection and player Elos (server
+  // side), so refetch after a save (originalSettings updates) and when the saved
+  // player Elos change. Failures leave the list empty; the render falls back to
+  // an Auto-only selector.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await apiFetch('/api/coaches');
+        const data = await res.json();
+        if (cancelled) return;
+        setCoaches(Array.isArray(data.coaches) ? (data.coaches as CoachInfo[]) : []);
+        setResolvedCoach((data.resolved as CoachInfo | null) ?? null);
+      } catch {
+        if (!cancelled) {
+          setCoaches([]);
+          setResolvedCoach(null);
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
   }, [
-    formSettings.game.coach_provider,
-    originalSettings.game.coach_api_key,
-    originalSettings.game.coach_base_url,
+    originalSettings.game.coach_id,
+    originalSettings.player1.elo,
+    originalSettings.player2.elo,
+    originalSettings.player1.type,
+    originalSettings.player2.type,
   ]);
 
   const updateFormSettings = <T extends keyof FormSettings>(
@@ -502,6 +643,42 @@ export function Settings() {
     setHasChanges(true);
   };
 
+  // Update one agent's edit form and mark the page dirty. Editing the API key sets
+  // its dirty flag so the save knows a blank value means "leave unchanged" versus
+  // a real (typed) new key.
+  const updateAgentEdit = (agentId: string, updates: Partial<AgentEdit>) => {
+    setAgentEdits((prev) => {
+      const base: AgentEdit = prev[agentId] ?? {
+        api_key: '',
+        api_key_dirty: false,
+        model: '',
+        base_url: '',
+      };
+      return { ...prev, [agentId]: { ...base, ...updates } };
+    });
+    setHasChanges(true);
+  };
+
+  // Build the namespaced per-agent game keys to persist. Model/base URL are always
+  // written (for agents that use them); the API key is written only when the user
+  // typed a new one (blank = leave the stored secret unchanged, since it is never
+  // fetched back). Mirrors coach_settings.namespaced_key(base, id) on the backend.
+  const buildAgentKeyWrites = (): Record<string, string> => {
+    const writes: Record<string, string> = {};
+    for (const agent of agents) {
+      const edit = agentEdits[agent.id];
+      if (!edit) continue;
+      writes[`coach_model_${agent.id}`] = edit.model;
+      if (agent.requires_base_url) {
+        writes[`coach_base_url_${agent.id}`] = edit.base_url;
+      }
+      if (edit.api_key_dirty && edit.api_key !== '') {
+        writes[`coach_api_key_${agent.id}`] = edit.api_key;
+      }
+    }
+    return writes;
+  };
+
   const saveSettings = async (): Promise<boolean> => {
     setSaving(true);
     try {
@@ -510,6 +687,7 @@ export function Settings() {
         PlayerTwo: formSettings.player2,
         game: {
           ...formSettings.game,
+          ...buildAgentKeyWrites(),
           time_control: parseInt(formSettings.game.time_control),
         },
         lichess: formSettings.lichess,
@@ -956,23 +1134,35 @@ export function Settings() {
   const timeControlOptions = optionSet('time_control');
   const sleepTimerOptions = optionSet('sleep_timer');
   const notationOptions = optionSet('notation');
-  const coachProviderOptions = optionSet('coach_provider');
-  // Coach Model dropdown options: a Default entry (blank -> provider default),
-  // then the live-fetched models. A currently-saved model that is not in the live
-  // list is appended so it stays selectable rather than being silently reset.
-  const coachModelOptions: MenuOption[] = [
-    { value: '', label: 'Default (recommended)' },
-    ...coachModels.map((modelId) => ({ value: modelId, label: modelId })),
-  ];
-  if (
-    formSettings.game.coach_model &&
-    !coachModels.includes(formSettings.game.coach_model)
-  ) {
-    coachModelOptions.push({
-      value: formSettings.game.coach_model,
-      label: `${formSettings.game.coach_model} (current)`,
-    });
-  }
+  // Agent selector options (Game tab): every *configured* registered agent, built
+  // from the live /api/agents list so a user-dropped agent module appears without
+  // any catalog change. Only agents with a key and all required settings are
+  // offered, since an unconfigured agent cannot power the coach. Disabling coaching
+  // lives on the Coach persona selector (Coach = "Disabled"), not here.
+  const configuredAgents = agents.filter((agent) => agent.configured);
+  const agentChoiceOptions: MenuOption[] = configuredAgents.map((agent) => ({
+    value: agent.id,
+    label: agent.name,
+  }));
+  // Coaching master switch lives on the Coach persona selector; when off, the
+  // agent selector is greyed and coaching does not run.
+  const coachDisabled = formSettings.game.coach_id === 'off';
+
+  // Build the Model dropdown options for one agent: a Default entry (blank -> the
+  // agent's default model), then its live-fetched models. A currently-saved model
+  // not in the live list is appended so it stays selectable rather than being
+  // silently reset.
+  const modelOptionsForAgent = (agentId: string, currentModel: string): MenuOption[] => {
+    const models = agentModels[agentId] ?? [];
+    const options: MenuOption[] = [
+      { value: '', label: 'Default (recommended)' },
+      ...models.map((modelId) => ({ value: modelId, label: modelId })),
+    ];
+    if (currentModel && !models.includes(currentModel)) {
+      options.push({ value: currentModel, label: `${currentModel} (current)` });
+    }
+    return options;
+  };
 
   // Field label/help come from the catalog (the single source of truth). Rich
   // help that needs JSX (links, <code>) is rendered inline at the call site; the
@@ -1246,88 +1436,82 @@ export function Settings() {
               />
             </Card>
 
-            {/* AI Coach: pick a provider, then supply its key/model (+ base URL
-                for a custom OpenAI-compatible endpoint). The key/model rows only
-                appear once a provider is chosen, and the base URL only for the
-                custom provider -- mirroring the catalog visibleWhen gating the
-                board menu uses. The API key is a secret, so it renders in a
-                password field (like the Lichess token). */}
+            {/* Coach: pick the coaching persona and which AI agent powers it. The
+                agent's credentials (key/model/endpoint) are configured under the
+                Agents tab -- coach persona and agent choice live here in Game. */}
             <Card className="mb-6">
-              <CardHeader title="AI Coach" />
+              <CardHeader title="Coach" />
+              {/* Coach persona: who is coaching and in what style. Independent of
+                  the agent that powers it. "Auto" picks a coach by the opponent's
+                  rating; the resolved coach is shown so the choice is visible. */}
+              <FormRow
+                label="Coach"
+                help={
+                  // Keep the static hint and the resolved-coach note in the left
+                  // help column (which fills the row) rather than in the
+                  // fixed-width control column, where the multi-sentence coach
+                  // description forces the column wide and collapses the label
+                  // column to one word per line. Matches every other settings row.
+                  <>
+                    The coaching personality and style.{' '}
+                    {coachDisabled ? (
+                      <>
+                        Coaching is disabled &mdash; the agent selector below is
+                        greyed out; choose a coach to enable it.
+                      </>
+                    ) : formSettings.game.coach_id === 'auto' ? (
+                      <>
+                        Auto matches the coach to the opponent's rating
+                        {resolvedCoach ? (
+                          <>
+                            {' '}and currently selects{' '}
+                            <strong>{resolvedCoach.name}</strong> (
+                            {resolvedCoach.elo}, {resolvedCoach.character_type}).{' '}
+                            {resolvedCoach.description}
+                          </>
+                        ) : (
+                          '.'
+                        )}
+                      </>
+                    ) : (
+                      (() => {
+                        const selected =
+                          coaches.find((c) => c.id === formSettings.game.coach_id) ?? null;
+                        if (!selected) return null;
+                        return (
+                          <>
+                            <strong>{selected.name}</strong> ({selected.elo},{' '}
+                            {selected.character_type}). {selected.description}
+                          </>
+                        );
+                      })()
+                    )}
+                  </>
+                }
+              >
+                <Select
+                  value={formSettings.game.coach_id}
+                  options={[
+                    { value: 'off', label: 'Disabled' },
+                    { value: 'auto', label: 'Auto (match opponent)' },
+                    ...coaches.map((c) => ({
+                      value: c.id,
+                      label: `${c.name} \u2014 ${c.elo} \u2014 ${c.character_type}`,
+                    })),
+                  ]}
+                  onChange={(e) => updateFormSettings('game', { coach_id: e.target.value })}
+                />
+              </FormRow>
+              {/* Agent selector: which configured AI agent powers the coach. Its
+                  key/model/endpoint are set under the Agents tab. Options come from
+                  the live agents list (Disabled + every registered agent). */}
               <CatalogField
                 node={fieldById(catalog, 'coach.provider')!}
                 value={formSettings.game.coach_provider}
-                options={coachProviderOptions}
-                onChange={(v) =>
-                  // Reset the model when the provider changes: model ids are
-                  // provider-specific, so carrying one over would send an invalid
-                  // id (404). Blank falls back to the new provider's default.
-                  updateFormSettings('game', { coach_provider: String(v), coach_model: '' })
-                }
+                options={agentChoiceOptions}
+                disabled={coachDisabled}
+                onChange={(v) => updateFormSettings('game', { coach_provider: String(v) })}
               />
-              {['openai', 'anthropic', 'custom'].includes(formSettings.game.coach_provider) && (
-                <>
-                  <FormRow
-                    label={fieldLabel('coach.api_key')}
-                    help={fieldHelp('coach.api_key')}
-                  >
-                    <Input
-                      type="password"
-                      autoComplete="off"
-                      placeholder="Enter API key"
-                      value={formSettings.game.coach_api_key}
-                      onChange={(e) => updateFormSettings('game', { coach_api_key: e.target.value })}
-                    />
-                    {(() => {
-                      const guidance =
-                        COACH_API_KEY_GUIDANCE[
-                          formSettings.game.coach_provider as keyof typeof COACH_API_KEY_GUIDANCE
-                        ];
-                      if (!guidance) return null;
-                      return (
-                        <p className="text-muted mt-2" style={{ fontSize: '0.85em' }}>
-                          {guidance.text}
-                          {guidance.url && (
-                            <>
-                              {' '}
-                              <a href={guidance.url} target="_blank" rel="noreferrer">
-                                {guidance.linkLabel}
-                              </a>
-                            </>
-                          )}
-                        </p>
-                      );
-                    })()}
-                  </FormRow>
-                  {formSettings.game.coach_provider === 'custom' ? (
-                    // Custom endpoints have no canonical model list, so keep a
-                    // free-text field (deployment-specific ids).
-                    <CatalogField
-                      node={fieldById(catalog, 'coach.model_custom')!}
-                      value={formSettings.game.coach_model}
-                      onChange={(v) => updateFormSettings('game', { coach_model: String(v) })}
-                    />
-                  ) : (
-                    // OpenAI/Anthropic: dropdown fetched live from the provider so
-                    // only valid, currently-available models can be chosen. A saved
-                    // model no longer in the list is kept as an explicit option so
-                    // it is not silently dropped.
-                    <CatalogField
-                      node={fieldById(catalog, 'coach.model')!}
-                      value={formSettings.game.coach_model}
-                      options={coachModelOptions}
-                      onChange={(v) => updateFormSettings('game', { coach_model: String(v) })}
-                    />
-                  )}
-                </>
-              )}
-              {formSettings.game.coach_provider === 'custom' && (
-                <CatalogField
-                  node={fieldById(catalog, 'coach.base_url')!}
-                  value={formSettings.game.coach_base_url}
-                  onChange={(v) => updateFormSettings('game', { coach_base_url: String(v) })}
-                />
-              )}
             </Card>
 
             <Card className="mb-6">
@@ -1339,6 +1523,136 @@ export function Settings() {
                 onChange={(v) => updateFormSettings('game', { notation: String(v) })}
               />
             </Card>
+          </section>
+        )}
+
+        {/* AGENTS TAB */}
+        {activeTab === 'agents' && (
+          <section>
+            <h2 className="page-title">Agents</h2>
+            <p className="text-muted mb-6">
+              Configure the AI agents (services) that power features like coaching. Each agent stores its
+              own API key and model; choose which one powers the coach under Game &rarr; Coach.
+            </p>
+
+            {agents.length === 0 ? (
+              <Card className="mb-6">
+                <p className="text-muted">No agents are available.</p>
+              </Card>
+            ) : (
+              // One card per registered agent. Every agent stores its own key/model
+              // (and base URL when required), independent of which agent is active,
+              // so the user can pre-configure several and switch between them under
+              // Game > Coach. The API key is write-only: the stored value is never
+              // sent to the browser, so the field shows a "saved" placeholder and a
+              // blank submit leaves the stored key unchanged.
+              agents.map((agent) => {
+                const edit = agentEdits[agent.id] ?? {
+                  api_key: '',
+                  api_key_dirty: false,
+                  model: agent.model,
+                  base_url: agent.base_url,
+                };
+                const isActive =
+                  !coachDisabled && formSettings.game.coach_provider === agent.id;
+                const guidance =
+                  COACH_API_KEY_GUIDANCE[agent.id as keyof typeof COACH_API_KEY_GUIDANCE];
+                const usesFreeTextModel = agent.fields.some(
+                  (f) => f.key_base === 'coach_model' && f.kind === 'model_text'
+                );
+                return (
+                  <Card key={agent.id} className="mb-6">
+                    <CardHeader
+                      title={agent.name}
+                      action={isActive ? <Badge variant="success">Active</Badge> : undefined}
+                    />
+                    {agent.description && (
+                      <p className="text-muted mb-4" style={{ fontSize: '0.85em' }}>
+                        {agent.description}
+                      </p>
+                    )}
+
+                    <FormRow
+                      label="API Key"
+                      help={
+                        // Keep all explanatory text in the left help column (which
+                        // grows to fill the row) rather than in the fixed-width
+                        // control column, where a long provider hint wraps into a
+                        // tall, awkward block beside the input. Matches every other
+                        // settings row's layout.
+                        <>
+                          Stored securely on the board and never shown here.
+                          {guidance && (
+                            <>
+                              {' '}
+                              {guidance.text}
+                              {guidance.url && (
+                                <>
+                                  {' '}
+                                  <a href={guidance.url} target="_blank" rel="noreferrer">
+                                    {guidance.linkLabel}
+                                  </a>
+                                </>
+                              )}
+                            </>
+                          )}
+                        </>
+                      }
+                    >
+                      <Input
+                        type="password"
+                        autoComplete="off"
+                        placeholder={
+                          agent.api_key_set ? 'Key saved \u2014 leave blank to keep' : 'Enter API key'
+                        }
+                        value={edit.api_key}
+                        onChange={(e) =>
+                          updateAgentEdit(agent.id, { api_key: e.target.value, api_key_dirty: true })
+                        }
+                      />
+                    </FormRow>
+
+                    {usesFreeTextModel ? (
+                      // Free-text model: this agent has no canonical model list
+                      // (e.g. a custom OpenAI-compatible endpoint with
+                      // deployment-specific ids).
+                      <FormRow label="Model" help="The model id to use. Leave blank for the agent default.">
+                        <Input
+                          type="text"
+                          autoComplete="off"
+                          placeholder="Default"
+                          value={edit.model}
+                          onChange={(e) => updateAgentEdit(agent.id, { model: e.target.value })}
+                        />
+                      </FormRow>
+                    ) : (
+                      // Live model dropdown fetched from the agent's endpoint (using
+                      // its stored key) so only valid, available models are shown. A
+                      // saved model no longer listed is kept as an explicit option.
+                      <FormRow label="Model" help="Fetched from the agent. Leave on Default for the recommended model.">
+                        <Select
+                          value={edit.model}
+                          options={modelOptionsForAgent(agent.id, edit.model)}
+                          onChange={(e) => updateAgentEdit(agent.id, { model: e.target.value })}
+                        />
+                      </FormRow>
+                    )}
+
+                    {agent.requires_base_url && (
+                      <FormRow label="Base URL" help="The OpenAI-compatible endpoint base URL for this agent.">
+                        <Input
+                          type="text"
+                          autoComplete="off"
+                          placeholder="https://your-endpoint/v1"
+                          value={edit.base_url}
+                          onChange={(e) => updateAgentEdit(agent.id, { base_url: e.target.value })}
+                        />
+                      </FormRow>
+                    )}
+                  </Card>
+                );
+              })
+            )}
           </section>
         )}
 

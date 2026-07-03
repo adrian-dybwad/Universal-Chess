@@ -16,9 +16,12 @@ display thread.
 from universalchess.services.coach import CoachConfig, CoachError, CoachRequest
 from universalchess.managers.game.coach_coordinator import (
     CoachCoordinator,
+    AUTH_TEXT,
     ERROR_TEXT,
     LOADING_TEXT,
     NOT_CONFIGURED_TEXT,
+    QUOTA_TEXT,
+    RATE_LIMIT_TEXT,
     UNAVAILABLE_TEXT,
 )
 
@@ -194,6 +197,31 @@ def test_fetch_error_shows_error_text_and_does_not_persist():
     h.coordinator.on_selection(1)
     assert h.saved == []
     assert h.texts[-1] == ERROR_TEXT
+
+
+def test_fetch_error_shows_reason_specific_text_for_billing_and_auth():
+    # A permanent problem (out-of-credit account, or a rejected key) must show its
+    # own actionable message, not the generic "try later" -- retrying an unfunded
+    # account forever would otherwise hide the real cause the user must fix. A bare
+    # 429 stays a transient rate-limit message. Regression: reverting to a single
+    # ERROR_TEXT would make a billing failure indistinguishable from a blip.
+    cases = [
+        (CoachError("q", status=429, code="insufficient_quota"), QUOTA_TEXT),
+        (CoachError("q", status=402), QUOTA_TEXT),
+        (CoachError("a", status=401), AUTH_TEXT),
+        (CoachError("a", status=403), AUTH_TEXT),
+        (CoachError("r", status=429), RATE_LIMIT_TEXT),
+        (CoachError("boom"), ERROR_TEXT),
+    ]
+    for exc, expected in cases:
+        h = _Harness(stored=None)
+
+        def failing_fetch(config, request, _exc=exc):
+            raise _exc
+
+        h.coordinator._fetch = failing_fetch
+        h.coordinator.on_selection(1)
+        assert h.texts[-1] == expected, f"{exc.status}/{exc.code} -> {h.texts[-1]!r}"
 
 
 def test_stale_result_is_discarded_when_selection_moved_on():

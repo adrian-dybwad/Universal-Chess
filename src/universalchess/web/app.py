@@ -2224,7 +2224,62 @@ def get_all_settings():
             for key, value in defconfig.items(section):
                 if key not in result[section]:
                     result[section][key] = value
-    
+
+    # Coach settings: expose the non-secret selection (coach_id/coach_provider) and
+    # the per-agent model/base_url (namespaced keys pass through from the ini), but
+    # never the stored API keys. Each coach API key is redacted to a boolean
+    # ``<key>_set`` companion so the settings page (which is not behind auth) cannot
+    # leak a secret. The Agents tab reads per-agent config from /api/agents.
+    if "game" in result:
+        game = result["game"]
+        game.setdefault("coach_id", "auto")
+        game.setdefault("coach_provider", "none")
+        for key in list(game.keys()):
+            if _is_coach_api_key(key):
+                game[f"{key}_set"] = bool(game.get(key))
+                game[key] = ""
+
+    return result
+
+
+def _is_coach_api_key(key: str) -> bool:
+    """True for the effective or any per-agent coach API-key storage key.
+
+    Matches ``coach_api_key`` and ``coach_api_key_<agent>`` (but not the ``_set``
+    boolean companions, which are not themselves secrets). Used to redact secrets
+    from GET responses and to treat a blank key on save as "leave unchanged".
+    """
+    if key.endswith("_set"):
+        return False
+    return key == "coach_api_key" or key.startswith("coach_api_key_")
+
+
+def _translate_game_coach_writes(config, values):
+    """Route effective coach key/model/base_url writes to the active provider's slot.
+
+    The settings UI sends a single ``coach_api_key``/``coach_model``/
+    ``coach_base_url`` (the active provider's value). Storage is per provider, so
+    these are rewritten to the namespaced key for the provider named in this save
+    (falling back to the persisted provider), and the flat keys are dropped so they
+    never shadow the namespaced layout. Other keys pass through unchanged.
+
+    Returns a new mapping; the input is not mutated.
+    """
+    from universalchess.managers.game import coach_settings
+
+    result = dict(values)
+    provider = result.get("coach_provider")
+    if provider is None:
+        provider = config.get("game", "coach_provider", fallback="none")
+
+    for base in ("coach_api_key", "coach_model", "coach_base_url"):
+        if base not in result:
+            continue
+        value = result.pop(base)
+        for namespaced, namespaced_value in coach_settings.writes_for_effective(
+            provider, base, value
+        ).items():
+            result[namespaced] = namespaced_value
     return result
 
 
@@ -2245,6 +2300,20 @@ def save_all_settings(settings_dict, *, broadcast: bool = True):
     for section, values in settings_dict.items():
         if not config.has_section(section):
             config.add_section(section)
+        if section == "game":
+            # The UI edits a single effective coach key/model/base_url; route those
+            # to the active provider's namespaced slot so switching providers keeps
+            # every provider's saved credentials (matching GameSettings.set).
+            values = _translate_game_coach_writes(config, values)
+            # A blank coach API key means "leave unchanged": the GET never returns
+            # the stored secret, so a blank field on save must not wipe it. Drop the
+            # UI-only ``_set`` boolean companions as well (they are not stored).
+            values = {
+                key: value
+                for key, value in values.items()
+                if not (key.startswith("coach_api_key") and key.endswith("_set"))
+                and not (_is_coach_api_key(key) and (value is None or value == ""))
+            }
         for key, value in values.items():
             # Handle booleans
             if isinstance(value, bool):
@@ -2326,13 +2395,52 @@ def _read_coach_config():
     provider.
     """
     from universalchess.board.settings import Settings
+    from universalchess.managers.game import coach_settings
     from universalchess.services.coach import CoachConfig
 
+    from universalchess.coaches import registry as coaches
+
+    # Coach credentials are stored per provider (namespaced keys); resolve the
+    # active provider's effective key/model/base_url the same way the board does so
+    # web and board agree on which provider is configured.
+    storage = {"coach_provider": Settings.read("game", "coach_provider", "none")}
+    for key in coach_settings.per_provider_keys():
+        storage[key] = Settings.read("game", key, "")
+    effective = coach_settings.resolve_effective(storage)
+
+    # The Coach selector is the master switch: "Disabled" (coach id ``off``) turns
+    # coaching off no matter how well the agent is configured, so is_configured()
+    # returns False and the coach endpoints refuse to call the provider.
+    enabled = Settings.read("game", "coach_id", coaches.AUTO) != coaches.OFF
+
     return CoachConfig(
-        provider=Settings.read("game", "coach_provider", "none"),
-        api_key=Settings.read("game", "coach_api_key", ""),
-        model=Settings.read("game", "coach_model", ""),
-        base_url=Settings.read("game", "coach_base_url", ""),
+        provider=effective["coach_provider"],
+        api_key=effective["coach_api_key"],
+        model=effective["coach_model"],
+        base_url=effective["coach_base_url"],
+        enabled=enabled,
+    )
+
+
+def _read_agent_config(agent_id):
+    """Build a CoachConfig for a specific agent from its namespaced ini slots.
+
+    Used by the Agents tab endpoints (models listing) so a user can test/list
+    models for any agent, not only the one currently powering coaching. The API key
+    is read server-side and never returned to the client.
+    """
+    from universalchess.board.settings import Settings
+    from universalchess.managers.game import coach_settings
+    from universalchess.services.coach import CoachConfig
+
+    def _slot(base):
+        return Settings.read("game", coach_settings.namespaced_key(base, agent_id), "")
+
+    return CoachConfig(
+        provider=agent_id,
+        api_key=_slot(coach_settings.API_KEY_BASE),
+        model=_slot(coach_settings.MODEL_BASE),
+        base_url=_slot(coach_settings.BASE_URL_BASE),
     )
 
 
@@ -2349,16 +2457,165 @@ def _read_notation():
     return normalize_notation(Settings.read("game", "notation", DEFAULT_NOTATION))
 
 
+def _read_player_dicts():
+    """Read both players' type/color/elo from centaur.ini for coach selection.
+
+    Returns two mappings shaped like the board's player settings dicts so the
+    shared coach helpers (:func:`resolve_human_color`, :func:`resolve_opponent_elo`)
+    resolve identically on web and board.
+    """
+    from universalchess.board.settings import Settings
+
+    player1 = {
+        "type": Settings.read("PlayerOne", "type", "human"),
+        "color": Settings.read("PlayerOne", "color", "white"),
+        "elo": Settings.read("PlayerOne", "elo", "Default"),
+    }
+    player2 = {
+        "type": Settings.read("PlayerTwo", "type", "engine"),
+        "color": Settings.read("PlayerTwo", "color", "black"),
+        "elo": Settings.read("PlayerTwo", "elo", "Default"),
+    }
+    return player1, player2
+
+
+def _read_coach_persona(side_to_move: str, *, is_potential_move: bool):
+    """Resolve the coaching persona for a move, mirroring the board's selection.
+
+    Selects the coach (explicit ``coach_id`` or Elo-matched Auto) and returns its
+    persona for the move context. Returns None when no coach is available so the
+    service falls back to its default voice.
+    """
+    from universalchess.board.settings import Settings
+    from universalchess.coaches import registry as coaches
+
+    player1, player2 = _read_player_dicts()
+    coach_id = Settings.read("game", "coach_id", coaches.AUTO)
+    return coaches.resolve_persona(
+        coach_id,
+        coaches.resolve_opponent_elo(player1, player2),
+        human_color=coaches.resolve_human_color(player1, player2),
+        is_potential_move=is_potential_move,
+        side_to_move=side_to_move,
+    )
+
+
+def _read_move_is_opponent(side_to_move: str) -> bool:
+    """Whether a played move on ``side_to_move`` is the opponent's, not the player's.
+
+    Uses the same move-context rule as persona selection so the prompt framing and
+    the persona always agree: an opponent's move must be explained as the opponent's
+    (not addressed as the player's own move). With no single human (engine-vs-engine
+    or two humans) a played move is treated as the opponent's, matching
+    :func:`select_move_context`.
+    """
+    from universalchess.board.settings import Settings
+    from universalchess.coaches import registry as coaches
+    from universalchess.coaches.base import MoveContext
+
+    player1, player2 = _read_player_dicts()
+    human_color = coaches.resolve_human_color(player1, player2)
+    context = coaches.select_move_context(False, side_to_move, human_color)
+    return context is MoveContext.OPPONENT_MOVE
+
+
+def _resolved_coach_id():
+    """Return the resolved coach's id (for tip cache keys), or "" when none."""
+    from universalchess.board.settings import Settings
+    from universalchess.coaches import registry as coaches
+
+    player1, player2 = _read_player_dicts()
+    coach_id = Settings.read("game", "coach_id", coaches.AUTO)
+    coach = coaches.resolve_coach(coach_id, coaches.resolve_opponent_elo(player1, player2))
+    return coach.id if coach is not None else ""
+
+
+@app.route("/api/agents", methods=["GET"])
+def api_agents():
+    """List every registered AI agent with its (non-secret) configuration.
+
+    Powers the Agents tab: one entry per built-in and user agent, each carrying its
+    display metadata (name/description), its configurable field schema, the stored
+    model and (for agents that require one) base URL, ``api_key_set`` -- a boolean
+    flag rather than the key itself, so the secret never leaves the server -- and
+    ``configured``, true when the agent has its key plus every required setting (so
+    the Game > Agent selector can offer configured agents only).
+    ``selected`` echoes the agent currently powering coaching (game.coach_provider).
+
+    Response: ``{"agents": [agent], "selected": str}``.
+    """
+    from universalchess.agents import registry as agents_reg
+    from universalchess.board.settings import Settings
+    from universalchess.managers.game import coach_settings
+
+    def _slot(agent_id, base):
+        return Settings.read("game", coach_settings.namespaced_key(base, agent_id), "")
+
+    agents_out = []
+    for info in agents_reg.list_agents():
+        agent_id = info["id"]
+        api_key_set = bool(_slot(agent_id, coach_settings.API_KEY_BASE))
+        base_url = (
+            _slot(agent_id, coach_settings.BASE_URL_BASE)
+            if info.get("requires_base_url")
+            else ""
+        )
+        # An agent is offerable in the Game > Agent selector only once it can power
+        # the coach: an API key plus a base URL for agents that require one. The
+        # frontend uses this to list configured agents only.
+        configured = api_key_set and (not info.get("requires_base_url") or bool(base_url))
+        agents_out.append({
+            **info,
+            "api_key_set": api_key_set,
+            "configured": configured,
+            "model": _slot(agent_id, coach_settings.MODEL_BASE),
+            "base_url": base_url,
+        })
+    return jsonify({
+        "agents": agents_out,
+        "selected": Settings.read("game", "coach_provider", "none"),
+    })
+
+
+@app.route("/api/coaches", methods=["GET"])
+def api_coaches():
+    """List selectable coaches and the coach resolved for the current game.
+
+    Powers the coach card's selector: ``coaches`` is the full roster (built-in +
+    user, weakest-first) for the dropdown, ``selected`` is the persisted
+    ``coach_id`` (``"auto"`` by default), and ``resolved`` is the coach that
+    ``coach_id`` currently maps to given the opponent's Elo -- so the UI can show
+    which coach Auto picked.
+
+    Response: ``{"coaches": [info], "selected": str, "resolved": info | null}``.
+    """
+    from universalchess.board.settings import Settings
+    from universalchess.coaches import registry as coaches
+
+    player1, player2 = _read_player_dicts()
+    selected = Settings.read("game", "coach_id", coaches.AUTO)
+    resolved = coaches.resolve_coach_info(
+        selected, coaches.resolve_opponent_elo(player1, player2)
+    )
+    return jsonify({
+        "coaches": coaches.list_coaches(),
+        "selected": selected,
+        "resolved": resolved,
+    })
+
+
 @app.route("/api/coach/models", methods=["GET"])
 def api_coach_models():
-    """List available AI-coach models for the configured provider.
+    """List available AI models for an agent (query ``agent``) or the active one.
 
-    Reads the provider/key/base URL from centaur.ini server-side (the API key is
-    never returned to the client) and queries the provider's list-models endpoint
-    so the Coach Model dropdown reflects the account's real, currently available
-    models. On any failure (not configured, network, bad key) returns the curated
-    fallback plus an ``error`` note so the dropdown still renders rather than
-    breaking the settings page.
+    With ``?agent=<id>`` the models are listed for that specific agent (the Agents
+    tab uses this to populate each agent's Model dropdown from its own key); without
+    it, the agent currently powering coaching is used. Reads the key/base URL from
+    centaur.ini server-side (the API key is never returned to the client) and
+    queries the agent's list-models endpoint so the dropdown reflects the account's
+    real, currently available models. On any failure (not configured, network, bad
+    key) returns the curated fallback plus an ``error`` note so the dropdown still
+    renders rather than breaking the settings page.
 
     Response: ``{"provider": str, "models": [str], "error": str | null}``.
     """
@@ -2368,7 +2625,8 @@ def api_coach_models():
         list_models,
     )
 
-    config = _read_coach_config()
+    agent_id = request.args.get("agent")
+    config = _read_agent_config(agent_id) if agent_id else _read_coach_config()
     provider = config.provider
 
     if not config.is_configured():
@@ -2405,8 +2663,10 @@ def api_coach_statement(gameid, ply):
     Response: ``{"statement": str | null, "cached": bool, "error": str | null}``.
     ``error`` is ``"not_configured"`` when no provider/key is set (the UI then
     hides the panel), ``"out_of_range"`` for an unknown ply, or ``"unavailable"``
-    on a generation failure (the UI shows a retry); the underlying error detail is
-    logged server-side and never returned, to avoid leaking internals.
+    on a generation failure. A generation failure also carries ``reason`` (a safe
+    category: ``quota``/``auth``/``rate_limited``/``unavailable``) and a user-facing
+    ``message``, so the UI can explain a billing/key problem instead of offering a
+    futile retry. The raw provider error is logged server-side, never returned.
     """
     from universalchess.managers.game.coach_persistence import (
         get_coach_statement,
@@ -2415,7 +2675,12 @@ def api_coach_statement(gameid, ply):
         save_coach_statement_if_absent,
     )
     from universalchess.managers.game.coach_request_builder import build_coach_request
-    from universalchess.services.coach import CoachError, generate_coach_statement
+    from universalchess.services.coach import (
+        CoachError,
+        error_category,
+        error_message,
+        generate_coach_statement,
+    )
 
     stored = get_coach_statement(gameid, ply)
     if stored:
@@ -2431,12 +2696,17 @@ def api_coach_statement(gameid, ply):
 
     fen_before, move_uci = context
     eval_before_cp, eval_after_cp = get_move_evals(gameid, ply)
+    import chess
+
+    side_to_move = "white" if chess.Board(fen_before).turn == chess.WHITE else "black"
     coach_request = build_coach_request(
         fen_before,
         move_uci,
         notation=_read_notation(),
         eval_before_cp=eval_before_cp,
         eval_after_cp=eval_after_cp,
+        is_opponent_move=_read_move_is_opponent(side_to_move),
+        persona=_read_coach_persona(side_to_move, is_potential_move=False),
     )
     if coach_request is None:
         return jsonify({"statement": None, "cached": False, "error": "bad_move"}), 422
@@ -2444,10 +2714,24 @@ def api_coach_statement(gameid, ply):
     try:
         statement = generate_coach_statement(config, coach_request)
     except CoachError as exc:
-        # Log the detail server-side; return a fixed token so the response never
-        # leaks internal error text to the client (the UI just shows a retry).
+        # Log the full detail server-side. To the client, return the failure
+        # *category* and a safe, user-facing sentence (never the raw provider text):
+        # a quota/billing or key problem is permanent, so the UI must explain it
+        # rather than offer a futile retry. ``error`` stays "unavailable" for
+        # backward compatibility; ``reason``/``message`` carry the specifics.
         app.logger.info(f"Coach statement failed for game {gameid} ply {ply}: {exc}")
-        return jsonify({"statement": None, "cached": False, "error": "unavailable"}), 502
+        # error_category returns a value from a closed set (quota/auth/rate_limited/
+        # unavailable) and error_message returns a fixed sentence from a constant
+        # table keyed by that category. Neither includes the exception's text (only
+        # logged above), so this is not stack-trace exposure; suppress the taint
+        # heuristic that assumes any exc-derived value returned is a leak.
+        return jsonify({  # nosemgrep: semgrep.flask-stack-trace-exposure,semgrep.exception-text-returned
+            "statement": None,
+            "cached": False,
+            "error": "unavailable",
+            "reason": error_category(exc),
+            "message": error_message(exc),
+        }), 502
 
     # First-writer-wins: if the board (or a concurrent request) already stored a
     # statement for this move, adopt it so board and web show identical text rather
@@ -2483,8 +2767,23 @@ def api_coach_tip():
     if not config.is_configured():
         return jsonify({"statement": None, "error": "not_configured"})
 
+    # A tip is a move the player is considering, so it uses the player-move persona.
+    # side_to_move is irrelevant for a hint but resolves cleanly from the FEN.
+    import chess
+
+    try:
+        side_to_move = "white" if chess.Board(fen).turn == chess.WHITE else "black"
+    except ValueError:
+        return jsonify({"statement": None, "error": "unavailable"})
+    persona = _read_coach_persona(side_to_move, is_potential_move=True)
+
     statement = coach_tips.get_tip_statement(
-        config, fen, move_uci, notation=_read_notation()
+        config,
+        fen,
+        move_uci,
+        notation=_read_notation(),
+        persona=persona,
+        persona_key=_resolved_coach_id(),
     )
     if statement is None:
         return jsonify({"statement": None, "error": "unavailable"})

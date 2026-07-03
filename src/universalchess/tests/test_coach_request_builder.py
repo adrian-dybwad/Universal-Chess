@@ -91,6 +91,20 @@ def test_potential_move_flag_defaults_off_and_propagates_when_set():
     assert tip.is_potential_move is True
 
 
+def test_opponent_move_flag_defaults_off_and_propagates_when_set():
+    # The opponent-move flag must default off (a request is the player's own move
+    # unless stated) and reach the request when set, so the prompt frames the
+    # opponent's move as the opponent's. Regression: dropping the flag here would
+    # let the coach address an opponent's move as if the player made it.
+    own = build_coach_request(STARTPOS, "e2e4")
+    assert own is not None
+    assert own.is_opponent_move is False
+
+    opponent = build_coach_request(STARTPOS, "e2e4", is_opponent_move=True)
+    assert opponent is not None
+    assert opponent.is_opponent_move is True
+
+
 def test_invalid_fen_returns_none():
     # A malformed FEN must yield None (not raise) so the endpoint returns a clean
     # error instead of 500-ing on corrupt input.

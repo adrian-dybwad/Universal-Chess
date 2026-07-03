@@ -28,6 +28,11 @@ interface CoachResponse {
   statement: string | null;
   cached?: boolean;
   error: string | null;
+  // Failure category and a user-facing sentence, present on a generation failure.
+  // ``reason`` distinguishes a permanent problem (quota/auth) from a transient one
+  // (rate_limited/unavailable) so the panel only offers Retry when retrying helps.
+  reason?: string;
+  message?: string;
 }
 
 type Status =
@@ -35,7 +40,9 @@ type Status =
   | { kind: 'loading' }
   | { kind: 'ready'; text: string }
   | { kind: 'pending' }         // move not yet stored (e.g. latest live move)
-  | { kind: 'error' };
+  // ``retryable`` is false for a billing/key problem, where a retry cannot help
+  // until the user fixes it, so the panel shows the reason without a Retry button.
+  | { kind: 'error'; message: string; retryable: boolean };
 
 /**
  * Shows the AI coach's remark for the currently-viewed move.
@@ -91,10 +98,20 @@ export function CoachPanel({ gameId, ply, moveKey, variant = 'box' }: CoachPanel
         } else if (data.error === 'out_of_range') {
           setStatus({ kind: 'pending' });
         } else {
-          setStatus({ kind: 'error' });
+          // A quota/auth failure is permanent until the user acts, so surface the
+          // specific reason and suppress the (futile) Retry; transient failures
+          // keep the generic retryable message.
+          const permanent = data.reason === 'quota' || data.reason === 'auth';
+          setStatus({
+            kind: 'error',
+            message: data.message ?? 'Coaching unavailable.',
+            retryable: !permanent,
+          });
         }
       } catch {
-        if (!cancelled) setStatus({ kind: 'error' });
+        if (!cancelled) {
+          setStatus({ kind: 'error', message: 'Coaching unavailable.', retryable: true });
+        }
       }
     }, DEBOUNCE_MS);
 
@@ -122,10 +139,12 @@ export function CoachPanel({ gameId, ply, moveKey, variant = 'box' }: CoachPanel
       case 'error':
         return (
           <p className="coach-panel-muted">
-            Coaching unavailable.{' '}
-            <button className="coach-panel-retry" onClick={() => setRetryToken((t) => t + 1)}>
-              Retry
-            </button>
+            {status.message}{' '}
+            {status.retryable && (
+              <button className="coach-panel-retry" onClick={() => setRetryToken((t) => t + 1)}>
+                Retry
+              </button>
+            )}
           </p>
         );
     }

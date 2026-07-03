@@ -6,7 +6,23 @@ Encapsulates settings loading, saving, and access in a clean interface.
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from universalchess.managers.game.coach_settings import (
+    BASE_URL_BASE,
+    API_KEY_BASE,
+    MODEL_BASE,
+    default_namespaced_settings,
+    migrate_legacy,
+    per_provider_keys,
+    resolve_effective,
+    writes_for_effective,
+)
 from universalchess.utils.settings_persistence import load_section, save_setting, clear_section
+
+# Effective coach fields the board menu binds to. Setting one of these writes to
+# the active provider's namespaced slot (see GameSettings.set); reading one
+# resolves from that slot (see GameSettings.to_dict). Kept as a module constant
+# so both paths agree on which keys are "effective, per-provider" aliases.
+_COACH_EFFECTIVE_BASES = (API_KEY_BASE, MODEL_BASE, BASE_URL_BASE)
 
 
 @dataclass
@@ -146,14 +162,22 @@ class GameSettings:
             reads the default and cycling never advances.
         notation: Chess notation used for move history on the board and web
             ("figurine", "san", "lan", or "uci"). Defaults to figurine.
-        coach_provider: AI coach service ("none", "openai", "anthropic", or
-            "custom"). "none" (default) disables the move-review coach.
-        coach_api_key: API key for the selected coach service. Stored as a
-            secret in centaur.ini (same handling as the Lichess token).
-        coach_model: Model id for the coach service; empty uses the provider
-            default.
-        coach_base_url: Base URL for the "custom" OpenAI-compatible coach
-            endpoint (unused by the built-in providers).
+        coach_provider: Active AI coach service ("none", "openai", "anthropic",
+            or "custom"). "none" (default) disables the move-review coach.
+        coach_api_key_openai / _anthropic / _custom: API key stored per provider
+            so switching providers preserves each provider's key (each a secret in
+            centaur.ini, same handling as the Lichess token). The effective key
+            for the active provider is exposed as ``coach_api_key`` via to_dict()
+            and edited via ``set("coach_api_key", ...)``.
+        coach_model_openai / _anthropic / _custom: Model id stored per provider;
+            empty uses the provider default. Effective value exposed/edited as
+            ``coach_model``.
+        coach_base_url_custom: Base URL for the "custom" OpenAI-compatible coach
+            endpoint (the built-in providers have fixed endpoints). Effective
+            value exposed/edited as ``coach_base_url``.
+        coach_id: Selected coach id from the coaches framework, or "auto" (default)
+            to pick a coach by the opponent's Elo. Controls the coaching persona,
+            independent of the provider/key.
     """
 
     section: str
@@ -169,10 +193,31 @@ class GameSettings:
     chess_sprites: str = "default"
     notation: str = "figurine"
     coach_provider: str = "none"
-    coach_api_key: str = ""
-    coach_model: str = ""
-    coach_base_url: str = ""
+    coach_api_key_openai: str = ""
+    coach_api_key_anthropic: str = ""
+    coach_api_key_custom: str = ""
+    coach_model_openai: str = ""
+    coach_model_anthropic: str = ""
+    coach_model_custom: str = ""
+    coach_base_url_custom: str = ""
+    coach_id: str = "auto"
     _log: Optional[Any] = field(default=None, repr=False)
+
+    def _coach_storage(self) -> Dict[str, str]:
+        """Raw per-agent coach mapping for resolution (namespaced + provider).
+
+        Uses a default of "" for any namespaced key that has no attribute yet: the
+        built-in agents have declared fields, but a user-added agent's slots exist
+        only as dynamically set attributes, so ``getattr`` must not raise for one
+        that was never written.
+        """
+        storage = {key: getattr(self, key, "") for key in per_provider_keys()}
+        storage["coach_provider"] = self.coach_provider
+        return storage
+
+    def effective_coach(self) -> Dict[str, str]:
+        """Effective coach provider/key/model/base_url for the active provider."""
+        return resolve_effective(self._coach_storage())
 
     def save(self, key: str) -> None:
         """Save a single setting to config file.
@@ -191,20 +236,38 @@ class GameSettings:
     def set(self, key: str, value: Any) -> None:
         """Set a setting value and save to config file.
 
+        For the effective coach fields (``coach_api_key``/``coach_model``/
+        ``coach_base_url``) the value is routed to the *active* provider's
+        namespaced slot, so editing a key only touches the current provider and
+        every other provider's stored credentials are left intact. All other keys
+        (including ``coach_provider`` and the namespaced keys themselves) are set
+        directly.
+
         Args:
             key: Setting key to set
             value: New value
         """
+        if key in _COACH_EFFECTIVE_BASES:
+            writes = writes_for_effective(self.coach_provider, key, value)
+            for namespaced, namespaced_value in writes.items():
+                setattr(self, namespaced, namespaced_value)
+                self.save(namespaced)
+            return
         setattr(self, key, value)
         self.save(key)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert settings to a dictionary.
 
+        The coach fields are exposed both as the namespaced per-provider keys (so
+        the raw storage round-trips) and as the effective ``coach_api_key``/
+        ``coach_model``/``coach_base_url`` for the active provider (what the board
+        menu binds and the coach config builder reads).
+
         Returns:
             Dict with all setting values
         """
-        return {
+        data = {
             "time_control": self.time_control,
             "analysis_mode": self.analysis_mode,
             "analysis_engine": self.analysis_engine,
@@ -217,10 +280,15 @@ class GameSettings:
             "chess_sprites": self.chess_sprites,
             "notation": self.notation,
             "coach_provider": self.coach_provider,
-            "coach_api_key": self.coach_api_key,
-            "coach_model": self.coach_model,
-            "coach_base_url": self.coach_base_url,
+            "coach_id": self.coach_id,
         }
+        for key in per_provider_keys():
+            data[key] = getattr(self, key, "")
+        effective = self.effective_coach()
+        data["coach_api_key"] = effective["coach_api_key"]
+        data["coach_model"] = effective["coach_model"]
+        data["coach_base_url"] = effective["coach_base_url"]
+        return data
 
     @classmethod
     def load(
@@ -239,8 +307,24 @@ class GameSettings:
         Returns:
             GameSettings instance with loaded values
         """
-        data = load_section(section, defaults)
-        return cls(
+        # Ensure the per-provider coach keys (and the legacy flat keys used only
+        # for one-time migration) are read from the section regardless of what the
+        # caller listed in ``defaults`` -- load_section only reads keys it has a
+        # default for. This keeps the per-provider layout encapsulated here.
+        load_defaults = dict(defaults)
+        load_defaults.setdefault("coach_provider", "none")
+        load_defaults.setdefault("coach_id", "auto")
+        for key in default_namespaced_settings():
+            load_defaults.setdefault(key, "")
+        for legacy in _COACH_EFFECTIVE_BASES:
+            load_defaults.setdefault(legacy, "")
+
+        data = load_section(section, load_defaults)
+        # Fold any legacy single-slot values into the active provider's namespaced
+        # slot so an upgraded config keeps its existing key under the right
+        # provider. Pure/in-memory; the migrated values persist on the next save.
+        coach = migrate_legacy(data)
+        game = cls(
             section=section,
             time_control=data.get("time_control", defaults.get("time_control", 0)),
             analysis_mode=data.get("analysis_mode", defaults.get("analysis_mode", True)),
@@ -256,12 +340,26 @@ class GameSettings:
             ),
             chess_sprites=data.get("chess_sprites", defaults.get("chess_sprites", "default")),
             notation=data.get("notation", defaults.get("notation", "figurine")),
-            coach_provider=data.get("coach_provider", defaults.get("coach_provider", "none")),
-            coach_api_key=data.get("coach_api_key", defaults.get("coach_api_key", "")),
-            coach_model=data.get("coach_model", defaults.get("coach_model", "")),
-            coach_base_url=data.get("coach_base_url", defaults.get("coach_base_url", "")),
+            coach_provider=coach.get("coach_provider", defaults.get("coach_provider", "none")),
+            coach_api_key_openai=coach.get("coach_api_key_openai", ""),
+            coach_api_key_anthropic=coach.get("coach_api_key_anthropic", ""),
+            coach_api_key_custom=coach.get("coach_api_key_custom", ""),
+            coach_model_openai=coach.get("coach_model_openai", ""),
+            coach_model_anthropic=coach.get("coach_model_anthropic", ""),
+            coach_model_custom=coach.get("coach_model_custom", ""),
+            coach_base_url_custom=coach.get("coach_base_url_custom", ""),
+            coach_id=data.get("coach_id", defaults.get("coach_id", "auto")),
             _log=log,
         )
+        # Overlay any namespaced slots that are not declared dataclass fields --
+        # user-added agents (discovered from the agents folder) contribute storage
+        # keys beyond the built-in openai/anthropic/custom fields. Setting them as
+        # instance attributes lets a user agent's credentials round-trip through
+        # _coach_storage()/to_dict() without hardcoding every agent id here.
+        for key in per_provider_keys():
+            if not hasattr(game, key):
+                setattr(game, key, coach.get(key, ""))
+        return game
 
     def log_summary(self) -> None:
         """Log a summary of the settings."""

@@ -37,6 +37,37 @@ LOADING_TEXT = "Coaching..."
 ERROR_TEXT = "Coach unavailable.\nTry again later."
 UNAVAILABLE_TEXT = "No coaching available\nfor this move."
 
+# Reason-specific panel text for common provider refusals, so the tiny coach area
+# tells the user what to actually do rather than a generic "try later" that hides a
+# permanent problem (an out-of-credit account never recovers by retrying). Kept to a
+# few short lines for the 128x128 panel.
+QUOTA_TEXT = "Coach paused:\nAI account is out\nof credit/quota."
+AUTH_TEXT = "Coach paused:\nAI key rejected.\nCheck it in Agents."
+RATE_LIMIT_TEXT = "Coach busy:\nrate limited.\nTry again shortly."
+
+
+# Compact panel text per shared failure category (services.coach.error_category),
+# so the board and web classify a failure identically and only the wording differs.
+_TEXT_BY_CATEGORY = {
+    "quota": QUOTA_TEXT,
+    "auth": AUTH_TEXT,
+    "rate_limited": RATE_LIMIT_TEXT,
+    "unavailable": ERROR_TEXT,
+}
+
+
+def coach_error_text(exc: CoachError) -> str:
+    """Map a coach failure to the most actionable short panel message.
+
+    An out-of-credit account and a rejected key are configuration/billing problems
+    the user must fix (so they get specific text a retry cannot resolve); a rate
+    limit is transient; anything else falls back to the generic retry message.
+    Classification is shared with the web via :func:`services.coach.error_category`.
+    """
+    from universalchess.services.coach import error_category
+
+    return _TEXT_BY_CATEGORY[error_category(exc)]
+
 
 def _default_run_async(job: Callable[[], None]) -> None:
     """Run a coach fetch job on a daemon thread (never blocks the caller)."""
@@ -194,7 +225,7 @@ class CoachCoordinator:
             if self._inflight.get(key) == token:
                 del self._inflight[key]
                 if self._current_key == key:
-                    self._set_text(ERROR_TEXT)
+                    self._set_text(coach_error_text(exc))
             return
         except Exception as exc:  # defensive: never let a worker thread crash
             log.warning(f"[Coach] Unexpected error fetching ply {ply}: {exc}")
@@ -245,8 +276,12 @@ class CoachCoordinator:
 
 __all__ = [
     "CoachCoordinator",
+    "coach_error_text",
     "NOT_CONFIGURED_TEXT",
     "LOADING_TEXT",
     "ERROR_TEXT",
     "UNAVAILABLE_TEXT",
+    "QUOTA_TEXT",
+    "AUTH_TEXT",
+    "RATE_LIMIT_TEXT",
 ]

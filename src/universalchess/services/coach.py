@@ -1,137 +1,157 @@
 """AI chess-coach service.
 
 Turns a played move (position, move, evaluation swing) into a short natural
-language coaching remark using a configurable AI provider. The remark is meant
-for the board's 128x128 area, so it is constrained to one or two short
-sentences.
+language coaching remark using a configurable AI agent. The remark is meant for
+the board's 128x128 area, so it is constrained to one or two short sentences.
 
 Design
 ------
-- Pure request-building and response-parsing helpers are separated from the one
-  networked entry point (:func:`generate_coach_statement`) so provider payloads
-  and parsing are unit-tested without any network access.
-- The HTTP call is injectable (``http_post``) for the same reason; it defaults
-  to ``requests.post``.
-- Providers:
-  - ``openai``: OpenAI Chat Completions at ``https://api.openai.com/v1``.
-  - ``custom``: any OpenAI-compatible Chat Completions endpoint, at the
-    configured ``base_url``.
-  - ``anthropic``: Anthropic Messages API.
-- Failures (network error, non-2xx, empty/*malformed* body) raise
-  :class:`CoachError`; the caller renders a short fallback and does NOT persist,
-  so a transient failure is retried on the next review.
+- This module owns the *coaching-specific* content: it composes the system prompt
+  (coach persona + fixed guardrails) and the user prompt (move, eval, verified
+  facts). It does NOT know any provider details.
+- Transport is delegated to an :class:`~universalchess.agents.base.Agent` resolved
+  by id from :mod:`universalchess.agents.registry`. The agent builds the
+  ``(url, headers, body)`` and parses the response, so every AI service (OpenAI,
+  Anthropic, custom, or a user-provided module) is pluggable and unit-tested
+  without network. ``CoachConfig.provider`` is the agent id.
+- The HTTP call is injectable (``http_post``/``http_get``) so payloads and parsing
+  are tested without any network access; it defaults to ``requests``.
+- Failures (network error, non-2xx, empty/malformed body, unconfigured, or an
+  :class:`~universalchess.agents.base.AgentError` from the agent) raise
+  :class:`CoachError`; the caller renders a short fallback and does NOT persist, so
+  a transient failure is retried on the next review.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
+
+from universalchess.agents import registry as agents
+from universalchess.agents.base import AgentConfig, AgentError
 
 DEFAULT_TIMEOUT_SECONDS = 20
 
-OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1"
-OPENAI_DEFAULT_MODEL = "gpt-4o-mini"
-
-ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
-ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models"
-ANTHROPIC_VERSION = "2023-06-01"
-# Fast, low-cost, current model. The previous default (claude-3-5-haiku-latest)
-# was retired by Anthropic and now returns 404, which surfaced as "Coach
-# unavailable"; keep this pointing at a live model id.
-ANTHROPIC_DEFAULT_MODEL = "claude-haiku-4-5"
-
-# Providers that produce a coach statement. "none" (or anything else) means the
-# feature is not configured.
-CONFIGURED_PROVIDERS = ("openai", "anthropic", "custom")
-
-# Curated fallback model ids per provider, used only when the live model list
-# cannot be fetched (offline, key not yet valid, endpoint down). The live list
-# from the provider's models endpoint is preferred; these keep the dropdown
-# usable rather than empty. Ordered best-first for display.
-OPENAI_FALLBACK_MODELS = (
-    "gpt-4o-mini",
-    "gpt-4o",
-    "gpt-4.1-mini",
-    "gpt-4.1",
-    "gpt-5-mini",
-    "gpt-5",
-)
-ANTHROPIC_FALLBACK_MODELS = (
-    "claude-haiku-4-5",
-    "claude-sonnet-5",
-    "claude-opus-4-8",
+# Always-on guardrails composed into every system prompt regardless of the coach
+# persona. These enforce the board's hard constraints (brevity for the 128x128
+# area) and the product's honesty rule (no invented tactics); a coach persona
+# shapes tone/focus but can never relax these.
+_BASE_GUARDRAILS = (
+    "Explain the move's idea or mistake in at most two short sentences. "
+    "Do not restate the move in notation. Be specific and practical."
 )
 
-# Substrings that mark an OpenAI/custom model id as non-chat (audio, images,
-# embeddings, etc.). Used to keep the model dropdown focused on models usable for
-# a text coaching completion. Not applied to Anthropic, whose listed models are
-# all chat models.
-_NON_CHAT_MODEL_KEYWORDS = (
-    "embedding",
-    "embed",
-    "whisper",
-    "tts",
-    "audio",
-    "realtime",
-    "transcribe",
-    "search",
-    "moderation",
-    "image",
-    "dall-e",
-    "dalle",
-)
-
-_SYSTEM_PROMPT = (
-    "You are a concise, encouraging chess coach. Given a position and the move "
-    "that was just played, explain the move's idea or mistake in at most two "
-    "short sentences. Do not restate the move in notation. Be specific and "
-    "practical."
-)
+# Persona used when no coach persona is supplied (coach framework absent or a
+# coach could not be resolved). Preserves the prior default coaching voice.
+_DEFAULT_PERSONA = "You are a concise, encouraging chess coach."
 
 _MAX_TOKENS = 120
 
 
 class CoachError(Exception):
-    """Raised when a coach statement could not be produced."""
+    """Raised when a coach statement could not be produced.
+
+    Carries the provider HTTP ``status`` and error ``code`` when the failure came
+    from a non-2xx response (both None for a network/parse/config failure), so a
+    caller can render a specific, actionable message -- quota exhausted vs. a
+    rejected key vs. a transient rate limit -- instead of a generic "try later".
+    """
+
+    def __init__(self, message: str, *, status: Optional[int] = None, code: Optional[str] = None):
+        super().__init__(message)
+        self.status = status
+        self.code = code
+
+
+# Human, surface-neutral messages per failure category, for the web and any caller
+# that wants a full sentence. The board panel keeps its own compact, line-broken
+# wording; only the *classification* (error_category) is shared, so board and web
+# always agree on what went wrong even if the phrasing differs.
+_CATEGORY_MESSAGES = {
+    "quota": "The AI account is out of credit or quota. Add billing/credits for this agent.",
+    "auth": "The AI key was rejected. Check the agent's API key in Settings > Agents.",
+    "rate_limited": "The AI service is rate-limiting requests. Try again shortly.",
+    "unavailable": "The AI service is unavailable. Try again later.",
+}
+
+
+def error_category(exc: "CoachError") -> str:
+    """Classify a coach failure so callers can message it appropriately.
+
+    Returns one of ``"quota"`` (account out of credit/quota -- a permanent problem
+    retrying never fixes), ``"auth"`` (key rejected), ``"rate_limited"`` (transient),
+    or ``"unavailable"`` (network/parse/unknown status). Reads the provider status
+    and error code carried on the error; an out-of-credit OpenAI account is 429
+    ``insufficient_quota``, distinct from a genuine 429 rate limit.
+    """
+    status = exc.status
+    code = (exc.code or "").lower()
+    if code == "insufficient_quota" or status == 402:
+        return "quota"
+    if status in (401, 403):
+        return "auth"
+    if status == 429:
+        return "rate_limited"
+    return "unavailable"
+
+
+def error_message(exc: "CoachError") -> str:
+    """Return a full-sentence, user-facing reason for a coach failure."""
+    return _CATEGORY_MESSAGES[error_category(exc)]
 
 
 @dataclass
 class CoachConfig:
-    """Coach provider configuration, sourced from game settings.
+    """Coach agent configuration, sourced from game settings.
 
     Attributes:
-        provider: One of ``openai``/``anthropic``/``custom`` (or ``none``).
-        api_key: Provider API key.
-        model: Model id; falls back to the provider default when empty.
-        base_url: Base URL for the ``custom`` (OpenAI-compatible) provider.
+        provider: The agent id selecting which AI service to use (e.g. ``openai``),
+            or ``none``/an unknown id when no agent is selected.
+        api_key: The agent's API key.
+        model: Model id; falls back to the agent default when empty.
+        base_url: Base URL for agents that require one (custom OpenAI-compatible).
+        enabled: Master coaching switch. False when the Coach selector is set to
+            "Disabled" (coach id ``off``), which turns coaching off no matter how
+            well the agent is configured. Defaults True so a config built purely to
+            inspect an agent (e.g. listing its models on the Agents tab) is not
+            gated by whether coaching happens to be on.
     """
 
     provider: str = "none"
     api_key: str = ""
     model: str = ""
     base_url: str = ""
+    enabled: bool = True
+
+    def _agent_config(self) -> AgentConfig:
+        """The connection config passed to the resolved agent."""
+        return AgentConfig(api_key=self.api_key, model=self.model, base_url=self.base_url)
 
     def is_configured(self) -> bool:
-        """True when a real provider and an API key are set.
+        """True when coaching is enabled, an agent is selected, and it is set up.
 
-        ``custom`` additionally requires a base URL, since it has no default
-        endpoint to fall back to.
+        Gates every network call: coaching turned off (Coach = "Disabled"), a
+        disabled/unknown provider, or a selected agent missing its key (or base URL
+        when required), all read as not configured so the caller shows the setup
+        hint instead of attempting a request that would 401.
         """
-        if self.provider not in CONFIGURED_PROVIDERS:
+        if not self.enabled:
             return False
-        if not self.api_key:
+        agent = agents.get_agent(self.provider)
+        if agent is None:
             return False
-        if self.provider == "custom" and not self.base_url:
-            return False
-        return True
+        return agent.is_configured(self._agent_config())
 
     def resolved_model(self) -> str:
-        """The model id to use, applying the provider default when unset."""
-        if self.model:
-            return self.model
-        if self.provider == "anthropic":
-            return ANTHROPIC_DEFAULT_MODEL
-        return OPENAI_DEFAULT_MODEL
+        """The model id to use, applying the agent default when unset.
+
+        Returns an empty string when no agent is selected, since there is no
+        default to apply.
+        """
+        agent = agents.get_agent(self.provider)
+        if agent is None:
+            return ""
+        return agent.resolved_model(self._agent_config())
 
 
 @dataclass
@@ -156,6 +176,15 @@ class CoachRequest:
             considering (a hint/tip) rather than a move that was actually played.
             The prompt is framed accordingly so the coach explains why the move
             would be good instead of critiquing it as an executed move.
+        is_opponent_move: True when the played move was made by the opponent rather
+            than the human player. The prompt is framed so the coach explains what
+            the opponent is doing/threatening and addresses the player about it,
+            instead of critiquing it as though the player had played it (which
+            produced remarks like "By playing d6, you solidify..." for an opponent's
+            move). Ignored for a potential move (a hint is always the player's).
+        persona: Optional coach persona (tone/focus/instructions) for the system
+            prompt, supplied by the selected coach. When unset, the default
+            coaching voice is used. The fixed guardrails are always appended.
     """
 
     fen_before: str
@@ -166,6 +195,20 @@ class CoachRequest:
     move_number: Optional[int] = None
     facts: Tuple[str, ...] = ()
     is_potential_move: bool = False
+    is_opponent_move: bool = False
+    persona: Optional[str] = None
+
+
+def build_system_prompt(request: "CoachRequest") -> str:
+    """Compose the system prompt: the coach persona followed by the guardrails.
+
+    The persona (who the coach is and how they coach) comes from the selected
+    coach via ``request.persona``; when unset the default coaching voice is used.
+    The fixed guardrails are always appended so brevity and the no-invented-tactics
+    rule hold for every coach.
+    """
+    persona = (request.persona or "").strip() or _DEFAULT_PERSONA
+    return f"{persona}\n\n{_BASE_GUARDRAILS}"
 
 
 def _format_eval(cp: Optional[int]) -> str:
@@ -178,16 +221,25 @@ def _format_eval(cp: Optional[int]) -> str:
 def build_user_prompt(request: CoachRequest) -> str:
     """Build the user prompt describing the move and its evaluation swing.
 
-    For a played move the prompt asks the coach to explain the executed move. For
-    a potential move (``is_potential_move`` -- a hint/tip) it states the move has
-    not been played yet and asks why the move would be a good choice, so the coach
-    never critiques it as if it were already on the board.
+    The final instruction is framed by whose move it is, because the coach speaks
+    to the human player:
+
+    - Potential move (``is_potential_move`` -- a hint/tip): states the move is not
+      yet played and asks why it would be a good choice, so the coach never
+      critiques it as if it were already on the board.
+    - Opponent's move (``is_opponent_move``): tells the coach the opponent, not the
+      player, made the move and to explain what the opponent is doing/threatening.
+      Without this the coach addressed the player as the mover ("By playing d6, you
+      solidify...") for a move the opponent played.
+    - Player's own played move (default): asks the coach to explain the player's
+      move.
     """
-    move_label = (
-        "Candidate move being considered (a hint, NOT yet played)"
-        if request.is_potential_move
-        else "Move played"
-    )
+    if request.is_potential_move:
+        move_label = "Candidate move being considered (a hint, NOT yet played)"
+    elif request.is_opponent_move:
+        move_label = "Move played by the opponent"
+    else:
+        move_label = "Move played"
     lines = [
         f"Position (FEN): {request.fen_before}",
         f"Side to move: {request.side_to_move}",
@@ -212,146 +264,61 @@ def build_user_prompt(request: CoachRequest) -> str:
             "played yet. In at most two short sentences, explain why it is a good "
             "move to play -- its plan or the tactic it would achieve. " + tactical_guard
         )
+    elif request.is_opponent_move:
+        lines.append(
+            "The opponent just played this move, not the player. Speaking to the "
+            "player, explain in at most two short sentences what the opponent is "
+            "doing or threatening. Do not phrase it as if the player made this move; "
+            'never say "you played" about the opponent\'s move. ' + tactical_guard
+        )
     else:
         lines.append(
-            "Coach the side that just moved in at most two short sentences. "
-            + tactical_guard
+            "The player just played this move. Coach the player on their own move in "
+            "at most two short sentences. " + tactical_guard
         )
     return "\n".join(lines)
 
 
-def _openai_base_url(config: CoachConfig) -> str:
-    """Resolve the OpenAI-compatible base URL for openai/custom providers."""
-    if config.provider == "custom":
-        return config.base_url.rstrip("/")
-    return OPENAI_DEFAULT_BASE_URL
+def fallback_models(provider: str) -> List[str]:
+    """Return the curated fallback model ids for an agent (may be empty).
 
-
-def build_openai_payload(config: CoachConfig, request: CoachRequest) -> Tuple[str, dict, dict]:
-    """Build ``(url, headers, json_body)`` for an OpenAI-compatible request."""
-    url = f"{_openai_base_url(config)}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {config.api_key}",
-        "Content-Type": "application/json",
-    }
-    body = {
-        "model": config.resolved_model(),
-        "max_tokens": _MAX_TOKENS,
-        "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": build_user_prompt(request)},
-        ],
-    }
-    return url, headers, body
-
-
-def build_anthropic_payload(config: CoachConfig, request: CoachRequest) -> Tuple[str, dict, dict]:
-    """Build ``(url, headers, json_body)`` for an Anthropic Messages request."""
-    headers = {
-        "x-api-key": config.api_key,
-        "anthropic-version": ANTHROPIC_VERSION,
-        "Content-Type": "application/json",
-    }
-    body = {
-        "model": config.resolved_model(),
-        "max_tokens": _MAX_TOKENS,
-        "system": _SYSTEM_PROMPT,
-        "messages": [
-            {"role": "user", "content": build_user_prompt(request)},
-        ],
-    }
-    return ANTHROPIC_API_URL, headers, body
-
-
-def parse_openai_response(data: dict) -> str:
-    """Extract the assistant message text from an OpenAI-compatible response."""
-    try:
-        content = data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as exc:
-        raise CoachError("Unexpected OpenAI response shape") from exc
-    text = (content or "").strip()
-    if not text:
-        raise CoachError("Empty OpenAI response")
-    return text
-
-
-def parse_anthropic_response(data: dict) -> str:
-    """Extract the text from an Anthropic Messages response."""
-    try:
-        blocks = data["content"]
-        text = "".join(
-            block.get("text", "") for block in blocks if block.get("type") == "text"
-        )
-    except (KeyError, TypeError) as exc:
-        raise CoachError("Unexpected Anthropic response shape") from exc
-    text = text.strip()
-    if not text:
-        raise CoachError("Empty Anthropic response")
-    return text
-
-
-def fallback_models(provider: str) -> list:
-    """Return the curated fallback model ids for a provider (may be empty).
-
-    Used when the live model list cannot be fetched. ``custom`` has no curated
-    list (its models are endpoint-specific and unknown), so it returns empty.
+    Used when the live model list cannot be fetched. An unknown/disabled provider,
+    or an agent with no curated list (e.g. custom), returns an empty list.
     """
-    if provider == "anthropic":
-        return list(ANTHROPIC_FALLBACK_MODELS)
-    if provider == "openai":
-        return list(OPENAI_FALLBACK_MODELS)
-    return []
+    agent = agents.get_agent(provider)
+    if agent is None:
+        return []
+    return list(agent.fallback_models)
 
 
-def build_models_request(config: CoachConfig) -> Tuple[str, dict]:
-    """Build ``(url, headers)`` for the provider's list-models endpoint.
+def _error_info(response) -> Tuple[Optional[str], str]:
+    """Best-effort (code, detail) from a non-2xx response, for diagnostics.
 
-    Anthropic uses ``GET /v1/models`` with ``x-api-key``; openai/custom use the
-    OpenAI-compatible ``GET {base}/models`` with a Bearer key.
-    """
-    if config.provider == "anthropic":
-        headers = {
-            "x-api-key": config.api_key,
-            "anthropic-version": ANTHROPIC_VERSION,
-        }
-        return ANTHROPIC_MODELS_URL, headers
-    headers = {"Authorization": f"Bearer {config.api_key}"}
-    return f"{_openai_base_url(config)}/models", headers
-
-
-def parse_models_response(data: dict) -> list:
-    """Extract model ids from a models-list response.
-
-    Both OpenAI-compatible and Anthropic list endpoints return ``{"data": [{"id":
-    ...}, ...]}``. Raises :class:`CoachError` on a shape that carries no ids.
+    A bare status code (e.g. 429) hides *why* the provider refused: an unfunded
+    OpenAI account returns 429 ``insufficient_quota`` while a real rate limit
+    returns 429 ``rate_limit_exceeded`` -- callers must tell those apart to show an
+    actionable message. Returns the provider's structured error ``code``/``type``
+    (or None) and a human ``detail`` string (``code: message`` when present, else a
+    truncated raw body). Never raises; ``detail`` is "" when nothing usable is
+    present. An error body carries no credentials, so surfacing it is safe.
     """
     try:
-        items = data["data"]
-        ids = [item["id"] for item in items if isinstance(item, dict) and item.get("id")]
-    except (KeyError, TypeError) as exc:
-        raise CoachError("Unexpected models response shape") from exc
-    if not ids:
-        raise CoachError("No models returned")
-    return ids
-
-
-def filter_chat_models(provider: str, model_ids: list) -> list:
-    """Return chat-usable model ids, sorted for stable display.
-
-    Anthropic's listed models are all chat models, so they pass through (sorted).
-    For openai/custom, ids whose name marks them as non-chat (audio, embeddings,
-    image, etc.) are dropped -- but if that would empty the list (e.g. a custom
-    endpoint using unusual names), the unfiltered list is returned so the user is
-    never left with no choices.
-    """
-    if provider == "anthropic":
-        return sorted(model_ids)
-    filtered = [
-        model_id
-        for model_id in model_ids
-        if not any(keyword in model_id.lower() for keyword in _NON_CHAT_MODEL_KEYWORDS)
-    ]
-    return sorted(filtered or model_ids)
+        data = response.json()
+    except Exception:
+        data = None
+    if isinstance(data, dict):
+        err = data.get("error")
+        if isinstance(err, dict):
+            raw_code = err.get("code") or err.get("type")
+            code = str(raw_code) if raw_code else None
+            parts = [str(err[k]) for k in ("code", "message") if err.get(k)]
+            if parts:
+                return code, ": ".join(parts)
+            return code, ""
+        if isinstance(err, str) and err:
+            return None, err
+    text = (getattr(response, "text", "") or "").strip().replace("\n", " ")
+    return None, text[:200]
 
 
 def list_models(
@@ -359,19 +326,27 @@ def list_models(
     *,
     http_get: Optional[Callable] = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
-) -> list:
-    """Fetch the available model ids for the configured provider.
+) -> List[str]:
+    """Fetch the available model ids for the configured agent.
 
-    Queries the provider's list-models endpoint with the configured key so the
-    model dropdown always reflects models the account can actually use. Returns
-    the chat-usable ids (sorted). Raises :class:`CoachError` if not configured or
-    on any network/HTTP/parse failure -- the caller falls back to the curated
-    list so a transient failure does not empty the dropdown.
+    Queries the agent's list-models endpoint with the configured key so the model
+    dropdown always reflects models the account can actually use. Returns the
+    chat-usable ids (sorted). Raises :class:`CoachError` if not configured, if the
+    agent cannot list models, or on any network/HTTP/parse failure -- the caller
+    falls back to the curated list so a transient failure does not empty the
+    dropdown.
     """
     if not config.is_configured():
         raise CoachError("Coach service is not configured")
 
-    url, headers = build_models_request(config)
+    agent = agents.get_agent(config.provider)
+    if agent is None or not agent.supports_model_listing():
+        raise CoachError("Agent does not support model listing")
+
+    try:
+        url, headers = agent.build_models_request(config._agent_config())
+    except AgentError as exc:
+        raise CoachError(str(exc)) from exc
 
     if http_get is None:
         import requests
@@ -385,14 +360,22 @@ def list_models(
 
     status = getattr(response, "status_code", None)
     if status is None or not (200 <= status < 300):
-        raise CoachError(f"Model list returned status {status}")
+        code, detail = _error_info(response)
+        raise CoachError(
+            f"Model list returned status {status}" + (f" ({detail})" if detail else ""),
+            status=status,
+            code=code,
+        )
 
     try:
         data = response.json()
     except Exception as exc:
         raise CoachError("Model list response was not valid JSON") from exc
 
-    return filter_chat_models(config.provider, parse_models_response(data))
+    try:
+        return agent.filter_models(agent.parse_models_response(data))
+    except AgentError as exc:
+        raise CoachError(str(exc)) from exc
 
 
 def generate_coach_statement(
@@ -402,10 +385,13 @@ def generate_coach_statement(
     http_post: Optional[Callable] = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> str:
-    """Produce a coach statement for a move via the configured provider.
+    """Produce a coach statement for a move via the configured agent.
+
+    Composes the coaching prompts here and delegates the request/parse to the
+    resolved agent, so this function is provider-agnostic.
 
     Args:
-        config: Provider configuration (must be configured).
+        config: Agent configuration (must be configured).
         request: The move to coach.
         http_post: Callable used to POST (defaults to ``requests.post``);
             injectable for tests.
@@ -415,19 +401,24 @@ def generate_coach_statement(
         The coach statement text.
 
     Raises:
-        CoachError: If not configured, on any network/HTTP failure, or on an
-            empty/malformed response.
+        CoachError: If not configured, on any network/HTTP failure, on an
+            empty/malformed response, or when the agent reports an error.
     """
     if not config.is_configured():
         raise CoachError("Coach service is not configured")
 
-    if config.provider == "anthropic":
-        url, headers, body = build_anthropic_payload(config, request)
-        parse = parse_anthropic_response
-    else:
-        # openai + custom share the OpenAI-compatible chat completions shape.
-        url, headers, body = build_openai_payload(config, request)
-        parse = parse_openai_response
+    agent = agents.get_agent(config.provider)
+    if agent is None:
+        raise CoachError("Coach service is not configured")
+
+    system_prompt = build_system_prompt(request)
+    user_prompt = build_user_prompt(request)
+    try:
+        url, headers, body = agent.build_chat_request(
+            config._agent_config(), system_prompt, user_prompt, _MAX_TOKENS
+        )
+    except AgentError as exc:
+        raise CoachError(str(exc)) from exc
 
     if http_post is None:
         import requests
@@ -441,29 +432,33 @@ def generate_coach_statement(
 
     status = getattr(response, "status_code", None)
     if status is None or not (200 <= status < 300):
-        raise CoachError(f"Coach request returned status {status}")
+        code, detail = _error_info(response)
+        raise CoachError(
+            f"Coach request returned status {status}" + (f" ({detail})" if detail else ""),
+            status=status,
+            code=code,
+        )
 
     try:
         data = response.json()
     except Exception as exc:
         raise CoachError("Coach response was not valid JSON") from exc
 
-    return parse(data)
+    try:
+        return agent.parse_chat_response(data)
+    except AgentError as exc:
+        raise CoachError(str(exc)) from exc
 
 
 __all__ = [
     "CoachConfig",
     "CoachRequest",
     "CoachError",
+    "error_category",
+    "error_message",
     "generate_coach_statement",
     "build_user_prompt",
-    "build_openai_payload",
-    "build_anthropic_payload",
-    "parse_openai_response",
-    "parse_anthropic_response",
+    "build_system_prompt",
     "list_models",
-    "build_models_request",
-    "parse_models_response",
-    "filter_chat_models",
     "fallback_models",
 ]
