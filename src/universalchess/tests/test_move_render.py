@@ -58,6 +58,29 @@ def test_draw_with_sheet_advances_by_measured_width_and_inks():
     assert img.getextrema() == (0, 255)  # something was drawn
 
 
+def test_draw_inverted_fill_whitens_text_and_glyph():
+    # The selected move is highlighted by an inverted fill: with fill=255 the
+    # move must render white (255) on the caller's black cell. The glyph sprite is
+    # inverted too, so its black-on-white art becomes white-on-black -- otherwise
+    # the sprite's white background would punch a white box into the black cell.
+    # Canvas starts black to mimic the pre-filled selection cell.
+    img = Image.new("L", (128, 32), 0)
+    draw = ImageDraw.Draw(img)
+    sheet = Image.new("1", (208, 16), 255)
+    ImageDraw.Draw(sheet).rectangle([48, 0, 63, 15], fill=0)  # black in the "N" slot
+    glyph_size = 16
+
+    move_render.draw_move_string(
+        img, draw, 4, 8, f"{KNIGHT}f3", True, FONT, glyph_size, sheet, fill=255
+    )
+
+    # White ink was produced (text and/or inverted glyph) on the black canvas.
+    assert img.getextrema()[1] == 255
+    # The glyph column that was solid-black art is now predominantly white after
+    # inversion: sample its center pixel.
+    assert img.getpixel((4 + glyph_size // 2, 8 + glyph_size // 2)) == 255
+
+
 def test_draw_without_sheet_falls_back_to_letters():
     # No sheet -> the piece letter is drawn instead of the sprite so the move is
     # still legible; it must not raise and must ink the canvas.

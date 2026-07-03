@@ -254,7 +254,7 @@ def test_render_score_change_does_not_request_a_refresh():
 
 def test_render_selected_move_draws_highlight_without_sprites():
     # Rendering a selected move with no sprite sheet must not raise and must draw
-    # ink (falls back to piece letters plus the selection box). Guards the
+    # ink (falls back to piece letters on the inverted highlight). Guards the
     # figurine fallback and highlight layout end-to-end on a real canvas.
     widget = _widget(_game(RUY_LOPEZ_UCI))
     widget.step_selection(1)                 # select ply 1

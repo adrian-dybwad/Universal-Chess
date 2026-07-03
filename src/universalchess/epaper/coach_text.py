@@ -6,12 +6,13 @@ AI coach statement for that move; on the analysis view the board is restored and
 this widget is hidden. Hidden by default so it never draws until a move is
 selected.
 
-Wrapping/centering is delegated to a child :class:`TextWidget`; this widget adds
-the surrounding border and the "Coach" header so the statement reads as its own
-panel rather than floating over an empty square.
+Wrapping/centering is delegated to a child :class:`TextWidget` that fills the whole
+panel; no title, underline, or outer border is drawn, so the statement gets the
+maximum room in the board area below the status bar. The header label is still
+tracked (tip vs. review) for the manager/tests but is no longer rendered.
 """
 
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from .framework.widget import Widget
 from .text import TextWidget, Justify
@@ -26,7 +27,6 @@ except ImportError:  # pragma: no cover - logging shim for non-board contexts
 class CoachTextWidget(Widget):
     """Board-area panel that renders a wrapped AI coach statement."""
 
-    HEADER_HEIGHT = 16
     DEFAULT_HEADER = "Coach"
 
     def __init__(self, x: int, y: int, width: int, height: int, update_callback):
@@ -38,17 +38,19 @@ class CoachTextWidget(Widget):
         self.visible = False
         self._text = ""
         # The header labels the panel's purpose ("Coach" for move review, "Coach's
-        # Tip" for a hint). Kept mutable so the same panel can distinguish the two
-        # without a second widget.
+        # Tip" for a hint). Retained as state (read by the manager and tests) but no
+        # longer drawn, so the body gets the full panel.
         self._header = self.DEFAULT_HEADER
-        # Child text widget draws the wrapped, centered statement body. Its
-        # update callback is a no-op: set_text() is only called from this
-        # widget's set_text(), which already invalidates and requests one refresh.
+        # Child text widget draws the wrapped, centered statement body across the
+        # full panel width (2px top/bottom inset only). Its update callback is a
+        # no-op: set_text()
+        # is only called from this widget's set_text(), which already invalidates and
+        # requests one refresh.
         self._body = TextWidget(
+            0,
             2,
-            self.HEADER_HEIGHT + 2,
-            self.width - 4,
-            self.height - self.HEADER_HEIGHT - 4,
+            self.width,
+            self.height - 4,
             self._noop_update,
             text="",
             font_size=12,
@@ -88,16 +90,7 @@ class CoachTextWidget(Widget):
         return self._header
 
     def render(self, sprite: Image.Image) -> None:
-        """Render the border, header, and wrapped statement body."""
-        draw = ImageDraw.Draw(sprite)
+        """Render the wrapped statement body filling the panel (no title/border)."""
         self.draw_background_on_sprite(sprite)
-        draw.rectangle([(0, 0), (self.width - 1, self.height - 1)], fill=None, outline=0)
-
-        from universalchess.resources import get_font
-
-        font = get_font(12)
-        draw.text((4, 2), self._header, font=font, fill=0)
-        draw.line([(2, self.HEADER_HEIGHT), (self.width - 2, self.HEADER_HEIGHT)], fill=0, width=1)
-
-        # Vertically center the wrapped body within the area below the header.
-        self._body.draw_on(sprite, 2, self.HEADER_HEIGHT + 2)
+        # Full-width body (no left/right padding); small top inset only.
+        self._body.draw_on(sprite, 0, 2)

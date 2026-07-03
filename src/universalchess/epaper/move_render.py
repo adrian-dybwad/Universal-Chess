@@ -78,19 +78,24 @@ def measure_move_string(draw, text: str, font, glyph_size: int) -> int:
 
 
 def draw_move_string(sprite, draw, x: int, y: int, text: str, white_side: bool,
-                     font, glyph_size: int, sheet) -> int:
+                     font, glyph_size: int, sheet, fill: int = 0) -> int:
     """Draw ``text`` at ``(x, y)``, compositing piece sprites for figurine glyphs.
 
     White art is used for a white move, black art for a black move. When no
     sprite sheet is available the piece letter is drawn instead so the move stays
     legible rather than dropping the piece. Returns the x after the drawn string.
+
+    ``fill`` is the text color (0=black default, 255=white). White is used to draw
+    a move inverted on a black-filled cell (the selected-move highlight); the piece
+    sprite is inverted to match so its black-on-white art becomes white-on-black and
+    blends into the filled cell rather than punching a white box into it.
     """
     run = ""
 
     def flush(cur_x: int) -> int:
         nonlocal run
         if run:
-            draw.text((cur_x, y), run, font=font, fill=0)
+            draw.text((cur_x, y), run, font=font, fill=fill)
             cur_x += int(draw.textlength(run, font=font))
             run = ""
         return cur_x
@@ -105,10 +110,15 @@ def draw_move_string(sprite, draw, x: int, y: int, text: str, white_side: bool,
             letter = letter.lower()
         img = _piece_glyph_image(sheet, letter, glyph_size)
         if img is not None:
+            if fill == 255:
+                # Invert the glyph so white piece art sits on a black background,
+                # matching the inverted (selected) cell instead of overwriting it
+                # with the sprite's white background.
+                img = Image.eval(img.convert("L"), lambda p: 255 - p)
             sprite.paste(img, (int(x), int(y)))
             x += glyph_size + 1
         else:
             fallback = letter.upper()
-            draw.text((x, y), fallback, font=font, fill=0)
+            draw.text((x, y), fallback, font=font, fill=fill)
             x += int(draw.textlength(fallback, font=font)) + 1
     return flush(x)

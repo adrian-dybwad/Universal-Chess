@@ -523,38 +523,35 @@ class GameAnalysisWidget(Widget):
     _WHITE_COL_X = 26
     _BLACK_COL_X = 78
 
-    def _draw_move_string(self, sprite, draw, x, y, text, white_side, font, glyph_size) -> int:
+    def _draw_move_string(self, sprite, draw, x, y, text, white_side, font, glyph_size, fill=0) -> int:
         """Draw a move string, compositing piece sprites for figurine glyphs.
 
         Thin wrapper over the shared move_render helper, passing this widget's
-        sprite sheet (falling back to the app's global sheet). Returns the
-        advanced x.
+        sprite sheet (falling back to the app's global sheet). ``fill`` is the text
+        color (255 for an inverted, selected move). Returns the advanced x.
         """
         from . import move_render
         sheet = move_render.sprite_sheet(self._sprites)
         return move_render.draw_move_string(
-            sprite, draw, x, y, text, white_side, font, glyph_size, sheet
+            sprite, draw, x, y, text, white_side, font, glyph_size, sheet, fill=fill
         )
 
     def _render_moves(self, sprite: Image.Image) -> None:
         """Render the move-history window for the selection, highlighting the ply.
 
         A header line ("Move k/N") tops the window; the selected ply's half-move
-        is boxed so the user sees exactly which move the coach statement (shown in
-        the board area) refers to.
+        is drawn inverted (white on black) so the user sees exactly which move the
+        coach statement (shown in the board area) refers to.
         """
         from universalchess.resources import get_font
 
         draw = ImageDraw.Draw(sprite)
         self.draw_background_on_sprite(sprite)
-        draw.rectangle([(0, 0), (self.width - 1, self.height - 1)], fill=None, outline=0)
 
         font = get_font(self.MOVE_FONT_SIZE)
 
         header = f"Move  {self.selected_ply()}/{self.num_plies()}"
         draw.text((self.MOVE_MARGIN, self.MOVE_MARGIN), header, font=font, fill=0)
-        separator_y = self.MOVE_MARGIN + self.MOVE_HEADER_HEIGHT - 2
-        draw.line([(2, separator_y), (self.width - 2, separator_y)], fill=0, width=1)
 
         selected_row = self.selected_row_index()
         selected_is_white = self.selected_is_white()
@@ -563,34 +560,44 @@ class GameAnalysisWidget(Widget):
         top = self.MOVE_MARGIN + self.MOVE_HEADER_HEIGHT
         y = top
         for row_index, (number, white, black) in enumerate(self.visible_rows()):
+            row_selected = row_index == selected_row and selected_is_white is not None
             draw.text((self._NUMBER_COL_X, y), f"{number}.", font=font, fill=0)
-            self._draw_move_string(
-                sprite, draw, self._WHITE_COL_X, y, white, True, font, glyph_size
+            self._draw_move_cell(
+                sprite, draw, self._WHITE_COL_X, y, white, True, font, glyph_size,
+                selected=row_selected and selected_is_white,
             )
             if black is not None:
-                self._draw_move_string(
-                    sprite, draw, self._BLACK_COL_X, y, black, False, font, glyph_size
+                self._draw_move_cell(
+                    sprite, draw, self._BLACK_COL_X, y, black, False, font, glyph_size,
+                    selected=row_selected and not selected_is_white,
                 )
-            if row_index == selected_row and selected_is_white is not None:
-                self._draw_selection_box(draw, y, selected_is_white)
             y += self.MOVE_LINE_HEIGHT
 
-    def _draw_selection_box(self, draw: 'ImageDraw.ImageDraw', y: int, is_white: bool) -> None:
-        """Outline the selected half-move cell on its row.
-
-        A box (rather than an inverted fill) is used because the move text is
-        composited from piece sprites for figurine glyphs; a box highlights the
-        selected move without having to re-composite those glyphs in inverse.
-        """
+    def _selection_cell_bounds(self, is_white: bool, y: int):
+        """Pixel bounds ``(x0, y0, x1, y1)`` of a half-move cell for highlighting."""
         if is_white:
             x0 = self._WHITE_COL_X - 2
             x1 = self._BLACK_COL_X - 3
         else:
             x0 = self._BLACK_COL_X - 2
             x1 = self.width - 3
-        draw.rectangle(
-            [(x0, y - 1), (x1, y + self.MOVE_LINE_HEIGHT - 2)], fill=None, outline=0
-        )
+        return x0, y - 1, x1, y + self.MOVE_LINE_HEIGHT - 2
+
+    def _draw_move_cell(self, sprite, draw, x, y, text, white_side, font, glyph_size,
+                        selected: bool) -> None:
+        """Draw a half-move, inverting it (white on black) when it is the selection.
+
+        The selected move is highlighted by filling its cell black and drawing the
+        move -- text and composited piece glyphs -- in white, instead of boxing it,
+        so the active move reads as a solid highlight. The figurine glyphs are
+        inverted to match (see :func:`move_render.draw_move_string`).
+        """
+        if selected:
+            x0, y0, x1, y1 = self._selection_cell_bounds(white_side, y)
+            draw.rectangle([(x0, y0), (x1, y1)], fill=0, outline=0)
+            self._draw_move_string(sprite, draw, x, y, text, white_side, font, glyph_size, fill=255)
+        else:
+            self._draw_move_string(sprite, draw, x, y, text, white_side, font, glyph_size)
 
     def render_red(self, sprite: Image.Image) -> None:
         """Render the RED overlay: the losing-side (negative) history bars in red.
