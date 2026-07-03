@@ -190,6 +190,10 @@ class DisplayManager:
         self._menu_active = False
         self._current_menu = None
         self._menu_result_callback = None
+        # True while this manager paused a running clock to show a game-overlay
+        # menu (resign/draw). Gates the resume-on-cancel so a clock that was
+        # already paused/stopped (or never started) is not spuriously started.
+        self._clock_paused_for_menu = False
         
         # Key callback for routing during menu
         self._original_key_callback = None
@@ -782,7 +786,47 @@ class DisplayManager:
         """Pause the chess clock."""
         self._clock.pause()
         self._sync_clock_refresh_mode()
-    
+
+    def resume_clock(self) -> None:
+        """Resume the chess clock after a pause."""
+        self._clock.resume()
+        self._sync_clock_refresh_mode()
+
+    def _pause_clock_for_menu(self) -> None:
+        """Pause a running clock while a game-overlay menu (resign/draw) is shown.
+
+        Two problems are fixed by pausing here. First, the meta-decision of
+        whether to resign or offer a draw must not be charged to the player on
+        move. Second, and the reason a still-running clock made the menu
+        unusable: a counting clock puts the Manager in clock-driven refresh mode,
+        where routine widget updates only mark the framebuffer dirty and ride the
+        clock widget's per-tick flush. Opening the menu tears the clock widget
+        down (see clear_widgets), so no tick fires to flush deferred content -
+        the menu's selection-highlight redraws queued forever and arrow-key
+        navigation appeared frozen. Pausing flips the clock out of the counting
+        state, which _sync_clock_refresh_mode turns into immediate (coalesced)
+        refreshes, restoring responsive navigation.
+
+        Only a clock that is actually counting is paused, so a not-yet-started or
+        already-paused clock is left untouched (and, via the guard flag, is not
+        spuriously resumed when the menu is cancelled).
+        """
+        if self._clock.is_running and not self._clock.is_paused:
+            self.pause_clock()
+            self._clock_paused_for_menu = True
+
+    def _resume_clock_after_menu(self) -> None:
+        """Resume a clock paused by _pause_clock_for_menu (menu was cancelled).
+
+        Resumes only when this manager paused the clock for the menu, so a clock
+        that was already paused/stopped before the menu opened is not started.
+        Resign/draw outcomes end the game (their handlers stop the clock) and so
+        must not resume; only the cancel path returns to live play.
+        """
+        if self._clock_paused_for_menu:
+            self._clock_paused_for_menu = False
+            self.resume_clock()
+
     def stop_clock(self) -> None:
         """Stop the chess clock completely."""
         self._clock.stop()
@@ -1041,6 +1085,14 @@ class DisplayManager:
         if result != "exit":
             self._init_widgets()
 
+        # Resume a clock paused for this overlay only when returning to live
+        # play. Resign/draw end the game (their handlers stop the clock) and exit
+        # powers off, so those outcomes clear the guard flag without resuming.
+        if result == "cancel":
+            self._resume_clock_after_menu()
+        else:
+            self._clock_paused_for_menu = False
+
         if self._menu_result_callback:
             self._menu_result_callback(result)
 
@@ -1057,7 +1109,12 @@ class DisplayManager:
 
         
         log.info(f"[DisplayManager] Showing back menu (two_player={is_two_player})")
-        
+
+        # Pause a running clock before the overlay replaces the board: it stops
+        # charging the resign/draw decision to the player on move and keeps the
+        # menu navigable (see _pause_clock_for_menu).
+        self._pause_clock_for_menu()
+
         if is_two_player:
             # In 2-player mode, show separate resign options for each side
             # White flag (white fill, black border) for white resigns
@@ -1145,7 +1202,11 @@ class DisplayManager:
         # Use same resign icons as kings-in-center: resign_white for white, resign_black for black
         icon_name = "resign_white" if king_color else "resign_black"
         log.info(f"[DisplayManager] Showing king-lift resign menu for {color_name}")
-        
+
+        # Pause a running clock so the resign gesture is not charged to the mover
+        # and the menu stays navigable (see _pause_clock_for_menu).
+        self._pause_clock_for_menu()
+
         entries = [
             _IconMenuEntry(key="resign", label=f"Resign\n{color_name}?", icon_name=icon_name),
             _IconMenuEntry(key="cancel", label="No", icon_name="cancel"),

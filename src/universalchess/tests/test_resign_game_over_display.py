@@ -225,6 +225,102 @@ class TestFinalizeMenuSelectionRebuild(_DisplayManagerTestBase):
         self.assertIsNone(self.dm._current_menu)
 
 
+class TestOverlayMenuPausesClock(_DisplayManagerTestBase):
+    """A running clock is paused for the resign/draw overlay and resumed on cancel.
+
+    Regression: in a timed game the clock kept counting while the BACK
+    (resign/draw) menu was shown. A counting clock puts the Manager in
+    clock-driven refresh mode, but the overlay tears the clock widget down, so no
+    tick fired to flush the menu's selection-highlight redraws - arrow-key
+    navigation appeared frozen. Pausing the clock (which _sync_clock_refresh_mode
+    turns into immediate refreshes) fixes both the time accounting and the
+    responsiveness. Cancel returns to play and must resume; resign/draw/exit end
+    or leave the game and must not.
+    """
+
+    def _finalize(self, selection_result, shutdown_result="exit"):
+        self.dm._init_widgets = lambda: None
+        self.dm._menu_result_callback = lambda result: None
+        menu = _FakeMenu(selection_result)
+        self.dm._menu_active = True
+        self.dm._current_menu = menu
+        self.dm._finalize_menu_selection(menu, shutdown_result=shutdown_result)
+
+    def test_pause_only_when_clock_is_counting(self):
+        """_pause_clock_for_menu pauses and flags only a running, unpaused clock.
+
+        Failure manifests as either a not-yet-started clock being paused/flagged
+        (which would then be spuriously resumed on cancel, starting the clock) or
+        a counting clock not being paused (the original frozen-menu bug).
+        """
+        self.dm._clock.is_running = False
+        self.dm._clock.is_paused = False
+        self.dm._pause_clock_for_menu()
+        self.dm._clock.pause.assert_not_called()
+        self.assertFalse(self.dm._clock_paused_for_menu)
+
+        self.dm._clock.reset_mock()
+        self.dm._clock.is_running = True
+        self.dm._clock.is_paused = True  # already paused (e.g. full-menu suspend)
+        self.dm._pause_clock_for_menu()
+        self.dm._clock.pause.assert_not_called()
+        self.assertFalse(self.dm._clock_paused_for_menu)
+
+        self.dm._clock.reset_mock()
+        self.dm._clock.is_running = True
+        self.dm._clock.is_paused = False
+        self.dm._pause_clock_for_menu()
+        self.dm._clock.pause.assert_called_once()
+        self.assertTrue(self.dm._clock_paused_for_menu)
+
+    def test_cancel_resumes_clock_paused_for_menu(self):
+        """Cancelling the overlay resumes the clock this manager paused.
+
+        Failure manifests as the clock staying paused after returning to play,
+        so the player's time would never resume counting.
+        """
+        self.dm._clock_paused_for_menu = True
+        self._finalize("BACK")  # BACK maps to cancel
+        self.dm._clock.resume.assert_called_once()
+        self.assertFalse(self.dm._clock_paused_for_menu)
+
+    def test_cancel_does_not_resume_when_not_paused_for_menu(self):
+        """Cancel must not start a clock this manager did not pause for the menu.
+
+        Guards the not-yet-started case: resume() on a stopped clock would START
+        it. Failure manifests as clock.resume being called with the guard flag
+        clear.
+        """
+        self.dm._clock_paused_for_menu = False
+        self._finalize("BACK")
+        self.dm._clock.resume.assert_not_called()
+
+    def test_game_ending_outcomes_do_not_resume(self):
+        """Resign/draw end the game, so the clock must not be resumed.
+
+        The game-over handler stops the clock; resuming here would restart a
+        countdown behind the end screen. Failure manifests as clock.resume being
+        called for a resign/draw, and the guard flag left set.
+        """
+        for result in ("resign", "resign_white", "resign_black", "draw"):
+            with self.subTest(result=result):
+                self.dm._clock.reset_mock()
+                self.dm._clock_paused_for_menu = True
+                self._finalize(result)
+                self.dm._clock.resume.assert_not_called()
+                self.assertFalse(self.dm._clock_paused_for_menu)
+
+    def test_exit_does_not_resume(self):
+        """Shutdown must not resume the clock (device is powering off).
+
+        Failure manifests as clock.resume being called during teardown.
+        """
+        self.dm._clock_paused_for_menu = True
+        self._finalize("SHUTDOWN", shutdown_result="exit")
+        self.dm._clock.resume.assert_not_called()
+        self.assertFalse(self.dm._clock_paused_for_menu)
+
+
 class TestResignDisplaysGameOverWidget(_DisplayManagerTestBase):
     """End-to-end: a resign selection results in a visible game-over screen."""
 
