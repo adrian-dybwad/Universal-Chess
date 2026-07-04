@@ -1642,6 +1642,10 @@ export function Settings() {
                       <Input
                         type="password"
                         autoComplete="off"
+                        // Widened (~1.3x the default) so the longer "Key saved --
+                        // leave blank to keep" placeholder is fully visible rather
+                        // than clipped.
+                        size={32}
                         placeholder={
                           agent.api_key_set ? 'Key saved \u2014 leave blank to keep' : 'Enter API key'
                         }
