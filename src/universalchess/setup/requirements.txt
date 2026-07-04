@@ -7,6 +7,10 @@ evdev
 cairosvg
 casttube
 ndjson
+# Generates the SVG QR code on the CA-install page (web/app.py /ca.pem?qr=1).
+# Without it the import fails, the endpoint returns 500, and the page shows a
+# broken/missing QR image.
+segno
 pyserial
 spidev
 # RPi.GPIO is intentionally NOT pip-installed. On the device the API is provided
