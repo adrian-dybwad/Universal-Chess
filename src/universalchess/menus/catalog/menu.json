@@ -741,7 +741,21 @@
       "help": "Configure the selected agent: API key, model, and endpoint.",
       "section": "agents",
       "platforms": ["board"],
-      "children": ["agents.detail.api_key", "agents.detail.model", "agents.detail.model_custom", "agents.detail.base_url"]
+      "children": ["agents.detail.api_key", "agents.detail.clear_key", "agents.detail.model", "agents.detail.model_custom", "agents.detail.base_url"]
+    },
+    {
+      "id": "agents.detail.clear_key",
+      "key": "agent_clear_key",
+      "type": "action",
+      "label": "Clear API Key",
+      "boardLabel": "Clear API Key",
+      "action": "clear_agent_api_key",
+      "icon": "settings",
+      "help": "Remove this agent's stored API key. Shown only when a key is set.",
+      "section": "agents",
+      "visibleWhen": { "store": "agent_edit", "key": "has_api_key", "equals": true },
+      "platforms": ["board"],
+      "epaper": { "font_size": 14, "height_ratio": 0.8, "layout": "horizontal" }
     },
     {
       "id": "agents.detail.api_key",

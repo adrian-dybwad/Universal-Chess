@@ -163,7 +163,7 @@ const defaultFormSettings: FormSettings = {
     chess_sprites: 'default',
     notation: 'figurine',
     coach_provider: 'none',
-    coach_id: 'auto',
+    coach_id: 'off',
   },
   lichess: { api_token: '', range: '' },
   sound: { enabled: true, key_press: true, game_events: true, piece_events: true, errors: true },
@@ -220,7 +220,7 @@ function parseRawSettings(data: SettingsData): FormSettings {
       chess_sprites: data.game?.chess_sprites || 'default',
       notation: data.game?.notation || 'figurine',
       coach_provider: data.game?.coach_provider || 'none',
-      coach_id: data.game?.coach_id || 'auto',
+      coach_id: data.game?.coach_id || 'off',
     },
     lichess: {
       api_token: data.lichess?.api_token || '',
@@ -361,6 +361,9 @@ export function Settings() {
   // agent's server-stored key). Backs each agent's Model dropdown; empty until
   // fetched or for agents that use a free-text model.
   const [agentModels, setAgentModels] = useState<Record<string, string[]>>({});
+  // Per-agent error text for a failed "clear saved key" request, shown inline
+  // under that agent's API-key row. Keyed by agent id; cleared on a fresh attempt.
+  const [agentKeyErrors, setAgentKeyErrors] = useState<Record<string, string>>({});
   // Selectable coaches (persona) from the coaches framework, and the coach the
   // current selection resolves to (so "Auto" can show which coach it picked).
   // Fetched from GET /api/coaches. Independent of the AI provider/key.
@@ -635,27 +638,6 @@ export function Settings() {
     originalSettings.player2.type,
   ]);
 
-  // Keep the coach's agent selection valid and savable. When coaching is enabled
-  // and at least one agent is configured but the stored provider is not one of them
-  // (e.g. still "none" from before any key existed, or a since-removed key), select
-  // the first configured agent and mark the page dirty. A native <select> shows its
-  // first option when the bound value is not in its list, which otherwise let the UI
-  // display an agent that was never actually saved (no onChange fired, nothing to
-  // save). Skipped while coaching is off so a disabled coach leaves the provider as
-  // stored.
-  useEffect(() => {
-    if (formSettings.game.coach_id === 'off') return;
-    const configured = agents.filter((a) => a.configured);
-    if (configured.length === 0) return;
-    if (!configured.some((a) => a.id === formSettings.game.coach_provider)) {
-      setFormSettings((prev) => ({
-        ...prev,
-        game: { ...prev.game, coach_provider: configured[0].id },
-      }));
-      setHasChanges(true);
-    }
-  }, [agents, formSettings.game.coach_id, formSettings.game.coach_provider]);
-
   const updateFormSettings = <T extends keyof FormSettings>(
     section: T,
     updates: Partial<FormSettings[T]>
@@ -683,6 +665,40 @@ export function Settings() {
     setHasChanges(true);
   };
 
+  // Delete an agent's stored API key. A blank key on save means "leave unchanged"
+  // (the secret is never fetched back), so removing a key needs an explicit call.
+  // Acts immediately against the server rather than through the Save button so the
+  // destructive intent is unambiguous; then refetches agents so api_key_set /
+  // configured update (which may drop this agent from the Game > Agent selector and
+  // re-point or disable the coach via the normalization effect). The local input is
+  // reset so a since-cleared field cannot be re-saved as if unchanged.
+  const clearAgentKey = async (agentId: string) => {
+    if (!window.confirm('Remove the saved API key for this agent? It will stop working until a new key is entered.')) {
+      return;
+    }
+    setAgentKeyErrors((prev) => {
+      const next = { ...prev };
+      delete next[agentId];
+      return next;
+    });
+    try {
+      const res = await apiFetch(`/api/agents/${encodeURIComponent(agentId)}/clear-key`, {
+        method: 'POST',
+        requiresAuth: true,
+      });
+      if (!res.ok) {
+        throw new Error(`Request failed (${res.status})`);
+      }
+      setAgentEdits((prev) => ({
+        ...prev,
+        [agentId]: { ...(prev[agentId] ?? { model: '', base_url: '' }), api_key: '', api_key_dirty: false },
+      }));
+      await fetchAgents();
+    } catch {
+      setAgentKeyErrors((prev) => ({ ...prev, [agentId]: 'Could not remove the key. Try again.' }));
+    }
+  };
+
   // Build the namespaced per-agent game keys to persist. Model/base URL are always
   // written (for agents that use them); the API key is written only when the user
   // typed a new one (blank = leave the stored secret unchanged, since it is never
@@ -701,6 +717,29 @@ export function Settings() {
       }
     }
     return writes;
+  };
+
+  // An agent can power the coach once it has an API key plus every required setting
+  // -- either already saved (agent.configured) or entered in the current, unsaved
+  // form (a pending, dirty key). Counting the pending key lets a user add a key and
+  // select it as the coach's agent in a single save, instead of the save being
+  // blocked because the key it is about to persist is not yet stored on the server
+  // (which would otherwise deadlock a board whose coach is enabled but agentless).
+  const agentReadyForCoach = (agent: AgentInfo): boolean => {
+    if (agent.configured) return true;
+    const edit = agentEdits[agent.id];
+    if (!edit || !edit.api_key_dirty || edit.api_key === '') return false;
+    return !agent.requires_base_url || edit.base_url !== '';
+  };
+
+  // An enabled coach (persona other than "Disabled") must be backed by a selected,
+  // ready agent. Used both to gate saving and to surface the requirement in the UI,
+  // so the two never disagree.
+  const coachAgentRequirementUnmet = (): boolean => {
+    if (formSettings.game.coach_id === 'off') return false;
+    return !agents.some(
+      (agent) => agent.id === formSettings.game.coach_provider && agentReadyForCoach(agent)
+    );
   };
 
   const saveSettings = async (): Promise<boolean> => {
@@ -766,6 +805,9 @@ export function Settings() {
   };
 
   const saveAndApply = async () => {
+    // Enforce the mandatory-agent rule regardless of entry point (button click or a
+    // post-login retry): never persist an enabled coach with no configured agent.
+    if (coachAgentRequirementUnmet()) return;
     const saved = await saveSettings();
     if (!saved) {
       // saveSettings will have shown login dialog if needed
@@ -1168,22 +1210,39 @@ export function Settings() {
   // any catalog change. Only agents with a key and all required settings are
   // offered, since an unconfigured agent cannot power the coach. Disabling coaching
   // lives on the Coach persona selector (Coach = "Disabled"), not here.
-  const configuredAgents = agents.filter((agent) => agent.configured);
+  // Agents offerable as the coach's provider: those ready to power it, including one
+  // whose key is typed but not yet saved, so it can be selected in the same save.
+  const configuredAgents = agents.filter(agentReadyForCoach);
   const agentChoiceOptions: MenuOption[] = configuredAgents.map((agent) => ({
     value: agent.id,
     label: agent.name,
   }));
-  // Coaching needs a configured agent to power it, so it can only be enabled once
-  // at least one agent has a key (and any required settings). Until then the Coach
-  // selector offers only "Disabled" and coaching cannot be turned on -- this avoids
-  // the chicken-and-egg where the coach reads "Auto" but no agent exists to run it.
+  // Never rewrite the stored provider on the user's behalf (adding/removing an API
+  // key must not change the coach's agent). But a native <select> falls back to its
+  // first option when its bound value is absent from the list, which would visually
+  // show a configured agent that was never actually saved. So when the stored
+  // provider is not among the configured agents (still "none" before any key, or an
+  // agent whose key was removed), surface it as an explicit, honest option instead
+  // of letting the control masquerade a different value.
+  const currentProvider = formSettings.game.coach_provider;
+  if (currentProvider && !configuredAgents.some((agent) => agent.id === currentProvider)) {
+    const known = agents.find((agent) => agent.id === currentProvider);
+    agentChoiceOptions.unshift({
+      value: currentProvider,
+      label: known ? `${known.name} (no key)` : 'Select an agent',
+    });
+  }
   const hasConfiguredAgent = configuredAgents.length > 0;
-  // Effective persona shown in the selector: forced to "Disabled" while no agent can
-  // power coaching, so the control never shows an enabled coach that cannot run.
-  const effectiveCoachId = hasConfiguredAgent ? formSettings.game.coach_id : 'off';
-  // The agent selector is greyed when coaching is effectively off (explicitly
-  // disabled, or no agent available); the Agents-tab "active" badge follows suit.
-  const coachDisabled = effectiveCoachId === 'off';
+  // The Coach selector always shows the real stored persona -- it is never masked
+  // by agent availability. Masking it (forcing "Disabled" until an agent existed)
+  // made the coach appear to flip from Disabled to Auto the moment an API key was
+  // entered, because the un-masked default ("auto") was revealed. Entering a key
+  // must never change the coach setting.
+  const coachDisabled = formSettings.game.coach_id === 'off';
+  // Any enabled coach (anything but "Disabled") requires an agent to power it, so a
+  // configured agent must be selected. This is enforced at save time rather than by
+  // silently choosing an agent for the user.
+  const coachAgentMissing = coachAgentRequirementUnmet();
 
   // Build the Model dropdown options for one agent: a Default entry (blank -> the
   // agent's default model), then its live-fetched models. A currently-saved model
@@ -1491,16 +1550,20 @@ export function Settings() {
                   // column to one word per line. Matches every other settings row.
                   <>
                     The coaching personality and style.{' '}
-                    {!hasConfiguredAgent ? (
-                      <>
-                        No AI agents are configured, so coaching is off. Add an API
-                        key to an agent under <strong>Agents</strong> to enable
-                        coaching.
-                      </>
-                    ) : coachDisabled ? (
+                    {coachDisabled ? (
                       <>
                         Coaching is disabled &mdash; the agent selector below is
                         greyed out; choose a coach to enable it.
+                      </>
+                    ) : coachAgentMissing ? (
+                      <>
+                        Coaching requires an agent: select one below.{' '}
+                        {!hasConfiguredAgent && (
+                          <>
+                            No AI agents are configured yet &mdash; add an API key to
+                            an agent under <strong>Agents</strong> first.
+                          </>
+                        )}
                       </>
                     ) : formSettings.game.coach_id === 'auto' ? (
                       <>
@@ -1533,20 +1596,15 @@ export function Settings() {
                 }
               >
                 <Select
-                  value={effectiveCoachId}
-                  disabled={!hasConfiguredAgent}
-                  options={
-                    hasConfiguredAgent
-                      ? [
-                          { value: 'off', label: 'Disabled' },
-                          { value: 'auto', label: 'Auto (match opponent)' },
-                          ...coaches.map((c) => ({
-                            value: c.id,
-                            label: `${c.name} \u2014 ${c.elo} \u2014 ${c.character_type}`,
-                          })),
-                        ]
-                      : [{ value: 'off', label: 'Disabled' }]
-                  }
+                  value={formSettings.game.coach_id}
+                  options={[
+                    { value: 'off', label: 'Disabled' },
+                    { value: 'auto', label: 'Auto (match opponent)' },
+                    ...coaches.map((c) => ({
+                      value: c.id,
+                      label: `${c.name} \u2014 ${c.elo} \u2014 ${c.character_type}`,
+                    })),
+                  ]}
                   onChange={(e) => updateFormSettings('game', { coach_id: e.target.value })}
                 />
               </FormRow>
@@ -1560,6 +1618,13 @@ export function Settings() {
                 disabled={coachDisabled}
                 onChange={(v) => updateFormSettings('game', { coach_provider: String(v) })}
               />
+              {coachAgentMissing && (
+                <p className="text-danger" style={{ fontSize: '0.8em', marginTop: '0.4em' }}>
+                  An agent is required when coaching is enabled. Select an agent
+                  {hasConfiguredAgent ? '' : ' after adding an API key under Agents'} to
+                  save.
+                </p>
+              )}
             </Card>
 
             <Card className="mb-6">
@@ -1647,21 +1712,42 @@ export function Settings() {
                         </>
                       }
                     >
-                      <Input
-                        type="password"
-                        autoComplete="off"
-                        // Widened (~1.3x the default) so the longer "Key saved --
-                        // leave blank to keep" placeholder is fully visible rather
-                        // than clipped.
-                        size={32}
-                        placeholder={
-                          agent.api_key_set ? 'Key saved \u2014 leave blank to keep' : 'Enter API key'
-                        }
-                        value={edit.api_key}
-                        onChange={(e) =>
-                          updateAgentEdit(agent.id, { api_key: e.target.value, api_key_dirty: true })
-                        }
-                      />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4em' }}>
+                        <Input
+                          type="password"
+                          autoComplete="off"
+                          // Widened (~1.3x the default) so the longer "Key saved --
+                          // leave blank to keep" placeholder is fully visible rather
+                          // than clipped.
+                          size={32}
+                          placeholder={
+                            agent.api_key_set ? 'Key saved \u2014 leave blank to keep' : 'Enter API key'
+                          }
+                          value={edit.api_key}
+                          onChange={(e) =>
+                            updateAgentEdit(agent.id, { api_key: e.target.value, api_key_dirty: true })
+                          }
+                        />
+                        {/* Deleting the stored key is only possible when one exists;
+                            a blank save leaves it unchanged, so this is the only way
+                            to remove a mistyped or rotated key. */}
+                        {agent.api_key_set && (
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            onClick={() => {
+                              void clearAgentKey(agent.id);
+                            }}
+                          >
+                            Clear saved key
+                          </Button>
+                        )}
+                        {agentKeyErrors[agent.id] && (
+                          <p className="text-danger" style={{ fontSize: '0.8em', margin: 0 }}>
+                            {agentKeyErrors[agent.id]}
+                          </p>
+                        )}
+                      </div>
                     </FormRow>
 
                     {usesFreeTextModel ? (
@@ -1952,10 +2038,18 @@ export function Settings() {
       {/* Apply Settings Bar */}
       {hasChanges && (
         <div className="apply-settings-bar">
-          <span className="changes-text">Unsaved changes</span>
+          <span className="changes-text">
+            {coachAgentMissing
+              ? 'Select an agent for the coach, or set the coach to Disabled, to save.'
+              : 'Unsaved changes'}
+          </span>
           <div className="apply-settings-buttons">
             <Button variant="secondary" onClick={discardChanges}>Discard</Button>
-            <Button variant="success" onClick={saveAndApply} disabled={saving}>
+            <Button
+              variant="success"
+              onClick={saveAndApply}
+              disabled={saving || coachAgentMissing}
+            >
               {saving ? 'Saving...' : 'Save & Apply'}
             </Button>
           </div>

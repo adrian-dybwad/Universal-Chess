@@ -196,8 +196,9 @@ describe('Settings agent list refresh after saving an API key', () => {
     const user = userEvent.setup();
     renderSettings('game');
 
-    // Baseline: no agent configured yet, so coaching is off and the notice shows.
-    expect(await screen.findByText(/No AI agents are configured/i)).toBeInTheDocument();
+    // Baseline: no agent configured yet, so the coach is disabled and the agent
+    // selector offers no configured agent to choose.
+    expect(await screen.findByText(/Coaching is disabled/i)).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'OpenAI' })).not.toBeInTheDocument();
 
     // Switch to Agents (same mounted component), enter a key, and save.
@@ -212,6 +213,69 @@ describe('Settings agent list refresh after saving an API key', () => {
     await waitFor(() =>
       expect(screen.getByRole('option', { name: 'OpenAI' })).toBeInTheDocument()
     );
-    expect(screen.queryByText(/No AI agents are configured/i)).not.toBeInTheDocument();
+  });
+
+  it('does not change the coach setting when an API key is added', async () => {
+    // Requirement: entering an agent key must not modify the coach persona. The
+    // masking bug made the coach appear to flip from Disabled to Auto on key
+    // entry. The coach starts Disabled, so the save that persists the key must
+    // still carry coach_id 'off' -- a regression re-enabling the coach would post
+    // 'auto' here.
+    const user = userEvent.setup();
+    renderSettings('agents');
+
+    await user.type(await screen.findByPlaceholderText('Enter API key'), 'sk-test-123');
+    await user.click(await screen.findByRole('button', { name: /save & apply/i }));
+
+    await waitFor(() => expect(lastSettingsPost).not.toBeNull());
+    expect(lastSettingsPost?.game?.coach_id).toBe('off');
+  });
+
+  it('blocks saving an enabled coach until an agent is selected', async () => {
+    // Requirement: any coach other than Disabled requires a selected agent. With no
+    // agent configured, enabling the coach must disable Save (a regression that
+    // dropped the rule would leave Save enabled and persist an agentless coach that
+    // silently never runs).
+    const user = userEvent.setup();
+    renderSettings('game');
+
+    const autoOption = await screen.findByRole('option', { name: /Auto \(match opponent\)/ });
+    const coachSelect = autoOption.closest('select') as HTMLSelectElement;
+    await user.selectOptions(coachSelect, 'auto');
+
+    const saveButton = await screen.findByRole('button', { name: /save & apply/i });
+    expect(saveButton).toBeDisabled();
+    expect(
+      screen.getByText(/Select an agent for the coach, or set the coach to Disabled/i)
+    ).toBeInTheDocument();
+  });
+
+  it('saves an enabled coach once a keyed agent is selected as its provider', async () => {
+    // End-to-end of the mandatory-agent rule: after adding a key (pending, unsaved)
+    // and selecting that agent as the coach's provider, Save unblocks and persists
+    // the key, the enabled coach, and the chosen provider together. This also guards
+    // the deadlock fix -- a board whose coach is enabled but agentless must be able
+    // to configure and select an agent in a single save.
+    const user = userEvent.setup();
+    renderSettings('agents');
+
+    await user.type(await screen.findByPlaceholderText('Enter API key'), 'sk-test-123');
+
+    await user.click(screen.getByRole('button', { name: 'Game' }));
+
+    const autoOption = await screen.findByRole('option', { name: /Auto \(match opponent\)/ });
+    await user.selectOptions(autoOption.closest('select') as HTMLSelectElement, 'auto');
+
+    const agentOption = await screen.findByRole('option', { name: 'OpenAI' });
+    await user.selectOptions(agentOption.closest('select') as HTMLSelectElement, 'openai');
+
+    const saveButton = await screen.findByRole('button', { name: /save & apply/i });
+    await waitFor(() => expect(saveButton).not.toBeDisabled());
+    await user.click(saveButton);
+
+    await waitFor(() => expect(lastSettingsPost).not.toBeNull());
+    expect(lastSettingsPost?.game?.coach_id).toBe('auto');
+    expect(lastSettingsPost?.game?.coach_provider).toBe('openai');
+    expect(lastSettingsPost?.game?.coach_api_key_openai).toBe('sk-test-123');
   });
 });

@@ -2577,6 +2577,44 @@ def api_agents():
     })
 
 
+# Uses POST, not DELETE: the app's WebDAV before_request (handle_preflight)
+# intercepts every DELETE app-wide and demands WebDAV auth, so REST routes cannot
+# use that verb (see the engine/profile endpoints for the same reason).
+@app.route("/api/agents/<agent_id>/clear-key", methods=["POST"])
+@requires_auth
+def api_clear_agent_key(agent_id):
+    """Clear the stored API key for one agent.
+
+    The GET never returns the stored secret and a blank key on save means "leave
+    unchanged", so the normal save path cannot remove a key. This explicit endpoint
+    clears the agent's namespaced API-key slot (leaving its model and base URL
+    intact) so a mistyped or rotated key can be deleted. ``agent_id`` is validated
+    against the registry so the route cannot be used to write an arbitrary settings
+    key. Broadcasts the same settings-changed notifications as a save so the board
+    and other clients reload and drop the now-unconfigured agent.
+
+    Response: ``{"ok": true}``, or ``{"error": "unknown_agent"}`` (404).
+    """
+    from universalchess.agents import registry as agents_reg
+    from universalchess.board.settings import Settings
+    from universalchess.managers.game import coach_settings
+
+    if agents_reg.get_agent(agent_id) is None:
+        return jsonify({"error": "unknown_agent"}), 404
+
+    key = coach_settings.namespaced_key(coach_settings.API_KEY_BASE, agent_id)
+    Settings.write("game", key, "")
+
+    broadcast_sse_event("settings_changed")
+    try:
+        from universalchess.services.game_broadcast import notify_main_process_settings_changed
+        notify_main_process_settings_changed()
+    except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
+        pass
+
+    return jsonify({"ok": True})
+
+
 @app.route("/api/coaches", methods=["GET"])
 def api_coaches():
     """List selectable coaches and the coach resolved for the current game.

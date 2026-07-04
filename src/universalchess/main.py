@@ -3677,6 +3677,10 @@ def _build_agents_menu_context():
             return _agent_value(coach_settings.MODEL_BASE)
         if key == "base_url":
             return _agent_value(coach_settings.BASE_URL_BASE)
+        # Gates the "Clear API Key" detail row so it appears only when a key is
+        # actually stored (nothing to clear otherwise).
+        if key == "has_api_key":
+            return bool(_agent_value(coach_settings.API_KEY_BASE))
         raise NotImplementedError(f"agent_edit store has no key {key!r}")
 
     def agent_edit_set(key, value):
@@ -3752,6 +3756,19 @@ def _build_agents_menu_context():
             )
         return None
 
+    def clear_agent_api_key():
+        """Remove the stored API key for the agent being edited.
+
+        A blank key means "unset" everywhere (is_configured is false without one),
+        so writing an empty value is the clear operation. The model and base URL are
+        left intact so re-adding a key restores the prior configuration.
+        """
+        if editing["id"]:
+            _save_game_setting(
+                coach_settings.namespaced_key(coach_settings.API_KEY_BASE, editing["id"]), ""
+            )
+        return None
+
     ctx.register_provider("agents", agents_rows)
     ctx.register_provider("agent_models", agent_models_rows)
     # The API key is a secret: its board label shows only whether one is set, never
@@ -3773,6 +3790,7 @@ def _build_agents_menu_context():
     ctx.register_action("edit_agent_api_key", lambda: _prompt_agent_text(coach_settings.API_KEY_BASE, "API Key"))
     ctx.register_action("edit_agent_model", lambda: _prompt_agent_text(coach_settings.MODEL_BASE, "Model", max_length=60))
     ctx.register_action("edit_agent_base_url", lambda: _prompt_agent_text(coach_settings.BASE_URL_BASE, "Base URL"))
+    ctx.register_action("clear_agent_api_key", clear_agent_api_key)
     return ctx
 
 

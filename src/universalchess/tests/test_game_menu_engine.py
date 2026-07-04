@@ -61,6 +61,9 @@ def _game_ctx(
         "api_key": agent_api_key,
         "model": agent_model,
         "base_url": agent_base_url,
+        # Mirrors the board adapter's derived flag that gates the "Clear API Key"
+        # detail row: it is shown only when a key is actually stored.
+        "has_api_key": bool(agent_api_key),
     }
 
     ctx = BoardMenuContext()
@@ -322,6 +325,35 @@ def test_agent_detail_api_key_label_hides_the_secret():
     _, rows = _detail_rows(agent_edit_id="openai", agent_api_key="")
     api_row = {r.key: r for r in rows}["agent_api_key"]
     assert api_row.label == "API Key\nNot set"
+
+
+def test_agent_detail_clear_key_row_only_shows_when_a_key_is_stored():
+    """The "Clear API Key" detail row appears only when the agent has a stored key.
+
+    Why this test exists: clearing is the only way to remove a saved key (a blank
+    save leaves the stored secret unchanged), but offering it when nothing is
+    stored is a dead no-op. The row is gated on the derived ``has_api_key`` flag.
+    How a regression manifests: the row shows for an agent with no key (a dead
+    action), or never shows (no way to clear), so the gating flag is wrong.
+    """
+    _, with_key = _detail_rows(agent_edit_id="openai", agent_api_key="sk-secret")
+    assert "agent_clear_key" in [r.key for r in with_key]
+
+    _, without_key = _detail_rows(agent_edit_id="openai", agent_api_key="")
+    assert "agent_clear_key" not in [r.key for r in without_key]
+
+
+def test_agent_detail_clear_key_row_is_an_action_node():
+    """The Clear API Key node is an action node wired to clear_agent_api_key.
+
+    Why this test exists: the board runs an action node's named action on select;
+    this row's whole purpose is to invoke the clear handler. How a regression
+    manifests: the node loses its ``action`` (selecting it does nothing) or names a
+    different handler, so the key can't be removed from the board.
+    """
+    node = load_catalog().get_node("agents.detail.clear_key")
+    assert node["type"] == "action"
+    assert node["action"] == "clear_agent_api_key"
 
 
 def test_agent_detail_model_label_reads_default_when_blank():

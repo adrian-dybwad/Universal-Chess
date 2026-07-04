@@ -202,6 +202,44 @@ def test_agents_endpoint_lists_all_agents_without_leaking_keys(client, monkeypat
     assert all("fields" in a for a in body["agents"])
 
 
+def test_delete_agent_key_clears_only_that_key(client, config_files):
+    # Removing a stored key is the only way to unset it (a blank save keeps it),
+    # so DELETE must clear the agent's own API key while leaving its model/base URL
+    # and every other agent's key intact. Regression: clearing too much would wipe
+    # unrelated config; clearing nothing would leave the stale key active.
+    cfg, _ = config_files
+    _seed(cfg, {
+        "coach_provider": "openai",
+        "coach_api_key_openai": "sk-openai",
+        "coach_model_openai": "gpt-4o",
+        "coach_api_key_anthropic": "sk-anthropic",
+    })
+
+    resp = client.post("/api/agents/openai/clear-key")
+    assert resp.status_code == 200
+    assert json.loads(resp.data)["ok"] is True
+
+    game = _read_game(cfg)
+    assert game["coach_api_key_openai"] == ""
+    assert game["coach_model_openai"] == "gpt-4o"
+    assert game["coach_api_key_anthropic"] == "sk-anthropic"
+
+
+def test_delete_unknown_agent_key_is_rejected(client, config_files):
+    # The agent id is interpolated into a settings key, so an unknown id must be
+    # refused (404); otherwise the route could be used to write an arbitrary
+    # coach_api_key_<anything> entry. Regression: accepting any id would let a
+    # caller pollute the config with bogus keys.
+    cfg, _ = config_files
+    _seed(cfg, {"coach_provider": "openai", "coach_api_key_openai": "sk-openai"})
+
+    resp = client.post("/api/agents/not-a-real-agent/clear-key")
+    assert resp.status_code == 404
+    assert json.loads(resp.data)["error"] == "unknown_agent"
+    # The real agent's key must be untouched by the rejected request.
+    assert _read_game(cfg)["coach_api_key_openai"] == "sk-openai"
+
+
 def test_read_coach_config_disabled_when_coach_off(monkeypatch, config_files):
     # The Coach selector is the master switch: coach_id "off" must make the web
     # coach config read as not configured even when the active agent has a valid key,
