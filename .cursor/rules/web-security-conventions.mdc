@@ -1,0 +1,55 @@
+---
+description: Path-injection and exception-exposure conventions for the Flask request path
+globs: src/universalchess/web/**/*.py,src/universalchess/services/**/*.py
+alwaysApply: false
+---
+
+# Web request-path security conventions
+
+These two classes are gated by `.semgrep/` (and CodeQL). Write compliant code so
+the commit is never blocked.
+
+## Untrusted data in a filesystem path → use `safe_under_base`
+
+Any path built from request data (`request.form/args/json/files`, route params,
+an uploaded `filename`, or a value read from a registry/DB that originated from a
+request) MUST resolve through `universalchess.utils.safe_path.safe_under_base`
+before reaching `open`/`os.*`/`shutil.*`/`send_file`. A validating regex or an
+ad-hoc `realpath` check is NOT recognized as a sanitizer.
+
+```python
+# ❌ BAD — engine_id is request data
+dest = os.path.join(ENGINES_DIR, engine_id)
+os.remove(dest)
+
+# ✅ GOOD
+dest = safe_under_base(ENGINES_DIR, engine_id)
+if dest is None:
+    return jsonify({"success": False, "error": "Invalid id."}), 400
+os.remove(dest)
+```
+
+## Never return exception text to the client
+
+A caught exception's text (`str(e)`, `repr(e)`, or an f-string with `{e}`) must
+not flow into an HTTP response — directly OR via a value returned from a helper
+that a route later serializes. It leaks file paths, URLs, and internals (CWE-209).
+Log the detail server-side; return a fixed message.
+
+```python
+# ❌ BAD
+except OSError as e:
+    return f"Could not install: {e}"        # caller jsonify's this
+
+# ✅ GOOD
+except OSError as e:
+    log.warning("Could not install %s: %s", dest, e)
+    return "Could not install the engine binary."
+```
+
+For catch-all `except Exception` in a route, return `_internal_error(e)` (logs +
+generic 500).
+
+## The local gate must stay active
+
+Run once per clone: `.venv/bin/pip install -r requirements-dev.txt && .venv/bin/pre-commit install`.

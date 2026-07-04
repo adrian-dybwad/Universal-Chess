@@ -1,0 +1,34 @@
+---
+description: Always run npm/npx for the frontend inside src/universalchess/web-app
+globs: src/universalchess/web-app/**
+alwaysApply: false
+---
+
+# Frontend npm commands must run in the web-app directory
+
+The only Node/npm project is `src/universalchess/web-app`. The repo root has
+**no** `package.json`. If `npm install`/`npm i <pkg>`/`npm ci` runs with the
+repo root as the working directory, npm walks up, finds no manifest, and writes
+a stray empty `package-lock.json` (and `node_modules/`) named after the root
+folder. This has happened twice; the root artifacts are now git-ignored, but the
+correct fix is to never run npm from the wrong directory.
+
+The Shell tool's session is **stateful**: a `cd` from an earlier command
+persists, so a relative `cd src/universalchess/web-app && npm ...` can no-op (or
+land at the repo root) on a later call. Do not rely on relative `cd`.
+
+Set the working directory explicitly on every npm/npx call:
+
+```jsonc
+// ✅ GOOD — working_directory pins the cwd regardless of prior cd
+{ "command": "npm install @fontsource/inter",
+  "working_directory": "/Users/.../Universal-Chess/src/universalchess/web-app" }
+```
+
+```bash
+# ❌ BAD — relies on the stateful shell's current directory
+cd src/universalchess/web-app && npm install @fontsource/inter
+```
+
+If a tool call cannot set `working_directory`, use `npm --prefix` instead:
+`npm --prefix src/universalchess/web-app install @fontsource/inter`.

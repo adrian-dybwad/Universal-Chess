@@ -4,6 +4,12 @@
 !.github
 !.semgrep
 !.pre-commit-config.yaml
+# Share Cursor project rules (AI-guidance conventions) with every clone. The
+# leading `.*` above otherwise ignores the whole .cursor tree. Only rules/ is
+# re-included; .cursormemory.md and other local .cursor state stay ignored.
+!.cursor/
+!.cursor/rules/
+!.cursor/rules/*.mdc
 __pycache__
 **/7-Zip
 **/*.msi
@@ -23,6 +29,14 @@ __pycache__
 # React web-app
 **/web-app/node_modules/
 **/web-app/dist/
+# Stray npm artifacts at the repo root. There is no package.json here; the only
+# frontend project lives in src/universalchess/web-app. Running `npm install`
+# with the repo root as the working directory makes npm walk up, find no
+# package.json, and write an empty package-lock.json (and node_modules) named
+# after this folder. These leading-slash patterns are anchored to the repo root,
+# so the real, tracked src/universalchess/web-app/package-lock.json is unaffected.
+/package-lock.json
+/node_modules/
 # Built bundle staged for deploy/packaging (produced by scripts/build.sh and
 # deploy-to-pi.sh; never committed - it is generated from web-app/).
 src/universalchess/web/react-app/
