@@ -72,8 +72,9 @@ interface CentaurImportStatus {
 // separate sibling sections (right after Game), mirroring the board menu.
 // Connectivity sits before System, matching the board's Settings submenu order;
 // its 'accounts' subsection is rendered inside the Connectivity panel rather
-// than as its own tab.
-const SETTINGS_TAB_IDS: SettingsTab[] = ['players', 'game', 'agents', 'display', 'sound', 'connectivity', 'engines', 'system'];
+// than as its own tab. Agents sits after Engines (both configure what powers
+// play/coaching) and before System.
+const SETTINGS_TAB_IDS: SettingsTab[] = ['players', 'game', 'display', 'sound', 'connectivity', 'engines', 'agents', 'system'];
 
 // Web-only Settings tabs, appended beneath the catalog-backed sections. Support
 // and Licenses are informational web pages, not board menu sections, so they are
