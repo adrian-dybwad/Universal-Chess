@@ -18,9 +18,16 @@
     inset 0 -1px 0 rgba(0,0,0,0.2);
   padding: 0;
   border-bottom: 1px solid rgba(255,255,255,0.1);
-  min-height: 3.25rem;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Top row: brand + primary navigation (and, on mobile, the burger). The status
+   bar renders as a separate row beneath this. */
+.navbar-top {
   display: flex;
   align-items: stretch;
+  min-height: 3.25rem;
 }
 
 /* Subtle texture overlay */
@@ -81,15 +88,9 @@
   white-space: nowrap;
 }
 
-/* Container for connection status + burger on mobile */
-.navbar-brand-right {
-  display: none;
-  align-items: center;
-  margin-left: auto;
-}
-
+/* Burger is hidden by default (desktop); the mobile media query enables it. */
 .navbar-burger {
-  display: block;
+  display: none;
   cursor: pointer;
   width: 3.25rem;
   height: 3.25rem;
@@ -98,15 +99,40 @@
   position: relative;
 }
 
-/* Hide mobile status in navbar-brand on desktop */
-.navbar-item--mobile-status {
-  display: none;
+/* Status bar row beneath the main nav. Shared across all viewports; right
+   aligned on desktop, centered/wrapping on mobile. Light grey surface, so its
+   contents use dark foregrounds instead of the navbar's white (see overrides). */
+.navbar-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.4rem 1rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  background: #e9e9ec;
+  color: #363636;
 }
 
-/* Show desktop status in navbar-end on desktop */
-.navbar-item--desktop-status {
-  display: flex;
-  gap: 0.5rem;
+/* The icon buttons and battery glyph draw with currentColor, which is white for
+   the purple navbar. On the light grey status bar they must switch to a dark
+   tone to stay legible; the hover/active tints flip from white to black for the
+   same reason. Status tags (connection, update) carry their own backgrounds and
+   need no override. */
+.navbar-status-bar .navbar-control-icon,
+.navbar-status-bar .battery-indicator {
+  color: #363636;
+}
+
+.navbar-status-bar .navbar-control-icon:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.navbar-status-bar .navbar-control-icon.is-active {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.navbar-status-bar .conn-ind--muted {
+  color: rgba(0, 0, 0, 0.35);
 }
 
 .navbar-burger span {
@@ -145,13 +171,6 @@
   align-items: stretch;
   justify-content: flex-start;
   margin-right: auto;
-}
-
-.navbar-end {
-  display: flex;
-  align-items: stretch;
-  justify-content: flex-end;
-  margin-left: auto;
 }
 
 .navbar-item {
@@ -204,32 +223,20 @@
 
 /* Mobile responsive */
 @media screen and (max-width: 1023px) {
-  .navbar {
+  .navbar-top {
     flex-wrap: wrap;
   }
 
-  /* Make navbar-brand full width so brand-right can be pushed to the right */
+  /* Full-width brand row so the burger is pushed to the far right on its own. */
   .navbar-brand {
     width: 100%;
     justify-content: space-between;
-  }
-
-  /* Show the brand-right container (connection + burger) */
-  .navbar-brand-right {
-    display: flex;
-  }
-
-  /* Show compact connection status on mobile */
-  .navbar-item--mobile-status {
-    display: flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0 0.5rem;
   }
 
-  /* Hide desktop connection status on mobile */
-  .navbar-item--desktop-status {
-    display: none;
+  /* Show the burger on mobile. */
+  .navbar-burger {
+    display: block;
   }
 
   .navbar-menu {
@@ -245,8 +252,7 @@
     display: flex;
   }
 
-  .navbar-start,
-  .navbar-end {
+  .navbar-start {
     flex-direction: column;
     align-items: stretch;
   }
@@ -256,15 +262,34 @@
     margin: 0;
     border-radius: 0;
   }
-}
 
-/* Desktop: hide the brand-right container since burger isn't needed */
-@media screen and (min-width: 1024px) {
-  .navbar-brand-right {
+  /* Center the status icons and let them wrap on narrow screens. */
+  .navbar-status-bar {
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  /* Collapse the connection status and battery to their glyph-only form on
+     narrow screens. This is done in CSS (not the `compact` prop) so the single
+     shared instance can respond to width without duplicating the components:
+     the labels are already in the DOM, so hiding them here reproduces the
+     compact treatment the mobile-only cluster used before the unified bar. */
+  .navbar-status-bar .status-text,
+  .navbar-status-bar .api-host,
+  .navbar-status-bar .battery-text {
     display: none;
   }
 
-  .navbar-burger {
-    display: none;
+  /* Match the round dot-only shape of the former compact connection tag. */
+  .navbar-status-bar .tag {
+    width: 2em;
+    height: 2em;
+    padding: 0.5em;
+    border-radius: 50%;
+  }
+
+  .navbar-status-bar .tag .status-dot {
+    width: 10px;
+    height: 10px;
   }
 }

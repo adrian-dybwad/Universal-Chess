@@ -21,10 +21,9 @@ export function Navbar() {
   const isActive = (path: string) =>
     location.pathname === path || location.pathname.startsWith(`${path}/`);
 
-  // Board Control lives in the right-hand status cluster (left of the cast
-  // button) rather than the main nav, grouped with the other live device
-  // controls. The same element is rendered in both the desktop and mobile
-  // clusters so it stays reachable when the main nav collapses behind the burger.
+  // Board Control lives in the shared status bar (left of the cast button)
+  // rather than the main nav, grouped with the other live device controls, so it
+  // stays reachable on all viewports without depending on the burger menu.
   const boardControl = (
     <Link
       to="/control"
@@ -39,16 +38,17 @@ export function Navbar() {
 
   return (
     <nav className="navbar" role="navigation" aria-label="main navigation">
-      <div className="navbar-brand">
-        <Link to="/" className="navbar-item navbar-logo-item">
-          <img src="/logo" alt="" className="navbar-logo-img" />
-          <div className="brand-text">
-            <span className="brand-title">Universal Chess</span>
-            <span className="brand-tagline">Your smart chess companion</span>
-          </div>
-        </Link>
-        {/* Mobile: burger menu and connection status together on the right */}
-        <div className="navbar-brand-right">
+      <div className="navbar-top">
+        <div className="navbar-brand">
+          <Link to="/" className="navbar-item navbar-logo-item">
+            <img src="/logo" alt="" className="navbar-logo-img" />
+            <div className="brand-text">
+              <span className="brand-title">Universal Chess</span>
+              <span className="brand-tagline">Your smart chess companion</span>
+            </div>
+          </Link>
+          {/* Mobile: burger sits alone on the right. The status icons that used to
+              share this row now live in the status bar below the main nav. */}
           <button
             className={`navbar-burger ${menuOpen ? 'is-active' : ''}`}
             aria-label="menu"
@@ -59,61 +59,54 @@ export function Navbar() {
             <span aria-hidden="true" />
             <span aria-hidden="true" />
           </button>
-          <div className="navbar-item navbar-item--mobile-status">
-            <UpdateIndicator />
-            <ConnectivityIndicators />
-            <BatteryIndicator compact />
-            {boardControl}
-            <CastButton />
-            <ConnectionStatus compact />
+        </div>
+
+        <div className={`navbar-menu ${menuOpen ? 'is-active' : ''}`}>
+          <div className="navbar-start">
+            <Link
+              to="/"
+              className={`navbar-item ${isActive('/') ? 'is-active' : ''}`}
+              onClick={() => setMenuOpen(false)}
+            >
+              Live Board
+            </Link>
+            <Link
+              to="/games"
+              className={`navbar-item ${isActive('/games') ? 'is-active' : ''}`}
+              onClick={() => setMenuOpen(false)}
+            >
+              Games
+            </Link>
+            <Link
+              to="/positions"
+              className={`navbar-item ${isActive('/positions') ? 'is-active' : ''}`}
+              onClick={() => setMenuOpen(false)}
+            >
+              Positions
+            </Link>
+            <Link
+              to="/settings"
+              className={`navbar-item ${isActive('/settings') ? 'is-active' : ''}`}
+              onClick={() => setMenuOpen(false)}
+            >
+              Settings
+            </Link>
           </div>
         </div>
       </div>
 
-      <div className={`navbar-menu ${menuOpen ? 'is-active' : ''}`}>
-        <div className="navbar-start">
-          <Link
-            to="/"
-            className={`navbar-item ${isActive('/') ? 'is-active' : ''}`}
-            onClick={() => setMenuOpen(false)}
-          >
-            Live Board
-          </Link>
-          <Link
-            to="/games"
-            className={`navbar-item ${isActive('/games') ? 'is-active' : ''}`}
-            onClick={() => setMenuOpen(false)}
-          >
-            Games
-          </Link>
-          <Link
-            to="/positions"
-            className={`navbar-item ${isActive('/positions') ? 'is-active' : ''}`}
-            onClick={() => setMenuOpen(false)}
-          >
-            Positions
-          </Link>
-          <Link
-            to="/settings"
-            className={`navbar-item ${isActive('/settings') ? 'is-active' : ''}`}
-            onClick={() => setMenuOpen(false)}
-          >
-            Settings
-          </Link>
-        </div>
-        <div className="navbar-end">
-          {/* Support and Licenses now live under Settings (beneath System); the
-              global footer still links to their standalone pages. */}
-          {/* Desktop: battery + board control + cast + connection status */}
-          <div className="navbar-item navbar-item--desktop-status">
-            <UpdateIndicator />
-            <ConnectivityIndicators />
-            <BatteryIndicator />
-            {boardControl}
-            <CastButton />
-            <ConnectionStatus />
-          </div>
-        </div>
+      {/* Shared status bar below the main nav. A single instance serves both
+          mobile and desktop, so the live device controls (update, connectivity,
+          battery, board control, cast, connection) stay reachable without the
+          previous mobile/desktop duplication. Support and Licenses live under
+          Settings (beneath System); the global footer still links to them. */}
+      <div className="navbar-status-bar">
+        <UpdateIndicator />
+        <ConnectivityIndicators />
+        <BatteryIndicator />
+        {boardControl}
+        <CastButton />
+        <ConnectionStatus />
       </div>
     </nav>
   );
