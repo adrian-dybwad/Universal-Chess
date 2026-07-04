@@ -447,6 +447,43 @@ export function Settings() {
     return { settingsData, enginesData };
   }, []);
 
+  // Fetch every registered agent and seed the per-agent edit forms. The API key
+  // edit starts blank (write-only); model/base URL are seeded from the stored
+  // config. An in-flight (unsaved) key edit is preserved across a refetch so a
+  // background refresh does not wipe what the user is typing. Failures leave the
+  // list empty; the Agents tab then shows nothing to configure.
+  //
+  // Exposed as a callback (not inlined in an effect) because an agent's
+  // `configured` flag flips on an API-key save, which does not change any value
+  // in `originalSettings` (keys are write-only and redacted). The Game tab's
+  // Coach/Agent controls read that flag, so this must be re-run explicitly after
+  // a save and on a background settings change -- otherwise a just-entered key
+  // stays hidden until a full page reload.
+  const fetchAgents = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/agents');
+      const data = await res.json();
+      const list: AgentInfo[] = Array.isArray(data.agents) ? (data.agents as AgentInfo[]) : [];
+      setAgents(list);
+      setAgentEdits((prev) => {
+        const next: Record<string, AgentEdit> = {};
+        for (const agent of list) {
+          const priorDirty = prev[agent.id]?.api_key_dirty ?? false;
+          next[agent.id] = {
+            api_key: priorDirty ? prev[agent.id].api_key : '',
+            api_key_dirty: priorDirty,
+            model: agent.model,
+            base_url: agent.base_url,
+          };
+        }
+        return next;
+      });
+    } catch {
+      setAgents([]);
+      setAgentEdits({});
+    }
+  }, []);
+
   // Listen for settings_changed events via SSE
   useEffect(() => {
     const eventsUrl = buildApiUrl('/events');
@@ -460,6 +497,9 @@ export function Settings() {
           if (!hasChangesRef.current) {
             console.log('[Settings] Received settings_changed, refetching...');
             fetchSettings().catch((e) => console.error('Failed to refetch settings:', e));
+            // Agents are not part of /api/settings; refresh them too so a key
+            // added elsewhere (e.g. the board) flips agents to configured here.
+            void fetchAgents();
           } else {
             console.log('[Settings] Received settings_changed but have local changes, skipping refetch');
           }
@@ -472,7 +512,7 @@ export function Settings() {
     return () => {
       es.close();
     };
-  }, [fetchSettings]);
+  }, [fetchSettings, fetchAgents]);
 
   // Load the catalog (once) and the settings on mount. Both are required for the
   // page to render correctly, so either failing shows the load error. The work is
@@ -528,48 +568,10 @@ export function Settings() {
     })();
   }, [formSettings.player1.engine, formSettings.player2.engine, formSettings.game.analysis_engine, loadEngineLevels]);
 
-  // Fetch every registered agent and seed the per-agent edit forms. Refetches
-  // after a save (originalSettings updates) so a just-saved key flips to "set" and
-  // the model dropdowns reload against the new key. The API key edit starts blank
-  // (write-only); model/base URL are seeded from the stored config. Failures leave
-  // the list empty; the Agents tab then shows nothing to configure.
+  // Load the agent list on mount.
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await apiFetch('/api/agents');
-        const data = await res.json();
-        if (cancelled) return;
-        const list: AgentInfo[] = Array.isArray(data.agents) ? (data.agents as AgentInfo[]) : [];
-        setAgents(list);
-        setAgentEdits((prev) => {
-          const next: Record<string, AgentEdit> = {};
-          for (const agent of list) {
-            // Preserve an in-flight (unsaved) key edit across a refetch so a
-            // background settings_changed does not wipe what the user is typing.
-            const priorDirty = prev[agent.id]?.api_key_dirty ?? false;
-            next[agent.id] = {
-              api_key: priorDirty ? prev[agent.id].api_key : '',
-              api_key_dirty: priorDirty,
-              model: agent.model,
-              base_url: agent.base_url,
-            };
-          }
-          return next;
-        });
-      } catch {
-        if (!cancelled) {
-          setAgents([]);
-          setAgentEdits({});
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // Refetch after a save. coach_provider is included so switching the active
-    // agent (which can be saved) keeps the list's "active" marker in sync.
-  }, [originalSettings.game.coach_provider]);
+    void fetchAgents();
+  }, [fetchAgents]);
 
   // Fetch the live model list for each agent that supports listing and has a key
   // stored. The endpoint uses each agent's *saved* key (server-side), so this runs
@@ -749,6 +751,11 @@ export function Settings() {
       
       setOriginalSettings(formSettings);
       setHasChanges(false);
+      // Refresh agents so a newly saved API key flips the agent to configured
+      // right away -- the Game tab's Coach/Agent controls read that flag, and it
+      // is not carried in /api/settings (keys are write-only). Without this the
+      // just-saved agent stays hidden until a full page reload.
+      await fetchAgents();
       return true;
     } catch (e) {
       console.error('Failed to save settings:', e);

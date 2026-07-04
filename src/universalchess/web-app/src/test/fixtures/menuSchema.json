@@ -1,0 +1,2091 @@
+{
+  "description": "Shared menu catalog. Single source of truth for menu structure, labels, icons, help tips, e-paper styles, and web field metadata. The e-paper board and the React web UI each render this through their own renderer; inherently dynamic menus (device scans, engine/player lists) stay code-driven but read their chrome (label/icon/help) from here.",
+  "nodes": [
+    {
+      "children": [
+        "main.play",
+        "main.settings",
+        "main.centaur"
+      ],
+      "id": "main",
+      "label": "Main Menu",
+      "platforms": [
+        "board"
+      ],
+      "type": "menu"
+    },
+    {
+      "boardLabel": "{fn:play_label}",
+      "epaper": {
+        "bold": true,
+        "font_size": 32,
+        "height_ratio": 2.0,
+        "icon_size": 80,
+        "layout": "vertical"
+      },
+      "help": "Start a new game. When a game is suspended this reads RESUME and continues it.",
+      "icon": "universal_logo",
+      "id": "main.play",
+      "key": "Universal",
+      "label": "PLAY",
+      "label_in_progress": "RESUME",
+      "platforms": [
+        "board"
+      ],
+      "type": "action"
+    },
+    {
+      "epaper": {
+        "font_size": 16,
+        "height_ratio": 1.0,
+        "layout": "horizontal"
+      },
+      "help": "Configure players, time control, positions, display, connectivity, and system options.",
+      "icon": "settings",
+      "id": "main.settings",
+      "key": "Settings",
+      "label": "Settings",
+      "platforms": [
+        "board"
+      ],
+      "target": "settings",
+      "type": "submenu"
+    },
+    {
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.67,
+        "icon_size": 28,
+        "layout": "horizontal"
+      },
+      "help": "Switch back to the original DGT Centaur software.",
+      "icon": "centaur",
+      "id": "main.centaur",
+      "key": "Centaur",
+      "label": "Original\nCentaur",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "type": "action",
+      "visibleWhen": {
+        "equals": true,
+        "key": "centaur_available",
+        "store": "main"
+      }
+    },
+    {
+      "children": [
+        "settings.players",
+        "settings.game",
+        "settings.agents",
+        "settings.display",
+        "settings.sound",
+        "settings.positions",
+        "settings.connectivity",
+        "settings.system"
+      ],
+      "id": "settings",
+      "label": "Settings",
+      "type": "menu"
+    },
+    {
+      "boardLabel": "{fn:players_summary}",
+      "children": [
+        "players.player1",
+        "players.player2",
+        "players.start"
+      ],
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      },
+      "help": "Configure player names, types, and engine preferences.",
+      "icon": "players",
+      "id": "settings.players",
+      "key": "Players",
+      "label": "Players",
+      "section": "players",
+      "target": "settings.players",
+      "type": "submenu"
+    },
+    {
+      "action": "open_player1",
+      "bind": {
+        "key": "color",
+        "store": "player1"
+      },
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      },
+      "help": "Configure Player 1 (the player who controls the chosen color).",
+      "icon": {
+        "black": "black_piece",
+        "white": "white_piece"
+      },
+      "id": "players.player1",
+      "label": "Player 1\n{fn:player1_summary}",
+      "platforms": [
+        "board"
+      ],
+      "type": "action"
+    },
+    {
+      "action": "open_player2",
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      },
+      "help": "Configure Player 2.",
+      "icon": "universal_logo",
+      "id": "players.player2",
+      "label": "Player 2\n{fn:player2_summary}",
+      "platforms": [
+        "board"
+      ],
+      "type": "action"
+    },
+    {
+      "action": "start_game",
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      },
+      "help": "Start a game with the current player configuration.",
+      "icon": "play",
+      "id": "players.start",
+      "label": "Start\nGame",
+      "platforms": [
+        "board"
+      ],
+      "type": "action"
+    },
+    {
+      "children": [
+        "field.player.color",
+        "field.player.type",
+        "field.player.name",
+        "field.player.hand_brain_mode",
+        "field.player.engine",
+        "field.player.elo",
+        "field.player.lichess"
+      ],
+      "help": "Configure a single player.",
+      "id": "settings.player_detail",
+      "label": "Player",
+      "platforms": [
+        "board"
+      ],
+      "type": "menu"
+    },
+    {
+      "children": [
+        "settings.timecontrol",
+        "settings.notation",
+        "analysis.enabled",
+        "analysis.engine",
+        "coach.id",
+        "coach.provider"
+      ],
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      },
+      "help": "Time control and live position analysis.",
+      "icon": "timer_checked",
+      "id": "settings.game",
+      "key": "Game",
+      "label": "Game",
+      "section": "game",
+      "target": "settings.game",
+      "type": "submenu"
+    },
+    {
+      "children": [
+        "agents.list.items"
+      ],
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      },
+      "help": "Configure the AI agents (services) that power features like coaching: API key, model, and endpoint.",
+      "icon": "agents",
+      "id": "settings.agents",
+      "key": "Agents",
+      "label": "Agents",
+      "section": "agents",
+      "target": "settings.agents",
+      "type": "submenu"
+    },
+    {
+      "bind": {
+        "key": "notation",
+        "store": "game"
+      },
+      "boardLabel": "Notation\n{value}",
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      },
+      "help": "Chess notation used for the move history on the board and web.",
+      "icon": "settings",
+      "id": "settings.notation",
+      "key": "Notation",
+      "label": "Move Notation",
+      "optionSet": "notation",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "section": "game",
+      "type": "select"
+    },
+    {
+      "bind": {
+        "key": "time_control",
+        "store": "game"
+      },
+      "boardLabel": "Time\n{fn:time_control}",
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      },
+      "help": "Minutes per player for the game clock.",
+      "icon": {
+        "0": "timer",
+        "default": "timer_checked"
+      },
+      "id": "settings.timecontrol",
+      "key": "TimeControl",
+      "label": "Time Control",
+      "optionSet": "time_control",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "section": "game",
+      "selectedIcon": "timer_checked",
+      "type": "select",
+      "unselectedIcon": "timer"
+    },
+    {
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      },
+      "help": "Set up a predefined position on the board to practice or analyze.",
+      "icon": "positions",
+      "id": "settings.positions",
+      "key": "Positions",
+      "label": "Positions",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "type": "submenu"
+    },
+    {
+      "children": [
+        "settings.display.board",
+        "field.display.show_clock",
+        "field.display.show_analysis",
+        "field.display.show_graph",
+        "field.display.led_brightness"
+      ],
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      },
+      "help": "Control what appears on the e-paper display and the LEDs.",
+      "icon": "display",
+      "id": "settings.display",
+      "key": "Display",
+      "label": "Display",
+      "section": "display",
+      "target": "settings.display",
+      "type": "submenu"
+    },
+    {
+      "children": [
+        "field.display.show_board",
+        "field.display.sprites"
+      ],
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.8
+      },
+      "help": "Board visibility and the sprite sheet used to draw pieces.",
+      "icon": "display",
+      "id": "settings.display.board",
+      "key": "board",
+      "label": "Board",
+      "platforms": [
+        "board"
+      ],
+      "target": "settings.display.board",
+      "type": "submenu"
+    },
+    {
+      "children": [
+        "field.sound.enabled",
+        "field.sound.piece_events",
+        "field.sound.game_events",
+        "field.sound.errors",
+        "field.sound.key_press"
+      ],
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      },
+      "help": "Control audio feedback and beeps.",
+      "icon": "sound",
+      "id": "settings.sound",
+      "key": "Sound",
+      "label": "Sound",
+      "section": "sound",
+      "target": "settings.sound",
+      "type": "submenu"
+    },
+    {
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      },
+      "help": "Network, peripherals, screen mirroring, and account connections.",
+      "icon": "wifi",
+      "id": "settings.connectivity",
+      "key": "Connectivity",
+      "label": "Connectivity",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "target": "connectivity",
+      "type": "submenu"
+    },
+    {
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      },
+      "help": "Engines, maintenance, software updates, and power.",
+      "icon": "system",
+      "id": "settings.system",
+      "key": "System",
+      "label": "System",
+      "section": "system",
+      "target": "system",
+      "type": "submenu"
+    },
+    {
+      "children": [
+        "connectivity.wifi",
+        "connectivity.bluetooth",
+        "connectivity.chromecast",
+        "connectivity.accounts"
+      ],
+      "id": "connectivity",
+      "label": "Connectivity",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "type": "menu"
+    },
+    {
+      "action": "open_wifi",
+      "help": "Connect the board to a wireless network.",
+      "icon": "wifi",
+      "id": "connectivity.wifi",
+      "key": "WiFi",
+      "label": "WiFi",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "type": "action"
+    },
+    {
+      "action": "open_bluetooth",
+      "help": "Pair a Bluetooth keyboard with the board.",
+      "icon": "bluetooth",
+      "id": "connectivity.bluetooth",
+      "key": "Bluetooth",
+      "label": "Bluetooth",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "type": "action"
+    },
+    {
+      "action": "open_chromecast",
+      "help": "Mirror the board to a Chromecast device.",
+      "icon": "cast",
+      "id": "connectivity.chromecast",
+      "key": "Chromecast",
+      "label": "Chromecast",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "type": "action"
+    },
+    {
+      "action": "open_accounts",
+      "help": "Connect external services such as Lichess.",
+      "icon": "account",
+      "id": "connectivity.accounts",
+      "key": "Accounts",
+      "label": "Accounts",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "section": "accounts",
+      "type": "action"
+    },
+    {
+      "children": [
+        "wifi.status",
+        "wifi.scan",
+        "wifi.enabled"
+      ],
+      "help": "WiFi status, scan for networks, and enable or disable the radio.",
+      "id": "wifi",
+      "label": "WiFi",
+      "platforms": [
+        "board"
+      ],
+      "type": "menu"
+    },
+    {
+      "epaper": {
+        "border_width": 1,
+        "font_size": 12,
+        "height_ratio": 1.8,
+        "icon_size": 52,
+        "layout": "vertical",
+        "selectable": false
+      },
+      "help": "Current WiFi connection status and signal strength.",
+      "id": "wifi.status",
+      "key": "Info",
+      "platforms": [
+        "board"
+      ],
+      "provider": "wifi_status",
+      "type": "dynamic"
+    },
+    {
+      "action": "wifi_scan",
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.9,
+        "icon_size": 28,
+        "layout": "horizontal"
+      },
+      "help": "Scan for available wireless networks and connect.",
+      "icon": "wifi",
+      "id": "wifi.scan",
+      "key": "Scan",
+      "label": "Scan",
+      "platforms": [
+        "board"
+      ],
+      "type": "action"
+    },
+    {
+      "bind": {
+        "key": "enabled",
+        "store": "wifi"
+      },
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.7,
+        "layout": "horizontal"
+      },
+      "help": "Enable or disable the WiFi radio.",
+      "icon": {
+        "false": "timer",
+        "true": "timer_checked"
+      },
+      "id": "wifi.enabled",
+      "key": "Toggle",
+      "label": "{fn:wifi_enable_state}",
+      "platforms": [
+        "board"
+      ],
+      "type": "toggle"
+    },
+    {
+      "children": [
+        "wifi.networks.list"
+      ],
+      "help": "Wireless networks found by the last scan.",
+      "id": "wifi.networks",
+      "label": "Networks",
+      "platforms": [
+        "board"
+      ],
+      "type": "menu"
+    },
+    {
+      "help": "Select a network to connect; secured networks prompt for a password.",
+      "id": "wifi.networks.list",
+      "itemAction": "wifi_connect",
+      "platforms": [
+        "board"
+      ],
+      "provider": "wifi_networks",
+      "type": "dynamic"
+    },
+    {
+      "children": [
+        "bluetooth.status",
+        "bluetooth.enabled",
+        "bluetooth.devices",
+        "bluetooth.pair"
+      ],
+      "help": "Bluetooth status, advertising, and paired devices.",
+      "id": "bluetooth",
+      "label": "Bluetooth",
+      "platforms": [
+        "board"
+      ],
+      "type": "menu"
+    },
+    {
+      "epaper": {
+        "border_width": 1,
+        "font_size": 11,
+        "height_ratio": 1.5,
+        "icon_size": 36,
+        "layout": "vertical",
+        "selectable": false
+      },
+      "help": "Current Bluetooth connection and BLE advertising status.",
+      "id": "bluetooth.status",
+      "key": "Info",
+      "platforms": [
+        "board"
+      ],
+      "provider": "bluetooth_status",
+      "type": "dynamic"
+    },
+    {
+      "bind": {
+        "key": "enabled",
+        "store": "bluetooth"
+      },
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.8,
+        "layout": "horizontal"
+      },
+      "help": "Enable or disable the Bluetooth radio.",
+      "icon": {
+        "false": "timer",
+        "true": "timer_checked"
+      },
+      "id": "bluetooth.enabled",
+      "key": "Toggle",
+      "label": "{fn:bluetooth_enable_state}",
+      "platforms": [
+        "board"
+      ],
+      "type": "toggle"
+    },
+    {
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.8,
+        "layout": "horizontal"
+      },
+      "help": "View and manage paired Bluetooth devices.",
+      "icon": "bluetooth",
+      "id": "bluetooth.devices",
+      "key": "ManageDevices",
+      "label": "Devices",
+      "platforms": [
+        "board"
+      ],
+      "target": "bluetooth.devices.list",
+      "type": "submenu"
+    },
+    {
+      "action": "bluetooth_pair",
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.8,
+        "layout": "horizontal"
+      },
+      "help": "Scan for and pair a Bluetooth keyboard.",
+      "icon": "bluetooth",
+      "id": "bluetooth.pair",
+      "key": "PairKeyboard",
+      "label": "Pair Keyboard",
+      "platforms": [
+        "board"
+      ],
+      "type": "action"
+    },
+    {
+      "children": [
+        "bluetooth.devices.list.items"
+      ],
+      "help": "Paired Bluetooth devices; select one to connect, disconnect, or forget.",
+      "id": "bluetooth.devices.list",
+      "label": "Paired Devices",
+      "platforms": [
+        "board"
+      ],
+      "type": "menu"
+    },
+    {
+      "help": "Select a paired device to manage it.",
+      "id": "bluetooth.devices.list.items",
+      "itemAction": "bluetooth_device_select",
+      "platforms": [
+        "board"
+      ],
+      "provider": "bluetooth_paired_devices",
+      "type": "dynamic"
+    },
+    {
+      "children": [
+        "bluetooth.device.info",
+        "bluetooth.device.connect",
+        "bluetooth.device.disconnect",
+        "bluetooth.device.forget"
+      ],
+      "help": "Connect, disconnect, or forget the selected Bluetooth device.",
+      "id": "bluetooth.device.detail",
+      "label": "Device",
+      "platforms": [
+        "board"
+      ],
+      "type": "menu"
+    },
+    {
+      "epaper": {
+        "border_width": 1,
+        "font_size": 11,
+        "height_ratio": 1.5,
+        "icon_size": 36,
+        "layout": "vertical",
+        "selectable": false
+      },
+      "help": "The selected device and its connection status.",
+      "icon": "bluetooth",
+      "id": "bluetooth.device.info",
+      "key": "Info",
+      "label": "{fn:bt_device_status}",
+      "platforms": [
+        "board"
+      ],
+      "type": "info"
+    },
+    {
+      "action": "bluetooth_connect",
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.8,
+        "layout": "horizontal"
+      },
+      "help": "Connect to this device.",
+      "icon": "bluetooth",
+      "id": "bluetooth.device.connect",
+      "key": "Connect",
+      "label": "Connect",
+      "platforms": [
+        "board"
+      ],
+      "type": "action",
+      "visibleWhen": {
+        "equals": false,
+        "key": "connected",
+        "store": "bt_device"
+      }
+    },
+    {
+      "action": "bluetooth_disconnect",
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.8,
+        "layout": "horizontal"
+      },
+      "help": "Disconnect this device.",
+      "icon": "cancel",
+      "id": "bluetooth.device.disconnect",
+      "key": "Disconnect",
+      "label": "Disconnect",
+      "platforms": [
+        "board"
+      ],
+      "type": "action",
+      "visibleWhen": {
+        "equals": true,
+        "key": "connected",
+        "store": "bt_device"
+      }
+    },
+    {
+      "action": "bluetooth_forget",
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.8,
+        "layout": "horizontal"
+      },
+      "help": "Remove this device's pairing.",
+      "icon": "exit",
+      "id": "bluetooth.device.forget",
+      "key": "Forget",
+      "label": "Forget",
+      "platforms": [
+        "board"
+      ],
+      "type": "action"
+    },
+    {
+      "children": [
+        "bluetooth.device.stale.remove",
+        "bluetooth.device.stale.keep"
+      ],
+      "help": "The device rejected the saved pairing; remove it or keep it.",
+      "id": "bluetooth.device.stale",
+      "label": "Pairing Rejected",
+      "platforms": [
+        "board"
+      ],
+      "type": "menu"
+    },
+    {
+      "action": "bluetooth_remove_pairing",
+      "help": "Forget the rejected pairing so it can be re-paired.",
+      "icon": "exit",
+      "id": "bluetooth.device.stale.remove",
+      "key": "RemovePairing",
+      "label": "Remove\nPairing",
+      "platforms": [
+        "board"
+      ],
+      "type": "action"
+    },
+    {
+      "action": "cancel",
+      "help": "Keep the existing pairing and return.",
+      "icon": "cancel",
+      "id": "bluetooth.device.stale.keep",
+      "key": "KeepPairing",
+      "label": "Keep\nPairing",
+      "platforms": [
+        "board"
+      ],
+      "type": "action"
+    },
+    {
+      "children": [
+        "bluetooth.keyboards.list"
+      ],
+      "help": "Discovered Bluetooth keyboards; select one to pair.",
+      "id": "bluetooth.keyboards",
+      "label": "Pair Keyboard",
+      "platforms": [
+        "board"
+      ],
+      "type": "menu"
+    },
+    {
+      "help": "Select a keyboard to pair; a passkey is shown if required.",
+      "id": "bluetooth.keyboards.list",
+      "itemAction": "bluetooth_pair_select",
+      "platforms": [
+        "board"
+      ],
+      "provider": "bluetooth_keyboards",
+      "type": "dynamic"
+    },
+    {
+      "children": [
+        "system.engines",
+        "system.inactivity",
+        "system.reset",
+        "system.about",
+        "system.power"
+      ],
+      "id": "system",
+      "label": "System",
+      "platforms": [
+        "board"
+      ],
+      "type": "menu"
+    },
+    {
+      "action": "engine_manager",
+      "help": "Install and manage chess engines for play and analysis.",
+      "icon": "engine",
+      "id": "system.engines",
+      "key": "Engines",
+      "label": "Engine\nManager",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "section": "engines",
+      "type": "action"
+    },
+    {
+      "bind": {
+        "key": "sleep_seconds",
+        "store": "system"
+      },
+      "boardLabel": "Sleep Timer\n{value}",
+      "help": "Automatically put the board to sleep after a period of inactivity.",
+      "icon": {
+        "0": "timer",
+        "default": "timer_checked"
+      },
+      "id": "system.inactivity",
+      "key": "Inactivity",
+      "label": "Sleep Timer",
+      "optionSet": "sleep_timer",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "type": "select"
+    },
+    {
+      "help": "Restore all settings to their defaults.",
+      "icon": "cancel",
+      "id": "system.reset",
+      "key": "ResetSettings",
+      "label": "Reset\nSettings",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "target": "system.reset.confirm",
+      "type": "submenu"
+    },
+    {
+      "action": "about",
+      "help": "Version and support information.",
+      "icon": "info",
+      "id": "system.about",
+      "key": "About",
+      "label": "About",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "type": "action"
+    },
+    {
+      "help": "Shut down or reboot the board.",
+      "icon": "shutdown",
+      "id": "system.power",
+      "key": "Power",
+      "label": "Power",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "target": "power",
+      "type": "submenu"
+    },
+    {
+      "children": [
+        "system.reset.confirm.yes",
+        "system.reset.confirm.no"
+      ],
+      "help": "Confirm restoring all settings to their defaults.",
+      "id": "system.reset.confirm",
+      "label": "Reset Settings",
+      "platforms": [
+        "board"
+      ],
+      "type": "menu"
+    },
+    {
+      "action": "reset_confirm",
+      "help": "Clear all game and player settings and restore defaults.",
+      "icon": "cancel",
+      "id": "system.reset.confirm.yes",
+      "key": "confirm",
+      "label": "Reset All\nSettings?",
+      "platforms": [
+        "board"
+      ],
+      "type": "action"
+    },
+    {
+      "action": "cancel",
+      "help": "Return without changing settings.",
+      "icon": "cancel",
+      "id": "system.reset.confirm.no",
+      "key": "cancel",
+      "label": "Cancel",
+      "platforms": [
+        "board"
+      ],
+      "type": "action"
+    },
+    {
+      "bind": {
+        "key": "mode",
+        "store": "analysis"
+      },
+      "epaper": {
+        "bold": true,
+        "font_size": 14,
+        "height_ratio": 0.8,
+        "layout": "horizontal"
+      },
+      "help": "Show engine evaluation of the current position during play.",
+      "icon": {
+        "false": "timer",
+        "true": "timer_checked"
+      },
+      "id": "analysis.enabled",
+      "key": "enabled",
+      "label": "Live Analysis",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "section": "game",
+      "type": "toggle"
+    },
+    {
+      "bind": {
+        "key": "engine",
+        "store": "analysis"
+      },
+      "boardLabel": "Engine\n{value}",
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.8,
+        "layout": "horizontal"
+      },
+      "help": "Engine used for position analysis (best changed between games).",
+      "icon": "engine",
+      "id": "analysis.engine",
+      "key": "engine",
+      "label": "Analysis Engine",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "provider": "installed_engines",
+      "section": "game",
+      "type": "select",
+      "visibleWhen": {
+        "equals": true,
+        "key": "mode",
+        "store": "analysis"
+      }
+    },
+    {
+      "bind": {
+        "key": "coach_id",
+        "store": "game"
+      },
+      "boardLabel": "Coach\n{fn:coach_selected_label}",
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.8,
+        "layout": "horizontal"
+      },
+      "help": "Coaching personality and style. Auto matches the coach to the opponent's rating; independent of the agent that powers it.",
+      "icon": "engine",
+      "id": "coach.id",
+      "key": "coach_id",
+      "label": "Coach",
+      "platforms": [
+        "board"
+      ],
+      "provider": "coaches",
+      "section": "game",
+      "type": "select"
+    },
+    {
+      "bind": {
+        "key": "coach_provider",
+        "store": "game"
+      },
+      "boardLabel": "Agent\n{value}",
+      "enabledWhen": {
+        "key": "coach_id",
+        "notEquals": "off",
+        "store": "game"
+      },
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.8,
+        "layout": "horizontal"
+      },
+      "help": "Which AI agent powers the coach. Only agents with an API key and all required settings are listed; configure them under Settings > Agents. Greyed out while the Coach is Disabled.",
+      "icon": "agents",
+      "id": "coach.provider",
+      "key": "coach_provider",
+      "label": "Agent",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "provider": "agents_choices",
+      "section": "game",
+      "type": "select"
+    },
+    {
+      "help": "Select an agent to configure its API key, model, and endpoint.",
+      "id": "agents.list.items",
+      "itemAction": "agent_select",
+      "platforms": [
+        "board"
+      ],
+      "provider": "agents",
+      "section": "agents",
+      "type": "dynamic"
+    },
+    {
+      "children": [
+        "agents.detail.api_key",
+        "agents.detail.model",
+        "agents.detail.model_custom",
+        "agents.detail.base_url"
+      ],
+      "help": "Configure the selected agent: API key, model, and endpoint.",
+      "id": "agents.detail",
+      "label": "Agent",
+      "platforms": [
+        "board"
+      ],
+      "section": "agents",
+      "type": "menu"
+    },
+    {
+      "action": "edit_agent_api_key",
+      "bind": {
+        "key": "api_key",
+        "store": "agent_edit"
+      },
+      "boardLabel": "API Key\n{fn:agent_key_status}",
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.8,
+        "layout": "horizontal"
+      },
+      "help": "API key for this AI agent.",
+      "icon": "settings",
+      "id": "agents.detail.api_key",
+      "key": "agent_api_key",
+      "label": "API Key",
+      "platforms": [
+        "board"
+      ],
+      "secret": true,
+      "section": "agents",
+      "type": "text"
+    },
+    {
+      "bind": {
+        "key": "model",
+        "store": "agent_edit"
+      },
+      "boardLabel": "Model\n{fn:agent_model_label}",
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.8,
+        "layout": "horizontal"
+      },
+      "help": "Model for this agent (fetched live; blank uses the agent default).",
+      "icon": "settings",
+      "id": "agents.detail.model",
+      "key": "agent_model",
+      "label": "Model",
+      "platforms": [
+        "board"
+      ],
+      "provider": "agent_models",
+      "section": "agents",
+      "type": "select",
+      "visibleWhen": {
+        "equals": "model",
+        "key": "model_kind",
+        "store": "agent_edit"
+      }
+    },
+    {
+      "action": "edit_agent_model",
+      "bind": {
+        "key": "model",
+        "store": "agent_edit"
+      },
+      "boardLabel": "Model\n{fn:agent_model_label}",
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.8,
+        "layout": "horizontal"
+      },
+      "help": "Model id for this endpoint (blank uses the agent default).",
+      "icon": "settings",
+      "id": "agents.detail.model_custom",
+      "key": "agent_model",
+      "label": "Model",
+      "platforms": [
+        "board"
+      ],
+      "section": "agents",
+      "type": "text",
+      "visibleWhen": {
+        "equals": "model_text",
+        "key": "model_kind",
+        "store": "agent_edit"
+      }
+    },
+    {
+      "action": "edit_agent_base_url",
+      "bind": {
+        "key": "base_url",
+        "store": "agent_edit"
+      },
+      "boardLabel": "Base URL\n{fn:agent_base_url_label}",
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.8,
+        "layout": "horizontal"
+      },
+      "help": "Base URL for this OpenAI-compatible agent endpoint.",
+      "icon": "settings",
+      "id": "agents.detail.base_url",
+      "key": "agent_base_url",
+      "label": "Base URL",
+      "platforms": [
+        "board"
+      ],
+      "section": "agents",
+      "type": "text",
+      "visibleWhen": {
+        "equals": true,
+        "key": "requires_base_url",
+        "store": "agent_edit"
+      }
+    },
+    {
+      "children": [
+        "power.shutdown",
+        "power.reboot"
+      ],
+      "id": "power",
+      "label": "Power",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "type": "menu"
+    },
+    {
+      "action": "shutdown",
+      "help": "Power off the board.",
+      "icon": "shutdown",
+      "id": "power.shutdown",
+      "key": "Shutdown",
+      "label": "Shutdown",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "type": "action"
+    },
+    {
+      "action": "reboot",
+      "help": "Restart the board.",
+      "icon": "reboot",
+      "id": "power.reboot",
+      "key": "Reboot",
+      "label": "Reboot",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "type": "action"
+    },
+    {
+      "children": [
+        "about.version",
+        "about.updates",
+        "about.telemetry"
+      ],
+      "help": "Version, update status, and live system telemetry.",
+      "id": "about",
+      "label": "About",
+      "platforms": [
+        "board"
+      ],
+      "type": "menu"
+    },
+    {
+      "bind": {
+        "key": "version",
+        "store": "about"
+      },
+      "boardLabel": "Version\n{value}",
+      "epaper": {
+        "selectable": false
+      },
+      "help": "Installed software version.",
+      "icon": "info",
+      "id": "about.version",
+      "key": "Version",
+      "label": "Version",
+      "platforms": [
+        "board"
+      ],
+      "type": "info",
+      "valueDefault": "Unknown"
+    },
+    {
+      "action": "open_updates",
+      "bind": {
+        "key": "update_state",
+        "store": "about"
+      },
+      "boardLabel": "Updates\n{fn:updates_status}",
+      "help": "Check for and install software updates.",
+      "icon": {
+        "auto": "checkbox_checked",
+        "available": "update",
+        "manual": "checkbox_empty",
+        "ready": "update"
+      },
+      "id": "about.updates",
+      "key": "Updates",
+      "label": "Updates",
+      "platforms": [
+        "board"
+      ],
+      "type": "action"
+    },
+    {
+      "help": "Live system telemetry (CPU, memory, storage, uptime).",
+      "id": "about.telemetry",
+      "platforms": [
+        "board"
+      ],
+      "provider": "system_telemetry",
+      "type": "dynamic"
+    },
+    {
+      "children": [
+        "updates.auto",
+        "updates.channel",
+        "updates.check",
+        "updates.install_pending",
+        "updates.download",
+        "updates.install_local"
+      ],
+      "help": "Auto-update, release channel, and update installation.",
+      "id": "updates",
+      "label": "Updates",
+      "platforms": [
+        "board"
+      ],
+      "type": "menu"
+    },
+    {
+      "bind": {
+        "key": "auto_update",
+        "store": "update"
+      },
+      "boardLabel": "Auto Download\n{fn:auto_update_state}",
+      "help": "Automatically download updates in the background; install them yourself when ready.",
+      "icon": {
+        "false": "checkbox_empty",
+        "true": "checkbox_checked"
+      },
+      "id": "updates.auto",
+      "key": "AutoUpdate",
+      "label": "Auto Download",
+      "platforms": [
+        "board"
+      ],
+      "type": "toggle"
+    },
+    {
+      "bind": {
+        "key": "channel",
+        "store": "update"
+      },
+      "boardLabel": "Channel\n{value}",
+      "help": "Stable releases are recommended. Nightly builds may contain bugs.",
+      "icon": "settings",
+      "id": "updates.channel",
+      "key": "Channel",
+      "label": "Channel",
+      "optionSet": "update_channel",
+      "platforms": [
+        "board"
+      ],
+      "selectedIcon": "checkbox_checked",
+      "type": "select",
+      "unselectedIcon": "checkbox_empty"
+    },
+    {
+      "action": "check_updates",
+      "help": "Check the update server for a newer version now.",
+      "icon": "update",
+      "id": "updates.check",
+      "key": "CheckNow",
+      "label": "Check for\nUpdates",
+      "platforms": [
+        "board"
+      ],
+      "type": "action"
+    },
+    {
+      "action": "install_pending",
+      "help": "Install the downloaded update; the board restarts onto the new version.",
+      "icon": "play",
+      "id": "updates.install_pending",
+      "key": "InstallPending",
+      "label": "Install\nPending Update",
+      "platforms": [
+        "board"
+      ],
+      "type": "action",
+      "visibleWhen": {
+        "equals": true,
+        "key": "has_pending",
+        "store": "update"
+      }
+    },
+    {
+      "action": "download_update",
+      "bind": {
+        "key": "available",
+        "store": "update"
+      },
+      "boardLabel": "Download\nv{value}",
+      "help": "Download the available update.",
+      "icon": "update",
+      "id": "updates.download",
+      "key": "DownloadUpdate",
+      "label": "Download Update",
+      "platforms": [
+        "board"
+      ],
+      "type": "action",
+      "visibleWhen": {
+        "equals": true,
+        "key": "has_download",
+        "store": "update"
+      }
+    },
+    {
+      "action": "install_local",
+      "help": "Install a .deb package found in the home directory.",
+      "icon": "update",
+      "id": "updates.install_local",
+      "key": "InstallLocal",
+      "label": "Install\nLocal .deb",
+      "platforms": [
+        "board"
+      ],
+      "type": "action"
+    },
+    {
+      "children": [
+        "updates.install_local.confirm.yes",
+        "updates.install_local.confirm.no"
+      ],
+      "help": "Confirm installing the discovered .deb package.",
+      "id": "updates.install_local.confirm",
+      "label": "Install Local .deb",
+      "platforms": [
+        "board"
+      ],
+      "type": "menu"
+    },
+    {
+      "action": "install_local_confirmed",
+      "bind": {
+        "key": "local_deb_name",
+        "store": "update"
+      },
+      "boardLabel": "Install\n{value}?",
+      "help": "Install the discovered package; the board restarts onto the new version.",
+      "icon": "play",
+      "id": "updates.install_local.confirm.yes",
+      "key": "confirm",
+      "label": "Install {value}?",
+      "platforms": [
+        "board"
+      ],
+      "type": "action"
+    },
+    {
+      "action": "cancel",
+      "help": "Return without installing.",
+      "icon": "cancel",
+      "id": "updates.install_local.confirm.no",
+      "key": "cancel",
+      "label": "Cancel",
+      "platforms": [
+        "board"
+      ],
+      "type": "action"
+    },
+    {
+      "bind": {
+        "key": "color",
+        "store": "player"
+      },
+      "boardLabel": "Color\n{value}",
+      "help": "Which color this player controls",
+      "icon": {
+        "black": "black_piece",
+        "white": "white_piece"
+      },
+      "id": "field.player.color",
+      "label": "Color",
+      "optionSet": "color",
+      "platforms": [
+        "board"
+      ],
+      "type": "select",
+      "visibleWhen": {
+        "equals": true,
+        "key": "has_color",
+        "store": "player"
+      }
+    },
+    {
+      "bind": {
+        "key": "type",
+        "store": "player"
+      },
+      "boardLabel": "Type\n{value}",
+      "help": "Human, Engine, Hand+Brain, or Lichess",
+      "icon": "universal_logo",
+      "id": "field.player.type",
+      "label": "Player Type",
+      "optionSet": "player_type",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "section": "players",
+      "type": "select"
+    },
+    {
+      "action": "edit_name",
+      "bind": {
+        "key": "name",
+        "store": "player"
+      },
+      "boardLabel": "Name\n{value}",
+      "help": "Optional name for PGN headers",
+      "icon": "universal_logo",
+      "id": "field.player.name",
+      "label": "Player Name",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "section": "players",
+      "type": "text",
+      "valueDefault": "Human",
+      "visibleWhen": {
+        "equals": "human",
+        "key": "type",
+        "store": "player"
+      }
+    },
+    {
+      "bind": {
+        "key": "hand_brain_mode",
+        "store": "player"
+      },
+      "boardLabel": "Reverse",
+      "help": "How the human and engine collaborate",
+      "icon": {
+        "normal": "checkbox_empty",
+        "reverse": "checkbox_checked"
+      },
+      "id": "field.player.hand_brain_mode",
+      "label": "Hand+Brain Mode",
+      "optionSet": "hand_brain_mode",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "section": "players",
+      "type": "cycle",
+      "visibleWhen": {
+        "equals": "hand_brain",
+        "key": "type",
+        "store": "player"
+      }
+    },
+    {
+      "bind": {
+        "key": "engine",
+        "store": "player"
+      },
+      "boardLabel": "Engine\n{value}",
+      "help": "Chess engine to use",
+      "icon": "engine",
+      "id": "field.player.engine",
+      "label": "Engine",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "provider": "installed_engines",
+      "section": "players",
+      "type": "select",
+      "visibleWhen": {
+        "in": [
+          "human",
+          "engine",
+          "hand_brain"
+        ],
+        "key": "type",
+        "store": "player"
+      }
+    },
+    {
+      "bind": {
+        "key": "elo",
+        "store": "player"
+      },
+      "boardLabel": "ELO\n{value}",
+      "help": "Engine strength or personality",
+      "icon": "elo",
+      "id": "field.player.elo",
+      "label": "ELO / Style",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "provider": "engine_levels",
+      "section": "players",
+      "type": "select",
+      "visibleWhen": {
+        "in": [
+          "human",
+          "engine",
+          "hand_brain"
+        ],
+        "key": "type",
+        "store": "player"
+      }
+    },
+    {
+      "action": "lichess",
+      "boardLabel": "Lichess\nSettings",
+      "help": "Configure Lichess account and matchmaking for this player",
+      "icon": "lichess",
+      "id": "field.player.lichess",
+      "label": "Lichess Settings",
+      "platforms": [
+        "board"
+      ],
+      "type": "action",
+      "visibleWhen": {
+        "equals": "lichess",
+        "key": "type",
+        "store": "player"
+      }
+    },
+    {
+      "bind": {
+        "key": "show_board",
+        "store": "game"
+      },
+      "help": "Display chess board on screen",
+      "icon": {
+        "false": "checkbox_empty",
+        "true": "checkbox_checked"
+      },
+      "id": "field.display.show_board",
+      "label": "Show Board",
+      "section": "display",
+      "type": "toggle"
+    },
+    {
+      "help": "Sprite sheet used to draw pieces on the e-paper board",
+      "id": "field.display.sprites",
+      "itemBind": {
+        "key": "chess_sprites",
+        "store": "game"
+      },
+      "label": "Piece Sprites",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "provider": "sprite_sheets",
+      "section": "display",
+      "type": "dynamic"
+    },
+    {
+      "bind": {
+        "key": "show_clock",
+        "store": "game"
+      },
+      "boardLabel": "Clock",
+      "help": "Display game clock and turn indicator",
+      "icon": {
+        "false": "checkbox_empty",
+        "true": "checkbox_checked"
+      },
+      "id": "field.display.show_clock",
+      "label": "Show Clock",
+      "section": "display",
+      "type": "toggle"
+    },
+    {
+      "bind": {
+        "key": "show_analysis",
+        "store": "game"
+      },
+      "enabledWhen": {
+        "equals": true,
+        "key": "mode",
+        "store": "analysis"
+      },
+      "help": "Display engine analysis widget",
+      "icon": {
+        "false": "checkbox_empty",
+        "true": "checkbox_checked"
+      },
+      "id": "field.display.show_analysis",
+      "label": "Show Analysis",
+      "section": "display",
+      "type": "toggle"
+    },
+    {
+      "bind": {
+        "key": "show_graph",
+        "store": "game"
+      },
+      "boardLabel": "Show Graph",
+      "enabledWhen": {
+        "allOf": [
+          {
+            "equals": true,
+            "key": "mode",
+            "store": "analysis"
+          },
+          {
+            "equals": true,
+            "key": "show_analysis",
+            "store": "game"
+          }
+        ]
+      },
+      "help": "Display evaluation history graph",
+      "icon": {
+        "false": "checkbox_empty",
+        "true": "checkbox_checked"
+      },
+      "id": "field.display.show_graph",
+      "label": "Show Evaluation Graph",
+      "section": "display",
+      "type": "toggle"
+    },
+    {
+      "bind": {
+        "key": "led_brightness",
+        "store": "game"
+      },
+      "boardLabel": "LED: {value}",
+      "help": "Brightness level for the board LEDs",
+      "icon": "star",
+      "id": "field.display.led_brightness",
+      "label": "LED Brightness",
+      "range": {
+        "max": 10,
+        "min": 1,
+        "step": 1,
+        "wrap": true
+      },
+      "section": "display",
+      "type": "range"
+    },
+    {
+      "bind": {
+        "key": "pegasus_override_brightness",
+        "store": "game"
+      },
+      "help": "The DGT Chess app sends a fixed LED brightness. When on, use the LED Brightness setting above for Pegasus LEDs instead.",
+      "icon": {
+        "false": "checkbox_empty",
+        "true": "checkbox_checked"
+      },
+      "id": "field.display.pegasus_override_brightness",
+      "label": "Override Pegasus Brightness",
+      "platforms": [
+        "web"
+      ],
+      "section": "display",
+      "type": "toggle"
+    },
+    {
+      "bind": {
+        "key": "enabled",
+        "store": "sound"
+      },
+      "epaper": {
+        "bold": true,
+        "font_size": 14,
+        "height_ratio": 0.8
+      },
+      "help": "Master switch for all sound effects",
+      "icon": {
+        "false": "timer",
+        "true": "timer_checked"
+      },
+      "id": "field.sound.enabled",
+      "label": "Sound Enabled",
+      "section": "sound",
+      "type": "toggle"
+    },
+    {
+      "bind": {
+        "key": "piece_events",
+        "store": "sound"
+      },
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.8
+      },
+      "help": "Beep when pieces are lifted or placed",
+      "icon": {
+        "false": "timer",
+        "true": "timer_checked"
+      },
+      "id": "field.sound.piece_events",
+      "label": "Piece Events",
+      "section": "sound",
+      "type": "toggle"
+    },
+    {
+      "bind": {
+        "key": "game_events",
+        "store": "sound"
+      },
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.8
+      },
+      "help": "Beep for check, checkmate, and other game events",
+      "icon": {
+        "false": "timer",
+        "true": "timer_checked"
+      },
+      "id": "field.sound.game_events",
+      "label": "Game Events",
+      "section": "sound",
+      "type": "toggle"
+    },
+    {
+      "bind": {
+        "key": "errors",
+        "store": "sound"
+      },
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.8
+      },
+      "help": "Beep on error conditions",
+      "icon": {
+        "false": "timer",
+        "true": "timer_checked"
+      },
+      "id": "field.sound.errors",
+      "label": "Errors",
+      "section": "sound",
+      "type": "toggle"
+    },
+    {
+      "bind": {
+        "key": "key_press",
+        "store": "sound"
+      },
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.8
+      },
+      "help": "Beep when buttons are pressed",
+      "icon": {
+        "false": "timer",
+        "true": "timer_checked"
+      },
+      "id": "field.sound.key_press",
+      "label": "Key Press",
+      "section": "sound",
+      "type": "toggle"
+    },
+    {
+      "help": "Get a token from lichess.org with challenge:write and board:play permissions",
+      "id": "field.lichess.api_token",
+      "label": "API Token",
+      "platforms": [
+        "web"
+      ],
+      "section": "accounts",
+      "type": "text"
+    },
+    {
+      "help": "Preferred opponent rating range for matchmaking",
+      "id": "field.lichess.range",
+      "label": "Rating Range",
+      "platforms": [
+        "web"
+      ],
+      "section": "accounts",
+      "type": "text"
+    },
+    {
+      "help": "Automatically put the board to sleep after a period of inactivity",
+      "id": "field.system.sleep_timer",
+      "label": "Sleep Timer",
+      "optionSet": "sleep_timer",
+      "platforms": [
+        "web"
+      ],
+      "section": "system",
+      "type": "select"
+    },
+    {
+      "help": "Stable releases are recommended. Nightly builds may contain bugs.",
+      "id": "field.system.update_channel",
+      "label": "Update Channel",
+      "optionSet": "update_channel",
+      "platforms": [
+        "web"
+      ],
+      "section": "system",
+      "type": "select"
+    },
+    {
+      "help": "Automatically download new versions in the background so they are ready to install. Updates are never installed on their own; you choose when to install.",
+      "id": "field.system.auto_update",
+      "label": "Auto Download Updates",
+      "platforms": [
+        "web"
+      ],
+      "section": "system",
+      "type": "toggle"
+    },
+    {
+      "help": "Leave empty for default SQLite. Supports any SQLAlchemy-compatible URI.",
+      "id": "field.system.database_uri",
+      "label": "Database URI",
+      "platforms": [
+        "web"
+      ],
+      "section": "system",
+      "type": "text"
+    }
+  ],
+  "optionSets": {
+    "color": [
+      {
+        "icon": "white_piece",
+        "label": "White",
+        "value": "white"
+      },
+      {
+        "icon": "black_piece",
+        "label": "Black",
+        "value": "black"
+      }
+    ],
+    "hand_brain_mode": [
+      {
+        "label": "Normal (Engine = Brain)",
+        "value": "normal"
+      },
+      {
+        "label": "Reverse (Human = Brain)",
+        "value": "reverse"
+      }
+    ],
+    "notation": [
+      {
+        "label": "Figurine (\u2658f3)",
+        "value": "figurine"
+      },
+      {
+        "label": "Standard (Nf3)",
+        "value": "san"
+      },
+      {
+        "label": "Long (Ng1-f3)",
+        "value": "lan"
+      },
+      {
+        "label": "Coordinate (g1f3)",
+        "value": "uci"
+      }
+    ],
+    "player_type": [
+      {
+        "icon": "universal_logo",
+        "label": "Human",
+        "value": "human"
+      },
+      {
+        "icon": "engine",
+        "label": "Engine",
+        "value": "engine"
+      },
+      {
+        "icon": "engine",
+        "label": "Hand + Brain",
+        "value": "hand_brain"
+      },
+      {
+        "icon": "lichess",
+        "label": "Lichess",
+        "value": "lichess"
+      }
+    ],
+    "sleep_timer": [
+      {
+        "label": "Disabled",
+        "value": "0"
+      },
+      {
+        "label": "5 min",
+        "value": "300"
+      },
+      {
+        "label": "10 min",
+        "value": "600"
+      },
+      {
+        "label": "15 min",
+        "value": "900"
+      },
+      {
+        "label": "30 min",
+        "value": "1800"
+      },
+      {
+        "label": "1 hour",
+        "value": "3600"
+      }
+    ],
+    "time_control": [
+      {
+        "label": "Untimed",
+        "value": "0"
+      },
+      {
+        "label": "1 min (Bullet)",
+        "value": "1"
+      },
+      {
+        "label": "3 min (Blitz)",
+        "value": "3"
+      },
+      {
+        "label": "5 min (Blitz)",
+        "value": "5"
+      },
+      {
+        "label": "10 min (Rapid)",
+        "value": "10"
+      },
+      {
+        "label": "15 min (Rapid)",
+        "value": "15"
+      },
+      {
+        "label": "30 min (Classical)",
+        "value": "30"
+      },
+      {
+        "label": "60 min (Classical)",
+        "value": "60"
+      },
+      {
+        "label": "90 min (Classical)",
+        "value": "90"
+      }
+    ],
+    "update_channel": [
+      {
+        "label": "Stable (Recommended)",
+        "value": "stable"
+      },
+      {
+        "label": "Nightly (Development)",
+        "value": "nightly"
+      }
+    ]
+  },
+  "roots": [
+    "main",
+    "settings",
+    "connectivity",
+    "system",
+    "power"
+  ],
+  "sections": [
+    {
+      "icon": "players",
+      "id": "players",
+      "label": "Players"
+    },
+    {
+      "icon": "timer_checked",
+      "id": "game",
+      "label": "Game"
+    },
+    {
+      "icon": "agents",
+      "id": "agents",
+      "label": "Agents"
+    },
+    {
+      "icon": "display",
+      "id": "display",
+      "label": "Display"
+    },
+    {
+      "icon": "sound",
+      "id": "sound",
+      "label": "Sound"
+    },
+    {
+      "icon": "wifi",
+      "id": "connectivity",
+      "label": "Connectivity"
+    },
+    {
+      "icon": "account",
+      "id": "accounts",
+      "label": "Accounts"
+    },
+    {
+      "icon": "engine",
+      "id": "engines",
+      "label": "Engines"
+    },
+    {
+      "icon": "system",
+      "id": "system",
+      "label": "System"
+    }
+  ],
+  "version": 1
+}
