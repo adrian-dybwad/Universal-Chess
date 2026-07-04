@@ -4257,19 +4257,11 @@ function SystemInfoCard() {
       )}
       {!error && !stats && <p className="text-muted">Loading system information...</p>}
       {stats && (
-        <dl
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'max-content 1fr',
-            gap: 'var(--space-2) var(--space-6)',
-            margin: 0,
-            alignItems: 'baseline',
-          }}
-        >
+        <dl className="system-info-grid">
           {rows.map((row) => (
             <div key={row.label} style={{ display: 'contents' }}>
               <dt className="text-muted">{row.label}</dt>
-              <dd style={{ margin: 0, fontVariantNumeric: 'tabular-nums' }}>{row.value}</dd>
+              <dd>{row.value}</dd>
             </div>
           ))}
         </dl>

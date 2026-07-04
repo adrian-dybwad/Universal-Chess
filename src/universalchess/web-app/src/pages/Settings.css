@@ -593,6 +593,40 @@
   font-size: var(--text-xs);
 }
 
+/* System Information definition list (System tab). Two columns (label / value)
+   on wide viewports; the label column is sized to its content so values align
+   in a clean column. The value column may wrap long, hyphen-free strings
+   (e.g. a hostname) instead of overflowing the card. */
+.system-info-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-2) var(--space-6);
+  margin: 0;
+  align-items: baseline;
+}
+
+.system-info-grid dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+/* On narrow screens the fixed label column plus the column gap left almost no
+   room for values, crushing them into a sliver. Collapse to a single stacked
+   column (label above value) so each value gets the full card width, with a
+   gap before every pair after the first to keep pairs visually grouped. */
+@media (max-width: 480px) {
+  .system-info-grid {
+    grid-template-columns: 1fr;
+    row-gap: var(--space-1);
+  }
+
+  .system-info-grid > div:not(:first-child) dt {
+    margin-top: var(--space-3);
+  }
+}
+
 /* Event Log viewer (System tab). A scrollable, newest-first list of important
    events from /api/system/event-log. Bounded height so a long history scrolls
    within the card instead of stretching the page. */

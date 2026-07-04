@@ -476,18 +476,34 @@
 .text-success { color: var(--color-success-dark); }
 .text-danger { color: var(--color-danger-dark); }
 .text-mono { font-family: var(--font-mono); }
+.text-sm { font-size: var(--text-sm); }
+.text-xs { font-size: var(--text-xs); }
+.underline { text-decoration: underline; }
 
 .mt-4 { margin-top: var(--space-4); }
 .mt-6 { margin-top: var(--space-6); }
 .mb-4 { margin-bottom: var(--space-4); }
 .mb-6 { margin-bottom: var(--space-6); }
+.ml-5 { margin-left: var(--space-5); }
 
 .flex { display: flex; }
 .flex-col { flex-direction: column; }
+.flex-wrap { flex-wrap: wrap; }
 .items-center { align-items: center; }
 .justify-between { justify-content: space-between; }
 .gap-2 { gap: var(--space-2); }
+.gap-3 { gap: var(--space-3); }
 .gap-4 { gap: var(--space-4); }
+
+.hidden { display: none; }
+.list-decimal { list-style-type: decimal; }
+
+/* Vertical rhythm between stacked children (mirrors Tailwind's space-y-*):
+   adds top margin to every child except the first, so a list/stack gets even
+   spacing without a trailing gap. */
+.space-y-1 > * + * { margin-top: var(--space-1); }
+.space-y-2 > * + * { margin-top: var(--space-2); }
+.space-y-3 > * + * { margin-top: var(--space-3); }
 
 /* Loading/Empty States */
 .loading,
