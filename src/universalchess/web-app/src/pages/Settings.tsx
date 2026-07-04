@@ -632,6 +632,27 @@ export function Settings() {
     originalSettings.player2.type,
   ]);
 
+  // Keep the coach's agent selection valid and savable. When coaching is enabled
+  // and at least one agent is configured but the stored provider is not one of them
+  // (e.g. still "none" from before any key existed, or a since-removed key), select
+  // the first configured agent and mark the page dirty. A native <select> shows its
+  // first option when the bound value is not in its list, which otherwise let the UI
+  // display an agent that was never actually saved (no onChange fired, nothing to
+  // save). Skipped while coaching is off so a disabled coach leaves the provider as
+  // stored.
+  useEffect(() => {
+    if (formSettings.game.coach_id === 'off') return;
+    const configured = agents.filter((a) => a.configured);
+    if (configured.length === 0) return;
+    if (!configured.some((a) => a.id === formSettings.game.coach_provider)) {
+      setFormSettings((prev) => ({
+        ...prev,
+        game: { ...prev.game, coach_provider: configured[0].id },
+      }));
+      setHasChanges(true);
+    }
+  }, [agents, formSettings.game.coach_id, formSettings.game.coach_provider]);
+
   const updateFormSettings = <T extends keyof FormSettings>(
     section: T,
     updates: Partial<FormSettings[T]>
@@ -1144,9 +1165,17 @@ export function Settings() {
     value: agent.id,
     label: agent.name,
   }));
-  // Coaching master switch lives on the Coach persona selector; when off, the
-  // agent selector is greyed and coaching does not run.
-  const coachDisabled = formSettings.game.coach_id === 'off';
+  // Coaching needs a configured agent to power it, so it can only be enabled once
+  // at least one agent has a key (and any required settings). Until then the Coach
+  // selector offers only "Disabled" and coaching cannot be turned on -- this avoids
+  // the chicken-and-egg where the coach reads "Auto" but no agent exists to run it.
+  const hasConfiguredAgent = configuredAgents.length > 0;
+  // Effective persona shown in the selector: forced to "Disabled" while no agent can
+  // power coaching, so the control never shows an enabled coach that cannot run.
+  const effectiveCoachId = hasConfiguredAgent ? formSettings.game.coach_id : 'off';
+  // The agent selector is greyed when coaching is effectively off (explicitly
+  // disabled, or no agent available); the Agents-tab "active" badge follows suit.
+  const coachDisabled = effectiveCoachId === 'off';
 
   // Build the Model dropdown options for one agent: a Default entry (blank -> the
   // agent's default model), then its live-fetched models. A currently-saved model
@@ -1454,7 +1483,13 @@ export function Settings() {
                   // column to one word per line. Matches every other settings row.
                   <>
                     The coaching personality and style.{' '}
-                    {coachDisabled ? (
+                    {!hasConfiguredAgent ? (
+                      <>
+                        No AI agents are configured, so coaching is off. Add an API
+                        key to an agent under <strong>Agents</strong> to enable
+                        coaching.
+                      </>
+                    ) : coachDisabled ? (
                       <>
                         Coaching is disabled &mdash; the agent selector below is
                         greyed out; choose a coach to enable it.
@@ -1490,15 +1525,20 @@ export function Settings() {
                 }
               >
                 <Select
-                  value={formSettings.game.coach_id}
-                  options={[
-                    { value: 'off', label: 'Disabled' },
-                    { value: 'auto', label: 'Auto (match opponent)' },
-                    ...coaches.map((c) => ({
-                      value: c.id,
-                      label: `${c.name} \u2014 ${c.elo} \u2014 ${c.character_type}`,
-                    })),
-                  ]}
+                  value={effectiveCoachId}
+                  disabled={!hasConfiguredAgent}
+                  options={
+                    hasConfiguredAgent
+                      ? [
+                          { value: 'off', label: 'Disabled' },
+                          { value: 'auto', label: 'Auto (match opponent)' },
+                          ...coaches.map((c) => ({
+                            value: c.id,
+                            label: `${c.name} \u2014 ${c.elo} \u2014 ${c.character_type}`,
+                          })),
+                        ]
+                      : [{ value: 'off', label: 'Disabled' }]
+                  }
                   onChange={(e) => updateFormSettings('game', { coach_id: e.target.value })}
                 />
               </FormRow>
