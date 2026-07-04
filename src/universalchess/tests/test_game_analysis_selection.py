@@ -269,3 +269,44 @@ def test_five_rows_fit_the_compact_timed_height():
     # a regression to 16px would fit only four, wasting nearly a row.
     widget = _widget(_game(RUY_LOPEZ_UCI), height=100)
     assert widget._rows_per_page() == 5
+
+
+def _sized_widget(game_state, text_size, height=80):
+    """A widget over game_state at a given Display text size (stubbed analysis)."""
+    return GameAnalysisWidget(
+        0, 216, 128, height, lambda full=False, immediate=False: None,
+        analysis_state=MagicMock(),
+        notation="figurine",
+        game_state=game_state,
+        sprites=None,
+        text_size=text_size,
+    )
+
+
+def test_text_size_scales_move_list_metrics_default_medium():
+    # The Display > Text Size setting scales the move-list font, line height, and
+    # header height. The default (no arg) must equal the class-level medium base so
+    # the existing layout is unchanged; small shrinks and large grows. A regression
+    # ignoring text_size would render every size at the medium metrics.
+    from universalchess.epaper.text_scale import scale_font
+
+    default = _widget(_game(RUY_LOPEZ_UCI))
+    assert default.MOVE_FONT_SIZE == GameAnalysisWidget.MOVE_FONT_SIZE
+    assert default.MOVE_LINE_HEIGHT == GameAnalysisWidget.MOVE_LINE_HEIGHT
+    assert default.MOVE_HEADER_HEIGHT == GameAnalysisWidget.MOVE_HEADER_HEIGHT
+
+    small = _sized_widget(_game(RUY_LOPEZ_UCI), "small")
+    large = _sized_widget(_game(RUY_LOPEZ_UCI), "large")
+    assert small.MOVE_FONT_SIZE == scale_font(GameAnalysisWidget.MOVE_FONT_SIZE, "small")
+    assert large.MOVE_FONT_SIZE == scale_font(GameAnalysisWidget.MOVE_FONT_SIZE, "large")
+    assert small.MOVE_FONT_SIZE < default.MOVE_FONT_SIZE < large.MOVE_FONT_SIZE
+
+
+def test_larger_text_size_fits_fewer_move_rows_per_page():
+    # A larger move-list font increases the line height, so fewer rows fit the same
+    # widget height and the move history spans more pages. This is the visible
+    # effect of the setting; a regression scaling the font without the line height
+    # would keep rows_per_page constant and overlap rows.
+    small = _sized_widget(_game(RUY_LOPEZ_UCI), "small", height=100)
+    large = _sized_widget(_game(RUY_LOPEZ_UCI), "large", height=100)
+    assert large._rows_per_page() < small._rows_per_page()

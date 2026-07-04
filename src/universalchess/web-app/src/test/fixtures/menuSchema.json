@@ -289,6 +289,7 @@
     {
       "children": [
         "settings.display.board",
+        "field.display.text_size",
         "field.display.show_clock",
         "field.display.show_analysis",
         "field.display.show_graph",
@@ -1690,6 +1691,28 @@
     },
     {
       "bind": {
+        "key": "text_size",
+        "store": "game"
+      },
+      "boardLabel": "Text Size\n{value}",
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      },
+      "help": "Size of the coach text and move list on the e-paper display.",
+      "icon": "settings",
+      "id": "field.display.text_size",
+      "label": "Text Size",
+      "optionSet": "text_size",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "section": "display",
+      "type": "select"
+    },
+    {
+      "bind": {
         "key": "show_clock",
         "store": "game"
       },
@@ -2079,6 +2102,20 @@
       {
         "label": "1 hour",
         "value": "3600"
+      }
+    ],
+    "text_size": [
+      {
+        "label": "Small",
+        "value": "small"
+      },
+      {
+        "label": "Medium",
+        "value": "medium"
+      },
+      {
+        "label": "Large",
+        "value": "large"
       }
     ],
     "time_control": [

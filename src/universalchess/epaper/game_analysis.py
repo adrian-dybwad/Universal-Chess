@@ -20,6 +20,7 @@ import math
 from PIL import Image, ImageDraw
 from .framework.widget import Widget
 from .text import TextWidget, Justify
+from .text_scale import DEFAULT_TEXT_SIZE, scale_font
 from universalchess.utils.chess_notation import (
     format_move_history,
     normalize_notation,
@@ -55,9 +56,12 @@ class GameAnalysisWidget(Widget):
     SCORE_COLUMN_WIDTH = 44  # Score text and annotation
     GRAPH_WIDTH = 82  # History graph
 
-    # Move-history page layout constants. MOVE_LINE_HEIGHT is 15 (not the font's
-    # natural ~16) so five rows fit the 100px the analysis widget gets in the
-    # compact clock layout: (100 - 2*MOVE_MARGIN - MOVE_HEADER_HEIGHT) // 15 = 5.
+    # Move-history page layout constants at the base (medium) text size.
+    # MOVE_LINE_HEIGHT is 15 (not the font's natural ~16) so five rows fit the
+    # 100px the analysis widget gets in the compact clock layout:
+    # (100 - 2*MOVE_MARGIN - MOVE_HEADER_HEIGHT) // 15 = 5. The font, line, and
+    # header sizes are scaled per instance by the Display > Text Size setting
+    # (see __init__); MOVE_MARGIN is a fixed inset and does not scale.
     MOVE_FONT_SIZE = 13
     MOVE_LINE_HEIGHT = 15
     MOVE_MARGIN = 3          # Inner top/left margin for the move list
@@ -68,7 +72,8 @@ class GameAnalysisWidget(Widget):
                  analysis_state: 'AnalysisState' = None,
                  notation: str = "figurine",
                  game_state: 'ChessGameState' = None,
-                 sprites: Image.Image = None):
+                 sprites: Image.Image = None,
+                 text_size: str = DEFAULT_TEXT_SIZE):
         """Initialize the analysis widget.
         
         Args:
@@ -85,11 +90,22 @@ class GameAnalysisWidget(Widget):
                 the singleton.
             sprites: Piece sprite sheet for figurine rendering. If None, uses the
                 module-level sheet set by the app at startup.
+            text_size: Display text-size name (small/medium/large) scaling the
+                move-list font, line height, and header height. Medium is the
+                identity (unchanged) layout; larger sizes fit fewer rows per page
+                (paging absorbs the difference).
         """
         super().__init__(x, y, width, height, update_callback)
         self.bottom_color = bottom_color
         self._show_graph = show_graph
         self._notation = normalize_notation(notation)
+        # Scale the move-list metrics for the selected text size. Instance
+        # attributes shadow the class-level base (medium) constants so every
+        # self.MOVE_* reference below picks up the scaled value while the base
+        # values remain the documented medium defaults.
+        self.MOVE_FONT_SIZE = scale_font(GameAnalysisWidget.MOVE_FONT_SIZE, text_size)
+        self.MOVE_LINE_HEIGHT = scale_font(GameAnalysisWidget.MOVE_LINE_HEIGHT, text_size)
+        self.MOVE_HEADER_HEIGHT = scale_font(GameAnalysisWidget.MOVE_HEADER_HEIGHT, text_size)
         # Selection cursor over [analysis, ply 1 .. ply N]: 0 = the analysis /
         # eval-graph view (chess board shown); 1..N select an individual played
         # move (ply), whose row is highlighted in the move list while the board

@@ -127,6 +127,7 @@ interface FormSettings {
     pegasus_override_brightness: boolean;
     chess_sprites: string;
     notation: string;
+    text_size: string;
     coach_provider: string;
     coach_id: string;
     coach_language: string;
@@ -163,6 +164,7 @@ const defaultFormSettings: FormSettings = {
     pegasus_override_brightness: true,
     chess_sprites: 'default',
     notation: 'figurine',
+    text_size: 'medium',
     coach_provider: 'none',
     coach_id: 'off',
     coach_language: 'English',
@@ -221,6 +223,7 @@ function parseRawSettings(data: SettingsData): FormSettings {
       pegasus_override_brightness: parseConfigBool(data.game?.pegasus_override_brightness, true),
       chess_sprites: data.game?.chess_sprites || 'default',
       notation: data.game?.notation || 'figurine',
+      text_size: data.game?.text_size || 'medium',
       coach_provider: data.game?.coach_provider || 'none',
       coach_id: data.game?.coach_id || 'off',
       coach_language: data.game?.coach_language || 'English',
@@ -1208,6 +1211,7 @@ export function Settings() {
   const timeControlOptions = optionSet('time_control');
   const sleepTimerOptions = optionSet('sleep_timer');
   const notationOptions = optionSet('notation');
+  const textSizeOptions = optionSet('text_size');
   const coachLanguageOptions = optionSet('coach_language');
   // Agent selector options (Game tab): every *configured* registered agent, built
   // from the live /api/agents list so a user-dropped agent module appears without
@@ -1822,6 +1826,12 @@ export function Settings() {
                 (allOf) -- all gating driven by the catalog, not hand-coded. */}
             <Card className="mb-6">
               <CardHeader title="E-Paper Display" />
+              <CatalogField
+                node={fieldById(catalog, 'field.display.text_size')!}
+                value={formSettings.game.text_size}
+                options={textSizeOptions}
+                onChange={(v) => updateFormSettings('game', { text_size: String(v) })}
+              />
               {fieldsForSection(catalog, 'display')
                 .filter((node) => node.type === 'toggle')
                 // LED settings live in the LEDs card below, not among the e-paper

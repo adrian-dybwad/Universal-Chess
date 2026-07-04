@@ -29,6 +29,7 @@ from universalchess.state import get_chess_clock as get_clock_state
 from universalchess.state import get_chess_game
 from universalchess.managers.game_layout import compute_clock_analysis_layout
 from universalchess.utils.chess_notation import format_move
+from universalchess.epaper.text_scale import DEFAULT_TEXT_SIZE, normalize_text_size
 
 # Lazy imports for widgets to avoid loading all epaper modules at startup
 _widgets_loaded = False
@@ -167,6 +168,10 @@ class DisplayManager:
         # Move-history notation for the analysis widget's paged move list;
         # refreshed from settings in _reload_display_settings before each rebuild.
         self._notation = "figurine"
+        # Display text size (small/medium/large) scaling the coach panel and
+        # move-list fonts; refreshed in _reload_display_settings before each
+        # rebuild so a menu change takes effect on the next widget rebuild.
+        self._text_size = DEFAULT_TEXT_SIZE
         
         # Widgets
         self.chess_board_widget = None
@@ -263,6 +268,9 @@ class DisplayManager:
         self._show_analysis = load_bool('show_analysis', True)
         self._show_graph = load_bool('show_graph', True)
         self._notation = Settings.read('game', 'notation', 'figurine')
+        self._text_size = normalize_text_size(
+            Settings.read('game', 'text_size', DEFAULT_TEXT_SIZE)
+        )
 
         # Re-apply the selected chess sprite sheet so the board widget rebuilt by
         # _init_widgets() reflects a sprite change made in the display menu (hot
@@ -425,6 +433,7 @@ class DisplayManager:
                 show_graph=self._show_graph,
                 notation=self._notation,
                 game_state=self._game_state,
+                text_size=self._text_size,
             )
             
             if not self._show_analysis:
@@ -438,7 +447,8 @@ class DisplayManager:
             # alongside the analysis widget so the selection callback can swap
             # them. Starts hidden.
             self.coach_text_widget = _CoachTextWidget(
-                0, 16, 128, 128, board.display_manager.update
+                0, 16, 128, 128, board.display_manager.update,
+                text_size=self._text_size,
             )
             board.display_manager.add_widget(self.coach_text_widget)
 

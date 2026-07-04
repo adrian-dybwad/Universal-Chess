@@ -1006,6 +1006,7 @@ GAME_SETTINGS_DEFAULTS = {
     'show_analysis': True,
     'show_graph': True,
     'chess_sprites': 'default',
+    'text_size': 'medium',
     'coach_provider': 'none',
     'coach_id': 'auto',
     'coach_api_key_openai': '',

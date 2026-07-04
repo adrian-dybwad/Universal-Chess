@@ -107,3 +107,35 @@ def test_load_reads_stored_coach_language(monkeypatch):
     settings = GameSettings.load("game", {})
     assert settings.coach_language == "Japanese"
     assert settings.to_dict()["coach_language"] == "Japanese"
+
+
+def test_text_size_defaults_to_medium():
+    # The display text size must default to medium so a fresh install renders the
+    # existing (unscaled) coach and move-list layout. A missing field or wrong
+    # default would resize the e-paper text without the user choosing to.
+    settings = GameSettings(section="game")
+    assert settings.to_dict()["text_size"] == "medium"
+
+
+def test_to_dict_includes_selected_text_size():
+    # Guards the to_dict() round-trip the board menu reads the current text size
+    # through (game store -> to_dict). Without the field this raises TypeError on
+    # construction; a broken to_dict() KeyErrors here.
+    settings = GameSettings(section="game", text_size="large")
+    assert settings.to_dict()["text_size"] == "large"
+
+
+def test_load_reads_stored_text_size(monkeypatch):
+    # load() must surface a persisted text size; otherwise the board menu and web
+    # always re-read medium and the user's Text Size choice is silently ignored. The
+    # fake omits text_size from its explicit defaults to prove load() seeds the read
+    # default itself (setdefault), so load_section actually reads the stored key.
+    def fake_load_section(section, defaults):
+        data = dict(defaults)
+        data["text_size"] = "small"
+        return data
+
+    monkeypatch.setattr(settings_mod, "load_section", fake_load_section)
+    settings = GameSettings.load("game", {})
+    assert settings.text_size == "small"
+    assert settings.to_dict()["text_size"] == "small"

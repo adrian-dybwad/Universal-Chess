@@ -24,6 +24,7 @@ from PIL import Image, ImageDraw
 
 from .framework.widget import Widget
 from .text import TextWidget, Justify
+from .text_scale import DEFAULT_TEXT_SIZE, scale_font
 from universalchess.resources import get_font
 
 try:
@@ -43,10 +44,20 @@ class CoachTextWidget(Widget):
     # this amount so the footer never overlaps the statement text.
     FOOTER_HEIGHT = 14
     # Footer text size; smaller than the body so the indicator stays unobtrusive.
+    # Fixed (not scaled) so the paging indicator stays a compact, consistent size
+    # regardless of the body text size.
     FOOTER_FONT_SIZE = 10
+    # Base (medium) body font size; scaled by the Display > Text Size setting.
+    BODY_FONT_SIZE = 12
 
-    def __init__(self, x: int, y: int, width: int, height: int, update_callback):
-        """Initialize the coach-text widget (hidden until a move is selected)."""
+    def __init__(self, x: int, y: int, width: int, height: int, update_callback,
+                 text_size: str = DEFAULT_TEXT_SIZE):
+        """Initialize the coach-text widget (hidden until a move is selected).
+
+        Args:
+            text_size: Display text-size name (small/medium/large) that scales the
+                statement body font. The paging footer stays a fixed size.
+        """
         super().__init__(x, y, width, height, update_callback)
         # Hidden by default: it only appears while a move is selected. Set the
         # flag directly (not via hide()) so no refresh is requested before the
@@ -74,7 +85,7 @@ class CoachTextWidget(Widget):
             self.height - 2 - self.FOOTER_HEIGHT,
             self._noop_update,
             text="",
-            font_size=12,
+            font_size=scale_font(self.BODY_FONT_SIZE, text_size),
             wrapText=True,
             justify=Justify.CENTER,
             transparent=True,

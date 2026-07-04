@@ -181,6 +181,9 @@ class GameSettings:
         coach_language: Natural language the AI coach responds in (e.g. "Spanish").
             Defaults to "English", which adds no prompt instruction; any other value
             asks the model to write its remark in that language.
+        text_size: Display text size ("small", "medium", or "large", default
+            "medium") scaling the e-paper coach panel and move-list fonts. Medium
+            leaves existing layouts unchanged.
     """
 
     section: str
@@ -195,6 +198,7 @@ class GameSettings:
     pegasus_override_brightness: bool = True
     chess_sprites: str = "default"
     notation: str = "figurine"
+    text_size: str = "medium"
     coach_provider: str = "none"
     coach_api_key_openai: str = ""
     coach_api_key_anthropic: str = ""
@@ -283,6 +287,7 @@ class GameSettings:
             "pegasus_override_brightness": self.pegasus_override_brightness,
             "chess_sprites": self.chess_sprites,
             "notation": self.notation,
+            "text_size": self.text_size,
             "coach_provider": self.coach_provider,
             "coach_id": self.coach_id,
             "coach_language": self.coach_language,
@@ -320,6 +325,7 @@ class GameSettings:
         load_defaults.setdefault("coach_provider", "none")
         load_defaults.setdefault("coach_id", "auto")
         load_defaults.setdefault("coach_language", "English")
+        load_defaults.setdefault("text_size", "medium")
         for key in default_namespaced_settings():
             load_defaults.setdefault(key, "")
         for legacy in _COACH_EFFECTIVE_BASES:
@@ -346,6 +352,7 @@ class GameSettings:
             ),
             chess_sprites=data.get("chess_sprites", defaults.get("chess_sprites", "default")),
             notation=data.get("notation", defaults.get("notation", "figurine")),
+            text_size=data.get("text_size", defaults.get("text_size", "medium")),
             coach_provider=coach.get("coach_provider", defaults.get("coach_provider", "none")),
             coach_api_key_openai=coach.get("coach_api_key_openai", ""),
             coach_api_key_anthropic=coach.get("coach_api_key_anthropic", ""),

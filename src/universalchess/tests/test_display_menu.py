@@ -53,6 +53,7 @@ def _state(**overrides):
         "show_graph": True,
         "led_brightness": 5,
         "chess_sprites": "default",
+        "text_size": "medium",
         # Master analysis compute switch (Game menu's Live Analysis). The Display
         # analysis toggles gate on it via the catalog, so the fixture must carry
         # it the same way the real display context does (see _ctx below).
@@ -120,6 +121,7 @@ def test_top_level_lists_display_controls_without_sound():
     ids = [r.node["id"] for r in _display_rows(_state())]
     assert ids == [
         "settings.display.board",
+        "field.display.text_size",
         "field.display.show_clock",
         "field.display.show_analysis",
         "field.display.show_graph",
@@ -254,6 +256,28 @@ def test_selecting_show_board_toggles_it():
     run_engine_menu("settings.display.board", _ctx(state), mm, catalog=load_catalog())
 
     assert state["show_board"] is False
+
+
+def test_selecting_text_size_opens_option_list_and_persists_choice():
+    """Text Size opens its option list and stores the picked value.
+
+    Why this test exists: Text Size is a select bound to game.text_size; on the
+    board a select opens an option sub-list (small/medium/large) and persists the
+    chosen value to the game store. How the regression manifests: the row is inert
+    or writes to the wrong key, so the coach/move-list text never resizes from the
+    board menu. Script: open the row, pick "large", then exit the parent.
+    """
+    state = _state(text_size="small")
+    mm = _FakeMenuManager(["field.display.text_size", "large", "BACK"])
+
+    run_engine_menu("settings.display", _ctx(state), mm, catalog=load_catalog())
+
+    assert state["text_size"] == "large"
+    # The option list must be shown between opening the row and picking a value.
+    assert any(
+        [e.key for e in screen] == ["small", "medium", "large"]
+        for screen in mm.shown
+    )
 
 
 def test_selecting_led_advances_brightness_within_range():

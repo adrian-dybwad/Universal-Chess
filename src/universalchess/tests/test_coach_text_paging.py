@@ -25,11 +25,15 @@ import math
 from PIL import Image
 
 from universalchess.epaper.coach_text import CoachTextWidget
+from universalchess.epaper.text_scale import scale_font
 
 
-def _widget():
+def _widget(text_size: str = "medium"):
     """A 128x128 coach-text widget with a no-op update callback."""
-    return CoachTextWidget(0, 16, 128, 128, lambda full=False, immediate=False: None)
+    return CoachTextWidget(
+        0, 16, 128, 128, lambda full=False, immediate=False: None,
+        text_size=text_size,
+    )
 
 
 def _multiline_text(line_count: int) -> str:
@@ -153,3 +157,33 @@ def test_footer_absent_when_empty():
     # meaningless indicator.
     widget = _widget()
     assert _footer_has_ink(widget) is False
+
+
+def test_text_size_scales_body_font_and_default_is_medium():
+    # The Display > Text Size setting scales the statement body font: small is the
+    # scaled-down size, large scaled up, and the default (no arg) equals medium.
+    # A regression ignoring text_size would render every size at 12px, defeating
+    # the accessibility control.
+    default_widget = _widget()
+    assert default_widget._body.font_size == CoachTextWidget.BODY_FONT_SIZE
+
+    small = _widget("small")
+    large = _widget("large")
+    assert small._body.font_size == scale_font(CoachTextWidget.BODY_FONT_SIZE, "small")
+    assert large._body.font_size == scale_font(CoachTextWidget.BODY_FONT_SIZE, "large")
+    assert small._body.font_size < default_widget._body.font_size < large._body.font_size
+
+
+def test_larger_text_size_fits_fewer_lines_per_page():
+    # A larger body font must reduce lines_per_page (taller lines), so the same
+    # statement paginates into more pages. This is the user-visible effect of the
+    # setting; a regression that scaled the font without affecting layout would
+    # keep lines_per_page constant and overflow the panel.
+    small = _widget("small")
+    large = _widget("large")
+    assert large._lines_per_page() < small._lines_per_page()
+
+    text = _multiline_text(30)
+    small.set_text(text)
+    large.set_text(text)
+    assert large.page_count > small.page_count

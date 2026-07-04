@@ -59,6 +59,11 @@
       { "value": "lan", "label": "Long (Ng1-f3)" },
       { "value": "uci", "label": "Coordinate (g1f3)" }
     ],
+    "text_size": [
+      { "value": "small", "label": "Small" },
+      { "value": "medium", "label": "Medium" },
+      { "value": "large", "label": "Large" }
+    ],
     "coach_language": [
       { "value": "English", "label": "English" },
       { "value": "Spanish", "label": "Spanish (Espa\u00f1ol)" },
@@ -258,6 +263,7 @@
       "epaper": { "font_size": 12, "height_ratio": 0.8 },
       "children": [
         "settings.display.board",
+        "field.display.text_size",
         "field.display.show_clock",
         "field.display.show_analysis",
         "field.display.show_graph",
@@ -1135,6 +1141,19 @@
       "help": "Sprite sheet used to draw pieces on the e-paper board",
       "section": "display",
       "platforms": ["board", "web"]
+    },
+    {
+      "id": "field.display.text_size",
+      "type": "select",
+      "label": "Text Size",
+      "boardLabel": "Text Size\n{value}",
+      "icon": "settings",
+      "help": "Size of the coach text and move list on the e-paper display.",
+      "section": "display",
+      "bind": { "store": "game", "key": "text_size" },
+      "optionSet": "text_size",
+      "platforms": ["board", "web"],
+      "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },
     {
       "id": "field.display.show_clock",
