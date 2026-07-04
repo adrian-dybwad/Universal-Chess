@@ -178,6 +178,9 @@ class GameSettings:
         coach_id: Selected coach id from the coaches framework, or "auto" (default)
             to pick a coach by the opponent's Elo. Controls the coaching persona,
             independent of the provider/key.
+        coach_language: Natural language the AI coach responds in (e.g. "Spanish").
+            Defaults to "English", which adds no prompt instruction; any other value
+            asks the model to write its remark in that language.
     """
 
     section: str
@@ -201,6 +204,7 @@ class GameSettings:
     coach_model_custom: str = ""
     coach_base_url_custom: str = ""
     coach_id: str = "auto"
+    coach_language: str = "English"
     _log: Optional[Any] = field(default=None, repr=False)
 
     def _coach_storage(self) -> Dict[str, str]:
@@ -281,6 +285,7 @@ class GameSettings:
             "notation": self.notation,
             "coach_provider": self.coach_provider,
             "coach_id": self.coach_id,
+            "coach_language": self.coach_language,
         }
         for key in per_provider_keys():
             data[key] = getattr(self, key, "")
@@ -314,6 +319,7 @@ class GameSettings:
         load_defaults = dict(defaults)
         load_defaults.setdefault("coach_provider", "none")
         load_defaults.setdefault("coach_id", "auto")
+        load_defaults.setdefault("coach_language", "English")
         for key in default_namespaced_settings():
             load_defaults.setdefault(key, "")
         for legacy in _COACH_EFFECTIVE_BASES:
@@ -349,6 +355,9 @@ class GameSettings:
             coach_model_custom=coach.get("coach_model_custom", ""),
             coach_base_url_custom=coach.get("coach_base_url_custom", ""),
             coach_id=data.get("coach_id", defaults.get("coach_id", "auto")),
+            coach_language=data.get(
+                "coach_language", defaults.get("coach_language", "English")
+            ),
             _log=log,
         )
         # Overlay any namespaced slots that are not declared dataclass fields --

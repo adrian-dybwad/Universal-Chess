@@ -58,6 +58,18 @@
       { "value": "san", "label": "Standard (Nf3)" },
       { "value": "lan", "label": "Long (Ng1-f3)" },
       { "value": "uci", "label": "Coordinate (g1f3)" }
+    ],
+    "coach_language": [
+      { "value": "English", "label": "English" },
+      { "value": "Spanish", "label": "Spanish (Espa\u00f1ol)" },
+      { "value": "Chinese", "label": "Chinese (\u4e2d\u6587)" },
+      { "value": "Hindi", "label": "Hindi (\u0939\u093f\u0928\u094d\u0926\u0940)" },
+      { "value": "Arabic", "label": "Arabic (\u0627\u0644\u0639\u0631\u0628\u064a\u0629)" },
+      { "value": "French", "label": "French (Fran\u00e7ais)" },
+      { "value": "Russian", "label": "Russian (\u0420\u0443\u0441\u0441\u043a\u0438\u0439)" },
+      { "value": "Portuguese", "label": "Portuguese (Portugu\u00eas)" },
+      { "value": "German", "label": "German (Deutsch)" },
+      { "value": "Japanese", "label": "Japanese (\u65e5\u672c\u8a9e)" }
     ]
   },
 
@@ -180,7 +192,7 @@
       "help": "Time control and live position analysis.",
       "section": "game",
       "epaper": { "font_size": 12, "height_ratio": 0.8 },
-      "children": ["settings.timecontrol", "settings.notation", "analysis.enabled", "analysis.engine", "coach.id", "coach.provider"]
+      "children": ["settings.timecontrol", "settings.notation", "analysis.enabled", "analysis.engine", "coach.id", "coach.provider", "coach.language"]
     },
     {
       "id": "settings.agents",
@@ -721,6 +733,21 @@
       "section": "game",
       "bind": { "store": "game", "key": "coach_provider" },
       "provider": "agents_choices",
+      "enabledWhen": { "store": "game", "key": "coach_id", "notEquals": "off" },
+      "platforms": ["board", "web"],
+      "epaper": { "font_size": 14, "height_ratio": 0.8, "layout": "horizontal" }
+    },
+    {
+      "id": "coach.language",
+      "key": "coach_language",
+      "type": "select",
+      "label": "Coach Language",
+      "boardLabel": "Language\n{value}",
+      "icon": "settings",
+      "help": "Language the AI coach writes its remarks and tips in. Defaults to English.",
+      "section": "game",
+      "bind": { "store": "game", "key": "coach_language" },
+      "optionSet": "coach_language",
       "enabledWhen": { "store": "game", "key": "coach_id", "notEquals": "off" },
       "platforms": ["board", "web"],
       "epaper": { "font_size": 14, "height_ratio": 0.8, "layout": "horizontal" }

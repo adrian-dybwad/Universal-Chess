@@ -308,6 +308,21 @@ class TextWidget(Widget):
         
         return mask
     
+    def wrap_lines(self, text: str = None) -> list:
+        """Return `text` wrapped to this widget's width using its font.
+
+        Public entry point for callers (e.g. a paginating parent widget) that
+        need the exact line breaks this widget will render. Defaults to the
+        widget's current text.
+
+        Args:
+            text: Text to wrap; uses self.text when None.
+
+        Returns:
+            List of wrapped lines (respecting explicit newlines).
+        """
+        return self._wrap_text(self.text if text is None else text, self.width)
+
     def _wrap_text(self, text: str, max_width: int) -> list:
         """
         Wrap text to fit within max_width using the widget's font.

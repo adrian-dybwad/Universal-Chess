@@ -44,6 +44,7 @@ class _FakeWidget:
         self.visible = False
         self.text = None
         self.header = "Coach"
+        self.next_page_calls = 0
 
     def show(self):
         self.visible = True
@@ -56,6 +57,10 @@ class _FakeWidget:
 
     def set_header(self, header):
         self.header = header
+
+    def next_page(self):
+        self.next_page_calls += 1
+        return True
 
 
 class _FakeAnalysis:
@@ -193,3 +198,45 @@ def test_review_taking_over_restores_review_comment_on_hide():
     assert manager.coach_text_widget.visible is True
     assert manager.coach_text_widget.text == "Review: solid development."
     assert manager.coach_text_widget.header == "Coach"
+
+
+def test_page_coach_text_pages_when_statement_visible():
+    # OK (checkmark) while a coach statement occupies the panel must page the
+    # statement (delegating to the widget's next_page) and report True so the key
+    # handler skips the full-screen refresh. A regression returning False would
+    # flash a full refresh instead of turning the page.
+    manager = _manager()
+    manager.coach_text_widget.visible = True
+    manager.coach_text_widget.text = "A long coaching remark spanning pages."
+    assert manager.page_coach_text() is True
+    assert manager.coach_text_widget.next_page_calls == 1
+
+
+def test_page_coach_text_ignored_when_panel_hidden():
+    # With the coach panel hidden (board shown), OK must fall through to the full
+    # refresh: page_coach_text returns False and never touches next_page. A
+    # regression paging a hidden panel would suppress the intended refresh.
+    manager = _manager()
+    manager.coach_text_widget.visible = False
+    manager.coach_text_widget.text = "Stale text left on a hidden panel."
+    assert manager.page_coach_text() is False
+    assert manager.coach_text_widget.next_page_calls == 0
+
+
+def test_page_coach_text_ignored_when_no_statement():
+    # A visible-but-empty panel has nothing to page; page_coach_text returns False
+    # so OK still forces the ghosting-clearing full refresh. A regression paging an
+    # empty panel would swallow that refresh.
+    manager = _manager()
+    manager.coach_text_widget.visible = True
+    manager.coach_text_widget.text = ""
+    assert manager.page_coach_text() is False
+    assert manager.coach_text_widget.next_page_calls == 0
+
+
+def test_page_coach_text_ignored_when_no_widget():
+    # In non-analysis layouts there is no coach panel at all; page_coach_text must
+    # tolerate a None widget and return False rather than raising.
+    manager = _manager()
+    manager.coach_text_widget = None
+    assert manager.page_coach_text() is False

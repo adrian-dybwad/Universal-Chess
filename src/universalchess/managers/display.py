@@ -617,6 +617,24 @@ class DisplayManager:
         if self._show_board and self.chess_board_widget is not None:
             self.chess_board_widget.show()
 
+    def page_coach_text(self) -> bool:
+        """Advance the coach panel to its next page if a statement is on screen.
+
+        Called from the OK (checkmark) key handler: while a move-review comment or
+        a hint tip occupies the board-area coach panel, OK pages the statement
+        (wrapping to the first page after the last) with a partial refresh instead
+        of forcing a full-screen refresh.
+
+        Returns:
+            True when the coach panel is visible with text and was paged, so the
+            caller skips its default full-refresh; False otherwise, so the caller
+            falls back to the full refresh.
+        """
+        coach = self.coach_text_widget
+        if coach is None or not coach.visible or not coach.text:
+            return False
+        return coach.next_page()
+
     def _on_hint_alert_cleared(self) -> None:
         """Clear the hint coach panel when the alert is cleared (e.g. a move made).
 

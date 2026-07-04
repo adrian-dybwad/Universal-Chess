@@ -28,6 +28,7 @@ def _game_ctx(
     notation="figurine",
     coach_provider="none",
     coach_id="auto",
+    coach_language="English",
     agent_edit_id="",
     agent_model_kind="model",
     agent_requires_base_url=False,
@@ -52,6 +53,7 @@ def _game_ctx(
         "notation": notation,
         "coach_provider": coach_provider,
         "coach_id": coach_id,
+        "coach_language": coach_language,
     }
     edit_state = {
         "id": agent_edit_id,
@@ -167,19 +169,20 @@ def test_game_menu_rows_and_engine_visibility():
 
     Why this test exists: the unified Game menu must show Time Control, Notation,
     and the analysis toggle always, reveal the Analysis Engine row only when Live
-    Analysis is on (via ``visibleWhen``), and always show the Coach persona and
-    Agent selector (their key/model config lives under Agents). How a regression
-    manifests: an item is dropped/reordered, the Engine row shows while analysis is
-    off (dead row) or never shows while on, or coach_id/coach_provider go missing.
+    Analysis is on (via ``visibleWhen``), and always show the Coach persona, Agent
+    selector, and Coach Language (their key/model config lives under Agents). How a
+    regression manifests: an item is dropped/reordered, the Engine row shows while
+    analysis is off (dead row) or never shows while on, or coach_id/coach_provider/
+    coach_language go missing.
     """
     _, off_rows = _rows(mode=False)
     assert [r.key for r in off_rows] == [
-        "TimeControl", "Notation", "enabled", "coach_id", "coach_provider",
+        "TimeControl", "Notation", "enabled", "coach_id", "coach_provider", "coach_language",
     ]
 
     _, on_rows = _rows(mode=True)
     assert [r.key for r in on_rows] == [
-        "TimeControl", "Notation", "enabled", "engine", "coach_id", "coach_provider",
+        "TimeControl", "Notation", "enabled", "engine", "coach_id", "coach_provider", "coach_language",
     ]
 
 

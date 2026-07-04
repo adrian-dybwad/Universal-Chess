@@ -98,6 +98,7 @@ def test_statement_generates_persists_when_absent(client, monkeypatch):
         captured["san"] = req.move_text
         captured["eval_before"] = req.eval_before_cp
         captured["eval_after"] = req.eval_after_cp
+        captured["language"] = req.language
         return "Grabs the center."
 
     monkeypatch.setattr(coach_service, "generate_coach_statement", fake_generate)
@@ -111,8 +112,15 @@ def test_statement_generates_persists_when_absent(client, monkeypatch):
     }
     # Persisted against the requested game/ply with the generated text.
     assert saved == {"g": 7, "p": 1, "s": "Grabs the center."}
-    # The reconstructed prompt used the real SAN and the eval swing from the DB.
-    assert captured == {"san": "e4", "eval_before": 20, "eval_after": 35}
+    # The reconstructed prompt used the real SAN, the eval swing from the DB, and
+    # the default response language (English adds no directive downstream). A
+    # regression dropping language plumbing would omit this key.
+    assert captured == {
+        "san": "e4",
+        "eval_before": 20,
+        "eval_after": 35,
+        "language": "English",
+    }
 
 
 def test_statement_returns_canonical_when_another_writer_won(client, monkeypatch):
@@ -199,12 +207,15 @@ def test_tip_returns_statement(client, monkeypatch):
     _configured(monkeypatch)
     seen = {}
 
-    def fake_tip(config, fen, move, *, notation=None, persona=None, persona_key=""):
+    def fake_tip(
+        config, fen, move, *, notation=None, persona=None, persona_key="", language=None
+    ):
         seen["fen"] = fen
         seen["move"] = move
         seen["notation"] = notation
         seen["persona"] = persona
         seen["persona_key"] = persona_key
+        seen["language"] = language
         return "Develops toward the center."
 
     monkeypatch.setattr(coach_tips, "get_tip_statement", fake_tip)
@@ -226,6 +237,9 @@ def test_tip_returns_statement(client, monkeypatch):
     # persona plumbing would leave these unset.
     assert seen["persona"]
     assert seen["persona_key"]
+    # The configured coach language must be plumbed through so the tip is written
+    # in the chosen language; a regression dropping it would leave this unset.
+    assert seen["language"] == "English"
 
 
 def test_coaches_lists_roster_and_resolved(client):

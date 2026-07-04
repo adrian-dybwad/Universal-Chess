@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from universalchess.services.coach import CoachRequest
+from universalchess.services.coach import DEFAULT_LANGUAGE, CoachRequest
 from universalchess.utils.chess_notation import DEFAULT_NOTATION, format_move
 
 from .move_facts import summarize_move_facts
@@ -35,6 +35,7 @@ def build_coach_request(
     is_potential_move: bool = False,
     is_opponent_move: bool = False,
     persona: Optional[str] = None,
+    language: str = DEFAULT_LANGUAGE,
 ) -> Optional[CoachRequest]:
     """Return a :class:`CoachRequest` for a move, or None if it can't be built.
 
@@ -56,6 +57,9 @@ def build_coach_request(
             persona so framing and persona agree.
         persona: Optional coach persona (from the selected coach) carried onto the
             request so the service composes it into the system prompt.
+        language: Natural language the coach must respond in (defaults to English,
+            which adds no prompt instruction). Carried onto the request so the
+            service appends the language directive to the system prompt.
 
     Returns None when the FEN or move is invalid/illegal for that position, so
     the caller produces no coach statement rather than prompting the AI with a
@@ -95,6 +99,7 @@ def build_coach_request(
         is_potential_move=is_potential_move,
         is_opponent_move=is_opponent_move,
         persona=persona,
+        language=language,
     )
 
 

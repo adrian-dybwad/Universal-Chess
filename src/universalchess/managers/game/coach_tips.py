@@ -24,6 +24,7 @@ import threading
 from typing import Callable, Dict, Optional, Tuple
 
 from universalchess.services.coach import (
+    DEFAULT_LANGUAGE,
     CoachConfig,
     CoachError,
     generate_coach_statement,
@@ -33,7 +34,7 @@ from universalchess.utils.chess_notation import DEFAULT_NOTATION
 from .coach_request_builder import build_coach_request
 
 _lock = threading.Lock()
-_cache: Dict[Tuple[str, str, str, str, str], str] = {}
+_cache: Dict[Tuple[str, str, str, str, str, str], str] = {}
 
 
 def _signature(config: CoachConfig) -> str:
@@ -50,6 +51,7 @@ def get_tip_statement(
     notation: str = DEFAULT_NOTATION,
     persona: Optional[str] = None,
     persona_key: str = "",
+    language: str = DEFAULT_LANGUAGE,
     generate_fn: Optional[Callable[[CoachConfig, object], str]] = None,
     http_post: Optional[Callable] = None,
 ) -> Optional[str]:
@@ -68,6 +70,10 @@ def get_tip_statement(
     part of the cache key so switching coach regenerates rather than serving a
     statement produced in another coach's voice.
 
+    ``language`` is the natural language the remark is written in; it is part of
+    the cache key so switching language regenerates rather than serving a
+    statement produced in the previous language.
+
     Returns None (and caches nothing) when the coach is not configured, the
     position/move can't be built into a request, or the AI call fails -- the
     caller then shows the plain hint without a coaching remark rather than an
@@ -76,7 +82,7 @@ def get_tip_statement(
     if not config.is_configured():
         return None
 
-    key = (_signature(config), fen, move_uci, notation, persona_key)
+    key = (_signature(config), fen, move_uci, notation, persona_key, language)
     with _lock:
         cached = _cache.get(key)
     if cached is not None:
@@ -86,7 +92,12 @@ def get_tip_statement(
     # potential move: the prompt then explains why the move would be good rather
     # than critiquing it as if it were already played.
     request = build_coach_request(
-        fen, move_uci, notation=notation, is_potential_move=True, persona=persona
+        fen,
+        move_uci,
+        notation=notation,
+        is_potential_move=True,
+        persona=persona,
+        language=language,
     )
     if request is None:
         return None

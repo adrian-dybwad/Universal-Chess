@@ -129,6 +129,7 @@ interface FormSettings {
     notation: string;
     coach_provider: string;
     coach_id: string;
+    coach_language: string;
   };
   lichess: {
     api_token: string;
@@ -164,6 +165,7 @@ const defaultFormSettings: FormSettings = {
     notation: 'figurine',
     coach_provider: 'none',
     coach_id: 'off',
+    coach_language: 'English',
   },
   lichess: { api_token: '', range: '' },
   sound: { enabled: true, key_press: true, game_events: true, piece_events: true, errors: true },
@@ -221,6 +223,7 @@ function parseRawSettings(data: SettingsData): FormSettings {
       notation: data.game?.notation || 'figurine',
       coach_provider: data.game?.coach_provider || 'none',
       coach_id: data.game?.coach_id || 'off',
+      coach_language: data.game?.coach_language || 'English',
     },
     lichess: {
       api_token: data.lichess?.api_token || '',
@@ -1205,6 +1208,7 @@ export function Settings() {
   const timeControlOptions = optionSet('time_control');
   const sleepTimerOptions = optionSet('sleep_timer');
   const notationOptions = optionSet('notation');
+  const coachLanguageOptions = optionSet('coach_language');
   // Agent selector options (Game tab): every *configured* registered agent, built
   // from the live /api/agents list so a user-dropped agent module appears without
   // any catalog change. Only agents with a key and all required settings are
@@ -1625,6 +1629,16 @@ export function Settings() {
                   save.
                 </p>
               )}
+              {/* Coach language: the natural language the AI writes its remarks
+                  and tips in. Greyed out while coaching is disabled, matching the
+                  agent selector. */}
+              <CatalogField
+                node={fieldById(catalog, 'coach.language')!}
+                value={formSettings.game.coach_language}
+                options={coachLanguageOptions}
+                disabled={coachDisabled}
+                onChange={(v) => updateFormSettings('game', { coach_language: String(v) })}
+              />
             </Card>
 
             <Card className="mb-6">

@@ -105,6 +105,20 @@ def test_opponent_move_flag_defaults_off_and_propagates_when_set():
     assert opponent.is_opponent_move is True
 
 
+def test_language_defaults_to_english_and_propagates_when_set():
+    # The response language must default to English (no directive downstream) and
+    # reach the request when a caller supplies one, so the coach's language
+    # selection actually shapes the prompt. Regression: dropping the language here
+    # would ignore the user's Coach Language setting for every caller.
+    default = build_coach_request(STARTPOS, "e2e4")
+    assert default is not None
+    assert default.language == "English"
+
+    localized = build_coach_request(STARTPOS, "e2e4", language="German")
+    assert localized is not None
+    assert localized.language == "German"
+
+
 def test_invalid_fen_returns_none():
     # A malformed FEN must yield None (not raise) so the endpoint returns a clean
     # error instead of 500-ing on corrupt input.

@@ -186,7 +186,8 @@
         "analysis.enabled",
         "analysis.engine",
         "coach.id",
-        "coach.provider"
+        "coach.provider",
+        "coach.language"
       ],
       "epaper": {
         "font_size": 12,
@@ -1041,6 +1042,35 @@
       "type": "select"
     },
     {
+      "bind": {
+        "key": "coach_language",
+        "store": "game"
+      },
+      "boardLabel": "Language\n{value}",
+      "enabledWhen": {
+        "key": "coach_id",
+        "notEquals": "off",
+        "store": "game"
+      },
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.8,
+        "layout": "horizontal"
+      },
+      "help": "Language the AI coach writes its remarks and tips in. Defaults to English.",
+      "icon": "settings",
+      "id": "coach.language",
+      "key": "coach_language",
+      "label": "Coach Language",
+      "optionSet": "coach_language",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "section": "game",
+      "type": "select"
+    },
+    {
       "help": "Select an agent to configure its API key, model, and endpoint.",
       "id": "agents.list.items",
       "itemAction": "agent_select",
@@ -1054,6 +1084,7 @@
     {
       "children": [
         "agents.detail.api_key",
+        "agents.detail.clear_key",
         "agents.detail.model",
         "agents.detail.model_custom",
         "agents.detail.base_url"
@@ -1066,6 +1097,30 @@
       ],
       "section": "agents",
       "type": "menu"
+    },
+    {
+      "action": "clear_agent_api_key",
+      "boardLabel": "Clear API Key",
+      "epaper": {
+        "font_size": 14,
+        "height_ratio": 0.8,
+        "layout": "horizontal"
+      },
+      "help": "Remove this agent's stored API key. Shown only when a key is set.",
+      "icon": "settings",
+      "id": "agents.detail.clear_key",
+      "key": "agent_clear_key",
+      "label": "Clear API Key",
+      "platforms": [
+        "board"
+      ],
+      "section": "agents",
+      "type": "action",
+      "visibleWhen": {
+        "equals": true,
+        "key": "has_api_key",
+        "store": "agent_edit"
+      }
     },
     {
       "action": "edit_agent_api_key",
@@ -1896,6 +1951,48 @@
     }
   ],
   "optionSets": {
+    "coach_language": [
+      {
+        "label": "English",
+        "value": "English"
+      },
+      {
+        "label": "Spanish (Espa\u00f1ol)",
+        "value": "Spanish"
+      },
+      {
+        "label": "Chinese (\u4e2d\u6587)",
+        "value": "Chinese"
+      },
+      {
+        "label": "Hindi (\u0939\u093f\u0928\u094d\u0926\u0940)",
+        "value": "Hindi"
+      },
+      {
+        "label": "Arabic (\u0627\u0644\u0639\u0631\u0628\u064a\u0629)",
+        "value": "Arabic"
+      },
+      {
+        "label": "French (Fran\u00e7ais)",
+        "value": "French"
+      },
+      {
+        "label": "Russian (\u0420\u0443\u0441\u0441\u043a\u0438\u0439)",
+        "value": "Russian"
+      },
+      {
+        "label": "Portuguese (Portugu\u00eas)",
+        "value": "Portuguese"
+      },
+      {
+        "label": "German (Deutsch)",
+        "value": "German"
+      },
+      {
+        "label": "Japanese (\u65e5\u672c\u8a9e)",
+        "value": "Japanese"
+      }
+    ],
     "color": [
       {
         "icon": "white_piece",

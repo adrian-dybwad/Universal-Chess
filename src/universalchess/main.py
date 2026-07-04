@@ -2845,6 +2845,17 @@ def _coach_config():
     )
 
 
+def _coach_language():
+    """Return the language the AI coach should respond in, from game settings.
+
+    Defaults to English (which adds no prompt instruction) when unset, so an
+    upgraded config with no ``coach_language`` key keeps the prior English output.
+    """
+    from universalchess.services.coach import DEFAULT_LANGUAGE
+
+    return _game_settings_dict().get("coach_language", DEFAULT_LANGUAGE)
+
+
 def _agent_is_configured(agent_id, game):
     """True when ``agent_id`` has an API key and every required setting.
 
@@ -2970,6 +2981,7 @@ def _build_coach_request(ply: int):
     # same way the board move list does. An illegal move (corrupt stack) falls back
     # to UCI rather than dropping the request.
     notation = _game_settings_dict().get("notation", "figurine")
+    language = _coach_language()
     fen_before = position.fen()
     move_uci = move.uci()
     try:
@@ -2995,6 +3007,7 @@ def _build_coach_request(ply: int):
         facts=tuple(summarize_move_facts(fen_before, move_uci)),
         is_opponent_move=is_opponent_move,
         persona=_coach_persona(side_to_move, is_potential_move=False),
+        language=language,
     )
 
 
@@ -3066,6 +3079,7 @@ def _show_hint_coach_async(display_manager, fen_before: str, move_uci: str) -> N
         return
 
     notation = _game_settings_dict().get("notation", "figurine")
+    language = _coach_language()
     # A hint is a move the player is considering, so it always uses the player-move
     # persona. Include the coach id in the cache key so switching coach regenerates.
     import chess
@@ -3083,6 +3097,7 @@ def _show_hint_coach_async(display_manager, fen_before: str, move_uci: str) -> N
             notation=notation,
             persona=persona,
             persona_key=persona_key,
+            language=language,
         )
         if statement:
             display_manager.show_hint_coach(statement)
@@ -5668,10 +5683,16 @@ def key_callback(key_id):
             return
         
         if key_id == board.Key.TICK:
-            # OK during a game forces a full e-paper refresh to clear ghosting.
-            # In menus TICK means "select" and is handled by the menu widget, not
-            # this branch. This replaces the old (hidden) long-press-any-key
-            # refresh at the board layer.
+            # OK while a coach statement or hint tip is on screen pages through it
+            # (wrapping to the first page after the last) instead of refreshing, so
+            # the reader can read a long statement one page at a time.
+            if display_manager and display_manager.page_coach_text():
+                _reset_unhandled_key_count()
+                return
+            # Otherwise OK during a game forces a full e-paper refresh to clear
+            # ghosting. In menus TICK means "select" and is handled by the menu
+            # widget, not this branch. This replaces the old (hidden)
+            # long-press-any-key refresh at the board layer.
             if board.display_manager:
                 board.display_manager.update(full=True)
             _reset_unhandled_key_count()

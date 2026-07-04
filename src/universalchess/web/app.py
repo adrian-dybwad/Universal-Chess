@@ -2457,6 +2457,18 @@ def _read_notation():
     return normalize_notation(Settings.read("game", "notation", DEFAULT_NOTATION))
 
 
+def _read_coach_language():
+    """Return the coach's response language from centaur.ini, defaulting English.
+
+    Shared by the coach endpoints so web and board ask the AI to respond in the
+    same language. English (the default) adds no prompt instruction.
+    """
+    from universalchess.board.settings import Settings
+    from universalchess.services.coach import DEFAULT_LANGUAGE
+
+    return Settings.read("game", "coach_language", DEFAULT_LANGUAGE) or DEFAULT_LANGUAGE
+
+
 def _read_player_dicts():
     """Read both players' type/color/elo from centaur.ini for coach selection.
 
@@ -2745,6 +2757,7 @@ def api_coach_statement(gameid, ply):
         eval_after_cp=eval_after_cp,
         is_opponent_move=_read_move_is_opponent(side_to_move),
         persona=_read_coach_persona(side_to_move, is_potential_move=False),
+        language=_read_coach_language(),
     )
     if coach_request is None:
         return jsonify({"statement": None, "cached": False, "error": "bad_move"}), 422
@@ -2822,6 +2835,7 @@ def api_coach_tip():
         notation=_read_notation(),
         persona=persona,
         persona_key=_resolved_coach_id(),
+        language=_read_coach_language(),
     )
     if statement is None:
         return jsonify({"statement": None, "error": "unavailable"})

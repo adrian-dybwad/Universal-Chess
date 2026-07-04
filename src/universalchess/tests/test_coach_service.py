@@ -139,6 +139,64 @@ def test_system_prompt_uses_supplied_persona_but_keeps_guardrails():
     assert "concise, encouraging chess coach" not in prompt
 
 
+def test_system_prompt_omits_language_directive_for_english_default():
+    # English is the model's native default, so the default request must NOT add a
+    # language line -- keeping the prompt lean. A regression that always appended a
+    # directive would bloat every English prompt and could confuse the model.
+    prompt = coach.build_system_prompt(REQUEST)
+    assert "Write your entire response in" not in prompt
+
+
+def test_system_prompt_appends_language_directive_for_non_english():
+    # A non-English language must append an explicit, final directive naming the
+    # language twice (so it overrides the otherwise-English prompt). A regression
+    # dropping this would return English remarks despite the user's selection.
+    request = CoachRequest(
+        fen_before=REQUEST.fen_before,
+        move_text="e4",
+        side_to_move="white",
+        language="Spanish",
+    )
+    prompt = coach.build_system_prompt(request)
+    assert prompt.rstrip().endswith(
+        "Write your entire response in Spanish. Every word must be in Spanish, "
+        "regardless of the language of this prompt."
+    )
+    # The guardrails must still be present -- language never relaxes brevity.
+    assert "at most two short sentences" in prompt
+
+
+def test_language_directive_is_case_insensitive_for_english():
+    # "english" (any casing) must be treated as the default and add no directive,
+    # so a differently-cased stored value doesn't spuriously force a language line.
+    request = CoachRequest(
+        fen_before=REQUEST.fen_before,
+        move_text="e4",
+        side_to_move="white",
+        language="english",
+    )
+    assert "Write your entire response in" not in coach.build_system_prompt(request)
+
+
+def test_language_directive_reaches_agent_system_content():
+    # The language directive must reach the actual request payload (OpenAI system
+    # message), not just the composed string; otherwise the selection would have no
+    # effect on the AI call.
+    request = CoachRequest(
+        fen_before=REQUEST.fen_before,
+        move_text="e4",
+        side_to_move="white",
+        language="French",
+    )
+    post, calls = _capturing_post(
+        _FakeResponse(200, {"choices": [{"message": {"content": "ok"}}]})
+    )
+    generate_coach_statement(
+        CoachConfig(provider="openai", api_key="k"), request, http_post=post
+    )
+    assert "in French" in calls[0]["json"]["messages"][0]["content"]
+
+
 def test_persona_flows_into_openai_and_anthropic_system_content():
     # The persona must reach the actual request for both agent shapes (OpenAI system
     # message vs Anthropic top-level system field); otherwise coach selection would

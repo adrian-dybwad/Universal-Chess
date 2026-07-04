@@ -86,6 +86,29 @@ def test_notation_is_part_of_cache_key_and_reaches_move_text():
     assert calls == ["Nf3", "g1f3"]  # regenerated for the new notation, not reused
 
 
+def test_language_is_part_of_cache_key_and_reaches_request():
+    # The same hint requested in a different language must regenerate (language is
+    # in the cache key) and the request must carry that language so the prompt asks
+    # for it. Regression: omitting language from the key would serve an English
+    # remark after the user switched the Coach Language, or vice versa.
+    seen = []
+
+    def fake_generate(config, request):
+        seen.append(request.language)
+        return f"[{request.language}]"
+
+    english = coach_tips.get_tip_statement(
+        _config(), STARTPOS, "e2e4", language="English", generate_fn=fake_generate
+    )
+    spanish = coach_tips.get_tip_statement(
+        _config(), STARTPOS, "e2e4", language="Spanish", generate_fn=fake_generate
+    )
+
+    assert english == "[English]"
+    assert spanish == "[Spanish]"
+    assert seen == ["English", "Spanish"]  # regenerated for the new language
+
+
 def test_tip_request_is_flagged_as_a_potential_move():
     # A tip coaches a move the player has not made yet, so the request must be
     # flagged as a potential move -- that is what makes the prompt say "not yet

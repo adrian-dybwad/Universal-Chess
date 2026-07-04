@@ -45,6 +45,11 @@ _BASE_GUARDRAILS = (
 # coach could not be resolved). Preserves the prior default coaching voice.
 _DEFAULT_PERSONA = "You are a concise, encouraging chess coach."
 
+# Language the coach writes in when none is specified. English is the model's
+# native default, so a request for English adds no instruction (the prompt stays
+# lean); any other language appends an explicit "write in this language" line.
+DEFAULT_LANGUAGE = "English"
+
 _MAX_TOKENS = 120
 
 
@@ -185,6 +190,10 @@ class CoachRequest:
         persona: Optional coach persona (tone/focus/instructions) for the system
             prompt, supplied by the selected coach. When unset, the default
             coaching voice is used. The fixed guardrails are always appended.
+        language: Natural language the coach must write its remark in (e.g.
+            ``"Spanish"``). Defaults to English, which adds no instruction (the
+            model's native default); any other value appends an explicit
+            "write in this language" line to the system prompt.
     """
 
     fen_before: str
@@ -197,18 +206,41 @@ class CoachRequest:
     is_potential_move: bool = False
     is_opponent_move: bool = False
     persona: Optional[str] = None
+    language: str = DEFAULT_LANGUAGE
+
+
+def _language_instruction(language: Optional[str]) -> str:
+    """Return a "respond in this language" line, or "" for English/unset.
+
+    English is the model default so it needs no instruction; any other language
+    gets an explicit directive strong enough to override the English-heavy prompt
+    (all other lines are in English) so the remark comes back in the chosen
+    language.
+    """
+    name = (language or "").strip()
+    if not name or name.casefold() == DEFAULT_LANGUAGE.casefold():
+        return ""
+    return (
+        f"Write your entire response in {name}. "
+        f"Every word must be in {name}, regardless of the language of this prompt."
+    )
 
 
 def build_system_prompt(request: "CoachRequest") -> str:
-    """Compose the system prompt: the coach persona followed by the guardrails.
+    """Compose the system prompt: persona, guardrails, then a language directive.
 
     The persona (who the coach is and how they coach) comes from the selected
     coach via ``request.persona``; when unset the default coaching voice is used.
     The fixed guardrails are always appended so brevity and the no-invented-tactics
-    rule hold for every coach.
+    rule hold for every coach. When a non-English language is requested, an
+    explicit directive is appended last so it is the final, strongest instruction.
     """
     persona = (request.persona or "").strip() or _DEFAULT_PERSONA
-    return f"{persona}\n\n{_BASE_GUARDRAILS}"
+    prompt = f"{persona}\n\n{_BASE_GUARDRAILS}"
+    language_line = _language_instruction(request.language)
+    if language_line:
+        prompt = f"{prompt}\n\n{language_line}"
+    return prompt
 
 
 def _format_eval(cp: Optional[int]) -> str:
@@ -454,6 +486,7 @@ __all__ = [
     "CoachConfig",
     "CoachRequest",
     "CoachError",
+    "DEFAULT_LANGUAGE",
     "error_category",
     "error_message",
     "generate_coach_statement",
