@@ -125,6 +125,51 @@ def test_resolve_coach_auto_picks_nearest_elo(opponent_elo, expected):
     assert coach.id == expected
 
 
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (1500, 1500),          # already numeric
+        (1500.0, 1500),        # float truncated
+        ("1500", 1500),        # numeric string
+        ("2850", 2850),
+        ("1200 ELO", 1200),    # seeded ELO-ladder section name
+        ("800 ELO", 800),
+        ("maia-1100.pb.gz", 1100),  # net file level: first number in the name
+        ("weights_1900.pb.gz", 1900),
+        ("Default", None),     # no number -> unknown (falls back to target)
+        ("Attacker", None),    # custom personality name -> unknown
+        ("", None),
+        (None, None),
+    ],
+)
+def test_parse_elo_derives_number_from_selection(value, expected):
+    # The app stores the strength *selection* (section name), not a bare Elo.
+    # _parse_elo is the single place that turns "1200 ELO"/a Maia filename into a
+    # number for Auto coach matching. A regression here would send every
+    # non-numeric selection to the default target, so a 800-ELO or 2850-ELO
+    # opponent would wrongly get the mid-strength coach.
+    assert registry._parse_elo(value) == expected
+
+
+@pytest.mark.parametrize(
+    "opponent_elo,expected",
+    [
+        ("800 ELO", "dave"),        # 800 -> dave exactly
+        ("1200 ELO", "myron"),      # 1200 -> myron (1250, 50 away)
+        ("maia-1100.pb.gz", "myron"),  # 1100 -> myron (150) beats dave (300)
+        ("2850 ELO", "viktor"),     # near-max ladder -> strongest coach
+        ("Attacker", "myron"),      # unnumbered selection -> default target 1200
+    ],
+)
+def test_resolve_coach_auto_matches_section_name_strength(opponent_elo, expected):
+    # End-to-end: a stored section name (the seeded ELO ladder or a Maia net
+    # level) must drive Auto selection just like a bare number. This guards the
+    # whole path resolve_coach -> _parse_elo for the values the app actually
+    # persists; a regression would ignore the ladder and mis-match the coach.
+    coach = registry.resolve_coach(registry.AUTO, opponent_elo)
+    assert coach.id == expected
+
+
 def test_resolve_coach_explicit_id_wins_over_elo():
     # An explicit selection must be honored regardless of opponent Elo, or the
     # user's choice would be silently ignored.

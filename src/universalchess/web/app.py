@@ -4198,15 +4198,13 @@ def api_get_engines():
         return jsonify([{"name": "stockfish", "display_name": "Stockfish", "installed": True}])
 
 
-# Engine personality profiles are editable only for engines with a parameter
-# schema in engine_profiles.PROFILE_SCHEMAS (currently Rodent IV). The editor
-# reads/writes the same .uci file the engine player loads at game start, so
-# edits take effect on the next game; the [DEFAULT] section is preserved.
-from universalchess.services import engine_profiles
-
-_DEFAULT_ENGINES_UCI_DIR = str(
-    pathlib.Path(__file__).parent.parent / "defaults" / "engines"
-)
+# Engine option profiles are editable for every installed engine. The schema is
+# discovered by probing the binary's UCI options (services.uci_schema); the
+# writable config/engines/<name>.uci -- generated on first use, never shipped --
+# holds the selectable sections the engine player loads at game start. Editing
+# reads/writes that file (the [DEFAULT] section is preserved), so edits take
+# effect on the next game.
+from universalchess.services import engine_profiles, uci_schema
 
 
 def _config_uci_path(engine_name):
@@ -4218,33 +4216,41 @@ def _config_uci_path(engine_name):
     return safe_under_base(os.path.join(CONFIG_DIR, "engines"), f"{engine_name}.uci")
 
 
-def _defaults_uci_path(engine_name):
-    """Resolve the packaged defaults ``.uci`` path (seed/fallback source)."""
-    return safe_under_base(_DEFAULT_ENGINES_UCI_DIR, f"{engine_name}.uci")
+def _seed_and_probe_schema(engine_name, config_path):
+    """Seed the writable config (if absent) and probe the engine's schema.
 
-
-@app.route("/api/engines/<engine_name>/profiles", methods=["GET"])
-def api_get_engine_profiles(engine_name):
-    """Return the editable profile schema and current profiles for an engine.
-
-    Engines without a schema return ``editable: false`` so the UI hides the
-    editor. Profiles come from the writable config ``.uci``, falling back to the
-    packaged defaults on a fresh install.
+    Returns the schema groups. Raises ``uci_schema.EngineProbeError`` when the
+    binary is missing or cannot be launched, which callers translate into a
+    "not editable"/"not installed" response.
     """
-    groups = engine_profiles.get_schema(engine_name)
-    if groups is None:
-        return jsonify({
-            "engine": engine_name, "editable": False, "schema": [], "profiles": [],
-        })
+    uci_schema.seed_config(engine_name, config_path=config_path)
+    return uci_schema.get_schema(engine_name)
+
+
+@app.route("/api/engines/<engine_name>/uci-schema", methods=["GET"])
+@app.route("/api/engines/<engine_name>/profiles", methods=["GET"])
+def api_get_engine_uci_schema(engine_name):
+    """Return the probed option schema and current sections for an engine.
+
+    Probes the installed binary for its real UCI options and seeds the writable
+    config on first use. Engines that are not installed (cannot be probed) return
+    ``editable: false`` so the UI hides the editor. Sections come from the
+    writable config.
+    """
     config_path = _config_uci_path(engine_name)
     if config_path is None:
         return jsonify({"success": False, "error": "Invalid engine"}), 400
-    profiles = engine_profiles.read_profiles(config_path, _defaults_uci_path(engine_name))
+    try:
+        groups = _seed_and_probe_schema(engine_name, config_path)
+    except uci_schema.EngineProbeError:
+        return jsonify({
+            "engine": engine_name, "editable": False, "schema": [], "profiles": [],
+        })
     return jsonify({
         "engine": engine_name,
         "editable": True,
         "schema": engine_profiles.schema_to_json(groups),
-        "profiles": profiles,
+        "profiles": engine_profiles.read_profiles(config_path),
     })
 
 
@@ -4256,17 +4262,18 @@ def api_get_engine_profiles(engine_name):
 def api_save_engine_profile(engine_name, profile_name):
     """Create or replace a profile. Body: ``{"values": {key: value}}``.
 
-    Values are validated against the engine schema (unknown keys and
-    out-of-range values are rejected, not clamped, because Rodent applies them
+    Values are validated against the probed engine schema (unknown keys and
+    out-of-range values are rejected, not clamped, because engines apply them
     verbatim) before the section is written atomically. The whole section is
     replaced, so the client must submit the complete set of keys to retain.
     """
-    groups = engine_profiles.get_schema(engine_name)
-    if groups is None:
-        return jsonify({"success": False, "error": "Engine has no editable profiles"}), 404
     config_path = _config_uci_path(engine_name)
     if config_path is None:
         return jsonify({"success": False, "error": "Invalid engine"}), 400
+    try:
+        groups = _seed_and_probe_schema(engine_name, config_path)
+    except uci_schema.EngineProbeError:
+        return jsonify({"success": False, "error": "Engine is not installed"}), 404
     body = request.get_json(silent=True) or {}
     values = body.get("values", {})
     # Validate up front and surface the message as a returned value. Catching
@@ -4278,9 +4285,7 @@ def api_save_engine_profile(engine_name, profile_name):
     value_error = engine_profiles.validation_error(groups, values)
     if value_error is not None:
         return jsonify({"success": False, "error": value_error}), 400
-    engine_profiles.write_profile(
-        config_path, profile_name, values, groups, _defaults_uci_path(engine_name)
-    )
+    engine_profiles.write_profile(config_path, profile_name, values, groups)
     return jsonify({"success": True})
 
 
@@ -4288,12 +4293,10 @@ def api_save_engine_profile(engine_name, profile_name):
 def api_delete_engine_profile(engine_name, profile_name):
     """Delete a profile section.
 
-    404 if the engine has no editable profiles or the profile does not exist;
-    400 if the name is reserved (``DEFAULT``).
+    400 if the name is reserved (``DEFAULT``) or invalid; 404 if the profile does
+    not exist. Deletion operates on the writable config directly and does not
+    require probing the engine.
     """
-    groups = engine_profiles.get_schema(engine_name)
-    if groups is None:
-        return jsonify({"success": False, "error": "Engine has no editable profiles"}), 404
     config_path = _config_uci_path(engine_name)
     if config_path is None:
         return jsonify({"success": False, "error": "Invalid engine"}), 400
@@ -4302,9 +4305,7 @@ def api_delete_engine_profile(engine_name, profile_name):
     blocked = engine_profiles.delete_blocked_reason(profile_name)
     if blocked is not None:
         return jsonify({"success": False, "error": blocked}), 400
-    removed = engine_profiles.delete_profile(
-        config_path, profile_name, _defaults_uci_path(engine_name)
-    )
+    removed = engine_profiles.delete_profile(config_path, profile_name)
     if not removed:
         return jsonify({"success": False, "error": "Profile not found"}), 404
     return jsonify({"success": True})
@@ -4312,41 +4313,24 @@ def api_delete_engine_profile(engine_name, profile_name):
 
 @app.route("/api/engines/<engine_name>/levels", methods=["GET"])
 def api_get_engine_levels(engine_name):
-    """Get ELO levels and personalities for an engine from its .uci file."""
-    try:
-        import configparser
-        import pathlib
-        
-        # Look for .uci file in config or defaults directories
-        uci_paths = [
-            pathlib.Path("/opt/universalchess/config/engines") / f"{engine_name}.uci",
-            pathlib.Path(__file__).parent.parent / "defaults" / "engines" / f"{engine_name}.uci",
-        ]
-        
-        uci_path = None
-        for path in uci_paths:
-            if path.exists():
-                uci_path = path
-                break
-        
-        if not uci_path:
-            return jsonify(["Default"])
-        
-        config = configparser.ConfigParser()
-        config.read(str(uci_path))
-        
-        levels = []
-        for section in config.sections():
-            if section != "DEFAULT":
-                levels.append(section)
-        
-        # Ensure "Default" is always first option if not already present
-        if "Default" not in levels:
-            levels.insert(0, "Default")
-        
-        return jsonify(levels)
-    except Exception as e:
+    """Return the selectable section names for an engine.
+
+    Mirrors the on-device picker: seeds the writable config by probing the
+    binary, then returns its section names (``read_profile_names``), always
+    including ``Default``. Falls back to ``["Default"]`` when the engine cannot
+    be probed or the name is invalid.
+    """
+    config_path = _config_uci_path(engine_name)
+    if config_path is None:
         return jsonify(["Default"])
+    try:
+        uci_schema.seed_config(engine_name, config_path=config_path)
+        levels = engine_profiles.read_profile_names(config_path)
+    except uci_schema.EngineProbeError:
+        levels = []
+    if "Default" not in levels:
+        levels.insert(0, "Default")
+    return jsonify(levels)
 
 
 @app.route("/api/engines/all", methods=["GET"])
@@ -4382,7 +4366,9 @@ def api_get_all_engines():
                 "can_uninstall": engine_def.can_uninstall,
                 "estimated_install_minutes": engine_def.estimated_install_minutes,
                 "has_prebuilt": engine_def.has_prebuilt,
-                "has_profiles": name in engine_profiles.PROFILE_SCHEMAS,
+                # Every installed engine is editable now: its option schema is
+                # discovered by probing the binary, not gated by a curated list.
+                "has_profiles": is_installed,
                 # Architecture support for THIS device. `supported` drives the UI's
                 # install button state; `unsupported_reason` explains why when False.
                 "supported": unsupported_reason is None,
@@ -4421,7 +4407,9 @@ def api_get_all_engines():
                 "can_uninstall": True,
                 "estimated_install_minutes": 0,
                 "has_prebuilt": False,
-                "has_profiles": False,
+                # Custom engines are probed for their schema just like catalog
+                # engines, so they are editable whenever their binary is present.
+                "has_profiles": installed,
                 "supported": True,
                 "unsupported_reason": None,
                 "source_installable": False,

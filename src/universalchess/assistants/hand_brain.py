@@ -352,28 +352,35 @@ class HandBrainAssistant(Assistant):
         return None
     
     def _resolve_uci_file_path(self) -> Optional[str]:
-        """Find the UCI configuration file for this engine.
-        
-        Searches in:
-        1. /opt/universalchess/config/engines/ (production)
-        2. defaults/engines/ relative to this module (development)
-        
+        """Find (generating if needed) the UCI configuration file for this engine.
+
+        No ``.uci`` files are shipped. The writable config at
+        ``/opt/universalchess/config/engines/<name>.uci`` is generated on first
+        use by probing the engine (``uci_schema.seed_config``), so a selected
+        section applies even if the level list was never opened this session.
+        Seeding is idempotent and reuses the engine instance about to be acquired.
+
         Returns:
-            Path to UCI file, or None if not found.
+            Path to the UCI file, or None if it could not be resolved/generated
+            (in which case the engine plays at its built-in defaults).
         """
         engine_name = self._brain_config.engine_name
-        
-        # Check production location
+
         prod_path = pathlib.Path(f"/opt/universalchess/config/engines/{engine_name}.uci")
         if prod_path.exists():
             return str(prod_path)
-        
-        # Check development location
-        dev_path = pathlib.Path(__file__).parent.parent / "defaults" / "engines" / f"{engine_name}.uci"
-        if dev_path.exists():
-            return str(dev_path)
-        
-        log.debug(f"[HandBrain] No UCI config found for {engine_name}")
+
+        try:
+            from universalchess.services import uci_schema
+            seeded = uci_schema.seed_config(engine_name)
+            if os.path.exists(seeded):
+                return seeded
+        except Exception as e:
+            # Best-effort: a probe failure must not block the game; the engine
+            # then runs at its defaults rather than a selected section.
+            log.debug(f"[HandBrain] Could not seed UCI config for {engine_name}: {e}")
+
+        log.debug(f"[HandBrain] No UCI config resolved for {engine_name}")
         return None
     
     def _load_uci_options(self, uci_file_path: str) -> None:

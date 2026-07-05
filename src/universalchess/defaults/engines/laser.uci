@@ -1,6 +1,0 @@
-[DEFAULT]
-Description = Fast tactical engine, ~3100 ELO
-Threads = 1
-
-[Default]
-Description = Maximum strength

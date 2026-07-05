@@ -4,6 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Button, Card, CardHeader, FormRow, Input, Select, Toggle, Badge, ProgressBar } from '../components/ui';
 import { CatalogField } from '../components/CatalogField';
 import { EngineProfileEditor } from '../components/EngineProfileEditor';
+import { EngineStrengthField } from '../components/EngineStrengthField';
 import type { FieldValue } from '../components/CatalogField';
 import { LoginDialog } from '../components/LoginDialog';
 import { MenuIcon } from '../components/MenuIcon';
@@ -1307,7 +1308,6 @@ export function Settings() {
   // Nodes that are imperative `action`s on the board (chained engine -> ELO
   // picker) but render as plain selects on the web via their catalog webType.
   const playerEngineNode = fieldById(catalog, 'field.player.engine')!;
-  const playerEloNode = fieldById(catalog, 'field.player.elo')!;
   const analysisEngineNode = fieldById(catalog, 'analysis.engine')!;
 
   // Resolve the runtime option list a provider-backed select renders. The
@@ -1392,11 +1392,14 @@ export function Settings() {
                       options={providerOptions(playerEngineNode)}
                       onChange={(v) => updateFormSettings('player1', { engine: String(v), elo: 'Default' })}
                     />
-                    <CatalogField
-                      node={playerEloNode}
+                    <EngineStrengthField
+                      key={formSettings.player1.engine}
+                      engineName={formSettings.player1.engine}
                       value={formSettings.player1.elo}
-                      options={providerOptions(playerEloNode, formSettings.player1.engine)}
-                      onChange={(v) => updateFormSettings('player1', { elo: String(v) })}
+                      sections={engineLevels[formSettings.player1.engine] || ['Default']}
+                      label={fieldLabel('field.player.elo')}
+                      help={fieldHelp('field.player.elo')}
+                      onChange={(v) => updateFormSettings('player1', { elo: v })}
                     />
                   </>
                 )}
@@ -1448,11 +1451,14 @@ export function Settings() {
                       options={providerOptions(playerEngineNode)}
                       onChange={(v) => updateFormSettings('player2', { engine: String(v), elo: 'Default' })}
                     />
-                    <CatalogField
-                      node={playerEloNode}
+                    <EngineStrengthField
+                      key={formSettings.player2.engine}
+                      engineName={formSettings.player2.engine}
                       value={formSettings.player2.elo}
-                      options={providerOptions(playerEloNode, formSettings.player2.engine)}
-                      onChange={(v) => updateFormSettings('player2', { elo: String(v) })}
+                      sections={engineLevels[formSettings.player2.engine] || ['Default']}
+                      label={fieldLabel('field.player.elo')}
+                      help={fieldHelp('field.player.elo')}
+                      onChange={(v) => updateFormSettings('player2', { elo: v })}
                     />
                   </>
                 )}

@@ -1,6 +1,0 @@
-[DEFAULT]
-Description = Compact NNUE engine, ~3000 ELO
-Threads = 1
-
-[Default]
-Description = Maximum strength

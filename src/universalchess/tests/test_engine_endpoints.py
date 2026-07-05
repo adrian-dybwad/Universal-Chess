@@ -638,10 +638,16 @@ def test_all_engines_list_shape(client, monkeypatch):
     assert by_name[SYSTEM_ENGINE]["installed"] is True
     # Non-system engine with no binary on disk -> reported not installed.
     assert by_name[INSTALLABLE_ENGINE]["installed"] is False
-    # has_profiles drives whether the UI offers the profile editor: Rodent IV
-    # has an editable schema, Stockfish does not.
-    assert by_name["rodentIV"]["has_profiles"] is True
-    assert by_name[SYSTEM_ENGINE]["has_profiles"] is False
+    # has_profiles now means "editable" == "installed": the schema is discovered
+    # by probing the binary (services.uci_schema), not gated by a curated list, so
+    # every installed engine is editable and no uninstalled engine is. A
+    # regression that reintroduced curation (or inverted the flag) would break the
+    # has_profiles == installed invariant that drives whether the UI offers the
+    # inline option editor.
+    for entry in data:
+        assert entry["has_profiles"] == entry["installed"]
+    assert by_name[SYSTEM_ENGINE]["has_profiles"] is True   # installed system engine
+    assert by_name[INSTALLABLE_ENGINE]["has_profiles"] is False  # not installed
 
 
 def test_all_engines_marks_arch_unsupported(client, monkeypatch):
@@ -678,56 +684,134 @@ def test_all_engines_marks_arch_unsupported(client, monkeypatch):
     assert by_name["rodentIV"]["unsupported_reason"] is None
 
 
+def test_all_engines_discovers_custom_from_store_by_binary_presence(client, monkeypatch, tmp_path):
+    """Custom engines are discovered from the store + binary, not from .uci files.
+
+    The probe-driven design ships no .uci files, so engine discovery must derive
+    entirely from the catalog plus the operator-added store (a present, executable
+    binary is what makes a custom engine 'installed'). This test seeds two store
+    entries -- one with a binary on disk, one without -- and asserts both appear in
+    the list with installed/has_profiles reflecting binary presence, and is_custom
+    set. A regression that reintroduced file-based (.uci glob) discovery, or that
+    tied custom 'installed' to something other than the binary, would drop these
+    entries or mis-report their state.
+    """
+    from universalchess.services.custom_engine_registry import CustomEngine
+
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.EngineManager.is_installed",
+        lambda self, name: False,
+    )
+
+    engines_dir = tmp_path / "engines"
+    engines_dir.mkdir()
+    present = engines_dir / "mycustom"
+    present.write_text("#!/bin/sh\n")
+    present.chmod(0o755)  # executable -> counts as installed
+    # "ghost" has a store entry but no binary on disk -> reported not installed.
+
+    class _FakeStore:
+        def list(self):
+            return [
+                CustomEngine(id="mycustom", display_name="My Custom", source="upload"),
+                CustomEngine(id="ghost", display_name="Ghost", source="url",
+                             url="https://example/x"),
+            ]
+
+    monkeypatch.setattr(webapp, "_ENGINES_DIR", str(engines_dir))
+    monkeypatch.setattr(webapp, "_custom_engine_store", _FakeStore())
+
+    resp = client.get("/api/engines/all")
+    assert resp.status_code == 200
+    by_name = {e["name"]: e for e in json.loads(resp.data)}
+
+    assert by_name["mycustom"]["is_custom"] is True
+    assert by_name["mycustom"]["installed"] is True
+    assert by_name["mycustom"]["has_profiles"] is True   # editable when binary present
+    assert by_name["ghost"]["is_custom"] is True
+    assert by_name["ghost"]["installed"] is False
+    assert by_name["ghost"]["has_profiles"] is False
+
+
 # ---------------------------------------------------------------------------
 # Engine profile editor (read/create/update/delete)
 # ---------------------------------------------------------------------------
 
 PROFILES_ENGINE = "rodentIV"
 
-_SAMPLE_PROFILES_UCI = """\
-[DEFAULT]
-Hash = 16
-Threads = 2
 
-[Default]
-Description = Maximum strength
-UCI_LimitStrength = false
+class _FakeOption:
+    """Stand-in for ``chess.engine.Option`` the probe would return.
 
-[Attacker]
-Description = Aggressive
-OwnAttack = 125
-"""
+    The profile endpoints now discover the schema by probing the binary
+    (services.uci_schema) instead of reading a shipped .uci. These fake options
+    are the mocked probe result, so the endpoint/seed/validate/write path is
+    exercised end-to-end without a real engine process.
+    """
+
+    def __init__(self, name, type, default=None, min=None, max=None, var=None,
+                 managed=False):
+        self.name = name
+        self.type = type
+        self.default = default
+        self.min = min
+        self.max = max
+        self.var = var
+        self._managed = managed
+
+    def is_managed(self):
+        return self._managed
+
+
+# A compact probed option set: a UCI_Elo range plus UCI_LimitStrength (so seeding
+# derives a small, deterministic "<n> ELO" ladder), engine-wide Hash/Threads, and
+# two editable advanced options used by the write tests. The narrow 1400-1800
+# range keeps the seeded ladder to three rungs.
+_FAKE_OPTIONS = [
+    _FakeOption("UCI_LimitStrength", "check", False),
+    _FakeOption("UCI_Elo", "spin", 1600, 1400, 1800),
+    _FakeOption("OwnAttack", "spin", 100, 0, 500),
+    _FakeOption("Description", "string", ""),
+    _FakeOption("Hash", "spin", 16, 1, 1024),
+    _FakeOption("Threads", "spin", 1, 1, 32),
+]
+
+# Sections seed_config derives from _FAKE_OPTIONS (Default at max strength plus the
+# rounded ELO ladder within [1400, 1800]).
+_SEEDED_NAMES = {"Default", "1400 ELO", "1600 ELO", "1800 ELO"}
 
 
 @pytest.fixture
 def profile_paths(tmp_path, monkeypatch):
-    """Point the profile endpoints at isolated temp config/defaults dirs.
+    """Isolate the writable config dir and mock the engine probe.
 
-    The endpoints resolve the writable file under ``CONFIG_DIR/engines`` and the
-    seed/fallback under ``_DEFAULT_ENGINES_UCI_DIR`` (both module globals on the
-    app). Swapping them to temp dirs (with a seeded defaults file) keeps tests
-    from touching /opt and from depending on the packaged defaults content.
-    Yields the writable config .uci path so tests can inspect what was written.
+    The endpoints resolve the writable file under ``CONFIG_DIR/engines`` and,
+    for editable engines, probe the binary for its options. ``CONFIG_DIR`` is
+    pointed at a temp dir (no /opt writes), and the probe boundary is mocked so
+    the schema/seed are deterministic and offline: ``get_engine_path`` reports a
+    binary only for ``PROFILES_ENGINE`` (everything else is "not installed" ->
+    not editable), and ``probe_options`` returns the fake option set. Yields the
+    writable config path so tests can inspect what was seeded/written.
     """
     config_dir = tmp_path / "config"
-    defaults_dir = tmp_path / "defaults"
     (config_dir / "engines").mkdir(parents=True)
-    defaults_dir.mkdir(parents=True)
-    (defaults_dir / f"{PROFILES_ENGINE}.uci").write_text(
-        _SAMPLE_PROFILES_UCI, encoding="utf-8"
-    )
 
     monkeypatch.setattr(webapp, "CONFIG_DIR", str(config_dir))
-    monkeypatch.setattr(webapp, "_DEFAULT_ENGINES_UCI_DIR", str(defaults_dir))
+    monkeypatch.setattr(
+        webapp.uci_schema, "get_engine_path",
+        lambda name: f"/fake/bin/{name}" if name == PROFILES_ENGINE else None,
+    )
+    monkeypatch.setattr(webapp.uci_schema, "probe_options", lambda path: _FAKE_OPTIONS)
     return config_dir / "engines" / f"{PROFILES_ENGINE}.uci"
 
 
 def test_get_profiles_returns_schema_and_seeded_profiles(client, profile_paths):
-    """GET profiles returns editable=true, the schema, and the seeded profiles.
+    """GET profiles returns editable=true, the probed schema, and seeded sections.
 
-    The editor cannot render without the schema, and on a fresh install (no
-    config file yet) it must still see the packaged profiles via fallback. This
-    asserts both: a non-empty schema and the seeded profile names.
+    The editor cannot render without the schema; on first open (no config yet)
+    the endpoint probes and seeds, so the response must carry a non-empty schema
+    and the derived ELO ladder. A regression in probe->schema or probe->seed
+    wiring would drop the schema or the sections.
     """
     resp = client.get(f"/api/engines/{PROFILES_ENGINE}/profiles")
     assert resp.status_code == 200
@@ -736,17 +820,21 @@ def test_get_profiles_returns_schema_and_seeded_profiles(client, profile_paths):
     assert data["editable"] is True
     assert data["schema"] and isinstance(data["schema"], list)
     names = {p["name"] for p in data["profiles"]}
-    assert names == {"Default", "Attacker"}
-    attacker = next(p for p in data["profiles"] if p["name"] == "Attacker")
-    # Section-local values only -- no inherited Hash/Threads from [DEFAULT].
-    assert attacker["values"] == {"Description": "Aggressive", "OwnAttack": "125"}
+    assert names == _SEEDED_NAMES
+    rung = next(p for p in data["profiles"] if p["name"] == "1600 ELO")
+    # Section-local values only -- no inherited Threads from [DEFAULT]; the rung
+    # both sets the target Elo and enables the limit (else the engine ignores it).
+    assert rung["values"] == {"UCI_LimitStrength": "true", "UCI_Elo": "1600"}
+    assert "Threads" not in rung["values"]
 
 
-def test_get_profiles_non_editable_engine_hides_editor(client):
-    """A non-editable engine reports editable=false with empty schema/profiles.
+def test_get_profiles_non_editable_engine_hides_editor(client, profile_paths):
+    """A non-probeable engine reports editable=false with empty schema/profiles.
 
     The Settings UI uses editable to decide whether to show the editor at all;
-    if this regressed to true the UI would render an empty, broken editor.
+    if this regressed to true the UI would render an empty, broken editor. The
+    fixture's mock reports no binary for SYSTEM_ENGINE, so probing raises and the
+    endpoint must degrade to editable=false.
     """
     resp = client.get(f"/api/engines/{SYSTEM_ENGINE}/profiles")
     assert resp.status_code == 200
@@ -757,10 +845,11 @@ def test_get_profiles_non_editable_engine_hides_editor(client):
 
 
 def test_put_creates_profile_and_persists(client, profile_paths):
-    """PUT creates a profile that subsequent GET returns, seeding from defaults.
+    """POST creates a profile that a subsequent GET returns alongside the ladder.
 
-    Verifies the create path end-to-end and that the seed preserved the existing
-    profiles (the new file is not just the one new section).
+    Verifies the create path end-to-end and that seeding preserved the derived
+    sections (the file is not just the one new section). Values are coerced to
+    their .uci string forms.
     """
     resp = client.post(
         f"/api/engines/{PROFILES_ENGINE}/profiles/Tactical",
@@ -772,17 +861,18 @@ def test_put_creates_profile_and_persists(client, profile_paths):
 
     data = client.get(f"/api/engines/{PROFILES_ENGINE}/profiles").get_json()
     names = {p["name"] for p in data["profiles"]}
-    assert names == {"Default", "Attacker", "Tactical"}
+    assert names == _SEEDED_NAMES | {"Tactical"}
     tactical = next(p for p in data["profiles"] if p["name"] == "Tactical")
     assert tactical["values"] == {"Description": "Sharp", "OwnAttack": "140"}
 
 
 def test_put_rejects_out_of_range_value_with_400(client, profile_paths):
-    """An out-of-range value is rejected with 400 and is not written.
+    """An out-of-range value is rejected with 400 and no such profile is written.
 
-    Rodent does not clamp, so the server is the only guard; the error message
-    names the offending parameter for the UI. Also asserts the bad write did not
-    create the config file as a side effect.
+    The engine does not clamp, so the server is the only guard; the error message
+    names the offending parameter for the UI. The endpoint seeds the config
+    before validating, so the file may exist (with the ladder) -- but the invalid
+    profile must NOT be among the sections.
     """
     resp = client.post(
         f"/api/engines/{PROFILES_ENGINE}/profiles/Tactical",
@@ -793,14 +883,20 @@ def test_put_rejects_out_of_range_value_with_400(client, profile_paths):
     body = resp.get_json()
     assert body["success"] is False
     assert "UCI_Elo" in body["error"]
-    assert not profile_paths.exists()
+
+    names = {
+        p["name"]
+        for p in client.get(f"/api/engines/{PROFILES_ENGINE}/profiles").get_json()["profiles"]
+    }
+    assert "Tactical" not in names
 
 
-def test_save_non_editable_engine_returns_404(client):
-    """Saving against an engine with no schema is rejected with 404.
+def test_save_non_editable_engine_returns_404(client, profile_paths):
+    """Saving against a non-probeable engine is rejected with 404.
 
-    Guards the allow-list: only schema-backed engines accept profile writes, so
-    arbitrary engines cannot have .uci files synthesized through this endpoint.
+    Only installed/probeable engines accept profile writes, so an uninstalled
+    engine cannot have a .uci synthesized through this endpoint. The fixture's
+    mock reports no binary for SYSTEM_ENGINE, so the probe raises -> 404.
     """
     resp = client.post(
         f"/api/engines/{SYSTEM_ENGINE}/profiles/Foo",
@@ -811,13 +907,17 @@ def test_save_non_editable_engine_returns_404(client):
 
 
 def test_delete_removes_profile(client, profile_paths):
-    """DELETE removes an existing profile; a second delete reports 404.
+    """DELETE removes an existing (seeded) profile; a second delete reports 404.
 
-    Asserts the delete path and that the store reflects the removal (the profile
-    is gone from the subsequent GET), then that deleting it again is a 404 (the
-    'not found' path) rather than a false success.
+    Deletion operates on the writable config directly and does not probe, so the
+    config must be seeded first (via a GET). Asserts the removal is reflected in a
+    subsequent GET, then that deleting it again is a 404 rather than a false
+    success.
     """
-    first = client.post(f"/api/engines/{PROFILES_ENGINE}/profiles/Attacker/delete")
+    # Seed the config so there are real sections to delete.
+    client.get(f"/api/engines/{PROFILES_ENGINE}/profiles")
+
+    first = client.post(f"/api/engines/{PROFILES_ENGINE}/profiles/1600 ELO/delete")
     assert first.status_code == 200
     assert first.get_json()["success"] is True
 
@@ -825,7 +925,32 @@ def test_delete_removes_profile(client, profile_paths):
         p["name"]
         for p in client.get(f"/api/engines/{PROFILES_ENGINE}/profiles").get_json()["profiles"]
     }
-    assert "Attacker" not in names
+    assert "1600 ELO" not in names
 
-    again = client.post(f"/api/engines/{PROFILES_ENGINE}/profiles/Attacker/delete")
+    again = client.post(f"/api/engines/{PROFILES_ENGINE}/profiles/1600 ELO/delete")
     assert again.status_code == 404
+
+
+def test_levels_endpoint_seeds_and_returns_sections(client, profile_paths):
+    """GET /levels seeds the config and returns the section names for the picker.
+
+    The on-device ELO picker reads this. It must probe/seed on first use and
+    return the derived ladder with Default first. A regression that stopped
+    seeding would return only ["Default"] for an editable engine.
+    """
+    resp = client.get(f"/api/engines/{PROFILES_ENGINE}/levels")
+    assert resp.status_code == 200
+    levels = resp.get_json()
+    assert levels[0] == "Default"
+    assert set(levels) == _SEEDED_NAMES
+
+
+def test_levels_endpoint_falls_back_to_default_when_not_probeable(client, profile_paths):
+    """A non-probeable engine yields just ["Default"] rather than an error.
+
+    The picker must always offer at least Default; if probing fails (engine not
+    installed) the endpoint degrades gracefully instead of 500-ing.
+    """
+    resp = client.get(f"/api/engines/{SYSTEM_ENGINE}/levels")
+    assert resp.status_code == 200
+    assert resp.get_json() == ["Default"]

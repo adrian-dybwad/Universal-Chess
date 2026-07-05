@@ -1699,63 +1699,54 @@ def _start_from_position(fen: str, position_name: str, hint_move: str = None) ->
 # ============================================================================
 
 def _load_available_engines() -> List[str]:
-    """Load list of available engines from .uci files.
-    
+    """Return engines selectable for play: available catalog engines + custom.
+
+    Discovery no longer depends on shipped .uci files (there are none). The
+    catalog (``managers.engine_manager.ENGINES``) plus the operator-added custom
+    store are the source of truth for which engines exist; a catalog engine is
+    offered when :meth:`EngineManager.is_available` (system package or installed
+    binary), and a custom engine when its binary is present. ELO/option sections
+    are generated lazily per engine by ``services.uci_schema.seed_config`` at
+    first use, not enumerated from files on disk.
+
     Returns:
-        List of engine names (without .uci extension)
+        Sorted list of selectable engine names.
     """
-    global _available_engines, _engine_elo_levels
-    
+    global _available_engines
+
     if _available_engines:
         return _available_engines
-    
-    engines_dir = pathlib.Path("/opt/universalchess/engines")
-    uci_dir = pathlib.Path("/opt/universalchess/config/engines")
-    
-    # Fallback to development paths
-    if not uci_dir.exists():
-        base_path = pathlib.Path(__file__).parent
-        uci_dir = base_path / "defaults" / "engines"
-    
-    if not uci_dir.exists():
-        log.warning(f"[Settings] UCI config directory not found: {uci_dir}")
-        return ['stockfish']  # Default fallback
-    
-    engines = []
-    for uci_file in uci_dir.glob("*.uci"):
-        engine_name = uci_file.stem
-        engines.append(engine_name)
-        
-        # Also load ELO levels for this engine
-        _load_engine_elo_levels(engine_name, uci_file)
-    
-    _available_engines = sorted(engines)
-    log.info(f"[Settings] Found {len(_available_engines)} engines: {_available_engines}")
+
+    from universalchess.managers.engine_manager import ENGINES, get_engine_manager
+    from universalchess.services.custom_engine_registry import CUSTOM_ENGINE_STORE
+    from universalchess.paths import get_engine_path
+
+    engine_manager = get_engine_manager()
+    names = {name for name in ENGINES if engine_manager.is_available(name)}
+
+    for custom in CUSTOM_ENGINE_STORE.list():
+        # Custom engines are not in the catalog; a present binary is what makes
+        # one selectable (mirroring is_installed for catalog single-binaries).
+        if get_engine_path(custom.id):
+            names.add(custom.id)
+
+    _available_engines = sorted(names)
+    log.info(f"[Settings] Available engines ({len(_available_engines)}): {_available_engines}")
     return _available_engines
 
 
 def _get_installed_engines() -> List[str]:
     """Get list of engines available for selection.
-    
-    Filters the available engines (those with .uci config files) to those that
-    can be selected to play, using EngineManager.is_available -- the same
-    definition the web dropdowns use. This includes system-package engines like
-    Stockfish, which is_installed can miss in a service environment whose PATH
-    omits /usr/games (the reason Stockfish previously disappeared from the board
-    picker after switching engines).
-    
+
+    :func:`_load_available_engines` already applies the selectability rule
+    (catalog engines that are a system package or installed, plus custom engines
+    whose binary is present), so this returns that set directly. Kept as the
+    named entry point the board picker and callers use.
+
     Returns:
         List of selectable engine names, sorted alphabetically.
     """
-    from universalchess.managers.engine_manager import get_engine_manager
-    
-    engine_manager = get_engine_manager()
-    available = _load_available_engines()
-    
-    installed = [name for name in available if engine_manager.is_available(name)]
-    
-    log.debug(f"[Settings] Selectable engines: {installed} (of {len(available)} available)")
-    return installed
+    return _load_available_engines()
 
 
 def _format_engine_label_with_compat(engine_name: str, is_selected: bool, show_compat: bool = True) -> str:
@@ -1785,68 +1776,47 @@ def _format_engine_label_with_compat(engine_name: str, is_selected: bool, show_c
     return label
 
 
-def _load_engine_elo_levels(engine_name: str, uci_path: pathlib.Path) -> List[str]:
-    """Load ELO levels from an engine's .uci file.
-    
+def _get_engine_elo_levels(engine_name: str) -> List[str]:
+    """Get the selectable strength/option sections for an engine.
+
+    Sections come from the engine's writable ``config/engines/<name>.uci``,
+    which is generated on first use by probing the binary
+    (``uci_schema.seed_config``) -- no ``.uci`` files are shipped. The section
+    names are read via the shared ``read_profile_names`` (same ``[DEFAULT]``
+    exclusion the web editor uses) so the on-device picker never drifts from it.
+    A ``Default`` entry is always guaranteed so the default setting resolves, and
+    the result is cached for the process lifetime.
+
     Args:
         engine_name: Name of the engine
-        uci_path: Path to the .uci file
-        
+
     Returns:
-        List of ELO level names (section headers from .uci file)
+        List of section names (e.g. ``["Default", "1400 ELO", ...]``).
     """
     global _engine_elo_levels
-    
+
     if engine_name in _engine_elo_levels:
         return _engine_elo_levels[engine_name]
-    
+
+    from universalchess.services import uci_schema
     from universalchess.services.engine_profiles import read_profile_names
-    
+
+    levels: List[str] = ['Default']
     try:
-        # Reuse the shared profile-name reader (same [DEFAULT] exclusion the web
-        # profile editor uses) so the ELO picker never re-derives the section list
-        # and cannot drift from it (e.g. listing "Default" twice).
-        levels = read_profile_names(str(uci_path))
-        
-        # Guarantee a "Default" entry so the default ELO setting always resolves,
-        # even if an engine's file omits that profile.
+        config_path = uci_schema.seed_config(engine_name)
+        names = read_profile_names(config_path)
+        if names:
+            levels = names
         if 'Default' not in levels:
             levels.insert(0, 'Default')
-        
-        _engine_elo_levels[engine_name] = levels
-        log.debug(f"[Settings] Engine {engine_name} ELO levels: {levels}")
+        log.debug(f"[Settings] Engine {engine_name} levels: {levels}")
+    except uci_schema.EngineProbeError as e:
+        log.warning(f"[Settings] Cannot probe {engine_name} for levels: {e}")
     except Exception as e:
-        log.warning(f"[Settings] Error loading ELO levels from {uci_path}: {e}")
-        _engine_elo_levels[engine_name] = ['Default']
-    
-    return _engine_elo_levels[engine_name]
+        log.warning(f"[Settings] Error loading levels for {engine_name}: {e}")
 
-
-def _get_engine_elo_levels(engine_name: str) -> List[str]:
-    """Get ELO levels for an engine.
-    
-    Args:
-        engine_name: Name of the engine
-        
-    Returns:
-        List of ELO level names
-    """
-    global _engine_elo_levels
-    
-    if engine_name in _engine_elo_levels:
-        return _engine_elo_levels[engine_name]
-    
-    # Try to load from .uci file
-    uci_dir = pathlib.Path("/opt/universalchess/config/engines")
-    if not uci_dir.exists():
-        base_path = pathlib.Path(__file__).parent
-        uci_dir = base_path / "defaults" / "engines"
-    
-    uci_path = uci_dir / f"{engine_name}.uci"
-    if uci_path.exists():
-        return _load_engine_elo_levels(engine_name, uci_path)
-    
-    return ['Default']
+    _engine_elo_levels[engine_name] = levels
+    return levels
 
 
 # ============================================================================

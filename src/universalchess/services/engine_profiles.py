@@ -1,4 +1,4 @@
-"""Read, validate, and write engine personality profiles.
+"""Read, validate, and write engine option profiles.
 
 A "profile" is a named section in an engine's ``.uci`` config file (the same
 file the engine player loads at game start via
@@ -6,26 +6,20 @@ file the engine player loads at game start via
 is one selectable profile; its key/value pairs are UCI ``setoption`` settings
 applied when that profile is chosen.
 
-Only engines with an entry in :data:`PROFILE_SCHEMAS` expose an editable profile
-form. Currently that is Rodent IV, whose parameter schema is transcribed
-directly from the installed engine's own source (Rodent IV 0.33):
+The editable schema (which options exist, their types and bounds) is not hard
+coded here. It is discovered per engine by probing the binary's UCI handshake
+(see ``services.uci_schema``), so every engine -- catalog or custom -- gets an
+editable form with no per-engine curation. This module owns the generic pieces:
+the :class:`ProfileField` / :class:`ProfileGroup` schema shapes, JSON
+serialization for the web form, strict value validation against a supplied
+schema, and the section read/write/delete on the ``.uci`` file.
 
-* recognized option names come from ``sources/src/uci_options.cpp``
-  (``ParseSetoption``);
-* defaults and tuning ranges come from ``sources/src/params.cpp``
-  (``cParam::SetVal`` / ``cParam::DefaultWeights``);
-* PST-style integer-to-name labels come from Rodent's tuner documentation
-  (0=Quirky, 1=Classic, 2=Normal, 3=Blunt, 4=Forward).
-
-Why validation lives here, not in the engine: Rodent silently ignores option
-names it does not recognize and accepts out-of-range values without clamping
-(``ParseSetoption`` calls ``atoi`` and stores the result directly). So an
-unrecognized key or an out-of-range value would corrupt play with no error.
-This module is the only guard, hence the strict schema check on every write.
-
-The repo (github.com/nescitus/rodent-iv) has had no commits since April 2021,
-so this schema is stable; revisit it only if the installed engine version
-changes.
+Why validation lives here, not in the engine: many engines silently ignore
+option names they do not recognize and accept out-of-range values without
+clamping. So an unrecognized key or an out-of-range value would corrupt play
+with no error. Validation runs against the probed schema (real per-binary types
+and bounds), rejecting rather than clamping so a mistake surfaces instead of
+being silently mis-applied.
 
 All file mutations preserve the ``[DEFAULT]`` section verbatim (it holds
 engine-wide ``Hash``/``Threads`` the engine merges into every section) and edit
@@ -41,16 +35,16 @@ from typing import Dict, List, Optional, Tuple, Union
 __all__ = [
     "ProfileField",
     "ProfileGroup",
-    "PROFILE_SCHEMAS",
-    "get_schema",
     "schema_to_json",
     "is_valid_profile_name",
     "ProfileValidationError",
     "validate_profile_values",
+    "validation_error",
     "read_profiles",
     "read_profile_names",
     "write_profile",
     "delete_profile",
+    "delete_blocked_reason",
 ]
 
 # Sentinel "default section" name that does not appear in any real file. Parsing
@@ -75,16 +69,18 @@ class ProfileField:
 
     Attributes:
         key: Exact UCI option name written to the ``.uci`` file (case-sensitive,
-            as the engine compares case-insensitively but personalities use a
-            canonical spelling, e.g. ``OwnAttack``, ``blockedcpawn``).
+            preserved as the engine advertised it, e.g. ``UCI_Elo``, ``Skill Level``).
         label: Human-friendly label for the form.
         type: One of ``"int"``, ``"bool"``, ``"select"``, ``"text"``.
         default: The engine's default value (shown when a profile omits the key).
         minimum/maximum: Inclusive bounds for ``int`` fields (the engine's own
             tuning range). ``None`` for non-numeric fields.
-        options: For ``"select"``, the allowed ``{"value": int, "label": str}``
-            entries. ``None`` otherwise.
+        options: For ``"select"``, the allowed ``(value, label)`` string pairs
+            (UCI ``combo`` values, or enumerated file paths). ``None`` otherwise.
         help: Short explanation surfaced in the UI.
+        allow_custom: For ``"select"``, whether values outside ``options`` are
+            also accepted (a free-text escape hatch used for file-path options
+            whose enumerated list is a convenience, not an exhaustive constraint).
     """
 
     key: str
@@ -93,8 +89,9 @@ class ProfileField:
     default: ProfileValue
     minimum: Optional[int] = None
     maximum: Optional[int] = None
-    options: Optional[Tuple[Tuple[int, str], ...]] = None
+    options: Optional[Tuple[Tuple[str, str], ...]] = None
     help: str = ""
+    allow_custom: bool = False
 
 
 @dataclass(frozen=True)
@@ -104,238 +101,6 @@ class ProfileGroup:
     id: str
     label: str
     fields: Tuple[ProfileField, ...]
-
-
-def _int(key, label, default, minimum, maximum, help=""):
-    return ProfileField(key, label, "int", default, minimum, maximum, None, help)
-
-
-_PST_OPTIONS = (
-    (0, "Quirky"),
-    (1, "Classic"),
-    (2, "Normal"),
-    (3, "Blunt"),
-    (4, "Forward"),
-)
-
-
-# Rodent IV 0.33 schema. Defaults/ranges verified against params.cpp.
-#
-# Field help text describes each parameter's meaning for the editor UI. It is
-# sourced from Rodent IV's own documentation (docs/about_personalities.pdf and
-# the option comments in src/uci_options.cpp / src/params.cpp) and from the
-# personality-tuner notes shipped with the engine. Weights are multipliers where
-# 100 = the engine's normal evaluation; "mg"/"eg" parameters apply in the
-# middlegame/endgame and Rodent interpolates between them by game phase.
-_RODENT_GROUPS: Tuple[ProfileGroup, ...] = (
-    ProfileGroup("meta", "General", (
-        ProfileField(
-            "Description", "Description", "text", "",
-            help="A note shown in the profile list to remind you what this "
-                 "personality is for. Not sent to the engine.",
-        ),
-    )),
-    ProfileGroup("strength", "Strength", (
-        ProfileField(
-            "UCI_LimitStrength", "Limit strength", "bool", False,
-            help="When on, the engine deliberately plays down to the target "
-                 "ELO below instead of at full strength.",
-        ),
-        _int("UCI_Elo", "ELO", 2800, 800, 2800,
-             "Approximate playing strength in ELO. Only used when "
-             "'Limit strength' is on."),
-    )),
-    ProfileGroup("piece_values", "Piece values", (
-        _int("PawnValueMg", "Pawn (middlegame)", 90, 50, 150,
-             "How much a pawn is worth in the middlegame, in centipawns."),
-        _int("PawnValueEg", "Pawn (endgame)", 110, 50, 150,
-             "How much a pawn is worth in the endgame, where pawns matter more."),
-        _int("KnightValueMg", "Knight (middlegame)", 380, 200, 400,
-             "Middlegame value of a knight, in centipawns."),
-        _int("KnightValueEg", "Knight (endgame)", 360, 200, 400,
-             "Endgame value of a knight, in centipawns."),
-        _int("BishopValueMg", "Bishop (middlegame)", 390, 200, 400,
-             "Middlegame value of a bishop, in centipawns."),
-        _int("BishopValueEg", "Bishop (endgame)", 370, 200, 400,
-             "Endgame value of a bishop, in centipawns."),
-        _int("RookValueMg", "Rook (middlegame)", 530, 400, 700,
-             "Middlegame value of a rook, in centipawns."),
-        _int("RookValueEg", "Rook (endgame)", 650, 400, 700,
-             "Endgame value of a rook, in centipawns."),
-        _int("QueenValueMg", "Queen (middlegame)", 1160, 800, 1500,
-             "Middlegame value of a queen, in centipawns."),
-        _int("QueenValueEg", "Queen (endgame)", 1190, 800, 1500,
-             "Endgame value of a queen, in centipawns."),
-    )),
-    ProfileGroup("material", "Material & imbalance", (
-        _int("KeepPawn", "Keep pawns", 0, 0, 500,
-             "Bias toward keeping pawns rather than trading them; higher avoids "
-             "pawn exchanges."),
-        _int("KeepKnight", "Keep knights", 0, 0, 500,
-             "Bias toward keeping knights rather than trading them."),
-        _int("KeepBishop", "Keep bishops", 0, 0, 500,
-             "Bias toward keeping bishops rather than trading them."),
-        _int("KeepRook", "Keep rooks", 0, 0, 500,
-             "Bias toward keeping rooks rather than trading them."),
-        _int("KeepQueen", "Keep queens", 0, 0, 500,
-             "Bias toward keeping the queen rather than trading it."),
-        _int("BishopPairMg", "Bishop pair (middlegame)", 51, -100, 100,
-             "Bonus for holding both bishops, in the middlegame."),
-        _int("BishopPairEg", "Bishop pair (endgame)", 51, -100, 100,
-             "Bonus for holding both bishops, in the endgame."),
-        _int("KnightPair", "Knight pair", -1, -50, 50,
-             "Adjustment for holding two knights; slightly penalised by default "
-             "as the pair is a little redundant."),
-        _int("RookPair", "Rook pair", -11, -50, 50,
-             "Adjustment for holding two rooks; penalised by default as they "
-             "compete for the same open files."),
-        _int("ExchangeImbalance", "Exchange imbalance", 10, -50, 50,
-             "Bonus when ahead in the exchange (a rook for a minor piece)."),
-        _int("MinorVsQueen", "Minor vs queen", 5, -50, 50,
-             "Bonus for minor pieces coordinating against the enemy queen."),
-        _int("KnightLikesClosed", "Knight likes closed", 6, -50, 50,
-             "Per-pawn knight bonus; higher makes the engine steer toward closed "
-             "positions where knights are strong."),
-        _int("RookLikesOpen", "Rook likes open", 0, -50, 50,
-             "Per-pawn rook penalty; higher makes the engine prefer open "
-             "positions where rooks are strong."),
-    )),
-    ProfileGroup("weights", "Evaluation weights", (
-        _int("Material", "Material", 100, 0, 200,
-             "Overall weight of material balance (100 = normal). Lower values "
-             "make the engine more willing to sacrifice material."),
-        _int("OwnAttack", "Own attack", 110, 0, 500,
-             "Weight of the engine's own attack on the enemy king. Higher is "
-             "more aggressive."),
-        _int("OppAttack", "Opponent attack", 110, 0, 500,
-             "Weight given to the opponent's attack on the engine's king. Higher "
-             "makes the engine more cautious about its own king safety."),
-        _int("OwnMobility", "Own mobility", 50, 0, 500,
-             "Weight of the engine's own piece mobility. Higher pursues active "
-             "piece play."),
-        _int("OppMobility", "Opponent mobility", 50, 0, 500,
-             "Weight of restricting the opponent's mobility. Higher tries to "
-             "cramp the opponent."),
-        _int("FlatMobility", "Flat mobility", 50, 0, 500,
-             "Baseline mobility bonus applied equally to both sides."),
-        _int("KingTropism", "King tropism", 25, -500, 500,
-             "Bonus for placing pieces close to the enemy king; drives "
-             "king-hunting play."),
-        _int("PiecePressure", "Piece pressure", 109, 0, 500,
-             "Weight of pieces attacking and defending the squares around both "
-             "kings."),
-        _int("PassedPawns", "Passed pawns", 102, 0, 500,
-             "Weight of passed-pawn evaluation; higher pushes passed pawns "
-             "harder."),
-        _int("PawnStructure", "Pawn structure", 113, 0, 500,
-             "Overall weight of pawn-structure evaluation, covering both "
-             "strengths and weaknesses."),
-        _int("PawnShield", "Pawn shield", 120, 0, 500,
-             "Value of pawns sheltering the engine's own king; higher keeps the "
-             "king safer."),
-        _int("PawnStorm", "Pawn storm", 95, 0, 500,
-             "Value of advancing pawns toward the enemy king; higher launches "
-             "pawn storms."),
-        _int("Outposts", "Outposts", 73, 0, 500,
-             "Weight of well-supported advanced squares for minor pieces "
-             "(outposts)."),
-        _int("Lines", "Open lines", 109, 0, 500,
-             "Weight of control of open and semi-open files and the 7th rank."),
-        _int("Space", "Space", 0, 0, 500,
-             "Weight of space advantage (territory behind the engine's pawns)."),
-        _int("PawnMass", "Pawn mass", 98, 0, 500,
-             "Weight of pawns supporting one another as a connected mass."),
-        _int("PawnChains", "Pawn chains", 100, 0, 500,
-             "Weight of diagonal pawn-chain structures."),
-    )),
-    ProfileGroup("pst", "Piece placement", (
-        ProfileField(
-            "PrimaryPstStyle", "Primary PST style", "select", 0,
-            options=_PST_OPTIONS,
-            help="Primary piece-square table: the positional 'school' that "
-                 "guides where the engine likes to place its pieces.",
-        ),
-        ProfileField(
-            "SecondaryPstStyle", "Secondary PST style", "select", 1,
-            options=_PST_OPTIONS,
-            help="A second piece-square table blended with the primary one for "
-                 "a mixed placement style.",
-        ),
-        _int("PrimaryPstWeight", "Primary PST weight", 58, 0, 200,
-             "How strongly the primary piece-square table influences placement."),
-        _int("SecondaryPstWeight", "Secondary PST weight", 40, 0, 200,
-             "How strongly the secondary piece-square table influences "
-             "placement."),
-    )),
-    ProfileGroup("pawns", "Pawn weaknesses", (
-        _int("DoubledPawnMg", "Doubled (middlegame)", -8, -50, 0,
-             "Penalty for doubled pawns in the middlegame (negative value)."),
-        _int("DoubledPawnEg", "Doubled (endgame)", -21, -50, 0,
-             "Penalty for doubled pawns in the endgame (negative value)."),
-        _int("IsolatedPawnMg", "Isolated (middlegame)", -7, -50, 0,
-             "Penalty for an isolated pawn in the middlegame (negative value)."),
-        _int("IsolatedPawnEg", "Isolated (endgame)", -7, -50, 0,
-             "Penalty for an isolated pawn in the endgame (negative value)."),
-        _int("IsolatedOnOpenMg", "Isolated on open file", -13, -50, 0,
-             "Extra middlegame penalty for an isolated pawn on an open file "
-             "(negative value)."),
-        _int("BackwardPawnMg", "Backward (middlegame)", -2, -50, 0,
-             "Penalty for a backward pawn in the middlegame (negative value)."),
-        _int("BackwardPawnEg", "Backward (endgame)", -1, -50, 0,
-             "Penalty for a backward pawn in the endgame (negative value)."),
-        _int("BackwardOnOpenMg", "Backward on open file", -10, -50, 0,
-             "Extra middlegame penalty for a backward pawn on an open file "
-             "(negative value)."),
-        _int("blockedcpawn", "Blocked c-pawn", -17, -50, 0,
-             "Penalty for a c-pawn blocked behind its own pieces, a known "
-             "cramping weakness (negative value)."),
-    )),
-    ProfileGroup("patterns", "Positional patterns", (
-        _int("FianchBase", "Fianchetto bonus", 13, 0, 50,
-             "Bonus for a fianchettoed bishop (developed to g2/b2/g7/b7)."),
-        _int("FianchKing", "Fianchetto near king", 20, 0, 50,
-             "Bonus for a fianchetto that specifically shields the king."),
-        _int("ReturningB", "Returning bishop", 7, 0, 50,
-             "Bonus for a bishop returning from a fianchetto to a more active "
-             "diagonal."),
-    )),
-    ProfileGroup("search", "Search & books", (
-        _int("Contempt", "Contempt", 0, -500, 500,
-             "Draw aversion: positive values make the engine play on in equal "
-             "positions; negative values make it accept draws."),
-        _int("SlowMover", "Slow mover", 100, 10, 500,
-             "Time-management aggressiveness as a percentage; higher spends more "
-             "time per move."),
-        _int("Selectivity", "Selectivity", 175, 10, 500,
-             "How aggressively the search prunes unpromising lines; higher prunes "
-             "more and searches more narrowly."),
-        _int("SearchSkill", "Search skill", 10, 0, 10,
-             "Search skill from 0 to 10; lower deliberately weakens the search "
-             "for an easier opponent."),
-        _int("BookFilter", "Book filter", 20, 0, 100,
-             "How strictly opening-book moves are filtered; higher trusts only "
-             "the strongest book moves."),
-        ProfileField("GuideBookFile", "Guide book file", "text", "guide.bin",
-                     help="Guide opening book, as a path relative to the engine's "
-                          "books/ folder (e.g. guide/active.bin). The engine's "
-                          "built-in default is guide.bin."),
-        ProfileField("MainBookFile", "Main book file", "text", "rodent.bin",
-                     help="Main opening book, as a path relative to the engine's "
-                          "books/ folder. The engine's built-in default is "
-                          "rodent.bin."),
-    )),
-)
-
-
-# Registry of engines that expose an editable profile schema.
-PROFILE_SCHEMAS: Dict[str, Tuple[ProfileGroup, ...]] = {
-    "rodentIV": _RODENT_GROUPS,
-}
-
-
-def get_schema(engine_name: str) -> Optional[Tuple[ProfileGroup, ...]]:
-    """Return the profile schema for ``engine_name`` or ``None`` if not editable."""
-    return PROFILE_SCHEMAS.get(engine_name)
 
 
 def schema_to_json(groups: Tuple[ProfileGroup, ...]) -> List[dict]:
@@ -359,6 +124,7 @@ def schema_to_json(groups: Tuple[ProfileGroup, ...]) -> List[dict]:
                 entry["options"] = [
                     {"value": value, "label": label} for value, label in f.options
                 ]
+                entry["allow_custom"] = f.allow_custom
             fields.append(entry)
         out.append({"id": group.id, "label": group.label, "fields": fields})
     return out
@@ -402,8 +168,8 @@ def validate_profile_values(
     """Validate/coerce submitted ``values`` against ``groups``.
 
     Returns a new dict of ``key -> str`` ready to write to the ``.uci`` file
-    (booleans become ``"true"``/``"false"``, ints/selects become their decimal
-    string). Raises :class:`ProfileValidationError` on the first problem, naming
+    (booleans become ``"true"``/``"false"``, ints/selects become their string
+    form). Raises :class:`ProfileValidationError` on the first problem, naming
     the offending key, so the UI can surface a precise message.
 
     Strictness is intentional (see module docstring): an unknown key or an
@@ -427,7 +193,7 @@ def validation_error(
     exception) so HTTP handlers can surface it by returning a plain value, rather
     than funnelling a caught exception's text into the response -- the latter is
     flagged by static analysis as information exposure (CodeQL
-    py/stack-trace-exposure) because exception text can leak internal detail.
+    py/stack-trace-exposure).
     """
     return _validate_and_coerce(groups, values)[0]
 
@@ -454,13 +220,15 @@ def _validate_and_coerce(
         if field is None:
             return f"unknown parameter '{key}'", {}
 
-        if field.type in ("int", "select"):
+        if field.type == "int":
             error, value = _coerce_int(field, raw)
         elif field.type == "bool":
             error, value = _coerce_bool(field, raw)
+        elif field.type == "select":
+            error, value = _coerce_select(field, raw)
         elif field.type == "text":
             error, value = _coerce_text(field, raw)
-        else:  # pragma: no cover - schema is fixed and exhaustively typed
+        else:  # pragma: no cover - schema types are closed and exhaustive
             return f"unsupported field type '{field.type}' for '{key}'", {}
 
         if error is not None:
@@ -479,17 +247,35 @@ def _coerce_int(field: ProfileField, raw: object) -> Tuple[Optional[str], str]:
     except (TypeError, ValueError):
         return f"'{field.key}' must be a number", ""
 
-    if field.type == "select":
-        allowed = {value_ for value_, _ in (field.options or ())}
-        if value not in allowed:
-            return f"'{field.key}' must be one of {sorted(allowed)}", ""
-        return None, str(value)
-
     if field.minimum is not None and value < field.minimum:
         return f"'{field.key}' must be >= {field.minimum}", ""
     if field.maximum is not None and value > field.maximum:
         return f"'{field.key}' must be <= {field.maximum}", ""
     return None, str(value)
+
+
+def _coerce_select(field: ProfileField, raw: object) -> Tuple[Optional[str], str]:
+    """Return ``(error, value_string)`` for a combo/enumerated option.
+
+    Combo values are strings (the engine's ``var`` entries or enumerated file
+    paths). The value must be one of ``options`` unless ``allow_custom`` is set
+    -- the escape hatch for file-path options whose enumerated list is a
+    convenience, not an exhaustive constraint -- in which case any single-line
+    text within the length limit is accepted.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, (str, int)):
+        return f"'{field.key}' must be text", ""
+    text = str(raw).strip()
+    if field.allow_custom:
+        if len(text) > _MAX_TEXT_LEN:
+            return f"'{field.key}' must be at most {_MAX_TEXT_LEN} characters", ""
+        if "\n" in text or "\r" in text:
+            return f"'{field.key}' must be a single line", ""
+        return None, text
+    allowed = {value_ for value_, _ in (field.options or ())}
+    if text not in allowed:
+        return f"'{field.key}' must be one of {sorted(allowed)}", ""
+    return None, text
 
 
 def _coerce_bool(field: ProfileField, raw: object) -> Tuple[Optional[str], str]:

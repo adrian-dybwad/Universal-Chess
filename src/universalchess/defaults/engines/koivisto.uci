@@ -1,6 +1,0 @@
-[DEFAULT]
-Description = Top-10 NNUE engine, ~3350 ELO
-Threads = 1
-
-[Default]
-Description = Maximum strength
