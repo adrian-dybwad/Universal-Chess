@@ -5,15 +5,26 @@ from typing import Dict, List, Callable, Optional, Tuple
 from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.managers.menu import MenuSelection, is_break_result
 
+# Maps a positions.ini section name to the icon shown for that category.
+# The themed endgame sections all reuse the endgame icon; any section not listed
+# here falls back to the generic "positions" icon.
+CATEGORY_ICONS = {
+    "test": "positions_test",
+    "puzzles": "positions_puzzles",
+    "endgames": "positions_endgames",
+    "pawn_endgames": "positions_endgames",
+    "rook_endgames": "positions_endgames",
+    "queen_endgames": "positions_endgames",
+    "minor_piece_endgames": "positions_endgames",
+    "basic_mates": "positions_endgames",
+    "endgame_studies": "positions_endgames",
+    "custom": "positions_custom",
+}
+
 
 def build_category_entries(positions: Dict[str, Dict[str, Tuple[str, str]]]) -> List[IconMenuEntry]:
     """Build category menu entries."""
-    category_icons = {
-        "test": "positions_test",
-        "puzzles": "positions_puzzles",
-        "endgames": "positions_endgames",
-        "custom": "positions_custom",
-    }
+    category_icons = CATEGORY_ICONS
     category_entries: List[IconMenuEntry] = []
     for category in positions.keys():
         display_name = category.replace("_", " ").title()
@@ -144,12 +155,7 @@ def handle_positions_menu(
         return False
 
     category_entries = build_category_entries(positions)
-    category_icons = {
-        "test": "positions_test",
-        "puzzles": "positions_puzzles",
-        "endgames": "positions_endgames",
-        "custom": "positions_custom",
-    }
+    category_icons = CATEGORY_ICONS
 
     last_category_index = last_position_category_index_ref[0]
     skip_category_menu = return_to_last_position and last_position_category_ref[0] is not None

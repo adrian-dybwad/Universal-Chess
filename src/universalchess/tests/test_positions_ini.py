@@ -345,5 +345,94 @@ class TestLoadPositionsConfig(unittest.TestCase):
                 f"game_over should contain {pos_name}")
 
 
+class TestEndgameSections(unittest.TestCase):
+    """Guard the curated theoretical endgame sections in positions.ini.
+
+    The endgames were expanded from a single flat [endgames] list into themed
+    sections whose FENs are tablebase-verified (see
+    tools/dev-tools/verify_endgames.py). These tests guard against two
+    regressions the restructure could introduce:
+      1. a themed section being dropped or renamed (the Positions menu would
+         silently lose a whole category), and
+      2. an illegal or already-finished FEN slipping in (it would be unplayable
+         or immediately end the game when selected from the menu).
+    """
+
+    ENDGAME_SECTIONS = {
+        "pawn_endgames": 9,
+        "rook_endgames": 7,
+        "queen_endgames": 6,
+        "minor_piece_endgames": 6,
+        "basic_mates": 5,
+        "endgame_studies": 2,
+    }
+
+    def setUp(self):
+        from universalchess.utils.positions import load_positions_config
+        self.positions = load_positions_config()
+
+    def test_all_themed_sections_present_with_expected_counts(self):
+        """Every themed endgame section exists with its full position count.
+
+        Failure manifests as a missing key (section dropped/renamed) or a count
+        mismatch (a position was lost or an unverified one was added without
+        updating this guard).
+        """
+        for section, expected_count in self.ENDGAME_SECTIONS.items():
+            self.assertIn(section, self.positions,
+                f"positions.ini should have [{section}] section")
+            self.assertEqual(len(self.positions[section]), expected_count,
+                f"[{section}] should have {expected_count} positions")
+
+    def test_named_theoretical_positions_present(self):
+        """The signature theoretical positions must be present by name.
+
+        These are the anchors of the set (Lucena/Philidor/Vancura, the
+        trebuchet, Reti and Saavedra studies). If a rename drops one, the menu
+        loses a canonical teaching position even if counts still match.
+        """
+        expected = {
+            "pawn_endgames": ["trebuchet_zugzwang", "opposition_hold_draw"],
+            "rook_endgames": ["lucena_e_pawn_win", "philidor_defense_draw", "vancura_defense_draw"],
+            "queen_endgames": ["queen_vs_rook_win", "queen_vs_rook_pawn_draw"],
+            "basic_mates": ["bishop_knight_mate", "two_bishops_mate"],
+            "endgame_studies": ["reti_draw", "saavedra_win"],
+        }
+        for section, names in expected.items():
+            for name in names:
+                self.assertIn(name, self.positions[section],
+                    f"[{section}] should contain {name}")
+
+    def test_all_endgame_positions_legal_and_in_progress(self):
+        """Every endgame FEN is a legal, playable, not-yet-decided position.
+
+        Unlike [game_over], these are meant to be played out. A checkmate/
+        stalemate FEN here would end the game the instant it is loaded, and an
+        illegal FEN (e.g. the enemy king left in check) cannot be set up at all.
+        """
+        for section in self.ENDGAME_SECTIONS:
+            for name, (fen, _hint) in self.positions[section].items():
+                board = chess.Board(fen)
+                self.assertEqual(board.status(), chess.STATUS_VALID,
+                    f"{section}/{name} FEN is not a legal position: {fen}")
+                self.assertFalse(board.is_game_over(),
+                    f"{section}/{name} FEN is already game over: {fen}")
+
+
+class TestPositionsMenuCategoryIcons(unittest.TestCase):
+    """The themed endgame sections must map to the endgame category icon.
+
+    Without an explicit mapping the menu falls back to the generic "positions"
+    icon, so the new endgame categories would look unrelated to endgames.
+    """
+
+    def test_endgame_subcategories_use_endgame_icon(self):
+        from universalchess.menus.positions_menu import CATEGORY_ICONS
+        for section in ("pawn_endgames", "rook_endgames", "queen_endgames",
+                        "minor_piece_endgames", "basic_mates", "endgame_studies"):
+            self.assertEqual(CATEGORY_ICONS.get(section), "positions_endgames",
+                f"{section} should use the endgame icon")
+
+
 if __name__ == '__main__':
     unittest.main()
