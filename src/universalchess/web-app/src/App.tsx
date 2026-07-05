@@ -36,6 +36,7 @@ function App() {
               <Route path="/games" element={<Games />} />
               <Route path="/analyze/:gameId" element={<Analyze />} />
               <Route path="/positions" element={<Positions />} />
+              <Route path="/positions/:category" element={<Positions />} />
               {/* Connectivity moved under Settings (matches the board's menu IA).
                   Redirect the old top-level path to the new Settings tab so
                   existing links and bookmarks keep working. */}

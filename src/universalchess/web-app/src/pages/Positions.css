@@ -1,13 +1,13 @@
 .positions-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: var(--space-3);
 }
 
 .position-item {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
   text-align: left;
   padding: var(--space-3);
   border: 1px solid var(--color-border);
@@ -23,15 +23,30 @@
   background: var(--color-bg-muted);
 }
 
+.position-item:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* The board is a decorative preview; clicks should select the whole tile. */
+.position-board {
+  width: 100%;
+  pointer-events: none;
+}
+
+/* Reserve a square before the real board mounts so the grid does not reflow. */
+.position-board-placeholder {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-muted);
+}
+
 .position-name {
   font-weight: 600;
 }
 
-.position-fen {
-  font-family: var(--font-mono, monospace);
-  font-size: var(--text-xs, 0.75rem);
+.category-count {
+  font-size: var(--text-sm, 0.875rem);
   color: var(--color-text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }

@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Card, CardHeader } from '../components/ui';
+import { ChessBoard } from '../components/ChessBoard';
 import { LoginDialog } from '../components/LoginDialog';
 import { MenuIcon } from '../components/MenuIcon';
 import { useGameStore } from '../stores/gameStore';
@@ -27,15 +29,73 @@ function prettify(name: string): string {
 }
 
 /**
+ * Parse a UCI hint (e.g. "e2e4" or "a7a8q") into from/to squares for a board
+ * arrow. Returns null when there is no hint or it is too short to be a move, so
+ * hint-less positions (most puzzles/endgames) simply render without an arrow.
+ */
+function parseHint(hint: string | null): { from: string; to: string } | null {
+  if (!hint || hint.length < 4) return null;
+  return { from: hint.slice(0, 2), to: hint.slice(2, 4) };
+}
+
+/**
+ * Lazily-mounted preview board for a single position.
+ *
+ * The Positions page can list dozens of positions at once; mounting a
+ * react-chessboard for every one eagerly is needlessly heavy. This mounts the
+ * real board only once its tile scrolls near the viewport (IntersectionObserver
+ * with a margin so it is ready before it is seen), reserving a square
+ * placeholder beforehand so the grid does not reflow. The board is decorative
+ * and non-interactive here (pointer-events are disabled via CSS) so clicks fall
+ * through to the surrounding tile that sets the position up.
+ */
+function PositionPreview({ fen, hint }: { fen: string; hint: string | null }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+  const arrow = useMemo(() => parseHint(hint), [hint]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || visible) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '200px' }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [visible]);
+
+  return (
+    <div ref={ref} className="position-board" aria-hidden="true">
+      {visible ? (
+        <ChessBoard fen={fen} maxBoardWidth={240} showBestMove={arrow} />
+      ) : (
+        <div className="position-board-placeholder" />
+      )}
+    </div>
+  );
+}
+
+/**
  * Positions page.
  *
- * Lists the predefined positions shared with the board (GET /api/positions) and
- * sets a chosen one up on the physical board (POST /api/board/setup-position).
- * When a game is in progress, a confirmation is shown first because setting up a
- * position ends that game (recorded as abandoned on the board). Auth failures
- * reuse the same LoginDialog flow as Settings.
+ * Two views sharing the predefined-positions data (GET /api/positions):
+ *   - /positions            : an index grid with one box per category.
+ *   - /positions/:category  : the positions inside one category, each as a
+ *                             clickable board preview.
+ * Selecting a position sets it up on the physical board (POST
+ * /api/board/setup-position). When a game is in progress a confirmation is shown
+ * first because setting up a position ends that game (recorded as abandoned on
+ * the board). Auth failures reuse the same LoginDialog flow as Settings.
  */
 export function Positions() {
+  const { category: categoryParam } = useParams();
+  const navigate = useNavigate();
   const [categories, setCategories] = useState<PositionCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -44,6 +104,21 @@ export function Positions() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [loginOpen, setLoginOpen] = useState(false);
   const [loginError, setLoginError] = useState<string | undefined>();
+
+  // Test positions are developer/QA fixtures, so they render after the
+  // player-facing categories (puzzles, endgames, ...) regardless of their order
+  // in positions.ini. Other categories keep their file order.
+  const orderedCategories = useMemo(
+    () => [...categories].sort((a, b) => Number(a.name === 'test') - Number(b.name === 'test')),
+    [categories]
+  );
+
+  // When a category is in the URL, resolve it to the loaded category (or null
+  // if it does not exist, e.g. a stale bookmark) to drive the detail view.
+  const selectedCategory = useMemo(
+    () => (categoryParam ? categories.find((c) => c.name === categoryParam) ?? null : null),
+    [categories, categoryParam]
+  );
 
   const gameState = useGameStore((s) => s.gameState);
   // A game is "in progress" when the board has a live, unfinished game with at
@@ -115,6 +190,29 @@ export function Positions() {
     if (pending) void sendSetup(pending);
   };
 
+  const openCategory = (name: string) => navigate(`/positions/${name}`);
+
+  const renderPositionTile = (entry: PositionEntry) => (
+    <div
+      key={entry.name}
+      role="button"
+      tabIndex={0}
+      className="position-item"
+      onClick={() => onSelect(entry)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect(entry);
+        }
+      }}
+      title={entry.fen}
+      aria-label={`Set up ${prettify(entry.name)}`}
+    >
+      <PositionPreview fen={entry.fen} hint={entry.hint} />
+      <span className="position-name">{prettify(entry.name)}</span>
+    </div>
+  );
+
   if (loading) {
     return (
       <div className="page container--lg">
@@ -165,7 +263,9 @@ export function Positions() {
           Positions
         </h2>
         <p className="text-muted mb-6">
-          Set up a predefined position on the board to practice or analyze.
+          {categoryParam
+            ? 'Set up a predefined position on the board to practice or analyze.'
+            : 'Choose a category to browse positions.'}
         </p>
 
         {status && (
@@ -178,26 +278,55 @@ export function Positions() {
           <Card variant="danger">{loadError}</Card>
         ) : categories.length === 0 ? (
           <Card variant="muted">No positions are defined.</Card>
+        ) : categoryParam ? (
+          <>
+            <button
+              type="button"
+              className="btn btn--secondary btn--sm mb-4"
+              onClick={() => navigate('/positions')}
+            >
+              ← All categories
+            </button>
+            {selectedCategory ? (
+              <Card>
+                <CardHeader title={prettify(selectedCategory.name)} />
+                <div className="positions-grid">
+                  {selectedCategory.positions.map(renderPositionTile)}
+                </div>
+              </Card>
+            ) : (
+              <Card variant="muted">That category was not found.</Card>
+            )}
+          </>
         ) : (
-          categories.map((category) => (
-            <Card key={category.name} className="mb-6">
-              <CardHeader title={prettify(category.name)} />
-              <div className="positions-grid">
-                {category.positions.map((entry) => (
-                  <button
-                    key={entry.name}
-                    type="button"
-                    className="position-item"
-                    onClick={() => onSelect(entry)}
-                    title={entry.fen}
-                  >
-                    <span className="position-name">{prettify(entry.name)}</span>
-                    <span className="position-fen">{entry.fen}</span>
-                  </button>
-                ))}
+          <div className="positions-grid">
+            {orderedCategories.map((category) => (
+              <div
+                key={category.name}
+                role="button"
+                tabIndex={0}
+                className="position-item category-item"
+                onClick={() => openCategory(category.name)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    openCategory(category.name);
+                  }
+                }}
+                aria-label={`Open ${prettify(category.name)} (${category.positions.length} positions)`}
+              >
+                {category.positions[0] ? (
+                  <PositionPreview fen={category.positions[0].fen} hint={null} />
+                ) : (
+                  <div className="position-board-placeholder" />
+                )}
+                <span className="position-name">{prettify(category.name)}</span>
+                <span className="category-count">
+                  {category.positions.length} position{category.positions.length === 1 ? '' : 's'}
+                </span>
               </div>
-            </Card>
-          ))
+            ))}
+          </div>
         )}
       </div>
     </>
