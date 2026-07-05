@@ -1800,16 +1800,18 @@ def _load_engine_elo_levels(engine_name: str, uci_path: pathlib.Path) -> List[st
     if engine_name in _engine_elo_levels:
         return _engine_elo_levels[engine_name]
     
-    levels = ['Default']  # Always include Default
+    from universalchess.services.engine_profiles import read_profile_names
     
     try:
-        import configparser
-        config = configparser.ConfigParser()
-        config.read(str(uci_path))
+        # Reuse the shared profile-name reader (same [DEFAULT] exclusion the web
+        # profile editor uses) so the ELO picker never re-derives the section list
+        # and cannot drift from it (e.g. listing "Default" twice).
+        levels = read_profile_names(str(uci_path))
         
-        for section in config.sections():
-            if section != 'DEFAULT':
-                levels.append(section)
+        # Guarantee a "Default" entry so the default ELO setting always resolves,
+        # even if an engine's file omits that profile.
+        if 'Default' not in levels:
+            levels.insert(0, 'Default')
         
         _engine_elo_levels[engine_name] = levels
         log.debug(f"[Settings] Engine {engine_name} ELO levels: {levels}")

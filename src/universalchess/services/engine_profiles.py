@@ -48,6 +48,7 @@ __all__ = [
     "ProfileValidationError",
     "validate_profile_values",
     "read_profiles",
+    "read_profile_names",
     "write_profile",
     "delete_profile",
 ]
@@ -581,6 +582,20 @@ def read_profiles(
         values = {key: value for key, value in parser.items(section)}
         profiles.append({"name": section, "values": values})
     return profiles
+
+
+def read_profile_names(
+    uci_path: str, defaults_path: Optional[str] = None
+) -> List[str]:
+    """Return the ordered profile (section) names from the engine's config.
+
+    Single source of truth for "which sections are selectable profiles": the
+    engine-wide ``[DEFAULT]`` section is excluded and the ordinary ``[Default]``
+    profile is included exactly once. Both the on-device ELO picker and the web
+    profile editor use this so they never disagree (and neither re-implements the
+    ``[DEFAULT]`` exclusion, which previously listed ``Default`` twice).
+    """
+    return [profile["name"] for profile in read_profiles(uci_path, defaults_path)]
 
 
 def write_profile(

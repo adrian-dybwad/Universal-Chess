@@ -155,6 +155,43 @@ def test_read_profiles_falls_back_to_defaults_when_config_absent(tmp_path):
     assert {p["name"] for p in profiles} == {"Default", "1200 ELO", "Attacker"}
 
 
+def test_read_profile_names_lists_each_profile_once_in_order(uci_file):
+    """Profile names are listed in file order with "Default" appearing once.
+
+    Why this exists: the on-device ELO picker and the web editor must agree on
+    the profile list. The .uci files ship BOTH an engine-wide [DEFAULT] section
+    and an ordinary [Default] profile; the picker previously seeded "Default"
+    itself and then also appended the file's [Default], so it showed twice. This
+    pins the shared reader to the DEFAULT-excluded, deduplicated, ordered list.
+
+    How the regression manifests: "Default" appears twice (or out of file
+    order), reintroducing the duplicate the shared reader exists to prevent.
+    """
+    names = ep.read_profile_names(str(uci_file))
+
+    assert names == ["Default", "1200 ELO", "Attacker"]
+    assert names.count("Default") == 1
+
+
+def test_read_profile_names_falls_back_to_defaults_when_config_absent(tmp_path):
+    """Names use the same file precedence as read_profiles (writable, then defaults).
+
+    Why this exists: a fresh install has no writable .uci yet; the picker must
+    still list the packaged profiles rather than an empty list.
+
+    How the regression manifests: an empty name list on first boot despite the
+    curated profiles shipping in defaults/.
+    """
+    missing = tmp_path / "config" / "rodentIV.uci"
+    defaults = tmp_path / "defaults" / "rodentIV.uci"
+    defaults.parent.mkdir(parents=True)
+    defaults.write_text(SAMPLE_UCI, encoding="utf-8")
+
+    assert ep.read_profile_names(str(missing), str(defaults)) == [
+        "Default", "1200 ELO", "Attacker",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
