@@ -557,20 +557,30 @@ class BluezPairingManager:
     def get_adapter_info(self) -> Dict[str, str]:
         """Return this adapter's identity for the connectivity UI.
 
-        Reads the ``Adapter1`` object's ``Address`` (MAC) and friendly name
-        (``Alias``, falling back to ``Name``) from the cached BlueZ object tree,
-        so the web Bluetooth card can show which controller it manages -- the
-        same host-name/MAC identity the board's own Bluetooth readout shows.
+        Reads the ``Adapter1`` object from the cached BlueZ object tree and
+        returns three identity fields the web Bluetooth card shows:
+
+        * ``address`` -- the adapter MAC.
+        * ``name`` -- the friendly name remote devices actually see: the
+          ``Alias`` if set (the board sets it via ``system-alias``), else the
+          ``Name``.
+        * ``controller_name`` -- the read-only ``Name`` property (BlueZ derives
+          it from the system pretty hostname). This is the adapter's underlying
+          identity that ``Alias`` masks; it is surfaced separately so the card
+          can show it when it differs from the advertised ``Alias``.
+
         Returns empty strings for any field BlueZ does not expose (or when the
         adapter object is absent), letting the caller render "unknown" without
         raising.
         """
         props = self._managed_objects().get(self._adapter_path, {}).get(ADAPTER_IFACE)
         if not props:
-            return {"address": "", "name": ""}
+            return {"address": "", "name": "", "controller_name": ""}
+        controller_name = str(props.get("Name", "") or "")
         return {
             "address": str(props.get("Address", "") or ""),
-            "name": str(props.get("Alias") or props.get("Name") or ""),
+            "name": str(props.get("Alias") or controller_name),
+            "controller_name": controller_name,
         }
 
     def list_paired_devices(self) -> List[Dict[str, object]]:

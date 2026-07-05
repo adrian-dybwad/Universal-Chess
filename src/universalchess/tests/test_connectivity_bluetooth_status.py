@@ -21,7 +21,7 @@ class _FakeManager:
 
     def __init__(self, paired, adapter=None):
         self._paired = paired
-        self._adapter = adapter or {"address": "", "name": ""}
+        self._adapter = adapter or {"address": "", "name": "", "controller_name": ""}
 
     def list_paired_devices(self):
         return self._paired
@@ -93,11 +93,16 @@ def test_get_status_includes_adapter_host_name_and_mac(patched):
     status = bt.get_status(
         manager=_FakeManager(
             [{"address": "AA:BB", "name": "Phone", "connected": True}],
-            adapter={"address": "B8:27:EB:11:22:33", "name": "dgt-32"},
+            adapter={"address": "B8:27:EB:11:22:33", "name": "MILLENNIUM CHESS",
+                     "controller_name": "PCS-REVII-081500"},
         )
     )
 
-    assert status["host_name"] == "dgt-32"
+    # host_name is the advertised alias; controller_name is the masked BlueZ Name
+    # (pretty hostname). Both must surface so the card can show the alias plus the
+    # underlying adapter identity a regression that dropped either would hide.
+    assert status["host_name"] == "MILLENNIUM CHESS"
+    assert status["controller_name"] == "PCS-REVII-081500"
     assert status["address"] == "B8:27:EB:11:22:33"
 
 
@@ -108,10 +113,13 @@ def test_get_status_adapter_identity_empty_when_disabled(monkeypatch):
     monkeypatch.setattr(bt, "is_enabled", lambda log=None: False)
     _set_cached_snapshot(monkeypatch, _connected_snapshot())
 
-    status = bt.get_status(manager=_FakeManager([], adapter={"address": "B8:27:EB:11:22:33", "name": "dgt-32"}))
+    status = bt.get_status(manager=_FakeManager(
+        [], adapter={"address": "B8:27:EB:11:22:33", "name": "MILLENNIUM CHESS",
+                     "controller_name": "PCS-REVII-081500"}))
 
     assert status["enabled"] is False
     assert status["host_name"] == ""
+    assert status["controller_name"] == ""
     assert status["address"] == ""
 
 

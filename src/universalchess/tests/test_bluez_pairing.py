@@ -521,35 +521,46 @@ class TestGetAdapterInfo(unittest.TestCase):
         manager._managed_objects = MagicMock(return_value=objects)
         return manager
 
-    def test_reads_address_and_alias(self):
-        # The happy path: Address is the MAC shown as the card's identity and
-        # Alias is the friendly host name. A regression that read the wrong
-        # property (or the device tree instead of the adapter) would surface the
-        # wrong MAC/name on the card.
+    def test_reads_address_alias_and_controller_name(self):
+        # The happy path: Address is the MAC; Alias is the advertised friendly
+        # name (name); Name is the masked controller identity (controller_name),
+        # returned separately so the card can show both. A regression that read
+        # the wrong property (or the device tree instead of the adapter) would
+        # surface the wrong MAC/name on the card.
         manager = self._manager({
             "/org/bluez/hci0": {
-                "org.bluez.Adapter1": {"Address": "B8:27:EB:11:22:33", "Alias": "dgt-32", "Name": "raw"},
+                "org.bluez.Adapter1": {"Address": "B8:27:EB:11:22:33",
+                                       "Alias": "MILLENNIUM CHESS", "Name": "PCS-REVII-081500"},
             },
             # A paired device under the adapter must not be mistaken for it.
             "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF": {
                 "org.bluez.Device1": {"Address": "AA:BB:CC:DD:EE:FF", "Name": "Phone"},
             },
         })
-        assert manager.get_adapter_info() == {"address": "B8:27:EB:11:22:33", "name": "dgt-32"}
+        assert manager.get_adapter_info() == {
+            "address": "B8:27:EB:11:22:33",
+            "name": "MILLENNIUM CHESS",
+            "controller_name": "PCS-REVII-081500",
+        }
 
     def test_falls_back_to_name_when_no_alias(self):
-        # Alias is preferred, but a controller without one must still yield a
-        # name (Name) rather than an empty label.
+        # Alias is preferred for name, but a controller without one must still
+        # yield a name (Name), and controller_name always reflects Name. Both
+        # equal Name here, which the card uses to suppress the duplicate line.
         manager = self._manager({
             "/org/bluez/hci0": {"org.bluez.Adapter1": {"Address": "B8:27:EB:11:22:33", "Name": "hci0-name"}},
         })
-        assert manager.get_adapter_info() == {"address": "B8:27:EB:11:22:33", "name": "hci0-name"}
+        assert manager.get_adapter_info() == {
+            "address": "B8:27:EB:11:22:33",
+            "name": "hci0-name",
+            "controller_name": "hci0-name",
+        }
 
     def test_empty_strings_when_adapter_absent(self):
         # No adapter object in the tree (dbus reachable but hci0 missing) must
         # yield empty strings, not a KeyError, so get_status stays best-effort.
         manager = self._manager({"/org/bluez/hci1": {"org.bluez.Adapter1": {"Address": "X"}}})
-        assert manager.get_adapter_info() == {"address": "", "name": ""}
+        assert manager.get_adapter_info() == {"address": "", "name": "", "controller_name": ""}
 
 
 class TestPairedDeviceActions(unittest.TestCase):
