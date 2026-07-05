@@ -21,6 +21,7 @@ How a regression manifests:
 import unittest
 
 from universalchess.board import hardware_info as hw
+from universalchess.managers import bluez_patch_status
 
 
 # Real kernel-log fragments (trimmed) from the two boards in the investigation.
@@ -154,13 +155,18 @@ class CollectHardwareInfoTests(unittest.TestCase):
     """End-to-end assembly through an injected (fake) source -- no Pi needed."""
 
     @staticmethod
-    def _source(kernel_release, kernel_log, display_status=None):
+    def _source(kernel_release, kernel_log, display_status=None, bluez_patch=None):
+        # bluez_patch defaults to "no marker" (unknown) so the common cases do
+        # not have to specify it; the stack-specific tests pass a real marker.
         return hw.HardwareInfoSource(
             pi_model=lambda: "Raspberry Pi Zero W Rev 1.1",
             kernel_release=lambda: kernel_release,
             kernel_log=lambda: kernel_log,
             dpkg_status=lambda: _DPKG_STATUS,
             display_status=lambda: display_status,
+            bluez_patch=lambda: bluez_patch
+            if bluez_patch is not None
+            else bluez_patch_status.unknown_status(),
         )
 
     def test_affected_board_full_contract(self):
@@ -176,6 +182,9 @@ class CollectHardwareInfoTests(unittest.TestCase):
                 "wireless_chip": "BCM43430B0",
                 "wifi_firmware_version": "1:20250410-1+rpt1",
                 "bluez_version": "5.82-1.1+rpt1",
+                # No marker supplied -> "unknown" (never a fabricated "stock").
+                "bluez_stack": bluez_patch_status.STACK_UNKNOWN,
+                "bluez_stack_summary": info.bluez_stack_summary,
                 "hotspot_health": hw.HEALTH_AFFECTED,
                 "hotspot_summary": info.hotspot_summary,
                 "display_model": hw.DISPLAY_MODEL,
@@ -189,6 +198,24 @@ class CollectHardwareInfoTests(unittest.TestCase):
             },
         )
         self.assertEqual(info.hotspot_health, hw.HEALTH_AFFECTED)
+
+    def test_patched_stack_wired_through_assembly(self):
+        # The patched-BlueZ marker must reach the card's flat contract so the
+        # System Information row can render the warning. If collect_hardware_info
+        # drops the bluez_patch source, the row would fall back to "unknown" and
+        # the warning would silently disappear (the exact bug this move must not
+        # reintroduce elsewhere).
+        marker = bluez_patch_status.make_status(
+            active=bluez_patch_status.STACK_PATCHED,
+            base_version="5.82-1.1+rpt1",
+        )
+        info = hw.collect_hardware_info(
+            self._source("6.18.34+rpt-rpi-v7", _LOG_B0, bluez_patch=marker)
+        )
+        self.assertEqual(info.bluez_stack, bluez_patch_status.STACK_PATCHED)
+        self.assertIn("5.82-1.1+rpt1", info.bluez_stack_summary)
+        self.assertIn("bluez_stack", info.to_dict())
+        self.assertIn("bluez_stack_summary", info.to_dict())
 
     def test_healthy_board_reports_ok(self):
         # The A1/older board assembles an "ok" verdict end-to-end.
@@ -273,6 +300,57 @@ class CollectHardwareInfoTests(unittest.TestCase):
         info = hw.collect_hardware_info(self._source("6.12.47+rpt-rpi-v7", _LOG_A1))
         self.assertEqual(info.display_controller, hw.DISPLAY_CONTROLLER)
         self.assertEqual(info.display_driver, hw.DISPLAY_DRIVER)
+
+
+class SummarizeBluezStackTests(unittest.TestCase):
+    """Maps the install-time self-heal marker to the card's (stack, summary).
+
+    Why this exists: the patched-BlueZ warning was moved off the board's
+    Bluetooth menu and the web Connectivity card into the System Information
+    card, which reads it from this classifier. The warning must appear only when
+    the board actually runs a substituted binary, and must never falsely claim
+    "stock" when the marker is absent (that would silently drop the warning).
+    """
+
+    def test_patched_marker_is_a_warning_with_base_and_reason(self):
+        # The real device state: the self-heal installed a rebuilt bluetoothd.
+        # Regression: if the summary loses the "security updates" clause the
+        # operator would not learn the substituted binary forgoes distro
+        # patches; if it loses the base version the row cannot name the build.
+        marker = bluez_patch_status.make_status(
+            active=bluez_patch_status.STACK_PATCHED,
+            base_version="5.82-1.1+rpt1",
+            reason="kernel 6.18 ext-adv-data length validation rejects stock BlueZ 5.82",
+        )
+        stack, summary = hw.summarize_bluez_stack(marker)
+        self.assertEqual(stack, bluez_patch_status.STACK_PATCHED)
+        self.assertIn("5.82-1.1+rpt1", summary)
+        self.assertIn("security updates", summary)
+        self.assertIn("kernel 6.18", summary)  # the marker's reason is appended
+
+    def test_patched_without_base_version_still_warns(self):
+        # A patched marker missing base_version must still classify as patched
+        # (the warning is driven by "active", not by the optional base string).
+        stack, summary = hw.summarize_bluez_stack(
+            bluez_patch_status.make_status(active=bluez_patch_status.STACK_PATCHED)
+        )
+        self.assertEqual(stack, bluez_patch_status.STACK_PATCHED)
+        self.assertNotIn("based on BlueZ", summary)
+
+    def test_stock_marker_is_not_a_warning(self):
+        # A confirmed stock binary is the healthy case: classified stock, and the
+        # summary must not carry the patched-stack warning wording.
+        stack, summary = hw.summarize_bluez_stack(bluez_patch_status.stock_status())
+        self.assertEqual(stack, bluez_patch_status.STACK_STOCK)
+        self.assertNotIn("security updates", summary)
+
+    def test_missing_marker_is_unknown_not_stock(self):
+        # No marker (self-heal never ran on this image) must degrade to
+        # "unknown", NOT "stock": asserting stock would hide a real patch and is
+        # a fabricated value the marker never confirmed.
+        for absent in (None, {}, [], "corrupt"):
+            stack, _ = hw.summarize_bluez_stack(absent)
+            self.assertEqual(stack, bluez_patch_status.STACK_UNKNOWN)
 
 
 class ResolveActiveDisplayTests(unittest.TestCase):

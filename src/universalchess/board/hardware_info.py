@@ -36,13 +36,14 @@ import json
 import logging
 import os
 import re
-import subprocess
+import subprocess  # nosec B404 - only runs fixed, trusted argv lists (journalctl/dmesg), never a shell, no user input
 import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Optional
 
+from universalchess.managers import bluez_patch_status
 from universalchess.paths import TMP_DIR
 
 log = logging.getLogger(__name__)
@@ -125,6 +126,12 @@ class HardwareInfo:
     wireless_chip: Optional[str]
     wifi_firmware_version: Optional[str]
     bluez_version: Optional[str]
+    # Active bluetoothd stack (stock/patched/unknown) from the install-time
+    # self-heal marker, surfaced so the operator sees when the board runs a
+    # substituted binary that forgoes distro security updates (see
+    # summarize_bluez_stack / managers.bluez_patch_status).
+    bluez_stack: str
+    bluez_stack_summary: str
     hotspot_health: str
     hotspot_summary: str
     display_model: str
@@ -149,6 +156,8 @@ class HardwareInfo:
             "wireless_chip": self.wireless_chip,
             "wifi_firmware_version": self.wifi_firmware_version,
             "bluez_version": self.bluez_version,
+            "bluez_stack": self.bluez_stack,
+            "bluez_stack_summary": self.bluez_stack_summary,
             "hotspot_health": self.hotspot_health,
             "hotspot_summary": self.hotspot_summary,
             "display_model": self.display_model,
@@ -176,6 +185,7 @@ class HardwareInfoSource:
     kernel_log: Callable[[], str]
     dpkg_status: Callable[[], str]
     display_status: Callable[[], Optional[dict]]
+    bluez_patch: Callable[[], dict]
 
 
 # ---------------------------------------------------------------------------
@@ -294,6 +304,41 @@ def assess_wireless_health(
     )
 
 
+def summarize_bluez_stack(stack_status: Optional[dict]) -> tuple[str, str]:
+    """Classify the active ``bluetoothd`` as stock/patched/unknown for the card.
+
+    Returns ``(stack, summary)`` where ``stack`` is one of
+    ``bluez_patch_status.STACK_STOCK``/``STACK_PATCHED``/``STACK_UNKNOWN`` (the
+    same closed set the install-time marker uses) and ``summary`` is a one-line
+    human description for the System card.
+
+    Only ``patched`` is a warning: a locally rebuilt ``bluetoothd`` carries a
+    pre-release fix but stops receiving distribution security updates until it is
+    rebuilt or retired, so the summary states that plainly (and appends the
+    marker's ``reason`` when present). ``stock`` and ``unknown`` are
+    non-alarming. A missing/malformed status degrades to ``unknown`` rather than
+    asserting ``stock`` -- an absent marker means "not determined", not "stock".
+    """
+    status = stack_status if isinstance(stack_status, dict) else {}
+    active = status.get("active", bluez_patch_status.STACK_UNKNOWN)
+    if active == bluez_patch_status.STACK_PATCHED:
+        base = status.get("base_version")
+        lead = "Non-stock bluetoothd (pre-release fix)"
+        if base:
+            lead += f" based on BlueZ {base}"
+        summary = (
+            f"{lead}. Does not receive distribution security updates until it is "
+            "rebuilt or retired by an app update."
+        )
+        reason = status.get("reason")
+        if reason:
+            summary += f" {reason}"
+        return bluez_patch_status.STACK_PATCHED, summary
+    if active == bluez_patch_status.STACK_STOCK:
+        return bluez_patch_status.STACK_STOCK, "Stock distribution bluetoothd."
+    return bluez_patch_status.STACK_UNKNOWN, "BlueZ stack not determined."
+
+
 def format_resolution(width_px: int, height_px: int) -> str:
     """Pixel resolution as ``"128 x 296"``."""
     return f"{width_px} x {height_px}"
@@ -351,6 +396,7 @@ def collect_hardware_info(source: HardwareInfoSource) -> HardwareInfo:
 
     wireless_chip = parse_wireless_chip(kernel_log)
     health, summary = assess_wireless_health(wireless_chip, kernel_release)
+    bluez_stack, bluez_stack_summary = summarize_bluez_stack(source.bluez_patch())
     status_raw = source.display_status()
     display_status, display_detail = derive_display_status(status_raw)
     busy_timeout = bool(status_raw.get("busy_timeout")) if status_raw else False
@@ -365,6 +411,8 @@ def collect_hardware_info(source: HardwareInfoSource) -> HardwareInfo:
         wireless_chip=wireless_chip,
         wifi_firmware_version=parse_dpkg_version(dpkg_status, _WIFI_FIRMWARE_PACKAGE),
         bluez_version=parse_dpkg_version(dpkg_status, _BLUEZ_PACKAGE),
+        bluez_stack=bluez_stack,
+        bluez_stack_summary=bluez_stack_summary,
         hotspot_health=health,
         hotspot_summary=summary,
         display_model=display_model,
@@ -500,6 +548,7 @@ def default_source() -> HardwareInfoSource:
         kernel_log=_read_kernel_log,
         dpkg_status=_read_dpkg_status,
         display_status=read_display_status,
+        bluez_patch=bluez_patch_status.read_status,
     )
 
 
