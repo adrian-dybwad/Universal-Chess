@@ -72,12 +72,10 @@ interface BtHeal {
 
 interface BtStatus {
   enabled: boolean;
-  // The adapter's friendly name and MAC, read locally from BlueZ by the board's
-  // web process. Mirrors the identity the board's own Bluetooth readout shows.
-  // host_name is the advertised Alias; controller_name is the read-only BlueZ
-  // Name (system pretty hostname) that the Alias masks, shown when it differs.
+  // The adapter's advertised friendly name (BlueZ Alias) and MAC, read locally
+  // from BlueZ by the board's web process. Mirrors the identity the board's own
+  // Bluetooth readout shows. The device hostname lives on the System card.
   host_name?: string;
-  controller_name?: string;
   address?: string;
   paired: BtDevice[];
   advertising?: BtAdvertisingStatus;
@@ -555,7 +553,6 @@ function BluetoothCard() {
           // Identity (host name/MAC) is read locally by the poll, not carried in
           // the board's live push; keep the last polled values across pushes.
           host_name: prev?.host_name,
-          controller_name: prev?.controller_name,
           address: prev?.address,
           paired: prev?.paired ?? [],
           advertising: data.advertising,
@@ -850,9 +847,6 @@ function BluetoothCard() {
               <MenuIcon name="bluetooth" size={18} />
               <span className="conn-status-ssid">{status.host_name || 'Bluetooth'}</span>
             </div>
-            {status.controller_name && status.controller_name !== status.host_name && (
-              <div className="text-muted conn-status-detail">Adapter {status.controller_name}</div>
-            )}
             {status.address && <div className="text-muted conn-status-detail">{status.address}</div>}
           </div>
         )}

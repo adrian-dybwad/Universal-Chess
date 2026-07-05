@@ -113,11 +113,10 @@ def get_status(
         * ``host_name``/``address``: the adapter's friendly name (the advertised
           ``Alias``) and MAC (read locally from BlueZ), so the card shows the
           board's Bluetooth identity the same way the board's own readout does.
-          Empty when the radio is disabled or BlueZ is unreachable.
-        * ``controller_name``: the adapter's read-only BlueZ ``Name`` (derived
-          from the system pretty hostname). Surfaced so the card can show the
-          underlying controller identity that ``Alias`` masks; equals
-          ``host_name`` when no alias is set.
+          Empty when the radio is disabled or BlueZ is unreachable. The device
+          hostname is intentionally not included: it is shown on the web System
+          card, so repeating it here would only duplicate it under a name apps
+          do not use.
         * ``paired``: list of ``{address, name, connected}`` dicts from BlueZ.
         * ``advertising``: BLE advertisement registration status (the
           ``expected``/``registered``/``failed``/``ok``/``error``/``names``
@@ -141,7 +140,6 @@ def get_status(
     log = _resolve_log(log)
     paired: List[dict] = []
     host_name = ""
-    controller_name = ""
     address = ""
     if is_enabled(log):
         mgr = _get_manager(manager)
@@ -152,7 +150,6 @@ def get_status(
         try:
             info = mgr.get_adapter_info()
             host_name = info.get("name", "")
-            controller_name = info.get("controller_name", "")
             address = info.get("address", "")
         except Exception as e:  # noqa: BLE001 - dbus may be absent/unreachable
             log.warning(f"[BT] Failed to read adapter info: {e}")
@@ -162,7 +159,6 @@ def get_status(
     return {
         "enabled": is_enabled(log),
         "host_name": host_name,
-        "controller_name": controller_name,
         "address": address,
         "paired": paired,
         "advertising": advertising,

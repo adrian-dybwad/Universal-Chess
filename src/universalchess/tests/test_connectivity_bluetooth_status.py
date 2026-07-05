@@ -21,7 +21,7 @@ class _FakeManager:
 
     def __init__(self, paired, adapter=None):
         self._paired = paired
-        self._adapter = adapter or {"address": "", "name": "", "controller_name": ""}
+        self._adapter = adapter or {"address": "", "name": ""}
 
     def list_paired_devices(self):
         return self._paired
@@ -84,26 +84,26 @@ def test_get_status_merges_engine_snapshot_with_local_radio_and_paired(patched):
 
 
 def test_get_status_includes_adapter_host_name_and_mac(patched):
-    # The connectivity card shows the board's Bluetooth identity (host name +
-    # MAC) alongside the advertising state. get_status must surface the adapter
-    # info read locally from BlueZ; a regression that dropped it would leave the
-    # card without the identity the board's own readout shows.
+    # The connectivity card shows the board's Bluetooth identity (advertised
+    # alias + MAC) alongside the advertising state. get_status must surface the
+    # adapter info read locally from BlueZ; a regression that dropped it would
+    # leave the card without the identity the board's own readout shows.
     _set_cached_snapshot(patched, _connected_snapshot())
 
     status = bt.get_status(
         manager=_FakeManager(
             [{"address": "AA:BB", "name": "Phone", "connected": True}],
-            adapter={"address": "B8:27:EB:11:22:33", "name": "MILLENNIUM CHESS",
-                     "controller_name": "PCS-REVII-081500"},
+            adapter={"address": "B8:27:EB:11:22:33", "name": "MILLENNIUM CHESS"},
         )
     )
 
-    # host_name is the advertised alias; controller_name is the masked BlueZ Name
-    # (pretty hostname). Both must surface so the card can show the alias plus the
-    # underlying adapter identity a regression that dropped either would hide.
+    # host_name is the advertised alias remote devices see; both it and the MAC
+    # must surface so the card can show the Bluetooth identity. A regression that
+    # dropped either would hide it. The device hostname is deliberately absent
+    # here (it lives on the System card, not the Bluetooth card).
     assert status["host_name"] == "MILLENNIUM CHESS"
-    assert status["controller_name"] == "PCS-REVII-081500"
     assert status["address"] == "B8:27:EB:11:22:33"
+    assert "controller_name" not in status
 
 
 def test_get_status_adapter_identity_empty_when_disabled(monkeypatch):
@@ -114,12 +114,10 @@ def test_get_status_adapter_identity_empty_when_disabled(monkeypatch):
     _set_cached_snapshot(monkeypatch, _connected_snapshot())
 
     status = bt.get_status(manager=_FakeManager(
-        [], adapter={"address": "B8:27:EB:11:22:33", "name": "MILLENNIUM CHESS",
-                     "controller_name": "PCS-REVII-081500"}))
+        [], adapter={"address": "B8:27:EB:11:22:33", "name": "MILLENNIUM CHESS"}))
 
     assert status["enabled"] is False
     assert status["host_name"] == ""
-    assert status["controller_name"] == ""
     assert status["address"] == ""
 
 

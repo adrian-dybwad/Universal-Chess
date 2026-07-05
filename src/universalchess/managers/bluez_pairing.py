@@ -558,16 +558,17 @@ class BluezPairingManager:
         """Return this adapter's identity for the connectivity UI.
 
         Reads the ``Adapter1`` object from the cached BlueZ object tree and
-        returns three identity fields the web Bluetooth card shows:
+        returns the two identity fields the web Bluetooth card shows:
 
         * ``address`` -- the adapter MAC.
         * ``name`` -- the friendly name remote devices actually see: the
           ``Alias`` if set (the board sets it via ``system-alias``), else the
-          ``Name``.
-        * ``controller_name`` -- the read-only ``Name`` property (BlueZ derives
-          it from the system pretty hostname). This is the adapter's underlying
-          identity that ``Alias`` masks; it is surfaced separately so the card
-          can show it when it differs from the advertised ``Alias``.
+          read-only ``Name`` (which BlueZ derives from the system hostname).
+
+        The device hostname is not returned here; it is surfaced on the web
+        System card via the system-stats source, so exposing it a second time on
+        the Bluetooth card would only duplicate it under a masked name no client
+        uses.
 
         Returns empty strings for any field BlueZ does not expose (or when the
         adapter object is absent), letting the caller render "unknown" without
@@ -575,12 +576,10 @@ class BluezPairingManager:
         """
         props = self._managed_objects().get(self._adapter_path, {}).get(ADAPTER_IFACE)
         if not props:
-            return {"address": "", "name": "", "controller_name": ""}
-        controller_name = str(props.get("Name", "") or "")
+            return {"address": "", "name": ""}
         return {
             "address": str(props.get("Address", "") or ""),
-            "name": str(props.get("Alias") or controller_name),
-            "controller_name": controller_name,
+            "name": str(props.get("Alias") or props.get("Name", "") or ""),
         }
 
     def list_paired_devices(self) -> List[Dict[str, object]]:
