@@ -6367,6 +6367,16 @@ def main():
         log.error(f"[Main] Failed to start services: {e}", exc_info=True)
         # Continue anyway - services are not critical for basic operation
     
+    # Resolve the branded adapter alias (UC-<mac tail>) once from the adapter's
+    # own MAC and share it with BLE and RFCOMM so both set the same friendly
+    # name. Falls back to the device name when the MAC cannot be read, so alias
+    # branding never blocks Bluetooth bring-up. The alias is only the friendly
+    # name a phone shows; the per-advertisement LocalNames apps discover by
+    # (MILLENNIUM CHESS / DGT PEGASUS / Chessnut Air) are unaffected.
+    from universalchess.managers.adapter_alias import resolve_adapter_alias
+    adapter_alias = resolve_adapter_alias(log=log) or args.device_name
+    log.info(f"[Main] Adapter alias: {adapter_alias}")
+
     # Setup BLE if enabled
     global ble_manager
     if not args.no_ble:
@@ -6381,7 +6391,8 @@ def main():
                 on_disconnected=_on_ble_disconnected,
                 relay_mode=relay_mode,
                 on_display_passkey=_on_display_passkey,
-                on_confirm_pairing=_confirm_pairing_on_board
+                on_confirm_pairing=_confirm_pairing_on_board,
+                adapter_alias=adapter_alias,
             )
             log.info("[Main] BleManager created")
             
@@ -6458,8 +6469,11 @@ def main():
         # passkey display for Bluetooth keyboards). When BLE is disabled there is
         # no D-Bus agent, so bt-agent remains the fallback.
         global rfcomm_manager
+        # RfcommManager.device_name is used solely to set the adapter Alias
+        # (via system-alias), so it carries the branded alias. The SDP service
+        # name stays args.device_name on the server below.
         rfcomm_pairing_manager = RfcommManager(
-            device_name=args.device_name,
+            device_name=adapter_alias,
             use_external_agent=not args.no_ble,
         )
         rfcomm_manager = rfcomm_pairing_manager
@@ -6472,6 +6486,7 @@ def main():
             on_data_received=_on_rfcomm_data,
             port=args.port,
             rfcomm_manager=rfcomm_pairing_manager,
+            adapter_alias=adapter_alias,
         )
         rfcomm_server.start(startup_splash)
         log.info("[RFCOMM] Server started")

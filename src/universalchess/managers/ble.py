@@ -41,7 +41,7 @@ Usage:
 
 import os
 import signal
-import subprocess
+import subprocess  # nosec B404 - used only for fixed btmgmt management commands, never shell/untrusted input
 import threading
 import dbus
 import dbus.service
@@ -149,11 +149,16 @@ class BleManager:
                  on_relay_data: Callable[[bytes], None] = None,
                  on_display_passkey: Callable[[Optional[str]], None] = None,
                  on_confirm_pairing: Callable[[Optional[str]], bool] = None,
-                 status_state=None):
+                 status_state=None,
+                 adapter_alias: Optional[str] = None):
         """Initialize the BLE manager.
         
         Args:
             device_name: Bluetooth device name to advertise
+            adapter_alias: Friendly adapter Alias (BlueZ ``Adapter1.Alias``) to
+                set for the board. This is the branded name a phone shows for the
+                board and is independent of the per-advertisement ``LocalName``
+                values apps discover by. When None, falls back to ``device_name``.
             on_data_received: Callback(data: bytes, client_type: str) for received data
             on_connected: Callback(client_type: str) when client connects
             on_disconnected: Callback() when client disconnects
@@ -175,6 +180,8 @@ class BleManager:
                 such pairings are rejected so no device can pair unprompted.
         """
         self.device_name = device_name
+        # Friendly adapter Alias; None means "use device_name" (see __init__ doc).
+        self._adapter_alias = adapter_alias or device_name
         self._on_data_received = on_data_received
         self._on_connected = on_connected
         self._on_disconnected = on_disconnected
@@ -329,7 +336,7 @@ class BleManager:
         lets timeout cleanup kill both sudo and btmgmt so BLE startup cannot
         leave management commands stuck behind the service.
         """
-        process = subprocess.Popen(
+        process = subprocess.Popen(  # noqa: S603 # nosec B603 - cmd is a fixed btmgmt argv list, no shell, no untrusted input
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -343,7 +350,7 @@ class BleManager:
         except subprocess.TimeoutExpired:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
+            except ProcessLookupError:  # noqa: S110 # nosec B110 - process already gone; nothing to clean up
                 pass
             stdout, stderr = process.communicate()
             raise subprocess.TimeoutExpired(
@@ -444,8 +451,8 @@ class BleManager:
             )
             
             try:
-                adapter_props.Set("org.bluez.Adapter1", "Alias", dbus.String(self.device_name))
-                log.info(f"[BleManager] Adapter Alias set to '{self.device_name}'")
+                adapter_props.Set("org.bluez.Adapter1", "Alias", dbus.String(self._adapter_alias))
+                log.info(f"[BleManager] Adapter Alias set to '{self._adapter_alias}'")
             except dbus.exceptions.DBusException as e:
                 log.warning(f"[BleManager] Could not set Alias: {e}")
             

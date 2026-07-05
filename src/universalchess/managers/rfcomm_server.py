@@ -41,18 +41,26 @@ class RfcommServer:
         on_data_received: Callable[[bytes], None],
         port: Optional[int] = None,
         rfcomm_manager=None,
+        adapter_alias: Optional[str] = None,
     ):
         """Initialize the RFCOMM server.
         
         Args:
-            device_name: Bluetooth device name for service advertisement
+            device_name: Bluetooth SDP service name advertised for the SPP
+                service (what Classic apps match on by name); kept distinct from
+                the adapter's friendly Alias.
             on_connected: Callback when a client connects
             on_disconnected: Callback when a client disconnects
             on_data_received: Callback for received data bytes
             port: RFCOMM port number (None = auto-assign)
             rfcomm_manager: Optional RfcommManager for pairing support
+            adapter_alias: Friendly adapter Alias to set for discoverability
+                (the branded name a phone shows). When None, falls back to
+                ``device_name`` so behaviour is unchanged for callers that do
+                not brand the alias.
         """
         self._device_name = device_name
+        self._adapter_alias = adapter_alias or device_name
         self._on_connected = on_connected
         self._on_disconnected = on_disconnected
         self._on_data_received = on_data_received
@@ -127,7 +135,7 @@ class RfcommServer:
         log.info("[RfcommServer] Starting initialization...")
         
         # Kill any existing rfcomm processes
-        os.system('sudo service rfcomm stop 2>/dev/null')
+        os.system('sudo service rfcomm stop 2>/dev/null')  # noqa: S605, S607 # nosec B605 B607 - fixed literal command, no untrusted input
         time.sleep(0.5)
         
         if psutil:
@@ -135,7 +143,7 @@ class RfcommServer:
                 if str(p.info["name"]) == "rfcomm":
                     try:
                         p.kill()
-                    except Exception:
+                    except Exception:  # noqa: BLE001, S110 # nosec B110 - best-effort cleanup of a stale process; failure is non-fatal
                         pass
         
         time.sleep(0.3)
@@ -143,7 +151,10 @@ class RfcommServer:
         # Setup pairing manager if provided
         if self._rfcomm_manager is not None:
             self._rfcomm_manager.enable_bluetooth()
-            self._rfcomm_manager.set_device_name(self._device_name)
+            # Set the adapter Alias (friendly name), not the SDP service name:
+            # the alias is the branded name a phone shows, while the SDP service
+            # keeps device_name so Classic apps still match the SPP service.
+            self._rfcomm_manager.set_device_name(self._adapter_alias)
             self._rfcomm_manager.start_pairing_thread()
             time.sleep(0.5)
         
