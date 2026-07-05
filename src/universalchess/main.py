@@ -1017,28 +1017,10 @@ PLAYER2_DEFAULTS = {
     'think_time': 5,
 }
 
-GAME_SETTINGS_DEFAULTS = {
-    'time_control': 0,
-    'analysis_mode': True,
-    'analysis_engine': 'stockfish',
-    'ponder': False,
-    'show_board': True,
-    'show_clock': True,
-    'show_analysis': True,
-    'show_graph': True,
-    'chess_sprites': 'default',
-    'text_size': 'medium',
-    'coach_provider': 'none',
-    'coach_id': 'auto',
-    'coach_multipv': 1,
-    'coach_api_key_openai': '',
-    'coach_model_openai': '',
-    'coach_api_key_anthropic': '',
-    'coach_model_anthropic': '',
-    'coach_api_key_custom': '',
-    'coach_model_custom': '',
-    'coach_base_url_custom': '',
-}
+# Game settings defaults are the GameSettings dataclass field defaults (a single
+# source of truth); AllSettings.load derives the read set from the dataclass, so
+# no hand-maintained game-defaults dict is needed here. Player 2 still needs the
+# non-dataclass defaults below (black/engine) as per-key overrides.
 
 # Global settings instance (populated from centaur.ini on startup)
 _settings: Optional[AllSettings] = None
@@ -1066,7 +1048,6 @@ def _get_settings() -> AllSettings:
             game_section=SETTINGS_SECTION,
             player1_defaults=PLAYER1_DEFAULTS,
             player2_defaults=PLAYER2_DEFAULTS,
-            game_defaults=GAME_SETTINGS_DEFAULTS,
             log=log,
         )
     return _settings
@@ -1082,7 +1063,6 @@ def _load_game_settings():
         game_section=SETTINGS_SECTION,
         player1_defaults=PLAYER1_DEFAULTS,
         player2_defaults=PLAYER2_DEFAULTS,
-        game_defaults=GAME_SETTINGS_DEFAULTS,
         log=log,
     )
     _settings.log_summary()
@@ -3559,25 +3539,18 @@ def _get_installed_version() -> str:
     return ""
 
 
-# Defaults for game settings the Display menu reads that may be absent from a
-# freshly initialized centaur.ini (mirrors the old menu's .get(...) fallbacks).
-_DISPLAY_GAME_DEFAULTS = {"led_brightness": 5, "chess_sprites": "default"}
-
-
 def _build_game_context():
     """Build a BoardMenuContext whose ``game`` store wraps centaur.ini settings.
 
-    Reads resolve through ``_game_settings_dict`` (with defaults for keys that may
-    be absent on a fresh config) and writes through ``_save_game_setting``. Shared
-    by every board menu bound to game settings (Display, Time Control, ...).
+    Reads resolve through ``_game_settings_dict`` (GameSettings.to_dict, which
+    always includes every persisted field and its default) and writes through
+    ``_save_game_setting``. Shared by every board menu bound to game settings
+    (Display, Time Control, ...).
     """
     from universalchess.menus.board_context import BoardMenuContext
 
     def game_get(key):
-        settings = _game_settings_dict()
-        if key in settings:
-            return settings[key]
-        return _DISPLAY_GAME_DEFAULTS[key]
+        return _game_settings_dict()[key]
 
     def game_set(key, value):
         _save_game_setting(key, value)

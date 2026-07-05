@@ -14,6 +14,8 @@ How the regression manifests
 - load() ignores a stored value and falls back to the default.
 """
 
+import pytest
+
 import universalchess.players.settings as settings_mod
 from universalchess.players.settings import GameSettings
 
@@ -203,3 +205,59 @@ def test_load_reads_stored_coach_multipv(monkeypatch):
     settings = GameSettings.load("game", {})
     assert settings.coach_multipv == 4
     assert settings.to_dict()["coach_multipv"] == 4
+
+
+def _faithful_load_section(stored: dict):
+    """Build a load_section fake that honors its real contract.
+
+    The production ``load_section`` reads ONLY keys that appear in the ``defaults``
+    it is given (it uses them for both the key set and per-key type inference). The
+    other fakes in this file inject a key regardless of ``defaults``, so they can
+    pass even when a field is missing from the read set -- masking the exact bug
+    below. This fake instead returns a value ONLY for keys present in ``defaults``,
+    coercing the stored string by the default's type the way load_bool/load_int do.
+    """
+
+    def fake(section, defaults):
+        result = {}
+        for key, default in defaults.items():
+            if key not in stored:
+                result[key] = default
+                continue
+            raw = stored[key]
+            if isinstance(default, bool):
+                result[key] = str(raw).strip().lower() == "true"
+            elif isinstance(default, int):
+                result[key] = int(raw)
+            else:
+                result[key] = str(raw)
+        return result
+
+    return fake
+
+
+@pytest.mark.parametrize(
+    "key,stored,expected",
+    [
+        # Regression guards. GAME_SETTINGS_DEFAULTS omitted these three keys, and
+        # because load_section only reads keys present in its defaults, a stored
+        # value was never read back -- the board stayed on the hardcoded default no
+        # matter what the web saved (e.g. LED brightness set to 10 on the web still
+        # showed 5 on the board). Each row fails before the fix because load() did
+        # not seed the read default for that key from the dataclass.
+        ("led_brightness", "10", 10),
+        ("pegasus_override_brightness", "False", False),
+        ("notation", "uci", "uci"),
+    ],
+)
+def test_load_reads_stored_value_when_caller_omits_default(monkeypatch, key, stored, expected):
+    # Passes an empty caller-defaults dict, exactly like the production call path
+    # (GAME_SETTINGS_DEFAULTS did not list these keys). With a faithful load_section
+    # that only reads keys it has a default for, the stored value reaches the
+    # instance only if load() seeds every persisted field's read default from the
+    # dataclass. How it manifests otherwise: the assertion sees the default (5 /
+    # True / "figurine") instead of the stored value.
+    monkeypatch.setattr(settings_mod, "load_section", _faithful_load_section({key: stored}))
+    settings = GameSettings.load("game", {})
+    assert getattr(settings, key) == expected
+    assert settings.to_dict()[key] == expected

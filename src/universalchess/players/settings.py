@@ -3,7 +3,7 @@
 Encapsulates settings loading, saving, and access in a clean interface.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import MISSING, dataclass, field, fields
 from typing import Any, Dict, Optional
 
 from universalchess.managers.game.coach_settings import (
@@ -23,6 +23,25 @@ from universalchess.utils.settings_persistence import load_section, save_setting
 # resolves from that slot (see GameSettings.to_dict). Kept as a module constant
 # so both paths agree on which keys are "effective, per-provider" aliases.
 _COACH_EFFECTIVE_BASES = (API_KEY_BASE, MODEL_BASE, BASE_URL_BASE)
+
+
+def _field_defaults(cls) -> Dict[str, Any]:
+    """Default value for every persisted field of a settings dataclass.
+
+    Single source of truth for a section's read set. ``load_section`` reads ONLY
+    the keys present in the defaults it is given, so a field absent from that set
+    is silently never read back -- it stays at its default no matter what is
+    stored (this is exactly how ``led_brightness``/``notation`` stopped round-
+    tripping once they were left out of the hand-maintained defaults dict).
+    Deriving the read set from the dataclass makes that class of drift impossible:
+    every declared field is read. Excludes ``section`` (required, no default) and
+    private fields like ``_log``.
+    """
+    return {
+        f.name: f.default
+        for f in fields(cls)
+        if not f.name.startswith("_") and f.name != "section" and f.default is not MISSING
+    }
 
 
 @dataclass
@@ -98,29 +117,38 @@ class PlayerSettings:
     def load(
         cls,
         section: str,
-        defaults: Dict[str, str],
+        defaults: Optional[Dict[str, Any]] = None,
         log=None,
     ) -> "PlayerSettings":
         """Load player settings from config file.
 
+        The read set (and per-key fallback) is derived from the dataclass fields
+        so every declared field is read from the section. Any ``defaults`` the
+        caller passes override those per-key fallbacks (e.g. Player 2 defaults to
+        black/engine), but can no longer determine *which* fields are read -- that
+        is fixed by the dataclass, preventing a field from silently not loading.
+
         Args:
             section: Section name in config file
-            defaults: Default values for settings
+            defaults: Optional per-key default overrides (e.g. color/type).
             log: Optional logger for debug output
 
         Returns:
             PlayerSettings instance with loaded values
         """
-        data = load_section(section, defaults)
+        read_defaults = _field_defaults(cls)
+        if defaults:
+            read_defaults.update(defaults)
+        data = load_section(section, read_defaults)
         return cls(
             section=section,
-            color=data.get("color", defaults.get("color", "white")),
-            type=data.get("type", defaults.get("type", "human")),
-            name=data.get("name", defaults.get("name", "")),
-            engine=data.get("engine", defaults.get("engine", "stockfish")),
-            elo=data.get("elo", defaults.get("elo", "Default")),
-            hand_brain_mode=data.get("hand_brain_mode", defaults.get("hand_brain_mode", "normal")),
-            think_time=data.get("think_time", defaults.get("think_time", 5)),
+            color=data["color"],
+            type=data["type"],
+            name=data["name"],
+            engine=data["engine"],
+            elo=data["elo"],
+            hand_brain_mode=data["hand_brain_mode"],
+            think_time=data["think_time"],
             _log=log,
         )
 
@@ -322,30 +350,34 @@ class GameSettings:
     def load(
         cls,
         section: str,
-        defaults: Dict[str, Any],
+        defaults: Optional[Dict[str, Any]] = None,
         log=None,
     ) -> "GameSettings":
         """Load game settings from config file.
 
+        The read set (and per-key fallback) is derived from the dataclass fields
+        so every persisted field is read from the section -- ``load_section`` only
+        reads keys present in its defaults, so a field left out of the read set was
+        silently never loaded (led_brightness/notation/pegasus_override_brightness
+        each showed the hardcoded default no matter what was stored). Any
+        ``defaults`` the caller passes override the per-key fallbacks but cannot
+        remove a field from the read set.
+
         Args:
             section: Section name in config file
-            defaults: Default values for settings
+            defaults: Optional per-key default overrides.
             log: Optional logger for debug output
 
         Returns:
             GameSettings instance with loaded values
         """
-        # Ensure the per-provider coach keys (and the legacy flat keys used only
-        # for one-time migration) are read from the section regardless of what the
-        # caller listed in ``defaults`` -- load_section only reads keys it has a
-        # default for. This keeps the per-provider layout encapsulated here.
-        load_defaults = dict(defaults)
-        load_defaults.setdefault("coach_provider", "none")
-        load_defaults.setdefault("coach_id", "auto")
-        load_defaults.setdefault("coach_language", "English")
-        load_defaults.setdefault("coach_multipv", 1)
-        load_defaults.setdefault("ponder", False)
-        load_defaults.setdefault("text_size", "medium")
+        load_defaults = _field_defaults(cls)
+        if defaults:
+            load_defaults.update(defaults)
+        # The legacy flat coach keys (one-time migration only) and any user-added
+        # agent's namespaced slots are not declared dataclass fields, so add them
+        # to the read set explicitly; the built-in namespaced keys already come
+        # from the dataclass above.
         for key in default_namespaced_settings():
             load_defaults.setdefault(key, "")
         for legacy in _COACH_EFFECTIVE_BASES:
@@ -358,23 +390,20 @@ class GameSettings:
         coach = migrate_legacy(data)
         game = cls(
             section=section,
-            time_control=data.get("time_control", defaults.get("time_control", 0)),
-            analysis_mode=data.get("analysis_mode", defaults.get("analysis_mode", True)),
-            analysis_engine=data.get("analysis_engine", defaults.get("analysis_engine", "stockfish")),
-            ponder=data.get("ponder", defaults.get("ponder", False)),
-            show_board=data.get("show_board", defaults.get("show_board", True)),
-            show_clock=data.get("show_clock", defaults.get("show_clock", True)),
-            show_analysis=data.get("show_analysis", defaults.get("show_analysis", True)),
-            show_graph=data.get("show_graph", defaults.get("show_graph", True)),
-            led_brightness=data.get("led_brightness", defaults.get("led_brightness", 5)),
-            pegasus_override_brightness=data.get(
-                "pegasus_override_brightness",
-                defaults.get("pegasus_override_brightness", True),
-            ),
-            chess_sprites=data.get("chess_sprites", defaults.get("chess_sprites", "default")),
-            notation=data.get("notation", defaults.get("notation", "figurine")),
-            text_size=data.get("text_size", defaults.get("text_size", "medium")),
-            coach_provider=coach.get("coach_provider", defaults.get("coach_provider", "none")),
+            time_control=data["time_control"],
+            analysis_mode=data["analysis_mode"],
+            analysis_engine=data["analysis_engine"],
+            ponder=data["ponder"],
+            show_board=data["show_board"],
+            show_clock=data["show_clock"],
+            show_analysis=data["show_analysis"],
+            show_graph=data["show_graph"],
+            led_brightness=data["led_brightness"],
+            pegasus_override_brightness=data["pegasus_override_brightness"],
+            chess_sprites=data["chess_sprites"],
+            notation=data["notation"],
+            text_size=data["text_size"],
+            coach_provider=coach.get("coach_provider", "none"),
             coach_api_key_openai=coach.get("coach_api_key_openai", ""),
             coach_api_key_anthropic=coach.get("coach_api_key_anthropic", ""),
             coach_api_key_custom=coach.get("coach_api_key_custom", ""),
@@ -382,11 +411,9 @@ class GameSettings:
             coach_model_anthropic=coach.get("coach_model_anthropic", ""),
             coach_model_custom=coach.get("coach_model_custom", ""),
             coach_base_url_custom=coach.get("coach_base_url_custom", ""),
-            coach_id=data.get("coach_id", defaults.get("coach_id", "auto")),
-            coach_language=data.get(
-                "coach_language", defaults.get("coach_language", "English")
-            ),
-            coach_multipv=data.get("coach_multipv", defaults.get("coach_multipv", 1)),
+            coach_id=data["coach_id"],
+            coach_language=data["coach_language"],
+            coach_multipv=data["coach_multipv"],
             _log=log,
         )
         # Overlay any namespaced slots that are not declared dataclass fields --
@@ -431,20 +458,24 @@ class AllSettings:
         player1_section: str,
         player2_section: str,
         game_section: str,
-        player1_defaults: Dict[str, str],
-        player2_defaults: Dict[str, str],
-        game_defaults: Dict[str, Any],
+        player1_defaults: Optional[Dict[str, Any]] = None,
+        player2_defaults: Optional[Dict[str, Any]] = None,
+        game_defaults: Optional[Dict[str, Any]] = None,
         log=None,
     ) -> "AllSettings":
         """Load all settings from config file.
+
+        The per-section read sets derive from the dataclass fields; the *_defaults
+        arguments are optional per-key overrides (e.g. Player 2 defaults to
+        black/engine), not the source of which fields are read.
 
         Args:
             player1_section: Section name for player 1
             player2_section: Section name for player 2
             game_section: Section name for game settings
-            player1_defaults: Default values for player 1
-            player2_defaults: Default values for player 2
-            game_defaults: Default values for game settings
+            player1_defaults: Optional per-key default overrides for player 1
+            player2_defaults: Optional per-key default overrides for player 2
+            game_defaults: Optional per-key default overrides for game settings
             log: Optional logger for debug output
 
         Returns:
@@ -483,9 +514,9 @@ class AllSettings:
         player1_section: str,
         player2_section: str,
         game_section: str,
-        player1_defaults: Dict[str, str],
-        player2_defaults: Dict[str, str],
-        game_defaults: Dict[str, Any],
+        player1_defaults: Optional[Dict[str, Any]] = None,
+        player2_defaults: Optional[Dict[str, Any]] = None,
+        game_defaults: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Reset all settings to defaults.
 
@@ -495,9 +526,9 @@ class AllSettings:
             player1_section: Section name for player 1
             player2_section: Section name for player 2
             game_section: Section name for game settings
-            player1_defaults: Default values for player 1
-            player2_defaults: Default values for player 2
-            game_defaults: Default values for game settings
+            player1_defaults: Optional per-key default overrides for player 1
+            player2_defaults: Optional per-key default overrides for player 2
+            game_defaults: Optional per-key default overrides for game settings
         """
         clear_section(player1_section)
         clear_section(player2_section)
