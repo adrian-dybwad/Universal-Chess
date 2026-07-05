@@ -17,6 +17,7 @@ Responsibilities:
 """
 
 import threading
+import time
 import pathlib
 import chess
 import chess.engine
@@ -105,6 +106,9 @@ class DisplayManager:
     # which when a tip is shown on top of a review.
     _REVIEW_HEADER = "Coach"
     _TIP_HEADER = "Coach's Tip"
+    # How long the "Draw declined" splash stays up before the board is rebuilt
+    # and play resumes.
+    _DRAW_DECLINED_MESSAGE_SECONDS = 1.5
 
     
     def __init__(self, flip_board: bool = False, show_analysis: bool = True,
@@ -195,6 +199,12 @@ class DisplayManager:
         self._menu_active = False
         self._current_menu = None
         self._menu_result_callback = None
+        # Optional resolver consulted when the human selects "Draw" in the back
+        # menu. Injected by the app layer (it needs the players/board); returns
+        # True if the opponent accepts (end the game) or False if it declines
+        # (resume play). When unset, a draw is accepted, preserving the
+        # human-vs-human "agree to draw" behaviour.
+        self._draw_offer_resolver = None
         # True while this manager paused a running clock to show a game-overlay
         # menu (resign/draw). Gates the resume-on-cancel so a clock that was
         # already paused/stopped (or never started) is not spuriously started.
@@ -1120,6 +1130,12 @@ class DisplayManager:
         which restored it only for "cancel"), resign/draw would set the result
         while no GameOverWidget existed, so the end screen never appeared.
 
+        A "draw" selection is an offer: when a draw-offer resolver is set (an
+        engine opponent), it is consulted here. A declined offer is downgraded to
+        "cancel" so the game resumes (clock restarted, no GameOverWidget) after a
+        brief "Draw declined" splash; an accepted offer stays "draw" and ends the
+        game.
+
         Args:
             menu: The active menu widget that produced the selection.
             shutdown_result: Result to report when the SHUTDOWN key was pressed.
@@ -1138,6 +1154,24 @@ class DisplayManager:
         elif result == "SHUTDOWN":
             result = shutdown_result
 
+        # A draw is an OFFER, not an automatic agreement: let the opponent decide.
+        # An accepted offer stays "draw" (ends the game like the previous
+        # behaviour); a declined offer is turned into "cancel" so the shared
+        # resume path below restarts the clock and no GameOverWidget fires.
+        if result == "draw" and self._draw_offer_resolver is not None:
+            accepted = True
+            try:
+                accepted = bool(self._draw_offer_resolver())
+            except Exception as e:
+                # A resolver failure must not strand the game mid-menu; fall back
+                # to accepting (the pre-resolver behaviour).
+                log.warning(f"[DisplayManager] Draw offer resolver failed, accepting: {e}")
+            if not accepted:
+                log.info("[DisplayManager] Draw offer declined by opponent - resuming game")
+                self.show_splash("Draw declined")
+                time.sleep(self._DRAW_DECLINED_MESSAGE_SECONDS)
+                result = "cancel"
+
         # Rebuild the board (and its GameOverWidget) before the callback for
         # every on-board outcome; only a shutdown skips it. See docstring.
         if result != "exit":
@@ -1154,6 +1188,16 @@ class DisplayManager:
         if self._menu_result_callback:
             self._menu_result_callback(result)
 
+    def set_draw_offer_resolver(self, resolver) -> None:
+        """Set the resolver consulted when the human offers a draw.
+        
+        Args:
+            resolver: Callable() -> bool returning True if the opponent accepts
+                the draw (end the game) or False if it declines (resume play).
+                Pass None to always accept (human-vs-human agreement).
+        """
+        self._draw_offer_resolver = resolver
+    
     def show_back_menu(self, on_result: callable, is_two_player: bool = False):
         """Show the back button menu (resign/draw/cancel).
         

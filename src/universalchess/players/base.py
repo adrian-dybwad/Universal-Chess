@@ -541,6 +541,25 @@ class Player(ABC):
         """
         pass
     
+    def consider_draw_offer(self, board: chess.Board) -> bool:
+        """Decide whether this player accepts a draw offer from the opponent.
+        
+        Called synchronously when the human at the physical board offers a draw,
+        so the opponent can accept or refuse based on the position. Returning
+        True records the draw; returning False continues the game.
+        
+        The default accepts, which matches a human opponent agreeing to a draw
+        at the board (2-player mode). Engine players override this to evaluate
+        the position and decline when they are clearly winning.
+        
+        Args:
+            board: Current position at the time of the offer.
+        
+        Returns:
+            True to accept the draw, False to decline and keep playing.
+        """
+        return True
+    
     def on_correction_mode_exit(self) -> None:
         """Notification that correction mode has exited.
         

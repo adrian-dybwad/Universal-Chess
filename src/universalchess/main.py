@@ -2167,6 +2167,15 @@ def _start_game_mode(
     # Wires move_callback, error_callback, and pending_move_callback to GameManager
     protocol_manager.set_player_manager(player_manager)
     
+    # A draw offered from the back menu is an offer, not an automatic agreement:
+    # an engine opponent evaluates the position and may decline. Human-vs-human
+    # games have no engine, so the offer is accepted (mutual agreement).
+    def _resolve_draw_offer() -> bool:
+        from universalchess.managers.game.draw_offer import opponent_accepts_draw
+        from universalchess.state import get_chess_game
+        return opponent_accepts_draw(player_manager, get_chess_game().board)
+    display_manager.set_draw_offer_resolver(_resolve_draw_offer)
+    
     log.info(f"[App] Game components created: White={white_player.name}, Black={black_player.name}, hand_brain={is_hand_brain}, save_to_db={save_to_database}")
     
     # Create ControllerManager for routing events to local/remote controllers

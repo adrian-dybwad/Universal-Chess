@@ -66,6 +66,14 @@ class EnginePlayer(Player):
     - stop() waits for threads to complete
     """
     
+    # Draw-offer decision (see consider_draw_offer). The engine declines while
+    # ahead by more than this margin (from its own perspective), so it will not
+    # sign off on a draw in a position it is winning.
+    DRAW_OFFER_ACCEPT_MAX_CENTIPAWNS = 50  # +0.5 pawns
+    # Fixed analysis budget for judging a draw offer, independent of the engine's
+    # configured move time so the decision is quick and consistent.
+    DRAW_OFFER_ANALYSIS_SECONDS = 1.0
+    
     def __init__(self, config: Optional[EnginePlayerConfig] = None):
         """Initialize the engine player.
         
@@ -430,6 +438,76 @@ class EnginePlayer(Player):
             log.info(f"[EnginePlayer] Takeback - clearing pending move {cleared.uci()}")
         else:
             log.debug("[EnginePlayer] Takeback - no pending move to clear")
+    
+    def consider_draw_offer(self, board: chess.Board) -> bool:
+        """Decide whether to accept the human's draw offer for this position.
+        
+        Runs a short fixed-budget analysis and reads the evaluation from this
+        engine's own colour. The engine accepts only when it is not clearly
+        better: it declines while ahead by more than
+        ``DRAW_OFFER_ACCEPT_MAX_CENTIPAWNS`` and while it has a forced mate, and
+        accepts equal, worse, or being-mated positions.
+        
+        Falls back to accepting when no evaluation can be obtained (engine not
+        ready, analysis failure, or a scoreless result). Accepting on failure
+        preserves the pre-existing behaviour (offers were always accepted) rather
+        than fabricating a decline the position does not justify.
+        
+        Args:
+            board: Current position at the time of the offer.
+        
+        Returns:
+            True to accept the draw, False to decline and keep playing.
+        """
+        handle = self._engine_handle
+        if handle is None:
+            log.warning("[EnginePlayer] Draw offer received but engine not ready - accepting")
+            return True
+        if self._color is None:
+            log.warning("[EnginePlayer] Draw offer received but engine has no colour - accepting")
+            return True
+        
+        try:
+            info = handle.analyse(
+                board,
+                chess.engine.Limit(time=self.DRAW_OFFER_ANALYSIS_SECONDS),
+            )
+        except Exception as e:
+            log.warning(f"[EnginePlayer] Draw offer analysis failed, accepting: {e}")
+            return True
+        
+        score = info.get("score")
+        if score is None:
+            log.warning("[EnginePlayer] Draw offer analysis returned no score - accepting")
+            return True
+        
+        # Evaluate from the engine's own perspective: a winning engine should
+        # refuse, a losing/equal engine should accept.
+        pov_score = score.pov(self._color)
+        
+        if pov_score.is_mate():
+            mate_in = pov_score.mate()
+            # mate_in > 0: engine delivers mate -> decline; < 0: engine gets
+            # mated -> accept. A None mate value is treated as accept (unknown).
+            accept = mate_in is None or mate_in < 0
+            log.info(
+                f"[EnginePlayer] Draw offer with mate {mate_in} (engine POV) -> "
+                f"{'accept' if accept else 'decline'}"
+            )
+            return accept
+        
+        centipawns = pov_score.score()
+        if centipawns is None:
+            log.warning("[EnginePlayer] Draw offer score not numeric - accepting")
+            return True
+        
+        accept = centipawns <= self.DRAW_OFFER_ACCEPT_MAX_CENTIPAWNS
+        log.info(
+            f"[EnginePlayer] Draw offer eval {centipawns}cp (engine POV), "
+            f"threshold {self.DRAW_OFFER_ACCEPT_MAX_CENTIPAWNS}cp -> "
+            f"{'accept' if accept else 'decline'}"
+        )
+        return accept
     
     def get_info(self) -> dict:
         """Get information about this engine for display."""
