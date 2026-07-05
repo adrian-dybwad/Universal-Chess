@@ -2120,14 +2120,17 @@
     ],
     "text_size": [
       {
+        "font_size": 13,
         "label": "Small",
         "value": "small"
       },
       {
+        "font_size": 16,
         "label": "Medium",
         "value": "medium"
       },
       {
+        "font_size": 20,
         "label": "Large",
         "value": "large"
       }

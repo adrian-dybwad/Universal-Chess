@@ -60,9 +60,9 @@
       { "value": "uci", "label": "Coordinate (g1f3)" }
     ],
     "text_size": [
-      { "value": "small", "label": "Small" },
-      { "value": "medium", "label": "Medium" },
-      { "value": "large", "label": "Large" }
+      { "value": "small", "label": "Small", "font_size": 13 },
+      { "value": "medium", "label": "Medium", "font_size": 16 },
+      { "value": "large", "label": "Large", "font_size": 20 }
     ],
     "coach_language": [
       { "value": "English", "label": "English" },

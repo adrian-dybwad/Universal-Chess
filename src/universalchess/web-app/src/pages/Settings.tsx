@@ -216,6 +216,15 @@ const COACH_MULTIPV_MIN = 1;
 const COACH_MULTIPV_MAX = 5;
 const COACH_MULTIPV_DEFAULT = 1;
 
+// Relative font multipliers for the e-paper Text Size setting, mirrored from the
+// board's single source of truth (src/universalchess/epaper/text_scale.py _SCALE)
+// so each option's preview shows the same proportion the display actually uses.
+// Keep these in sync with that file; medium is the identity factor.
+const TEXT_SIZE_SCALE: Record<string, number> = { small: 0.8, medium: 1.0, large: 1.25 };
+// Base (medium) pixel size for the preview sample; small/large derive from it via
+// TEXT_SIZE_SCALE so the three previews sit in the board's relative proportions.
+const TEXT_SIZE_PREVIEW_BASE_PX = 16;
+
 /** Parse a persisted coach_multipv string into a clamped integer value. */
 function parseCoachMultipv(value: string | undefined): number {
   const parsed = parseInt(value ?? '', 10);
@@ -1926,12 +1935,47 @@ export function Settings() {
                 (allOf) -- all gating driven by the catalog, not hand-coded. */}
             <Card className="mb-6">
               <CardHeader title="E-Paper Display" />
-              <CatalogField
-                node={fieldById(catalog, 'field.display.text_size')!}
-                value={formSettings.game.text_size}
-                options={textSizeOptions}
-                onChange={(v) => updateFormSettings('game', { text_size: String(v) })}
-              />
+              {/* Text Size is a visual pick: each option renders a sample line at
+                  the same relative scale the e-paper uses (TEXT_SIZE_SCALE) so the
+                  choice can be made by eye rather than guessing from a label. */}
+              <FormRow
+                label={fieldLabel('field.display.text_size')}
+                help={fieldHelp('field.display.text_size')}
+              >
+                <div
+                  className="text-size-options"
+                  role="radiogroup"
+                  aria-label={fieldLabel('field.display.text_size')}
+                >
+                  {textSizeOptions.map((opt) => {
+                    const selected = formSettings.game.text_size === opt.value;
+                    const scale = TEXT_SIZE_SCALE[opt.value] ?? 1;
+                    return (
+                      <label
+                        key={opt.value}
+                        className={`text-size-option${selected ? ' text-size-option--selected' : ''}`}
+                      >
+                        <input
+                          type="radio"
+                          name="text_size"
+                          value={opt.value}
+                          checked={selected}
+                          onChange={() => updateFormSettings('game', { text_size: opt.value })}
+                        />
+                        <span className="text-size-option-body">
+                          <span className="text-size-option-label">{opt.label}</span>
+                          <span
+                            className="text-size-option-sample"
+                            style={{ fontSize: `${Math.round(TEXT_SIZE_PREVIEW_BASE_PX * scale)}px` }}
+                          >
+                            12. Nf3 Nc6 - knight eyes d5
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </FormRow>
               {fieldsForSection(catalog, 'display')
                 .filter((node) => node.type === 'toggle')
                 // LED settings live in the LEDs card below, not among the e-paper

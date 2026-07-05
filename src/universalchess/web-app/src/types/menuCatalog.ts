@@ -11,6 +11,10 @@ export interface MenuOption {
   label: string;
   /** Optional per-option icon (used by the board's option lists). */
   icon?: string;
+  /** Optional per-option render font size in px (board option lists); lets an
+   *  option preview its own effect, e.g. the Text Size choices render at their
+   *  own size. */
+  font_size?: number;
 }
 
 /** A data-binding reference: which store/key a node reads and writes. */

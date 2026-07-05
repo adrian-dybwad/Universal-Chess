@@ -175,19 +175,25 @@ def _run_select(outcome, ctx, menu_manager) -> Optional[MenuSelection]:
     unselected_icon = outcome.unselected_icon or "radio_empty"
 
     def _choices() -> List[tuple]:
-        """Return ``(value, label, icon)`` choices from provider or option set.
+        """Return ``(value, label, icon, font_size)`` choices from provider/option set.
 
-        Provider rows are keyed by the value to persist (``row.key``) and always
-        carry an icon; static option-set entries may omit an icon (radio-marked).
+        Provider rows are keyed by the value to persist (``row.key``), always carry
+        an icon, and have no per-row font size (``None``). Static option-set entries
+        may omit an icon (radio-marked) and may carry an optional ``font_size`` (px)
+        so a row can preview its own effect (the Text Size options render Small/
+        Medium/Large at small/medium/large text).
         """
         if outcome.provider:
-            return [(row.key, row.label, row.icon) for row in ctx.provide(outcome.provider)]
-        return [(opt["value"], opt["label"], opt.get("icon")) for opt in ctx.options(outcome.option_set)]
+            return [(row.key, row.label, row.icon, None) for row in ctx.provide(outcome.provider)]
+        return [
+            (opt["value"], opt["label"], opt.get("icon"), opt.get("font_size"))
+            for opt in ctx.options(outcome.option_set)
+        ]
 
     def build_entries() -> List[IconMenuEntry]:
         current = str(ctx.get(outcome.store, outcome.key))
         entries: List[IconMenuEntry] = []
-        for value, option_label, option_icon in _choices():
+        for value, option_label, option_icon, option_font_size in _choices():
             selected = str(value) == current
             if option_icon:
                 icon_name = option_icon
@@ -195,12 +201,16 @@ def _run_select(outcome, ctx, menu_manager) -> Optional[MenuSelection]:
             else:
                 icon_name = selected_icon if selected else unselected_icon
                 label = option_label
+            # Pass font_size only when the option declares one, so options without
+            # it keep IconMenuEntry's default rather than being pinned to a guess.
+            extra = {"font_size": option_font_size} if option_font_size is not None else {}
             entries.append(
                 IconMenuEntry(
                     key=str(value),
                     label=label,
                     icon_name=icon_name,
                     enabled=True,
+                    **extra,
                 )
             )
         return entries

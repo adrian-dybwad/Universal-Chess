@@ -274,10 +274,18 @@ def test_selecting_text_size_opens_option_list_and_persists_choice():
 
     assert state["text_size"] == "large"
     # The option list must be shown between opening the row and picking a value.
-    assert any(
-        [e.key for e in screen] == ["small", "medium", "large"]
-        for screen in mm.shown
-    )
+    option_screens = [
+        screen for screen in mm.shown if [e.key for e in screen] == ["small", "medium", "large"]
+    ]
+    assert option_screens
+
+    # Each option row previews its own effect: Small/Medium/Large render at their
+    # declared font sizes (from the text_size optionSet), so the size is visible on
+    # the button itself. How the regression manifests: the per-option font_size is
+    # dropped (all rows share the default 16px), so the list no longer shows the
+    # sizes and this mapping check fails on whichever row lost its size.
+    sizes_by_key = {e.key: e.font_size for e in option_screens[0]}
+    assert sizes_by_key == {"small": 13, "medium": 16, "large": 20}
 
 
 def test_selecting_led_advances_brightness_within_range():
