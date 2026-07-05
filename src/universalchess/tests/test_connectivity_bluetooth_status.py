@@ -16,13 +16,18 @@ from universalchess.managers.bluetooth_status_state import BluetoothStatusState
 
 
 class _FakeManager:
-    """Minimal BluezPairingManager stand-in returning a fixed paired list."""
+    """Minimal BluezPairingManager stand-in returning a fixed paired list and
+    adapter identity."""
 
-    def __init__(self, paired):
+    def __init__(self, paired, adapter=None):
         self._paired = paired
+        self._adapter = adapter or {"address": "", "name": ""}
 
     def list_paired_devices(self):
         return self._paired
+
+    def get_adapter_info(self):
+        return self._adapter
 
 
 def _connected_snapshot():
@@ -76,6 +81,38 @@ def test_get_status_merges_engine_snapshot_with_local_radio_and_paired(patched):
     assert status["link"]["emulator"] == "pegasus"
     assert status["link"]["peer"] == {"address": "AA:BB", "name": "Phone"}
     assert status["devices"] == [{"address": "AA:BB", "name": "Phone"}]
+
+
+def test_get_status_includes_adapter_host_name_and_mac(patched):
+    # The connectivity card shows the board's Bluetooth identity (host name +
+    # MAC) alongside the advertising state. get_status must surface the adapter
+    # info read locally from BlueZ; a regression that dropped it would leave the
+    # card without the identity the board's own readout shows.
+    _set_cached_snapshot(patched, _connected_snapshot())
+
+    status = bt.get_status(
+        manager=_FakeManager(
+            [{"address": "AA:BB", "name": "Phone", "connected": True}],
+            adapter={"address": "B8:27:EB:11:22:33", "name": "dgt-32"},
+        )
+    )
+
+    assert status["host_name"] == "dgt-32"
+    assert status["address"] == "B8:27:EB:11:22:33"
+
+
+def test_get_status_adapter_identity_empty_when_disabled(monkeypatch):
+    # Radio off: get_status must not probe the adapter (nothing to read) and must
+    # return empty identity strings rather than raising, so the disabled card
+    # renders cleanly.
+    monkeypatch.setattr(bt, "is_enabled", lambda log=None: False)
+    _set_cached_snapshot(monkeypatch, _connected_snapshot())
+
+    status = bt.get_status(manager=_FakeManager([], adapter={"address": "B8:27:EB:11:22:33", "name": "dgt-32"}))
+
+    assert status["enabled"] is False
+    assert status["host_name"] == ""
+    assert status["address"] == ""
 
 
 def test_get_status_failed_advertising_propagates_failure(patched):

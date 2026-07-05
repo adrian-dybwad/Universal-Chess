@@ -511,6 +511,47 @@ class TestListPairedDevices(unittest.TestCase):
         assert manager.list_paired_devices() == []
 
 
+class TestGetAdapterInfo(unittest.TestCase):
+    """`get_adapter_info` reduces the adapter's BlueZ object to the identity the
+    connectivity UI shows (MAC + friendly name), tolerating a missing adapter or
+    absent fields so the card can render 'unknown' instead of crashing."""
+
+    def _manager(self, objects):
+        manager = BluezPairingManager()
+        manager._managed_objects = MagicMock(return_value=objects)
+        return manager
+
+    def test_reads_address_and_alias(self):
+        # The happy path: Address is the MAC shown as the card's identity and
+        # Alias is the friendly host name. A regression that read the wrong
+        # property (or the device tree instead of the adapter) would surface the
+        # wrong MAC/name on the card.
+        manager = self._manager({
+            "/org/bluez/hci0": {
+                "org.bluez.Adapter1": {"Address": "B8:27:EB:11:22:33", "Alias": "dgt-32", "Name": "raw"},
+            },
+            # A paired device under the adapter must not be mistaken for it.
+            "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF": {
+                "org.bluez.Device1": {"Address": "AA:BB:CC:DD:EE:FF", "Name": "Phone"},
+            },
+        })
+        assert manager.get_adapter_info() == {"address": "B8:27:EB:11:22:33", "name": "dgt-32"}
+
+    def test_falls_back_to_name_when_no_alias(self):
+        # Alias is preferred, but a controller without one must still yield a
+        # name (Name) rather than an empty label.
+        manager = self._manager({
+            "/org/bluez/hci0": {"org.bluez.Adapter1": {"Address": "B8:27:EB:11:22:33", "Name": "hci0-name"}},
+        })
+        assert manager.get_adapter_info() == {"address": "B8:27:EB:11:22:33", "name": "hci0-name"}
+
+    def test_empty_strings_when_adapter_absent(self):
+        # No adapter object in the tree (dbus reachable but hci0 missing) must
+        # yield empty strings, not a KeyError, so get_status stays best-effort.
+        manager = self._manager({"/org/bluez/hci1": {"org.bluez.Adapter1": {"Address": "X"}}})
+        assert manager.get_adapter_info() == {"address": "", "name": ""}
+
+
 class TestPairedDeviceActions(unittest.TestCase):
     """connect / disconnect / forget validate the address and report a
     boolean outcome the UI can toast. The dbus action itself lives in thin

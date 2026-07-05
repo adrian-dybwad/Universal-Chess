@@ -13,7 +13,7 @@ no adapter, rfkill missing); the caller decides how to surface that.
 """
 
 import logging
-import subprocess
+import subprocess  # nosec B404 - fixed, trusted argv lists (rfkill/sudo bt-admin); no shell, no user input
 from typing import List, Optional
 
 from universalchess.managers.bluez_pairing import BluezPairingManager
@@ -39,8 +39,8 @@ def is_enabled(log: Optional[logging.Logger] = None) -> bool:
     """Return True when the Bluetooth radio is not soft-blocked by rfkill."""
     log = _resolve_log(log)
     try:
-        result = subprocess.run(
-            ["rfkill", "list", "bluetooth"],
+        result = subprocess.run(  # noqa: S603  # nosec B603 B607
+            ["rfkill", "list", "bluetooth"],  # noqa: S607
             capture_output=True,
             text=True,
             timeout=_RFKILL_TIMEOUT_SECONDS,
@@ -63,8 +63,8 @@ def set_enabled(enabled: bool, log: Optional[logging.Logger] = None) -> bool:
     log = _resolve_log(log)
     action = "enable" if enabled else "disable"
     try:
-        result = subprocess.run(
-            ["sudo", "-n", BT_ADMIN, action],
+        result = subprocess.run(  # noqa: S603  # nosec B603 B607
+            ["sudo", "-n", BT_ADMIN, action],  # noqa: S607
             capture_output=True,
             text=True,
             timeout=_RFKILL_TIMEOUT_SECONDS,
@@ -98,7 +98,7 @@ def _live_bt_status() -> dict:
         return cached
     try:
         request_bt_status_broadcast()
-    except Exception:  # noqa: BLE001 - best-effort resync
+    except Exception:  # noqa: BLE001, S110  # nosec B110 - best-effort resync; a failure just leaves the card on its poll fallback
         pass
     return {}
 
@@ -110,6 +110,10 @@ def get_status(
 
     Keys:
         * ``enabled``: radio not soft-blocked by rfkill (read locally here).
+        * ``host_name``/``address``: the adapter's friendly name and MAC (read
+          locally from BlueZ), so the card shows the board's Bluetooth identity
+          the same way the board's own readout does. Empty when the radio is
+          disabled or BlueZ is unreachable.
         * ``paired``: list of ``{address, name, connected}`` dicts from BlueZ.
         * ``advertising``: BLE advertisement registration status (the
           ``expected``/``registered``/``failed``/``ok``/``error``/``names``
@@ -132,16 +136,27 @@ def get_status(
 
     log = _resolve_log(log)
     paired: List[dict] = []
+    host_name = ""
+    address = ""
     if is_enabled(log):
+        mgr = _get_manager(manager)
         try:
-            paired = _get_manager(manager).list_paired_devices()
+            paired = mgr.list_paired_devices()
         except Exception as e:  # noqa: BLE001 - dbus may be absent/unreachable
             log.warning(f"[BT] Failed to list paired devices: {e}")
+        try:
+            info = mgr.get_adapter_info()
+            host_name = info.get("name", "")
+            address = info.get("address", "")
+        except Exception as e:  # noqa: BLE001 - dbus may be absent/unreachable
+            log.warning(f"[BT] Failed to read adapter info: {e}")
 
     bt = _live_bt_status()
     advertising = bt.get("advertising") or unknown_status()
     return {
         "enabled": is_enabled(log),
+        "host_name": host_name,
+        "address": address,
         "paired": paired,
         "advertising": advertising,
         "advertised_names": bt.get("advertised_names") or advertising.get("names", []),

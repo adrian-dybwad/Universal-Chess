@@ -72,6 +72,10 @@ interface BtHeal {
 
 interface BtStatus {
   enabled: boolean;
+  // The adapter's friendly name and MAC, read locally from BlueZ by the board's
+  // web process. Mirrors the identity the board's own Bluetooth readout shows.
+  host_name?: string;
+  address?: string;
   paired: BtDevice[];
   advertising?: BtAdvertisingStatus;
   advertised_names?: string[];
@@ -545,6 +549,10 @@ function BluetoothCard() {
         // locally-read radio/paired list until the next poll refreshes them.
         setStatus((prev) => ({
           enabled: prev?.enabled ?? data.enabled ?? false,
+          // Identity (host name/MAC) is read locally by the poll, not carried in
+          // the board's live push; keep the last polled values across pushes.
+          host_name: prev?.host_name,
+          address: prev?.address,
           paired: prev?.paired ?? [],
           advertising: data.advertising,
           advertised_names: data.advertised_names,
@@ -830,6 +838,16 @@ function BluetoothCard() {
 
         {status && (
           <Toggle checked={status.enabled} onChange={(v) => toggleEnabled(v)} disabled={busy} label="Bluetooth enabled" />
+        )}
+
+        {status && status.enabled && (status.host_name || status.address) && (
+          <div className="conn-status">
+            <div className="conn-status-row">
+              <MenuIcon name="bluetooth" size={18} />
+              <span className="conn-status-ssid">{status.host_name || 'Bluetooth'}</span>
+            </div>
+            {status.address && <div className="text-muted conn-status-detail">{status.address}</div>}
+          </div>
         )}
 
         {message && <div className={`conn-message conn-message--${message.kind}`}>{message.text}</div>}

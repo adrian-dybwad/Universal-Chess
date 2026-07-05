@@ -51,7 +51,7 @@ package.
 """
 
 import re
-import subprocess
+import subprocess  # nosec B404 - fixed, trusted argv list (journalctl); no shell, no user input
 import time
 from typing import Callable, Dict, List, Optional
 
@@ -131,7 +131,7 @@ class BluezPairingManager:
             try:
                 if int(appearance) == _APPEARANCE_KEYBOARD:
                     return True
-            except (TypeError, ValueError):
+            except (TypeError, ValueError):  # noqa: S110  # nosec B110 - a non-numeric Appearance just means "not a keyboard by this signal"
                 pass
 
         uuids = properties.get("UUIDs")
@@ -325,8 +325,8 @@ class BluezPairingManager:
         since = time.strftime(
             "%Y-%m-%d %H:%M:%S", time.localtime(max(0, since_timestamp - 1)))
         try:
-            result = subprocess.run(
-                ["journalctl", "-u", "bluetooth", "--since", since, "--no-pager"],
+            result = subprocess.run(  # noqa: S603  # nosec B603 B607
+                ["journalctl", "-u", "bluetooth", "--since", since, "--no-pager"],  # noqa: S607
                 capture_output=True,
                 text=True,
                 timeout=2,
@@ -554,6 +554,25 @@ class BluezPairingManager:
     # ------------------------------------------------------------------
     # Paired-device management (list / connect / disconnect / forget)
     # ------------------------------------------------------------------
+    def get_adapter_info(self) -> Dict[str, str]:
+        """Return this adapter's identity for the connectivity UI.
+
+        Reads the ``Adapter1`` object's ``Address`` (MAC) and friendly name
+        (``Alias``, falling back to ``Name``) from the cached BlueZ object tree,
+        so the web Bluetooth card can show which controller it manages -- the
+        same host-name/MAC identity the board's own Bluetooth readout shows.
+        Returns empty strings for any field BlueZ does not expose (or when the
+        adapter object is absent), letting the caller render "unknown" without
+        raising.
+        """
+        props = self._managed_objects().get(self._adapter_path, {}).get(ADAPTER_IFACE)
+        if not props:
+            return {"address": "", "name": ""}
+        return {
+            "address": str(props.get("Address", "") or ""),
+            "name": str(props.get("Alias") or props.get("Name") or ""),
+        }
+
     def list_paired_devices(self) -> List[Dict[str, object]]:
         """List paired devices belonging to this adapter for the management UI.
 
