@@ -148,10 +148,10 @@ fi
         echo "* *" | sudo tee /etc/bluetooth/pin.conf > /dev/null
     fi
 
-    # Copy machine-info for Bluetooth name
-    if [ ! -f /etc/machine-info ]; then
-        echo "PRETTY_HOSTNAME=PCS-REVII-081500" | sudo tee /etc/machine-info > /dev/null
-    fi
+    # No PRETTY_HOSTNAME is written: the board sets the adapter Alias at runtime
+    # (Adapter1.Alias, e.g. "MILLENNIUM CHESS"), which is what remote clients see.
+    # Leaving /etc/machine-info unset lets the read-only BlueZ Name fall back to
+    # the system hostname instead of a hardcoded faked Revelation-II serial.
 
     # Install systemd service overrides (but NOT rfcomm.service)
     sudo mkdir -p /etc/systemd/system/bluetooth.service.d
@@ -162,7 +162,6 @@ fi
 
     # Set correct permissions
     sudo chmod 644 /etc/bluetooth/pin.conf
-    sudo chmod 644 /etc/machine-info
 
     echo -e "::: Enabling Bluetooth services"
     systemctl daemon-reload
