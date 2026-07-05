@@ -1735,27 +1735,26 @@ def _load_available_engines() -> List[str]:
 
 
 def _get_installed_engines() -> List[str]:
-    """Get list of installed engines only.
+    """Get list of engines available for selection.
     
-    Filters the available engines (those with .uci config files) to only include
-    engines that are actually installed on the system. This is the function that
-    should be used for engine selection menus where the user needs to pick an
-    engine to use.
+    Filters the available engines (those with .uci config files) to those that
+    can be selected to play, using EngineManager.is_available -- the same
+    definition the web dropdowns use. This includes system-package engines like
+    Stockfish, which is_installed can miss in a service environment whose PATH
+    omits /usr/games (the reason Stockfish previously disappeared from the board
+    picker after switching engines).
     
     Returns:
-        List of installed engine names, sorted alphabetically.
+        List of selectable engine names, sorted alphabetically.
     """
     from universalchess.managers.engine_manager import get_engine_manager
     
     engine_manager = get_engine_manager()
     available = _load_available_engines()
     
-    installed = []
-    for engine_name in available:
-        if engine_manager.is_installed(engine_name):
-            installed.append(engine_name)
+    installed = [name for name in available if engine_manager.is_available(name)]
     
-    log.debug(f"[Settings] Installed engines: {installed} (of {len(available)} available)")
+    log.debug(f"[Settings] Selectable engines: {installed} (of {len(available)} available)")
     return installed
 
 

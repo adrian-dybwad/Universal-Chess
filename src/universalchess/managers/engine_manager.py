@@ -1004,6 +1004,32 @@ class EngineManager:
             log.debug(f"[EngineManager] is_installed: {engine_name} = {is_installed} (exists={exists}, executable={executable}, path={engine_path})")
             return is_installed
     
+    def is_available(self, engine_name: str) -> bool:
+        """Whether an engine can be selected to play.
+        
+        Single definition shared by the on-device engine picker and the web
+        dropdowns/management list, so they never disagree on which engines are
+        offered. An engine is available when it is a system package (e.g.
+        Stockfish, provided via apt and resolved at launch regardless of the
+        current PATH) or its binary is physically present (``is_installed``).
+        
+        This differs from ``is_installed``, which is strictly "the binary is
+        present" and drives the management UI's install/uninstall state. System
+        packages are always available even though their PATH-based
+        ``is_installed`` check can fail under a service environment whose PATH
+        omits ``/usr/games`` -- the reason the board previously dropped Stockfish
+        from the picker.
+        
+        Args:
+            engine_name: Name of the engine to check.
+        
+        Returns:
+            True if the engine can be offered for selection.
+        """
+        if engine_name not in ENGINES:
+            return False
+        return ENGINES[engine_name].is_system_package or self.is_installed(engine_name)
+    
     def get_engine_list(self) -> List[dict]:
         """Get list of all engines with installation status.
         

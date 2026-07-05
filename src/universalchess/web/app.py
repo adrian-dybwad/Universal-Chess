@@ -4186,11 +4186,10 @@ def api_get_engines():
         engines_list = []
         
         for name, engine_def in ENGINES.items():
-            is_installed = engine_def.is_system_package or engine_manager.is_installed(name)
             engines_list.append({
                 "name": name,
                 "display_name": engine_def.display_name,
-                "installed": is_installed
+                "installed": engine_manager.is_available(name)
             })
         
         return jsonify(engines_list)
@@ -4366,7 +4365,7 @@ def api_get_all_engines():
         engines_list = []
 
         for name, engine_def in ENGINES.items():
-            is_installed = engine_def.is_system_package or engine_manager.is_installed(name)
+            is_installed = engine_manager.is_available(name)
             unsupported_reason = arch_unsupported_reason(engine_def, arch)
             # Source-built engines support the ref picker; system packages and
             # bundled engines (no repo_url) do not. Reported here so the list view
