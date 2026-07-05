@@ -116,7 +116,7 @@ def save_setting(section: str, key: str, value: Any, *, broadcast: bool = True) 
             try:
                 from universalchess.services.game_broadcast import broadcast_settings_changed
                 broadcast_settings_changed()
-            except Exception:
+            except Exception:  # noqa: S110  # nosec B110 - broadcast is an optional enhancement; a failure must not block the settings write
                 pass  # Broadcast is optional enhancement
         
         return True
@@ -172,6 +172,22 @@ class MenuContext:
     _nav_depth: int = field(default=0, repr=False)
     _log: Optional[Any] = field(default=None, repr=False)
     _section: str = field(default="MenuState", repr=False)
+    _frozen: bool = field(default=False, repr=False)
+
+    def freeze(self) -> None:
+        """Stop persisting further navigation changes for the process lifetime.
+
+        Called once at the start of shutdown/cleanup. On SIGTERM the process
+        exits via ``sys.exit`` from the signal handler, which raises SystemExit
+        and unwinds the blocked menu stack -- running every ``leave_menu`` in a
+        ``finally``. Those pops would rewrite the persisted path shallower and
+        shallower (Settings/connectivity/bluetooth -> Settings), destroying the
+        exact position the next launch must restore to. Freezing makes ``save``
+        a no-op so the deepest position -- already on disk from when the user
+        entered it -- survives the teardown. In-memory mutation still proceeds
+        (harmless in a dying process); only persistence is suppressed.
+        """
+        self._frozen = True
 
     def push(self, menu_name: str, index: int = 0) -> None:
         """Push a new menu level onto the navigation stack.
@@ -259,7 +275,13 @@ class MenuContext:
         self.save()
 
     def save(self) -> None:
-        """Persist the current state to centaur.ini."""
+        """Persist the current state to centaur.ini.
+
+        Suppressed after :meth:`freeze` so the shutdown teardown unwind cannot
+        overwrite the deep restore path already on disk (see ``freeze``).
+        """
+        if self._frozen:
+            return
         try:
             path = self.path_str()
             indices = self.indices_str()
@@ -355,6 +377,37 @@ class MenuContext:
         self.index_stack = [index for _, index in path]
         self._nav_depth = 0
         self.save()
+
+    def truncate_below_current(self) -> None:
+        """Drop any saved path deeper than the current navigation depth.
+
+        Called when a restore descent stops at the current level because the
+        next saved container is unreachable (e.g. a dynamic item -- a paired
+        device or scanned network -- that no longer exists). The lingering
+        deeper tokens no longer reflect a reachable position, so they must not
+        persist or hijack a subsequent navigation. A no-op when nothing is saved
+        below the current depth.
+        """
+        if self._nav_depth < len(self.path_stack):
+            self.path_stack = self.path_stack[: self._nav_depth]
+            self.index_stack = self.index_stack[: self._nav_depth]
+            self.save()
+
+    def next_restore_token(self) -> Optional[str]:
+        """Peek the saved menu token the current depth would descend into next.
+
+        Returns ``path_stack[_nav_depth]`` -- the child container recorded one
+        level below the current position -- or ``None`` when the saved chain is
+        exhausted (the deepest recorded level has been entered) or has been
+        truncated by a divergent (fresh) navigation.
+
+        The engine uses this during restore to auto-dispatch the row that leads
+        into the next saved container, replaying the full navigation path level
+        by level. It only peeks; ``enter_menu`` is what consumes a level.
+        """
+        if self._nav_depth < len(self.path_stack):
+            return self.path_stack[self._nav_depth]
+        return None
 
     def enter_menu(self, menu_name: str, default_index: int = 0) -> int:
         """Enter a submenu, handling both fresh navigation and restoration.

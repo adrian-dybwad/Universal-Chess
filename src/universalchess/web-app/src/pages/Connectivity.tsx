@@ -60,19 +60,6 @@ interface BtLink {
   connected_since: number | null;
 }
 
-// Whether the board runs a patched (non-stock) bluetoothd. Mirrors the board's
-// managers/bluez_patch_status schema. Surfaced so the operator is warned that
-// the board is on a substituted binary that does not get distro security
-// updates until rebuilt/retired. patched=false (stock/unknown) shows nothing.
-interface BtStack {
-  active: 'stock' | 'patched' | 'unknown';
-  patched: boolean;
-  base_version: string | null;
-  fix: string | null;
-  reason: string | null;
-  applied_at: string | null;
-}
-
 // Whether the bluez self-heal is actively repairing advertising. Mirrors the
 // board's managers/bluez_patch_status progress record. While running, the board
 // reports adv_state 'healing' and the card shows the (pre-formatted) label so
@@ -92,7 +79,6 @@ interface BtStatus {
   link?: BtLink;
   powered?: boolean;
   devices?: BtPeer[];
-  stack?: BtStack;
   heal?: BtHeal;
 }
 
@@ -310,6 +296,19 @@ function WifiCard() {
 
   const toggleEnabled = useCallback(
     async (enabled: boolean) => {
+      // Disabling WiFi while it is the board's active connection cuts off this
+      // web interface for anyone reaching it over that network (mirrors the
+      // forget()-active-network guard). Only warn when actually turning it off
+      // and currently connected; on a wired/other link there is nothing to lose.
+      if (
+        !enabled &&
+        status?.connected &&
+        !confirm(
+          'Turning off WiFi disconnects the board from this network. If you are using this web interface over WiFi, you will lose access to the board until WiFi is re-enabled from the board itself. Continue?'
+        )
+      ) {
+        return;
+      }
       setBusy(true);
       try {
         const r = await apiFetch('/api/connectivity/wifi/enable', {
@@ -327,7 +326,7 @@ function WifiCard() {
         setBusy(false);
       }
     },
-    [onUnauthorized, fetchStatus]
+    [onUnauthorized, fetchStatus, status?.connected]
   );
 
   return (
@@ -533,7 +532,6 @@ function BluetoothCard() {
         peer?: BtPeer | null;
         connected_since?: number | null;
         devices?: BtPeer[];
-        stack?: BtStack;
         heal?: BtHeal;
       };
       try {
@@ -560,7 +558,6 @@ function BluetoothCard() {
           },
           powered: data.powered,
           devices: data.devices,
-          stack: data.stack ?? prev?.stack,
           heal: data.heal ?? prev?.heal,
         }));
         // A connect/disconnect changes the paired list's "connected" flags too;
@@ -856,20 +853,6 @@ function BluetoothCard() {
             {status.advertising.error && (
               <div className="conn-status-detail text-muted">{status.advertising.error}</div>
             )}
-          </div>
-        )}
-
-        {status?.stack?.patched && (
-          <div className="conn-message conn-message--warn">
-            Running a patched (non-stock) Bluetooth stack
-            {status.stack.base_version ? ` based on BlueZ ${status.stack.base_version}` : ''}.
-            {status.stack.reason && (
-              <div className="conn-status-detail text-muted">{status.stack.reason}</div>
-            )}
-            <div className="conn-status-detail text-muted">
-              This binary does not receive distribution security updates until it is
-              rebuilt or retired by an app update.
-            </div>
           </div>
         )}
 

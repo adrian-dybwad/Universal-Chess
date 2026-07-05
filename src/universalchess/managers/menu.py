@@ -305,7 +305,8 @@ class MenuManager:
     def show_menu(
         self,
         entries: List[IconMenuEntry],
-        initial_index: int = 0
+        initial_index: int = 0,
+        on_index_change: Optional[Callable[[int], None]] = None
     ) -> MenuSelection:
         """Display a menu and wait for selection.
         
@@ -323,6 +324,9 @@ class MenuManager:
         Args:
             entries: List of menu entry configurations
             initial_index: Index of entry to select initially
+            on_index_change: Optional callback(index) forwarded to the widget,
+                fired on each cursor move so the caller can persist the live
+                cursor position (needed for restart restore).
             
         Returns:
             MenuSelection with the user's selection or break result
@@ -368,7 +372,6 @@ class MenuManager:
             self._board.display_manager.clear_widgets()
 
             # Create menu widget
-            log.info(f"[DEBUG MenuManager] Creating IconMenuWidget with selected_index={current_index}")
             menu_widget = IconMenuWidget(
                 0,
                 self._status_bar_height,
@@ -376,9 +379,9 @@ class MenuManager:
                 self._display_height - self._status_bar_height,
                 self._board.display_manager.update,
                 entries=entries,
-                selected_index=current_index
+                selected_index=current_index,
+                on_index_change=on_index_change
             )
-            log.info(f"[DEBUG MenuManager] IconMenuWidget created, menu_widget.selected_index={menu_widget.selected_index}")
 
             # Register as active menu (keys will be queued until loading completes)
             self._active_widget = menu_widget
@@ -442,7 +445,8 @@ class MenuManager:
         build_entries: Callable[[], List[IconMenuEntry]],
         handle_selection: Callable[[MenuSelection], Optional[MenuSelection]],
         initial_index: int = 0,
-        track_selection: bool = True
+        track_selection: bool = True,
+        on_index_change: Optional[Callable[[int], None]] = None
     ) -> Optional[MenuSelection]:
         """Run a menu loop with automatic break handling.
         
@@ -460,15 +464,27 @@ class MenuManager:
                              - MenuSelection to exit (propagates breaks/back)
             initial_index: Starting selection index
             track_selection: If True, tracks last selection and uses it on next iteration
+            on_index_change: Optional callback(index) forwarded to each shown menu,
+                fired on every cursor move so the caller can persist the live
+                cursor position.
             
         Returns:
             MenuSelection if exited due to break/back, None if handle_selection returned
         """
         last_index = initial_index
-        
+
+        # Keep last_index synced to the live cursor so any rebuild re-shows at the
+        # user's current row rather than resetting to the top. Forwards to the
+        # caller's callback (live persistence) as well.
+        def _track_index(index: int) -> None:
+            nonlocal last_index
+            last_index = index
+            if on_index_change is not None:
+                on_index_change(index)
+
         while True:
             entries = build_entries()
-            result = self.show_menu(entries, initial_index=last_index)
+            result = self.show_menu(entries, initial_index=last_index, on_index_change=_track_index)
             
             # Handle settings refresh - rebuild entries with updated values
             if result.key == "REFRESH":
@@ -478,8 +494,15 @@ class MenuManager:
             if result.is_break:
                 return result
             
-            # Update tracked index
-            if track_selection:
+            # Update the tracked index only for an actual entry selection. Injected
+            # provider-refresh keys (BT_REFRESH, WIFI_REFRESH, BT_KBD_REFRESH) and
+            # other non-entry results are not rows, so find_entry_index would
+            # return 0 and reset the cursor to the top on the next redraw -- the
+            # "selection jumps to the top a few seconds after restore" regression
+            # seen when a device-state change refreshed the Bluetooth menu. The
+            # live cursor is already tracked via _track_index, so leave last_index
+            # untouched for non-entry results.
+            if track_selection and any(entry.key == result.key for entry in entries):
                 last_index = self._find_entry_index(entries, result.key)
             
             # Exit on standard exit results

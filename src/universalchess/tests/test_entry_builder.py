@@ -47,6 +47,36 @@ def test_node_to_entry_overrides_label_and_icon():
     assert entry.icon_name == "timer_checked"
 
 
+def test_node_to_entry_forwards_state_footer_fields():
+    """description + trailing_icon must map onto the entry while keeping node style.
+
+    Why this test exists: the WiFi/Bluetooth merged status button reads as a
+    toggle only when its Enabled/Disabled description and checkbox trailing icon
+    reach the renderer *and* the node's vertical readout chrome is preserved.
+    Uses wifi.enabled, which has a full vertical epaper block.
+
+    How a regression manifests: if node_to_entry dropped the new kwargs, the
+    footer fields would be None (no checkbox/label renders); if it dropped the
+    epaper style, the button would lose its vertical layout/height.
+    """
+    catalog = load_catalog()
+    entry = node_to_entry(
+        catalog.get_node("wifi.enabled"),
+        label="MyNetwork",
+        icon="wifi_full",
+        description="Enabled",
+        trailing_icon="checkbox_checked",
+    )
+    # Footer fields forwarded.
+    assert entry.description == "Enabled"
+    assert entry.trailing_icon_name == "checkbox_checked"
+    # Node's vertical readout chrome preserved alongside the footer.
+    assert entry.layout == "vertical"
+    assert entry.selectable is True
+    assert entry.label == "MyNetwork"
+    assert entry.icon_name == "wifi_full"
+
+
 def test_build_menu_entries_order_and_keys():
     """Children must be built in declared order with their selection keys.
 

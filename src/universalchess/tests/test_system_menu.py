@@ -33,7 +33,7 @@ class _FakeMenuManager:
         self._script = list(script)
         self.shown = []
 
-    def run_menu_loop(self, build_entries, handle_selection, initial_index=0, track_selection=True):
+    def run_menu_loop(self, build_entries, handle_selection, initial_index=0, track_selection=True, on_index_change=None):
         while True:
             self.shown.append(build_entries())
             selection = MenuSelection.from_key(self._script.pop(0))

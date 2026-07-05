@@ -324,8 +324,20 @@ class IconButtonWidget(Widget):
         description_lines = []
         description_height = 0
         description_line_height = self.description_font_size + 2
-        
-        if self.description:
+
+        # A vertical button carrying both a trailing icon and a description
+        # renders an enable-state footer instead of the word-wrapped block: a
+        # centered "[checkbox] Enabled/Disabled" line at the bottom that signals
+        # the row is a toggle (the WiFi/Bluetooth merged status button). Every
+        # other description keeps the existing multi-line readout.
+        state_footer = (self.layout == "vertical"
+                        and self.trailing_icon_name is not None
+                        and self.description is not None)
+        footer_height = 0
+
+        if state_footer:
+            footer_height = max(self.description_font_size + 6, description_line_height) + 4
+        elif self.description:
             # Word-wrap description to fit content width
             # At font size 10-11, average character width is ~5-6 pixels
             # Use font_size * 0.5 as approximate char width for proportional fonts
@@ -334,8 +346,8 @@ class IconButtonWidget(Widget):
             description_lines = self._wrap_description(self.description, chars_per_line)
             description_height = len(description_lines) * description_line_height + 4  # +4 for gap
         
-        # Reduce content height for icon+label if description present
-        icon_label_height = content_height - description_height
+        # Reduce content height for icon+label if a description/footer is present
+        icon_label_height = content_height - description_height - footer_height
         
         if self.layout == "vertical":
             # Vertical layout: icon centered on top, text centered below
@@ -350,8 +362,13 @@ class IconButtonWidget(Widget):
                 lines, line_height, text_color
             )
         
-        # Render description below icon+label area
-        if description_lines:
+        if state_footer:
+            self._render_state_footer(
+                sprite, draw, content_left, content_top + icon_label_height,
+                content_width, footer_height, text_color
+            )
+        elif description_lines:
+            # Render description below icon+label area
             desc_start_y = content_top + icon_label_height + 4  # 4px gap
             desc_left_margin = 4  # Small left margin to prevent cutoff
             for i, desc_line in enumerate(description_lines):
@@ -462,7 +479,37 @@ class IconButtonWidget(Widget):
             # Single line: center vertically in content area
             text_y = content_top + (content_height - self.label_height) // 2
             self._render_text_line(sprite, self.label, text_x, text_y, text_width, text_color)
-    
+
+    def _render_state_footer(self, sprite: Image.Image, draw: ImageDraw.Draw,
+                             content_left: int, footer_top: int,
+                             content_width: int, footer_height: int, text_color: int):
+        """Render a centered "[checkbox] state" footer line for a toggle button.
+
+        Draws the trailing icon (a checkbox reflecting the on/off state) directly
+        left of the description text, the pair centered horizontally on one line
+        at the bottom of the button. Used by the WiFi/Bluetooth merged status
+        button so it reads as an enable/disable toggle.
+        """
+        from universalchess.resources import get_font
+
+        text = self.description
+        icon_size = min(self.description_font_size + 4, max(1, footer_height - 2))
+        gap = 3
+        text_width = int(draw.textlength(text, font=get_font(self.description_font_size)))
+
+        group_width = icon_size + gap + text_width
+        start_x = content_left + max(0, (content_width - group_width) // 2)
+        center_y = footer_top + footer_height // 2
+
+        self._draw_icon(draw, self.trailing_icon_name,
+                        start_x + icon_size // 2, center_y, icon_size, self.selected)
+
+        text_x = start_x + icon_size + gap
+        text_y = center_y - (self.description_font_size + 2) // 2
+        self._render_text_line(sprite, text, text_x, text_y, text_width + 4,
+                               text_color, centered=False,
+                               font_size=self.description_font_size, bold=False)
+
     def get_mask(self):
         """Get mask for transparent margin.
         
@@ -1900,11 +1947,15 @@ class IconButtonWidget(Widget):
 
     def _draw_bluetooth_icon(self, draw: ImageDraw.Draw, x: int, y: int,
                              size: int, line_color: int):
-        """Draw a Bluetooth icon.
-        
-        The Bluetooth logo is a stylized "B" rune shape - a vertical line
-        with two triangular arrow shapes pointing right.
-        
+        """Draw the Bluetooth rune (ᛒ), matching the web UI's Material glyph.
+
+        The logo is a vertical stem whose top and bottom connect to two distinct
+        right-hand vertices (the two angular "bumps"), plus two long diagonals
+        that run from each right vertex across to the opposite left tip. Those
+        diagonals cross the stem at its centre -- a single crossing, but two
+        separate right vertices. The previous drawing collapsed both right arrows
+        onto one mid-right point, which is why the right side looked pinched.
+
         Args:
             draw: ImageDraw object
             x: X center position
@@ -1914,40 +1965,30 @@ class IconButtonWidget(Widget):
         """
         s = size / 36.0
         line_width = max(2, int(2 * s))
-        
-        # The Bluetooth symbol dimensions
-        # Vertical line from top to bottom
-        top_y = y - int(14 * s)
-        bottom_y = y + int(14 * s)
-        mid_y = y
-        
-        # Horizontal extent for the arrows
-        left_x = x - int(8 * s)
-        right_x = x + int(6 * s)
-        center_x = x
-        
-        # Draw vertical center line
-        draw.line([(center_x, top_y), (center_x, bottom_y)], fill=line_color, width=line_width)
-        
-        # Top arrow: from top-center to right-middle, then back to left-top-middle
-        # Top point
-        top_point = (center_x, top_y)
-        # Right middle point
-        right_mid = (right_x, mid_y)
-        # Left upper point (where arrow goes back to)
-        left_upper = (left_x, y - int(7 * s))
-        
-        draw.line([top_point, right_mid], fill=line_color, width=line_width)
-        draw.line([right_mid, left_upper], fill=line_color, width=line_width)
-        
-        # Bottom arrow: from bottom-center to right-middle, then back to left-bottom-middle
-        # Bottom point
-        bottom_point = (center_x, bottom_y)
-        # Left lower point (where arrow goes back to)
-        left_lower = (left_x, y + int(7 * s))
-        
-        draw.line([bottom_point, right_mid], fill=line_color, width=line_width)
-        draw.line([right_mid, left_lower], fill=line_color, width=line_width)
+
+        # Proportions follow the Material Bluetooth path (24px viewBox): the stem
+        # spans ~+/-10 of a 12 centre, the right/left tips sit ~+/-6.5 out, and
+        # the vertices sit ~+/-4.3 above/below centre. Scaled here to +/-14 stem.
+        half_h = int(14 * s)      # stem half-height
+        horiz = int(8 * s)        # horizontal reach of the vertices/tips
+        vy = int(6 * s)           # vertical offset of the vertices from centre
+
+        top = (x, y - half_h)
+        bottom = (x, y + half_h)
+        upper_right = (x + horiz, y - vy)
+        lower_right = (x + horiz, y + vy)
+        upper_left = (x - horiz, y - vy)
+        lower_left = (x - horiz, y + vy)
+
+        # Vertical stem.
+        draw.line([top, bottom], fill=line_color, width=line_width)
+        # Stem ends to the two distinct right vertices (the angular bumps).
+        draw.line([top, upper_right], fill=line_color, width=line_width)
+        draw.line([bottom, lower_right], fill=line_color, width=line_width)
+        # Long diagonals from each right vertex to the opposite left tip; these
+        # cross the stem at its centre and form the recognisable rune.
+        draw.line([upper_right, lower_left], fill=line_color, width=line_width)
+        draw.line([lower_right, upper_left], fill=line_color, width=line_width)
 
     def _draw_account_icon(self, draw: ImageDraw.Draw, x: int, y: int,
                            size: int, line_color: int):

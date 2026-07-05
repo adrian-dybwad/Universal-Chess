@@ -5,18 +5,20 @@ Background / why these tests exist
 The WiFi settings submenu was migrated off the hand-built row scaffold in
 ``wifi_menu.handle_wifi_settings_menu`` onto the shared engine: the ``wifi``
 catalog container declares a live status readout (dynamic ``wifi_status``
-provider, non-selectable), a Scan action, and an enable/disable toggle. main.py
-supplies a ``wifi`` store (radio on/off), the ``wifi_status`` provider, the
-``wifi_enable_state`` label compute, and the ``wifi_scan`` action; the live
-status *subscription* stays imperative (it is effect lifecycle, not structure).
-These tests build from the *real* catalog with a fake context, pinning the row
-order, the non-selectable status row, the toggle's state label/icon, and the
-dispatch wiring the deleted scaffold used to guarantee.
+provider) and a Scan action. The standalone enable/disable toggle was later
+folded into that first status row -- the readout *is* the enable control -- so
+the enable/disable option sits in a predictable place (the top row) across
+menus. main.py supplies a ``wifi`` store (radio on/off), the ``wifi_status``
+provider (whose row carries the ``wifi.enabled`` toggle node), and the
+``wifi_scan`` action; the live status *subscription* stays imperative (it is
+effect lifecycle, not structure). These tests build from the *real* catalog with
+a fake context, pinning the row order, the selectable merged status/toggle row,
+and the dispatch wiring the deleted scaffold used to guarantee.
 """
 
 from universalchess.menus.board_context import BoardMenuContext
 from universalchess.menus.catalog.loader import load_catalog
-from universalchess.menus.engine import MenuRow, build_rows, dispatch, dispatch_row, resolve_icon, resolve_label
+from universalchess.menus.engine import MenuRow, build_rows, dispatch, dispatch_row
 from universalchess.menus.wifi_menu import wifi_network_rows, wifi_signal_icon, wifi_status_icon
 
 _CATALOG = load_catalog()
@@ -54,6 +56,9 @@ def _wifi_ctx(*, enabled=True, status_label="Connected: MyNet (80%)", status_ico
     ctx.connected = []
     ctx.register_store("wifi", wifi_get, wifi_set)
     ctx.register_value("wifi_enable_state", lambda node: "Enabled" if state["enabled"] else "Disabled")
+    # Mirror main._wifi_status_rows after the status/toggle merge: the single
+    # readout row now carries the ``wifi.enabled`` toggle node (readout chrome +
+    # selectable) so the first status row *is* the enable/disable control.
     ctx.register_provider(
         "wifi_status",
         lambda: [
@@ -61,8 +66,8 @@ def _wifi_ctx(*, enabled=True, status_label="Connected: MyNet (80%)", status_ico
                 key="Info",
                 label=status_label,
                 icon=status_icon,
-                node=_CATALOG.get_node("wifi.status"),
-                selectable=False,
+                node=_CATALOG.get_node("wifi.enabled"),
+                selectable=True,
             )
         ],
     )
@@ -74,77 +79,81 @@ def _wifi_ctx(*, enabled=True, status_label="Connected: MyNet (80%)", status_ico
     return ctx
 
 
-def test_wifi_lists_status_scan_toggle_in_order():
-    """WiFi renders the status readout, then Scan, then the enable toggle.
+def test_wifi_lists_merged_status_toggle_then_scan_in_order():
+    """WiFi renders the merged status-and-enable row first, then Scan.
 
-    Why this test exists: the deleted scaffold built exactly Info -> Scan ->
-    Toggle, and the board's default focus/state-restore lined up with that
-    order. The data-driven build must reproduce it by expanding the
-    ``wifi_status`` provider in place of the dynamic node. How a regression
-    manifests: a row is dropped, reordered, or the provider is not expanded, so
-    this key sequence changes.
+    Why this test exists: the standalone enable Toggle was folded into the first
+    status row so the enable/disable control sits in a predictable place (the top
+    readout) across menus. The data-driven build must expand the ``wifi_status``
+    provider (the merged row) and then Scan -- and no longer carry a separate
+    Toggle row. How a regression manifests: the merged row is dropped, a separate
+    Toggle reappears, or the order changes, so this key sequence changes.
     """
     rows = build_rows("wifi", _wifi_ctx(), platform="board", catalog=_CATALOG)
-    assert [r.key for r in rows] == ["Info", "Scan", "Toggle"]
+    assert [r.key for r in rows] == ["Info", "Scan"]
 
 
-def test_status_row_is_nonselectable_and_carries_live_icon_and_node():
-    """The status readout is non-selectable and shows the provider's live icon.
+def test_merged_status_row_is_selectable_and_carries_live_icon_and_toggle_node():
+    """The first row is the merged status-and-enable control.
 
-    Why this test exists: the original Info entry was selectable=False (the
-    cursor skipped it) and showed a signal-bucketed icon; both must survive the
-    migration so the readout never steals focus and still reflects signal
-    strength. The provider row also carries its catalog node so the board
-    renderer applies the node's e-paper chrome (big vertical icon, border). How
-    a regression manifests: the status row becomes selectable (cursor lands on a
-    readout) or loses its node/icon (blank or unstyled readout).
+    Why this test exists: the readout row is now the enable/disable toggle, so it
+    must be selectable (the cursor can land on and activate it), still show the
+    provider's signal-bucketed icon and live text, and carry the ``wifi.enabled``
+    toggle node so the board renderer applies the big vertical readout chrome and
+    selecting it flips the radio. How a regression manifests: the merged row
+    becomes non-selectable (the radio can't be toggled from it), loses its live
+    icon (unstyled readout), or stops carrying the toggle node (selecting it does
+    nothing).
     """
     rows = build_rows("wifi", _wifi_ctx(status_icon="wifi_weak"), platform="board", catalog=_CATALOG)
     info = rows[0]
     assert info.key == "Info"
-    assert info.selectable is False
+    assert info.selectable is True
     assert info.icon == "wifi_weak"
-    assert info.node is _CATALOG.get_node("wifi.status")
-    # Scan and Toggle remain selectable (the only focusable rows).
-    assert [r.selectable for r in rows[1:]] == [True, True]
+    assert info.node is _CATALOG.get_node("wifi.enabled")
+    # Scan remains the only other focusable row.
+    assert [r.selectable for r in rows[1:]] == [True]
 
 
-def test_toggle_label_and_icon_reflect_enabled_state():
-    """The enable toggle shows Enabled/Disabled with the matching state icon.
+def test_enable_node_is_a_selectable_toggle_with_readout_chrome():
+    """The ``wifi.enabled`` node backing the merged row is a selectable toggle.
 
-    Why this test exists: the scaffold mapped is_enabled -> ("Enabled",
-    "timer_checked") and not-enabled -> ("Disabled", "timer"); the catalog
-    reproduces this via the ``{fn:wifi_enable_state}`` label and a state-map
-    icon keyed on the bound boolean. How a regression manifests: the label fn or
-    icon state map drifts, so the toggle shows the wrong text/icon for the
-    radio's state (e.g. "Disabled" while connected).
+    Why this test exists: the merged row relies on this node being a ``toggle``
+    bound to the radio flag AND rendering with the vertical readout chrome
+    (selectable, so the entry is focusable -- the board derives entry
+    selectability from the node's epaper block, not the MenuRow). How a
+    regression manifests: the node reverts to a non-selectable readout (the merged
+    row can't be focused) or loses its toggle type/bind (selecting it no longer
+    flips the radio).
     """
-    toggle = _CATALOG.get_node("wifi.enabled")
-
-    on = _wifi_ctx(enabled=True)
-    assert resolve_label(toggle, on, platform="board") == "Enabled"
-    assert resolve_icon(toggle, on) == "timer_checked"
-
-    off = _wifi_ctx(enabled=False)
-    assert resolve_label(toggle, off, platform="board") == "Disabled"
-    assert resolve_icon(toggle, off) == "timer"
+    node = _CATALOG.get_node("wifi.enabled")
+    assert node["type"] == "toggle"
+    assert node["bind"] == {"store": "wifi", "key": "enabled"}
+    assert node["key"] == "Info"
+    epaper = node.get("epaper", {})
+    assert epaper.get("selectable") is True
+    assert epaper.get("layout") == "vertical"
 
 
-def test_toggle_dispatch_flips_radio_state():
-    """Selecting the toggle flips the bound ``wifi.enabled`` value in place.
+def test_selecting_merged_row_flips_radio_state():
+    """Selecting the merged status row flips the bound ``wifi.enabled`` value.
 
-    Why this test exists: the scaffold called enable_wifi()/disable_wifi() based
-    on the current state; the toggle must now write !current through the store
-    setter (which main.py backs with enable/disable) and stay on the menu so it
-    redraws with the new state. How a regression manifests: dispatch returns the
-    wrong kind, or the store value does not invert, so the radio never toggles.
+    Why this test exists: the enable/disable action now lives on the first status
+    row, so dispatching that built row (not a separate Toggle) must write
+    !current through the store setter (which main.py backs with enable/disable)
+    and stay on the menu so it redraws with the new state. How a regression
+    manifests: dispatching the row returns the wrong kind, or the store value
+    does not invert, so the radio never toggles from the readout.
     """
     ctx = _wifi_ctx(enabled=False)
-    outcome = dispatch(_CATALOG.get_node("wifi.enabled"), ctx)
+    rows = build_rows("wifi", ctx, platform="board", catalog=_CATALOG)
+    info = rows[0]
+
+    outcome = dispatch_row(info, ctx)
     assert outcome.kind == "stay"
     assert ctx.state["enabled"] is True
 
-    outcome = dispatch(_CATALOG.get_node("wifi.enabled"), ctx)
+    outcome = dispatch_row(info, ctx)
     assert outcome.kind == "stay"
     assert ctx.state["enabled"] is False
 

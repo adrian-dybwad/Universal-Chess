@@ -177,6 +177,7 @@
       "platforms": [
         "board"
       ],
+      "restorable": false,
       "type": "menu"
     },
     {
@@ -406,6 +407,7 @@
         "board",
         "web"
       ],
+      "restore_target": "wifi",
       "type": "action"
     },
     {
@@ -419,6 +421,7 @@
         "board",
         "web"
       ],
+      "restore_target": "bluetooth",
       "type": "action"
     },
     {
@@ -451,8 +454,7 @@
     {
       "children": [
         "wifi.status",
-        "wifi.scan",
-        "wifi.enabled"
+        "wifi.scan"
       ],
       "help": "WiFi status, scan for networks, and enable or disable the radio.",
       "id": "wifi",
@@ -504,17 +506,20 @@
         "store": "wifi"
       },
       "epaper": {
-        "font_size": 14,
-        "height_ratio": 0.7,
-        "layout": "horizontal"
+        "border_width": 1,
+        "font_size": 12,
+        "height_ratio": 1.8,
+        "icon_size": 52,
+        "layout": "vertical",
+        "selectable": true
       },
-      "help": "Enable or disable the WiFi radio.",
+      "help": "WiFi connection status. Select to enable or disable the WiFi radio.",
       "icon": {
         "false": "timer",
         "true": "timer_checked"
       },
       "id": "wifi.enabled",
-      "key": "Toggle",
+      "key": "Info",
       "label": "{fn:wifi_enable_state}",
       "platforms": [
         "board"
@@ -531,6 +536,7 @@
       "platforms": [
         "board"
       ],
+      "restorable": false,
       "type": "menu"
     },
     {
@@ -546,9 +552,7 @@
     {
       "children": [
         "bluetooth.status",
-        "bluetooth.enabled",
-        "bluetooth.devices",
-        "bluetooth.pair"
+        "bluetooth.devices"
       ],
       "help": "Bluetooth status, advertising, and paired devices.",
       "id": "bluetooth",
@@ -582,17 +586,20 @@
         "store": "bluetooth"
       },
       "epaper": {
-        "font_size": 14,
-        "height_ratio": 0.8,
-        "layout": "horizontal"
+        "border_width": 1,
+        "font_size": 11,
+        "height_ratio": 2.6,
+        "icon_size": 36,
+        "layout": "vertical",
+        "selectable": true
       },
-      "help": "Enable or disable the Bluetooth radio.",
+      "help": "Bluetooth connection and advertising status. Select to enable or disable the Bluetooth radio.",
       "icon": {
         "false": "timer",
         "true": "timer_checked"
       },
       "id": "bluetooth.enabled",
-      "key": "Toggle",
+      "key": "Info",
       "label": "{fn:bluetooth_enable_state}",
       "platforms": [
         "board"
@@ -605,7 +612,7 @@
         "height_ratio": 0.8,
         "layout": "horizontal"
       },
-      "help": "View and manage paired Bluetooth devices.",
+      "help": "Pair a new keyboard, and view or manage paired Bluetooth devices.",
       "icon": "bluetooth",
       "id": "bluetooth.devices",
       "key": "ManageDevices",
@@ -635,11 +642,12 @@
     },
     {
       "children": [
-        "bluetooth.devices.list.items"
+        "bluetooth.devices.list.items",
+        "bluetooth.pair"
       ],
-      "help": "Paired Bluetooth devices; select one to connect, disconnect, or forget.",
+      "help": "Select a paired device to connect, disconnect, or forget, or pair a new keyboard.",
       "id": "bluetooth.devices.list",
-      "label": "Paired Devices",
+      "label": "Devices",
       "platforms": [
         "board"
       ],
@@ -668,6 +676,7 @@
       "platforms": [
         "board"
       ],
+      "restorable": false,
       "type": "menu"
     },
     {
@@ -761,6 +770,7 @@
       "platforms": [
         "board"
       ],
+      "restorable": false,
       "type": "menu"
     },
     {
@@ -797,6 +807,7 @@
       "platforms": [
         "board"
       ],
+      "restorable": false,
       "type": "menu"
     },
     {
@@ -883,6 +894,7 @@
         "board",
         "web"
       ],
+      "restore_target": "about",
       "type": "action"
     },
     {
@@ -909,6 +921,7 @@
       "platforms": [
         "board"
       ],
+      "restorable": false,
       "type": "menu"
     },
     {
@@ -1096,6 +1109,7 @@
       "platforms": [
         "board"
       ],
+      "restorable": false,
       "section": "agents",
       "type": "menu"
     },
@@ -1324,6 +1338,7 @@
       "platforms": [
         "board"
       ],
+      "restore_target": "updates",
       "type": "action"
     },
     {
@@ -1464,6 +1479,7 @@
       "platforms": [
         "board"
       ],
+      "restorable": false,
       "type": "menu"
     },
     {

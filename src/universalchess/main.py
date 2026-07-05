@@ -2756,6 +2756,32 @@ def _process_pending_board_command() -> None:
         log.warning(f"[App] Unknown board command: {command}")
 
 
+# Maps a recorded level-1 menu token (what is saved directly under "Settings" in
+# the navigation path) back to the Settings list entry key that reopens it, so
+# full-depth restore can re-enter the correct branch and let the engine auto-
+# descend the rest of the saved chain. The engine-backed handlers record their
+# catalog container id (e.g. "connectivity"); Positions is imperative and records
+# under its own display name. A token already equal to an entry key (or absent
+# from this map) is returned unchanged.
+_SETTINGS_ENTRY_BY_CONTAINER = {
+    "settings.players": "Players",
+    "settings.display": "Display",
+    "settings.sound": "Sound",
+    "settings.game": "Game",
+    "settings.agents": "Agents",
+    "connectivity": "Connectivity",
+    "system": "System",
+    "Positions": "Positions",
+}
+
+
+def _settings_entry_for_token(token: Optional[str]) -> Optional[str]:
+    """Return the Settings entry key that reopens a saved level-1 menu token."""
+    if token is None:
+        return None
+    return _SETTINGS_ENTRY_BY_CONTAINER.get(token, token)
+
+
 def _handle_settings(initial_selection: str = None):
     """Handle the Settings submenu.
     
@@ -2797,9 +2823,17 @@ def _handle_settings(initial_selection: str = None):
             ctx.update_index(last_selected)
         else:
             result = _show_menu(entries, initial_index=last_selected)
-            # Update last_selected for when we return from a submenu
-            last_selected = find_entry_index(entries, result)
-            ctx.update_index(last_selected)
+            # Persist the focused row only for an actual Settings entry. SHUTDOWN,
+            # BACK, HELP, break, and REFRESH are not entries (find_entry_index
+            # returns 0 for them), and on a SHUTDOWN unwind the engine submenu
+            # levels intentionally do not pop -- so _nav_depth still points at the
+            # deepest submenu. Writing index 0 at that depth would clobber the
+            # deep cursor the next launch must restore. That was the LONG_PLAY
+            # power-down regression: highlighting Devices, powering off, then
+            # relaunching landed on the status/disable button instead of Devices.
+            if any(entry.key == result for entry in entries):
+                last_selected = find_entry_index(entries, result)
+                ctx.update_index(last_selected)
         
         # Handle settings refresh - rebuild entries with updated values
         if is_refresh_result(result):
@@ -2817,14 +2851,19 @@ def _handle_settings(initial_selection: str = None):
             return
         
         if result == "SHUTDOWN":
-            ctx.clear()
+            # Do not clear the menu path: every shutdown path (LONG_PLAY, the
+            # Power menu, inactivity, restart, crash) preserves it so the next
+            # launch restores to the exact submenu. cleanup_and_exit freezes
+            # persistence, so the deep position already on disk survives.
             _shutdown("Shutdown")
             return
         
         if result == "Players":
-            ctx.enter_menu("Players", 0)
+            # No enter_menu/leave_menu wrapper: the engine records its own
+            # container (settings.players) so the navigation path is single-level
+            # per menu (not a redundant display-name level on top of it), which is
+            # what full-depth restore replays. Same for the other engine handlers.
             players_result = _handle_players_menu()
-            ctx.leave_menu()  # Pop Players, restore to Settings level
             if is_break_result(players_result):
                 ctx.clear()
                 app_state = AppState.MENU
@@ -2837,36 +2876,28 @@ def _handle_settings(initial_selection: str = None):
                 return
         
         elif result == "Display":
-            ctx.enter_menu("Display", 0)
             display_result = _handle_display_menu()
-            ctx.leave_menu()  # Pop Display, restore to Settings level
             if is_break_result(display_result):
                 ctx.clear()
                 app_state = AppState.MENU
                 return display_result
 
         elif result == "Sound":
-            ctx.enter_menu("Sound", 0)
             sound_result = _handle_sound_menu()
-            ctx.leave_menu()  # Pop Sound, restore to Settings level
             if is_break_result(sound_result):
                 ctx.clear()
                 app_state = AppState.MENU
                 return sound_result
         
         elif result == "Game":
-            ctx.enter_menu("Game", 0)
             game_result = _handle_game_menu()
-            ctx.leave_menu()  # Pop Game, restore to Settings level
             if is_break_result(game_result):
                 ctx.clear()
                 app_state = AppState.MENU
                 return game_result
 
         elif result == "Agents":
-            ctx.enter_menu("Agents", 0)
             agents_result = _handle_agents_menu()
-            ctx.leave_menu()  # Pop Agents, restore to Settings level
             if is_break_result(agents_result):
                 ctx.clear()
                 app_state = AppState.MENU
@@ -2898,18 +2929,14 @@ def _handle_settings(initial_selection: str = None):
                 return
         
         elif result == "Connectivity":
-            ctx.enter_menu("Connectivity", 0)
             connectivity_result = _handle_connectivity_menu()
-            ctx.leave_menu()  # Pop Connectivity, restore to Settings level
             if is_break_result(connectivity_result):
                 ctx.clear()
                 app_state = AppState.MENU
                 return connectivity_result
         
         elif result == "System":
-            ctx.enter_menu("System", 0)
             system_result = _handle_system_menu()
-            ctx.leave_menu()  # Pop System, restore to Settings level
             if is_break_result(system_result):
                 ctx.clear()
                 app_state = AppState.MENU
@@ -4320,26 +4347,34 @@ def _handle_system_menu():
 
 
 def _wifi_status_rows():
-    """Provide the live WiFi status readout row for the data-driven WiFi menu.
+    """Provide the merged WiFi status-and-enable row for the data-driven menu.
 
-    The ``wifi.status`` catalog node owns the row's e-paper chrome (big vertical
-    signal icon, border); this provider supplies only the live status text and
-    signal-bucketed icon, re-read on each rebuild so the open menu reflects the
-    current connection. The row carries its catalog node so the board renderer
-    applies that chrome, and is non-selectable (a readout, like About's Version).
+    The status readout and the enable/disable toggle were merged: this single
+    row shows the live status text and signal-bucketed icon (re-read on each
+    rebuild) *and* is the enable control. It carries the ``wifi.enabled`` toggle
+    node -- a selectable node with the big vertical readout chrome -- so the
+    board renderer draws the readout and selecting the row flips the radio
+    (dispatch sees the toggle's bind). Placing the enable control on the first
+    row keeps it in a predictable place across menus. The node's ``key`` is
+    ``"Info"`` so this row maps back to it on selection.
     """
     from universalchess.menus.engine import MenuRow
     from universalchess.menus.catalog.loader import get_catalog
 
     wifi_info = __import__("DGTCentaurMods.epaper.wifi_info", fromlist=["get_wifi_status"])
     status = wifi_info.get_wifi_status()
+    enabled = bool(status["enabled"])
     return [
         MenuRow(
             key="Info",
             label=wifi_info.format_status_label(status),
             icon=wifi_status_icon(status),
-            node=get_catalog().get_node("wifi.status"),
-            selectable=False,
+            node=get_catalog().get_node("wifi.enabled"),
+            selectable=True,
+            # Enable-state footer so the merged status row reads as a toggle: a
+            # checkbox + Enabled/Disabled drawn under the status readout.
+            description="Enabled" if enabled else "Disabled",
+            trailing_icon="checkbox_checked" if enabled else "checkbox_empty",
         )
     ]
 
@@ -4454,34 +4489,36 @@ def _run_wifi_settings_menu():
 
     wifi_info.subscribe(_on_wifi_status_change)
     try:
-        # Default focus on Scan (index 1); index 0 is the non-selectable readout.
-        return run_engine_menu("wifi", _build_wifi_context(), _menu_manager, initial_index=1)
+        # Default focus on Scan. The first row is the merged status/enable
+        # control; focusing Scan avoids toggling the radio off on the first press.
+        return run_engine_menu("wifi", _build_wifi_context(), _menu_manager, initial_key="Scan")
     finally:
         wifi_info.unsubscribe(_on_wifi_status_change)
 
 
 def _bluetooth_status_rows():
-    """Provide the live Bluetooth status rows for the data-driven BT menu.
+    """Provide the single live Bluetooth status button for the data-driven menu.
 
     Built from the in-process :class:`BluetoothStatusState` snapshot (the board's
     single source of truth, also broadcast to the web) so the board and web show
-    the same thing. Yields, re-read on each rebuild so the open menu stays live:
+    the same thing, re-read on each rebuild so the open menu stays live. The
+    readout is ONE merged button (see
+    :func:`universalchess.menus.bluetooth_status_view.bluetooth_status_menu_rows`)
+    carrying the device identity (icon, host name, MAC), the live connection, and
+    the advertising state ("Broadcasting" + the names apps should look for), with
+    a failure/heal/off state folded into the same button rather than extra rows.
 
-    * a status readout (device name/address + radio/connection summary);
-    * a connected-client detail row naming the active emulator and peer when a
-      chess app is connected (what the user asked to see live);
-    * the advertised-names row (what apps should look for);
-    * a self-heal-in-progress row while the bluez self-heal is repairing
-      advertising (shown instead of the failure, so a mid-repair board reads as
-      "fixing" rather than broken);
-    * an advertising-error row when registration failed and no heal is running --
-      i.e. the board is invisible to BLE scans -- explaining why apps "can't
-      find" it;
-    * a patched-stack warning row when the board runs a substituted (non-stock)
-      bluetoothd (see managers/bluez_patch_status).
+    That single button is also the enable/disable control: it carries the
+    selectable ``bluetooth.enabled`` toggle node (vertical readout chrome), so
+    selecting it flips the radio, placing the enable control in a predictable
+    place. The row keys ``"Info"`` so the selected row maps back to that node.
 
-    All rows carry the ``bluetooth.status`` catalog node so the board renderer
-    applies its vertical chrome, and are non-selectable readouts.
+    The device name comes from the launch args and the MAC from the adapter
+    probe; everything else (connection, advertising, names, heal) comes from the
+    snapshot so the readout has one source of truth.
+
+    The patched-stack (non-stock bluetoothd) warning is not shown here; it lives
+    in the web System Information card (see board.hardware_info).
     """
     from universalchess.menus.engine import MenuRow
     from universalchess.menus.catalog.loader import get_catalog
@@ -4489,6 +4526,7 @@ def _bluetooth_status_rows():
     from universalchess.managers.bluetooth_status_state import (
         get_bluetooth_status_state,
     )
+    from universalchess.connectivity import bluetooth as _bt_conn
 
     bt_status_mod = __import__(
         "DGTCentaurMods.epaper.bluetooth_status",
@@ -4501,13 +4539,26 @@ def _bluetooth_status_rows():
         rfcomm_connected=(rfcomm_server.connected if rfcomm_server else False),
     )
     snapshot = get_bluetooth_status_state().to_dict()
-    status_label = bt_status_mod.format_status_label(bt)
-    node = get_catalog().get_node("bluetooth.status")
+    toggle_node = get_catalog().get_node("bluetooth.enabled")
+    # Radio state from the same source the toggle writes, so the footer's
+    # checkbox and Enabled/Disabled label match what selecting the row does.
+    enabled = bool(_bt_conn.is_enabled(log))
 
+    rows = bluetooth_status_menu_rows(snapshot, bt.get("device_name"), bt.get("address"))
     return [
-        MenuRow(key=row["key"], label=row["label"], icon=row["icon"],
-                node=node, selectable=False)
-        for row in bluetooth_status_menu_rows(snapshot, status_label)
+        MenuRow(
+            key=row["key"],
+            label=row["label"],
+            icon=row["icon"],
+            # The merged readout button is itself the enable/disable control.
+            node=toggle_node,
+            selectable=True,
+            # Enable-state footer so the button reads as a toggle: a checkbox +
+            # Enabled/Disabled drawn under the status readout.
+            description="Enabled" if enabled else "Disabled",
+            trailing_icon="checkbox_checked" if enabled else "checkbox_empty",
+        )
+        for row in rows
     ]
 
 
@@ -4804,7 +4855,13 @@ def _run_bluetooth_settings_menu():
 
     state.add_observer(_on_bt_status_change)
     try:
-        return run_engine_menu("bluetooth", _build_bluetooth_context(), _menu_manager)
+        # Default focus on Devices. The first row is the merged status/enable
+        # control; focusing Devices avoids toggling the radio off on the first
+        # press. Focus by key (not a fixed index) so it stays correct if the
+        # readout layout changes.
+        return run_engine_menu(
+            "bluetooth", _build_bluetooth_context(), _menu_manager, initial_key="ManageDevices"
+        )
     finally:
         state.remove_observer(_on_bt_status_change)
 
@@ -5490,6 +5547,16 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
         log.info(f"[Cleanup] Starting cleanup: {reason}")
         kill = 1
         running = False
+
+        # Freeze the menu navigation path before any teardown. cleanup ends in
+        # sys.exit(), whose SystemExit unwinds the blocked menu stack and runs
+        # every run_engine_menu ``finally: leave_menu`` -- which would pop the
+        # persisted path back up to the top and defeat full-depth restore. The
+        # deepest position is already on disk (saved when the user entered it),
+        # so freezing persistence here keeps it intact for the next launch. A
+        # deliberate power-off still clears first (main loop ctx.clear before
+        # _shutdown), so only unexpected restarts/crashes restore.
+        _get_menu_context().freeze()
         
         # Show the shutdown splash immediately for every shutdown path - menu
         # selection, long-press PLAY, and inactivity timeout all funnel through
@@ -6489,48 +6556,108 @@ def main():
         log.info("  RFCOMM: Initializing in background...")
     log.info("")
     
-    # Check for incomplete game to resume
-    incomplete_game = _get_incomplete_game()
-    if incomplete_game:
+    # Restore the exact view the app was in before the last stop. The session
+    # snapshot records what the user was looking at (board, coach panel on a
+    # move, or the menu with the game paused); the database supplies the game
+    # itself. This layered decision replaces the old "resume any incomplete DB
+    # game straight to the board" logic so a service restart or shutdown brings
+    # the app back up "like nothing happened".
+    global _suspended_menu_restore_path
+    snapshot = _get_session_snapshot()
+    resume_target = _resolve_resume_target(snapshot)
+    plan = plan_startup(snapshot, has_resumable_game=resume_target is not None)
+    log.info(f"[App] Startup plan: {plan} (app_view={snapshot.app_view}, "
+             f"game_db_id={snapshot.game_db_id})")
+
+    # Crash-loop guard: if applying the saved view keeps crashing the boot, stop
+    # re-applying it. Persist an incremented attempt BEFORE the restore so a
+    # crash is counted; the counter is reset once the app reaches steady state
+    # (see the main loop). When the guard trips, plan_startup has already
+    # returned the safe default, so clear the poison view-state for future boots.
+    if plan.fell_back:
+        log.warning("[App] Session restore repeatedly failed; falling back to "
+                    "the safe default and clearing saved view-state")
+        snapshot.app_view = VIEW_NONE
+        snapshot.game_db_id = 0
+        snapshot.analysis_selection = 0
+        snapshot.restore_attempts = 0
+        snapshot.save()
+    elif snapshot.app_view != VIEW_NONE:
+        snapshot.restore_attempts += 1
+        snapshot.save()
+
+    # Capture the saved menu navigation path before any game resume clears it
+    # (resume -> _start_game_mode -> _clear_menu_state), so the paused-menu case
+    # can reopen the exact submenu afterwards.
+    ctx = _get_menu_context()
+    # Inject the process-wide navigation context into the menu engine so every
+    # restorable container it enters is recorded onto this one context (and the
+    # saved chain is auto-descended on restore). Done once here at the
+    # composition root; the engine stays decoupled from the app otherwise.
+    from universalchess.menus.board_context import set_nav_context
+    set_nav_context(ctx)
+    saved_menu_path = ctx.get_restore_path() if plan.restore_menu_path else []
+
+    if plan.resume_game and resume_target is not None:
         if startup_splash:
             startup_splash.set_message("Resuming...")
             time.sleep(0.5)
-        
-        if _resume_game(incomplete_game):
-            log.info("[App] Successfully resumed incomplete game")
+        if _resume_game(resume_target):
+            log.info("[App] Successfully resumed game")
             app_state = AppState.GAME
+            if plan.suspend_after_resume:
+                # Paused game behind the menu: build the managers so RESUME
+                # continues the game, then suspend so the menu (not the board)
+                # shows with the clock paused.
+                _suspend_game()
+            elif plan.analysis_selection > 0 and display_manager:
+                # Reopen the coach panel on the exact move the user was reviewing.
+                display_manager.select_analysis_ply(plan.analysis_selection)
         else:
             log.warning("[App] Failed to resume game, showing menu")
-            if startup_splash:
-                startup_splash.set_message("Ready!")
-                time.sleep(0.3)
             app_state = AppState.MENU
     else:
-        # Show ready message before menu
         if startup_splash:
             startup_splash.set_message("Ready!")
             time.sleep(0.3)
         app_state = AppState.MENU
-    
-    # Load saved menu state for restoration (only if not resuming a game)
-    # MenuContext tracks full navigation path with indices at each level
-    ctx = _get_menu_context()
-    restore_path = ctx.get_restore_path() if app_state == AppState.MENU else []
-    
-    # Determine if we should restore to a submenu
+
+    # Set up menu restoration for the main loop.
     restore_to_settings = False
     restore_settings_submenu = None
+    if app_state == AppState.MENU and plan.restore_menu_path:
+        if plan.suspend_after_resume:
+            # A game was resumed then suspended: reopen the exact submenu via the
+            # same one-shot path used by in-session suspend/resume. _start_game_mode
+            # cleared the live MenuContext, so the pre-captured path is used.
+            _suspended_menu_restore_path = saved_menu_path
+        elif saved_menu_path and saved_menu_path[0][0] == "Settings":
+            restore_to_settings = True
+            if len(saved_menu_path) > 1:
+                # The saved level-1 token is a catalog container id (or Positions);
+                # map it to the Settings entry that opens it. The engine then auto-
+                # descends the deeper saved path (levels 2+) on its own.
+                restore_settings_submenu = _settings_entry_for_token(saved_menu_path[1][0])
+            log.info(f"[App] Will restore to Settings menu "
+                     f"(submenu={restore_settings_submenu}, full_path={ctx.path_str()})")
     
-    if restore_path and restore_path[0][0] == "Settings":
-        restore_to_settings = True
-        # If there's a submenu beyond Settings, extract it
-        if len(restore_path) > 1:
-            restore_settings_submenu = restore_path[1][0]
-        log.info(f"[App] Will restore to Settings menu (submenu={restore_settings_submenu}, full_path={ctx.path_str()})")
-    
+    _startup_completed_at = time.monotonic()
+
     try:
         while running and not kill:
             try:
+                # Clear the crash-loop guard once the app has run healthily for a
+                # short period after applying the restore. A restore that crashes
+                # the boot does so during startup (before this) or within the
+                # first seconds, so surviving this window means the restore was
+                # good and the attempt counter must not carry into the next boot.
+                if (snapshot.restore_attempts != 0
+                        and time.monotonic() - _startup_completed_at
+                        > _RESTORE_STABLE_UPTIME_SECONDS):
+                    log.info("[App] Session restore stable; clearing restore-attempt guard")
+                    snapshot.restore_attempts = 0
+                    snapshot.save()
+
                 # Apply a pending live waveform-profile change (no reboot) from
                 # any app_state: it only re-inits the panel and redraws the
                 # current framebuffer, so it is independent of menu/game state.
@@ -6572,14 +6699,20 @@ def main():
                     # Restore the submenu the user was in when they suspended the
                     # game (PLAY), so the full menu reopens at its last position.
                     # One-shot: consumed here so a normal BACK out of the submenu does
-                    # not immediately re-enter it.
-                    global _suspended_menu_restore_path
+                    # not immediately re-enter it. (_suspended_menu_restore_path is
+                    # declared global in the startup block above.)
                     if _suspended_menu_restore_path is not None:
                         resume_path = _suspended_menu_restore_path
                         _suspended_menu_restore_path = None
                         if resume_path and resume_path[0][0] == "Settings":
                             ctx.restore_from_path(resume_path)
-                            resume_submenu = resume_path[1][0] if len(resume_path) > 1 else None
+                            # Map the saved level-1 container id to its Settings
+                            # entry; the engine auto-descends the deeper path.
+                            resume_submenu = (
+                                _settings_entry_for_token(resume_path[1][0])
+                                if len(resume_path) > 1
+                                else None
+                            )
                             log.info(f"[App] Restoring suspended menu position (submenu={resume_submenu})")
                             settings_result = _handle_settings(initial_selection=resume_submenu)
                             if is_break_result(settings_result):
@@ -6587,6 +6720,12 @@ def main():
                             continue
                         # A non-Settings (e.g. root) capture has nothing to restore;
                         # fall through to show the main menu normally.
+
+                    # Record that the main menu is on screen so a restart comes
+                    # back here. Idempotent (only writes on a view change), so it
+                    # is safe in this hot loop. game_db_id is preserved: a game
+                    # suspended behind the menu stays resumable.
+                    _record_session_view(VIEW_MENU)
 
                     # Show main menu. The top entry relabels to RESUME when a game
                     # is suspended (managers alive) so PLAY resumes it, and Original
@@ -6616,7 +6755,10 @@ def main():
                         continue
 
                     elif result == "SHUTDOWN":
-                        ctx.clear()
+                        # Preserve the menu path (no ctx.clear): all shutdown
+                        # paths restore to where the user was on next launch;
+                        # cleanup_and_exit freezes persistence so the saved
+                        # position survives teardown.
                         _shutdown("Shutdown")
 
                     elif result == "Centaur":

@@ -22,6 +22,10 @@ def node_to_entry(
     label: Optional[str] = None,
     icon: Optional[str] = None,
     enabled: Optional[bool] = None,
+    description: Optional[str] = None,
+    trailing_icon: Optional[str] = None,
+    icon_image=None,
+    icon_mask=None,
 ) -> IconMenuEntry:
     """Convert a single catalog node into an IconMenuEntry.
 
@@ -31,6 +35,12 @@ def node_to_entry(
         label: Override for the node's static label (dynamic summaries).
         icon: Override for the node's static icon (dynamic state icons).
         enabled: Override for the entry's enabled flag.
+        description: Optional secondary line (e.g. the merged status button's
+            Enabled/Disabled state) rendered below the icon+label.
+        trailing_icon: Optional trailing icon name (e.g. a checkbox glyph paired
+            with ``description`` to signal a toggle).
+        icon_image: Optional pre-rendered main-icon image (provider previews).
+        icon_mask: Optional transparency mask for ``icon_image``.
 
     Returns:
         An IconMenuEntry with e-paper style taken from the node's ``epaper``
@@ -41,6 +51,8 @@ def node_to_entry(
     # omit it are constructed exactly as before (IconMenuEntry's own default
     # applies) rather than being pinned to a guessed value here.
     extra = {"border_width": style["border_width"]} if "border_width" in style else {}
+    if "description_font_size" in style:
+        extra["description_font_size"] = style["description_font_size"]
     return IconMenuEntry(
         key=node.get("key", node["id"]),
         label=label if label is not None else node.get("label", ""),
@@ -54,6 +66,10 @@ def node_to_entry(
         font_size=style.get("font_size", 16),
         bold=style.get("bold", False),
         help=node.get("help"),
+        description=description,
+        trailing_icon_name=trailing_icon,
+        icon_image=icon_image,
+        icon_mask=icon_mask,
         **extra,
     )
 

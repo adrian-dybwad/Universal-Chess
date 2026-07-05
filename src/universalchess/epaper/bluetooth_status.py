@@ -8,8 +8,8 @@ Provides:
 
 from PIL import Image, ImageDraw
 from .framework.widget import Widget
-import subprocess
-from typing import Optional, List
+import subprocess  # nosec B404 - fixed, trusted argv lists (rfkill/hciconfig/bt-admin); no shell, no user input
+from typing import Optional
 
 try:
     from universalchess.board.logging import log
@@ -68,7 +68,7 @@ def get_bluetooth_status(device_name: Optional[str] = None,
     
     # Check rfkill status
     try:
-        result = subprocess.run(['rfkill', 'list', 'bluetooth'],
+        result = subprocess.run(['rfkill', 'list', 'bluetooth'],  # noqa: S607  # nosec B603 B607
                                capture_output=True, text=True, timeout=5)
         # If "Soft blocked: no" is in output, Bluetooth is enabled
         status['enabled'] = 'Soft blocked: no' in result.stdout
@@ -77,7 +77,7 @@ def get_bluetooth_status(device_name: Optional[str] = None,
     
     # Get adapter address via hciconfig
     try:
-        result = subprocess.run(['hciconfig', 'hci0'],
+        result = subprocess.run(['hciconfig', 'hci0'],  # noqa: S607  # nosec B603 B607
                                capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             # Parse output for BD Address
@@ -119,54 +119,6 @@ def get_bluetooth_status(device_name: Optional[str] = None,
     return status
 
 
-def format_status_label(status: dict) -> str:
-    """Format Bluetooth status into a multi-line label for display.
-    
-    Shows device name, MAC address, connection status, and connected client type.
-    
-    Args:
-        status: Dictionary from get_bluetooth_status()
-        
-    Returns:
-        Multi-line string for display
-    """
-    lines = []
-    
-    # Device name
-    lines.append(status['device_name'])
-    
-    # MAC address
-    if status['address']:
-        lines.append(status['address'])
-    
-    # Connection status
-    if status['ble_connected']:
-        client_type = status.get('ble_client_type', 'BLE')
-        if client_type:
-            lines.append(f"BLE: {client_type}")
-        else:
-            lines.append("BLE: Connected")
-    elif status['rfcomm_connected']:
-        lines.append("RFCOMM: Connected")
-    elif status['enabled'] and status['powered']:
-        lines.append("Ready")
-    elif status['enabled']:
-        lines.append("Enabled")
-    else:
-        lines.append("Disabled")
-    
-    return '\n'.join(lines)
-
-
-def get_advertised_names_label() -> str:
-    """Get a formatted label showing all advertised names.
-    
-    Returns:
-        Multi-line string with all advertised names
-    """
-    return '\n'.join(ADVERTISED_NAMES.values())
-
-
 def _bt_admin(action: str) -> bool:
     """Run the pinned ``bt-admin`` helper for a radio ``action`` (enable/disable).
 
@@ -177,8 +129,8 @@ def _bt_admin(action: str) -> bool:
     ``sudo rfkill`` swallowed failures by returning True on any non-exception).
     """
     try:
-        result = subprocess.run(
-            ['sudo', '-n', BT_ADMIN, action],
+        result = subprocess.run(  # noqa: S603  # nosec B603 B607
+            ['sudo', '-n', BT_ADMIN, action],  # noqa: S607
             capture_output=True, text=True, timeout=5,
         )
         if result.returncode != 0:
@@ -238,52 +190,43 @@ class BluetoothStatusWidget(Widget):
         self._state.remove_observer(self._on_bluetooth_change)
     
     def _draw_bluetooth_icon(self, draw: ImageDraw.Draw, connected: bool = False) -> None:
-        """Draw a Bluetooth icon onto sprite.
-        
-        The icon is a stylized "B" shape with angular notches.
-        Scales to fit within width x height, with 1px margin on all sides.
-        
+        """Draw the Bluetooth rune (ᛒ) onto the sprite, matching the menu glyph.
+
+        The stem's top and bottom connect to two distinct right-hand vertices,
+        and two long diagonals run from each right vertex to the opposite left
+        tip, crossing the stem at its centre. Scales to fit within width x height
+        with a 1px margin. (An earlier version collapsed both right arrows onto a
+        single mid-right point, pinching the right side.)
+
         Args:
             draw: ImageDraw object for the sprite
             connected: If True, draw with thicker lines (connected state)
         """
-        # 1px margin around the icon
         margin = 1
-        icon_x = margin
-        icon_y = margin
-        icon_w = self._width - 2 * margin
         icon_h = self._height - 2 * margin
-        
-        # Scale factors based on icon dimensions (10x14 base for 12x16 widget)
-        sx = icon_w / 10.0
-        sy = icon_h / 14.0
-        
-        # Vertical center of icon area
-        cy = icon_y + icon_h // 2
-        
-        # The vertical line position: shift left to balance visual weight
-        # since arrows only extend to the right. Place at ~1/3 of icon width.
-        cx = icon_x + icon_w // 3
-        
-        # Bluetooth runic "B" shape
-        top_y = icon_y
-        bottom_y = icon_y + icon_h - 1
-        
         line_width = 2 if connected else 1
-        
-        # Main vertical line
-        draw.line([(cx, top_y), (cx, bottom_y)], fill=0, width=line_width)
-        
-        # Arrow points to the right
-        arrow_right = cx + int(4 * sx)
-        
-        # Top arrow: center-top -> right corner -> center-middle
-        draw.line([(cx, top_y), (arrow_right, cy - int(3 * sy))], fill=0, width=line_width)
-        draw.line([(arrow_right, cy - int(3 * sy)), (cx, cy)], fill=0, width=line_width)
-        
-        # Bottom arrow: center-bottom -> right corner -> center-middle
-        draw.line([(cx, bottom_y), (arrow_right, cy + int(3 * sy))], fill=0, width=line_width)
-        draw.line([(arrow_right, cy + int(3 * sy)), (cx, cy)], fill=0, width=line_width)
+
+        # Centre the glyph in the sprite. The rune is narrower than it is tall,
+        # so the horizontal reach is a fraction of the width; the vertices sit
+        # ~0.43 of the stem half-height above/below centre (Material proportion).
+        cx = self._width // 2
+        cy = margin + icon_h // 2
+        half_h = icon_h // 2
+        horiz = max(2, int(self._width * 0.32))
+        vy = max(1, int(half_h * 0.43))
+
+        top = (cx, cy - half_h)
+        bottom = (cx, cy + half_h)
+        upper_right = (cx + horiz, cy - vy)
+        lower_right = (cx + horiz, cy + vy)
+        upper_left = (cx - horiz, cy - vy)
+        lower_left = (cx - horiz, cy + vy)
+
+        draw.line([top, bottom], fill=0, width=line_width)
+        draw.line([top, upper_right], fill=0, width=line_width)
+        draw.line([bottom, lower_right], fill=0, width=line_width)
+        draw.line([upper_right, lower_left], fill=0, width=line_width)
+        draw.line([lower_right, upper_left], fill=0, width=line_width)
     
     def _draw_disabled_cross(self, draw: ImageDraw.Draw) -> None:
         """Draw a cross overlay to indicate Bluetooth is disabled.

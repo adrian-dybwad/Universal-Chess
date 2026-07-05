@@ -1,83 +1,118 @@
-"""Pure derivation of the Bluetooth status menu rows.
+"""Pure derivation of the Bluetooth status menu row.
 
 Turns a :class:`~universalchess.managers.bluetooth_status_state.BluetoothStatusState`
-snapshot into framework-neutral row descriptors (``{key, label, icon}``). Kept
-free of any renderer or hardware import so it is unit-testable and shared: the
-board adapter (``main._bluetooth_status_rows``) wraps these into e-paper
-``MenuRow``s with the ``bluetooth.status`` catalog chrome, while the wording and
-which-rows-to-show logic lives here once.
+snapshot (plus the adapter identity) into a single framework-neutral row
+descriptor (``{key, label, icon}``). Kept free of any renderer or hardware
+import so it is unit-testable and shared: the board adapter
+(``main._bluetooth_status_rows``) wraps this into an e-paper ``MenuRow`` with the
+selectable ``bluetooth.enabled`` toggle chrome (the readout *is* the enable
+control), while the wording lives here once.
+
+The readout is deliberately ONE fixed button rather than a variable list of
+rows: it always carries the device identity (icon, host name, MAC) and then a
+state-driven activity block, so the layout is predictable and the whole readout
+can double as the enable/disable toggle.
 """
 
-from typing import List
+from typing import List, Optional
 
 from universalchess.managers.ble_advertising_status import failure_label
-from universalchess.managers.bluetooth_status_state import ADV_FAILED, ADV_HEALING
-from universalchess.managers.bluez_patch_status import warning_label as stack_warning_label
+from universalchess.managers.bluetooth_status_state import (
+    ADV_ADVERTISING,
+    ADV_FAILED,
+    ADV_HEALING,
+    ADV_PAUSED_CONNECTED,
+    ADV_RADIO_OFF,
+    ADV_UNKNOWN,
+)
 
 
-def bluetooth_status_menu_rows(snapshot: dict, status_label: str) -> List[dict]:
-    """Return the status rows for the board Bluetooth menu, in display order.
+def bluetooth_status_menu_rows(
+    snapshot: dict,
+    device_name: Optional[str],
+    address: Optional[str],
+) -> List[dict]:
+    """Return the single merged Bluetooth status/enable button row.
 
-    Always includes the status readout. Adds, conditionally:
+    The row always begins with the device identity -- host name and, when known,
+    the adapter MAC. It then adds, in order:
 
-    * a connected-client detail row (the active emulator and peer) only while a
-      chess app is connected -- this is the live "what's in play" readout;
-    * the advertised-names row when names are known;
-    * a self-heal-in-progress row only when ``adv_state`` is ``healing`` -- the
-      bluez self-heal is actively repairing advertising (the multi-minute
-      on-board rebuild), shown instead of the failure so the user is reassured
-      rather than alarmed mid-repair;
-    * an advertising-error row only when ``adv_state`` is ``failed`` -- i.e. the
-      board is invisible to BLE scans -- so the failure is shown but never
-      flashed while merely pending, paused, or healing;
-    * a patched-stack warning row only when the board runs a substituted
-      (non-stock) ``bluetoothd`` -- so the operator can see the deviation (and
-      that it forgoes distro security updates) directly on the device.
+    * a live connection line ("In play: <emulator>" + peer) whenever a chess app
+      is linked -- the "what's in play" readout, shown independent of advertising
+      because an RFCOMM link keeps BLE advertising up;
+    * a state-driven activity block derived from ``adv_state`` (a closed union):
+
+        - ``advertising``  -> "Broadcasting:" + the advertised names;
+        - ``unknown``      -> "Starting Bluetooth" + the names it will advertise
+          (registration is still pending -- do not yet claim it is broadcasting);
+        - ``paused_connected`` -> nothing extra (the connection line above already
+          states the link; LE advertising is legitimately paused);
+        - ``healing``      -> "Fixing Bluetooth" + the shared self-heal phase
+          label + the names (the multi-minute on-board rebuild is repairing
+          advertising, shown instead of the raw failure so the user is reassured);
+        - ``failed``       -> "Apps can't find board" + the failure summary + the
+          names it is trying to broadcast, and the icon becomes ``cancel`` so the
+          single button itself signals the alarm;
+        - ``radio_off``    -> "Disabled" and NO names (nothing is being
+          broadcast, so listing names would falsely imply discoverability).
+
+    Every known ``adv_state`` is handled explicitly; an unrecognised value raises
+    rather than silently defaulting, so adding a new state to the engine forces a
+    matching UI decision here instead of the button quietly misrepresenting it.
+
+    The patched-stack (non-stock ``bluetoothd``) warning is intentionally NOT
+    shown here: it lives in the web System Information card (which reads the
+    self-heal marker directly), so the board's Bluetooth readout stays focused on
+    live connection/advertising state.
 
     Args:
         snapshot: A :meth:`BluetoothStatusState.to_dict` payload.
-        status_label: The pre-formatted multi-line status readout (device
-            name/address + connection summary).
+        device_name: The primary advertised host name (heads the button).
+        address: The adapter MAC address, or empty/``None`` when not yet probed.
     """
-    rows: List[dict] = [
-        {"key": "Info", "label": status_label, "icon": "bluetooth"},
-    ]
+    lines: List[str] = []
+    if device_name:
+        lines.append(device_name)
+    if address:
+        lines.append(address)
 
     if snapshot.get("connected"):
         emulator = snapshot.get("emulator") or snapshot.get("transport") or "app"
-        detail = f"In play: {str(emulator).capitalize()}"
+        lines.append(f"In play: {str(emulator).capitalize()}")
         peer = snapshot.get("peer") or {}
         peer_label = peer.get("name") or peer.get("address")
         if peer_label:
-            detail += f"\n{peer_label}"
-        rows.append({"key": "Link", "label": detail, "icon": "bluetooth"})
+            lines.append(str(peer_label))
 
-    names = snapshot.get("advertised_names") or []
-    if names:
-        rows.append({"key": "Names", "label": "\n".join(names), "icon": "bluetooth"})
+    names = [name for name in (snapshot.get("advertised_names") or []) if name]
+    adv_state = snapshot.get("adv_state")
+    icon = "bluetooth"
 
-    if snapshot.get("adv_state") == ADV_HEALING:
-        heal = snapshot.get("heal") or {}
-        detail = heal.get("label") or "Repairing Bluetooth advertising..."
-        rows.append({
-            "key": "Heal",
-            "label": f"Fixing Bluetooth\n{detail}",
-            "icon": "bluetooth",
-        })
-    elif snapshot.get("adv_state") == ADV_FAILED:
+    if adv_state == ADV_RADIO_OFF:
+        lines.append("Disabled")
+    elif adv_state == ADV_FAILED:
+        icon = "cancel"
         detail = failure_label(snapshot.get("advertising") or {}) or "BLE advertising failed"
-        rows.append({
-            "key": "AdvertError",
-            "label": f"Apps can't find board\n{detail}",
-            "icon": "cancel",
-        })
+        lines.append("Apps can't find board")
+        lines.append(detail)
+        lines.extend(names)
+    elif adv_state == ADV_HEALING:
+        heal = snapshot.get("heal") or {}
+        lines.append("Fixing Bluetooth")
+        lines.append(heal.get("label") or "Repairing advertising...")
+        lines.extend(names)
+    elif adv_state == ADV_PAUSED_CONNECTED:
+        # A BLE central is connected; LE advertising pauses. The connection line
+        # above already states the active link, so no broadcasting header (and no
+        # names) is added -- claiming "Broadcasting" here would be false.
+        pass
+    elif adv_state == ADV_ADVERTISING:
+        lines.append("Broadcasting:")
+        lines.extend(names)
+    elif adv_state == ADV_UNKNOWN:
+        lines.append("Starting Bluetooth")
+        lines.extend(names)
+    else:
+        raise ValueError(f"Unhandled Bluetooth adv_state: {adv_state!r}")
 
-    stack_warning = stack_warning_label(snapshot.get("stack") or {})
-    if stack_warning:
-        rows.append({
-            "key": "Stack",
-            "label": f"{stack_warning}\nNo distro security updates",
-            "icon": "info",
-        })
-
-    return rows
+    return [{"key": "Info", "label": "\n".join(lines), "icon": icon}]

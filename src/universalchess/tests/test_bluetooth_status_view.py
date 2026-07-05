@@ -1,128 +1,143 @@
 """Tests for the Bluetooth status menu row derivation.
 
-The board Bluetooth menu and the web card must show the live connection (which
-emulator is in play) and the advertising-failure state, but must NOT flash a
-failure while advertising is merely pending or paused. These tests pin which
-rows appear for each state so a regression in the conditionals (showing the
-error row too eagerly, or dropping the live connected detail) is caught.
+The board Bluetooth menu shows a single readout button that merges the device
+identity (icon, host name, MAC), the live connection ("what's in play"), and the
+advertising state ("Broadcasting" + the names apps should look for). It is one
+fixed row -- not a variable list of readout rows -- and doubles as the enable
+control. These tests pin the one-row contract and the state-driven content so a
+regression cannot re-split the readout, drop the broadcast names, hide an
+advertising failure, or flash a failure while advertising is merely pending,
+paused, or healing.
 """
-
-import pytest
 
 from universalchess.managers.bluetooth_status_state import BluetoothStatusState
 from universalchess.menus.bluetooth_status_view import bluetooth_status_menu_rows
 
-_STATUS_LABEL = "DGT PEGASUS\nAA:BB:CC:DD:EE:FF\nReady"
+_DEVICE_NAME = "DGT PEGASUS"
+_ADDRESS = "AA:BB:CC:DD:EE:FF"
+_NAMES = ["DGT PEGASUS", "Chessnut Air", "MILLENNIUM CHESS"]
 
 
-def _rows_by_key(snapshot, label=_STATUS_LABEL):
-    return {r["key"]: r for r in bluetooth_status_menu_rows(snapshot, label)}
+def _row(snapshot, device_name=_DEVICE_NAME, address=_ADDRESS):
+    rows = bluetooth_status_menu_rows(snapshot, device_name, address)
+    # The readout is one fixed button; anything else is a regression in the
+    # merge (the old design emitted a variable number of readout rows).
+    assert len(rows) == 1
+    return rows[0]
 
 
-def test_idle_shows_only_status_and_names_no_error_or_link():
-    # Healthy/advertising idle: status readout + advertised names, but no
-    # connected-detail row and no error row. Regression: an error row appearing
-    # while advertising is fine would falsely tell the user apps can't connect.
+def _advertising():
     engine = BluetoothStatusState(broadcast=None)
-    engine.begin_advertising(3, ["DGT PEGASUS", "Chessnut Air", "MILLENNIUM CHESS"])
-    for _ in range(3):
+    engine.begin_advertising(len(_NAMES), _NAMES)
+    for _ in range(len(_NAMES)):
         engine.advertisement_registered()
-
-    rows = _rows_by_key(engine.to_dict())
-    assert set(rows) == {"Info", "Names"}
-    assert rows["Names"]["label"] == "DGT PEGASUS\nChessnut Air\nMILLENNIUM CHESS"
+    return engine.to_dict()
 
 
-def test_connected_adds_live_emulator_detail_row():
-    # The live "what's in play" requirement: while a chess app is connected, a
-    # detail row names the active emulator and the peer. Regression: dropping
-    # this row hides which app/emulator is driving the board.
+def test_single_button_carries_identity_broadcasting_header_and_names():
+    # The healthy button: BT icon + host name + MAC + "Broadcasting:" + the full
+    # broadcast list, all in one row. Regression: the identity, the header, or
+    # any broadcast name dropping out of the merged label (the split-row design
+    # returning), or the icon losing the bluetooth glyph.
+    row = _row(_advertising())
+    assert row["key"] == "Info"
+    assert row["icon"] == "bluetooth"
+    assert row["label"] == (
+        "DGT PEGASUS\n"
+        "AA:BB:CC:DD:EE:FF\n"
+        "Broadcasting:\n"
+        "DGT PEGASUS\n"
+        "Chessnut Air\n"
+        "MILLENNIUM CHESS"
+    )
+
+
+def test_missing_address_omits_the_mac_line_only():
+    # The MAC line is dropped when the adapter address is unknown, but the rest
+    # of the button is unchanged. Regression: a blank MAC line appearing, or the
+    # whole button collapsing when the address probe returns "".
+    row = _row(_advertising(), address="")
+    lines = row["label"].split("\n")
+    assert lines[0] == "DGT PEGASUS"
+    assert lines[1] == "Broadcasting:"
+    assert _ADDRESS not in row["label"]
+
+
+def test_connected_ble_shows_in_play_and_not_a_broadcasting_header():
+    # While a BLE central is connected, LE advertising pauses, so the button must
+    # state what's in play instead of claiming it is broadcasting. Regression:
+    # a "Broadcasting:" header appearing during a paused-connected link (false),
+    # or the active emulator/peer detail being dropped.
     engine = BluetoothStatusState(broadcast=None)
-    engine.begin_advertising(3, ["DGT PEGASUS"])
-    for _ in range(3):
-        engine.advertisement_registered()
+    engine.begin_advertising(1, ["DGT PEGASUS"])
+    engine.advertisement_registered()
     engine.client_connected("ble", emulator="pegasus",
-                            peer={"address": "AA:BB", "name": "Phone"})
+                            peer={"address": "11:22", "name": "Phone"})
+    row = _row(engine.to_dict())
+    assert "In play: Pegasus" in row["label"]
+    assert "Phone" in row["label"]
+    assert "Broadcasting:" not in row["label"]
+    assert row["icon"] == "bluetooth"
 
-    rows = _rows_by_key(engine.to_dict())
-    assert "Link" in rows
-    assert "In play: Pegasus" in rows["Link"]["label"]
-    assert "Phone" in rows["Link"]["label"]
 
-
-def test_failed_advertising_adds_error_row_only_when_failed():
-    # The core failure visibility: an error row appears exactly when adv_state is
-    # 'failed' (BlueZ rejected the adverts), carrying the n/m failure summary.
+def test_failed_advertising_flags_the_button_and_lists_names():
+    # A genuine advertising failure turns the single button into the alarm: the
+    # icon becomes 'cancel' and the label explains apps can't find the board,
+    # while still listing the names it is trying to broadcast. Regression: the
+    # failure not surfacing on the merged button, or the icon staying bluetooth.
     engine = BluetoothStatusState(broadcast=None)
     engine.begin_advertising(3, ["DGT PEGASUS"])
     for _ in range(3):
         engine.advertisement_failed("org.bluez.Error.Failed")
+    row = _row(engine.to_dict())
+    assert row["icon"] == "cancel"
+    assert "Apps can't find board" in row["label"]
+    assert "3/3" in row["label"]
+    assert "DGT PEGASUS" in row["label"]
 
-    rows = _rows_by_key(engine.to_dict())
-    assert "AdvertError" in rows
-    assert "Apps can't find board" in rows["AdvertError"]["label"]
-    assert "3/3" in rows["AdvertError"]["label"]
-    assert rows["AdvertError"]["icon"] == "cancel"
 
-
-def test_pending_state_has_no_error_row():
-    # Startup window: nothing registered yet (pending). No error row -- the UI
-    # must not flash a failure before BlueZ answers. Manifests as a spurious
-    # 'AdvertError' row if the conditional keys off failed>0 incorrectly.
+def test_pending_startup_does_not_claim_broadcasting_or_flag_failure():
+    # Startup window: adverts requested, none registered yet. The button must not
+    # claim "Broadcasting:" (nothing is registered) nor flag a failure -- it reads
+    # as starting. Regression: a premature "Broadcasting:" or a 'cancel' icon
+    # while registration is merely pending.
     engine = BluetoothStatusState(broadcast=None)
-    engine.begin_advertising(3, ["DGT PEGASUS"])
+    engine.begin_advertising(3, _NAMES)
+    row = _row(engine.to_dict())
+    assert row["icon"] == "bluetooth"
+    assert "Broadcasting:" not in row["label"]
+    assert "Apps can't find board" not in row["label"]
+    assert "Starting Bluetooth" in row["label"]
 
-    rows = _rows_by_key(engine.to_dict())
-    assert "AdvertError" not in rows
 
-
-def test_healing_shows_heal_row_not_error_row():
+def test_healing_shows_fixing_not_failure():
     # While the self-heal runs, stock BlueZ rejects the adverts (failed > 0) but
-    # the device must show a "fixing" row instead of the alarming error row. The
-    # heal row carries the shared phase label; the AdvertError row must be absent.
-    # Regression: showing AdvertError during a legitimate heal alarms the user.
+    # the button must read as "fixing" (with the shared phase label), not the
+    # alarming failure. Regression: the 'cancel' failure surfacing during a
+    # legitimate heal alarms the user.
     engine = BluetoothStatusState(broadcast=None)
     engine.begin_advertising(3, ["DGT PEGASUS"])
     for _ in range(3):
         engine.advertisement_failed("org.bluez.Error.Failed")
     engine.set_heal_status(True, phase="building")
+    row = _row(engine.to_dict())
+    assert row["icon"] == "bluetooth"
+    assert "Fixing Bluetooth" in row["label"]
+    assert "Building" in row["label"]
+    assert "Apps can't find board" not in row["label"]
 
-    rows = _rows_by_key(engine.to_dict())
-    assert "Heal" in rows
-    assert "AdvertError" not in rows
-    assert "Fixing Bluetooth" in rows["Heal"]["label"]
-    assert "Building" in rows["Heal"]["label"]
 
-
-def test_patched_stack_adds_warning_row():
-    # When the board runs a substituted (non-stock) bluetoothd, a 'Stack' row
-    # must warn on the device (the operator can't see the web). Regression:
-    # dropping this row hides that the board forgoes distro security updates.
+def test_radio_off_reads_disabled_and_lists_no_broadcasts():
+    # With the radio off there is nothing to broadcast: the button reads Disabled
+    # and lists no names. Regression: names lingering under a "Broadcasting:"
+    # header while the radio is off would falsely imply the board is discoverable.
     engine = BluetoothStatusState(broadcast=None)
-    engine.begin_advertising(1, ["DGT PEGASUS"])
-    engine.advertisement_registered()
-    engine.set_stack_status({
-        "active": "patched",
-        "patched": True,
-        "base_version": "5.82-1.1+rpt1",
-        "fix": "bluez 2a6968b",
-        "reason": "kernel ext-adv-data validation",
-        "applied_at": "2026-06-19T10:00:00Z",
-    })
-
-    rows = _rows_by_key(engine.to_dict())
-    assert "Stack" in rows
-    assert "5.82-1.1+rpt1" in rows["Stack"]["label"]
-    assert "security updates" in rows["Stack"]["label"]
-
-
-def test_stock_stack_has_no_warning_row():
-    # The complementary case: a stock (or unknown) stack must NOT add the warning
-    # row, so stock boards are not nagged. Manifests as a spurious 'Stack' row.
-    engine = BluetoothStatusState(broadcast=None)
-    engine.begin_advertising(1, ["DGT PEGASUS"])
-    engine.advertisement_registered()
-    engine.set_stack_status({"active": "stock", "patched": False})
-
-    rows = _rows_by_key(engine.to_dict())
-    assert "Stack" not in rows
+    engine.begin_advertising(len(_NAMES), _NAMES)
+    engine.set_enabled(False)
+    row = _row(engine.to_dict())
+    assert "Disabled" in row["label"]
+    assert "Broadcasting:" not in row["label"]
+    # The device name legitimately heads the button; the *other* broadcast names
+    # must not be listed as if the board were still advertising them.
+    assert "Chessnut Air" not in row["label"]
+    assert "MILLENNIUM CHESS" not in row["label"]

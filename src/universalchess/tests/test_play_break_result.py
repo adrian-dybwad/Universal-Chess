@@ -85,7 +85,7 @@ def test_run_menu_loop_returns_on_play_without_invoking_handler():
 
     # show_menu is the boundary to the e-paper widget/selection wait; stub it to
     # deterministically yield the PLAY cancel result.
-    manager.show_menu = lambda entries, initial_index=0: MenuSelection.from_key("PLAY")
+    manager.show_menu = lambda entries, initial_index=0, on_index_change=None: MenuSelection.from_key("PLAY")
 
     result = manager.run_menu_loop(build_entries, handle_selection)
 
@@ -94,3 +94,48 @@ def test_run_menu_loop_returns_on_play_without_invoking_handler():
     assert result.is_break is True
     # build_entries runs once; a second call would mean the loop refreshed.
     assert build_calls["count"] == 1
+
+
+def test_run_menu_loop_keeps_cursor_on_injected_refresh():
+    """An injected non-entry refresh key must not reset the cursor to the top.
+
+    Reproduces the on-device regression: after restore focused the Bluetooth
+    "Devices" row (index 1), a device-state change injected a ``BT_REFRESH``
+    selection a few seconds later. run_menu_loop's track_selection ran
+    find_entry_index(entries, "BT_REFRESH") -> 0 (not an entry) and re-showed the
+    rebuilt menu at index 0, so the highlighted row jumped to the top on its own.
+
+    How a regression manifests: the second show_menu (after the injected refresh)
+    is passed initial_index 0 instead of the preserved 1, so shown_indices'
+    second element is 0.
+    """
+    manager = MenuManager()
+
+    class _Entry:
+        def __init__(self, key):
+            self.key = key
+
+    entries = [_Entry("Status"), _Entry("Devices")]
+
+    def build_entries():
+        return entries
+
+    def handle_selection(_selection):
+        # BT_REFRESH is not a row: the engine redraws (returns None) rather than
+        # exiting, matching run_engine_menu's handle_selection for unknown keys.
+        return None
+
+    script = ["BT_REFRESH", "BACK"]
+    shown_indices = []
+
+    def fake_show_menu(entries, initial_index=0, on_index_change=None):
+        shown_indices.append(initial_index)
+        return MenuSelection.from_key(script.pop(0))
+
+    manager.show_menu = fake_show_menu
+
+    manager.run_menu_loop(build_entries, handle_selection, initial_index=1)
+
+    # First show at the restored Devices row; after the injected refresh the menu
+    # must re-show at Devices (1), not reset to the top (0).
+    assert shown_indices == [1, 1]

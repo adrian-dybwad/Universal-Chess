@@ -215,6 +215,16 @@ def _validate(menu_data: dict, icons_data: dict) -> None:
         if target is not None and target not in ids:
             raise CatalogError(f"node '{node_id}' references unknown target '{target}'")
 
+        # ``restore_target`` names the container an action row opens, so full-depth
+        # menu restore can auto-descend across an action boundary (e.g. Connectivity
+        # -> Bluetooth). It must resolve like ``target`` so a typo fails at load
+        # rather than silently breaking restore for that branch.
+        restore_target = node.get("restore_target")
+        if restore_target is not None and restore_target not in ids:
+            raise CatalogError(
+                f"node '{node_id}' references unknown restore_target '{restore_target}'"
+            )
+
         option_set = node.get("optionSet")
         if option_set is not None and option_set not in option_set_names:
             raise CatalogError(f"node '{node_id}' references unknown optionSet '{option_set}'")

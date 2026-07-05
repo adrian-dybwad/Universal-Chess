@@ -90,6 +90,11 @@ class MenuRow:
     icon_image: Any = None
     icon_mask: Any = None
     trailing_icon: Optional[str] = None
+    # Optional secondary line rendered below the icon+label (board vertical
+    # layout). Used by the WiFi/Bluetooth merged status button to show the
+    # radio's Enabled/Disabled state next to a checkbox (the trailing_icon),
+    # making it read as a toggle. None for ordinary rows.
+    description: Optional[str] = None
     # Action to run when this row is selected, with the row's ``key`` passed as
     # the argument. Set on ``dynamic`` provider rows whose container node declares
     # an ``itemAction`` so a runtime-listed item (e.g. a scanned WiFi network) can

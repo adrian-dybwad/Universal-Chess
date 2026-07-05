@@ -83,7 +83,13 @@ def test_devices_entry_opens_the_provider_backed_list():
     assert devices["type"] == "submenu"
     assert devices["target"] == "bluetooth.devices.list"
 
-    assert _CATALOG.child_ids("bluetooth.devices.list") == ["bluetooth.devices.list.items"]
+    # The paired list holds the dynamic device rows first, then the Pair action
+    # (folded in from the old top-level Pair entry) at the bottom -- mirroring the
+    # web card's "list, then Scan for keyboards" order.
+    assert _CATALOG.child_ids("bluetooth.devices.list") == [
+        "bluetooth.devices.list.items",
+        "bluetooth.pair",
+    ]
     items = _CATALOG.get_node("bluetooth.devices.list.items")
     assert items["type"] == "dynamic"
     assert items["provider"] == "bluetooth_paired_devices"

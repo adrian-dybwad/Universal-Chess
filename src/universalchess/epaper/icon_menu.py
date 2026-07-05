@@ -108,6 +108,7 @@ class IconMenuWidget(Widget):
                  selected_index: int = 0,
                  on_select: Optional[Callable[[str], None]] = None,
                  on_back: Optional[Callable[[], None]] = None,
+                 on_index_change: Optional[Callable[[int], None]] = None,
                  button_height: int = 70,
                  button_margin: int = 4,
                  background_shade: int = 2,
@@ -124,6 +125,10 @@ class IconMenuWidget(Widget):
             selected_index: Initial selected entry index
             on_select: Optional callback(key) when entry is selected with TICK
             on_back: Optional callback() when BACK is pressed
+            on_index_change: Optional callback(index) fired whenever the cursor
+                moves to a different entry. Used to persist the live cursor
+                position so it survives a process restart (which interrupts the
+                blocked menu before any save-on-exit could run).
             button_height: Height of each button (default 70)
             button_margin: Margin around buttons, passed to each button (default 4)
             background_shade: Dithered background shade 0-16 (default 2 = ~12.5% grey)
@@ -134,24 +139,20 @@ class IconMenuWidget(Widget):
         # Filter disabled entries (disabled entries are not shown at all)
         self.entries = [e for e in entries if e.enabled]
         
-        log.info(f"[DEBUG IconMenuWidget] __init__ received selected_index={selected_index}, len(entries)={len(self.entries)}")
-        
         # Clamp selected_index to valid range
         self.selected_index = min(selected_index, max(0, len(self.entries) - 1))
-        
-        log.info(f"[DEBUG IconMenuWidget] After clamp: self.selected_index={self.selected_index}")
         
         # If initial selection is non-selectable, find first selectable entry
         if self.entries and not self.entries[self.selected_index].selectable:
             for i, entry in enumerate(self.entries):
                 if entry.selectable:
                     self.selected_index = i
-                    log.info(f"[DEBUG IconMenuWidget] Non-selectable adjusted to: {i}")
                     break
         
         # Callbacks for external use
         self.on_select = on_select
         self.on_back = on_back
+        self.on_index_change = on_index_change
         
         # Layout
         self.button_height = button_height
@@ -263,7 +264,6 @@ class IconMenuWidget(Widget):
                 icon_size = min(36, max(20, button_height - 24))
             
             is_selected = (actual_idx == self.selected_index)
-            log.info(f"[DEBUG _create_buttons] Button {entry.key}: actual_idx={actual_idx}, self.selected_index={self.selected_index}, selected={is_selected}")
             button = IconButtonWidget(
                 0,
                 current_y,
@@ -376,6 +376,12 @@ class IconMenuWidget(Widget):
             return
         
         self.selected_index = new_index
+        
+        # Persist the new cursor position immediately. A process restart (SIGTERM)
+        # interrupts the blocked menu wait, so persisting only on menu exit would
+        # lose the live cursor; the callback writes it on every move instead.
+        if self.on_index_change is not None:
+            self.on_index_change(new_index)
         
         # Check if we need to scroll to keep selection visible
         needs_rebuild = self._ensure_selection_visible()

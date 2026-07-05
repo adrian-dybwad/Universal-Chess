@@ -4196,6 +4196,10 @@ interface SystemStats {
 // (these facts do not change while the board runs), unlike the polled stats.
 type HotspotHealth = 'ok' | 'affected' | 'unknown';
 type DisplayStatus = 'ok' | 'failed' | 'unknown';
+// Active bluetoothd stack. Mirrors the board's managers/bluez_patch_status
+// closed set: only 'patched' warns (a substituted binary that forgoes distro
+// security updates); 'stock' is healthy and 'unknown' means no marker was read.
+type BluezStack = 'stock' | 'patched' | 'unknown';
 
 interface HardwareInfo {
   pi_model: string | null;
@@ -4203,6 +4207,8 @@ interface HardwareInfo {
   wireless_chip: string | null;
   wifi_firmware_version: string | null;
   bluez_version: string | null;
+  bluez_stack: BluezStack;
+  bluez_stack_summary: string;
   hotspot_health: HotspotHealth;
   hotspot_summary: string;
   display_model: string;
@@ -4229,6 +4235,15 @@ const DISPLAY_STATUS_BADGE = {
   failed: { variant: 'danger', label: 'Not responding' },
   unknown: { variant: 'default', label: 'Unknown' },
 } satisfies Record<DisplayStatus, { variant: 'success' | 'danger' | 'default'; label: string }>;
+
+// Exhaustive mapping over the closed BluezStack union. 'patched' is the only
+// warning state (substituted binary, no distro security updates); 'stock' is
+// healthy and 'unknown' is non-alarming (no marker read).
+const BLUEZ_STACK_BADGE = {
+  stock: { variant: 'success', label: 'Stock' },
+  patched: { variant: 'danger', label: 'Patched' },
+  unknown: { variant: 'default', label: 'Unknown' },
+} satisfies Record<BluezStack, { variant: 'success' | 'danger' | 'default'; label: string }>;
 
 const SYSTEM_STATS_POLL_MS = 5000;
 const EM_DASH = '\u2014';
@@ -4340,6 +4355,19 @@ function SystemInfoCard() {
         { label: 'Wi-Fi / BT chip', value: orDash(hardware.wireless_chip) },
         { label: 'Wi-Fi firmware', value: orDash(hardware.wifi_firmware_version) },
         { label: 'BlueZ', value: orDash(hardware.bluez_version) },
+        {
+          label: 'BlueZ stack',
+          value: (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+              <Badge variant={BLUEZ_STACK_BADGE[hardware.bluez_stack].variant}>
+                {BLUEZ_STACK_BADGE[hardware.bluez_stack].label}
+              </Badge>
+              <span className="text-muted" style={{ fontSize: 'var(--text-sm)' }}>
+                {hardware.bluez_stack_summary}
+              </span>
+            </div>
+          ),
+        },
         {
           label: 'Bluetooth advertising',
           value: (
