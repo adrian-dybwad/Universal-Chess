@@ -61,6 +61,7 @@ from .move_state import (
 from .task_worker import GameTaskWorker
 from .database import (
     close_game_db_context,
+    clear_game_result,
     create_game_db_context_if_enabled,
     delete_last_move,
     update_game_result,
@@ -302,7 +303,9 @@ class GameManager:
         # This prevents database operations with invalid game ID (game_db_id = -1) before _reset_game() is called
         if self.database_session is not None and self.game_db_id >= 0:
             try:
-                updated = update_game_result(self.database_session, self.game_db_id, result_string)
+                updated = update_game_result(
+                    self.database_session, self.game_db_id, result_string, termination
+                )
                 self.cached_result = result_string  # Cache for thread-safe access
                 if updated:
                     log.info(
@@ -411,12 +414,18 @@ class GameManager:
             # Clear any pending move state - takeback invalidates the computed move
             self.move_state.reset()
             
-            # Remove last move from database
+            # Remove last move from database and clear any recorded game result.
+            # Taking back the deciding move means the game is no longer over, so
+            # a stale result/termination must not survive to make a resumed game
+            # wrongly reappear as finished (see clear_game_result). cached_result
+            # is cleared to match the now-live game state.
             if self.database_session is not None:
                 try:
                     delete_last_move(self.database_session)
+                    clear_game_result(self.database_session, self.game_db_id)
                 except Exception as e:
                     log.error(f"[GameManager._check_takeback] Error deleting last move: {e}")
+            self.cached_result = None
             
             self._game_state.pop_move()  # Notifies observers automatically
             board.beep(board.SOUND_GENERAL, event_type='game_event')

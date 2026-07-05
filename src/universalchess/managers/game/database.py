@@ -83,8 +83,28 @@ def close_game_db_context(ctx: Optional[GameDatabaseContext]) -> None:
             log.error(f"[GameDB] Error disposing database engine: {e}")
 
 
-def update_game_result(session, game_db_id: int, result_string: str) -> bool:
-    """Update game result if record exists."""
+def update_game_result(
+    session, game_db_id: int, result_string: str, termination: Optional[str] = None
+) -> bool:
+    """Persist a game's result and how it ended, if the record exists.
+
+    The termination reason is stored alongside the result so a *finished* game
+    can be resumed with its exact game-over state after a restart. Manual
+    endings (resignation, draw agreement, time forfeit) are not derivable from
+    the final board position, so without the stored reason a resumed resigned
+    game could not reproduce its game-over screen.
+
+    Args:
+        session: Active SQLAlchemy session, or None (no-op).
+        game_db_id: Game row id; negative ids are treated as uninitialized.
+        result_string: Result token ('1-0', '0-1', '1/2-1/2').
+        termination: How the game ended (e.g. 'Termination.RESIGN'). When None
+            the existing termination is left unchanged so callers that only know
+            the result do not erase a previously stored reason.
+
+    Returns:
+        True if the record was found and updated, False otherwise.
+    """
     if session is None or game_db_id < 0:
         return False
 
@@ -97,6 +117,41 @@ def update_game_result(session, game_db_id: int, result_string: str) -> bool:
         return False
 
     game_record.result = result_string
+    if termination is not None:
+        game_record.termination = termination
+    session.flush()
+    session.commit()
+    return True
+
+
+def clear_game_result(session, game_db_id: int) -> bool:
+    """Clear a game's result and termination (e.g. after a takeback).
+
+    A takeback removes the game-ending move, so the game is no longer over. The
+    result/termination must be cleared to keep the stored game state truthful --
+    otherwise a resumed game whose deciding move was taken back would wrongly
+    reappear as finished. Idempotent for a game that has no result.
+
+    Args:
+        session: Active SQLAlchemy session, or None (no-op).
+        game_db_id: Game row id; negative ids are treated as uninitialized.
+
+    Returns:
+        True if the record was found and cleared, False otherwise.
+    """
+    if session is None or game_db_id < 0:
+        return False
+
+    models = _get_models()
+    if models is None:
+        return False
+
+    game_record = session.query(models.Game).filter(models.Game.id == game_db_id).first()
+    if game_record is None:
+        return False
+
+    game_record.result = None
+    game_record.termination = None
     session.flush()
     session.commit()
     return True
@@ -125,6 +180,7 @@ __all__ = [
     "create_game_db_context_if_enabled",
     "close_game_db_context",
     "update_game_result",
+    "clear_game_result",
     "delete_last_move",
 ]
 

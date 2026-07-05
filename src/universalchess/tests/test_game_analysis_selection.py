@@ -190,6 +190,51 @@ def test_selection_change_callback_fires_on_stepping():
     assert seen == [1, 2, 1]
 
 
+def test_select_ply_sets_selection_and_notifies():
+    # select_ply restores a coach selection without a key press (startup restore).
+    # It must set the exact ply and fire the selection-change callback so the
+    # board/coach swap happens. Regression: a restore that mutated selection
+    # without notifying would rebuild the game screen on the board, not the coach
+    # panel the user was viewing.
+    widget = _widget(_game(RUY_LOPEZ_UCI))
+    seen = []
+    widget.set_selection_change_callback(seen.append)
+
+    widget.select_ply(7)
+
+    assert widget.selection == 7
+    assert widget.selected_ply() == 7
+    assert seen == [7]
+
+
+def test_select_ply_clamps_beyond_last_move():
+    # A stale saved ply larger than the move count must clamp to the last played
+    # ply, never selecting a phantom move. 99 is well past the 14 plies present.
+    # Regression: an unclamped restore would index a nonexistent move and either
+    # blank the coach panel or raise.
+    widget = _widget(_game(RUY_LOPEZ_UCI))   # 14 plies
+
+    widget.select_ply(99)
+
+    assert widget.selection == widget.num_plies()
+    assert widget.selected_ply() == 14
+
+
+def test_select_ply_zero_selects_board_view():
+    # Restoring selection 0 must return to the analysis/board view. Starting from
+    # a selected ply, select_ply(0) must notify with 0 so the board is restored.
+    widget = _widget(_game(RUY_LOPEZ_UCI))
+    widget.select_ply(5)
+    seen = []
+    widget.set_selection_change_callback(seen.append)
+
+    widget.select_ply(0)
+
+    assert widget.selection == 0
+    assert widget.selected_ply() is None
+    assert seen == [0]
+
+
 def test_selection_change_callback_silent_when_unchanged():
     # With no moves there is only the analysis view, so stepping is a no-op and
     # the callback must not fire (no spurious board/coach swaps).

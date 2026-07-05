@@ -301,6 +301,25 @@ class GameAnalysisWidget(Widget):
         self._set_selection((self._selection + direction) % total)
         self.invalidate_and_update(immediate=True)
 
+    def select_ply(self, ply: int) -> None:
+        """Select a specific ply (1-based), clamped to the valid range.
+
+        Restores a previously shown coach selection without a key press (e.g.
+        rebuilding the game screen on startup so the coach panel reappears on the
+        move the user was reviewing). ``ply <= 0`` selects the analysis/board
+        view; a ply beyond the last played move is clamped to the last ply so a
+        stale saved value never selects a non-existent move. Repaints like
+        :meth:`step_selection`.
+        """
+        target = ply
+        if target < 0:
+            target = 0
+        max_selection = self.num_plies()
+        if target > max_selection:
+            target = max_selection
+        self._set_selection(target)
+        self.invalidate_and_update(immediate=True)
+
     def _selected_pair_index(self) -> Optional[int]:
         """Index into ``_move_pairs`` of the selected ply's row, or None."""
         ply = self.selected_ply()

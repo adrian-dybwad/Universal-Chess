@@ -40,6 +40,13 @@ class Game(Base):
     white = Column(String(255), nullable=True)
     black = Column(String(255), nullable=True)
     result = Column(String(255), nullable=True)
+    # How the game ended (e.g. 'Termination.CHECKMATE', 'Termination.RESIGN').
+    # Board-terminal endings (checkmate/stalemate) are re-derivable from the
+    # final position, but manual endings (resign/draw/time forfeit) are not, so
+    # the reason is stored to reproduce the exact game-over state when a finished
+    # game is resumed across a restart. Nullable for in-progress games and for
+    # existing databases created before this column.
+    termination = Column(String(255), nullable=True)
 
     def __repr__(self):
         return "<Game(id='%s', created_at='%s', source='%s')>" % (str(self.id), str(self.created_at), self.source)
@@ -76,6 +83,7 @@ try:
     from sqlalchemy import text, inspect
     inspector = inspect(engine)
     columns = [col['name'] for col in inspector.get_columns('gameMove')]
+    game_columns = [col['name'] for col in inspector.get_columns('game')]
     
     with engine.connect() as conn:
         if 'white_clock' not in columns:
@@ -89,6 +97,9 @@ try:
             conn.commit()
         if 'coach_statement' not in columns:
             conn.execute(text('ALTER TABLE gameMove ADD COLUMN coach_statement TEXT'))
+            conn.commit()
+        if 'termination' not in game_columns:
+            conn.execute(text('ALTER TABLE game ADD COLUMN termination VARCHAR(255)'))
             conn.commit()
 except Exception:  # noqa: BLE001, S110  # nosec B110 - startup migration must never crash import
     # Migration may fail if the table doesn't exist yet (first run) - that's ok;

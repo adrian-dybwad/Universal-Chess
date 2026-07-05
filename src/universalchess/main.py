@@ -74,6 +74,15 @@ from universalchess.utils.positions import (
 from universalchess.utils.settings_persistence import (
     MenuContext,
 )
+from universalchess.utils.session_state import (
+    SESSION_STATE_SECTION,
+    VIEW_GAME,
+    VIEW_MENU,
+    VIEW_NONE,
+    VIEW_SETTINGS,
+    SessionSnapshot,
+    plan_startup,
+)
 from universalchess.players.settings import (
     PlayerSettings,
     GameSettings,
@@ -976,7 +985,16 @@ _args = None
 SETTINGS_SECTION = 'game'
 PLAYER1_SECTION = 'PlayerOne'
 PLAYER2_SECTION = 'PlayerTwo'
-MENU_STATE_SECTION = 'MenuState'
+# Menu navigation (path/indices) and the session view-state snapshot share one
+# section: menu position is part of "the state the app was in", so it is stored
+# alongside the rest of the session rather than in a separate [MenuState] block.
+MENU_STATE_SECTION = SESSION_STATE_SECTION
+
+# Seconds the app must run after applying a session restore before the crash-loop
+# guard counter is cleared. Long enough to cover the initial render and settling,
+# short enough that a genuine restore-induced crash loop trips the guard within a
+# few systemd restarts rather than persisting a false positive.
+_RESTORE_STABLE_UPTIME_SECONDS = 30
 
 # Default settings (used for type inference and missing values)
 PLAYER1_DEFAULTS = {
@@ -1165,6 +1183,65 @@ def _clear_menu_state():
     ctx.clear()
 
 
+# Global session view-state snapshot (persists what the user was looking at so a
+# restart/shutdown restores the exact view: board, coach panel, or paused menu).
+_session_snapshot: Optional[SessionSnapshot] = None
+
+
+def _get_session_snapshot() -> SessionSnapshot:
+    """Get the global session snapshot, loading from storage on first use."""
+    global _session_snapshot
+    if _session_snapshot is None:
+        _session_snapshot = SessionSnapshot.load(section=SESSION_STATE_SECTION, log=log)
+    return _session_snapshot
+
+
+def _current_game_db_id() -> int:
+    """Return the live game's database id, or 0 when there is none.
+
+    A brand-new game has no row until its first move is persisted (id stays -1
+    until then); such a game is reported as 0 so the snapshot records "no
+    specific game yet" and startup falls back to the incomplete-game lookup.
+    """
+    if protocol_manager is not None and protocol_manager.game_manager is not None:
+        gid = protocol_manager.game_manager.game_db_id
+        if gid and gid > 0:
+            return gid
+    return 0
+
+
+def _record_session_view(view: str, *, game_db_id: Optional[int] = None,
+                         analysis_selection: Optional[int] = None) -> None:
+    """Persist the current view-state so the next boot restores it exactly.
+
+    Write-through (rather than saving only on shutdown) so the state is correct
+    even after an ungraceful kill or power loss -- the e-paper retains its last
+    image, so the software must match it. Only the provided fields change; the
+    rest of the snapshot (including the crash-loop counter) is preserved.
+
+    Args:
+        view: One of the session_state VIEW_* values.
+        game_db_id: New current-game id to record; None leaves it unchanged.
+        analysis_selection: New coach selection to record; None leaves it
+            unchanged.
+    """
+    snapshot = _get_session_snapshot()
+    changed = False
+    if snapshot.app_view != view:
+        snapshot.app_view = view
+        changed = True
+    if game_db_id is not None and snapshot.game_db_id != game_db_id:
+        snapshot.game_db_id = game_db_id
+        changed = True
+    if analysis_selection is not None and snapshot.analysis_selection != analysis_selection:
+        snapshot.analysis_selection = analysis_selection
+        changed = True
+    # Only persist on an actual change so this is safe to call every main-loop
+    # iteration (e.g. while the menu is showing) without thrashing centaur.ini.
+    if changed:
+        snapshot.save()
+
+
 def _capture_menu_for_resume():
     """Snapshot the current menu navigation path for a later game suspend.
 
@@ -1185,16 +1262,83 @@ def _capture_menu_for_resume():
 # Game Resume Functions
 # ============================================================================
 
+def _build_resume_data(models, session, game) -> Optional[dict]:
+    """Build the resume payload for a Game row, or None if it cannot be resumed.
+
+    Shared by the incomplete-game (legacy) and by-id (session restore) lookups so
+    both produce the same shape. Returns None when the game has only the starting
+    position (no played moves), which is not resumable. Includes the stored
+    ``result`` and ``termination`` so a *finished* game can be resumed with its
+    exact game-over state rather than prompting for a move.
+
+    Args:
+        models: The db.models module (passed in to avoid re-importing).
+        session: Active SQLAlchemy session used to read the moves.
+        game: The Game ORM row to build resume data for.
+
+    Returns:
+        Resume dict (id, source, fen, moves, white, black, clocks, eval_scores,
+        result, termination) or None when the game has no played moves.
+    """
+    moves = session.query(models.GameMove).filter(
+        models.GameMove.gameid == game.id
+    ).order_by(models.GameMove.id.asc()).all()
+
+    if not moves:
+        log.debug(f"[Resume] Game {game.id} has no moves, cannot resume")
+        return None
+
+    last_move = moves[-1]
+    last_fen = last_move.fen
+    white_clock = getattr(last_move, 'white_clock', None)
+    black_clock = getattr(last_move, 'black_clock', None)
+
+    # Skip the empty starting-position row; resume only with actual played moves.
+    move_list = [m.move for m in moves if m.move]
+    if not move_list:
+        log.debug(f"[Resume] Game {game.id} has no actual moves (only starting position), not resuming")
+        return None
+
+    eval_scores = [
+        getattr(m, 'eval_score', None)
+        for m in moves
+        if m.move and getattr(m, 'eval_score', None) is not None
+    ]
+
+    result = game.result
+    termination = getattr(game, 'termination', None)
+    log.info(f"[Resume] Loaded game: id={game.id}, source={game.source}, "
+             f"moves={len(move_list)}, result={result}, last_fen={last_fen[:30]}...")
+    if white_clock is not None and black_clock is not None:
+        log.info(f"[Resume] Clock times: white={white_clock}s, black={black_clock}s")
+    if eval_scores:
+        log.info(f"[Resume] Eval scores: {len(eval_scores)} positions")
+
+    return {
+        'id': game.id,
+        'source': game.source,
+        'fen': last_fen,
+        'moves': move_list,
+        'white': game.white,
+        'black': game.black,
+        'white_clock': white_clock,
+        'black_clock': black_clock,
+        'eval_scores': eval_scores,
+        'result': result,
+        'termination': termination,
+    }
+
+
 def _get_incomplete_game() -> Optional[dict]:
     """Check if there's an incomplete game that can be resumed.
     
     An incomplete game is one where result is NULL (not completed, not abandoned).
     Games marked with '*' are explicitly abandoned and should not be resumed.
+    Used as the legacy fallback when the session snapshot does not identify a
+    specific game (fresh device, or the recorded id is missing).
     
     Returns:
         Dictionary with game data if found, None otherwise.
-        Dict contains: id, source, fen (last position), moves (list of move strings),
-                      white_clock, black_clock (seconds remaining, or None if not stored)
     """
     try:
         from sqlalchemy.orm import sessionmaker
@@ -1213,58 +1357,79 @@ def _get_incomplete_game() -> Optional[dict]:
                 log.debug("[Resume] No incomplete games found")
                 return None
             
-            # Get all moves for this game
-            moves = session.query(models.GameMove).filter(
-                models.GameMove.gameid == game.id
-            ).order_by(models.GameMove.id.asc()).all()
-            
-            if not moves:
-                log.debug(f"[Resume] Game {game.id} has no moves, cannot resume")
-                return None
-            
-            # Get the last FEN position and clock times
-            last_move = moves[-1]
-            last_fen = last_move.fen
-            
-            # Get clock times from the last move (may be None for older games)
-            white_clock = getattr(last_move, 'white_clock', None)
-            black_clock = getattr(last_move, 'black_clock', None)
-
-            # Extract move list (skip empty starting move if present)
-            move_list = [m.move for m in moves if m.move]
-            
-            # Extract eval scores for analysis history (skip moves without eval)
-            eval_scores = [getattr(m, 'eval_score', None) for m in moves if m.move and getattr(m, 'eval_score', None) is not None]
-            
-            # Only resume if there are actual moves played (not just starting position)
-            if not move_list:
-                log.debug(f"[Resume] Game {game.id} has no actual moves (only starting position), not resuming")
-                return None
-            
-            log.info(f"[Resume] Found incomplete game: id={game.id}, source={game.source}, "
-                    f"moves={len(move_list)}, last_fen={last_fen[:30]}...")
-            if white_clock is not None and black_clock is not None:
-                log.info(f"[Resume] Clock times: white={white_clock}s, black={black_clock}s")
-            if eval_scores:
-                log.info(f"[Resume] Eval scores: {len(eval_scores)} positions")
-            
-            return {
-                'id': game.id,
-                'source': game.source,
-                'fen': last_fen,
-                'moves': move_list,
-                'white': game.white,
-                'black': game.black,
-                'white_clock': white_clock,
-                'black_clock': black_clock,
-                'eval_scores': eval_scores
-            }
+            return _build_resume_data(models, session, game)
         finally:
             session.close()
             
     except Exception as e:
         log.error(f"[Resume] Error checking for incomplete game: {e}")
         return None
+
+
+def _get_game_by_id(game_id: int) -> Optional[dict]:
+    """Load a specific game for resume by its database id, regardless of result.
+
+    Unlike :func:`_get_incomplete_game`, this returns finished games too, so a
+    game the user was viewing after it ended (game-over screen / coach review)
+    can be brought back exactly. Abandoned games (result '*') are excluded: they
+    were explicitly discarded and must not reappear.
+
+    Args:
+        game_id: The Game row id recorded in the session snapshot.
+
+    Returns:
+        Resume dict, or None if the game is missing, abandoned, or unplayable.
+    """
+    if game_id <= 0:
+        return None
+    try:
+        from sqlalchemy.orm import sessionmaker
+        from universalchess.db import models
+
+        Session = sessionmaker(bind=models.engine)
+        session = Session()
+
+        try:
+            game = session.query(models.Game).filter(
+                models.Game.id == game_id
+            ).first()
+
+            if game is None:
+                log.debug(f"[Resume] Game id={game_id} not found")
+                return None
+            if game.result == '*':
+                log.debug(f"[Resume] Game id={game_id} was abandoned, not resuming")
+                return None
+
+            return _build_resume_data(models, session, game)
+        finally:
+            session.close()
+
+    except Exception as e:
+        log.error(f"[Resume] Error loading game id={game_id}: {e}")
+        return None
+
+
+def _resolve_resume_target(snapshot) -> Optional[dict]:
+    """Pick the game to resume for a session snapshot, or None.
+
+    Prefers the exact game the snapshot recorded (which may be finished, so it
+    can be restored to its game-over state). Falls back to the legacy
+    most-recent-incomplete-game lookup when the snapshot has no usable id -- this
+    covers fresh/upgraded devices and the brief window before a new game's id is
+    recorded, where the in-progress game is still found by its NULL result.
+
+    Args:
+        snapshot: The loaded :class:`SessionSnapshot`.
+
+    Returns:
+        Resume dict for the game to resume, or None when nothing is resumable.
+    """
+    if snapshot.game_db_id > 0:
+        data = _get_game_by_id(snapshot.game_db_id)
+        if data is not None:
+            return data
+    return _get_incomplete_game()
 
 
 def _resume_game(game_data: dict) -> bool:
@@ -1305,6 +1470,11 @@ def _resume_game(game_data: dict) -> bool:
         
         # Set the database game ID so updates go to the right record
         gm.game_db_id = game_data['id']
+
+        # Record the resumed game's id so a subsequent restart resumes this same
+        # game (including a finished one) rather than falling back to the most
+        # recent incomplete game. _start_game_mode reset it to 0.
+        _record_session_view(VIEW_GAME, game_db_id=game_data['id'])
         
         # Get game state for proper mutation with observer notification
         from universalchess.state import get_chess_game
@@ -1341,6 +1511,24 @@ def _resume_game(game_data: dict) -> bool:
             from universalchess.services.analysis import get_analysis_service
             get_analysis_service().restore_history(eval_scores)
             log.info(f"[Resume] Eval scores restored: {len(eval_scores)} positions")
+        
+        # A finished game (result recorded) is resumed for review/takebacks, not
+        # continued play: reproduce its game-over state and do not prompt a move
+        # or force board correction. Board-terminal endings (checkmate/stalemate)
+        # already fired the game-over event during move replay (push_move detects
+        # the terminal position); manual endings (resignation, draw agreement,
+        # time forfeit) are not derivable from the position, so the stored result
+        # and termination are re-applied. A later takeback clears the result (see
+        # GameManager._check_takeback) so the game becomes live again.
+        result = game_data.get('result')
+        if result is not None:
+            termination = game_data.get('termination')
+            if not game_state.is_game_over:
+                game_state.set_result(result, termination)
+            if display_manager:
+                display_manager.stop_clock()
+            log.info(f"[Resume] Restored finished game (result={result}, termination={termination})")
+            return True
         
         # Check if physical board matches the resumed position
         current_physical_state = board.getChessState()
@@ -1724,6 +1912,15 @@ def _start_game_mode(
     _clear_menu_state()
     _is_position_game = is_position_game
     app_state = AppState.GAME
+
+    # Record the game view for cross-restart restoration. Position (practice)
+    # games are not persisted to the database and so are not resumable; recording
+    # them would make a restart try to resume a game that was never saved, so the
+    # snapshot is only updated for real games. game_db_id is reset to 0 here (the
+    # row does not exist until the first move) and the coach selection to 0 (a
+    # fresh game opens on the board); the real id is recorded once known.
+    if not is_position_game:
+        _record_session_view(VIEW_GAME, game_db_id=0, analysis_selection=0)
     
     # Determine if we should save to database
     # Position games are practice and should not be saved
@@ -2180,6 +2377,11 @@ def _start_game_mode(
             # GameOverWidget already showed itself via ChessGameState observer
             # Just stop the clock
             display_manager.stop_clock()
+            # A finished game keeps a non-NULL result, so it is no longer found
+            # by the incomplete-game lookup; record its id so a restart resumes
+            # this exact game to its game-over state for review/takebacks.
+            if not _is_position_game:
+                _record_session_view(VIEW_GAME, game_db_id=_current_game_db_id())
     local_controller.set_external_event_callback(_on_game_event)
     
     # Register controller_manager with ConnectionManager - this also processes any queued data
@@ -2253,8 +2455,13 @@ def _return_to_menu(reason: str):
         # Return to positions menu, not main menu
         _return_to_positions_menu = True
         app_state = AppState.SETTINGS
+        _record_session_view(VIEW_SETTINGS, game_db_id=0)
     else:
         app_state = AppState.MENU
+        # The game is fully torn down (not suspended), so clear the current-game
+        # id: a restart must not resume a game the user has left. A finished game
+        # dismissed to the menu is cleared here too, so it does not reappear.
+        _record_session_view(VIEW_MENU, game_db_id=0)
 
 
 def _has_suspended_game() -> bool:
@@ -2298,6 +2505,10 @@ def _suspend_game():
         display_manager.suspend()
         display_manager.show_splash("Suspending")
     app_state = AppState.MENU
+    # Record the paused-game-behind-menu state: the game stays resumable (its id
+    # is kept) but the menu is what shows, so a restart reopens the menu with the
+    # game still paused rather than jumping onto the board.
+    _record_session_view(VIEW_MENU, game_db_id=_current_game_db_id())
     log.info("[App] Game suspended to menu")
 
 
@@ -2312,6 +2523,7 @@ def _resume_game_mode():
     app_state = AppState.GAME
     if display_manager:
         display_manager.resume()
+    _record_session_view(VIEW_GAME, game_db_id=_current_game_db_id())
     log.info("[App] Game resumed from menu")
 
 
@@ -2561,6 +2773,10 @@ def _handle_settings(initial_selection: str = None):
     from universalchess.board import centaur
     
     app_state = AppState.SETTINGS
+    # Record that Settings is on screen so a restart reopens it (the exact
+    # submenu is restored from the menu navigation path). Preserves game_db_id so
+    # a game paused behind Settings stays resumable.
+    _record_session_view(VIEW_SETTINGS)
     ctx = _get_menu_context()
     
     # Enter Settings menu - handles both fresh navigation and restoration
@@ -5714,6 +5930,12 @@ def key_callback(key_id):
             # otherwise fall through so the arrows still reach the game manager.
             direction = -1 if key_id == board.Key.UP else 1
             if display_manager.step_analysis_selection(direction):
+                # Persist the reviewed move so a restart reopens the same coach
+                # panel (or the board when back on the analysis view).
+                _record_session_view(
+                    VIEW_GAME,
+                    analysis_selection=display_manager.current_analysis_selection(),
+                )
                 _reset_unhandled_key_count()
                 return
         

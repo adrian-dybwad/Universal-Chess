@@ -675,6 +675,36 @@ class DisplayManager:
         self.analysis_widget.step_selection(direction)
         return True
 
+    def select_analysis_ply(self, ply: int) -> bool:
+        """Programmatically select a coach ply (1-based) to restore the coach view.
+
+        Mirrors a UP/DOWN move selection -- driving the board/coach swap and the
+        coach-statement fetch via the selection-change callback -- but from a
+        saved value rather than a key press. Used to bring the game screen back
+        up on the exact move the user was reviewing after a restart. No-op
+        (returns False) when there is no analysis widget.
+
+        Args:
+            ply: 1-based ply to select; 0 (or less) selects the board view.
+
+        Returns:
+            True if applied, False when there is no analysis widget.
+        """
+        if self.analysis_widget is None:
+            return False
+        self.analysis_widget.select_ply(ply)
+        return True
+
+    def current_analysis_selection(self) -> int:
+        """Return the current analysis/coach selection (0 = board view; N = ply).
+
+        Used to persist the reviewed move so a restart reopens the same coach
+        panel. Returns 0 when there is no analysis widget.
+        """
+        if self.analysis_widget is None:
+            return 0
+        return self.analysis_widget.selection
+
     def set_coach_selection_callback(self, callback) -> None:
         """Register a callback invoked with the selected ply (or None).
 
