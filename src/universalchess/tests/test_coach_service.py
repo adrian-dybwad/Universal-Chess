@@ -476,3 +476,32 @@ def test_potential_move_prompt_frames_the_move_as_a_not_yet_played_hint():
     assert "why it is a good move to play" in prompt
     # The grounding instruction must still be present for tips.
     assert "do not assert a pin, fork, check, or capture that is not supported" in prompt
+
+
+def test_user_prompt_lists_multipv_candidate_lines_when_present():
+    # When MultiPV candidate lines are supplied (coach_multipv > 1), the prompt must
+    # list them verbatim under an "engine's top candidate moves" header so the coach
+    # can reference better/alternative moves. Regression: dropping them would make
+    # the MultiPV setting inert -- the coach would never see the alternatives.
+    request = CoachRequest(
+        fen_before="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        move_text="a3",
+        side_to_move="white",
+        candidate_lines=("e4 (+0.30)", "d4 (+0.25)", "Nf3 (+0.20)"),
+    )
+    prompt = build_user_prompt(request)
+    assert "Engine's top candidate moves" in prompt
+    assert "- e4 (+0.30)" in prompt
+    assert "- d4 (+0.25)" in prompt
+    assert "- Nf3 (+0.20)" in prompt
+
+
+def test_user_prompt_without_candidate_lines_omits_the_alternatives_block():
+    # With MultiPV disabled (default, no candidate lines) the prompt must omit the
+    # alternatives header entirely rather than print an empty block, matching how
+    # the facts section is handled. Regression: an empty header would imply the
+    # engine found no alternatives, subtly misleading the model.
+    request = CoachRequest(fen_before="8/8/8/8/8/8/8/8 w - - 0 1", move_text="e4",
+                           side_to_move="white")
+    prompt = build_user_prompt(request)
+    assert "Engine's top candidate moves" not in prompt

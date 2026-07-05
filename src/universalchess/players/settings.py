@@ -39,6 +39,9 @@ class PlayerSettings:
         engine: Engine name (for engine/human/hand_brain type)
         elo: Engine ELO level (for engine/human/hand_brain type)
         hand_brain_mode: Hand+Brain mode ('normal' or 'reverse')
+        think_time: Seconds the engine may think per move (engine type). Integer
+            seconds because the settings loader infers type from the default and
+            has no float branch; a float would round-trip as a string.
     """
 
     section: str
@@ -48,6 +51,7 @@ class PlayerSettings:
     engine: str = "stockfish"
     elo: str = "Default"
     hand_brain_mode: str = "normal"
+    think_time: int = 5
     _log: Optional[Any] = field(default=None, repr=False)
 
     def save(self, key: str) -> None:
@@ -87,6 +91,7 @@ class PlayerSettings:
             "engine": self.engine,
             "elo": self.elo,
             "hand_brain_mode": self.hand_brain_mode,
+            "think_time": self.think_time,
         }
 
     @classmethod
@@ -115,6 +120,7 @@ class PlayerSettings:
             engine=data.get("engine", defaults.get("engine", "stockfish")),
             elo=data.get("elo", defaults.get("elo", "Default")),
             hand_brain_mode=data.get("hand_brain_mode", defaults.get("hand_brain_mode", "normal")),
+            think_time=data.get("think_time", defaults.get("think_time", 5)),
             _log=log,
         )
 
@@ -145,6 +151,10 @@ class GameSettings:
         time_control: Time per player in minutes (0 = disabled/untimed)
         analysis_mode: Enable analysis engine
         analysis_engine: Engine to use for position analysis
+        ponder: When True, engine players think on the opponent's time (UCI
+            pondering). A pondering engine runs in a dedicated process so its
+            background search is never interrupted by analysis or the opponent;
+            costs extra CPU/power. Default False.
         show_board: Show chess board widget
         show_clock: Show clock/turn indicator widget
         show_analysis: Show analysis widget
@@ -181,6 +191,10 @@ class GameSettings:
         coach_language: Natural language the AI coach responds in (e.g. "Spanish").
             Defaults to "English", which adds no prompt instruction; any other value
             asks the model to write its remark in that language.
+        coach_multipv: Number of engine candidate lines (1-5) the AI coach is given
+            for a reviewed move. 1 (default) sends no alternatives (current
+            behavior); higher values run a multi-line analysis so the coach can
+            reference better/alternative moves.
         text_size: Display text size ("small", "medium", or "large", default
             "medium") scaling the e-paper coach panel and move-list fonts. Medium
             leaves existing layouts unchanged.
@@ -190,6 +204,7 @@ class GameSettings:
     time_control: int = 0
     analysis_mode: bool = True
     analysis_engine: str = "stockfish"
+    ponder: bool = False
     show_board: bool = True
     show_clock: bool = True
     show_analysis: bool = True
@@ -209,6 +224,7 @@ class GameSettings:
     coach_base_url_custom: str = ""
     coach_id: str = "auto"
     coach_language: str = "English"
+    coach_multipv: int = 1
     _log: Optional[Any] = field(default=None, repr=False)
 
     def _coach_storage(self) -> Dict[str, str]:
@@ -279,6 +295,7 @@ class GameSettings:
             "time_control": self.time_control,
             "analysis_mode": self.analysis_mode,
             "analysis_engine": self.analysis_engine,
+            "ponder": self.ponder,
             "show_board": self.show_board,
             "show_clock": self.show_clock,
             "show_analysis": self.show_analysis,
@@ -291,6 +308,7 @@ class GameSettings:
             "coach_provider": self.coach_provider,
             "coach_id": self.coach_id,
             "coach_language": self.coach_language,
+            "coach_multipv": self.coach_multipv,
         }
         for key in per_provider_keys():
             data[key] = getattr(self, key, "")
@@ -325,6 +343,8 @@ class GameSettings:
         load_defaults.setdefault("coach_provider", "none")
         load_defaults.setdefault("coach_id", "auto")
         load_defaults.setdefault("coach_language", "English")
+        load_defaults.setdefault("coach_multipv", 1)
+        load_defaults.setdefault("ponder", False)
         load_defaults.setdefault("text_size", "medium")
         for key in default_namespaced_settings():
             load_defaults.setdefault(key, "")
@@ -341,6 +361,7 @@ class GameSettings:
             time_control=data.get("time_control", defaults.get("time_control", 0)),
             analysis_mode=data.get("analysis_mode", defaults.get("analysis_mode", True)),
             analysis_engine=data.get("analysis_engine", defaults.get("analysis_engine", "stockfish")),
+            ponder=data.get("ponder", defaults.get("ponder", False)),
             show_board=data.get("show_board", defaults.get("show_board", True)),
             show_clock=data.get("show_clock", defaults.get("show_clock", True)),
             show_analysis=data.get("show_analysis", defaults.get("show_analysis", True)),
@@ -365,6 +386,7 @@ class GameSettings:
             coach_language=data.get(
                 "coach_language", defaults.get("coach_language", "English")
             ),
+            coach_multipv=data.get("coach_multipv", defaults.get("coach_multipv", 1)),
             _log=log,
         )
         # Overlay any namespaced slots that are not declared dataclass fields --
@@ -446,8 +468,8 @@ class AllSettings:
         """
         p1, p2 = self.player1, self.player2
         return (
-            p1.type, p1.color, p1.engine, p1.elo, p1.hand_brain_mode,
-            p2.type, p2.color, p2.engine, p2.elo, p2.hand_brain_mode,
+            p1.type, p1.color, p1.engine, p1.elo, p1.hand_brain_mode, p1.think_time,
+            p2.type, p2.color, p2.engine, p2.elo, p2.hand_brain_mode, p2.think_time,
         )
 
     def log_summary(self) -> None:

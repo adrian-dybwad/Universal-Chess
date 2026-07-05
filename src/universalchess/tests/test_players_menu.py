@@ -118,21 +118,22 @@ def _detail_rows(state, *, has_color=True):
 # -- detail menu: type-conditional row sets ------------------------------------
 
 
-def test_human_shows_color_type_name_engine_elo():
-    """A human player exposes Color, Type, Name, Engine, and ELO (no H+B/Lichess).
+def test_human_shows_color_type_name_only():
+    """A human player exposes Color, Type, and Name (no Engine/ELO/H+B/Lichess).
 
     Why this test exists: row visibility is gated by ``visibleWhen`` on the player
-    type; a human keeps Name and (per the prior board) the Engine/ELO rows. How a
-    regression manifests: the Name row disappears, or the Hand+Brain/Lichess row
-    leaks in for a human, changing this exact id list.
+    type. Engine/ELO must NOT show for a human -- those fields drive engine and
+    hand-brain players only; a human's hints use the global analysis engine (see
+    DisplayManager.get_hint_move, which reads the analysis handle, not the player's
+    engine/elo). This previously leaked Engine/ELO onto the board for a human while
+    the web already hid them, so the two UIs disagreed. How a regression manifests:
+    "field.player.engine"/"field.player.elo" reappear in this id list for a human.
     """
     ids = [r.node["id"] for r in _detail_rows(_player_state(type="human"))]
     assert ids == [
         "field.player.color",
         "field.player.type",
         "field.player.name",
-        "field.player.engine",
-        "field.player.elo",
     ]
 
 

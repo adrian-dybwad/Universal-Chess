@@ -17,7 +17,7 @@ pure, network-only module with no chess dependency.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Iterable, Optional, Tuple
 
 from universalchess.services.coach import DEFAULT_LANGUAGE, CoachRequest
 from universalchess.utils.chess_notation import DEFAULT_NOTATION, format_move
@@ -103,4 +103,67 @@ def build_coach_request(
     )
 
 
-__all__ = ["build_coach_request"]
+def _format_white_eval(score) -> str:
+    """Format a python-chess PovScore as a white's-perspective pawn/mate string.
+
+    Matches the coach's white's-perspective convention (see coach._format_eval):
+    a numeric eval reads like ``+0.30``/``-1.20`` (pawns), a forced mate like
+    ``#3``/``#-2``. Returns "" when the score is missing or unscored so the
+    candidate line falls back to just the move text rather than a fabricated eval.
+    """
+    if score is None:
+        return ""
+    white = score.white()
+    if white.is_mate():
+        mate = white.mate()
+        if mate is None:
+            return ""
+        return f"#{mate}" if mate > 0 else f"#-{abs(mate)}"
+    centipawns = white.score()
+    if centipawns is None:
+        return ""
+    return f"{centipawns / 100.0:+.2f}"
+
+
+def format_candidate_lines(
+    fen_before: str,
+    infos: Iterable[dict],
+    notation: str = DEFAULT_NOTATION,
+) -> Tuple[str, ...]:
+    """Format MultiPV analysis results into coach candidate-line strings.
+
+    Turns the ``analyse(multipv=N)`` output for the position before a move into
+    strings like ``"e4 (+0.30)"`` -- the first move of each principal variation
+    in the user's notation, with its white's-perspective eval -- ordered best
+    first (the order python-chess returns). Used to give the AI coach the
+    engine's preferred/alternative moves without leaking python-chess types into
+    the service layer.
+
+    An info with no ``pv`` (no move) is skipped. An unformattable move (illegal
+    for the FEN -- corrupt data) falls back to its UCI string rather than dropping
+    the line. Returns an empty tuple when the FEN is invalid or nothing usable is
+    present, so the caller simply omits the alternatives block.
+    """
+    import chess
+
+    try:
+        board = chess.Board(fen_before)
+    except ValueError:
+        return ()
+
+    lines = []
+    for info in infos:
+        pv = info.get("pv")
+        if not pv:
+            continue
+        move = pv[0]
+        try:
+            move_text = format_move(board, move, notation)
+        except (ValueError, AssertionError):
+            move_text = move.uci()
+        eval_text = _format_white_eval(info.get("score"))
+        lines.append(f"{move_text} ({eval_text})" if eval_text else move_text)
+    return tuple(lines)
+
+
+__all__ = ["build_coach_request", "format_candidate_lines"]

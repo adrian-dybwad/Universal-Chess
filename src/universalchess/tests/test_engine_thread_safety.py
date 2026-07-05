@@ -39,10 +39,14 @@ class _BlockingHandle:
         self.release = threading.Event()
         self._calls_lock = threading.Lock()
         self.play_calls = 0
+        # Capture the last play() kwargs so tests can assert ponder/game/options
+        # forwarding without racing the background think thread.
+        self.last_kwargs = None
 
-    def play(self, board, limit, options=None):
+    def play(self, board, limit, options=None, ponder=False, game=None):
         with self._calls_lock:
             self.play_calls += 1
+            self.last_kwargs = {"options": options, "ponder": ponder, "game": game}
         self.play_started.set()
         self.release.wait(timeout=5)
         return SimpleNamespace(move=self._move)
@@ -183,6 +187,77 @@ def test_on_move_made_does_not_cancel_in_flight_think():
 
     assert player._pending_move == E2E4
     assert notified == [E2E4]
+
+
+def test_ponder_config_forwards_ponder_and_game_token_and_omits_options():
+    """A pondering engine must call play with ponder=True, the game token, options=None.
+
+    Why: python-chess only keeps pondering / issues ponderhit when it gets
+    ponder=True and a stable game token across moves. And re-sending UCI options
+    each move (setoption) would disrupt the dedicated engine's background ponder
+    search, so options must be omitted on the ponder path (they were applied once
+    at startup).
+
+    How the regression manifests: last_kwargs shows ponder=False, game=None, or a
+    non-None options dict -- any of which means pondering is broken or interrupted.
+    """
+    from universalchess.players.engine import EnginePlayerConfig
+
+    handle = _BlockingHandle(E2E4)
+    handle.release.set()
+    player = EnginePlayer(EnginePlayerConfig(ponder=True))
+    player._color = chess.WHITE
+    player._engine_handle = handle
+    player._uci_options = {"UCI_Elo": "1500"}  # would be forwarded if not pondering
+
+    player._do_request_move(chess.Board())
+    player._think_thread.join(timeout=3)
+
+    assert handle.last_kwargs["ponder"] is True
+    assert handle.last_kwargs["game"] is player._game_token
+    assert handle.last_kwargs["options"] is None
+
+
+def test_non_ponder_config_forwards_options_and_no_ponder():
+    """The default (non-ponder) path must forward options and not ponder.
+
+    Why: guards that adding the ponder path did not change normal play -- options
+    are still applied per move and the engine does not start a background search
+    when the toggle is off.
+
+    How the regression manifests: last_kwargs shows ponder=True or drops the
+    options dict, i.e. the ponder branch leaked into the default path.
+    """
+    from universalchess.players.engine import EnginePlayerConfig
+
+    handle = _BlockingHandle(E2E4)
+    handle.release.set()
+    player = EnginePlayer(EnginePlayerConfig(ponder=False))
+    player._color = chess.WHITE
+    player._engine_handle = handle
+    player._uci_options = {"UCI_Elo": "1500"}
+
+    player._do_request_move(chess.Board())
+    player._think_thread.join(timeout=3)
+
+    assert handle.last_kwargs["ponder"] is False
+    assert handle.last_kwargs["game"] is None
+    assert handle.last_kwargs["options"] == {"UCI_Elo": "1500"}
+
+
+def test_new_game_refreshes_ponder_game_token():
+    """on_new_game must refresh the ponder game token.
+
+    Why: python-chess must never issue a ponderhit against a search from a
+    previous game; the token identifies the game, so a new game needs a new token.
+
+    How the regression manifests: the token is unchanged across on_new_game, so a
+    stale ponder from the prior game could be treated as a hit in the new one.
+    """
+    player = EnginePlayer()
+    before = player._game_token
+    player.on_new_game()
+    assert player._game_token is not before
 
 
 def test_stop_clears_handle_and_stops_even_if_release_raises():

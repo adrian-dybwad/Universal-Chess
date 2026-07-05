@@ -38,12 +38,16 @@ class EnginePlayerConfig(PlayerConfig):
                     standard locations (engines/ folder).
         elo_section: Section name from .uci config file for ELO settings.
         uci_options: Additional UCI options to configure.
+        ponder: When True, the engine thinks on the opponent's time (UCI
+            pondering) using a dedicated engine process so its background search
+            is not interrupted by analysis or the opponent. Costs extra CPU/power.
     """
     time_limit_seconds: float = 5.0
     engine_name: str = "stockfish"
     engine_path: Optional[str] = None
     elo_section: str = "Default"
     uci_options: Dict[str, str] = field(default_factory=dict)
+    ponder: bool = False
 
 
 class EnginePlayer(Player):
@@ -106,6 +110,11 @@ class EnginePlayer(Player):
         
         # Pending move from engine computation (for LED display)
         self._pending_move: Optional[chess.Move] = None
+
+        # Opaque per-game token passed to the engine's play() so python-chess only
+        # issues ponderhit across moves of the same game. Refreshed on_new_game so
+        # pondering never carries over between games. Unused when ponder is off.
+        self._game_token: object = object()
     
     @property
     def player_type(self) -> PlayerType:
@@ -177,6 +186,28 @@ class EnginePlayer(Player):
             log.error(f"[EnginePlayer] Failed to initialize engine: {e}")
             self._set_state(PlayerState.ERROR, str(e))
         
+        if self._engine_config.ponder:
+            # Pondering needs a dedicated engine process (acquire_dedicated), since
+            # the background ponder search must not be interrupted by other
+            # consumers of a shared instance. acquire_dedicated is blocking, so run
+            # it on a background thread to preserve the async startup contract.
+            log.info(f"[EnginePlayer] Requesting dedicated (ponder) engine: {engine_path}")
+
+            def _load_dedicated():
+                handle = get_engine_registry().acquire_dedicated(str(engine_path))
+                if handle is not None:
+                    _on_engine_ready(handle)
+                else:
+                    _on_engine_error(Exception(f"Failed to load dedicated engine: {engine_path}"))
+
+            self._init_thread = threading.Thread(
+                target=_load_dedicated,
+                name=f"engine-load-ponder-{self.engine_name}",
+                daemon=True,
+            )
+            self._init_thread.start()
+            return True
+
         log.info(f"[EnginePlayer] Requesting engine from registry: {engine_path}")
         get_engine_registry().acquire_async(
             str(engine_path),
@@ -284,10 +315,18 @@ class EnginePlayer(Player):
                 
                 # Get engine move (registry handles serialization and options)
                 time_limit = self._engine_config.time_limit_seconds
+                ponder = self._engine_config.ponder
+                # When pondering, do NOT re-send options every move: the options
+                # were applied once at startup (see _on_engine_ready), and issuing
+                # setoption while the dedicated engine is running its background
+                # ponder search would disrupt it. Options don't change mid-game.
+                play_options = None if ponder else (self._uci_options if self._uci_options else None)
                 result = handle.play(
                     board_copy,
                     chess.engine.Limit(time=time_limit),
-                    options=self._uci_options if self._uci_options else None
+                    options=play_options,
+                    ponder=ponder,
+                    game=self._game_token if ponder else None,
                 )
                 move = result.move
             except Exception as e:
@@ -418,6 +457,9 @@ class EnginePlayer(Player):
         """
         log.info(f"[EnginePlayer] New game - resetting {self.engine_name}")
         self._invalidate_pending()
+        # New game: refresh the ponder token so python-chess never issues a
+        # ponderhit against a search from the previous game.
+        self._game_token = object()
         
         # If engine is in error state, attempt to re-initialize
         if self._state == PlayerState.ERROR:

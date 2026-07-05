@@ -1004,6 +1004,7 @@ PLAYER1_DEFAULTS = {
     'engine': 'stockfish',
     'elo': 'Default',
     'hand_brain_mode': 'normal',
+    'think_time': 5,
 }
 
 PLAYER2_DEFAULTS = {
@@ -1013,12 +1014,14 @@ PLAYER2_DEFAULTS = {
     'engine': 'stockfish',
     'elo': 'Default',
     'hand_brain_mode': 'normal',
+    'think_time': 5,
 }
 
 GAME_SETTINGS_DEFAULTS = {
     'time_control': 0,
     'analysis_mode': True,
     'analysis_engine': 'stockfish',
+    'ponder': False,
     'show_board': True,
     'show_clock': True,
     'show_analysis': True,
@@ -1027,6 +1030,7 @@ GAME_SETTINGS_DEFAULTS = {
     'text_size': 'medium',
     'coach_provider': 'none',
     'coach_id': 'auto',
+    'coach_multipv': 1,
     'coach_api_key_openai': '',
     'coach_model_openai': '',
     'coach_api_key_anthropic': '',
@@ -1952,7 +1956,8 @@ def _start_game_mode(
                 color=color,
                 engine_name=ps.engine,
                 elo_section=ps.elo,
-                time_limit_seconds=5.0
+                time_limit_seconds=float(ps.think_time),
+                ponder=settings.game.ponder,
             )
             return EnginePlayer(config)
         elif ps.type == 'lichess':
@@ -1974,7 +1979,7 @@ def _start_game_mode(
                 mode=mode,
                 engine_name=ps.engine,
                 elo_section=ps.elo,
-                time_limit_seconds=2.0
+                time_limit_seconds=float(ps.think_time)
             )
             return HandBrainPlayer(config)
         else:
@@ -3235,6 +3240,61 @@ def _build_coach_request(ply: int):
     )
 
 
+# Time budget for the coach's MultiPV candidate-line analysis. Short because it
+# runs lazily off the display thread for one reviewed move at a time; long enough
+# to rank the top few moves meaningfully.
+_COACH_MULTIPV_ANALYSIS_SECONDS = 0.5
+
+
+def _coach_candidate_lines(fen_before: str):
+    """Engine MultiPV candidate lines for a position, or () when disabled/unavailable.
+
+    Returns pre-formatted candidate-move strings (best first) for the AI coach
+    when ``coach_multipv`` > 1, by running a short MultiPV analysis on the shared
+    analysis engine. Best-effort: returns an empty tuple when MultiPV is disabled,
+    no analysis engine is available, or the analysis fails, so coaching proceeds
+    without alternatives rather than erroring. The pondering player uses a separate
+    dedicated engine, so this shared-engine analysis never touches a ponder search.
+    """
+    game = _get_settings().game
+    try:
+        multipv = int(game.coach_multipv)
+    except (TypeError, ValueError):
+        return ()
+    if multipv <= 1:
+        return ()
+
+    from universalchess.paths import get_engine_path
+    from universalchess.services.engine_registry import get_engine_registry
+    from universalchess.managers.game.coach_request_builder import format_candidate_lines
+    import chess
+    import chess.engine
+
+    engine_path = get_engine_path(game.analysis_engine)
+    if not engine_path:
+        return ()
+
+    registry = get_engine_registry()
+    handle = registry.acquire(str(engine_path))
+    if handle is None:
+        return ()
+    try:
+        board = chess.Board(fen_before)
+        infos = handle.analyse(
+            board,
+            chess.engine.Limit(time=_COACH_MULTIPV_ANALYSIS_SECONDS),
+            multipv=multipv,
+        )
+    except Exception as e:
+        log.info(f"[Coach] MultiPV analysis failed: {e}")
+        return ()
+    finally:
+        registry.release(handle)
+
+    notation = _game_settings_dict().get("notation", "figurine")
+    return format_candidate_lines(fen_before, infos, notation)
+
+
 def _wire_coach_coordinator(display_manager, game_manager):
     """Connect analysis-widget move selection to the lazy AI coach fetch.
 
@@ -3255,21 +3315,28 @@ def _wire_coach_coordinator(display_manager, game_manager):
     coach_models.refresh_models_async(_coach_config())
 
     def _enrich_with_evals(request, game_db_id, ply):
-        """Attach stored eval scores to a request on the coach worker thread.
+        """Attach stored eval scores and MultiPV candidate lines to a request.
 
-        The eval read touches the database, which is why it runs here (off the
-        display thread) rather than in ``_build_coach_request``: the move-review
-        keypress that selects a ply stays responsive while the fetch worker gathers
-        the extra context. Missing evals leave the request's eval fields as None.
+        Runs on the coach worker thread (not ``_build_coach_request``) because it
+        touches the database (stored evals) and, when ``coach_multipv`` > 1, runs a
+        short engine analysis for the engine's top candidate moves. Keeping this
+        off the display thread means the move-review keypress that selects a ply
+        stays responsive. All context here is best-effort: missing evals leave the
+        eval fields None and a failed/absent MultiPV analysis leaves candidate
+        lines empty rather than aborting coaching.
         """
         eval_before_cp, eval_after_cp = get_move_evals(game_db_id, ply)
-        if eval_before_cp is None and eval_after_cp is None:
-            return request
-        return replace(
-            request,
-            eval_before_cp=eval_before_cp,
-            eval_after_cp=eval_after_cp,
-        )
+        if eval_before_cp is not None or eval_after_cp is not None:
+            request = replace(
+                request,
+                eval_before_cp=eval_before_cp,
+                eval_after_cp=eval_after_cp,
+            )
+
+        candidate_lines = _coach_candidate_lines(request.fen_before)
+        if candidate_lines:
+            request = replace(request, candidate_lines=candidate_lines)
+        return request
 
     coordinator = CoachCoordinator(
         build_request=_build_coach_request,

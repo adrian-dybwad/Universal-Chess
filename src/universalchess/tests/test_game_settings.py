@@ -139,3 +139,67 @@ def test_load_reads_stored_text_size(monkeypatch):
     settings = GameSettings.load("game", {})
     assert settings.text_size == "small"
     assert settings.to_dict()["text_size"] == "small"
+
+
+def test_ponder_defaults_to_off():
+    # Pondering must default off so a fresh install (including battery boards) does
+    # not spawn a dedicated engine burning CPU/power without the user opting in. A
+    # missing field or wrong default would enable pondering silently.
+    settings = GameSettings(section="game")
+    assert settings.to_dict()["ponder"] is False
+
+
+def test_to_dict_includes_ponder():
+    # Guards the to_dict() round-trip the board menu/web read the ponder flag
+    # through. Without the field this raises TypeError on construction; a broken
+    # to_dict() KeyErrors here.
+    settings = GameSettings(section="game", ponder=True)
+    assert settings.to_dict()["ponder"] is True
+
+
+def test_load_reads_stored_ponder(monkeypatch):
+    # load() must surface a persisted ponder flag; otherwise the setting is
+    # inert and the engine never ponders even when the user enabled it. The fake
+    # omits ponder from explicit defaults to prove load() seeds the read default
+    # itself (setdefault) so load_section actually reads the stored key.
+    def fake_load_section(section, defaults):
+        data = dict(defaults)
+        data["ponder"] = True
+        return data
+
+    monkeypatch.setattr(settings_mod, "load_section", fake_load_section)
+    settings = GameSettings.load("game", {})
+    assert settings.ponder is True
+    assert settings.to_dict()["ponder"] is True
+
+
+def test_coach_multipv_defaults_to_one():
+    # MultiPV must default to 1 (no alternatives) so a fresh install keeps the
+    # current single-line coaching cost/behavior until the user raises it. A
+    # missing field or wrong default would run extra analysis unbidden.
+    settings = GameSettings(section="game")
+    assert settings.to_dict()["coach_multipv"] == 1
+
+
+def test_to_dict_includes_selected_coach_multipv():
+    # Guards the to_dict() round-trip the web reads the current MultiPV through.
+    # Without the field this raises TypeError on construction; a broken to_dict()
+    # KeyErrors here.
+    settings = GameSettings(section="game", coach_multipv=3)
+    assert settings.to_dict()["coach_multipv"] == 3
+
+
+def test_load_reads_stored_coach_multipv(monkeypatch):
+    # load() must surface a persisted MultiPV count as an int; otherwise the coach
+    # never receives candidate lines even when configured. The fake omits
+    # coach_multipv from explicit defaults to prove load() seeds the read default
+    # itself (setdefault), and returns an int (load_int coerces the stored string).
+    def fake_load_section(section, defaults):
+        data = dict(defaults)
+        data["coach_multipv"] = 4
+        return data
+
+    monkeypatch.setattr(settings_mod, "load_section", fake_load_section)
+    settings = GameSettings.load("game", {})
+    assert settings.coach_multipv == 4
+    assert settings.to_dict()["coach_multipv"] == 4

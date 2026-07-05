@@ -75,11 +75,13 @@ _PLAYER_DEFINING_CHANGES = [
     ("p1", {"engine": "ct800"}),
     ("p1", {"elo": "1500"}),
     ("p1", {"hand_brain_mode": "reverse"}),
+    ("p1", {"think_time": 10}),
     ("p2", {"type": "human"}),
     ("p2", {"color": "white"}),
     ("p2", {"engine": "ct800"}),
     ("p2", {"elo": "1500"}),
     ("p2", {"hand_brain_mode": "reverse"}),
+    ("p2", {"think_time": 10}),
 ]
 
 
@@ -104,6 +106,34 @@ def test_identical_settings_have_equal_signatures():
     a = _make_settings(p2_overrides={"engine": "ct800", "elo": "1500"})
     b = _make_settings(p2_overrides={"engine": "ct800", "elo": "1500"})
     assert a.player_config_signature() == b.player_config_signature()
+
+
+def test_think_time_round_trips_through_to_dict_and_load(monkeypatch):
+    """PlayerSettings.think_time must survive to_dict() and load().
+
+    Why this test exists: the web/board read the per-move think time via to_dict()
+    and persist it via load(); a missing field or a to_dict()/load() gap would make
+    the setting inert (the engine always uses the 5s default). load_int coerces the
+    stored string, so the loaded value must come back as an int.
+
+    How the regression manifests: to_dict() lacks 'think_time' (KeyError), load()
+    ignores the stored value (falls back to 5), or the field is dropped entirely
+    (TypeError on construction).
+    """
+    import universalchess.players.settings as settings_mod
+
+    assert PlayerSettings(section="PlayerTwo", think_time=12).to_dict()["think_time"] == 12
+    assert PlayerSettings(section="PlayerTwo").to_dict()["think_time"] == 5
+
+    def fake_load_section(section, defaults):
+        data = dict(defaults)
+        data["think_time"] = 20
+        return data
+
+    monkeypatch.setattr(settings_mod, "load_section", fake_load_section)
+    loaded = PlayerSettings.load("PlayerTwo", {})
+    assert loaded.think_time == 20
+    assert loaded.to_dict()["think_time"] == 20
 
 
 def test_signature_models_the_changed_detection():

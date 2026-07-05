@@ -27,15 +27,24 @@ from universalchess.board.logging import log
 
 @dataclass
 class EngineHandle:
-    """Handle to a shared engine instance.
-    
+    """Handle to an engine instance.
+
     Provides serialized access to the underlying UCI engine.
     All operations acquire the lock before interacting with the engine.
+
+    ``shared`` distinguishes a pooled instance (cached and reused across
+    consumers via the registry) from a dedicated one owned by a single consumer.
+    A dedicated engine is required for UCI pondering: python-chess keeps the
+    ``go ponder`` search running in the background between the player's moves, and
+    any command from another consumer (analysis, the opponent) on a shared
+    process would interrupt it. Releasing a dedicated handle quits its engine
+    process, since nothing else references it.
     """
     path: str
     engine: chess.engine.SimpleEngine
     lock: threading.Lock = field(default_factory=threading.Lock)
     ref_count: int = 0
+    shared: bool = True
     
     def configure(self, options: Dict[str, str]) -> None:
         """Configure UCI options (serialized).
@@ -53,7 +62,9 @@ class EngineHandle:
         board: chess.Board,
         limit: chess.engine.Limit,
         options: Optional[Dict[str, str]] = None,
-        root_moves: Optional[List[chess.Move]] = None
+        root_moves: Optional[List[chess.Move]] = None,
+        ponder: bool = False,
+        game: object = None,
     ) -> chess.engine.PlayResult:
         """Compute best move (serialized).
         
@@ -62,6 +73,15 @@ class EngineHandle:
             limit: Time/depth limit
             options: Optional UCI options to apply before this search
             root_moves: Optional list of moves to restrict search to
+            ponder: When True, python-chess lets the engine keep searching on the
+                opponent's move (``go ponder``) after returning the best move, and
+                sends ``ponderhit`` on the next call when the position matches. Use
+                only with a dedicated handle (``shared=False``): the background
+                search would otherwise be clobbered by another consumer.
+            game: Opaque token identifying the current game. python-chess only
+                issues ``ponderhit`` when this equals the token from the previous
+                ``play`` call, so a caller passes a stable per-game object and
+                refreshes it on a new game.
             
         Returns:
             PlayResult with best move
@@ -69,7 +89,9 @@ class EngineHandle:
         with self.lock:
             if options:
                 self.engine.configure(options)
-            return self.engine.play(board, limit, root_moves=root_moves)
+            return self.engine.play(
+                board, limit, root_moves=root_moves, ponder=ponder, game=game
+            )
     
     def analyse(
         self,
@@ -115,6 +137,10 @@ class EngineRegistry:
     def __init__(self):
         self._engines: Dict[str, EngineHandle] = {}
         self._loading: Dict[str, threading.Event] = {}  # Tracks engines currently being loaded
+        # Dedicated (non-shared) handles are not pooled by path, so they are
+        # tracked separately purely so shutdown() can quit any that a consumer
+        # failed to release (e.g. an abrupt exit mid-game).
+        self._dedicated: List[EngineHandle] = []
         self._lock = threading.Lock()
     
     @classmethod
@@ -269,16 +295,62 @@ class EngineRegistry:
             daemon=True
         )
         thread.start()
-    
+
+    def acquire_dedicated(self, engine_path: str) -> Optional[EngineHandle]:
+        """Acquire a private engine instance not shared with other consumers.
+
+        Unlike :meth:`acquire`, this always spawns a fresh engine process and does
+        not cache it by path, so the returned handle is owned solely by the
+        caller. This is required for UCI pondering: the engine keeps a background
+        ``go ponder`` search running between the player's moves, which any command
+        from another consumer on a shared instance would interrupt.
+
+        The caller must :meth:`release` the handle when done; releasing a
+        dedicated handle quits its engine process.
+
+        Args:
+            engine_path: Path to engine executable.
+
+        Returns:
+            A dedicated EngineHandle, or None on failure.
+        """
+        resolved = self._canonicalize_path(engine_path)
+        log.info(f"[EngineRegistry] Loading dedicated engine: {resolved}")
+        try:
+            engine = chess.engine.SimpleEngine.popen_uci(resolved, timeout=None)
+        except Exception as e:
+            log.error(f"[EngineRegistry] Failed to load dedicated engine {resolved}: {e}")
+            return None
+
+        handle = EngineHandle(path=resolved, engine=engine, ref_count=1, shared=False)
+        with self._lock:
+            self._dedicated.append(handle)
+        log.info(f"[EngineRegistry] Dedicated engine loaded: {resolved}")
+        return handle
+
     def release(self, handle: EngineHandle) -> None:
         """Release a handle to an engine.
         
-        The engine is kept loaded for potential reuse by other consumers.
-        Call shutdown() to actually close engines.
+        A shared engine is kept loaded for potential reuse by other consumers;
+        call shutdown() to actually close pooled engines. A dedicated handle
+        (``shared=False``) is owned by this one consumer, so releasing it quits
+        the engine process immediately and stops tracking it.
         
         Args:
             handle: The handle to release
         """
+        if not handle.shared:
+            with self._lock:
+                if handle in self._dedicated:
+                    self._dedicated.remove(handle)
+            handle.ref_count = 0
+            try:
+                handle.engine.quit()
+                log.info(f"[EngineRegistry] Dedicated engine quit: {handle.path}")
+            except Exception as e:
+                log.debug(f"[EngineRegistry] Error quitting dedicated engine {handle.path}: {e}")
+            return
+
         with self._lock:
             if handle.path in self._engines:
                 handle.ref_count = max(0, handle.ref_count - 1)
@@ -297,6 +369,15 @@ class EngineRegistry:
                 except Exception as e:
                     log.debug(f"[EngineRegistry] Error closing {path}: {e}")
             self._engines.clear()
+            # Quit any dedicated engines a consumer failed to release (e.g. an
+            # abrupt shutdown mid-game left a pondering engine running).
+            for handle in self._dedicated:
+                try:
+                    log.info(f"[EngineRegistry] Closing dedicated engine: {handle.path}")
+                    handle.engine.quit()
+                except Exception as e:
+                    log.debug(f"[EngineRegistry] Error closing dedicated {handle.path}: {e}")
+            self._dedicated.clear()
         log.info("[EngineRegistry] All engines shut down")
     
     def get_loaded_engines(self) -> Dict[str, int]:

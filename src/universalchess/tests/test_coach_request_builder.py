@@ -9,11 +9,21 @@ the wrong notation), or a fabricated position -- silently producing misleading
 coaching for every caller.
 """
 
+import chess
+import chess.engine
 import pytest
 
-from universalchess.managers.game.coach_request_builder import build_coach_request
+from universalchess.managers.game.coach_request_builder import (
+    build_coach_request,
+    format_candidate_lines,
+)
 
 STARTPOS = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+
+
+def _info(uci, score):
+    """Build a minimal analyse() InfoDict with a single-move pv and a PovScore."""
+    return {"pv": [chess.Move.from_uci(uci)], "score": score}
 
 
 def test_builds_san_side_and_move_number_from_startpos():
@@ -139,3 +149,61 @@ def test_illegal_move_falls_back_to_uci_text():
     request = build_coach_request(STARTPOS, "e4e5")
     assert request is not None
     assert request.move_text == "e4e5"
+
+
+def test_candidate_lines_format_move_and_white_eval_best_first():
+    # MultiPV output must become "<move in notation> (<white-perspective eval>)"
+    # strings preserving the engine's order (best first). Regression: wrong order,
+    # dropped eval, or wrong notation would misrepresent the engine's preferences.
+    infos = [
+        _info("e2e4", chess.engine.PovScore(chess.engine.Cp(30), chess.WHITE)),
+        _info("d2d4", chess.engine.PovScore(chess.engine.Cp(25), chess.WHITE)),
+        _info("g1f3", chess.engine.PovScore(chess.engine.Cp(20), chess.WHITE)),
+    ]
+    lines = format_candidate_lines(STARTPOS, infos, notation="san")
+    assert lines == ("e4 (+0.30)", "d4 (+0.25)", "Nf3 (+0.20)")
+
+
+def test_candidate_line_eval_is_white_perspective_for_black_to_move():
+    # The eval must be reported from white's perspective (matching the coach's
+    # convention) regardless of side to move. For black to move, a PovScore from
+    # black's POV of +40cp is -0.40 for white. Regression: reporting the raw POV
+    # score would flip the sign and mislead the coach about who stands better.
+    after_e4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+    infos = [_info("c7c5", chess.engine.PovScore(chess.engine.Cp(40), chess.BLACK))]
+    lines = format_candidate_lines(after_e4, infos, notation="san")
+    assert lines == ("c5 (-0.40)",)
+
+
+def test_candidate_line_formats_mate_score():
+    # A forced mate must render as "#N" (white) so the coach can call it out. A
+    # mate for white in 2 is "#2". Regression: treating mate as a centipawn number
+    # would print a nonsense pawn value.
+    infos = [_info("e2e4", chess.engine.PovScore(chess.engine.Mate(2), chess.WHITE))]
+    lines = format_candidate_lines(STARTPOS, infos, notation="san")
+    assert lines == ("e4 (#2)",)
+
+
+def test_candidate_lines_skip_info_without_pv():
+    # An info with no principal variation (no move) must be skipped rather than
+    # crashing or emitting an empty entry. Regression: indexing pv[0] on an empty
+    # list would raise and abort the whole enrichment.
+    infos = [
+        {"pv": [], "score": chess.engine.PovScore(chess.engine.Cp(10), chess.WHITE)},
+        _info("e2e4", chess.engine.PovScore(chess.engine.Cp(30), chess.WHITE)),
+    ]
+    lines = format_candidate_lines(STARTPOS, infos, notation="san")
+    assert lines == ("e4 (+0.30)",)
+
+
+def test_candidate_lines_empty_when_no_infos():
+    # No analysis results must yield an empty tuple so the caller simply omits the
+    # alternatives block (no header, no fabricated content).
+    assert format_candidate_lines(STARTPOS, [], notation="san") == ()
+
+
+def test_candidate_lines_empty_on_invalid_fen():
+    # An unparseable FEN must yield () rather than raising, so a corrupt position
+    # degrades to no alternatives instead of breaking coaching.
+    infos = [_info("e2e4", chess.engine.PovScore(chess.engine.Cp(30), chess.WHITE))]
+    assert format_candidate_lines("not a fen", infos, notation="san") == ()

@@ -111,6 +111,7 @@ interface PlayerSettings {
   engine: string;
   elo: string;
   hand_brain_mode: string;
+  think_time: number;
 }
 
 interface FormSettings {
@@ -120,6 +121,7 @@ interface FormSettings {
     time_control: string;
     analysis_mode: boolean;
     analysis_engine: string;
+    ponder: boolean;
     show_board: boolean;
     show_clock: boolean;
     show_analysis: boolean;
@@ -132,6 +134,7 @@ interface FormSettings {
     coach_provider: string;
     coach_id: string;
     coach_language: string;
+    coach_multipv: number;
   };
   lichess: {
     api_token: string;
@@ -151,12 +154,13 @@ interface FormSettings {
 }
 
 const defaultFormSettings: FormSettings = {
-  player1: { type: 'human', name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal' },
-  player2: { type: 'engine', name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal' },
+  player1: { type: 'human', name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal', think_time: 5 },
+  player2: { type: 'engine', name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal', think_time: 5 },
   game: {
     time_control: '0',
     analysis_mode: true,
     analysis_engine: 'stockfish',
+    ponder: false,
     show_board: true,
     show_clock: true,
     show_analysis: true,
@@ -169,6 +173,7 @@ const defaultFormSettings: FormSettings = {
     coach_provider: 'none',
     coach_id: 'off',
     coach_language: 'English',
+    coach_multipv: 1,
   },
   lichess: { api_token: '', range: '' },
   sound: { enabled: true, key_press: true, game_events: true, piece_events: true, errors: true },
@@ -193,6 +198,31 @@ function parseConfigBool(value: string | undefined, defaultValue: boolean): bool
   return defaultValue;
 }
 
+// Bounds for the per-move engine think time (seconds). Kept in sync with the
+// backend PlayerSettings.think_time default; the UI clamps to a practical range.
+const THINK_TIME_MIN = 1;
+const THINK_TIME_MAX = 60;
+const THINK_TIME_DEFAULT = 5;
+
+/** Parse a persisted think_time string into a clamped integer seconds value. */
+function parseThinkTime(value: string | undefined): number {
+  const parsed = parseInt(value ?? '', 10);
+  if (Number.isNaN(parsed)) return THINK_TIME_DEFAULT;
+  return Math.min(THINK_TIME_MAX, Math.max(THINK_TIME_MIN, parsed));
+}
+
+// Bounds for coach MultiPV (candidate lines). 1 disables alternatives.
+const COACH_MULTIPV_MIN = 1;
+const COACH_MULTIPV_MAX = 5;
+const COACH_MULTIPV_DEFAULT = 1;
+
+/** Parse a persisted coach_multipv string into a clamped integer value. */
+function parseCoachMultipv(value: string | undefined): number {
+  const parsed = parseInt(value ?? '', 10);
+  if (Number.isNaN(parsed)) return COACH_MULTIPV_DEFAULT;
+  return Math.min(COACH_MULTIPV_MAX, Math.max(COACH_MULTIPV_MIN, parsed));
+}
+
 /**
  * Parse raw settings from the API into the form settings structure.
  */
@@ -204,6 +234,7 @@ function parseRawSettings(data: SettingsData): FormSettings {
       engine: data.PlayerOne?.engine || 'stockfish',
       elo: data.PlayerOne?.elo || 'Default',
       hand_brain_mode: data.PlayerOne?.hand_brain_mode || 'normal',
+      think_time: parseThinkTime(data.PlayerOne?.think_time),
     },
     player2: {
       type: data.PlayerTwo?.type || 'engine',
@@ -211,11 +242,13 @@ function parseRawSettings(data: SettingsData): FormSettings {
       engine: data.PlayerTwo?.engine || 'stockfish',
       elo: data.PlayerTwo?.elo || 'Default',
       hand_brain_mode: data.PlayerTwo?.hand_brain_mode || 'normal',
+      think_time: parseThinkTime(data.PlayerTwo?.think_time),
     },
     game: {
       time_control: data.game?.time_control || '0',
       analysis_mode: parseConfigBool(data.game?.analysis_mode, true),
       analysis_engine: data.game?.analysis_engine || 'stockfish',
+      ponder: parseConfigBool(data.game?.ponder, false),
       show_board: parseConfigBool(data.game?.show_board, true),
       show_clock: parseConfigBool(data.game?.show_clock, true),
       show_analysis: parseConfigBool(data.game?.show_analysis, true),
@@ -228,6 +261,7 @@ function parseRawSettings(data: SettingsData): FormSettings {
       coach_provider: data.game?.coach_provider || 'none',
       coach_id: data.game?.coach_id || 'off',
       coach_language: data.game?.coach_language || 'English',
+      coach_multipv: parseCoachMultipv(data.game?.coach_multipv),
     },
     lichess: {
       api_token: data.lichess?.api_token || '',
@@ -1392,6 +1426,20 @@ export function Settings() {
                       options={providerOptions(playerEngineNode)}
                       onChange={(v) => updateFormSettings('player1', { engine: String(v), elo: 'Default' })}
                     />
+                    <FormRow
+                      label="Think time"
+                      help="Seconds the engine may think per move."
+                    >
+                      <Input
+                        type="number"
+                        min={THINK_TIME_MIN}
+                        max={THINK_TIME_MAX}
+                        value={formSettings.player1.think_time}
+                        onChange={(e) =>
+                          updateFormSettings('player1', { think_time: parseThinkTime(e.target.value) })
+                        }
+                      />
+                    </FormRow>
                     <EngineStrengthField
                       key={formSettings.player1.engine}
                       engineName={formSettings.player1.engine}
@@ -1451,6 +1499,20 @@ export function Settings() {
                       options={providerOptions(playerEngineNode)}
                       onChange={(v) => updateFormSettings('player2', { engine: String(v), elo: 'Default' })}
                     />
+                    <FormRow
+                      label="Think time"
+                      help="Seconds the engine may think per move."
+                    >
+                      <Input
+                        type="number"
+                        min={THINK_TIME_MIN}
+                        max={THINK_TIME_MAX}
+                        value={formSettings.player2.think_time}
+                        onChange={(e) =>
+                          updateFormSettings('player2', { think_time: parseThinkTime(e.target.value) })
+                        }
+                      />
+                    </FormRow>
                     <EngineStrengthField
                       key={formSettings.player2.engine}
                       engineName={formSettings.player2.engine}
@@ -1543,6 +1605,16 @@ export function Settings() {
                 value={formSettings.game.analysis_engine}
                 options={providerOptions(analysisEngineNode)}
                 onChange={(v) => updateFormSettings('game', { analysis_engine: String(v) })}
+              />
+            </Card>
+
+            <Card className="mb-6">
+              <CardHeader title="Pondering" />
+              <Toggle
+                label="Ponder"
+                help="Let engine opponents think on your time. Improves engine play but continuously runs a dedicated engine process, using more CPU and power (best on a mains-powered board, not battery)."
+                checked={formSettings.game.ponder}
+                onChange={(v) => updateFormSettings('game', { ponder: Boolean(v) })}
               />
             </Card>
 
@@ -1649,6 +1721,28 @@ export function Settings() {
                 disabled={coachDisabled}
                 onChange={(v) => updateFormSettings('game', { coach_language: String(v) })}
               />
+              {/* Candidate lines (MultiPV): how many engine top moves the coach is
+                  given for a reviewed move so it can reference better/alternative
+                  moves. 1 sends none (fastest). */}
+              <FormRow
+                label="Candidate lines"
+                help="Number of engine candidate moves the coach considers for a move. Higher values let it suggest alternatives but cost extra analysis; 1 disables alternatives."
+              >
+                <Select
+                  value={String(formSettings.game.coach_multipv)}
+                  disabled={coachDisabled}
+                  options={[
+                    { value: '1', label: '1 (off)' },
+                    { value: '2', label: '2' },
+                    { value: '3', label: '3' },
+                    { value: '4', label: '4' },
+                    { value: '5', label: '5' },
+                  ]}
+                  onChange={(e) =>
+                    updateFormSettings('game', { coach_multipv: parseCoachMultipv(e.target.value) })
+                  }
+                />
+              </FormRow>
             </Card>
 
             <Card className="mb-6">

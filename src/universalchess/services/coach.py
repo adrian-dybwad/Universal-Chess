@@ -194,6 +194,13 @@ class CoachRequest:
             ``"Spanish"``). Defaults to English, which adds no instruction (the
             model's native default); any other value appends an explicit
             "write in this language" line to the system prompt.
+        candidate_lines: Engine-verified candidate moves for the position before
+            the move (best first), each pre-formatted like ``"e4 (+0.30)"`` in the
+            user's notation. Sourced from a MultiPV analysis (coach_multipv), they
+            let the coach reference the engine's preferred/alternative moves. Empty
+            when MultiPV is disabled or the analysis was unavailable, in which case
+            no alternatives block is added to the prompt. Being engine output,
+            these are authoritative like ``facts`` for referring to better moves.
     """
 
     fen_before: str
@@ -207,6 +214,7 @@ class CoachRequest:
     is_opponent_move: bool = False
     persona: Optional[str] = None
     language: str = DEFAULT_LANGUAGE
+    candidate_lines: Tuple[str, ...] = ()
 
 
 def _language_instruction(language: Optional[str]) -> str:
@@ -284,6 +292,12 @@ def build_user_prompt(request: CoachRequest) -> str:
     if request.facts:
         lines.append("Verified facts about the move (authoritative, from the board):")
         lines.extend(f"- {fact}" for fact in request.facts)
+    if request.candidate_lines:
+        lines.append(
+            "Engine's top candidate moves in this position (best first, "
+            "authoritative -- use these to reference better or alternative moves):"
+        )
+        lines.extend(f"- {line}" for line in request.candidate_lines)
     tactical_guard = (
         "Base every tactical claim (check, capture, pin, fork, threat) only on the "
         "verified facts above and the given position; do not assert a pin, fork, "

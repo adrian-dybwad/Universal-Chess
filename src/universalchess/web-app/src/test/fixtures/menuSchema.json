@@ -1622,7 +1622,6 @@
       "type": "select",
       "visibleWhen": {
         "in": [
-          "human",
           "engine",
           "hand_brain"
         ],
@@ -1649,7 +1648,6 @@
       "type": "select",
       "visibleWhen": {
         "in": [
-          "human",
           "engine",
           "hand_brain"
         ],

@@ -1107,7 +1107,7 @@
       "help": "Chess engine to use",
       "bind": { "store": "player", "key": "engine" },
       "icon": "engine",
-      "visibleWhen": { "store": "player", "key": "type", "in": ["human", "engine", "hand_brain"] },
+      "visibleWhen": { "store": "player", "key": "type", "in": ["engine", "hand_brain"] },
       "section": "players",
       "platforms": ["board", "web"]
     },
@@ -1120,7 +1120,7 @@
       "help": "Engine strength or personality",
       "bind": { "store": "player", "key": "elo" },
       "icon": "elo",
-      "visibleWhen": { "store": "player", "key": "type", "in": ["human", "engine", "hand_brain"] },
+      "visibleWhen": { "store": "player", "key": "type", "in": ["engine", "hand_brain"] },
       "section": "players",
       "platforms": ["board", "web"]
     },

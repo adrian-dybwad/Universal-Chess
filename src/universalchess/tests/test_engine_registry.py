@@ -354,3 +354,167 @@ class TestEngineRegistry:
         
         assert len(received_error) == 1
 
+    @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
+    def test_acquire_dedicated_is_private_not_pooled(self, mock_popen):
+        """acquire_dedicated must return a private instance, never the shared pool.
+
+        Why this test exists: pondering needs an engine whose background search is
+        never touched by another consumer. If a dedicated acquire were pooled by
+        path (like acquire), a later acquire() for the same binary would hand the
+        analysis service the pondering engine and interrupt it.
+
+        How the regression manifests: two dedicated acquires for the same path
+        would return the same handle, or the handle would appear in _engines and a
+        subsequent shared acquire() would reuse it (popen called only once).
+        """
+        from universalchess.services.engine_registry import get_engine_registry
+
+        mock_popen.side_effect = lambda *a, **k: MagicMock()
+
+        registry = get_engine_registry()
+        d1 = registry.acquire_dedicated("/usr/games/stockfish")
+        d2 = registry.acquire_dedicated("/usr/games/stockfish")
+
+        assert d1 is not None and d2 is not None
+        assert d1 is not d2, "each dedicated acquire must be its own instance"
+        assert d1.engine is not d2.engine
+        assert d1.shared is False and d2.shared is False
+        # Not pooled: a shared acquire spawns yet another (3rd) process.
+        shared = registry.acquire("/usr/games/stockfish")
+        assert shared is not d1 and shared is not d2
+        assert mock_popen.call_count == 3
+
+    @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
+    def test_release_dedicated_quits_engine(self, mock_popen):
+        """Releasing a dedicated handle must quit its engine process.
+
+        Why this test exists: a dedicated engine has a single owner, so releasing
+        it must free the process immediately (a shared engine, by contrast, stays
+        loaded for reuse). Leaking it would leave a pondering engine burning CPU.
+
+        How the regression manifests: if release treated a dedicated handle like a
+        shared one, engine.quit() is never called and the process lingers.
+        """
+        from universalchess.services.engine_registry import get_engine_registry
+
+        mock_engine = MagicMock()
+        mock_popen.return_value = mock_engine
+
+        registry = get_engine_registry()
+        handle = registry.acquire_dedicated("/usr/games/stockfish")
+        assert handle is not None
+
+        registry.release(handle)
+
+        mock_engine.quit.assert_called_once()
+
+    @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
+    def test_release_shared_does_not_quit_engine(self, mock_popen):
+        """Releasing a shared handle must NOT quit the engine (kept for reuse).
+
+        Why this test exists: guards the boundary that the dedicated-release change
+        must not alter shared behavior. A shared engine is reused across consumers,
+        so a single consumer's release only decrements the ref count.
+
+        How the regression manifests: if release quit shared engines, the analysis
+        service would lose its engine the moment any other consumer released.
+        """
+        from universalchess.services.engine_registry import get_engine_registry
+
+        mock_engine = MagicMock()
+        mock_popen.return_value = mock_engine
+
+        registry = get_engine_registry()
+        handle = registry.acquire("/usr/games/stockfish")
+
+        registry.release(handle)
+
+        mock_engine.quit.assert_not_called()
+        assert handle.ref_count == 0
+
+    @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
+    def test_shutdown_quits_unreleased_dedicated_engine(self, mock_popen):
+        """shutdown() must quit dedicated engines a consumer failed to release.
+
+        Why this test exists: an abrupt shutdown mid-game can leave a pondering
+        engine running; shutdown is the last chance to reap it.
+
+        How the regression manifests: if shutdown only iterated the shared pool, an
+        unreleased dedicated engine's quit() is never called and the process leaks.
+        """
+        from universalchess.services.engine_registry import get_engine_registry
+
+        mock_engine = MagicMock()
+        mock_popen.return_value = mock_engine
+
+        registry = get_engine_registry()
+        registry.acquire_dedicated("/usr/games/stockfish")  # intentionally not released
+
+        registry.shutdown()
+
+        mock_engine.quit.assert_called_once()
+
+    @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
+    def test_handle_play_forwards_ponder_and_game(self, mock_popen):
+        """EngineHandle.play must forward ponder and the game token to the engine.
+
+        Why this test exists: python-chess only keeps pondering / issues ponderhit
+        when it receives ponder=True and a stable game token across calls. If the
+        wrapper dropped these kwargs, pondering would silently never engage.
+
+        How the regression manifests: the captured kwargs below lack 'ponder'/'game'
+        (or ponder is False), so the engine never runs a background search.
+        """
+        import chess
+        from universalchess.services.engine_registry import get_engine_registry
+
+        mock_engine = MagicMock()
+        captured = {}
+
+        def fake_play(board, limit, **kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        mock_engine.play.side_effect = fake_play
+        mock_popen.return_value = mock_engine
+
+        registry = get_engine_registry()
+        handle = registry.acquire_dedicated("/usr/games/stockfish")
+
+        token = object()
+        handle.play(chess.Board(), chess.engine.Limit(time=0.1), ponder=True, game=token)
+
+        assert captured.get("ponder") is True
+        assert captured.get("game") is token
+
+    @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
+    def test_handle_play_defaults_to_no_ponder(self, mock_popen):
+        """EngineHandle.play must default ponder off so normal play is unaffected.
+
+        Why this test exists: pondering is opt-in; the default play path (analysis
+        off / battery boards) must not start a background search.
+
+        How the regression manifests: a default of ponder=True would leave every
+        engine pondering after each move even when the toggle is off.
+        """
+        import chess
+        from universalchess.services.engine_registry import get_engine_registry
+
+        mock_engine = MagicMock()
+        captured = {}
+
+        def fake_play(board, limit, **kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        mock_engine.play.side_effect = fake_play
+        mock_popen.return_value = mock_engine
+
+        registry = get_engine_registry()
+        handle = registry.acquire("/usr/games/stockfish")
+
+        handle.play(chess.Board(), chess.engine.Limit(time=0.1))
+
+        assert captured.get("ponder") is False
+        assert captured.get("game") is None
+
