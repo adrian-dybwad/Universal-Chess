@@ -4999,15 +4999,35 @@ def _start_lichess_game(lichess_config) -> bool:
 
 def _handle_accounts_menu():
     """Handle Accounts submenu for online service credentials.
-    
-    Shows account settings for online services like Lichess.
-    Each entry displays the current credential status (masked).
+
+    Shows account settings for online services like Lichess. The Lichess row
+    shows the account username above the masked token so a user with more than
+    one account can tell which account the stored token belongs to. The name is
+    seeded from the config cache (instant) and refreshed by a background live
+    lookup. Selecting the row opens a submenu to edit or delete the token.
     """
     from universalchess.board import centaur
+
+    def _fetch_lichess_username():
+        # Live lookup used by the Accounts menu's background worker; also persists
+        # the resolved name to config (via get_lichess_client) for the next open.
+        _, username, _ = get_lichess_client(centaur, log)
+        return username or None
+
+    def _delete_lichess_token():
+        # Writing an empty token also clears the cached username (set_lichess_api
+        # drops it when the token changes), matching the AI-agent clear-key flow.
+        centaur.set_lichess_api("")
+        log.info("[Accounts] Lichess token deleted")
+        board.beep(board.SOUND_GENERAL)
+
     return handle_accounts_menu(
         menu_manager=_menu_manager,
         get_lichess_api=centaur.get_lichess_api,
         handle_lichess_token_fn=_handle_lichess_token,
+        get_lichess_username=lambda: centaur.get_lichess_username() or None,
+        fetch_lichess_username=_fetch_lichess_username,
+        delete_lichess_token_fn=_delete_lichess_token,
     )
 
 

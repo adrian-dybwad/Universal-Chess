@@ -13,7 +13,7 @@ from universalchess.managers.menu import is_break_result
 def get_lichess_client(centaur_module, log):
     """Get a berserk client and username, with error classification."""
     token = centaur_module.get_lichess_api()
-    if not token or token == "tokenhere":
+    if not token or token == "tokenhere":  # noqa: S105 # nosec B105 - placeholder sentinel, not a secret
         log.warning("[Lichess] No valid API token configured")
         return None, None, "no_token"
     try:
@@ -24,6 +24,11 @@ def get_lichess_client(centaur_module, log):
         user_info = client.account.get()
         username = user_info.get("username", "")
         log.info(f"[Lichess] Authenticated as: {username}")
+        # Cache the resolved username so the Accounts menu can show which account
+        # the token belongs to without repeating this network call. Guarded by a
+        # capability check so callers passing a minimal module are unaffected.
+        if username and hasattr(centaur_module, "set_lichess_username"):
+            centaur_module.set_lichess_username(username)
         return client, username, None
     except ImportError:
         log.error("[Lichess] berserk library not installed")
@@ -134,7 +139,7 @@ def ensure_token(
     if promise:
         try:
             promise.result(timeout=5.0)
-        except Exception:
+        except Exception:  # noqa: S110 # nosec B110 - best-effort wait for the widget to render; input is still accepted below
             pass
     try:
         result = keyboard.wait_for_input(timeout=300.0)
@@ -230,7 +235,7 @@ def show_lichess_challenges(client, menu_manager, log) -> Optional[dict]:
         except AttributeError:
             try:
                 challenges_data = client.challenges.list()
-            except AttributeError:
+            except AttributeError:  # noqa: S110 # nosec B110 - berserk API-name fallback; None is handled just below
                 pass
 
         if challenges_data is None:

@@ -2254,6 +2254,28 @@ def _is_coach_api_key(key: str) -> bool:
     return key == "coach_api_key" or key.startswith("coach_api_key_")
 
 
+def _drop_stale_lichess_username(config, values):
+    """Clear the cached Lichess username when the stored token is changing.
+
+    The username (surfaced as the default human player-name placeholder) belongs
+    to the account the previous token authenticated as; a changed token may be a
+    different account, so a stale name must not linger. The board's
+    ``set_lichess_api`` clears it for on-device edits; the web writes the
+    ``lichess`` section directly, so this mirrors that behaviour. A save that does
+    not include ``api_token`` leaves the username untouched.
+
+    Returns a new mapping; the input is not mutated.
+    """
+    result = dict(values)
+    new_token = result.get("api_token")
+    if new_token is None:
+        return result
+    current_token = config.get("lichess", "api_token", fallback="")
+    if new_token != current_token:
+        result["username"] = ""
+    return result
+
+
 def _translate_game_coach_writes(config, values):
     """Route effective coach key/model/base_url writes to the active provider's slot.
 
@@ -2300,6 +2322,8 @@ def save_all_settings(settings_dict, *, broadcast: bool = True):
     for section, values in settings_dict.items():
         if not config.has_section(section):
             config.add_section(section)
+        if section == "lichess":
+            values = _drop_stale_lichess_username(config, values)
         if section == "game":
             # The UI edits a single effective coach key/model/base_url; route those
             # to the active provider's namespaced slot so switching providers keeps

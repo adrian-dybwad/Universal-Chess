@@ -8,7 +8,13 @@ from .bluetooth_menu import (
     keyboard_rows,
     paired_device_rows,
 )
-from .accounts_menu import handle_accounts_menu, mask_token
+from .accounts_menu import (
+    handle_accounts_menu,
+    handle_lichess_account_menu,
+    lichess_row_detail,
+    confirm_delete_token,
+    mask_token,
+)
 from .engine_manager_menu import (
     handle_engine_manager_menu,
     handle_engine_detail_menu,
@@ -44,6 +50,9 @@ __all__ = [
     "keyboard_rows",
     "paired_device_rows",
     "handle_accounts_menu",
+    "handle_lichess_account_menu",
+    "lichess_row_detail",
+    "confirm_delete_token",
     "mask_token",
     "perform_local_deb_install",
     "find_local_deb_files",

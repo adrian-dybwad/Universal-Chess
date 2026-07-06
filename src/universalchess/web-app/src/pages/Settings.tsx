@@ -139,6 +139,10 @@ interface FormSettings {
   lichess: {
     api_token: string;
     range: string;
+    // Cached account username (populated on the last successful authentication;
+    // never edited here). Used as the default human-player name placeholder so a
+    // connected account's name auto-fills instead of the generic "Player N".
+    username: string;
   };
   sound: {
     enabled: boolean;
@@ -175,7 +179,7 @@ const defaultFormSettings: FormSettings = {
     coach_language: 'English',
     coach_multipv: 1,
   },
-  lichess: { api_token: '', range: '' },
+  lichess: { api_token: '', range: '', username: '' },
   sound: { enabled: true, key_press: true, game_events: true, piece_events: true, errors: true },
   system: { database_uri: '', inactivity_timeout: '900' },
 };
@@ -275,6 +279,7 @@ function parseRawSettings(data: SettingsData): FormSettings {
     lichess: {
       api_token: data.lichess?.api_token || '',
       range: data.lichess?.range || '',
+      username: data.lichess?.username || '',
     },
     sound: {
       enabled: parseConfigBool(data.sound?.sound, true),
@@ -803,7 +808,10 @@ export function Settings() {
           ...buildAgentKeyWrites(),
           time_control: parseInt(formSettings.game.time_control),
         },
-        lichess: formSettings.lichess,
+        // username is a read-only cached field (populated by the board on
+        // authentication); never write it back, so a fresher board-resolved name
+        // is not clobbered by this page's stale copy.
+        lichess: { api_token: formSettings.lichess.api_token, range: formSettings.lichess.range },
         sound: {
           sound: formSettings.sound.enabled ? 'on' : 'off',
           key_press: formSettings.sound.key_press ? 'on' : 'off',
@@ -1238,6 +1246,22 @@ export function Settings() {
     return engine?.display_name || engineName;
   };
 
+  // Placeholder (default) name for a player's name field, by player type:
+  //  - engine / Hand+Brain: the engine's display name
+  //  - lichess: the connected account's username (the point of connecting an
+  //    account), or "Lichess" until the name is known
+  //  - human: the generic "Player N"
+  // Only the Lichess type borrows the account name; a plain human must not.
+  const lichessDefaultName =
+    formSettings.lichess.api_token.trim() !== '' && formSettings.lichess.username.trim() !== ''
+      ? formSettings.lichess.username.trim()
+      : '';
+  const playerNamePlaceholder = (type: string, engine: string, humanFallback: string): string => {
+    if (type === 'engine' || type === 'hand_brain') return getEngineDisplayName(engine);
+    if (type === 'lichess') return lichessDefaultName || 'Lichess';
+    return humanFallback;
+  };
+
   // Tabs are the catalog sections this page owns, rendered in the page's declared
   // order. Labels and icons come from the catalog; SETTINGS_TAB_IDS only selects
   // which sections belong here and their order.
@@ -1418,11 +1442,7 @@ export function Settings() {
                 <FormRow label={fieldLabel('field.player.name')} help={fieldHelp('field.player.name')}>
                   <Input
                     value={formSettings.player1.name}
-                    placeholder={
-                      formSettings.player1.type === 'engine' || formSettings.player1.type === 'hand_brain'
-                        ? getEngineDisplayName(formSettings.player1.engine)
-                        : 'Player 1'
-                    }
+                    placeholder={playerNamePlaceholder(formSettings.player1.type, formSettings.player1.engine, 'Player 1')}
                     onChange={(e) => updateFormSettings('player1', { name: e.target.value })}
                   />
                 </FormRow>
@@ -1491,11 +1511,7 @@ export function Settings() {
                 <FormRow label={fieldLabel('field.player.name')} help={fieldHelp('field.player.name')}>
                   <Input
                     value={formSettings.player2.name}
-                    placeholder={
-                      formSettings.player2.type === 'engine' || formSettings.player2.type === 'hand_brain'
-                        ? getEngineDisplayName(formSettings.player2.engine)
-                        : 'Player 2'
-                    }
+                    placeholder={playerNamePlaceholder(formSettings.player2.type, formSettings.player2.engine, 'Player 2')}
                     onChange={(e) => updateFormSettings('player2', { name: e.target.value })}
                   />
                 </FormRow>

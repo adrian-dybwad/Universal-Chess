@@ -1205,6 +1205,10 @@ function ChromecastCard() {
 function AccountsCard() {
   const [token, setToken] = useState('');
   const [range, setRange] = useState('');
+  // Connected Lichess account name, cached on the board's last successful
+  // authentication. Read-only here (never edited); shown so a user with more
+  // than one account can confirm which account the stored token belongs to.
+  const [username, setUsername] = useState('');
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
@@ -1217,6 +1221,7 @@ function AccountsCard() {
         if (data?.lichess) {
           setToken(data.lichess.api_token || '');
           setRange(data.lichess.range || '');
+          setUsername(data.lichess.username || '');
         }
         setLoaded(true);
       })
@@ -1255,6 +1260,12 @@ function AccountsCard() {
         <p className="text-muted mb-4" style={{ fontSize: '0.875rem' }}>
           Connect to Lichess for online play against other players.
         </p>
+
+        {token && username && (
+          <div className="conn-message conn-message--success">
+            Connected as <strong>{username}</strong>
+          </div>
+        )}
 
         {message && <div className={`conn-message conn-message--${message.kind}`}>{message.text}</div>}
 

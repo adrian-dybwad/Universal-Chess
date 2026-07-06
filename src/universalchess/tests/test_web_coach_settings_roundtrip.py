@@ -93,3 +93,48 @@ def test_translate_does_not_mutate_input():
     values = {"coach_provider": "openai", "coach_api_key": "k"}
     webapp._translate_game_coach_writes(_config(), values)
     assert values == {"coach_provider": "openai", "coach_api_key": "k"}
+
+
+def _lichess_config(token=""):
+    config = configparser.ConfigParser()
+    config.add_section("lichess")
+    config.set("lichess", "api_token", token)
+    config.set("lichess", "username", "OldName")
+    return config
+
+
+def test_changed_token_clears_stale_username():
+    # A different token may be a different account; the cached username (the
+    # default player-name placeholder) must be cleared so it does not show the
+    # previous account's name. A regression would keep OldName and surface it.
+    result = webapp._drop_stale_lichess_username(
+        _lichess_config("lip_old"), {"api_token": "lip_new", "range": "0-3000"}
+    )
+    assert result["username"] == ""
+    assert result["api_token"] == "lip_new"
+    assert result["range"] == "0-3000"
+
+
+def test_unchanged_token_leaves_username_untouched():
+    # Re-saving the same token (e.g. editing only the rating range) must not wipe
+    # the cached name. A regression would clear username on every save, blanking
+    # the placeholder until the board re-authenticates.
+    result = webapp._drop_stale_lichess_username(
+        _lichess_config("lip_same"), {"api_token": "lip_same", "range": "100-200"}
+    )
+    assert "username" not in result  # not forced empty; existing value persists
+
+
+def test_save_without_token_leaves_username_untouched():
+    # A lichess save that omits api_token (only range) must not touch username.
+    # A regression treating a missing token as a change would clear the name.
+    result = webapp._drop_stale_lichess_username(_lichess_config("lip_x"), {"range": "0-3000"})
+    assert "username" not in result
+
+
+def test_drop_stale_username_does_not_mutate_input():
+    # save_all_settings reuses the caller's dict; mutation would corrupt the
+    # payload for other consumers.
+    values = {"api_token": "lip_new", "range": "0-3000"}
+    webapp._drop_stale_lichess_username(_lichess_config("lip_old"), values)
+    assert values == {"api_token": "lip_new", "range": "0-3000"}

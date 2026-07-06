@@ -20,8 +20,8 @@
 # distribution, modification, variant, or derivative of this software.
 
 from universalchess.board.settings import Settings
-from subprocess import PIPE, Popen, check_output
-import subprocess
+from subprocess import PIPE, Popen, check_output  # nosec B404 - used only for fixed internal commands
+import subprocess  # nosec B404 - used only for fixed internal commands
 import shlex
 import pathlib
 import os, sys
@@ -33,6 +33,16 @@ from universalchess.board.logging import log
 
 def get_lichess_api():
     return Settings.read('lichess','api_token','')
+
+def get_lichess_username():
+    """Return the cached Lichess username for the stored token.
+
+    Populated on the last successful Lichess authentication (see
+    ``services.lichess_service.get_lichess_client``) so the Accounts menu can
+    show which account the token belongs to without making a network call.
+    Empty when no account has been authenticated for the current token.
+    """
+    return Settings.read('lichess','username','')
 
 def get_lichess_range():    
     return Settings.read('lichess','range','0-3000')
@@ -62,7 +72,15 @@ def get_sound():
     return Settings.read('sound','sound','on')
 
 def set_lichess_api(key):
+    # A different token may belong to a different account, so drop the cached
+    # username; it is repopulated on the next successful authentication.
+    if key != get_lichess_api():
+        Settings.write('lichess','username','')
     return Settings.write('lichess','api_token', key)
+
+def set_lichess_username(username):
+    """Cache the authenticated Lichess username for the stored token."""
+    return Settings.write('lichess','username', username or '')
 
 def set_lichess_range(newrange):
     return Settings.write('lichess','range',newrange)
@@ -98,7 +116,9 @@ def shell_run(rcmd):
     cmd = shlex.split(rcmd)
     executable = cmd[0]
     executable_options=cmd[1:]
-    proc  = Popen(([executable] + executable_options), stdout=PIPE, stderr=PIPE)
+    # List-form invocation (no shell=True), so the split args cannot be
+    # re-interpreted by a shell; callers pass fixed internal command strings.
+    proc  = Popen(([executable] + executable_options), stdout=PIPE, stderr=PIPE)  # noqa: S603 # nosec B603
     response = proc.communicate()
     response_stdout, response_stderr = response[0], response[1]
     if response_stderr:
