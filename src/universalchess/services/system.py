@@ -7,7 +7,7 @@ Battery is polled every 5 seconds, WiFi and Bluetooth every 10 seconds.
 
 import os
 import re
-import subprocess
+import subprocess  # nosec B404 - subprocess is only ever invoked with fixed argv lists, never shell=True
 import threading
 from typing import Optional
 
@@ -45,6 +45,10 @@ class SystemPollingService:
         # WiFi hook notification file (dhcpcd writes here on state change)
         self._hook_notification_file = "/var/run/dgtcm-wifi-hook-notify"
         self._last_hook_mtime = 0.0
+        
+        # Last raw battery payload logged, so the packet is recorded on change
+        # only (not every 5s poll). None until the first successful read.
+        self._last_battery_raw: Optional[bytes] = None
     
     def start(self) -> None:
         """Start the polling threads."""
@@ -121,7 +125,24 @@ class SystemPollingService:
             
             val = resp[0]
             level = val & 0x1F
-            charger_connected = ((val >> 5) & 0x07) in (1, 2)
+            charger_state = (val >> 5) & 0x07
+            charger_connected = charger_state in (1, 2)
+            
+            # Record the raw battery packet whenever it changes. The charger
+            # decode above treats only states 1 and 2 as "plugged in"; capturing
+            # charger_state here confirms what the controller actually reports at
+            # full charge (a suspected charge-complete state that is misread as
+            # unplugged, which lets the inactivity auto-shutdown fire on mains
+            # power). Logged on change only to stay readable in the persistent,
+            # rotated log rather than emitting a line every 5s poll.
+            if bytes(resp) != self._last_battery_raw:
+                self._last_battery_raw = bytes(resp)
+                log.info(
+                    "[SystemPollingService] Battery packet=%s level=%d "
+                    "charger_state=%d charger_connected=%s",
+                    " ".join(f"{b:02x}" for b in resp),
+                    level, charger_state, charger_connected,
+                )
             
             self._state.set_battery(level, charger_connected)
             
@@ -162,7 +183,7 @@ class SystemPollingService:
                 if current_mtime > self._last_hook_mtime:
                     self._last_hook_mtime = current_mtime
                     log.debug("[SystemPollingService] dhcpcd hook notification detected")
-            except Exception:
+            except Exception:  # noqa: S110  # nosec B110 - best-effort hook check; failure is non-fatal and intentionally ignored
                 pass
     
     def _poll_wifi(self) -> None:
@@ -194,8 +215,8 @@ class SystemPollingService:
     def _is_wifi_enabled(self) -> bool:
         """Check if WiFi is enabled (not blocked by rfkill)."""
         try:
-            result = subprocess.run(
-                ['rfkill', 'list', 'wifi'],
+            result = subprocess.run(  # noqa: S603  # nosec B603 B607 - argv list (no shell); fixed system utility
+                ['rfkill', 'list', 'wifi'],  # noqa: S607 - argv list (no shell); fixed system utility
                 capture_output=True, text=True, timeout=5
             )
             if result.returncode == 0:
@@ -211,8 +232,8 @@ class SystemPollingService:
             Tuple of (connected: bool, signal_pct: int, ssid: Optional[str])
         """
         try:
-            result = subprocess.run(
-                ['iwconfig', 'wlan0'],
+            result = subprocess.run(  # noqa: S603  # nosec B603 B607 - argv list (no shell); fixed system utility
+                ['iwconfig', 'wlan0'],  # noqa: S607 - argv list (no shell); fixed system utility
                 capture_output=True, text=True, timeout=5
             )
             if result.returncode != 0:
@@ -263,8 +284,8 @@ class SystemPollingService:
     def _is_bluetooth_enabled(self) -> bool:
         """Check if Bluetooth is enabled (not blocked by rfkill)."""
         try:
-            result = subprocess.run(
-                ['rfkill', 'list', 'bluetooth'],
+            result = subprocess.run(  # noqa: S603  # nosec B603 B607 - argv list (no shell); fixed system utility
+                ['rfkill', 'list', 'bluetooth'],  # noqa: S607 - argv list (no shell); fixed system utility
                 capture_output=True, text=True, timeout=5
             )
             if result.returncode == 0:
@@ -280,8 +301,8 @@ class SystemPollingService:
             Tuple of (connected: bool, device_name: Optional[str])
         """
         try:
-            result = subprocess.run(
-                ['bluetoothctl', 'devices', 'Connected'],
+            result = subprocess.run(  # noqa: S603  # nosec B603 B607 - argv list (no shell); fixed system utility
+                ['bluetoothctl', 'devices', 'Connected'],  # noqa: S607 - argv list (no shell); fixed system utility
                 capture_output=True, text=True, timeout=5
             )
             if result.returncode == 0:
