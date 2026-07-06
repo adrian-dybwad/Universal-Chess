@@ -5,9 +5,9 @@ from typing import Optional, Callable, Tuple
 
 import chess
 
-from universalchess.menus.accounts_menu import mask_token
 from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.managers.menu import is_break_result
+from universalchess.utils.token_display import mask_token
 
 
 def get_lichess_client(centaur_module, log):
@@ -36,6 +36,39 @@ def get_lichess_client(centaur_module, log):
     except Exception as e:
         log.error(f"[Lichess] Failed to connect to Lichess: {e}")
         return None, None, "network"
+
+
+def resolve_lichess_identity(token, log=None):
+    """Authenticate an explicit Lichess token and return its account identity.
+
+    Unlike :func:`get_lichess_client`, which reads the single stored token, this
+    verifies a token supplied for a *new* account (before it is saved) so the
+    account store can key the account on the resolved username. Returns a
+    :class:`account_store.ResolvedIdentity`: on success ``identity`` is the
+    Lichess username; on failure ``error`` is a short code
+    (``no_token``/``no_berserk``/``auth_failed``) and no username is returned.
+    """
+    from universalchess.services.account_store import ResolvedIdentity
+
+    if not token or token == "tokenhere":  # noqa: S105 # nosec B105 - placeholder sentinel, not a secret
+        return ResolvedIdentity(error="no_token", message="No API token provided")
+    try:
+        import berserk
+
+        session = berserk.TokenSession(token)
+        client = berserk.Client(session=session)
+        username = client.account.get().get("username", "")
+        if not username:
+            return ResolvedIdentity(error="auth_failed", message="Could not read Lichess account")
+        return ResolvedIdentity(identity=username)
+    except ImportError:
+        if log:
+            log.error("[Lichess] berserk library not installed")
+        return ResolvedIdentity(error="no_berserk", message="Lichess client library not installed")
+    except Exception as e:
+        if log:
+            log.error(f"[Lichess] Token verification failed: {e}")
+        return ResolvedIdentity(error="auth_failed", message="Could not verify token with Lichess")
 
 
 def build_lichess_menu_entries(username: Optional[str], ongoing_games: bool, has_challenges: bool):

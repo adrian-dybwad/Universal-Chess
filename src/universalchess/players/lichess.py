@@ -45,6 +45,9 @@ class LichessPlayerConfig(PlayerConfig):
         game_id: Game ID to resume (for ONGOING mode).
         challenge_id: Challenge ID to accept (for CHALLENGE mode).
         challenge_direction: 'in' for incoming, 'out' for outgoing.
+        account_id: Id of the saved Lichess account this slot plays as. Empty
+            uses the default (first) account for back-compat; the token and
+            rating range are resolved from the account store at start().
     """
     mode: LichessGameMode = LichessGameMode.NEW
     time_minutes: int = 10
@@ -55,6 +58,7 @@ class LichessPlayerConfig(PlayerConfig):
     game_id: str = ''
     challenge_id: str = ''
     challenge_direction: str = 'in'
+    account_id: str = ''
 
 
 class LichessPlayer(Player):
@@ -88,6 +92,9 @@ class LichessPlayer(Player):
         # Lichess API client (berserk)
         self._client = None
         self._token = None
+        # Rating range resolved from the bound account (used for matchmaking when
+        # the config does not override it).
+        self._account_range: str = ''
         
         # Game state
         self._game_id: Optional[str] = None
@@ -219,6 +226,37 @@ class LichessPlayer(Player):
         """
         self._info_message_callback = callback
     
+    def _resolve_account(self):
+        """Resolve the bound account's token and rating range for this slot.
+
+        Resolution order (each a deliberate fallback):
+        1. the account bound to this slot (``config.account_id``);
+        2. the default (first) account, used when the slot is unbound or its
+           bound account was deleted -- keeps a saved setup playable rather than
+           failing on a stale id;
+        3. the legacy single ``[lichess]`` token (via ``centaur.get_lichess_api``)
+           for a board that has a token but no migrated accounts yet.
+
+        Returns:
+            A ``(token, rating_range)`` tuple; ``rating_range`` is '' when the
+            account has none (matchmaking then uses the config/global default).
+        """
+        from universalchess.services import account_store
+
+        account = None
+        if self._lichess_config.account_id:
+            account = account_store.get_account("lichess", self._lichess_config.account_id)
+            if account is None:
+                log.warning(
+                    f"[LichessPlayer] Bound account '{self._lichess_config.account_id}' "
+                    "not found; using default account"
+                )
+        if account is None:
+            account = account_store.default_account("lichess")
+        if account is not None:
+            return account.get("api_token", ""), account.get("range", "")
+        return centaur.get_lichess_api(), ""
+
     def start(self) -> bool:
         """Start the Lichess connection and game.
         
@@ -232,9 +270,9 @@ class LichessPlayer(Player):
         self._set_state(PlayerState.INITIALIZING)
         self._report_status("Connecting to Lichess...")
         
-        # Get API token
-        self._token = centaur.get_lichess_api()
-        if not self._token or self._token == "tokenhere":
+        # Resolve the API token (and rating range) from the bound account.
+        self._token, self._account_range = self._resolve_account()
+        if not self._token or self._token == "tokenhere":  # noqa: S105 # nosec B105 - placeholder sentinel, not a secret
             log.error("[LichessPlayer] No valid API token configured")
             self._set_state(PlayerState.ERROR, "No API token configured")
             return False
@@ -505,7 +543,7 @@ class LichessPlayer(Player):
                     "Sorry, this external board doesn't handle takebacks well",
                     spectator=False
                 )
-            except Exception:
+            except Exception:  # noqa: S110 # nosec B110 - the courtesy chat message is best-effort; failing to send it must not abort declining the takeback
                 pass  # Message is optional
         except Exception as e:
             log.error(f"[LichessPlayer] Failed to decline takeback: {e}")
@@ -569,7 +607,11 @@ class LichessPlayer(Player):
             color = self._lichess_config.color_preference.lower()
             if color == 'random':
                 color = None
-            rating_range = self._lichess_config.rating_range or centaur.lichess_range
+            rating_range = (
+                self._lichess_config.rating_range
+                or self._account_range
+                or centaur.lichess_range
+            )
             
             self._client.board.seek(
                 int(self._lichess_config.time_minutes),
@@ -953,7 +995,7 @@ class LichessPlayer(Player):
             try:
                 from universalchess.board import board
                 board.beep(board.SOUND_WRONG_MOVE)
-            except Exception:
+            except Exception:  # noqa: S110 # nosec B110 - the game-over sound is cosmetic; a beep failure must not block the game-over callback
                 pass
             
             # Fire game over callback

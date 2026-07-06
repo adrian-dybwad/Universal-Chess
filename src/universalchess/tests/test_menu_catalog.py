@@ -404,6 +404,178 @@ def test_option_label_resolves_value_to_catalog_label():
     assert catalog.option_label("player_type", "android") == "android"
 
 
+def test_packaged_catalog_exposes_lichess_account_type():
+    """The shipped catalog must declare the Lichess online account type.
+
+    Why this test exists: the multi-account system generates the Add Account form
+    and enforces per-account storage from the catalog's ``accountTypes`` block,
+    which is the single source of truth for what an online player type collects.
+    This pins the Lichess entry (fields, secret flag, identity) the web/board and
+    the account store depend on.
+
+    How a regression manifests: the accountTypes block is dropped or the Lichess
+    entry loses a field/flag, so account_type('lichess') is missing or has the
+    wrong shape and the Add Account form/store can no longer be built.
+    """
+    catalog = load_catalog()
+    assert catalog.has_account_type("lichess")
+    lichess = catalog.account_type("lichess")
+    assert lichess["label"] == "Lichess"
+    assert lichess["icon"] == "lichess"
+    # Identity is the account username, resolved by authenticating the token
+    # (not typed by the user), which is what enforces "no two accounts share a
+    # player name".
+    assert lichess["identityField"] == "username"
+    assert lichess["identitySource"] == "resolved"
+    fields = {f["key"]: f for f in lichess["fields"]}
+    assert set(fields) == {"api_token", "range"}
+    # The token is the required secret; the range is an optional plain field.
+    assert fields["api_token"]["secret"] is True
+    assert fields["api_token"]["required"] is True
+    assert fields["api_token"]["type"] == "password"
+    assert fields["range"].get("secret", False) is False
+    assert fields["range"]["type"] == "text"
+
+
+def test_account_type_ids_are_online_player_types():
+    """Every accountType id must be a value in the player_type option set.
+
+    Why this test exists: an "online" player type is defined as one that has a
+    matching accountTypes entry. This one-to-one link is the whole basis for the
+    "player type must match account type" binding rule, so the two must not drift.
+
+    How a regression manifests: an accountType id (e.g. a future 'chess_com') is
+    added without a corresponding player_type option, so a player could never be
+    bound to that account type -- caught here as an id with no player_type value.
+    """
+    catalog = load_catalog()
+    player_type_values = {o["value"] for o in catalog.option_set("player_type")}
+    for entry in catalog.account_types():
+        assert entry["id"] in player_type_values, (
+            f"account type '{entry['id']}' has no matching player_type option"
+        )
+
+
+def test_account_type_field_control_types_are_valid():
+    """Every account field must use a control type the Add Account form can render.
+
+    Why this test exists: the definition-driven Add Account form renders each
+    field from its ``type``; an unsupported control type would render a blank
+    input. This asserts the shipped catalog only uses supported controls.
+
+    How a regression manifests: a field is authored with an unknown type (typo),
+    which this catches before it ships as an unrenderable form row.
+    """
+    catalog = load_catalog()
+    for entry in catalog.account_types():
+        for fld in entry["fields"]:
+            assert fld["type"] in {"text", "password"}, (
+                f"account type '{entry['id']}' field '{fld['key']}' has "
+                f"unsupported control type '{fld['type']}'"
+            )
+
+
+def _account_type_menu(entry: dict) -> dict:
+    """Build a minimal valid catalog carrying one accountTypes entry.
+
+    Includes the player_type option set (with the entry id as a value) and the
+    'lichess' icon so only the account-type-specific check under test can fail.
+    """
+    return {
+        "roots": ["a"],
+        "nodes": [{"id": "a", "type": "menu", "children": []}],
+        "optionSets": {"player_type": [{"value": entry["id"], "label": entry["id"]}]},
+        "accountTypes": [entry],
+    }
+
+
+_ACCOUNT_ICONS = {"version": 1, "icons": {"settings": {"d": "g"}, "lichess": {"d": "l"}}}
+
+
+def test_unknown_account_field_type_raises(tmp_path):
+    """An account field with an unrecognised control type must be rejected.
+
+    The Add Account form renders each field by its control type; an unknown type
+    yields a blank row. Validation must name the offending type rather than ship
+    an invisible field.
+    """
+    entry = {
+        "id": "lichess",
+        "label": "Lichess",
+        "icon": "lichess",
+        "identityField": "username",
+        "identitySource": "resolved",
+        "fields": [{"key": "api_token", "label": "Token", "type": "passwrd"}],
+    }
+    menu_path, icons_path = _write(tmp_path, _account_type_menu(entry), _ACCOUNT_ICONS)
+    with pytest.raises(CatalogError, match="unsupported.*type 'passwrd'"):
+        load_catalog(menu_path, icons_path)
+
+
+def test_duplicate_account_type_id_raises(tmp_path):
+    """Two account types with the same id must be rejected.
+
+    A duplicate id would shadow one definition in the type index, so the account
+    store/form could resolve the wrong type. Validation must name the duplicate.
+    """
+    entry = {
+        "id": "lichess",
+        "label": "Lichess",
+        "icon": "lichess",
+        "identityField": "username",
+        "identitySource": "resolved",
+        "fields": [{"key": "api_token", "label": "Token", "type": "password"}],
+    }
+    menu = _account_type_menu(entry)
+    menu["accountTypes"].append(dict(entry))
+    menu_path, icons_path = _write(tmp_path, menu, _ACCOUNT_ICONS)
+    with pytest.raises(CatalogError, match="duplicate account type id: lichess"):
+        load_catalog(menu_path, icons_path)
+
+
+def test_account_type_without_matching_player_type_raises(tmp_path):
+    """An account type id with no player_type option value must be rejected.
+
+    The online-player-type link requires each accountType id to be a player_type
+    value; otherwise no player slot could ever select it. Validation must flag
+    the orphaned id rather than let the two definitions drift silently.
+    """
+    entry = {
+        "id": "chess_com",
+        "label": "Chess.com",
+        "icon": "lichess",
+        "identityField": "username",
+        "identitySource": "resolved",
+        "fields": [{"key": "api_token", "label": "Token", "type": "password"}],
+    }
+    menu = _account_type_menu(entry)
+    # player_type only offers 'lichess', not 'chess_com'.
+    menu["optionSets"]["player_type"] = [{"value": "lichess", "label": "Lichess"}]
+    menu_path, icons_path = _write(tmp_path, menu, _ACCOUNT_ICONS)
+    with pytest.raises(CatalogError, match="account type 'chess_com'.*player_type"):
+        load_catalog(menu_path, icons_path)
+
+
+def test_account_type_entered_identity_must_be_a_field(tmp_path):
+    """An 'entered' identity field must name one of the type's own fields.
+
+    When identity is user-entered (not resolved by auth), the identity key must
+    be a real input field or the store has no value to key uniqueness on.
+    Validation must reject an identityField that is not among the fields.
+    """
+    entry = {
+        "id": "lichess",
+        "label": "Lichess",
+        "icon": "lichess",
+        "identityField": "handle",
+        "identitySource": "entered",
+        "fields": [{"key": "api_token", "label": "Token", "type": "password"}],
+    }
+    menu_path, icons_path = _write(tmp_path, _account_type_menu(entry), _ACCOUNT_ICONS)
+    with pytest.raises(CatalogError, match="identityField 'handle'"):
+        load_catalog(menu_path, icons_path)
+
+
 def test_duplicate_node_id_raises(tmp_path):
     """Duplicate ids must be rejected.
 

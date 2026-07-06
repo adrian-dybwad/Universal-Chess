@@ -112,6 +112,18 @@ interface PlayerSettings {
   elo: string;
   hand_brain_mode: string;
   think_time: number;
+  // For an online player type, the id of the saved account this slot plays as
+  // (must match the player type). Empty uses the default (first) account.
+  account: string;
+}
+
+// One saved online account as returned by GET /api/accounts (secrets redacted).
+interface AccountRecord {
+  type: string;
+  id: string;
+  identity: string;
+  values: Record<string, string>;
+  secretsSet: Record<string, boolean>;
 }
 
 interface FormSettings {
@@ -158,8 +170,8 @@ interface FormSettings {
 }
 
 const defaultFormSettings: FormSettings = {
-  player1: { type: 'human', name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal', think_time: 5 },
-  player2: { type: 'engine', name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal', think_time: 5 },
+  player1: { type: 'human', name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal', think_time: 5, account: '' },
+  player2: { type: 'engine', name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal', think_time: 5, account: '' },
   game: {
     time_control: '0',
     analysis_mode: true,
@@ -248,6 +260,7 @@ function parseRawSettings(data: SettingsData): FormSettings {
       elo: data.PlayerOne?.elo || 'Default',
       hand_brain_mode: data.PlayerOne?.hand_brain_mode || 'normal',
       think_time: parseThinkTime(data.PlayerOne?.think_time),
+      account: data.PlayerOne?.account || '',
     },
     player2: {
       type: data.PlayerTwo?.type || 'engine',
@@ -256,6 +269,7 @@ function parseRawSettings(data: SettingsData): FormSettings {
       elo: data.PlayerTwo?.elo || 'Default',
       hand_brain_mode: data.PlayerTwo?.hand_brain_mode || 'normal',
       think_time: parseThinkTime(data.PlayerTwo?.think_time),
+      account: data.PlayerTwo?.account || '',
     },
     game: {
       time_control: data.game?.time_control || '0',
@@ -402,6 +416,10 @@ export function Settings() {
   const [originalSettings, setOriginalSettings] = useState<FormSettings>(defaultFormSettings);
   const [engines, setEngines] = useState<EngineDefinition[]>([]);
   const [installedEngines, setInstalledEngines] = useState<EngineDefinition[]>([]);
+  // Saved online accounts (GET /api/accounts), used to render the per-player
+  // account picker and default an online player's name to its account username.
+  // Behind auth; a 401 at load degrades to an empty list (no picker shown).
+  const [accounts, setAccounts] = useState<AccountRecord[]>([]);
   const [engineLevels, setEngineLevels] = useState<{ [key: string]: string[] }>({});
   const [spriteSheets, setSpriteSheets] = useState<string[]>(['default']);
   // Every registered AI agent (built-in + user modules) from GET /api/agents,
@@ -489,15 +507,21 @@ export function Settings() {
   // refresh, so it must only fetch things that actually change at runtime
   // (settings values, engine install state, sprite sheets) -- never the catalog.
   const fetchSettings = useCallback(async () => {
-    const [settingsData, enginesData, spritesData] = await Promise.all([
+    const [settingsData, enginesData, spritesData, accountsData] = await Promise.all([
       apiFetch('/api/settings').then((r) => r.json()),
       apiFetch('/api/engines/all').then((r) => r.json()),
       apiFetch('/api/sprites').then((r) => r.json()).catch(() => ['default']),
+      // Accounts require auth; a 401 (or error) yields an empty list so the page
+      // still renders, just without the account picker.
+      apiFetch('/api/accounts', { requiresAuth: true })
+        .then((r) => (r.ok ? r.json() : { accounts: [] }))
+        .catch(() => ({ accounts: [] })),
     ]);
     setRawSettings(settingsData);
     setEngines(enginesData);
     setInstalledEngines(enginesData.filter((e: EngineDefinition) => e.installed));
     setSpriteSheets(Array.isArray(spritesData) && spritesData.length > 0 ? spritesData : ['default']);
+    setAccounts(Array.isArray(accountsData?.accounts) ? accountsData.accounts : []);
 
     const parsed = parseRawSettings(settingsData);
     setFormSettings(parsed);
@@ -1246,20 +1270,75 @@ export function Settings() {
     return engine?.display_name || engineName;
   };
 
-  // Placeholder (default) name for a player's name field, by player type:
-  //  - engine / Hand+Brain: the engine's display name
-  //  - lichess: the connected account's username (the point of connecting an
-  //    account), or "Lichess" until the name is known
-  //  - human: the generic "Player N"
-  // Only the Lichess type borrows the account name; a plain human must not.
+  // Online account types from the catalog (a player type is "online" iff it has
+  // a matching accountTypes entry). Drives the per-player account picker and the
+  // online-name defaulting below.
+  const accountTypes = catalog?.accountTypes ?? [];
+  const isOnlineType = (type: string): boolean => accountTypes.some((t) => t.id === type);
+  const accountTypeLabel = (type: string): string =>
+    accountTypes.find((t) => t.id === type)?.label ?? type;
+  const accountsForType = (type: string): AccountRecord[] => accounts.filter((a) => a.type === type);
+
+  // Legacy fallback name for a Lichess player before migration to accounts: the
+  // username cached on the single [lichess] token. Superseded by the account
+  // list once accounts exist, but kept so an unmigrated board still auto-fills.
   const lichessDefaultName =
     formSettings.lichess.api_token.trim() !== '' && formSettings.lichess.username.trim() !== ''
       ? formSettings.lichess.username.trim()
       : '';
-  const playerNamePlaceholder = (type: string, engine: string, humanFallback: string): string => {
+
+  // Placeholder (default) name for a player's name field, by player type:
+  //  - engine / Hand+Brain: the engine's display name
+  //  - online (e.g. lichess): the bound account's username, else the default
+  //    (first) account's, else the legacy cached name, else the type label
+  //  - human: the generic "Player N"
+  // Only online types borrow an account name; a plain human must not.
+  const playerNamePlaceholder = (
+    type: string,
+    engine: string,
+    account: string,
+    humanFallback: string
+  ): string => {
     if (type === 'engine' || type === 'hand_brain') return getEngineDisplayName(engine);
-    if (type === 'lichess') return lichessDefaultName || 'Lichess';
+    if (isOnlineType(type)) {
+      const list = accountsForType(type);
+      const bound = list.find((a) => a.id === account) ?? list[0];
+      if (bound) return bound.identity;
+      if (type === 'lichess' && lichessDefaultName) return lichessDefaultName;
+      return accountTypeLabel(type);
+    }
     return humanFallback;
+  };
+
+  // Account picker for an online player slot: a select scoped to accounts of the
+  // matching type (so a Lichess slot can only choose a Lichess account). Empty
+  // value means "default account". Offline types render nothing; an online type
+  // with no accounts yet points the user to where they are added.
+  const renderAccountPicker = (playerKey: 'player1' | 'player2') => {
+    const ps = formSettings[playerKey];
+    if (!isOnlineType(ps.type)) return null;
+    const list = accountsForType(ps.type);
+    const label = accountTypeLabel(ps.type);
+    if (list.length === 0) {
+      return (
+        <p className="text-muted" style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
+          No {label} accounts yet. Add one in Connectivity → Accounts.
+        </p>
+      );
+    }
+    return (
+      <FormRow label="Account" help={`Which ${label} account this player uses`}>
+        <Select
+          aria-label="Account"
+          value={ps.account}
+          options={[
+            { value: '', label: 'Default account' },
+            ...list.map((a) => ({ value: a.id, label: a.identity })),
+          ]}
+          onChange={(e) => updateFormSettings(playerKey, { account: e.target.value })}
+        />
+      </FormRow>
+    );
   };
 
   // Tabs are the catalog sections this page owns, rendered in the page's declared
@@ -1439,10 +1518,12 @@ export function Settings() {
                   onChange={(v) => updateFormSettings('player1', { type: String(v) })}
                 />
 
+                {renderAccountPicker('player1')}
+
                 <FormRow label={fieldLabel('field.player.name')} help={fieldHelp('field.player.name')}>
                   <Input
                     value={formSettings.player1.name}
-                    placeholder={playerNamePlaceholder(formSettings.player1.type, formSettings.player1.engine, 'Player 1')}
+                    placeholder={playerNamePlaceholder(formSettings.player1.type, formSettings.player1.engine, formSettings.player1.account, 'Player 1')}
                     onChange={(e) => updateFormSettings('player1', { name: e.target.value })}
                   />
                 </FormRow>
@@ -1508,10 +1589,12 @@ export function Settings() {
                   onChange={(v) => updateFormSettings('player2', { type: String(v) })}
                 />
 
+                {renderAccountPicker('player2')}
+
                 <FormRow label={fieldLabel('field.player.name')} help={fieldHelp('field.player.name')}>
                   <Input
                     value={formSettings.player2.name}
-                    placeholder={playerNamePlaceholder(formSettings.player2.type, formSettings.player2.engine, 'Player 2')}
+                    placeholder={playerNamePlaceholder(formSettings.player2.type, formSettings.player2.engine, formSettings.player2.account, 'Player 2')}
                     onChange={(e) => updateFormSettings('player2', { name: e.target.value })}
                   />
                 </FormRow>

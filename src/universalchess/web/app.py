@@ -2239,7 +2239,37 @@ def get_all_settings():
                 game[f"{key}_set"] = bool(game.get(key))
                 game[key] = ""
 
+    _redact_account_sections(result)
+
     return result
+
+
+def _redact_account_sections(result):
+    """Blank secret fields in ``account:<type>:<id>`` sections of a settings dict.
+
+    /api/settings is a broad, unauthenticated read; account sections carry the
+    stored credential (e.g. a Lichess ``api_token``). Each field marked ``secret``
+    in the catalog's account-type definition is replaced by an empty value plus a
+    boolean ``<key>_set`` companion, mirroring how coach API keys are redacted, so
+    the secret never leaves the server while the UI can still show "token set".
+    Non-account sections and unknown account types are left untouched.
+    """
+    from universalchess.menus.catalog import get_catalog
+    from universalchess.services import account_store
+
+    catalog = get_catalog()
+    for section in list(result.keys()):
+        parsed = account_store.parse_section(section)
+        if parsed is None:
+            continue
+        type_id, _ = parsed
+        if not catalog.has_account_type(type_id):
+            continue
+        secret_keys = {f["key"] for f in catalog.account_type(type_id)["fields"] if f.get("secret")}
+        for key in list(result[section].keys()):
+            if key in secret_keys:
+                result[section][f"{key}_set"] = bool(result[section].get(key))
+                result[section][key] = ""
 
 
 def _is_coach_api_key(key: str) -> bool:
@@ -2649,6 +2679,148 @@ def api_clear_agent_key(agent_id):
         pass
 
     return jsonify({"ok": True})
+
+
+def _account_resolver(type_id):
+    """Return the identity resolver for an account type, or None.
+
+    A ``resolved`` identity type (Lichess) needs to authenticate the submitted
+    credential to learn its canonical identity (the username the account is keyed
+    on). This maps a type id to that network-bound callable; ``entered`` identity
+    types need no resolver and return None. Isolated as one function so tests can
+    inject a fake resolver instead of contacting Lichess.
+    """
+    if type_id == "lichess":
+        from universalchess.services.lichess_service import resolve_lichess_identity
+
+        return lambda fields: resolve_lichess_identity(fields.get("api_token", ""), log=None)
+    return None
+
+
+def _redact_account(account, account_type):
+    """Shape a stored :class:`account_store.Account` for the API, hiding secrets.
+
+    Secret fields (per the catalog definition) are reported only as booleans in
+    ``secretsSet``; every other stored field is returned in ``values``. ``identity``
+    echoes the account's identity-field value (e.g. the Lichess username) for
+    display. The raw secret is never included.
+    """
+    secret_keys = {f["key"] for f in account_type.get("fields", []) if f.get("secret")}
+    values = {}
+    secrets_set = {}
+    for key, value in account.values.items():
+        if key in secret_keys:
+            secrets_set[key] = bool(value)
+        else:
+            values[key] = value
+    return {
+        "type": account.type,
+        "id": account.id,
+        "identity": account.get(account_type["identityField"], account.id),
+        "values": values,
+        "secretsSet": secrets_set,
+    }
+
+
+# HTTP status for each add-account failure code. Absent codes map to 400.
+_ADD_ACCOUNT_STATUS = {"duplicate": 409, "unknown_type": 400}
+
+
+@app.route("/api/accounts", methods=["GET"])
+@requires_auth
+def api_list_accounts():
+    """List saved online accounts, with secrets redacted. Requires auth.
+
+    Powers the Accounts page's list. Each entry carries its type, normalized id,
+    display identity, non-secret values, and a ``secretsSet`` map; tokens are
+    never returned. Response: ``{"accounts": [account]}``.
+    """
+    from universalchess.menus.catalog import get_catalog
+    from universalchess.services import account_store
+
+    # Promote a legacy single [lichess] credential into an account on first read
+    # (idempotent). resolver=None keeps this off the network: it migrates only
+    # when the username is already cached, which is the common case after any
+    # prior successful Lichess authentication.
+    account_store.ensure_lichess_migrated(resolver=None)
+
+    catalog = get_catalog()
+    accounts = []
+    for account in account_store.list_accounts():
+        if not catalog.has_account_type(account.type):
+            continue
+        accounts.append(_redact_account(account, catalog.account_type(account.type)))
+    return jsonify({"accounts": accounts})
+
+
+@app.route("/api/accounts", methods=["POST"])
+@requires_auth
+def api_add_account():
+    """Add an online account from submitted fields. Requires auth.
+
+    Body: ``{"type": "<account type id>", "fields": {<key>: <value>}}``. The type
+    must be declared in the catalog. For a resolved-identity type the credential
+    is authenticated to derive the account's unique identity; duplicates (same
+    player name) are rejected. Returns the redacted account (201) or an error code
+    with an appropriate status (400 validation/auth, 409 duplicate). Broadcasts a
+    settings change so the board and other clients reload.
+    """
+    from universalchess.menus.catalog import get_catalog
+    from universalchess.services import account_store
+
+    body = request.get_json(silent=True) or {}
+    type_id = body.get("type")
+    fields = body.get("fields") or {}
+    if not isinstance(fields, dict):
+        return jsonify({"error": "invalid_fields"}), 400
+
+    catalog = get_catalog()
+    if not type_id or not catalog.has_account_type(type_id):
+        return jsonify({"error": "unknown_type"}), 400
+    account_type = catalog.account_type(type_id)
+
+    result = account_store.add_account(
+        account_type, fields, resolver=_account_resolver(type_id)
+    )
+    if result.error:
+        status = _ADD_ACCOUNT_STATUS.get(result.error, 400)
+        return jsonify({"error": result.error, "message": result.message}), status
+
+    _broadcast_settings_changed()
+    return jsonify({"account": _redact_account(result.account, account_type)}), 201
+
+
+# POST (not DELETE): the app-wide WebDAV before_request intercepts DELETE, so REST
+# delete routes use POST (see api_clear_agent_key for the same constraint).
+@app.route("/api/accounts/<type_id>/<account_id>/delete", methods=["POST"])
+@requires_auth
+def api_delete_account(type_id, account_id):
+    """Delete a saved account. Requires auth.
+
+    Returns ``{"ok": true}`` when removed, or 404 when no such account exists.
+    Broadcasts a settings change so any player bound to it can be reconciled.
+    """
+    from universalchess.services import account_store
+
+    if account_store.delete_account(type_id, account_id):
+        _broadcast_settings_changed()
+        return jsonify({"ok": True})
+    return jsonify({"error": "not_found"}), 404
+
+
+def _broadcast_settings_changed():
+    """Notify web clients and the board that persisted settings changed.
+
+    Mirrors the notification a normal settings save emits so the board reloads
+    account state and other browser tabs refresh. Best-effort: a failed
+    cross-process notify must not fail the request.
+    """
+    broadcast_sse_event("settings_changed")
+    try:
+        from universalchess.services.game_broadcast import notify_main_process_settings_changed
+        notify_main_process_settings_changed()
+    except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
+        pass
 
 
 @app.route("/api/coaches", methods=["GET"])
@@ -3259,8 +3431,9 @@ def api_set_display_tuning():
 def api_download_debug_log():
     """Download the board debug log for support. Requires authentication.
 
-    Serves ~/debug.log (rewritten each boot by board.logging). Auth-gated
-    because a full debug log can contain diagnostic detail about the system.
+    Serves ~/debug.log (appended and size-rotated by board.logging, so it
+    spans restarts). Auth-gated because a full debug log can contain
+    diagnostic detail about the system.
     Returns 404 when no log exists yet (board has not run since install).
     """
     try:

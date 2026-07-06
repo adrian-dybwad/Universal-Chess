@@ -1,75 +1,100 @@
-"""Accounts (Lichess token) menu helper.
+"""Accounts menu helper (board, multi-account).
 
-The Accounts menu shows which Lichess account the stored token belongs to so a
-user with more than one account can tell them apart. The account name is shown
-above the masked token. The name is resolved two ways that complement each other:
+The Accounts menu lists every saved online account (e.g. Lichess logins) so a
+user with more than one can tell them apart, and manages them:
 
-  * ``get_lichess_username`` returns the name cached in config (populated on the
-    last successful authentication). It is cheap and used for the instant first
-    paint, even offline.
-  * ``fetch_lichess_username`` performs a live network lookup for the current
-    token. It runs on a background worker so it never blocks the e-paper UI, and
-    when it lands it refreshes the menu so the freshly resolved name replaces the
-    cached one.
+  * Each row shows the account type, its resolved identity (the username the
+    account is keyed on, stored when the account was added), and the masked
+    secret. No network call is needed to paint the list because the identity is
+    persisted per account.
+  * "Add Account" picks an account type (from the catalog's ``accountTypes``
+    definition) and collects that type's fields one at a time, then saves the
+    account (which authenticates the credential to resolve/uniquely key it).
+  * Selecting an account opens a detail submenu offering Delete, which confirms
+    before removing the credential (mirroring the AI-agent clear-key flow).
 
-The Lichess row opens a submenu to edit or delete the token. Deletion mirrors the
-AI-agent "clear saved key" action: it is only offered when a token exists and it
-confirms before removing the credential.
+The board-specific pieces (on-screen keyboard field capture, the account store,
+the identity resolver) are injected so this module stays UI-logic only and is
+unit-testable with a scripted menu manager.
 """
 
-import threading
-from typing import Callable, Optional
+from dataclasses import dataclass
+from typing import Callable, List, Optional, Tuple
 
 from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.managers.menu import MenuSelection, is_break_result
+from universalchess.utils.token_display import mask_token  # re-exported for callers
 
 
-def mask_token(token: str) -> str:
-    """Mask a token for display."""
-    if not token:
-        return "Not set"
-    if len(token) <= 8:
-        return token[:2] + "..." + token[-2:] if len(token) > 4 else "****"
-    return token[:6] + "..." + token[-4:]
+@dataclass
+class AccountView:
+    """Display model for one saved account row on the board.
 
-
-def lichess_row_detail(username: Optional[str], token: str) -> str:
-    """Build the detail lines shown under the "Lichess" heading.
-
-    Shows the account name above the masked token when the name is known so
-    multiple accounts are distinguishable; falls back to the masked token alone
-    (or "Not set") so behaviour degrades gracefully when the name is unknown.
+    ``identity`` is the account's resolved player name (shown so accounts are
+    distinguishable); ``masked_secret`` is the redacted credential for context.
     """
-    if not token:
-        return "Not set"
-    masked = mask_token(token)
-    if username:
-        return f"{username}\n{masked}"
-    return masked
+
+    type_id: str
+    account_id: str
+    identity: str
+    type_label: str
+    masked_secret: str = ""
+    icon: str = "account"
 
 
-def _default_run_in_background(worker: Callable[[], None]) -> None:
-    """Run ``worker`` on a daemon thread (injection seam for tests)."""
-    threading.Thread(target=worker, name="lichess-username-lookup", daemon=True).start()
+def account_row_key(type_id: str, account_id: str) -> str:
+    """Build the menu-entry key that encodes an account row's (type, id)."""
+    return f"account:{type_id}:{account_id}"
 
 
-def confirm_delete_token(menu_manager) -> bool:
+def parse_account_row_key(key: str) -> Optional[Tuple[str, str]]:
+    """Return ``(type_id, account_id)`` for an account row key, else None."""
+    if not key.startswith("account:"):
+        return None
+    _, _, rest = key.partition(":")
+    type_id, sep, account_id = rest.partition(":")
+    if not sep or not type_id or not account_id:
+        return None
+    return type_id, account_id
+
+
+def account_list_entries(accounts: List[AccountView]) -> List[IconMenuEntry]:
+    """Build the Accounts menu rows: one per account plus an "Add Account" row.
+
+    Kept pure (no menu manager) so the exact row composition -- type label,
+    identity, masked secret, and the trailing Add row -- can be asserted directly.
+    """
+    entries: List[IconMenuEntry] = []
+    for account in accounts:
+        detail = account.identity or account.account_id
+        label = f"{account.type_label}\n{detail}"
+        if account.masked_secret:
+            label += f"\n{account.masked_secret}"
+        entries.append(
+            IconMenuEntry(
+                key=account_row_key(account.type_id, account.account_id),
+                label=label,
+                icon_name=account.icon,
+                enabled=True,
+                font_size=12,
+                height_ratio=2.0,
+            )
+        )
+    entries.append(
+        IconMenuEntry(key="ADD", label="Add\nAccount", icon_name="account", enabled=True)
+    )
+    return entries
+
+
+def confirm_delete_account(menu_manager, identity: str = "") -> bool:
     """Show a Delete/Cancel confirmation and return True only if Delete is chosen.
 
-    Defaults the highlight to Cancel so a stray confirmation press cannot delete
-    the credential; any non-Delete outcome (Cancel, BACK, break) is treated as a
-    refusal, mirroring the confirm step the web app uses before clearing an
-    agent's API key.
+    Defaults the highlight to Cancel so a stray confirmation press cannot delete a
+    credential; any non-Delete outcome (Cancel, BACK, break) is a refusal.
     """
+    prompt = f"Delete\n{identity}?" if identity else "Delete\naccount?"
     entries = [
-        IconMenuEntry(
-            key="prompt",
-            label="Delete\nLichess token?",
-            icon_name="cancel",
-            enabled=True,
-            selectable=False,
-            font_size=12,
-        ),
+        IconMenuEntry(key="prompt", label=prompt, icon_name="cancel", enabled=True, selectable=False, font_size=12),
         IconMenuEntry(key="Delete", label="Delete", icon_name="cancel", enabled=True),
         IconMenuEntry(key="Cancel", label="Cancel", icon_name="undo", enabled=True),
     ]
@@ -78,163 +103,130 @@ def confirm_delete_token(menu_manager) -> bool:
     return key == "Delete"
 
 
-def handle_lichess_account_menu(
-    menu_manager,
-    get_lichess_api: Callable[[], str],
-    handle_lichess_token_fn: Callable[[], MenuSelection],
-    delete_lichess_token_fn: Optional[Callable[[], None]] = None,
-) -> Optional[MenuSelection]:
-    """Submenu to edit or delete the stored Lichess token.
+def choose_account_type(
+    menu_manager, account_type_choices: List[Tuple[str, str, str]]
+) -> Optional[str]:
+    """Pick an account type id, or None if cancelled.
 
-    "Edit Token" opens the on-screen keyboard (``handle_lichess_token_fn``);
-    "Delete Token" is offered only when a token is stored and confirms before
-    calling ``delete_lichess_token_fn``. Both actions loop back so the submenu
-    re-renders with the updated state; the user presses BACK to return.
+    ``account_type_choices`` is a list of ``(type_id, label, icon)``. With a
+    single type the picker is skipped and that type is returned directly (the
+    common case today, where only Lichess exists); with several, a chooser menu
+    is shown. A BACK/break returns None so the add flow is abandoned.
     """
-
-    def build_entries():
-        token = get_lichess_api()
-        entries = [
-            IconMenuEntry(
-                key="Edit",
-                label="Edit Token" if token else "Set Token",
-                icon_name="lichess",
-                enabled=True,
-            ),
-        ]
-        if token and delete_lichess_token_fn is not None:
-            entries.append(
-                IconMenuEntry(
-                    key="Delete",
-                    label="Delete Token",
-                    icon_name="cancel",
-                    enabled=True,
-                )
-            )
-        return entries
-
-    def handle_selection(result: MenuSelection):
-        if result.key == "Edit":
-            sub_result = handle_lichess_token_fn()
-            if is_break_result(sub_result):
-                return sub_result
-            return None
-        if result.key == "Delete":
-            if confirm_delete_token(menu_manager):
-                delete_lichess_token_fn()
-            return None
+    if not account_type_choices:
         return None
+    if len(account_type_choices) == 1:
+        return account_type_choices[0][0]
+    entries = [
+        IconMenuEntry(key=type_id, label=label, icon_name=icon, enabled=True)
+        for type_id, label, icon in account_type_choices
+    ]
+    result = menu_manager.show_menu(entries)
+    if is_break_result(result):
+        return None
+    key = result.key if hasattr(result, "key") else result
+    if not key or key == "BACK":
+        return None
+    return key
 
-    return menu_manager.run_menu_loop(build_entries, handle_selection)
+
+def run_add_account_flow(
+    fields: List[dict],
+    capture_field: Callable[[dict], Optional[str]],
+    submit: Callable[[dict], Tuple[bool, str]],
+    notify: Callable[[str], None],
+) -> bool:
+    """Collect each field for a new account and submit it.
+
+    Walks the type's ``fields`` in order, capturing each via ``capture_field``
+    (the board's on-screen keyboard). Capturing returns None when the user
+    cancels a field, which abandons the whole flow (returns False) so a partial
+    account is never submitted. ``submit`` persists the collected values and
+    returns ``(ok, message)``; on failure (e.g. duplicate/auth) ``notify`` shows
+    the message. Returns True only when the account was saved.
+
+    Kept free of the menu manager so the collect/abort/submit/notify contract is
+    directly testable; the board wires the keyboard and account store in.
+    """
+    collected: dict = {}
+    for field in fields:
+        value = capture_field(field)
+        if value is None:
+            return False
+        collected[field["key"]] = value
+    ok, message = submit(collected)
+    if not ok and message:
+        notify(message)
+    return ok
+
+
+def handle_account_detail(
+    menu_manager,
+    account: AccountView,
+    delete_account_fn: Callable[[str, str], None],
+) -> None:
+    """Detail submenu for one account: confirm-and-delete.
+
+    Deletion is gated by :func:`confirm_delete_account`. Only an explicit,
+    confirmed Delete calls ``delete_account_fn(type_id, account_id)``.
+    """
+    entries = [
+        IconMenuEntry(
+            key="header",
+            label=f"{account.type_label}\n{account.identity or account.account_id}",
+            icon_name=account.icon,
+            enabled=True,
+            selectable=False,
+            font_size=12,
+        ),
+        IconMenuEntry(key="Delete", label="Delete\nAccount", icon_name="cancel", enabled=True),
+    ]
+    result = menu_manager.show_menu(entries, initial_index=1)
+    key = result.key if hasattr(result, "key") else result
+    if key == "Delete" and confirm_delete_account(menu_manager, account.identity or account.account_id):
+        delete_account_fn(account.type_id, account.account_id)
 
 
 def handle_accounts_menu(
     menu_manager,
-    get_lichess_api: Callable[[], str],
-    handle_lichess_token_fn: Callable[[], MenuSelection],
-    get_lichess_username: Optional[Callable[[], Optional[str]]] = None,
-    fetch_lichess_username: Optional[Callable[[], Optional[str]]] = None,
-    delete_lichess_token_fn: Optional[Callable[[], None]] = None,
-    run_in_background: Optional[Callable[[Callable[[], None]], None]] = None,
+    list_accounts: Callable[[], List[AccountView]],
+    account_type_choices: Callable[[], List[Tuple[str, str, str]]],
+    add_account_fn: Callable[[str], None],
+    delete_account_fn: Callable[[str, str], None],
 ) -> MenuSelection:
-    """Handle Accounts submenu for online service credentials.
-
-    See the module docstring for the two-tier (cached + live) username resolution
-    and the edit/delete submenu behaviour.
+    """Multi-account Accounts menu loop.
 
     Args:
-        menu_manager: MenuManager driving the loop; also used to refresh the menu
-            when the background live lookup lands.
-        get_lichess_api: Returns the stored Lichess token.
-        handle_lichess_token_fn: Opens the token-entry keyboard.
-        get_lichess_username: Returns the config-cached username (instant), or
-            None when unknown. Read on each redraw (cheap) so a refresh after the
-            live lookup reflects the newly cached name.
-        fetch_lichess_username: Live network lookup for the current token, run on
-            ``run_in_background`` exactly once per distinct token. Returns the
-            username or None.
-        delete_lichess_token_fn: Clears the stored token (and its cached name).
-        run_in_background: Executor for the live lookup; defaults to a daemon
-            thread. Injected as a synchronous runner in tests.
+        menu_manager: MenuManager driving the loop (and the sub-menus).
+        list_accounts: Returns the current accounts as :class:`AccountView`s,
+            re-read on each redraw so add/delete reflect immediately.
+        account_type_choices: Returns the selectable ``(type_id, label, icon)``
+            account types for the Add flow.
+        add_account_fn: Runs the board's Add flow for a chosen type id (keyboard
+            field capture + save). Injected so this module holds no keyboard code.
+        delete_account_fn: Removes an account by ``(type_id, account_id)``.
     """
-    if run_in_background is None:
-        run_in_background = _default_run_in_background
-
-    # Shared with the background worker; the lock guards concurrent access
-    # between the worker (writer) and build_entries (reader).
-    lookup = {
-        "lock": threading.Lock(),
-        # nosec B105/B106: these keys hold API-token values for de-duplication
-        # state, they are not credentials being assigned a hardcoded default.
-        "started_token": None,  # nosec B105 - token a lookup was already started for
-        "name": None,  # freshly fetched username
-        "name_token": None,  # nosec B105 - token the fetched name belongs to
-    }
-
-    def start_live_lookup(token: str) -> None:
-        if fetch_lichess_username is None or not token:
-            return
-        with lookup["lock"]:
-            if lookup["started_token"] == token:
-                return
-            lookup["started_token"] = token
-
-        def worker():
-            name = fetch_lichess_username()
-            with lookup["lock"]:
-                # Drop a result whose token was superseded mid-flight.
-                if lookup["started_token"] != token:
-                    return
-                lookup["name"] = name or None
-                lookup["name_token"] = token
-            if name:
-                menu_manager.refresh_menu()
-
-        run_in_background(worker)
-
-    def resolve_username(token: str) -> Optional[str]:
-        with lookup["lock"]:
-            if lookup["name_token"] == token and lookup["name"]:
-                return lookup["name"]
-        if get_lichess_username is not None:
-            return get_lichess_username() or None
-        return None
-
-    def invalidate_lookup() -> None:
-        with lookup["lock"]:
-            lookup["started_token"] = None
-            lookup["name"] = None
-            lookup["name_token"] = None
 
     def build_entries():
-        token = get_lichess_api()
-        start_live_lookup(token)
-        username = resolve_username(token)
-        detail = lichess_row_detail(username, token)
-        return [
-            IconMenuEntry(
-                key="Lichess",
-                label=f"Lichess\n{detail}",
-                icon_name="lichess",
-                enabled=True,
-                font_size=12,
-                height_ratio=2.0,
-            ),
-        ]
+        return account_list_entries(list_accounts())
 
     def handle_selection(result: MenuSelection):
-        if result.key == "Lichess":
-            sub_result = handle_lichess_account_menu(
-                menu_manager=menu_manager,
-                get_lichess_api=get_lichess_api,
-                handle_lichess_token_fn=handle_lichess_token_fn,
-                delete_lichess_token_fn=delete_lichess_token_fn,
+        key = result.key
+        if key == "ADD":
+            type_id = choose_account_type(menu_manager, account_type_choices())
+            if type_id:
+                add_account_fn(type_id)
+            return None
+        parsed = parse_account_row_key(key)
+        if parsed is not None:
+            type_id, account_id = parsed
+            account = next(
+                (a for a in list_accounts() if a.type_id == type_id and a.account_id == account_id),
+                None,
             )
-            # The token may have changed (edited or deleted); allow a fresh live
-            # lookup and drop any stale name on the next redraw.
-            invalidate_lookup()
-            if is_break_result(sub_result):
-                return sub_result
+            if account is not None:
+                handle_account_detail(menu_manager, account, delete_account_fn)
+            return None
         return None
 
     return menu_manager.run_menu_loop(build_entries, handle_selection)

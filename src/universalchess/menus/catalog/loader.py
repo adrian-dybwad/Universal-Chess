@@ -27,6 +27,16 @@ _ICONS_FILE = _CATALOG_DIR / "icons.json"
 # error instead of a silently blank web row.
 _WEB_CONTROL_TYPES = frozenset({"toggle", "select", "cycle", "range", "text"})
 
+# Control types an ``accountTypes`` field may use. The definition-driven Add
+# Account form renders each field by this type, so an unknown value would leave a
+# blank, unfillable row; restricting the set turns that into a load-time error.
+_ACCOUNT_FIELD_TYPES = frozenset({"text", "password"})
+
+# How an account's unique identity is obtained. ``entered`` means it is one of
+# the user-typed fields; ``resolved`` means it is derived after the fact (e.g. a
+# Lichess username resolved by authenticating the token) and so is not a field.
+_IDENTITY_SOURCES = frozenset({"resolved", "entered"})
+
 
 class CatalogError(ValueError):
     """Raised when the menu catalog or icon registry is structurally invalid.
@@ -97,6 +107,36 @@ class MenuCatalog:
     def option_set(self, name: str) -> List[dict]:
         """Return the option list for an option set name."""
         return list(self._menu.get("optionSets", {}).get(name, []))
+
+    # -- account types ----------------------------------------------------
+
+    def account_types(self) -> List[dict]:
+        """Return the declared online account type definitions, in order.
+
+        Each entry describes an online player type's account: the fields the Add
+        Account form collects, which field/derived value is the unique identity,
+        and which fields are secrets. The board, the web UI, and the account
+        store all build from this one definition. Empty when none are declared.
+        """
+        return list(self._menu.get("accountTypes", []))
+
+    def has_account_type(self, type_id: str) -> bool:
+        """Return whether an account type with ``type_id`` is declared."""
+        return any(entry.get("id") == type_id for entry in self._menu.get("accountTypes", []))
+
+    def account_type(self, type_id: str) -> dict:
+        """Return the account type definition for ``type_id``.
+
+        Raises:
+            KeyError: if no account type has that id. Ids come from the catalog
+                itself (player_type values / stored account sections), which
+                :func:`load_catalog` validates, so an unknown id signals a caller
+                bug rather than user data.
+        """
+        for entry in self._menu.get("accountTypes", []):
+            if entry.get("id") == type_id:
+                return entry
+        raise KeyError(type_id)
 
     def option_label(self, name: str, value: object, default: Optional[str] = None) -> str:
         """Return the label for ``value`` within the named option set.
@@ -240,6 +280,8 @@ def _validate(menu_data: dict, icons_data: dict) -> None:
         if section is not None and section not in section_ids:
             raise CatalogError(f"node '{node_id}' references unknown section '{section}'")
 
+    _validate_account_types(menu_data, icon_ids)
+
     for root_id in menu_data.get("roots", []):
         if root_id not in ids:
             raise CatalogError(f"root references unknown node '{root_id}'")
@@ -248,6 +290,91 @@ def _validate(menu_data: dict, icons_data: dict) -> None:
         icon = section.get("icon")
         if icon is not None and icon not in icon_ids:
             raise CatalogError(f"section '{section.get('id')}' references unknown icon '{icon}'")
+
+
+def _validate_account_types(menu_data: dict, icon_ids: "set[str]") -> None:
+    """Validate the optional ``accountTypes`` block, raising :class:`CatalogError`.
+
+    Each entry defines an online player type's account. Checks guard the exact
+    ways a malformed entry would break the Add Account form or the account store:
+    - ids present and unique (a duplicate would shadow a definition);
+    - the id is also a ``player_type`` option value (the online-player-type link,
+      so a slot can actually select this account type);
+    - ``label`` present and ``icon`` registered (blank/placeholder chrome);
+    - ``fields`` non-empty, each with a unique ``key``, a ``label``, and a
+      supported control ``type`` (an unfillable/blank row otherwise);
+    - ``identitySource`` is a known mode and, when identity is ``entered``, the
+      ``identityField`` names a real field (else uniqueness has no value to key).
+
+    The block is optional; a catalog without ``accountTypes`` is valid.
+    """
+    account_types = menu_data.get("accountTypes")
+    if account_types is None:
+        return
+    if not isinstance(account_types, list):
+        raise CatalogError("'accountTypes' must be a list")
+
+    player_type_values = {
+        o.get("value") for o in menu_data.get("optionSets", {}).get("player_type", [])
+    }
+
+    seen_ids: "set[str]" = set()
+    for entry in account_types:
+        type_id = entry.get("id")
+        if not type_id:
+            raise CatalogError(f"account type missing 'id': {entry!r}")
+        if type_id in seen_ids:
+            raise CatalogError(f"duplicate account type id: {type_id}")
+        seen_ids.add(type_id)
+
+        if type_id not in player_type_values:
+            raise CatalogError(
+                f"account type '{type_id}' has no matching value in the "
+                f"'player_type' option set (an online player type must exist)"
+            )
+
+        if not entry.get("label"):
+            raise CatalogError(f"account type '{type_id}' missing 'label'")
+
+        icon = entry.get("icon")
+        if not icon or icon not in icon_ids:
+            raise CatalogError(f"account type '{type_id}' references unknown icon '{icon}'")
+
+        fields = entry.get("fields")
+        if not isinstance(fields, list) or not fields:
+            raise CatalogError(f"account type '{type_id}' must declare a non-empty 'fields' list")
+
+        field_keys: "set[str]" = set()
+        for fld in fields:
+            key = fld.get("key")
+            if not key:
+                raise CatalogError(f"account type '{type_id}' has a field missing 'key': {fld!r}")
+            if key in field_keys:
+                raise CatalogError(f"account type '{type_id}' has duplicate field key '{key}'")
+            field_keys.add(key)
+            if not fld.get("label"):
+                raise CatalogError(f"account type '{type_id}' field '{key}' missing 'label'")
+            field_type = fld.get("type")
+            if field_type not in _ACCOUNT_FIELD_TYPES:
+                raise CatalogError(
+                    f"account type '{type_id}' field '{key}' has unsupported control "
+                    f"type '{field_type}' (expected one of {sorted(_ACCOUNT_FIELD_TYPES)})"
+                )
+
+        identity_source = entry.get("identitySource")
+        if identity_source not in _IDENTITY_SOURCES:
+            raise CatalogError(
+                f"account type '{type_id}' has unknown identitySource "
+                f"'{identity_source}' (expected one of {sorted(_IDENTITY_SOURCES)})"
+            )
+        identity_field = entry.get("identityField")
+        if not identity_field:
+            raise CatalogError(f"account type '{type_id}' missing 'identityField'")
+        if identity_source == "entered" and identity_field not in field_keys:
+            raise CatalogError(
+                f"account type '{type_id}' identityField '{identity_field}' is not one of "
+                f"its fields (an entered identity must be a collected field)"
+            )
 
 
 def load_catalog(

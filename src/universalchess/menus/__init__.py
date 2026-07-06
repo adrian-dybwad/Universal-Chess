@@ -9,10 +9,13 @@ from .bluetooth_menu import (
     paired_device_rows,
 )
 from .accounts_menu import (
+    AccountView,
     handle_accounts_menu,
-    handle_lichess_account_menu,
-    lichess_row_detail,
-    confirm_delete_token,
+    handle_account_detail,
+    account_list_entries,
+    choose_account_type,
+    run_add_account_flow,
+    confirm_delete_account,
     mask_token,
 )
 from .engine_manager_menu import (
@@ -49,10 +52,13 @@ __all__ = [
     "wifi_network_rows",
     "keyboard_rows",
     "paired_device_rows",
+    "AccountView",
     "handle_accounts_menu",
-    "handle_lichess_account_menu",
-    "lichess_row_detail",
-    "confirm_delete_token",
+    "handle_account_detail",
+    "account_list_entries",
+    "choose_account_type",
+    "run_add_account_flow",
+    "confirm_delete_account",
     "mask_token",
     "perform_local_deb_install",
     "find_local_deb_files",

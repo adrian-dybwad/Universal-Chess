@@ -78,6 +78,36 @@
     ]
   },
 
+  "accountTypes": [
+    {
+      "id": "lichess",
+      "label": "Lichess",
+      "icon": "lichess",
+      "identityField": "username",
+      "identitySource": "resolved",
+      "fields": [
+        {
+          "key": "api_token",
+          "label": "API Token",
+          "type": "password",
+          "required": true,
+          "secret": true,
+          "placeholder": "lip_xxxxxxxx",
+          "help": "Get a token from lichess.org with challenge:write and board:play permissions"
+        },
+        {
+          "key": "range",
+          "label": "Rating Range",
+          "type": "text",
+          "required": false,
+          "secret": false,
+          "placeholder": "1000-1600",
+          "help": "Preferred opponent rating range for matchmaking"
+        }
+      ]
+    }
+  ],
+
   "nodes": [
     {
       "id": "main",
@@ -182,6 +212,7 @@
         "field.player.color",
         "field.player.type",
         "field.player.name",
+        "field.player.account",
         "field.player.hand_brain_mode",
         "field.player.engine",
         "field.player.elo",
@@ -1123,6 +1154,18 @@
       "visibleWhen": { "store": "player", "key": "type", "in": ["engine", "hand_brain"] },
       "section": "players",
       "platforms": ["board", "web"]
+    },
+    {
+      "id": "field.player.account",
+      "type": "select",
+      "provider": "player_accounts",
+      "label": "Account",
+      "boardLabel": "Account\n{fn:player_account}",
+      "help": "Which saved account this player plays as",
+      "bind": { "store": "player", "key": "account" },
+      "icon": "lichess",
+      "visibleWhen": { "store": "player", "key": "type", "equals": "lichess" },
+      "platforms": ["board"]
     },
     {
       "id": "field.player.lichess",

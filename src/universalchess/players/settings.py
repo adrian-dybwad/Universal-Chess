@@ -61,6 +61,9 @@ class PlayerSettings:
         think_time: Seconds the engine may think per move (engine type). Integer
             seconds because the settings loader infers type from the default and
             has no float branch; a float would round-trip as a string.
+        account: For an online player type, the id of the saved account this slot
+            plays as (matching the player type, e.g. a ``lichess`` account for a
+            ``lichess`` player). Empty falls back to the default account.
     """
 
     section: str
@@ -71,6 +74,7 @@ class PlayerSettings:
     elo: str = "Default"
     hand_brain_mode: str = "normal"
     think_time: int = 5
+    account: str = ""
     _log: Optional[Any] = field(default=None, repr=False)
 
     def save(self, key: str) -> None:
@@ -111,6 +115,7 @@ class PlayerSettings:
             "elo": self.elo,
             "hand_brain_mode": self.hand_brain_mode,
             "think_time": self.think_time,
+            "account": self.account,
         }
 
     @classmethod
@@ -149,6 +154,7 @@ class PlayerSettings:
             elo=data["elo"],
             hand_brain_mode=data["hand_brain_mode"],
             think_time=data["think_time"],
+            account=data["account"],
             _log=log,
         )
 

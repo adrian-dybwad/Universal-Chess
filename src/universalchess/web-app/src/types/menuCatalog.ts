@@ -114,11 +114,47 @@ export interface MenuNode {
   target?: string;
 }
 
+/**
+ * A single parameter an online account type collects in the Add Account form.
+ * The form renders one control per field, keyed by `type`.
+ */
+export interface AccountTypeField {
+  /** Storage/form key (e.g. 'api_token', 'range'). */
+  key: string;
+  label: string;
+  /** Control type the form renders. */
+  type: 'text' | 'password';
+  help?: string;
+  placeholder?: string;
+  required?: boolean;
+  /** Secret fields are never returned by the API in cleartext (redacted to a
+   *  `*_set` boolean) and render as password inputs. */
+  secret?: boolean;
+}
+
+/**
+ * Declarative definition of an online account type (e.g. Lichess). Drives the
+ * "Add Account" form and the per-account store. An online player type is one
+ * that has a matching entry here (its `id` equals a `player_type` option value).
+ */
+export interface AccountType {
+  id: string;
+  label: string;
+  icon: string;
+  /** Stored key that uniquely identifies an account of this type. */
+  identityField: string;
+  /** Whether the identity is user-`entered` or `resolved` after authenticating. */
+  identitySource: 'entered' | 'resolved';
+  fields: AccountTypeField[];
+}
+
 export interface MenuCatalog {
   version: number;
   roots: string[];
   sections: MenuSection[];
   optionSets: Record<string, MenuOption[]>;
+  /** Online account type definitions; absent/empty when none are declared. */
+  accountTypes?: AccountType[];
   nodes: MenuNode[];
 }
 

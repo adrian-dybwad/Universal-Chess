@@ -52,14 +52,15 @@ from universalchess.menus import (
     wifi_status_icon,
     wifi_signal_icon,
     wifi_network_rows,
+    AccountView,
     handle_accounts_menu,
+    run_add_account_flow,
     mask_token,
     handle_engine_manager_menu,
     handle_engine_detail_menu,
     show_engine_install_progress,
     reset_all_settings,
     get_lichess_client,
-    ensure_token,
     start_lichess_game_service,
 )
 from universalchess.utils.wifi import (
@@ -1945,6 +1946,7 @@ def _start_game_mode(
                 name="Lichess",
                 color=color,
                 mode=LichessGameMode.NEW,
+                account_id=ps.account,
             )
             return LichessPlayer(config)
         elif ps.type == 'hand_brain':
@@ -3465,10 +3467,57 @@ def _build_player_detail_context(player_num: int):
             for level in _get_engine_elo_levels(settings_dict()["engine"])
         ]
 
+    def player_accounts():
+        """Rows for the Account select: 'Default account' plus each saved account.
+
+        Scoped to the account type matching the player's (online) type -- a
+        Lichess player can only bind a Lichess account. The empty-key "Default
+        account" row leaves the slot unbound so it uses the default account
+        (back-compat). Returns no rows for a non-online type, so the row hides.
+        """
+        from universalchess.menus.catalog import get_catalog
+        from universalchess.menus.engine import MenuRow
+        from universalchess.services import account_store
+
+        catalog = get_catalog()
+        type_id = settings_dict()["type"]
+        if not catalog.has_account_type(type_id):
+            return []
+        definition = catalog.account_type(type_id)
+        icon = definition.get("icon", "account")
+        rows = [MenuRow(key="", label="Default account", icon=icon)]
+        for account in account_store.list_accounts(type_id):
+            identity = account.get(definition["identityField"], account.id)
+            rows.append(MenuRow(key=account.id, label=identity, icon=icon))
+        return rows
+
+    def player_account_label(_node):
+        """Computed label for the Account row: the bound account's identity.
+
+        Shows 'Default' when the slot is unbound or the bound account no longer
+        exists (deleted), so the row never advertises a stale/missing account.
+        """
+        from universalchess.menus.catalog import get_catalog
+        from universalchess.services import account_store
+
+        catalog = get_catalog()
+        settings = settings_dict()
+        account_id = settings.get("account", "")
+        type_id = settings["type"]
+        if not account_id or not catalog.has_account_type(type_id):
+            return "Default"
+        definition = catalog.account_type(type_id)
+        account = account_store.get_account(type_id, account_id)
+        if account is None:
+            return "Default"
+        return account.get(definition["identityField"], account_id)
+
     ctx = BoardMenuContext()
     ctx.register_store("player", player_get, player_set)
     ctx.register_provider("installed_engines", installed_engines)
     ctx.register_provider("engine_levels", engine_levels)
+    ctx.register_provider("player_accounts", player_accounts)
+    ctx.register_value("player_account", player_account_label)
     ctx.register_action("edit_name", lambda: _prompt_player_name(player_num))
     ctx.register_action("lichess", lambda: _signal_from(_handle_lichess_menu()))
     return ctx
@@ -4997,53 +5046,114 @@ def _start_lichess_game(lichess_config) -> bool:
     return result.success
 
 
-def _handle_accounts_menu():
-    """Handle Accounts submenu for online service credentials.
+def _capture_account_field(field: dict):
+    """Prompt for one Add-Account field via the on-screen keyboard.
 
-    Shows account settings for online services like Lichess. The Lichess row
-    shows the account username above the masked token so a user with more than
-    one account can tell which account the stored token belongs to. The name is
-    seeded from the config cache (instant) and refreshed by a background live
-    lookup. Selecting the row opens a submenu to edit or delete the token.
+    Returns the entered string, or None if the user cancelled (BACK), which the
+    add flow treats as abandoning the whole account so a partial one is never
+    saved. Registers the keyboard as the active widget so board keys reach it,
+    mirroring the token/password entry paths, and always clears it afterwards.
     """
-    from universalchess.board import centaur
+    title = field.get("label") or field.get("key") or "Value"
+    board.display_manager.clear_widgets(addStatusBar=False)
+    keyboard = KeyboardWidget(board.display_manager.update, title=title, max_length=64)
+    _set_active_keyboard_widget(keyboard)
+    promise = board.display_manager.add_widget(keyboard)
+    if promise:
+        try:
+            promise.result(timeout=5.0)
+        except Exception:  # noqa: S110 # nosec B110 - best-effort render wait; input still accepted below
+            pass
+    try:
+        return keyboard.wait_for_input(timeout=300.0)
+    finally:
+        _clear_active_keyboard_widget()
 
-    def _fetch_lichess_username():
-        # Live lookup used by the Accounts menu's background worker; also persists
-        # the resolved name to config (via get_lichess_client) for the next open.
-        _, username, _ = get_lichess_client(centaur, log)
-        return username or None
 
-    def _delete_lichess_token():
-        # Writing an empty token also clears the cached username (set_lichess_api
-        # drops it when the token changes), matching the AI-agent clear-key flow.
-        centaur.set_lichess_api("")
-        log.info("[Accounts] Lichess token deleted")
-        board.beep(board.SOUND_GENERAL)
+def _handle_accounts_menu():
+    """Handle the multi-account Accounts menu for online service credentials.
+
+    Lists every saved account (type + resolved identity + masked secret) plus an
+    "Add Account" row. Add picks an account type from the catalog's
+    ``accountTypes`` definition, collects that type's fields via the on-screen
+    keyboard, and saves the account (authenticating to resolve/uniquely key it).
+    Selecting an account offers a confirm-gated Delete. Identity is persisted per
+    account, so painting the list needs no network call.
+    """
+    from universalchess.menus.catalog import get_catalog
+    from universalchess.services import account_store
+    from universalchess.services.lichess_service import resolve_lichess_identity, show_lichess_error
+
+    catalog = get_catalog()
+
+    # Bring any legacy [lichess] credential into the account model first so it
+    # appears in the list. Offline (no resolver network call) this is a no-op
+    # unless a cached username exists; the resolver lets it complete online.
+    account_store.ensure_lichess_migrated(
+        resolver=lambda fields: resolve_lichess_identity(fields.get("api_token", ""), log)
+    )
+
+    def _resolver_for(type_id: str):
+        if type_id == "lichess":
+            return lambda fields: resolve_lichess_identity(fields.get("api_token", ""), log)
+        return None
+
+    def _list_views():
+        views = []
+        for account in account_store.list_accounts():
+            if not catalog.has_account_type(account.type):
+                continue
+            definition = catalog.account_type(account.type)
+            identity = account.get(definition["identityField"], account.id)
+            secret_key = next((f["key"] for f in definition["fields"] if f.get("secret")), None)
+            masked = mask_token(account.get(secret_key)) if secret_key else ""
+            views.append(
+                AccountView(
+                    type_id=account.type,
+                    account_id=account.id,
+                    identity=identity,
+                    type_label=definition.get("label", account.type),
+                    masked_secret=masked,
+                    icon=definition.get("icon", "account"),
+                )
+            )
+        return views
+
+    def _type_choices():
+        return [
+            (definition["id"], definition.get("label", definition["id"]), definition.get("icon", "account"))
+            for definition in catalog.account_types()
+        ]
+
+    def _add(type_id: str):
+        definition = catalog.account_type(type_id)
+
+        def _submit(values):
+            result = account_store.add_account(definition, values, resolver=_resolver_for(type_id))
+            if result.error is None:
+                log.info("[Accounts] Added %s account '%s'", type_id, result.account.id)
+                board.beep(board.SOUND_GENERAL)
+                return True, ""
+            return False, result.message or "Could not add account"
+
+        run_add_account_flow(
+            definition["fields"],
+            capture_field=_capture_account_field,
+            submit=_submit,
+            notify=lambda message: show_lichess_error(_menu_manager, "Account", message),
+        )
+
+    def _delete(type_id: str, account_id: str):
+        if account_store.delete_account(type_id, account_id):
+            log.info("[Accounts] Deleted %s account '%s'", type_id, account_id)
+            board.beep(board.SOUND_GENERAL)
 
     return handle_accounts_menu(
         menu_manager=_menu_manager,
-        get_lichess_api=centaur.get_lichess_api,
-        handle_lichess_token_fn=_handle_lichess_token,
-        get_lichess_username=lambda: centaur.get_lichess_username() or None,
-        fetch_lichess_username=_fetch_lichess_username,
-        delete_lichess_token_fn=_delete_lichess_token,
-    )
-
-
-def _handle_lichess_token():
-    """Handle Lichess API token entry using service helper."""
-    from universalchess.board import centaur
-    keyboard_factory = lambda update_fn, title, max_len: KeyboardWidget(update_fn, title=title, max_length=max_len)
-    return ensure_token(
-        menu_manager=_menu_manager,
-        keyboard_factory=keyboard_factory,
-        get_token=centaur.get_lichess_api,
-        set_token=centaur.set_lichess_api,
-        log=log,
-        board=board,
-        set_active_keyboard=_set_active_keyboard_widget,
-        clear_active_keyboard=_clear_active_keyboard_widget,
+        list_accounts=_list_views,
+        account_type_choices=_type_choices,
+        add_account_fn=_add,
+        delete_account_fn=_delete,
     )
 
 

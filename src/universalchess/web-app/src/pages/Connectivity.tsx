@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Button, Card, CardHeader, Input, Toggle } from '../components/ui';
+import { Button, Card, CardHeader, Input, Select, Toggle } from '../components/ui';
 import { MenuIcon } from '../components/MenuIcon';
 import { useAuthedAction } from '../components/useAuthedAction';
 import { apiFetch, buildApiUrl } from '../utils/api';
+import type { AccountType } from '../types/menuCatalog';
 import '../components/ApiSettingsDialog.css';
 import './Connectivity.css';
 
@@ -1202,55 +1203,143 @@ function ChromecastCard() {
   );
 }
 
-function AccountsCard() {
-  const [token, setToken] = useState('');
-  const [range, setRange] = useState('');
-  // Connected Lichess account name, cached on the board's last successful
-  // authentication. Read-only here (never edited); shown so a user with more
-  // than one account can confirm which account the stored token belongs to.
-  const [username, setUsername] = useState('');
+// One saved online account as returned by GET /api/accounts. Secrets are never
+// sent in cleartext: each secret field is reported only as a boolean in
+// `secretsSet` (e.g. `{ api_token: true }`).
+interface AccountRecord {
+  type: string;
+  id: string;
+  identity: string;
+  values: Record<string, string>;
+  secretsSet: Record<string, boolean>;
+}
+
+// Human-readable message for each add-account error code the API returns.
+// Exhaustive over the codes; unmapped codes fall back to the server message.
+const ADD_ERROR_TEXT: Record<string, string> = {
+  duplicate: 'An account with that player name already exists.',
+  missing_field: 'Please fill in all required fields.',
+  missing_identity: 'Account identifier is required.',
+  auth_failed: 'Could not verify the account. Check the token and try again.',
+  no_token: 'A token is required.',
+  no_berserk: 'The Lichess client is unavailable on the board.',
+  unknown_type: 'Unknown account type.',
+};
+
+/**
+ * Multi-account manager for online play (Lichess today; extensible via the
+ * catalog's `accountTypes`).
+ *
+ * Lists saved accounts (each shown by its connected username so a user with more
+ * than one can tell them apart), each with a delete control, and renders a
+ * definition-driven "Add Account" form: the account type is chosen from the
+ * catalog and its fields (token, rating range, ...) are generated from that
+ * type's definition. Adding authenticates the credential server-side to resolve
+ * the account's identity and reject duplicates; secrets never round-trip to the
+ * browser. Exported for focused testing.
+ */
+export function AccountsCard() {
+  const [accountTypes, setAccountTypes] = useState<AccountType[]>([]);
+  const [accounts, setAccounts] = useState<AccountRecord[]>([]);
+  const [selectedType, setSelectedType] = useState('');
+  // Add-form field values, keyed by field key (reset after a successful add).
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [loaded, setLoaded] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const { dialog, onUnauthorized } = useAuthedAction();
 
-  useEffect(() => {
-    apiFetch('/api/settings')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data?.lichess) {
-          setToken(data.lichess.api_token || '');
-          setRange(data.lichess.range || '');
-          setUsername(data.lichess.username || '');
-        }
-        setLoaded(true);
-      })
-      .catch(() => setLoaded(true));
+  // The account list is behind auth. On 401 at load, degrade quietly to an empty
+  // list (mirrors the WiFi saved-networks card) rather than forcing a login just
+  // to view the page; a mutation will trigger the login flow and then refresh.
+  const fetchAccounts = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/accounts', { requiresAuth: true });
+      if (r.status === 401) {
+        setAccounts([]);
+        return;
+      }
+      if (r.ok) setAccounts((await r.json()).accounts ?? []);
+    } catch {
+      /* best-effort */
+    }
   }, []);
 
-  // Read-modify-write only the lichess section. save_all_settings merges per
-  // section, so this never clobbers other settings owned by the Settings page.
-  const save = useCallback(async () => {
-    setSaving(true);
+  useEffect(() => {
+    apiFetch('/api/menu-schema')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        const types: AccountType[] = data?.accountTypes ?? [];
+        setAccountTypes(types);
+        if (types.length > 0) setSelectedType(types[0].id);
+      })
+      .catch(() => {});
+    void fetchAccounts().finally(() => setLoaded(true));
+  }, [fetchAccounts]);
+
+  const currentType = accountTypes.find((t) => t.id === selectedType);
+
+  const setField = (key: string, value: string) =>
+    setFieldValues((prev) => ({ ...prev, [key]: value }));
+
+  const add = useCallback(async () => {
+    if (!currentType) return;
+    setSubmitting(true);
     setMessage(null);
     try {
-      const r = await apiFetch('/api/settings', {
+      const r = await apiFetch('/api/accounts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lichess: { api_token: token, range } }),
+        body: JSON.stringify({ type: currentType.id, fields: fieldValues }),
         requiresAuth: true,
       });
       if (r.status === 401) {
-        onUnauthorized(save);
+        onUnauthorized(add);
         return;
       }
-      setMessage(r.ok ? { kind: 'success', text: 'Saved.' } : { kind: 'error', text: 'Could not save.' });
+      if (r.ok) {
+        setFieldValues({});
+        setMessage({ kind: 'success', text: 'Account added.' });
+        await fetchAccounts();
+        return;
+      }
+      const data = await r.json().catch(() => ({}));
+      setMessage({ kind: 'error', text: ADD_ERROR_TEXT[data.error] || data.message || 'Could not add account.' });
     } catch {
       setMessage({ kind: 'error', text: 'Network error contacting the board.' });
     } finally {
-      setSaving(false);
+      setSubmitting(false);
     }
-  }, [token, range, onUnauthorized]);
+  }, [currentType, fieldValues, onUnauthorized, fetchAccounts]);
+
+  const remove = useCallback(
+    async (account: AccountRecord) => {
+      if (!confirm(`Remove the account "${account.identity}"?`)) return;
+      setBusy(true);
+      setMessage(null);
+      try {
+        const r = await apiFetch(`/api/accounts/${account.type}/${account.id}/delete`, {
+          method: 'POST',
+          requiresAuth: true,
+        });
+        if (r.status === 401) {
+          onUnauthorized(() => remove(account));
+          return;
+        }
+        if (r.ok) {
+          await fetchAccounts();
+        } else {
+          setMessage({ kind: 'error', text: 'Could not remove account.' });
+        }
+      } catch {
+        setMessage({ kind: 'error', text: 'Network error contacting the board.' });
+      } finally {
+        setBusy(false);
+      }
+    },
+    [onUnauthorized, fetchAccounts]
+  );
 
   return (
     <>
@@ -1258,50 +1347,91 @@ function AccountsCard() {
       <Card className="mb-6">
         <CardHeader title="Accounts" />
         <p className="text-muted mb-4" style={{ fontSize: '0.875rem' }}>
-          Connect to Lichess for online play against other players.
+          Connect online accounts for internet play. Add more than one account to switch between them per player.
         </p>
-
-        {token && username && (
-          <div className="conn-message conn-message--success">
-            Connected as <strong>{username}</strong>
-          </div>
-        )}
 
         {message && <div className={`conn-message conn-message--${message.kind}`}>{message.text}</div>}
 
-        <div className="form-group">
-          <label htmlFor="lichess-token">
-            API Token{' '}
-            <a href="https://lichess.org/account/oauth/token" target="_blank" rel="noopener noreferrer">
-              (get a token)
-            </a>{' '}
-            with challenge:write and board:play permissions
-          </label>
-          <Input
-            id="lichess-token"
-            type="password"
-            value={token}
-            placeholder="lip_xxxxxxxx"
-            disabled={!loaded}
-            onChange={(e) => setToken(e.target.value)}
-          />
-        </div>
-        <div className="form-group">
-          <label htmlFor="lichess-range">Rating Range</label>
-          <Input
-            id="lichess-range"
-            value={range}
-            placeholder="1000-1600"
-            disabled={!loaded}
-            onChange={(e) => setRange(e.target.value)}
-          />
-        </div>
+        {loaded && accounts.length === 0 && (
+          <p className="text-muted">No accounts yet. Add one below.</p>
+        )}
 
-        <div className="conn-actions">
-          <Button variant="primary" onClick={save} disabled={saving || !loaded}>
-            {saving ? 'Saving…' : 'Save'}
-          </Button>
-        </div>
+        {accounts.length > 0 && (
+          <div className="conn-list">
+            <h4 className="conn-list-title">Saved accounts</h4>
+            {accounts.map((account) => {
+              const typeLabel = accountTypes.find((t) => t.id === account.type)?.label ?? account.type;
+              return (
+                <div key={`${account.type}:${account.id}`} className="conn-list-item conn-list-item--static">
+                  <span className="conn-list-name">
+                    <MenuIcon name="account" size={16} />
+                    <span>
+                      Connected as <strong>{account.identity}</strong>
+                      <span className="text-muted"> · {typeLabel}</span>
+                      {account.values.range && (
+                        <span className="text-muted"> · {account.values.range}</span>
+                      )}
+                    </span>
+                  </span>
+                  <Button variant="danger" size="sm" onClick={() => remove(account)} disabled={busy}>
+                    Delete
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {currentType && (
+          <form
+            className="conn-add-account"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void add();
+            }}
+          >
+            <h4 className="conn-list-title">Add Account</h4>
+
+            {accountTypes.length > 1 && (
+              <div className="form-group">
+                <label htmlFor="account-type">Account Type</label>
+                <Select
+                  id="account-type"
+                  value={selectedType}
+                  options={accountTypes.map((t) => ({ value: t.id, label: t.label }))}
+                  onChange={(e) => {
+                    setSelectedType(e.target.value);
+                    setFieldValues({});
+                  }}
+                />
+              </div>
+            )}
+
+            {currentType.fields.map((field) => (
+              <div className="form-group" key={field.key}>
+                <label htmlFor={`account-field-${field.key}`}>
+                  {field.label}
+                  {field.required ? ' *' : ''}
+                </label>
+                <Input
+                  id={`account-field-${field.key}`}
+                  type={field.type === 'password' ? 'password' : 'text'}
+                  value={fieldValues[field.key] ?? ''}
+                  placeholder={field.placeholder}
+                  disabled={!loaded}
+                  onChange={(e) => setField(field.key, e.target.value)}
+                />
+                {field.help && <p className="text-muted conn-field-help">{field.help}</p>}
+              </div>
+            ))}
+
+            <div className="conn-actions">
+              <Button type="submit" variant="primary" disabled={submitting || !loaded}>
+                {submitting ? 'Adding…' : 'Add Account'}
+              </Button>
+            </div>
+          </form>
+        )}
       </Card>
     </>
   );

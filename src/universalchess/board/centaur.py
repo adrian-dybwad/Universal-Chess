@@ -32,16 +32,38 @@ import urllib.request
 from universalchess.board.logging import log
 
 def get_lichess_api():
+    """Return the active Lichess API token.
+
+    Multi-account aware: prefers the first saved account's token (the migration
+    target of the former single credential), falling back to the legacy
+    ``[lichess]`` token for a board that predates migration or has no accounts
+    yet. This is the single back-compat shim the older single-account consumers
+    (accounts display, ``get_lichess_client``) route through.
+    """
+    from universalchess.services import account_store
+
+    account = account_store.default_account("lichess")
+    if account is not None:
+        token = account.get("api_token", "")
+        if token:
+            return token
     return Settings.read('lichess','api_token','')
 
 def get_lichess_username():
-    """Return the cached Lichess username for the stored token.
+    """Return the Lichess username of the active account.
 
-    Populated on the last successful Lichess authentication (see
-    ``services.lichess_service.get_lichess_client``) so the Accounts menu can
-    show which account the token belongs to without making a network call.
-    Empty when no account has been authenticated for the current token.
+    Prefers the first saved account's resolved username; falls back to the
+    legacy ``[lichess].username`` cached on the last successful authentication so
+    the account can be shown without a network call on an unmigrated board.
+    Empty when no username is known.
     """
+    from universalchess.services import account_store
+
+    account = account_store.default_account("lichess")
+    if account is not None:
+        username = account.get("username", "")
+        if username:
+            return username
     return Settings.read('lichess','username','')
 
 def get_lichess_range():    
