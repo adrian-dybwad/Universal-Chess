@@ -1,17 +1,58 @@
 import { useMemo } from 'react';
-import { Chess } from 'chess.js';
-import { formatMove, DEFAULT_NOTATION, type Notation } from '../utils/notation';
+import { formatMove, DEFAULT_NOTATION, type Notation, type VerboseMove } from '../utils/notation';
 import { renderFigurineText } from '../utils/figurineText';
+import type { PositionEntry } from '../types/game';
 import './MoveTable.css';
 
 interface MoveTableProps {
-  pgn: string;
+  /**
+   * Authoritative per-ply positions (python-chess computed), start first. This
+   * is the single source of the rows for both variants; the web no longer
+   * replays the PGN with chess.js (which mis-computes Chess960 castling).
+   * Null/empty renders "No moves".
+   */
+  positions?: PositionEntry[] | null;
   currentMoveIndex: number;
   /** Notation used to render each move. Defaults to figurine. */
   notation?: Notation;
   /** Evaluation history: array where index corresponds to move number (1-indexed) */
   evalHistory?: (number | null)[];
   onMoveClick?: (moveIndex: number) => void;
+}
+
+/**
+ * Build the {@link VerboseMove} shape `formatMove` needs from an authoritative
+ * position entry (which only carries SAN + UCI). from/to/promotion come from the
+ * UCI; the moving piece and castling/capture flags are inferred from the SAN.
+ * This keeps every notation (san/figurine/lan/uci) correct for 960 without
+ * relying on chess.js to re-derive squares it gets wrong for the variant.
+ */
+function verboseMoveFromPosition(entry: PositionEntry): VerboseMove {
+  const san = entry.san ?? '';
+  const uci = entry.uci ?? '';
+  const from = uci.slice(0, 2);
+  const to = uci.slice(2, 4);
+  const promotion = uci.length > 4 ? uci.slice(4, 5) : undefined;
+
+  let piece = 'p';
+  let flags = '';
+  if (san.startsWith('O-O-O')) {
+    piece = 'k';
+    flags = 'q';
+  } else if (san.startsWith('O-O')) {
+    piece = 'k';
+    flags = 'k';
+  } else {
+    const first = san.charAt(0);
+    if ('KQRBN'.includes(first)) {
+      piece = first.toLowerCase();
+    }
+    if (san.includes('x')) {
+      flags = 'c';
+    }
+  }
+
+  return { san, from, to, piece, promotion, flags };
 }
 
 interface MoveRow {
@@ -28,20 +69,11 @@ interface MoveRow {
  * Move table component showing game moves in the selected chess notation.
  * Clicking a move navigates to that position.
  */
-export function MoveTable({ pgn, currentMoveIndex, notation = DEFAULT_NOTATION, evalHistory = [], onMoveClick }: MoveTableProps) {
+export function MoveTable({ currentMoveIndex, positions, notation = DEFAULT_NOTATION, evalHistory = [], onMoveClick }: MoveTableProps) {
   const rows = useMemo(() => {
-    if (!pgn) return [];
-
-    const chess = new Chess();
-    try {
-      chess.loadPgn(pgn);
-    } catch {
-      return [];
-    }
-
-    // Verbose history carries the fields (from/to/piece/promotion/flags) that
-    // formatMove needs to build LAN/UCI, not just the SAN string.
-    const moves = chess.history({ verbose: true });
+    if (!Array.isArray(positions) || positions.length === 0) return [];
+    // positions[0] is the start (no move); each subsequent entry is one ply.
+    const moves: VerboseMove[] = positions.slice(1).map(verboseMoveFromPosition);
     if (moves.length === 0) return [];
 
     const text = (ply: number): string => formatMove(moves[ply], notation);
@@ -65,7 +97,7 @@ export function MoveTable({ pgn, currentMoveIndex, notation = DEFAULT_NOTATION, 
     }
 
     return result;
-  }, [pgn, notation, evalHistory]);
+  }, [positions, notation, evalHistory]);
 
   const formatEval = (cp: number | null): string => {
     if (cp === null) return '';

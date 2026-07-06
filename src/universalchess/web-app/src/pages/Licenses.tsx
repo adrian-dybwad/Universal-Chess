@@ -34,13 +34,6 @@ const licenses: License[] = [
     url: 'https://github.com/Clariity/react-chessboard',
   },
   {
-    name: 'chess.js',
-    type: 'BSD-2-Clause',
-    description: 'Handles chess game logic in the frontend. Validates moves, parses PGN notation, tracks game state, and provides move history navigation.',
-    copyright: '2021 Jeff Hlywa',
-    url: 'https://github.com/jhlywa/chess.js',
-  },
-  {
     name: 'Stockfish',
     type: 'GPL-3.0',
     description: 'The default chess engine for play and analysis. Stockfish is the strongest open source chess engine, providing move evaluation, best move suggestions, and opponent play.',

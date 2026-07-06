@@ -19,6 +19,32 @@ export interface GameState {
   last_move: string | null;
   /** Move pending on the physical board (engine/Lichess move waiting to be executed) */
   pending_move: string | null;
+  /**
+   * Whether the current game is Chess960 (Fischer Random). Reports which
+   * castling rules the position uses; absent/false for a standard game.
+   */
+  chess960?: boolean;
+  /** The game's starting FEN (generated 960 start, or the standard start). */
+  start_fen?: string | null;
+  /**
+   * Authoritative per-ply positions (python-chess computed), start first. The
+   * web builds and navigates the move list from these for both variants instead
+   * of replaying the PGN in the browser (chess.js is no longer used).
+   */
+  positions?: PositionEntry[] | null;
+}
+
+/**
+ * One authoritative position in a game's history, computed server-side by
+ * python-chess so it is correct for both standard and Chess960 castling.
+ */
+export interface PositionEntry {
+  /** Full FEN of the position (placement + turn/castling/etc.). */
+  fen: string;
+  /** SAN of the move that produced this position; null for the start. */
+  san: string | null;
+  /** UCI of the move that produced this position; null for the start. */
+  uci: string | null;
 }
 
 /**

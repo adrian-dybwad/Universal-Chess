@@ -178,7 +178,7 @@ class AnalysisService:
                     self._analysis_queue.task_done()
                 except queue.Empty:
                     break
-        except Exception:
+        except Exception:  # noqa: S110  # nosec B110 - best-effort queue drain; nothing to recover if get/task_done races during reset
             pass
         
         # Reset state
@@ -198,7 +198,10 @@ class AnalysisService:
         # Queue analysis request
         try:
             fen = self._game_state.fen
-            board_copy = chess.Board(fen)
+            # Copy through the state (not chess.Board(fen)) so the chess960 flag
+            # is carried over; python-chess only emits UCI_Chess960 and applies
+            # 960 castling when the analysed board has chess960 set.
+            board_copy = self._game_state.board_copy()
             is_first_move = len(self._game_state.move_stack) == 1
             
             request = (board_copy, fen, is_first_move, self._time_limit, self._reset_generation)
@@ -228,7 +231,7 @@ class AnalysisService:
             self._stop_event.set()
             try:
                 self._worker_thread.join(timeout=2.0)
-            except Exception:
+            except Exception:  # noqa: S110  # nosec B110 - join is best-effort on shutdown; the worker is a daemon thread and will be abandoned
                 pass
             self._worker_thread = None
     
@@ -239,14 +242,14 @@ class AnalysisService:
                 # Get next request
                 try:
                     request = self._analysis_queue.get(timeout=0.1)
-                except queue.Empty:
+                except queue.Empty:  # noqa: S112 - poll timeout; loop again to re-check the stop event
                     continue
                 
                 # Wait for engine
                 if self._engine_handle is None:
                     try:
                         self._analysis_queue.put_nowait(request)
-                    except queue.Full:
+                    except queue.Full:  # noqa: S110  # nosec B110 - requeue is best-effort while waiting for the engine; request is re-fetched next loop
                         pass
                     self._analysis_queue.task_done()
                     import time

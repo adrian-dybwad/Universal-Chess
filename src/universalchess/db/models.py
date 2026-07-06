@@ -47,6 +47,16 @@ class Game(Base):
     # game is resumed across a restart. Nullable for in-progress games and for
     # existing databases created before this column.
     termination = Column(String(255), nullable=True)
+    # Starting FEN of the game. NULL means the standard start position (the vast
+    # majority of games, and every game created before this column existed).
+    # Populated for Chess960 games so the exact generated start can be restored
+    # when the game is resumed. Move replay begins from here.
+    start_fen = Column(String(255), nullable=True)
+    # True when this is a Chess960 (Fischer Random) game. Required to rebuild the
+    # board with the chess960 flag on resume so castling rules and the
+    # king-onto-rook move encoding match how the game was played. Nullable/False
+    # for standard games and pre-existing databases.
+    chess960 = Column(Boolean, nullable=True, default=False)
 
     def __repr__(self):
         return "<Game(id='%s', created_at='%s', source='%s')>" % (str(self.id), str(self.created_at), self.source)
@@ -100,6 +110,12 @@ try:
             conn.commit()
         if 'termination' not in game_columns:
             conn.execute(text('ALTER TABLE game ADD COLUMN termination VARCHAR(255)'))
+            conn.commit()
+        if 'start_fen' not in game_columns:
+            conn.execute(text('ALTER TABLE game ADD COLUMN start_fen VARCHAR(255)'))
+            conn.commit()
+        if 'chess960' not in game_columns:
+            conn.execute(text('ALTER TABLE game ADD COLUMN chess960 BOOLEAN'))
             conn.commit()
 except Exception:  # noqa: BLE001, S110  # nosec B110 - startup migration must never crash import
     # Migration may fail if the table doesn't exist yet (first run) - that's ok;

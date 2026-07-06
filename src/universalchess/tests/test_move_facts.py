@@ -95,6 +95,24 @@ def test_knight_fork_lists_both_targets():
     ]
 
 
+def test_chess960_king_onto_rook_castle_is_reported():
+    # In Chess960, castling is encoded as a king-onto-rook move (here f1->h1) and is
+    # only legal on a board built with chess960=True. Regression: without threading
+    # the chess960 flag into the fact extractor, the move is illegal on the default
+    # standard board, summarize_move_facts returns [], and the coach silently loses
+    # the "Castles" fact for every 960 castling move it reviews.
+    before = "4k3/8/8/8/8/8/8/5K1R w K - 0 1"
+    assert summarize_move_facts(before, "f1h1", chess960=True) == ["Castles kingside."]
+
+
+def test_chess960_castle_ignored_without_flag():
+    # The same king-onto-rook move on a standard board is illegal, so no facts. This
+    # guards that the default (chess960=False) is unchanged and the flag is what
+    # enables 960 interpretation, not a silent always-on behavior change.
+    before = "4k3/8/8/8/8/8/8/5K1R w K - 0 1"
+    assert summarize_move_facts(before, "f1h1") == []
+
+
 def test_illegal_move_yields_no_facts():
     # An illegal move has no well-defined resulting position; the extractor must
     # return [] (never a fabricated fact) so the coach prompts without assertions.

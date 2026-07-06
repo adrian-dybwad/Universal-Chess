@@ -201,6 +201,11 @@ class CoachRequest:
             when MultiPV is disabled or the analysis was unavailable, in which case
             no alternatives block is added to the prompt. Being engine output,
             these are authoritative like ``facts`` for referring to better moves.
+        chess960: True when the move belongs to a Chess960 (Fischer Random) game.
+            Carried on the request so downstream enrichment (e.g. MultiPV candidate
+            analysis) rebuilds the board chess960-aware; 960 castling is a
+            king-onto-rook move that is illegal on a standard board. This field adds
+            no chess dependency to the service layer -- it is a plain flag.
     """
 
     fen_before: str
@@ -215,6 +220,7 @@ class CoachRequest:
     persona: Optional[str] = None
     language: str = DEFAULT_LANGUAGE
     candidate_lines: Tuple[str, ...] = ()
+    chess960: bool = False
 
 
 def _language_instruction(language: Optional[str]) -> str:

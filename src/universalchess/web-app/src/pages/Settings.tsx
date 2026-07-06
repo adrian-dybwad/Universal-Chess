@@ -134,6 +134,7 @@ interface FormSettings {
     analysis_mode: boolean;
     analysis_engine: string;
     ponder: boolean;
+    chess960: boolean;
     show_board: boolean;
     show_clock: boolean;
     show_analysis: boolean;
@@ -177,6 +178,7 @@ const defaultFormSettings: FormSettings = {
     analysis_mode: true,
     analysis_engine: 'stockfish',
     ponder: false,
+    chess960: false,
     show_board: true,
     show_clock: true,
     show_analysis: true,
@@ -276,6 +278,7 @@ function parseRawSettings(data: SettingsData): FormSettings {
       analysis_mode: parseConfigBool(data.game?.analysis_mode, true),
       analysis_engine: data.game?.analysis_engine || 'stockfish',
       ponder: parseConfigBool(data.game?.ponder, false),
+      chess960: parseConfigBool(data.game?.chess960, false),
       show_board: parseConfigBool(data.game?.show_board, true),
       show_clock: parseConfigBool(data.game?.show_clock, true),
       show_analysis: parseConfigBool(data.game?.show_analysis, true),
@@ -1698,6 +1701,15 @@ export function Settings() {
                 value={formSettings.game.time_control}
                 options={timeControlOptions}
                 onChange={(v) => updateFormSettings('game', { time_control: String(v) })}
+              />
+            </Card>
+
+            <Card className="mb-6">
+              <CardHeader title="Variant" />
+              <CatalogField
+                node={fieldById(catalog, 'settings.chess960')!}
+                value={formSettings.game.chess960}
+                onChange={(v) => updateFormSettings('game', { chess960: Boolean(v) })}
               />
             </Card>
 

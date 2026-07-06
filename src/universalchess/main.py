@@ -1292,8 +1292,15 @@ def _build_resume_data(models, session, game) -> Optional[dict]:
 
     result = game.result
     termination = getattr(game, 'termination', None)
+    # Chess960 metadata. getattr guards databases created before these columns
+    # existed (the migration adds them, but a row read mid-upgrade may lack them).
+    # start_fen is stored only for 960 games; fall back to the initial position
+    # row's FEN, which is the game's true start regardless of variant.
+    chess960 = bool(getattr(game, 'chess960', False))
+    start_fen = getattr(game, 'start_fen', None) or moves[0].fen
     log.info(f"[Resume] Loaded game: id={game.id}, source={game.source}, "
-             f"moves={len(move_list)}, result={result}, last_fen={last_fen[:30]}...")
+             f"moves={len(move_list)}, result={result}, chess960={chess960}, "
+             f"last_fen={last_fen[:30]}...")
     if white_clock is not None and black_clock is not None:
         log.info(f"[Resume] Clock times: white={white_clock}s, black={black_clock}s")
     if eval_scores:
@@ -1311,6 +1318,8 @@ def _build_resume_data(models, session, game) -> Optional[dict]:
         'eval_scores': eval_scores,
         'result': result,
         'termination': termination,
+        'chess960': chess960,
+        'start_fen': start_fen,
     }
 
 
@@ -1466,6 +1475,14 @@ def _resume_game(game_data: dict) -> bool:
         from universalchess.state.chess_game import ChessGameState
         game_state = get_chess_game()
         
+        # For a Chess960 game, configure the variant and generated start FEN
+        # BEFORE replaying moves. The stored castling moves use the king-onto-rook
+        # encoding (e.g. "e1h1"), which is only legal on a board with the chess960
+        # flag set; replaying them onto a standard board would fail. Standard games
+        # keep the default start (GameManager.__init__ already reset to standard).
+        if game_data.get('chess960'):
+            game_state.configure_start(game_data['start_fen'], chess960=True)
+
         # Replay all the moves to get to the current position
         # Use game_state.push_uci() to ensure observers are notified
         for move_uci in game_data['moves']:
@@ -1991,6 +2008,28 @@ def _start_game_mode(
     analysis_mode = game.analysis_mode
     analysis_engine_path = get_engine_path(game.analysis_engine) if analysis_mode else None
 
+    # Chess960: generate a random Fischer Random start for a fresh normal game.
+    # Skipped for position games (they load a specific FEN), for resume
+    # (suppress_initial_move_request; _resume_game restores its own stored start),
+    # and when a starting_fen was already supplied. The FEN is applied via
+    # configure_start AFTER the GameManager is constructed (its __init__ resets
+    # state), mirroring how _start_from_position applies a custom position. It is
+    # deliberately NOT passed to DisplayManager: set_fen on a not-yet-960 board
+    # would drop the non-standard castling rights.
+    chess960_start_fen = None
+    if (
+        game.chess960
+        and starting_fen is None
+        and not is_position_game
+        and not suppress_initial_move_request
+    ):
+        from universalchess.state.chess960 import random_chess960_fen
+        chess960_start_fen, chess960_position_number = random_chess960_fen()
+        log.info(
+            f"[App] Chess960 enabled: starting from position #{chess960_position_number} "
+            f"({chess960_start_fen})"
+        )
+
     # Create LED controller with configurable intensity
     # LED brightness can be set in display settings (1-10, default 5)
     from universalchess.utils.led import LedController
@@ -2103,6 +2142,13 @@ def _start_game_mode(
     # Create GameManager and set LED callbacks
     from universalchess.managers.game import GameManager
     game_manager = GameManager(save_to_database=save_to_database)
+    # Apply the Chess960 start now that the GameManager constructor has reset the
+    # shared game state. configure_start sets the chess960 flag before the FEN so
+    # castling rights parse correctly, and notifies the board widget (subscribed
+    # during DisplayManager construction) to render the target 960 position.
+    if chess960_start_fen is not None:
+        from universalchess.state import get_chess_game
+        get_chess_game().configure_start(chess960_start_fen, chess960=True)
     game_manager.set_led_callbacks(led_callbacks)
     # Drive the e-paper setup status / board preview during Chessnut puzzle setup.
     game_manager.set_setup_display_handler(display_manager.on_setup_display)
@@ -3180,6 +3226,7 @@ def _build_coach_request(ply: int):
     from universalchess.utils.chess_notation import format_move
 
     board_obj = get_chess_game().board
+    chess960 = bool(board_obj.chess960)
     moves = list(board_obj.move_stack)
     if ply < 1 or ply > len(moves):
         return None
@@ -3215,10 +3262,11 @@ def _build_coach_request(ply: int):
         move_text=move_text,
         side_to_move=side_to_move,
         move_number=position.fullmove_number,
-        facts=tuple(summarize_move_facts(fen_before, move_uci)),
+        facts=tuple(summarize_move_facts(fen_before, move_uci, chess960=chess960)),
         is_opponent_move=is_opponent_move,
         persona=_coach_persona(side_to_move, is_potential_move=False),
         language=language,
+        chess960=chess960,
     )
 
 
@@ -3228,7 +3276,7 @@ def _build_coach_request(ply: int):
 _COACH_MULTIPV_ANALYSIS_SECONDS = 0.5
 
 
-def _coach_candidate_lines(fen_before: str):
+def _coach_candidate_lines(fen_before: str, chess960: bool = False):
     """Engine MultiPV candidate lines for a position, or () when disabled/unavailable.
 
     Returns pre-formatted candidate-move strings (best first) for the AI coach
@@ -3237,6 +3285,11 @@ def _coach_candidate_lines(fen_before: str):
     no analysis engine is available, or the analysis fails, so coaching proceeds
     without alternatives rather than erroring. The pondering player uses a separate
     dedicated engine, so this shared-engine analysis never touches a ponder search.
+
+    ``chess960`` must be True for a Fischer Random game so the analysed board is
+    built 960-aware: this makes python-chess auto-send ``UCI_Chess960`` to the
+    engine and generate king-onto-rook castling, and lets the candidate lines be
+    formatted (a 960 castle is illegal on a standard board).
     """
     game = _get_settings().game
     try:
@@ -3261,7 +3314,7 @@ def _coach_candidate_lines(fen_before: str):
     if handle is None:
         return ()
     try:
-        board = chess.Board(fen_before)
+        board = chess.Board(fen_before, chess960=chess960)
         infos = handle.analyse(
             board,
             chess.engine.Limit(time=_COACH_MULTIPV_ANALYSIS_SECONDS),
@@ -3274,7 +3327,7 @@ def _coach_candidate_lines(fen_before: str):
         registry.release(handle)
 
     notation = _game_settings_dict().get("notation", "figurine")
-    return format_candidate_lines(fen_before, infos, notation)
+    return format_candidate_lines(fen_before, infos, notation, chess960=chess960)
 
 
 def _wire_coach_coordinator(display_manager, game_manager):
@@ -3315,7 +3368,7 @@ def _wire_coach_coordinator(display_manager, game_manager):
                 eval_after_cp=eval_after_cp,
             )
 
-        candidate_lines = _coach_candidate_lines(request.fen_before)
+        candidate_lines = _coach_candidate_lines(request.fen_before, request.chess960)
         if candidate_lines:
             request = replace(request, candidate_lines=candidate_lines)
         return request
@@ -3361,6 +3414,9 @@ def _show_hint_coach_async(display_manager, fen_before: str, move_uci: str) -> N
     persona = _coach_persona(side_to_move, is_potential_move=True)
     resolved = _resolved_coach()
     persona_key = resolved.id if resolved is not None else ""
+    from universalchess.state import get_chess_game
+
+    chess960 = bool(get_chess_game().chess960)
 
     def job() -> None:
         statement = coach_tips.get_tip_statement(
@@ -3371,6 +3427,7 @@ def _show_hint_coach_async(display_manager, fen_before: str, move_uci: str) -> N
             persona=persona,
             persona_key=persona_key,
             language=language,
+            chess960=chess960,
         )
         if statement:
             display_manager.show_hint_coach(statement)

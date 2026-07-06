@@ -229,7 +229,7 @@
       "help": "Time control and live position analysis.",
       "section": "game",
       "epaper": { "font_size": 12, "height_ratio": 0.8 },
-      "children": ["settings.timecontrol", "settings.notation", "analysis.enabled", "analysis.engine", "coach.id", "coach.provider", "coach.language"]
+      "children": ["settings.timecontrol", "settings.chess960", "settings.notation", "analysis.enabled", "analysis.engine", "coach.id", "coach.provider", "coach.language"]
     },
     {
       "id": "settings.agents",
@@ -254,6 +254,19 @@
       "section": "game",
       "bind": { "store": "game", "key": "notation" },
       "optionSet": "notation",
+      "platforms": ["board", "web"],
+      "epaper": { "font_size": 12, "height_ratio": 0.8 }
+    },
+    {
+      "id": "settings.chess960",
+      "key": "Chess960",
+      "type": "toggle",
+      "label": "Chess960",
+      "boardLabel": "Chess960",
+      "help": "Start each new game from a random Chess960 (Fischer Random) position. The target position is shown on the display; set up the pieces to match.",
+      "section": "game",
+      "bind": { "store": "game", "key": "chess960" },
+      "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
       "platforms": ["board", "web"],
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },

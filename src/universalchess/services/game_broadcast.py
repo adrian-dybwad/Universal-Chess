@@ -97,6 +97,19 @@ class GameState:
     # (GET /api/coach/statement/<game_id>/<ply>); without it the live coach panel
     # cannot identify which game's moves it is viewing.
     game_id: Optional[int] = None
+    # Chess960 (Fischer Random) variant flag. Reported for both variants so the
+    # web knows which castling rules a position uses. False for a standard game.
+    chess960: bool = False
+    # The game's starting FEN. For a 960 game this is the generated random start;
+    # for a standard game it is the standard start. Lets the web anchor the board
+    # even before any move.
+    start_fen: Optional[str] = None
+    # Authoritative per-ply positions (python-chess computed): a list of
+    # {"fen", "san", "uci"} with the start first. The web navigates and lists
+    # history by these server-computed FENs/SANs for BOTH variants instead of
+    # replaying the PGN in the browser (the web no longer uses chess.js). None
+    # only before any game state has been broadcast.
+    positions: Optional[List[dict]] = None
     
     def __post_init__(self):
         if self.timestamp == 0.0:
@@ -521,6 +534,9 @@ def broadcast_game_state(
     black: str = "Black",
     pending_move: Optional[str] = None,
     game_id: Optional[int] = None,
+    chess960: bool = False,
+    start_fen: Optional[str] = None,
+    positions: Optional[List[dict]] = None,
 ) -> bool:
     """Convenience function to broadcast game state.
     
@@ -536,6 +552,9 @@ def broadcast_game_state(
         white: White player name.
         black: Black player name.
         pending_move: Move in progress (from-to in UCI format, e.g., 'e2e4').
+        chess960: True for a Chess960 game (reports which castling rules apply).
+        start_fen: The game's starting FEN (generated 960 start, or standard).
+        positions: Authoritative per-ply positions for both variants; see GameState.
         
     Returns:
         True if broadcast succeeded, False otherwise.
@@ -559,6 +578,9 @@ def broadcast_game_state(
         black=black,
         pending_move=effective_pending_move,
         game_id=effective_game_id,
+        chess960=chess960,
+        start_fen=start_fen,
+        positions=positions,
     )
     return get_broadcaster().broadcast(state)
 

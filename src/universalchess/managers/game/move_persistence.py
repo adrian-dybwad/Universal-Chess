@@ -31,6 +31,7 @@ def persist_move_and_maybe_create_game(
     white_clock: Optional[int],
     black_clock: Optional[int],
     eval_score: Optional[int],
+    chess960: bool = False,
 ) -> Tuple[int, bool]:
     """Persist a move, creating the game record if needed.
 
@@ -46,6 +47,10 @@ def persist_move_and_maybe_create_game(
         white_clock: White clock seconds (or None)
         black_clock: Black clock seconds (or None)
         eval_score: Eval score in centipawns (or None)
+        chess960: True for a Chess960 game. Persisted on the game record (with the
+            start FEN, which is ``fen_before_move`` of the first move) so the
+            variant and exact generated start can be restored on resume. Standard
+            games store False and NULL start_fen.
 
     Returns:
         Tuple of (new_game_db_id, committed) where:
@@ -63,6 +68,9 @@ def persist_move_and_maybe_create_game(
 
     # Create new game if first move
     if is_first_move:
+        # start_fen is the position before the first move; store it only for
+        # Chess960 so standard games keep NULL (implicitly the standard start) and
+        # resume can distinguish "replay from a non-standard start" from the norm.
         game = models.Game(
             source=source_file,
             event=game_info.get("event", ""),
@@ -70,6 +78,8 @@ def persist_move_and_maybe_create_game(
             round=game_info.get("round", ""),
             white=game_info.get("white", ""),
             black=game_info.get("black", ""),
+            chess960=chess960,
+            start_fen=fen_before_move if chess960 else None,
         )
         session.add(game)
         session.flush()

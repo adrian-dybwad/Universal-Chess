@@ -120,7 +120,11 @@ class GameManager:
         # All mutations go through _game_state methods (push_move, pop_move, reset, etc.)
         # which automatically notify observers
         self._game_state = get_chess_game()
-        self._game_state.reset()  # Ensure clean state for new game
+        # Clear any prior variant/start FEN so a new game starts standard by
+        # default. A Chess960 game re-applies its start via configure_start after
+        # this constructor (see _start_game_mode); using the variant-aware reset()
+        # here would instead restore a previous game's 960 start.
+        self._game_state.reset_to_standard()
         
         # Read-only reference to board for queries (legal_moves, piece_at, etc.)
         # DO NOT mutate directly - use _game_state methods instead
@@ -668,6 +672,7 @@ class GameManager:
                             white_clock=white_clock,
                             black_clock=black_clock,
                             eval_score=eval_score,
+                            chess960=self._game_state.chess960,
                         )
                         self.game_db_id = new_game_db_id
                     except Exception as db_error:
@@ -1225,7 +1230,11 @@ class GameManager:
             
             # Step 4: Reset all game state
             self.move_state.reset()  # Clear move state (source square, legal moves, forced moves, etc.)
-            self._game_state.reset()  # Reset to starting position (notifies observers)
+            # Variant-aware: returns to this game's start position (standard, or
+            # the generated Chess960 start). For a 960 game the physical home-rank
+            # gesture must re-affirm the SAME random position, never regenerate
+            # one, so reset() restores the stored 960 start (notifies observers).
+            self._game_state.reset()
             self.cached_result = None  # Clear cached game result
             
             # Step 5: Reset UI state

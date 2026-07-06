@@ -1747,6 +1747,74 @@ def makePGN(gameid):
     return pgn_string
 
 
+@app.route("/api/games/<int:gameid>/positions")
+def api_game_positions(gameid):
+    """Return authoritative per-ply positions for a stored game.
+
+    Response: ``{"chess960": bool, "start_fen": str,
+                 "positions": [{"fen", "san", "uci"}]}`` with the start first.
+
+    The web analysis view navigates and lists a game's history by these
+    server-computed FENs instead of replaying the PGN in the browser; the web no
+    longer uses chess.js at all. Using python-chess as the single source of truth
+    keeps both variants correct (chess.js mis-computes Chess960 castling). The
+    FENs are the ones python-chess recorded per move; SAN is recomputed on a
+    variant-aware board so a 960 castle reads as ``O-O``/``O-O-O``. 404 when the
+    game or its moves are absent.
+    """
+    session = get_db_session()
+    try:
+        game = session.query(models.Game).filter(models.Game.id == gameid).first()
+        if game is None:
+            return jsonify({"error": "not_found"}), 404
+
+        chess960 = bool(getattr(game, "chess960", False))
+        move_rows = session.execute(
+            select(models.GameMove.move, models.GameMove.fen)
+            .where(models.GameMove.gameid == gameid)
+            .order_by(models.GameMove.id)
+        ).all()
+        if not move_rows:
+            return jsonify({"error": "not_found"}), 404
+
+        # The initial-position row has an empty move; its FEN is the start. Fall
+        # back to the game's stored start_fen (960 games) or the first row's FEN.
+        played = [r for r in move_rows if r[0]]
+        initial_row = next((r for r in move_rows if not r[0]), None)
+        start_fen = (
+            getattr(game, "start_fen", None)
+            or (initial_row[1] if initial_row is not None else None)
+            or (played[0][1] if played else chess.STARTING_FEN)
+        )
+
+        board = chess.Board(start_fen, chess960=chess960)
+        positions = [{"fen": board.fen(), "san": None, "uci": None}]
+        for move_uci, stored_fen in played:
+            try:
+                move = chess.Move.from_uci(move_uci)
+            except ValueError:
+                # A corrupt UCI can't be replayed; stop at the last good position
+                # rather than fabricating one.
+                break
+            # SAN needs the pre-move board; the authoritative resulting FEN is the
+            # stored one. If the move is illegal for this board (corrupt data),
+            # fall back to the UCI text so the row still renders.
+            try:
+                san = board.san(move)
+            except (ValueError, AssertionError):
+                san = move_uci
+            board.push(move)
+            positions.append(
+                {"fen": stored_fen or board.fen(), "san": san, "uci": move_uci}
+            )
+
+        return jsonify(
+            {"chess960": chess960, "start_fen": start_fen, "positions": positions}
+        )
+    finally:
+        session.close()
+
+
 @app.route("/logo")
 def logo_image():
     """Serve the knight logo from resources."""
@@ -2916,6 +2984,7 @@ def api_coach_statement(gameid, ply):
     """
     from universalchess.managers.game.coach_persistence import (
         get_coach_statement,
+        get_game_chess960,
         get_move_context,
         get_move_evals,
         save_coach_statement_if_absent,
@@ -2942,6 +3011,7 @@ def api_coach_statement(gameid, ply):
 
     fen_before, move_uci = context
     eval_before_cp, eval_after_cp = get_move_evals(gameid, ply)
+    chess960 = get_game_chess960(gameid)
     import chess
 
     side_to_move = "white" if chess.Board(fen_before).turn == chess.WHITE else "black"
@@ -2954,6 +3024,7 @@ def api_coach_statement(gameid, ply):
         is_opponent_move=_read_move_is_opponent(side_to_move),
         persona=_read_coach_persona(side_to_move, is_potential_move=False),
         language=_read_coach_language(),
+        chess960=chess960,
     )
     if coach_request is None:
         return jsonify({"statement": None, "cached": False, "error": "bad_move"}), 422
@@ -3007,6 +3078,7 @@ def api_coach_tip():
     body = request.get_json(silent=True) or {}
     fen = (body.get("fen") or "").strip()
     move_uci = (body.get("move") or "").strip()
+    chess960 = bool(body.get("chess960", False))
     if not fen or not move_uci:
         return jsonify({"statement": None, "error": "missing_fen_or_move"}), 400
 
@@ -3032,6 +3104,7 @@ def api_coach_tip():
         persona=persona,
         persona_key=_resolved_coach_id(),
         language=_read_coach_language(),
+        chess960=chess960,
     )
     if statement is None:
         return jsonify({"statement": None, "error": "unavailable"})

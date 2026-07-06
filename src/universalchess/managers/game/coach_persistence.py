@@ -284,6 +284,45 @@ def get_move_context(
                 engine.dispose()
 
 
+def get_game_chess960(game_db_id: int, *, session=None) -> bool:
+    """Return whether a stored game is Chess960 (Fischer Random).
+
+    Read from the ``Game.chess960`` column so the web coach endpoint can build the
+    move's board 960-aware (960 castling is a king-onto-rook move that is illegal
+    on a standard board, which would otherwise blank the move text and drop the
+    "Castles" fact for every reviewed 960 castle).
+
+    Returns False for an uninitialized game (``game_db_id < 0``), a missing row, a
+    NULL column (games created before the column existed), or an unavailable DB
+    layer -- the safe default that leaves standard games untouched.
+    """
+    if game_db_id is None or game_db_id < 0:
+        return False
+
+    models = _get_models()
+    if models is None:
+        return False
+
+    own_session = session is None
+    engine = None
+    if own_session:
+        engine, session = _open_session()
+        if session is None:
+            return False
+    try:
+        row = (
+            session.query(models.Game.chess960)
+            .filter(models.Game.id == game_db_id)
+            .first()
+        )
+        return bool(row[0]) if row is not None else False
+    finally:
+        if own_session:
+            session.close()
+            if engine is not None:
+                engine.dispose()
+
+
 def get_move_evals(
     game_db_id: int, ply_index: int, *, session=None
 ) -> tuple[Optional[int], Optional[int]]:

@@ -24,30 +24,79 @@ def _castling_rook_move(board: chess.Board, move: chess.Move):
     """Return the (rook_from, rook_to) squares for a castling king move.
 
     Must be called before the move is pushed (legality query needs the pre-move
-    board). Returns None when `move` is not a castling move.
+    board). Returns None when ``move`` is not a castling move.
 
-    Castling is always the king's two-square move; the rook then follows from the
-    corner to the square the king crossed (kingside: h->f, queenside: a->d) on the
-    king's home rank.
+    The rook always lands on the f-file (kingside) or d-file (queenside) of the
+    king's rank. Its origin depends on the variant:
+
+    - Standard chess: the rook is in the corner (kingside h-file, queenside
+      a-file), and ``move`` is the king's two-square move.
+    - Chess960: castling is encoded king-onto-rook, so ``move.to_square`` is the
+      rook's own square (which is not necessarily a corner). ``on_player_move``
+      resolves the physical gesture to this canonical form before this is called.
     """
     if not board.is_castling(move):
         return None
     rank = chess.square_rank(move.from_square)
-    if board.is_kingside_castling(move):
-        return chess.square(7, rank), chess.square(5, rank)  # h-file -> f-file
-    return chess.square(0, rank), chess.square(3, rank)  # a-file -> d-file
+    kingside = board.is_kingside_castling(move)
+    rook_to = chess.square(5, rank) if kingside else chess.square(3, rank)  # f / d file
+    if board.chess960:
+        rook_from = move.to_square  # king-onto-rook encoding: to_square is the rook
+    else:
+        rook_from = chess.square(7, rank) if kingside else chess.square(0, rank)  # h / a
+    return rook_from, rook_to
 
 
 def _is_king_onto_rook_castle(board: chess.Board, move: chess.Move) -> bool:
-    """Return True for the "king onto rook" castling representation (e.g. e1h1).
+    """Return True for an unsupported "king onto rook" castling gesture.
 
     python-chess accepts both the king's two-square move (e1g1/e1c1) and the
-    king-onto-rook form (e1h1/e1a1) as legal castling, even outside Chess960. Only
-    the two-square gesture is supported, so the rook-square form must be rejected.
+    king-onto-rook form (e1h1/e1a1) as legal castling in standard chess. Only the
+    two-square gesture is supported for standard chess, so the rook-square form is
+    rejected there.
+
+    In Chess960 the king-onto-rook form is the ONLY canonical representation
+    (python-chess does not emit a two-square form when the destination files
+    differ from standard), so it must never be rejected for a 960 game.
     """
+    if board.chess960:
+        return False
     if not board.is_castling(move):
         return False
     return abs(chess.square_file(move.to_square) - chess.square_file(move.from_square)) != 2
+
+
+def _resolve_castling_gesture(board: chess.Board, move: chess.Move) -> chess.Move:
+    """Translate a physical Chess960 castling gesture to python-chess's move.
+
+    python-chess only accepts the king-onto-rook encoding for Chess960 castling
+    (``move.to_square`` is the rook's square). A player at the physical board may
+    instead slide the king to its final square (g-file kingside, c-file
+    queenside). Map either gesture to the matching legal castling move so it is
+    recognised instead of being rejected as illegal.
+
+    No-op for standard chess, for non-king moves, and for promotions. Returns
+    ``move`` unchanged when it does not correspond to a legal castling.
+    """
+    if not board.chess960 or move.promotion is not None:
+        return move
+    king_square = board.king(board.turn)
+    if king_square is None or move.from_square != king_square:
+        return move
+    for castling in board.generate_castling_moves():
+        if castling.from_square != move.from_square:
+            continue
+        rank = chess.square_rank(castling.from_square)
+        king_dest = (
+            chess.square(6, rank)  # g-file
+            if board.is_kingside_castling(castling)
+            else chess.square(2, rank)  # c-file
+        )
+        # Accept either the canonical king-onto-rook target or the king's final
+        # square as the physical gesture for this castling.
+        if move.to_square in (castling.to_square, king_dest):
+            return castling
+    return move
 
 
 @dataclass(frozen=True)
@@ -284,6 +333,11 @@ def on_player_move(ctx: PlayerMoveContext, move: chess.Move) -> bool:
             move_to_execute = promotion_move
             log.info(f"[GameManager._on_player_move] Promotion handled: {move.uci()} -> {move_to_execute.uci()}")
 
+    # Map a Chess960 castling gesture (king to its final square, or king onto the
+    # rook) to python-chess's canonical king-onto-rook castling move so it is not
+    # rejected as illegal. No-op for standard chess and non-castling moves.
+    move_to_execute = _resolve_castling_gesture(ctx.chess_board, move_to_execute)
+
     if move_to_execute in ctx.chess_board.legal_moves and not _is_king_onto_rook_castle(ctx.chess_board, move_to_execute):
         log.info(f"[GameManager._on_player_move] Legal move, executing: {move_to_execute.uci()}")
         execute_complete_move(ctx, move_to_execute)
@@ -307,6 +361,9 @@ __all__ = [
     "complete_destination_only_move",
     "check_and_handle_promotion",
     "on_player_move",
+    "_castling_rook_move",
+    "_is_king_onto_rook_castle",
+    "_resolve_castling_gesture",
 ]
 
 

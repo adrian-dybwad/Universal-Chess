@@ -34,7 +34,7 @@ from universalchess.utils.chess_notation import DEFAULT_NOTATION
 from .coach_request_builder import build_coach_request
 
 _lock = threading.Lock()
-_cache: Dict[Tuple[str, str, str, str, str, str], str] = {}
+_cache: Dict[Tuple[str, str, str, str, str, str, bool], str] = {}
 
 
 def _signature(config: CoachConfig) -> str:
@@ -52,6 +52,7 @@ def get_tip_statement(
     persona: Optional[str] = None,
     persona_key: str = "",
     language: str = DEFAULT_LANGUAGE,
+    chess960: bool = False,
     generate_fn: Optional[Callable[[CoachConfig, object], str]] = None,
     http_post: Optional[Callable] = None,
 ) -> Optional[str]:
@@ -74,6 +75,11 @@ def get_tip_statement(
     the cache key so switching language regenerates rather than serving a
     statement produced in the previous language.
 
+    ``chess960`` must be True for a Fischer Random game so a hinted 960 castle
+    (king-onto-rook UCI) is formatted and grounded correctly; it is part of the
+    cache key because the same ``(fen, move)`` is interpreted differently under
+    the 960 flag.
+
     Returns None (and caches nothing) when the coach is not configured, the
     position/move can't be built into a request, or the AI call fails -- the
     caller then shows the plain hint without a coaching remark rather than an
@@ -82,7 +88,7 @@ def get_tip_statement(
     if not config.is_configured():
         return None
 
-    key = (_signature(config), fen, move_uci, notation, persona_key, language)
+    key = (_signature(config), fen, move_uci, notation, persona_key, language, chess960)
     with _lock:
         cached = _cache.get(key)
     if cached is not None:
@@ -98,6 +104,7 @@ def get_tip_statement(
         is_potential_move=True,
         persona=persona,
         language=language,
+        chess960=chess960,
     )
     if request is None:
         return None

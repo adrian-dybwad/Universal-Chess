@@ -11,14 +11,20 @@ import {
   Legend,
   Filler,
 } from 'chart.js';
-import { Chess } from 'chess.js';
 import { getStockfishService } from '../services/stockfish';
+import type { PositionEntry } from '../types/game';
 import './Analysis.css';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
 
 interface AnalysisProps {
-  pgn: string;
+  /**
+   * Authoritative per-ply positions (python-chess computed), start first. This
+   * is the single source of the move list for both variants: the web builds and
+   * navigates history from these server-computed FENs/SANs and no longer uses
+   * chess.js (which mis-computes Chess960 castling). Null/empty means no game.
+   */
+  positions?: PositionEntry[] | null;
   mode: 'live' | 'static';
   onPositionChange?: (fen: string, moveIndex: number, totalMoves: number) => void;
   onBestMoveChange?: (bestMove: { from: string; to: string } | null) => void;
@@ -57,7 +63,7 @@ function parseUciMove(uci: string | null): { from: string; to: string } | null {
   return { from, to };
 }
 
-export function Analysis({ pgn, mode, onPositionChange, onBestMoveChange, onPlayedMoveChange, onMoveDataChange, goToMoveRef, showBestMoveForLatest, onToggleShowBestMove }: AnalysisProps) {
+export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, onPlayedMoveChange, onMoveDataChange, goToMoveRef, showBestMoveForLatest, onToggleShowBestMove }: AnalysisProps) {
   const [moves, setMoves] = useState<MoveData[]>([]);
   const [movePos, setMovePos] = useState(0);  // 0 = start, 1 = after first move, etc.
   const [currentEval, setCurrentEval] = useState<{ cp: number; mate: number | null }>({ cp: 0, mate: null });
@@ -67,7 +73,7 @@ export function Analysis({ pgn, mode, onPositionChange, onBestMoveChange, onPlay
   const [sfReady, setSfReady] = useState(false);
   
   const chartRef = useRef<ChartJS<'line'> | null>(null);
-  const lastPgnRef = useRef('');
+  const lastSignatureRef = useRef('');
   const queueRef = useRef<number[]>([]);
   const processingRef = useRef(false);
   // Counter to track the latest analysis request - used to ignore stale results
@@ -93,50 +99,45 @@ export function Analysis({ pgn, mode, onPositionChange, onBestMoveChange, onPlay
     };
   }, []);
 
-  // Parse PGN and build move history
-  // Preserves existing evaluations for unchanged positions
+  // Build move history from the authoritative per-ply positions (python-chess
+  // computed on the server), preserving evals for unchanged positions. This is
+  // the single source for both variants; the web no longer replays the PGN with
+  // chess.js. A signature (the ordered FENs) gates rebuilds so frequent live
+  // broadcasts that don't change the move list (e.g. pending-move updates) do
+  // not churn state or discard in-flight analysis.
   useEffect(() => {
-    if (!pgn || pgn === lastPgnRef.current) return;
-    lastPgnRef.current = pgn;
+    const entries = Array.isArray(positions) ? positions : [];
+    const signature = entries.map((p) => p.fen).join('|');
+    if (signature === lastSignatureRef.current) return;
+    lastSignatureRef.current = signature;
 
-    console.log('[Analysis] Parsing PGN, length:', pgn.length);
+    const preserveEvalAt = (index: number, fen: string): { eval: number | null; mate: number | null } => {
+      // Keep a previously computed eval when the position at this index is
+      // unchanged, so rebuilding after a new move doesn't re-analyze the whole
+      // game. Matching on FEN distinguishes a genuine position change from a
+      // no-op rebuild.
+      const existingMove = moves[index];
+      const same = existingMove?.fen === fen;
+      return {
+        eval: same ? existingMove.eval : null,
+        mate: same ? existingMove.mate : null,
+      };
+    };
 
-    const chess = new Chess();
-    const newMoves: MoveData[] = [
-      { fen: chess.fen(), san: 'Start', eval: moves[0]?.eval ?? null, mate: moves[0]?.mate ?? null, uci: null },
-    ];
-
-    try {
-      chess.loadPgn(pgn);
-      const history = chess.history({ verbose: true });
-      
-      chess.reset();
-      for (let i = 0; i < history.length; i++) {
-        const move = history[i];
-        chess.move(move.san);
-        // Build UCI notation from "from" and "to" squares, plus promotion if any
-        const uci = move.from + move.to + (move.promotion || '');
-        const moveIndex = i + 1; // 1-indexed in moves array
-        
-        // Preserve existing evaluation if this position was already analyzed
-        // Check by comparing FEN (position) - if same position, keep the eval
-        const existingMove = moves[moveIndex];
-        const fen = chess.fen();
-        const existingEval = existingMove?.fen === fen ? existingMove.eval : null;
-        const existingMate = existingMove?.fen === fen ? existingMove.mate : null;
-        
-        newMoves.push({
-          fen: fen,
-          san: move.san,
-          eval: existingEval,
-          mate: existingMate,
-          uci: uci,
-        });
-      }
-      console.log('[Analysis] Parsed', newMoves.length - 1, 'moves');
-    } catch (e) {
-      console.error('[Analysis] Failed to parse PGN:', e);
-    }
+    // The first entry is the start; later entries carry the post-move FEN/SAN/UCI.
+    const newMoves: MoveData[] = entries.map((p, i) => {
+      const preserved =
+        i === 0
+          ? { eval: moves[0]?.eval ?? null, mate: moves[0]?.mate ?? null }
+          : preserveEvalAt(i, p.fen);
+      return {
+        fen: p.fen,
+        san: i === 0 ? 'Start' : (p.san ?? p.uci ?? ''),
+        eval: preserved.eval,
+        mate: preserved.mate,
+        uci: p.uci,
+      };
+    });
 
     const prevLength = moves.length;
     setMoves(newMoves);
@@ -168,7 +169,7 @@ export function Analysis({ pgn, mode, onPositionChange, onBestMoveChange, onPlay
     } else if (mode === 'static' && movePos === 0) {
       setMovePos(newMoves.length - 1);
     }
-  }, [pgn, mode]);
+  }, [positions, mode]);
 
   // Store moves in a ref so processNext always has current data
   const movesRef = useRef<MoveData[]>([]);

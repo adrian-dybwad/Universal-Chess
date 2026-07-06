@@ -36,12 +36,20 @@ def build_coach_request(
     is_opponent_move: bool = False,
     persona: Optional[str] = None,
     language: str = DEFAULT_LANGUAGE,
+    chess960: bool = False,
 ) -> Optional[CoachRequest]:
     """Return a :class:`CoachRequest` for a move, or None if it can't be built.
 
     Args:
         fen_before: FEN of the position before the move.
         move_uci: The move in UCI (e.g. ``"e2e4"``).
+        chess960: True for a Fischer Random game. 960 castling is encoded as a
+            king-onto-rook move (e.g. ``f1h1``) that is only legal/notatable on a
+            board built with ``chess960=True``; without this flag such a move is
+            illegal on the standard board, so its SAN/LAN formatting and its
+            "Castles" fact are lost and the coach mis-describes every 960 castle.
+            The flag is also carried onto the returned request so later enrichment
+            (MultiPV candidate lines) can rebuild the board 960-aware.
         notation: User's move notation ("figurine", "san", "lan", or "uci"); the
             move is formatted with it so the coach's remark matches the notation
             shown elsewhere. Unknown values fall back to the product default.
@@ -70,7 +78,7 @@ def build_coach_request(
     import chess
 
     try:
-        board = chess.Board(fen_before)
+        board = chess.Board(fen_before, chess960=chess960)
     except ValueError:
         return None
 
@@ -95,11 +103,12 @@ def build_coach_request(
         eval_before_cp=eval_before_cp,
         eval_after_cp=eval_after_cp,
         move_number=board.fullmove_number,
-        facts=tuple(summarize_move_facts(fen_before, move_uci)),
+        facts=tuple(summarize_move_facts(fen_before, move_uci, chess960=chess960)),
         is_potential_move=is_potential_move,
         is_opponent_move=is_opponent_move,
         persona=persona,
         language=language,
+        chess960=chess960,
     )
 
 
@@ -129,6 +138,8 @@ def format_candidate_lines(
     fen_before: str,
     infos: Iterable[dict],
     notation: str = DEFAULT_NOTATION,
+    *,
+    chess960: bool = False,
 ) -> Tuple[str, ...]:
     """Format MultiPV analysis results into coach candidate-line strings.
 
@@ -139,6 +150,10 @@ def format_candidate_lines(
     engine's preferred/alternative moves without leaking python-chess types into
     the service layer.
 
+    ``chess960`` must be True for a Fischer Random game so a candidate that is a
+    960 castle (king-onto-rook, e.g. ``f1h1``) is legal for SAN formatting; without
+    it the engine's top move would fall back to raw UCI and read as a non-castle.
+
     An info with no ``pv`` (no move) is skipped. An unformattable move (illegal
     for the FEN -- corrupt data) falls back to its UCI string rather than dropping
     the line. Returns an empty tuple when the FEN is invalid or nothing usable is
@@ -147,7 +162,7 @@ def format_candidate_lines(
     import chess
 
     try:
-        board = chess.Board(fen_before)
+        board = chess.Board(fen_before, chess960=chess960)
     except ValueError:
         return ()
 

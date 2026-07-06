@@ -48,12 +48,20 @@ _TARGET_TYPES = {chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN}
 _SLIDERS = {chess.BISHOP, chess.ROOK, chess.QUEEN}
 
 
-def summarize_move_facts(fen_before: str, move_uci: str) -> List[str]:
+def summarize_move_facts(
+    fen_before: str, move_uci: str, *, chess960: bool = False
+) -> List[str]:
     """Return verified factual statements about ``move_uci`` played in ``fen_before``.
 
     Each returned string is a plain-English fact that is unconditionally true of
     the position after the move (a capture, check, castling, promotion, a real
     target of the moved piece, or an absolute pin it creates).
+
+    ``chess960`` must be True for a Fischer Random game: 960 castling is encoded as
+    a king-onto-rook move (e.g. ``f1h1``) that is only legal on a board created with
+    ``chess960=True``. Without the flag such a move is illegal on the standard board
+    and the extractor would drop every 960 castle (returning no "Castles" fact),
+    silently degrading the coach's description of castling in every 960 game.
 
     Returns an empty list -- never a fabricated fact -- when the FEN is invalid,
     the move is unparseable, or the move is illegal in the position. The caller
@@ -61,7 +69,7 @@ def summarize_move_facts(fen_before: str, move_uci: str) -> List[str]:
     unverified.
     """
     try:
-        board = chess.Board(fen_before)
+        board = chess.Board(fen_before, chess960=chess960)
     except ValueError:
         return []
     try:

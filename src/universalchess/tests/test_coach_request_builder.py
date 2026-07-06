@@ -207,3 +207,42 @@ def test_candidate_lines_empty_on_invalid_fen():
     # degrades to no alternatives instead of breaking coaching.
     infos = [_info("e2e4", chess.engine.PovScore(chess.engine.Cp(30), chess.WHITE))]
     assert format_candidate_lines("not a fen", infos, notation="san") == ()
+
+
+# --- Chess960 -------------------------------------------------------------
+
+# A minimal 960-style position where the king (f1) can castle with the h1 rook.
+# In Chess960 the castling move is encoded king-onto-rook: f1->h1.
+_C960_CASTLE_FEN = "4k3/8/8/8/8/8/8/5K1R w K - 0 1"
+
+
+def test_build_coach_request_chess960_castle_renders_san_and_facts():
+    # A 960 castling move (king-onto-rook f1h1) is only legal on a chess960 board.
+    # Regression: without threading chess960 into the builder, the move is illegal
+    # on the default standard board, so move_text falls back to raw UCI "f1h1" and
+    # the "Castles kingside." fact is dropped -- the coach then describes a real
+    # castle as an anonymous king shuffle for every 960 game.
+    request = build_coach_request(_C960_CASTLE_FEN, "f1h1", notation="san", chess960=True)
+    assert request is not None
+    assert request.move_text == "O-O"
+    assert request.facts == ("Castles kingside.",)
+    assert request.chess960 is True
+
+
+def test_build_coach_request_defaults_chess960_off():
+    # The flag must default off so standard games are unchanged and requests are not
+    # silently marked 960. Regression: a default of True would misconfigure every
+    # standard-chess coach request.
+    request = build_coach_request(STARTPOS, "e2e4")
+    assert request is not None
+    assert request.chess960 is False
+
+
+def test_candidate_lines_chess960_castle_move():
+    # A MultiPV candidate that is a 960 castle (f1h1) must render as "O-O" when the
+    # board is built chess960-aware. Regression: without the flag the move is illegal
+    # for san(), so it falls back to the raw UCI "f1h1", presenting the engine's top
+    # move as a non-castle to the coach.
+    infos = [_info("f1h1", chess.engine.PovScore(chess.engine.Cp(30), chess.WHITE))]
+    lines = format_candidate_lines(_C960_CASTLE_FEN, infos, notation="san", chess960=True)
+    assert lines == ("O-O (+0.30)",)

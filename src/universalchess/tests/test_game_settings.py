@@ -207,6 +207,37 @@ def test_load_reads_stored_coach_multipv(monkeypatch):
     assert settings.to_dict()["coach_multipv"] == 4
 
 
+def test_chess960_defaults_to_off():
+    # Chess960 must default off so a fresh install starts standard games; a
+    # missing field or wrong default would silently randomize every new game.
+    settings = GameSettings(section="game")
+    assert settings.to_dict()["chess960"] is False
+
+
+def test_to_dict_includes_chess960():
+    # Guards the to_dict() round-trip the board menu/web read the chess960 flag
+    # through. Without the field this raises TypeError on construction; a broken
+    # to_dict() KeyErrors here.
+    settings = GameSettings(section="game", chess960=True)
+    assert settings.to_dict()["chess960"] is True
+
+
+def test_load_reads_stored_chess960(monkeypatch):
+    # load() must surface a persisted chess960 flag; otherwise the setting is
+    # inert and new games never randomize even when the user enabled it. The fake
+    # omits chess960 from explicit defaults to prove load() seeds the read default
+    # itself (setdefault) so load_section actually reads the stored key.
+    def fake_load_section(section, defaults):
+        data = dict(defaults)
+        data["chess960"] = True
+        return data
+
+    monkeypatch.setattr(settings_mod, "load_section", fake_load_section)
+    settings = GameSettings.load("game", {})
+    assert settings.chess960 is True
+    assert settings.to_dict()["chess960"] is True
+
+
 def _faithful_load_section(stored: dict):
     """Build a load_section fake that honors its real contract.
 

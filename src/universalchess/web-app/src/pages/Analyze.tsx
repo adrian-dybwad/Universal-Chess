@@ -7,6 +7,7 @@ import { MoveTable } from '../components/MoveTable';
 import { Card, CardHeader } from '../components/ui';
 import { apiFetch } from '../utils/api';
 import { useNotation } from '../hooks/useNotation';
+import type { PositionEntry } from '../types/game';
 import './Analyze.css';
 
 /**
@@ -16,6 +17,10 @@ export function Analyze() {
   const { gameId } = useParams<{ gameId: string }>();
   const notation = useNotation();
   const [pgn, setPgn] = useState('');
+  // Authoritative per-ply positions (python-chess computed). This is the source
+  // the move list and navigation use for both variants; the web no longer
+  // replays the PGN with chess.js. `pgn` is kept only for the raw PGN display.
+  const [positions, setPositions] = useState<PositionEntry[] | null>(null);
   const [currentFen, setCurrentFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR');
   const [bestMove, setBestMove] = useState<{ from: string; to: string } | null>(null);
   const [playedMove, setPlayedMove] = useState<{ from: string; to: string } | null>(null);
@@ -32,6 +37,7 @@ export function Analyze() {
 
     setLoading(true);
     setError(null);
+    setPositions(null);
 
     apiFetch(`/getpgn/${gameId}`)
       .then((res) => {
@@ -45,6 +51,20 @@ export function Analyze() {
       .catch((e) => {
         setError(e.message);
         setLoading(false);
+      });
+
+    // Fetch the authoritative positions that drive the move list and navigation
+    // for both variants. Runs in parallel with the PGN fetch (the PGN is only
+    // shown raw). A 404 (game with no moves) or failure just leaves the list empty.
+    apiFetch(`/api/games/${gameId}/positions`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && Array.isArray(data.positions)) {
+          setPositions(data.positions as PositionEntry[]);
+        }
+      })
+      .catch(() => {
+        /* leave positions null; the move list stays empty */
       });
   }, [gameId]);
 
@@ -101,7 +121,7 @@ export function Analyze() {
 
         <section className="analyze-panel">
           <Analysis
-            pgn={pgn}
+            positions={positions}
             mode="static"
             onPositionChange={handlePositionChange}
             onBestMoveChange={handleBestMoveChange}
@@ -121,7 +141,7 @@ export function Analyze() {
           <Card className="mt-4">
             <CardHeader title="Moves" />
             <MoveTable
-              pgn={pgn}
+              positions={positions}
               currentMoveIndex={currentMoveIndex}
               notation={notation}
               evalHistory={evalHistory}

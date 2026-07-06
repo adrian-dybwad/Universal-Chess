@@ -60,6 +60,11 @@ def _configured(monkeypatch):
         lambda: CoachConfig(provider="openai", api_key="k", model="gpt-4o-mini"),
     )
     monkeypatch.setattr(webapp, "_read_notation", lambda: "san")
+    # The statement endpoint reads the game's variant flag at the persistence
+    # boundary; mock it (like the other coach_persistence helpers) so tests do not
+    # depend on a populated Game table. Standard-chess default keeps these cases
+    # unchanged; the 960 path is covered by a dedicated test.
+    monkeypatch.setattr(coach_persistence, "get_game_chess960", lambda g: False)
 
 
 def test_statement_returns_stored_without_generating(client, monkeypatch):
@@ -201,6 +206,37 @@ def test_statement_generation_failure_returns_502(client, monkeypatch):
     assert "secret.internal" not in resp.get_data(as_text=True)
 
 
+def test_statement_chess960_castle_uses_variant_board(client, monkeypatch):
+    # For a Chess960 game the endpoint must build the move's board 960-aware so a
+    # king-onto-rook castle (f1h1) formats as "O-O" and carries chess960=True to the
+    # generator. Regression: reading the variant flag as standard makes f1h1 illegal
+    # on the board, blanking the SAN to raw UCI and dropping the castle grounding for
+    # every reviewed 960 castle.
+    c960_fen = "4k3/8/8/8/8/8/8/5K1R w K - 0 1"
+    _configured(monkeypatch)
+    monkeypatch.setattr(coach_persistence, "get_coach_statement", lambda g, p: None)
+    monkeypatch.setattr(coach_persistence, "get_move_context", lambda g, p: (c960_fen, "f1h1"))
+    monkeypatch.setattr(coach_persistence, "get_move_evals", lambda g, p: (None, None))
+    monkeypatch.setattr(coach_persistence, "get_game_chess960", lambda g: True)
+    monkeypatch.setattr(coach_persistence, "save_coach_statement_if_absent", lambda g, p, s: s)
+
+    captured = {}
+
+    def fake_generate(config, req):
+        captured["move_text"] = req.move_text
+        captured["chess960"] = req.chess960
+        captured["facts"] = req.facts
+        return "A safe king tuck."
+
+    monkeypatch.setattr(coach_service, "generate_coach_statement", fake_generate)
+
+    resp = client.get("/api/coach/statement/7/1")
+    assert resp.status_code == 200
+    assert captured["move_text"] == "O-O"
+    assert captured["chess960"] is True
+    assert "Castles kingside." in captured["facts"]
+
+
 def test_tip_returns_statement(client, monkeypatch):
     # The tip endpoint must pass the posted fen/move to the cached generator and
     # return its statement, so a hint gets an accompanying coaching remark.
@@ -208,7 +244,15 @@ def test_tip_returns_statement(client, monkeypatch):
     seen = {}
 
     def fake_tip(
-        config, fen, move, *, notation=None, persona=None, persona_key="", language=None
+        config,
+        fen,
+        move,
+        *,
+        notation=None,
+        persona=None,
+        persona_key="",
+        language=None,
+        chess960=False,
     ):
         seen["fen"] = fen
         seen["move"] = move
@@ -216,6 +260,7 @@ def test_tip_returns_statement(client, monkeypatch):
         seen["persona"] = persona
         seen["persona_key"] = persona_key
         seen["language"] = language
+        seen["chess960"] = chess960
         return "Develops toward the center."
 
     monkeypatch.setattr(coach_tips, "get_tip_statement", fake_tip)
@@ -232,6 +277,10 @@ def test_tip_returns_statement(client, monkeypatch):
     assert seen["fen"] == STARTPOS
     assert seen["move"] == "e2e4"
     assert seen["notation"] == "san"
+    # A standard-chess tip (no chess960 in the body) must default the flag off so
+    # the tip builder stays standard; a regression defaulting it on would misread
+    # every standard hint as a 960 game.
+    assert seen["chess960"] is False
     # A coach must be resolved for the tip, so a persona (player-move voice) and a
     # non-empty coach cache token are passed through; a regression that dropped
     # persona plumbing would leave these unset.
@@ -255,6 +304,28 @@ def test_coaches_lists_roster_and_resolved(client):
     assert body["selected"] == "auto"
     assert body["resolved"] is not None
     assert body["resolved"]["id"] in ids
+
+
+def test_tip_forwards_chess960_flag_from_body(client, monkeypatch):
+    # A 960 game's live board posts chess960=true so a hinted king-onto-rook castle
+    # is coached correctly. The endpoint must forward that flag to the tip generator.
+    # Regression: ignoring the body flag would coach a 960 hint as standard chess,
+    # mis-formatting a castling hint.
+    _configured(monkeypatch)
+    seen = {}
+
+    def fake_tip(config, fen, move, *, chess960=False, **kwargs):
+        seen["chess960"] = chess960
+        return "Castle to safety."
+
+    monkeypatch.setattr(coach_tips, "get_tip_statement", fake_tip)
+
+    resp = client.post(
+        "/api/coach/tip",
+        json={"fen": "4k3/8/8/8/8/8/8/5K1R w K - 0 1", "move": "f1h1", "chess960": True},
+    )
+    assert resp.status_code == 200
+    assert seen["chess960"] is True
 
 
 def test_tip_not_configured(client, monkeypatch):

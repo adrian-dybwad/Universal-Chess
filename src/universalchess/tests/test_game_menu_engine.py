@@ -26,6 +26,7 @@ def _game_ctx(
     engine="stockfish",
     time_control=0,
     notation="figurine",
+    chess960=False,
     coach_provider="none",
     coach_id="auto",
     coach_language="English",
@@ -51,6 +52,7 @@ def _game_ctx(
         "engine": engine,
         "time_control": time_control,
         "notation": notation,
+        "chess960": chess960,
         "coach_provider": coach_provider,
         "coach_id": coach_id,
         "coach_language": coach_language,
@@ -165,9 +167,10 @@ def _detail_rows(**kwargs):
 
 
 def test_game_menu_rows_and_engine_visibility():
-    """Game lists Time Control + Notation + Live Analysis + Coach + Agent selector.
+    """Game lists Time Control + Chess960 + Notation + Live Analysis + Coach + Agent selector.
 
-    Why this test exists: the unified Game menu must show Time Control, Notation,
+    Why this test exists: the unified Game menu must show Time Control, the
+    Chess960 variant toggle, Notation,
     and the analysis toggle always, reveal the Analysis Engine row only when Live
     Analysis is on (via ``visibleWhen``), and always show the Coach persona, Agent
     selector, and Coach Language (their key/model config lives under Agents). How a
@@ -177,12 +180,12 @@ def test_game_menu_rows_and_engine_visibility():
     """
     _, off_rows = _rows(mode=False)
     assert [r.key for r in off_rows] == [
-        "TimeControl", "Notation", "enabled", "coach_id", "coach_provider", "coach_language",
+        "TimeControl", "Chess960", "Notation", "enabled", "coach_id", "coach_provider", "coach_language",
     ]
 
     _, on_rows = _rows(mode=True)
     assert [r.key for r in on_rows] == [
-        "TimeControl", "Notation", "enabled", "engine", "coach_id", "coach_provider", "coach_language",
+        "TimeControl", "Chess960", "Notation", "enabled", "engine", "coach_id", "coach_provider", "coach_language",
     ]
 
 

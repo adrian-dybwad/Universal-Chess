@@ -186,9 +186,15 @@ class GameSettings:
         analysis_mode: Enable analysis engine
         analysis_engine: Engine to use for position analysis
         ponder: When True, engine players think on the opponent's time (UCI
-            pondering). A pondering engine runs in a dedicated process so its
+            pondering). A             pondering engine runs in a dedicated process so its
             background search is never interrupted by analysis or the opponent;
             costs extra CPU/power. Default False.
+        chess960: When True, each new game starts from a random Chess960 (Fischer
+            Random) position. Engines receive UCI_Chess960 automatically (the
+            board carries the chess960 flag) and 960 castling rules apply. The
+            board only senses occupancy, which is identical to standard chess for
+            every 960 start, so the target position is shown on the display and
+            the physical setup is trusted. Default False.
         show_board: Show chess board widget
         show_clock: Show clock/turn indicator widget
         show_analysis: Show analysis widget
@@ -239,6 +245,7 @@ class GameSettings:
     analysis_mode: bool = True
     analysis_engine: str = "stockfish"
     ponder: bool = False
+    chess960: bool = False
     show_board: bool = True
     show_clock: bool = True
     show_analysis: bool = True
@@ -330,6 +337,7 @@ class GameSettings:
             "analysis_mode": self.analysis_mode,
             "analysis_engine": self.analysis_engine,
             "ponder": self.ponder,
+            "chess960": self.chess960,
             "show_board": self.show_board,
             "show_clock": self.show_clock,
             "show_analysis": self.show_analysis,
@@ -400,6 +408,7 @@ class GameSettings:
             analysis_mode=data["analysis_mode"],
             analysis_engine=data["analysis_engine"],
             ponder=data["ponder"],
+            chess960=data["chess960"],
             show_board=data["show_board"],
             show_clock=data["show_clock"],
             show_analysis=data["show_analysis"],

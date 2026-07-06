@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { Chess } from 'chess.js';
 import { ChessBoard } from '../components/ChessBoard';
 import { Analysis } from '../components/Analysis';
 import { CoachPanel } from '../components/CoachPanel';
@@ -75,25 +74,25 @@ export function LiveBoard() {
     }
   }, []);
 
-  const currentFen = displayFen || gameState?.fen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
+  // At the latest position the definitive board FEN is the live game state
+  // (gameState.fen), which the board process reports directly and is correct for
+  // both variants. When reviewing an earlier move, use the Analysis-derived FEN
+  // for that ply (Analysis navigates by the same authoritative positions).
+  const currentFen =
+    (isAtLatestMove ? gameState?.fen : displayFen) ||
+    gameState?.fen ||
+    'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
   const currentPgn = gameState?.pgn || '';
 
-  // Per-ply move identities (UCI) parsed from the live PGN. Used only to key the
-  // coach cache so a takeback that replaces the move at a ply refetches coaching
-  // for the new move instead of showing the undone move's cached remark. Memoized
-  // off the PGN so it is stable across renders (no flicker while analysis runs).
+  // Per-ply move identities (UCI) from the authoritative positions. Used only to
+  // key the coach cache so a takeback that replaces the move at a ply refetches
+  // coaching for the new move instead of showing the undone move's cached remark.
+  // positions[0] is the start (uci null); memoized so it is stable across renders.
+  const positions = gameState?.positions;
   const moveUcis = useMemo<string[]>(() => {
-    if (!currentPgn) return [];
-    try {
-      const chess = new Chess();
-      chess.loadPgn(currentPgn);
-      return chess
-        .history({ verbose: true })
-        .map((m) => `${m.from}${m.to}${m.promotion ?? ''}`);
-    } catch {
-      return [];
-    }
-  }, [currentPgn]);
+    if (!Array.isArray(positions) || positions.length === 0) return [];
+    return positions.slice(1).map((p) => p.uci ?? '');
+  }, [positions]);
   const currentMoveKey = currentMoveIndex >= 1 ? moveUcis[currentMoveIndex - 1] : undefined;
 
   // Game info - using snake_case property names from backend
@@ -187,7 +186,7 @@ export function LiveBoard() {
         <div className="box" style={{ marginTop: '1rem' }}>
           <h3 className="title is-5 box-title">Analysis</h3>
           <Analysis
-            pgn={currentPgn}
+            positions={gameState?.positions}
             mode="live"
             onPositionChange={handlePositionChange}
             onBestMoveChange={handleBestMoveChange}
@@ -206,7 +205,7 @@ export function LiveBoard() {
         <div className="box" style={{ marginTop: '1rem' }}>
           <h3 className="title is-5 box-title">Moves</h3>
           <MoveTable
-            pgn={currentPgn}
+            positions={positions}
             currentMoveIndex={currentMoveIndex}
             notation={notation}
             evalHistory={evalHistory}

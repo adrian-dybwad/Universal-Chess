@@ -302,6 +302,14 @@ class ChessGameService:
                     set_pending_move(None)
                     pending = None
 
+            # Always include the authoritative per-ply positions so the web
+            # navigates and lists history by these server-computed FENs/SANs
+            # instead of replaying the PGN in the browser. This is the single
+            # source of truth for both variants: chess.js is no longer used on
+            # the web, and it mis-computes Chess960 castling in any case.
+            chess960 = bool(self._state.chess960)
+            positions = self._state.history_positions()
+
             broadcast_game_state(
                 fen=self._state.fen,
                 pgn=self.get_pgn(),
@@ -314,6 +322,9 @@ class ChessGameService:
                 white=players.white_name,
                 black=players.black_name,
                 pending_move=pending,
+                chess960=chess960,
+                start_fen=self._state.start_fen,
+                positions=positions,
             )
         except Exception as e:
             log.debug(f"[ChessGameService] Error broadcasting game state: {e}")

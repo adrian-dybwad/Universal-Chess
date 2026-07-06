@@ -2,9 +2,11 @@
  * Chess move notation formatting for the move-history views.
  *
  * The board and web share a single `game.notation` setting; this module is the
- * web half that turns a chess.js verbose move into a display string in the
- * selected notation. Kept as a pure function (no chess.js or React imports) so
- * it is trivially unit-testable and reusable by any move-history component.
+ * web half that turns a verbose move (SAN + squares + flags) into a display
+ * string in the selected notation. Kept as a pure function (no chess or React
+ * imports) so it is trivially unit-testable and reusable by any move-history
+ * component. The move objects are built from the server's authoritative
+ * per-ply positions.
  */
 
 /** The notation types offered by the `game.notation` setting. */
@@ -21,9 +23,9 @@ export function asNotation(value: string | null | undefined): Notation {
 }
 
 /**
- * The subset of a chess.js verbose move (`history({ verbose: true })`) needed to
- * render any supported notation. Declared locally so this module stays free of a
- * chess.js type dependency; callers pass the verbose move objects directly.
+ * The move fields needed to render any supported notation. Built by callers
+ * (e.g. MoveTable) from the server's authoritative positions -- SAN and squares
+ * plus lightweight flags -- so this module has no chess-library dependency.
  */
 export interface VerboseMove {
   /** Standard algebraic notation, e.g. "Nf3", "exd5", "e8=Q+", "O-O". */
@@ -36,7 +38,7 @@ export interface VerboseMove {
   piece: string;
   /** Lowercase promotion piece letter when the move promotes, else undefined. */
   promotion?: string;
-  /** chess.js flags string; contains 'c' or 'e' for captures, 'k'/'q' for castling. */
+  /** Flags string; contains 'c' or 'e' for captures, 'k'/'q' for castling. */
   flags: string;
 }
 
@@ -105,7 +107,7 @@ function toUci(move: VerboseMove): string {
 /**
  * Format a single move in the requested notation.
  *
- * @param move A chess.js verbose move (or the {@link VerboseMove} subset).
+ * @param move A {@link VerboseMove} (SAN + squares + flags).
  * @param notation The target notation.
  */
 export function formatMove(move: VerboseMove, notation: Notation): string {

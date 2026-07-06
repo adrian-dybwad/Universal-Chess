@@ -36,7 +36,9 @@ class ChessGameState:
     """
     
     def __init__(self):
-        """Initialize game state with starting position."""
+        """Initialize game state with the standard starting position."""
+        self._start_fen: str = chess.STARTING_FEN
+        self._chess960: bool = False
         self._board = chess.Board()
         self._result: Optional[str] = None  # '1-0', '0-1', '1/2-1/2'
         self._termination: Optional[str] = None  # 'checkmate', 'stalemate', 'resignation', etc.
@@ -65,6 +67,60 @@ class ChessGameState:
     def fen(self) -> str:
         """Current position in FEN notation."""
         return self._board.fen()
+
+    @property
+    def chess960(self) -> bool:
+        """Whether this game is Chess960 (Fischer Random).
+
+        When True, the board applies Chess960 castling rules and python-chess
+        automatically sends ``UCI_Chess960`` to engines that receive a copy of
+        this board (see ``board_copy``).
+        """
+        return self._chess960
+
+    @property
+    def start_fen(self) -> str:
+        """The starting FEN this game resets to.
+
+        For a standard game this is the normal start; for a Chess960 game it is
+        the randomly generated 960 start. ``reset()`` returns here so re-setting
+        up the physical board never changes the generated position.
+        """
+        return self._start_fen
+
+    def history_positions(self) -> List[dict]:
+        """Return authoritative per-ply positions for the whole game so far.
+
+        Each entry is ``{"fen", "san", "uci"}``: the first is the starting
+        position (``san``/``uci`` are None), and each subsequent entry is the
+        position after that ply with its SAN and UCI. The list is rebuilt from
+        the configured start FEN on a board carrying this game's ``chess960``
+        flag, so every FEN and SAN is variant-correct.
+
+        This is the source the web live board navigates history by, instead of
+        replaying the PGN in the browser: chess.js mis-computes Chess960 castling
+        (it moves the king to the wrong square), so browser-derived history
+        positions are wrong for a 960 game. Deriving them here with python-chess
+        keeps navigation correct for both variants.
+        """
+        root = chess.Board(self._start_fen, chess960=self._chess960)
+        positions: List[dict] = [{"fen": root.fen(), "san": None, "uci": None}]
+        node = root
+        for move in self._board.move_stack:
+            san = node.san(move)
+            node.push(move)
+            positions.append({"fen": node.fen(), "san": san, "uci": move.uci()})
+        return positions
+
+    def board_copy(self) -> chess.Board:
+        """Return an independent copy of the board preserving the Chess960 flag.
+
+        Engine/analysis callers must copy through this (not ``chess.Board(fen)``)
+        so the ``chess960`` flag is carried over; python-chess only emits
+        ``UCI_Chess960`` and applies 960 castling when the board it is given has
+        ``chess960`` set.
+        """
+        return self._board.copy()
     
     @property
     def turn(self) -> chess.Color:
@@ -459,7 +515,12 @@ class ChessGameState:
     
     def set_position(self, fen: str) -> None:
         """Set the board to a specific position.
-        
+
+        Preserves the current ``chess960`` flag: ``set_fen`` only rewrites the
+        position, not the variant, so a Chess960 game stays Chess960 when a
+        position is applied (e.g. loading the generated 960 start after game
+        mode init).
+
         Args:
             fen: FEN string of the position.
             
@@ -470,17 +531,64 @@ class ChessGameState:
         self._result = None
         self._termination = None
         self.notify_position_change()
-    
-    def reset(self) -> None:
-        """Reset to starting position.
-        
-        Clears any check/threat alerts since starting position has no threats.
+
+    def configure_start(self, fen: str, chess960: bool = False) -> None:
+        """Set the game's starting position and variant.
+
+        Establishes what ``reset()`` returns to. The board object is mutated in
+        place (the ``chess960`` flag is set before ``set_fen`` so castling rights
+        parse correctly) rather than reassigned, because GameManager captures the
+        board reference once and relies on its identity. Setting the flag is what
+        makes python-chess apply 960 castling rules and emit ``UCI_Chess960`` to
+        engines that receive ``board_copy()``.
+
+        Args:
+            fen: Starting FEN for the game.
+            chess960: True for a Chess960 (Fischer Random) game.
+
+        Raises:
+            ValueError: If FEN is invalid.
         """
-        self._board.reset()
+        self._start_fen = fen
+        self._chess960 = chess960
+        self._board.chess960 = chess960
+        self._board.set_fen(fen)
+        self._result = None
+        self._termination = None
+        self.notify_position_change()
+        self._notify_check_and_threats()
+
+    def reset(self) -> None:
+        """Reset to this game's starting position.
+
+        Variant-aware: restores the configured start FEN and ``chess960`` flag
+        rather than the standard start, so a Chess960 game keeps its generated
+        position across a board-reset (the physical home-rank gesture must not
+        regenerate a new random position). Clears any check/threat alerts since a
+        starting position has no threats.
+        """
+        self._board.chess960 = self._chess960
+        self._board.set_fen(self._start_fen)
         self._result = None
         self._termination = None
         self.notify_position_change()
         # Clear alerts - starting position has no check or threats
+        self._notify_check_and_threats()
+
+    def reset_to_standard(self) -> None:
+        """Reset to the standard starting position and clear the variant.
+
+        Used when a fresh game begins so a prior Chess960 game's start FEN does
+        not leak into a new standard game (``reset()`` is variant-aware and would
+        otherwise restore the previous game's 960 start).
+        """
+        self._start_fen = chess.STARTING_FEN
+        self._chess960 = False
+        self._board.chess960 = False
+        self._board.reset()
+        self._result = None
+        self._termination = None
+        self.notify_position_change()
         self._notify_check_and_threats()
     
     def set_result(self, result: str, termination: str) -> None:
