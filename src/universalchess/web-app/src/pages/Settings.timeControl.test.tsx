@@ -228,9 +228,10 @@ describe('Settings Time Control (web clock configuration)', () => {
 
   it('writes the preset and custom clock fields in the save payload', async () => {
     // Every clock control must round-trip to the board; dropping a key from the
-    // POST would make that web control inert. Toggling asymmetric makes a change
-    // (surfacing the save bar) and asserts the exact keys/values the board's
-    // build_time_control reads -- including the just-toggled asymmetric flag.
+    // POST would make that web control inert. Value settings auto-save on change,
+    // so toggling asymmetric triggers a debounced POST; assert the exact
+    // keys/values the board's build_time_control reads -- including the
+    // just-toggled asymmetric flag.
     mockFetch({
       time_control_preset: 'custom',
       tc_custom_base_seconds: '300',
@@ -244,7 +245,6 @@ describe('Settings Time Control (web clock configuration)', () => {
     const card = await timeControlCard();
     await waitFor(() => expect(within(card).getByText('Different Per Side')).toBeInTheDocument());
     fireEvent.click(switchInRow(card, 'Different Per Side'));
-    fireEvent.click(await screen.findByRole('button', { name: /save/i }));
 
     await waitFor(() => expect(lastPostBody).not.toBeNull());
     const game = (lastPostBody as Record<string, Record<string, unknown>>).game;

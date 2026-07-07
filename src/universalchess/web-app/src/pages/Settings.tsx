@@ -15,7 +15,75 @@ import type { EngineDefinition, EngineRef, EngineRefsResponse } from '../types/g
 import type { MenuCatalog, MenuOption, MenuCondition, MenuNode } from '../types/menuCatalog';
 import { fieldById, fieldsForSection } from '../types/menuCatalog';
 import { apiFetch, buildApiUrl, getStoredCredentials, encodeBasicAuth, storeCredentials, isCrossOriginApi } from '../utils/api';
+import { useSettingsStore } from '../stores/settingsStore';
 import './Settings.css';
+
+// Sections of FormSettings that map to persisted settings, used to merge an
+// incoming remote change field-by-field while preserving any key the local user
+// is mid-editing.
+const FORM_SECTIONS: ('player1' | 'player2' | 'game' | 'lichess' | 'sound' | 'system')[] = [
+  'player1', 'player2', 'game', 'lichess', 'sound', 'system',
+];
+
+// Map a sound form field to its raw centaur.ini [sound] key. The web edits
+// friendly booleans (enabled/game_events/...) that persist under the board's
+// on/off keys; used only to register the correct raw key as pending during a save.
+const SOUND_RAW_KEY: Record<string, string> = {
+  enabled: 'sound',
+  key_press: 'key_press',
+  game_events: 'game_event',
+  piece_events: 'piece_event',
+  errors: 'error',
+};
+
+/**
+ * Raw centaur.ini "section.key" identifiers touched by a form update, so the
+ * shared store can mark them pending (a refresh must not revert a value the user
+ * is actively saving). Mirrors the section mapping the save payload uses.
+ */
+function rawKeysForFormUpdate(section: string, updates: Record<string, unknown>): string[] {
+  const keys = Object.keys(updates);
+  switch (section) {
+    case 'player1':
+      return keys.map((k) => `PlayerOne.${k}`);
+    case 'player2':
+      return keys.map((k) => `PlayerTwo.${k}`);
+    case 'game':
+      return keys.map((k) => `game.${k}`);
+    case 'lichess':
+      return keys.map((k) => `lichess.${k}`);
+    case 'sound':
+      return keys.map((k) => `sound.${SOUND_RAW_KEY[k] ?? k}`);
+    case 'system':
+      return keys.map((k) => (k === 'database_uri' ? 'DATABASE.database_uri' : `system.${k}`));
+    default:
+      return keys.map((k) => `${section}.${k}`);
+  }
+}
+
+/**
+ * Overlay an incoming (remote) parsed settings object onto the current form,
+ * keeping the current value for any field the local user is mid-editing (its
+ * "section.key" is in ``pending``). This is what makes a board/other-tab change
+ * update every untouched field live without clobbering an in-flight local edit.
+ */
+function mergeFormPreservingPending(
+  current: FormSettings,
+  incoming: FormSettings,
+  pending: Set<string>
+): FormSettings {
+  const out = { ...incoming } as FormSettings;
+  for (const section of FORM_SECTIONS) {
+    const mergedSection: Record<string, unknown> = { ...(incoming[section] as Record<string, unknown>) };
+    for (const key of Object.keys(mergedSection)) {
+      if (pending.has(`${section}.${key}`)) {
+        mergedSection[key] = (current[section] as Record<string, unknown>)[key];
+      }
+    }
+    (out[section] as unknown) = mergedSection;
+  }
+  return out;
+}
 
 interface SettingsData {
   [section: string]: {
@@ -476,8 +544,15 @@ export function Settings() {
   const [resolvedCoach, setResolvedCoach] = useState<CoachInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [hasChanges, setHasChanges] = useState(false);
+  // Live save state for the inline indicator. Value settings save automatically
+  // (debounced) on every change -- there is no explicit Save button -- so this
+  // reports whether the last auto-save is in flight, succeeded, or failed.
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saving, setSaving] = useState(false);
+  // Agent ids with unsaved credential edits (API key / model / base URL). Agent
+  // secrets are write-only, so they are NOT auto-saved on keystroke; each agent
+  // card shows an explicit Save button while it is dirty.
+  const [dirtyAgents, setDirtyAgents] = useState<Set<string>>(new Set());
   const [installingEngine, setInstallingEngine] = useState<string | null>(null);
   // Full structured status for the install banner/progress bar and the
   // interrupted-install Resume/Cancel controls. Null when nothing relevant is in
@@ -499,7 +574,7 @@ export function Settings() {
   const [profileEngine, setProfileEngine] = useState<EngineDefinition | null>(null);
   const [loginDialogOpen, setLoginDialogOpen] = useState(false);
   const [loginError, setLoginError] = useState<string | undefined>();
-  const [pendingAction, setPendingAction] = useState<'save' | 'apply' | null>(null);
+  const [pendingAction, setPendingAction] = useState<'save' | null>(null);
   // "Retry after login" for engine install/uninstall, which (unlike the
   // string-based save/apply pendingAction) carry arguments. The arguments are
   // stashed -- not a callback that closes over toggleEngine, which would access
@@ -515,12 +590,31 @@ export function Settings() {
   // shared install-status watcher; uploads complete in-request and refresh.
   const [customEngineBusy, setCustomEngineBusy] = useState(false);
   const [customEngineError, setCustomEngineError] = useState<string | null>(null);
-  const hasChangesRef = useRef(hasChanges);
 
-  // Keep ref in sync with state (for use in SSE callback)
-  useEffect(() => {
-    hasChangesRef.current = hasChanges;
-  }, [hasChanges]);
+  // Debounce timer for the auto-save; a burst of edits collapses into one POST.
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Form-level "section.key" identifiers with an in-flight (debounced or saving)
+  // edit. A remote refresh preserves these so it cannot overwrite what the user
+  // is still saving. Kept in a ref so the merge effect reads the latest set
+  // without re-subscribing.
+  const pendingFormKeysRef = useRef<Set<string>>(new Set());
+  // Latest saveSettings closure, so the debounced timer (and the per-agent Save)
+  // always persist the current formSettings rather than a value captured when the
+  // timer was scheduled.
+  const saveSettingsRef = useRef<((opts?: { includeAgentKeys?: boolean }) => Promise<boolean>) | null>(null);
+  // Latest value of coachAgentRequirementUnmet, read by the debounced auto-save so
+  // it never persists an enabled coach that has no configured agent.
+  const coachUnmetRef = useRef(false);
+  // True once the initial load has populated the form, so the store-revision
+  // merge effect only reacts to genuine remote refreshes (not the first paint).
+  const initialLoadedRef = useRef(false);
+
+  // Shared settings store: the single channel through which board / other-tab
+  // changes arrive. GameStateProvider refreshes it on a settings_changed SSE
+  // event and bumps `revision`; this page merges the new raw into the form.
+  const storeRevision = useSettingsStore((s) => s.revision);
+  const storeBeginPending = useSettingsStore((s) => s.beginPending);
+  const storeEndPending = useSettingsStore((s) => s.endPending);
 
   // Load the shared menu catalog. It is immutable for the lifetime of the
   // running backend version (a static menu.json read server-side), so it is
@@ -598,35 +692,32 @@ export function Settings() {
     }
   }, []);
 
-  // Listen for settings_changed events via SSE
+  // React to a remote settings change (board menu or another browser tab). The
+  // shared store -- refreshed by GameStateProvider's single EventSource on a
+  // settings_changed SSE event -- bumps its `revision`; on each bump this merges
+  // the authoritative raw into the form, field by field, keeping any value the
+  // local user is mid-editing (tracked in pendingFormKeysRef) so a remote change
+  // updates every untouched field without clobbering an in-flight edit. Agents
+  // are not part of /api/settings, so refresh them too (a key added on the board
+  // flips an agent to configured here).
   useEffect(() => {
-    const eventsUrl = buildApiUrl('/events');
-    const es = new EventSource(eventsUrl);
+    if (!initialLoadedRef.current) return;
+    const raw = useSettingsStore.getState().raw;
+    if (!raw) return;
+    const incoming = parseRawSettings(raw as SettingsData);
+    setFormSettings((prev) => mergeFormPreservingPending(prev, incoming, pendingFormKeysRef.current));
+    setOriginalSettings((prev) => mergeFormPreservingPending(prev, incoming, pendingFormKeysRef.current));
+    void fetchAgents();
+    // Runs on each store revision bump (a remote refresh). fetchAgents is a
+    // stable useCallback, so listing it does not cause extra runs; parse/merge
+    // helpers are module-level and the store/refs are read imperatively.
+  }, [storeRevision, fetchAgents]);
 
-    es.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'settings_changed') {
-          // Only refetch if there are no local unsaved changes
-          if (!hasChangesRef.current) {
-            console.log('[Settings] Received settings_changed, refetching...');
-            fetchSettings().catch((e) => console.error('Failed to refetch settings:', e));
-            // Agents are not part of /api/settings; refresh them too so a key
-            // added elsewhere (e.g. the board) flips agents to configured here.
-            void fetchAgents();
-          } else {
-            console.log('[Settings] Received settings_changed but have local changes, skipping refetch');
-          }
-        }
-      } catch {
-        // Ignore parse errors (game state events have different structure)
-      }
-    };
-
-    return () => {
-      es.close();
-    };
-  }, [fetchSettings, fetchAgents]);
+  // Cancel a pending debounced save if the page unmounts, so a save never fires
+  // against a torn-down component.
+  useEffect(() => () => {
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+  }, []);
 
   // Load the catalog (once) and the settings on mount. Both are required for the
   // page to render correctly, so either failing shows the load error. The work is
@@ -637,6 +728,9 @@ export function Settings() {
     void (async () => {
       try {
         await Promise.all([loadCatalog(), fetchSettings()]);
+        // Gate the remote-merge effect: only genuine remote refreshes after the
+        // initial paint should overwrite the freshly loaded form.
+        initialLoadedRef.current = true;
         setLoading(false);
       } catch (e) {
         console.error('Failed to load settings:', e);
@@ -749,6 +843,49 @@ export function Settings() {
     originalSettings.player2.type,
   ]);
 
+  // Debounce window for the auto-save. Collapses a burst of edits (e.g. dragging a
+  // brightness slider) into a single POST, and is short enough that a change feels
+  // immediate to a second screen watching for it.
+  const AUTO_SAVE_DEBOUNCE_MS = 400;
+
+  // Persist the current form now (value settings only -- never agent secrets),
+  // reading the latest closures via refs because this runs from a debounced timer,
+  // not inline. An enabled coach with no configured agent is left unsaved (the
+  // inline coachAgentMissing message explains why) rather than persisting a coach
+  // that would silently never run.
+  const performAutoSave = async () => {
+    if (coachUnmetRef.current) {
+      setSaveState('idle');
+      return;
+    }
+    // Snapshot the keys this save covers so edits arriving mid-save keep their
+    // pending protection (and their own follow-up save) instead of being cleared.
+    const savedFormKeys = Array.from(pendingFormKeysRef.current);
+    setSaveState('saving');
+    let ok = false;
+    try {
+      ok = (await saveSettingsRef.current?.({ includeAgentKeys: false })) ?? false;
+    } finally {
+      pendingFormKeysRef.current = new Set(
+        Array.from(pendingFormKeysRef.current).filter((k) => !savedFormKeys.includes(k))
+      );
+      storeEndPending(savedFormKeys.map(rawKeyForFormKey));
+    }
+    setSaveState(ok ? 'saved' : 'error');
+  };
+
+  const scheduleAutoSave = () => {
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      autoSaveTimerRef.current = null;
+      void performAutoSave();
+    }, AUTO_SAVE_DEBOUNCE_MS);
+  };
+
+  // Apply a value-setting change: update the form immediately (optimistic), mark
+  // the touched keys pending so a concurrent remote refresh cannot clobber them,
+  // and schedule the debounced save. There is no explicit Save button for value
+  // settings -- the board saves each menu change the same way.
   const updateFormSettings = <T extends keyof FormSettings>(
     section: T,
     updates: Partial<FormSettings[T]>
@@ -757,12 +894,16 @@ export function Settings() {
       ...prev,
       [section]: { ...prev[section], ...updates },
     }));
-    setHasChanges(true);
+    Object.keys(updates).forEach((k) => pendingFormKeysRef.current.add(`${String(section)}.${k}`));
+    storeBeginPending(rawKeysForFormUpdate(String(section), updates as Record<string, unknown>));
+    scheduleAutoSave();
   };
 
-  // Update one agent's edit form and mark the page dirty. Editing the API key sets
-  // its dirty flag so the save knows a blank value means "leave unchanged" versus
-  // a real (typed) new key.
+  // Update one agent's edit form and mark that agent dirty. Agent credentials
+  // (API key / model / base URL) are NOT auto-saved -- the key is a write-only
+  // secret, so each agent card shows an explicit Save button while dirty. Editing
+  // the API key sets its dirty flag so the save knows a blank value means "leave
+  // unchanged" versus a real (typed) new key.
   const updateAgentEdit = (agentId: string, updates: Partial<AgentEdit>) => {
     setAgentEdits((prev) => {
       const base: AgentEdit = prev[agentId] ?? {
@@ -773,7 +914,25 @@ export function Settings() {
       };
       return { ...prev, [agentId]: { ...base, ...updates } };
     });
-    setHasChanges(true);
+    setDirtyAgents((prev) => new Set(prev).add(agentId));
+  };
+
+  // Persist an agent's credentials explicitly (the full payload write includes
+  // every agent's model/base URL and any dirty API key). Clears all agent dirty
+  // flags on success because one full save persists them all; saveSettings itself
+  // refetches the agent list so a just-saved key flips the agent to configured.
+  const saveAgent = async (): Promise<void> => {
+    const ok = (await saveSettingsRef.current?.({ includeAgentKeys: true })) ?? false;
+    if (ok) setDirtyAgents(new Set());
+  };
+
+  // Map a form-level "section.key" back to its raw centaur.ini identifier so a
+  // completed save can release the store-level pending guard it set.
+  const rawKeyForFormKey = (formKey: string): string => {
+    const dot = formKey.indexOf('.');
+    const section = formKey.slice(0, dot);
+    const key = formKey.slice(dot + 1);
+    return rawKeysForFormUpdate(section, { [key]: null })[0];
   };
 
   // Delete an agent's stored API key. A blank key on save means "leave unchanged"
@@ -853,7 +1012,11 @@ export function Settings() {
     );
   };
 
-  const saveSettings = async (): Promise<boolean> => {
+  // Persist the whole form. ``includeAgentKeys`` is false for the automatic
+  // value-setting save so a half-typed API key or unsaved model is never written
+  // mid-edit; the explicit per-agent Save passes true to commit those secrets.
+  const saveSettings = async (opts?: { includeAgentKeys?: boolean }): Promise<boolean> => {
+    const includeAgentKeys = opts?.includeAgentKeys !== false;
     setSaving(true);
     try {
       const payload = {
@@ -861,7 +1024,7 @@ export function Settings() {
         PlayerTwo: formSettings.player2,
         game: {
           ...formSettings.game,
-          ...buildAgentKeyWrites(),
+          ...(includeAgentKeys ? buildAgentKeyWrites() : {}),
           time_control: parseInt(formSettings.game.time_control),
         },
         // username is a read-only cached field (populated by the board on
@@ -903,7 +1066,6 @@ export function Settings() {
       }
       
       setOriginalSettings(formSettings);
-      setHasChanges(false);
       // Refresh agents so a newly saved API key flips the agent to configured
       // right away -- the Game tab's Coach/Agent controls read that flag, and it
       // is not carried in /api/settings (keys are write-only). Without this the
@@ -918,36 +1080,14 @@ export function Settings() {
     }
   };
 
-  const saveAndApply = async () => {
-    // Enforce the mandatory-agent rule regardless of entry point (button click or a
-    // post-login retry): never persist an enabled coach with no configured agent.
-    if (coachAgentRequirementUnmet()) return;
-    const saved = await saveSettings();
-    if (!saved) {
-      // saveSettings will have shown login dialog if needed
-      // Set pending action so we apply after successful login
-      if (pendingAction === 'save') {
-        setPendingAction('apply');
-      }
-      return;
-    }
-    
-    try {
-      const response = await apiFetch('/api/settings/apply', { 
-        method: 'POST',
-        requiresAuth: true,
-      });
-      
-      if (response.status === 401) {
-        setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
-        setPendingAction('apply');
-        setLoginDialogOpen(true);
-      }
-    } catch (e) {
-      console.error('Failed to apply settings:', e);
-    }
-  };
-  
+  // Keep the auto-save's refs pointing at the latest closures/state. Synced in an
+  // effect (never mutated during render) so the debounced save and per-agent Save,
+  // which run outside render, always see the current form and coach requirement.
+  useEffect(() => {
+    saveSettingsRef.current = saveSettings;
+    coachUnmetRef.current = coachAgentRequirementUnmet();
+  });
+
   // Handle successful login - retry the pending action
   const handleLoginSuccess = async () => {
     setLoginDialogOpen(false);
@@ -975,15 +1115,7 @@ export function Settings() {
     if (pendingAction === 'save') {
       setPendingAction(null);
       await saveSettings();
-    } else if (pendingAction === 'apply') {
-      setPendingAction(null);
-      await saveAndApply();
     }
-  };
-
-  const discardChanges = () => {
-    setFormSettings(originalSettings);
-    setHasChanges(false);
   };
 
   // Refresh the full engine list and the installed-engine subset used by the
@@ -2139,6 +2271,23 @@ export function Settings() {
                         />
                       </FormRow>
                     )}
+
+                    {/* Agent credentials are write-only secrets, so unlike value
+                        settings they are not auto-saved on keystroke; this explicit
+                        Save commits the key/model/base URL once the user is done. */}
+                    {dirtyAgents.has(agent.id) && (
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.5em' }}>
+                        <Button
+                          variant="success"
+                          disabled={saving}
+                          onClick={() => {
+                            void saveAgent();
+                          }}
+                        >
+                          {saving ? 'Saving\u2026' : 'Save'}
+                        </Button>
+                      </div>
+                    )}
                   </Card>
                 );
               })
@@ -2428,24 +2577,14 @@ export function Settings() {
         {activeTab === 'licenses' && <Licenses />}
       </main>
 
-      {/* Apply Settings Bar */}
-      {hasChanges && (
-        <div className="apply-settings-bar">
-          <span className="changes-text">
-            {coachAgentMissing
-              ? 'Select an agent for the coach, or set the coach to Disabled, to save.'
-              : 'Unsaved changes'}
-          </span>
-          <div className="apply-settings-buttons">
-            <Button variant="secondary" onClick={discardChanges}>Discard</Button>
-            <Button
-              variant="success"
-              onClick={saveAndApply}
-              disabled={saving || coachAgentMissing}
-            >
-              {saving ? 'Saving...' : 'Save & Apply'}
-            </Button>
-          </div>
+      {/* Auto-save indicator. Value settings save automatically on change (no
+          Save button); this transient status confirms the write reached the
+          board. A failure surfaces here rather than silently dropping the edit. */}
+      {saveState !== 'idle' && (
+        <div className={`save-indicator save-indicator-${saveState}`} role="status" aria-live="polite">
+          {saveState === 'saving' && 'Saving\u2026'}
+          {saveState === 'saved' && 'Saved'}
+          {saveState === 'error' && 'Could not save. Check your connection and try again.'}
         </div>
       )}
       </div>

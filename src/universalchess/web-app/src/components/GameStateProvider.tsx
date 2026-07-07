@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useGameStore } from '../stores/gameStore';
+import { useSettingsStore } from '../stores/settingsStore';
 import type { GameState } from '../types/game';
 import { MoveBanner } from './MoveBanner';
 import { buildApiUrl } from '../utils/api';
@@ -19,6 +20,13 @@ export function GameStateProvider({ children }: { children: React.ReactNode }) {
   const { setGameState, setConnectionStatus, setBattery, setClock } = useGameStore();
   const { toast, showToast, hideToast } = useGameStore();
   const location = useLocation();
+
+  // Seed the shared settings store once on mount so every screen (including ones
+  // that never open Settings, e.g. LiveBoard reading notation/clock preset) has
+  // settings available and stays live via the settings_changed handler below.
+  useEffect(() => {
+    void useSettingsStore.getState().load();
+  }, []);
 
   // Update ref when location changes
   isOnLiveBoardRef.current = location.pathname === '/';
@@ -106,6 +114,16 @@ export function GameStateProvider({ children }: { children: React.ReactNode }) {
               timed_mode: Boolean(data.timed_mode),
               synced_at: data.synced_at ?? null,
             });
+            return;
+          }
+          // A settings change on the board or in another browser tab arrives as
+          // a payload-less settings_changed event. Re-pull /api/settings into the
+          // shared store so every screen (Settings form, notation, clock preset)
+          // reflects it live. This is the single place the whole app consumes the
+          // event -- individual pages read the store instead of opening their own
+          // EventSource.
+          if (data.type === 'settings_changed') {
+            void useSettingsStore.getState().refresh();
             return;
           }
           if (data.type && data.type !== 'game_state') {

@@ -1,44 +1,25 @@
-import { useEffect, useState } from 'react';
-import { apiFetch } from '../utils/api';
-import { asNotation, DEFAULT_NOTATION, type Notation } from '../utils/notation';
+import { useEffect } from 'react';
+import { asNotation, type Notation } from '../utils/notation';
+import { useSettingsStore } from '../stores/settingsStore';
 
 /**
  * Read the shared `game.notation` setting for the move-history views.
  *
- * The setting is persisted board-side in centaur.ini and exposed read-only via
- * `/api/settings`; there is no dedicated SSE event for it, so this hook fetches
- * on mount and re-reads when the window regains focus (covers the common case of
- * changing the setting in another tab/the board, then returning to a live view).
- * Falls back to the product default (figurine) on any error or absent value.
+ * The value comes from the app-wide settings store, so it updates live whenever
+ * the store refreshes -- which happens on a `settings_changed` SSE event pushed
+ * when notation is changed on the board or in another browser tab. No window
+ * focus or per-hook fetch is needed. Falls back to the product default
+ * (figurine) on any absent/unrecognised value.
  */
 export function useNotation(): Notation {
-  const [notation, setNotation] = useState<Notation>(DEFAULT_NOTATION);
+  const load = useSettingsStore((s) => s.load);
+  const notationValue = useSettingsStore((s) => s.raw?.game?.notation);
 
+  // Ensure the store is seeded even if this hook mounts before anything else
+  // triggered a load; load() is idempotent (a no-op once loaded).
   useEffect(() => {
-    let cancelled = false;
+    void load();
+  }, [load]);
 
-    const load = () => {
-      apiFetch('/api/settings')
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          if (cancelled || !data) return;
-          setNotation(asNotation(data?.game?.notation));
-        })
-        .catch(() => {
-          // Keep the current/default notation; a settings fetch failure must not
-          // break the move-history rendering.
-        });
-    };
-
-    load();
-
-    const onFocus = () => load();
-    window.addEventListener('focus', onFocus);
-    return () => {
-      cancelled = true;
-      window.removeEventListener('focus', onFocus);
-    };
-  }, []);
-
-  return notation;
+  return asNotation(notationValue);
 }

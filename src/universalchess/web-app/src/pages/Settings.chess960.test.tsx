@@ -137,14 +137,14 @@ describe('Settings Chess960 toggle', () => {
   });
 
   it('includes chess960 in the save payload after toggling on', async () => {
-    // Toggling on and saving must write game.chess960 true; dropping it from the
-    // payload would make the web toggle inert on the board.
+    // Value settings auto-save on change (no Save button): toggling on must write
+    // game.chess960 true in the debounced POST. Dropping it from the payload would
+    // make the web toggle inert on the board; losing the auto-save would leave
+    // lastPostBody null.
     mockFetch('');
     renderSettings();
     const toggle = await findChess960Switch();
     fireEvent.click(toggle);
-    const save = screen.getByRole('button', { name: /save/i });
-    fireEvent.click(save);
     await waitFor(() => expect(lastPostBody).not.toBeNull());
     const game = (lastPostBody as Record<string, Record<string, unknown>>).game;
     expect(game.chess960).toBe(true);

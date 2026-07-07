@@ -167,9 +167,10 @@ function renderSettings(initialTab: string) {
 }
 
 describe('Settings agent list refresh after saving an API key', () => {
-  it('refetches /api/agents after a save so the newly saved key is reflected', async () => {
-    // Regression: the agents effect was keyed only on coach_provider, which a
-    // key save does not change. Failure manifests as agentsGetCount() staying at
+  it('refetches /api/agents after the explicit agent Save so the new key is reflected', async () => {
+    // Agent secrets are not auto-saved; each dirty agent card shows an explicit
+    // Save. Regression: the agents effect was keyed only on coach_provider, which
+    // a key save does not change. Failure manifests as agentsGetCount() staying at
     // 1 (the mount fetch) after Save, so the waitFor below times out.
     const user = userEvent.setup();
     renderSettings('agents');
@@ -178,13 +179,14 @@ describe('Settings agent list refresh after saving an API key', () => {
     expect(agentsGetCount()).toBe(1); // fetched once on mount
 
     await user.type(keyInput, 'sk-test-123');
-    await user.click(await screen.findByRole('button', { name: /save & apply/i }));
+    // Typing a key marks the agent dirty and reveals its Save button.
+    await user.click(await screen.findByRole('button', { name: /^save$/i }));
 
     // The fix refetches /api/agents inside saveSettings after the POST succeeds.
     await waitFor(() => expect(agentsGetCount()).toBeGreaterThan(1));
 
     // The save must carry the namespaced key the backend expects; a regression in
-    // buildAgentKeyWrites would omit it and the agent would never configure.
+    // buildAgentKeyWrites (or in includeAgentKeys gating) would omit it.
     expect(lastSettingsPost?.game?.coach_api_key_openai).toBe('sk-test-123');
   });
 
@@ -201,10 +203,10 @@ describe('Settings agent list refresh after saving an API key', () => {
     expect(await screen.findByText(/Coaching is disabled/i)).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'OpenAI' })).not.toBeInTheDocument();
 
-    // Switch to Agents (same mounted component), enter a key, and save.
+    // Switch to Agents (same mounted component), enter a key, and save it.
     await user.click(screen.getByRole('button', { name: 'Agents' }));
     await user.type(await screen.findByPlaceholderText('Enter API key'), 'sk-test-123');
-    await user.click(await screen.findByRole('button', { name: /save & apply/i }));
+    await user.click(await screen.findByRole('button', { name: /^save$/i }));
 
     // Back to the Game tab: the agent is now selectable and the notice is gone,
     // all without remounting the page.
@@ -217,49 +219,52 @@ describe('Settings agent list refresh after saving an API key', () => {
 
   it('does not change the coach setting when an API key is added', async () => {
     // Requirement: entering an agent key must not modify the coach persona. The
-    // masking bug made the coach appear to flip from Disabled to Auto on key
-    // entry. The coach starts Disabled, so the save that persists the key must
-    // still carry coach_id 'off' -- a regression re-enabling the coach would post
-    // 'auto' here.
+    // coach starts Disabled, so the save that persists the key must still carry
+    // coach_id 'off' -- a regression re-enabling the coach would post 'auto' here.
     const user = userEvent.setup();
     renderSettings('agents');
 
     await user.type(await screen.findByPlaceholderText('Enter API key'), 'sk-test-123');
-    await user.click(await screen.findByRole('button', { name: /save & apply/i }));
+    await user.click(await screen.findByRole('button', { name: /^save$/i }));
 
     await waitFor(() => expect(lastSettingsPost).not.toBeNull());
     expect(lastSettingsPost?.game?.coach_id).toBe('off');
   });
 
-  it('blocks saving an enabled coach until an agent is selected', async () => {
-    // Requirement: any coach other than Disabled requires a selected agent. With no
-    // agent configured, enabling the coach must disable Save (a regression that
-    // dropped the rule would leave Save enabled and persist an agentless coach that
-    // silently never runs).
+  it('does not auto-persist an enabled coach until an agent is selected', async () => {
+    // Requirement: any coach other than Disabled requires a selected, configured
+    // agent. With none configured, selecting a coach must NOT auto-save (the
+    // debounced save is blocked) and must surface the inline requirement message.
+    // A regression dropping the rule would POST an agentless coach that silently
+    // never runs.
     const user = userEvent.setup();
     renderSettings('game');
 
     const autoOption = await screen.findByRole('option', { name: /Auto \(match opponent\)/ });
-    const coachSelect = autoOption.closest('select') as HTMLSelectElement;
-    await user.selectOptions(coachSelect, 'auto');
+    await user.selectOptions(autoOption.closest('select') as HTMLSelectElement, 'auto');
 
-    const saveButton = await screen.findByRole('button', { name: /save & apply/i });
-    expect(saveButton).toBeDisabled();
+    // The inline requirement message appears next to the coach selector...
     expect(
-      screen.getByText(/Select an agent for the coach, or set the coach to Disabled/i)
+      await screen.findByText(/An agent is required when coaching is enabled/i)
     ).toBeInTheDocument();
+
+    // ...and no save carrying the enabled coach is issued (give the debounce
+    // window time to have fired had the guard been missing).
+    await new Promise((r) => setTimeout(r, 600));
+    expect(lastSettingsPost?.game?.coach_id).not.toBe('auto');
   });
 
-  it('saves an enabled coach once a keyed agent is selected as its provider', async () => {
-    // End-to-end of the mandatory-agent rule: after adding a key (pending, unsaved)
-    // and selecting that agent as the coach's provider, Save unblocks and persists
-    // the key, the enabled coach, and the chosen provider together. This also guards
-    // the deadlock fix -- a board whose coach is enabled but agentless must be able
-    // to configure and select an agent in a single save.
+  it('auto-saves an enabled coach once a keyed agent is selected as its provider', async () => {
+    // End-to-end of the mandatory-agent rule under auto-save: save the agent key
+    // (explicit), then selecting that agent as the coach's provider unblocks the
+    // debounced save, persisting the enabled coach and chosen provider.
     const user = userEvent.setup();
     renderSettings('agents');
 
     await user.type(await screen.findByPlaceholderText('Enter API key'), 'sk-test-123');
+    await user.click(await screen.findByRole('button', { name: /^save$/i }));
+    // Wait until the agent is configured server-side (its key stored).
+    await waitFor(() => expect(apiKeyStored).toBe(true));
 
     await user.click(screen.getByRole('button', { name: 'Game' }));
 
@@ -269,13 +274,7 @@ describe('Settings agent list refresh after saving an API key', () => {
     const agentOption = await screen.findByRole('option', { name: 'OpenAI' });
     await user.selectOptions(agentOption.closest('select') as HTMLSelectElement, 'openai');
 
-    const saveButton = await screen.findByRole('button', { name: /save & apply/i });
-    await waitFor(() => expect(saveButton).not.toBeDisabled());
-    await user.click(saveButton);
-
-    await waitFor(() => expect(lastSettingsPost).not.toBeNull());
+    await waitFor(() => expect(lastSettingsPost?.game?.coach_provider).toBe('openai'));
     expect(lastSettingsPost?.game?.coach_id).toBe('auto');
-    expect(lastSettingsPost?.game?.coach_provider).toBe('openai');
-    expect(lastSettingsPost?.game?.coach_api_key_openai).toBe('sk-test-123');
   });
 });
