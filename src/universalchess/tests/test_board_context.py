@@ -154,6 +154,85 @@ def test_select_node_opens_option_list_and_persists_choice():
     assert mm.shown[0][0].label == "Time\nUntimed"
 
 
+def test_select_opens_with_cursor_on_current_value():
+    """Opening a select list starts the highlight on the stored value's row.
+
+    Why this test exists: entering a value menu (e.g. Base Minutes / Time
+    Control / Notation) must pre-position the cursor on the currently-configured
+    option so the user sees what is set and can confirm it, instead of always
+    landing on the first row. This is the regression the fix addresses:
+    ``_run_select`` marked the active option with a radio/star icon but always
+    passed ``initial_index=0``, so the highlight and the marked option disagreed.
+
+    How the failure manifests: ``initial_index`` is 0 (first row) rather than the
+    index of the row whose value equals the stored setting.
+    """
+    state = {"game": {"time_control": 10}}
+    options = {
+        "time_control": [
+            {"value": "0", "label": "Untimed"},
+            {"value": "5", "label": "5 min (Blitz)"},
+            {"value": "10", "label": "10 min (Rapid)"},
+        ]
+    }
+    ctx = BoardMenuContext(option_set_fn=lambda name: options[name])
+    ctx.register_store(
+        "game",
+        lambda k: state["game"][k],
+        lambda k, v: state["game"].__setitem__(k, v),
+    )
+    select_node = {
+        "id": "field.game.time_control",
+        "key": "field.game.time_control",
+        "type": "select",
+        "label": "Base Minutes",
+        "bind": {"store": "game", "key": "time_control"},
+        "optionSet": "time_control",
+    }
+    catalog = _FakeCatalog({"c": ["tc"]}, {"tc": select_node})
+    # Open the select, back out of the inner list unchanged, then exit the parent.
+    mm = _FakeMenuManager(["field.game.time_control", "BACK", "BACK"])
+
+    run_engine_menu("c", ctx, mm, catalog=catalog)
+
+    # The inner option list opened with the cursor on the stored value: game
+    # time_control is int 10, matched against the string option value "10" at
+    # index 2 (the str() coercion in _run_select bridges the int/str gap).
+    assert mm.initial_index == 2
+
+
+def test_select_with_unknown_current_value_defaults_to_first_row():
+    """A stored value not present in the options falls back to cursor row 0.
+
+    Why this test exists: providers/option sets can change (an engine is
+    uninstalled, a preset removed) leaving a stored value with no matching row.
+    The open must not crash or point past the list; it degrades to the first row.
+    A regression that indexed by a not-found position would raise or mis-scroll.
+    """
+    state = {"game": {"time_control": 999}}
+    options = {"time_control": [{"value": "0", "label": "Untimed"}, {"value": "5", "label": "5 min"}]}
+    ctx = BoardMenuContext(option_set_fn=lambda name: options[name])
+    ctx.register_store(
+        "game",
+        lambda k: state["game"][k],
+        lambda k, v: state["game"].__setitem__(k, v),
+    )
+    select_node = {
+        "id": "field.game.time_control",
+        "key": "field.game.time_control",
+        "type": "select",
+        "label": "Base Minutes",
+        "bind": {"store": "game", "key": "time_control"},
+        "optionSet": "time_control",
+    }
+    catalog = _FakeCatalog({"c": ["tc"]}, {"tc": select_node})
+    mm = _FakeMenuManager(["field.game.time_control", "BACK", "BACK"])
+
+    run_engine_menu("c", ctx, mm, catalog=catalog)
+
+    assert mm.initial_index == 0
+
+
 def test_provider_backed_select_lists_runtime_options_marks_current_and_persists():
     """A select sourced from a provider opens the runtime list, marks the current
     value with a leading "* ", and writes the chosen key to the bound store.

@@ -18,7 +18,7 @@ shared catalog.
 from typing import Any, Callable, Dict, List, Optional
 
 from universalchess.epaper.icon_menu import IconMenuEntry
-from universalchess.managers.menu import MenuResult, MenuSelection
+from universalchess.managers.menu import MenuResult, MenuSelection, find_entry_index
 from universalchess.menus.catalog.entry_builder import node_to_entry
 from universalchess.menus.catalog.loader import get_catalog
 from universalchess.menus.engine import MenuRow, build_rows, dispatch, dispatch_row
@@ -227,7 +227,14 @@ def _run_select(outcome, ctx, menu_manager) -> Optional[MenuSelection]:
         ctx.set(outcome.store, outcome.key, selection.key)
         return MenuSelection.from_key("BACK")  # one pick, then return to parent
 
-    return menu_manager.run_menu_loop(build_entries, handle_selection, initial_index=0)
+    # Open with the cursor on the currently-stored value's row (entries are keyed
+    # by str(value); the store value is str()-coerced the same way in
+    # build_entries) so the highlight agrees with the radio/star marking instead
+    # of always starting at row 0. find_entry_index falls back to 0 when the
+    # stored value is not among the options (e.g. an uninstalled engine / removed
+    # preset), so a stale value degrades to the first row rather than crashing.
+    initial_index = find_entry_index(build_entries(), str(ctx.get(outcome.store, outcome.key)))
+    return menu_manager.run_menu_loop(build_entries, handle_selection, initial_index=initial_index)
 
 
 def render_container(
