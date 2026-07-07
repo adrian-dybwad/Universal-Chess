@@ -2181,6 +2181,19 @@ def _start_game_mode(
     if chess960_start_fen is not None:
         from universalchess.state import get_chess_game
         get_chess_game().configure_start(chess960_start_fen, chess960=True)
+
+    # Clear stale evaluation history/score from any prior game. AnalysisState is a
+    # process-wide singleton that survives a game teardown (cleanup only stops the
+    # worker, it does not clear the state), and the freshly built analysis widget
+    # subscribes to that same singleton. The EVENT_NEW_GAME reset only fires on a
+    # physical board reset, so a game started programmatically here (e.g. the
+    # Players menu "Start NEW Game", a positions game, or resume) would otherwise
+    # display the previous game's eval graph until the first move. Resetting after
+    # the start position is established notifies the already-subscribed widget with
+    # cleared state; the resume path repopulates it afterwards via restore_history.
+    from universalchess.services.analysis import get_analysis_service
+    get_analysis_service().reset()
+
     game_manager.set_led_callbacks(led_callbacks)
     # Drive the e-paper setup status / board preview during Chessnut puzzle setup.
     game_manager.set_setup_display_handler(display_manager.on_setup_display)

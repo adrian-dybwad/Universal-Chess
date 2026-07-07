@@ -233,9 +233,9 @@
       "id": "players.start",
       "type": "action",
       "action": "start_game",
-      "label": "Start\nGame",
+      "label": "Start NEW\nGame",
       "icon": "play",
-      "help": "Start a game with the current player configuration.",
+      "help": "Start a new game with the current player configuration. Ends any game currently in progress.",
       "platforms": ["board"],
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },
