@@ -407,7 +407,14 @@ class MenuManager:
                 # Wait for selection (widget is already activated)
                 log.info("MenuManager: Waiting for selection...")
                 menu_widget._selection_event.wait()
-                result_key = menu_widget._selection_result or "BACK"
+                # A selected entry key may legitimately be "" (e.g. the Basic
+                # time-control preset). Only an absent result (None) means no
+                # selection was made, so distinguish None from "" rather than
+                # coercing every falsy value to BACK -- otherwise picking Basic
+                # would back out and never persist the value.
+                result_key = menu_widget._selection_result
+                if result_key is None:
+                    result_key = "BACK"
                 log.info(f"MenuManager: Selection result='{result_key}'")
             finally:
                 self._menu_loading = False

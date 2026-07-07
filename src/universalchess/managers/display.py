@@ -28,6 +28,7 @@ from universalchess.services import get_chess_clock_service
 from universalchess.services.engine_registry import get_engine_registry, EngineHandle
 from universalchess.state import get_chess_clock as get_clock_state
 from universalchess.state import get_chess_game
+from universalchess.state.time_control import TimeControl
 from universalchess.managers.game_layout import compute_clock_analysis_layout
 from universalchess.utils.chess_notation import format_move
 from universalchess.epaper.text_scale import DEFAULT_TEXT_SIZE, normalize_text_size
@@ -118,7 +119,8 @@ class DisplayManager:
                  show_clock: bool = True,
                  show_graph: bool = True, analysis_mode: bool = True,
                  led_from_to_hint_callback: callable = None,
-                 led_off_callback: callable = None):
+                 led_off_callback: callable = None,
+                 time_control_spec: TimeControl = None):
         """Initialize the display controller.
         
         Args:
@@ -149,6 +151,15 @@ class DisplayManager:
         self._analysis_mode = analysis_mode  # Whether to create analysis engine/widget at all
         self._on_exit = on_exit
         self._time_control = time_control  # Minutes per player (0 = disabled)
+        # Full time-control spec (increment / delay / stages / asymmetric). When
+        # not provided by the caller, fall back to a symmetric sudden-death
+        # control derived from the legacy minutes so existing callers/tests keep
+        # working unchanged.
+        self._time_control_spec = (
+            time_control_spec
+            if time_control_spec is not None
+            else TimeControl.sudden_death_minutes(time_control)
+        )
         
         # Game state - authoritative source for position
         # Set initial position if provided, otherwise use game state's current position
@@ -221,7 +232,7 @@ class DisplayManager:
         # Get ChessClock singleton for this game
         # The clock persists across widget creation/destruction
         self._clock = get_chess_clock_service()
-        self._clock.configure(time_control_minutes=time_control)
+        self._clock.configure(self._time_control_spec)
         
         # Initialize widgets first (fast, non-blocking)
         self._init_widgets()
@@ -394,19 +405,21 @@ class DisplayManager:
         self._clock_y = clock_y
         self._normal_clock_height = clock_height
         self._display_bottom = analysis_y + analysis_height
-        self._compact_clock_height = 52 if self._time_control > 0 else 24
+        self._compact_clock_height = 52 if self._time_control_spec.is_timed else 24
         
         # Create clock widget directly below board
-        # Shows times if time_control > 0, otherwise shows turn indicator only
+        # Shows times if timed, otherwise shows turn indicator only
         # flip matches board orientation so clock top matches board top
         # Hand-brain hints are shown in the clock widget via set_brain_hint()
-        timed_mode = self._time_control > 0
+        timed_mode = self._time_control_spec.is_timed
         
         # Set initial times only if clock hasn't been started yet
-        # This preserves times when recreating widgets (e.g., after menu exit)
-        if self._time_control > 0 and not self._clock.is_running:
-            initial_seconds = self._time_control * 60
-            self._clock.set_times(initial_seconds, initial_seconds)
+        # This preserves times when recreating widgets (e.g., after menu exit).
+        # Uses per-side initial seconds so asymmetric (time-odds) controls seed
+        # each side correctly.
+        if timed_mode and not self._clock.is_running:
+            self._clock.set_times(self._time_control_spec.initial_seconds("white"),
+                                  self._time_control_spec.initial_seconds("black"))
         
         # The clock's tick drives the display heartbeat (flush_now) so the panel
         # refreshes on a steady once-per-second cadence while a timed game runs;
@@ -829,7 +842,7 @@ class DisplayManager:
         """
         if not board.display_manager:
             return
-        counting = (self._time_control > 0
+        counting = (self._time_control_spec.is_timed
                     and self._clock.is_running
                     and not self._clock.is_paused)
         board.display_manager.set_defer_to_clock(counting)
@@ -845,7 +858,7 @@ class DisplayManager:
         from manual clock switching. The ChessClockWidget observes game state
         directly for turn changes.
         """
-        if self._time_control > 0:
+        if self._time_control_spec.is_timed:
             # Timed mode: start the countdown
             self._clock.start()
             self._sync_clock_refresh_mode()
@@ -908,7 +921,17 @@ class DisplayManager:
         """
         self._clock.reset()
         self._sync_clock_refresh_mode()
-        log.info(f"[DisplayManager] Clock reset to {self._time_control} min per player")
+        log.info(f"[DisplayManager] Clock reset: {self._time_control_spec.describe()}")
+
+    def apply_clock_move(self) -> None:
+        """Apply time-control effects for any moves completed on the clock.
+
+        Delegates to the clock service, which reads the game's move stack and
+        credits increment / Bronstein giveback / stage time for each newly
+        completed move. Safe to call on every turn event: the service is
+        idempotent against repeated calls.
+        """
+        self._clock.notify_move_completed()
     
     def suspend(self) -> None:
         """Suspend the running game so the full menu can take over the screen.

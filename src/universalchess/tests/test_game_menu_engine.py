@@ -397,20 +397,22 @@ def test_time_control_row_label_and_icon_track_value():
 
 
 def test_enabled_toggle_icon_and_persistence():
-    """The Live Analysis toggle shows timer_checked/timer and toggling persists it.
+    """The Live Analysis toggle shows checkbox on/off and toggling persists it.
 
     Why this test exists: the toggle must render the on/off icon and actually write
-    analysis_mode through the store. How a regression manifests: the icon desyncs
-    from the flag, or selecting the row no longer persists the change.
+    analysis_mode through the store. It is a boolean, so it uses the checkbox glyph
+    (not the clock 'timer' icon, which is reserved for actual time controls). How a
+    regression manifests: the icon desyncs from the flag, or selecting the row no
+    longer persists the change.
     """
     catalog = load_catalog()
     node = catalog.get_node("analysis.enabled")
 
     on_ctx = _game_ctx(mode=True)
-    assert resolve_icon(node, on_ctx) == "timer_checked"
+    assert resolve_icon(node, on_ctx) == "checkbox_checked"
 
     off_ctx = _game_ctx(mode=False)
-    assert resolve_icon(node, off_ctx) == "timer"
+    assert resolve_icon(node, off_ctx) == "checkbox_empty"
 
     dispatch(node, off_ctx)
     assert off_ctx._state["mode"] is True

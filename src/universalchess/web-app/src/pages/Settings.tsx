@@ -131,6 +131,19 @@ interface FormSettings {
   player2: PlayerSettings;
   game: {
     time_control: string;
+    // Enhanced clock configuration. ``time_control_preset`` is the primary
+    // control: a preset key, ``''`` (fall back to the legacy base-minutes
+    // ``time_control``), or ``'custom'`` (use the ``tc_custom_*`` builder below).
+    // Kept as strings because they are edited through catalog selects; the board
+    // (GameSettings) coerces them to the types build_time_control reads.
+    time_control_preset: string;
+    tc_custom_base_seconds: string;
+    tc_custom_increment_seconds: string;
+    tc_custom_delay_seconds: string;
+    tc_custom_delay_mode: string;
+    tc_custom_asymmetric: boolean;
+    tc_custom_black_base_seconds: string;
+    tc_custom_black_increment_seconds: string;
     analysis_mode: boolean;
     analysis_engine: string;
     ponder: boolean;
@@ -175,6 +188,14 @@ const defaultFormSettings: FormSettings = {
   player2: { type: 'engine', name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal', think_time: 5, account: '' },
   game: {
     time_control: '0',
+    time_control_preset: '',
+    tc_custom_base_seconds: '300',
+    tc_custom_increment_seconds: '0',
+    tc_custom_delay_seconds: '0',
+    tc_custom_delay_mode: 'none',
+    tc_custom_asymmetric: false,
+    tc_custom_black_base_seconds: '300',
+    tc_custom_black_increment_seconds: '0',
     analysis_mode: true,
     analysis_engine: 'stockfish',
     ponder: false,
@@ -275,6 +296,14 @@ function parseRawSettings(data: SettingsData): FormSettings {
     },
     game: {
       time_control: data.game?.time_control || '0',
+      time_control_preset: data.game?.time_control_preset || '',
+      tc_custom_base_seconds: data.game?.tc_custom_base_seconds || '300',
+      tc_custom_increment_seconds: data.game?.tc_custom_increment_seconds || '0',
+      tc_custom_delay_seconds: data.game?.tc_custom_delay_seconds || '0',
+      tc_custom_delay_mode: data.game?.tc_custom_delay_mode || 'none',
+      tc_custom_asymmetric: parseConfigBool(data.game?.tc_custom_asymmetric, false),
+      tc_custom_black_base_seconds: data.game?.tc_custom_black_base_seconds || '300',
+      tc_custom_black_increment_seconds: data.game?.tc_custom_black_increment_seconds || '0',
       analysis_mode: parseConfigBool(data.game?.analysis_mode, true),
       analysis_engine: data.game?.analysis_engine || 'stockfish',
       ponder: parseConfigBool(data.game?.ponder, false),
@@ -1359,6 +1388,21 @@ export function Settings() {
   const playerTypeOptions = optionSet('player_type');
   const handBrainModeOptions = optionSet('hand_brain_mode');
   const timeControlOptions = optionSet('time_control');
+  // Enhanced clock option lists. The preset list is generated server-side from
+  // the Python preset registry (injected into /api/menu-schema) so it stays in
+  // lockstep with the board; the custom-builder lists are authored option sets
+  // shared with the board's Custom Clock submenu.
+  const timeControlPresetOptions = optionSet('time_control_presets');
+  // Full rules sentence for the selected preset, shown beneath the selector so
+  // the dropdown labels can stay short (just the preset name). Falls back to the
+  // Basic entry's description when no value matches.
+  const selectedPresetDescription =
+    timeControlPresetOptions.find((o) => o.value === formSettings.game.time_control_preset)
+      ?.description ?? '';
+  const tcBaseOptions = optionSet('tc_base');
+  const tcIncrementOptions = optionSet('tc_increment');
+  const tcDelayOptions = optionSet('tc_delay');
+  const tcDelayModeOptions = optionSet('tc_delay_mode');
   const sleepTimerOptions = optionSet('sleep_timer');
   const notationOptions = optionSet('notation');
   const textSizeOptions = optionSet('text_size');
@@ -1694,14 +1738,84 @@ export function Settings() {
                 uses). Analysis Engine is an `action` on the board but renders as a
                 select on the web via the node's webType, with options resolved
                 from the `installed_engines` provider. */}
+            {/* Time Control: the preset selector is primary and mirrors the
+                board's Time Control submenu. A named preset defines the whole
+                clock; "Basic" ('' preset) falls back to the legacy base-minutes
+                select; "Custom" reveals the custom-clock builder. The gating
+                below follows build_time_control's precedence so the web only
+                shows the control that actually takes effect. */}
             <Card className="mb-6">
-              <CardHeader title="Time Control" />
+              <CardHeader title="Chess Clock" />
+              {/* Suppress the node's static label-side hint: the full rules of
+                  the selected preset are shown in the description block below, so
+                  a second hint beside the dropdown would just crowd the row. */}
               <CatalogField
-                node={fieldById(catalog, 'settings.timecontrol')!}
-                value={formSettings.game.time_control}
-                options={timeControlOptions}
-                onChange={(v) => updateFormSettings('game', { time_control: String(v) })}
+                node={fieldById(catalog, 'settings.timecontrol.preset')!}
+                value={formSettings.game.time_control_preset}
+                options={timeControlPresetOptions}
+                help=""
+                onChange={(v) => updateFormSettings('game', { time_control_preset: String(v) })}
               />
+              {selectedPresetDescription && (
+                <p className="tc-preset-description">{selectedPresetDescription}</p>
+              )}
+              {formSettings.game.time_control_preset === '' && (
+                <CatalogField
+                  node={fieldById(catalog, 'settings.timecontrol')!}
+                  value={formSettings.game.time_control}
+                  options={timeControlOptions}
+                  onChange={(v) => updateFormSettings('game', { time_control: String(v) })}
+                />
+              )}
+              {formSettings.game.time_control_preset === 'custom' && (
+                <>
+                  <CatalogField
+                    node={fieldById(catalog, 'timecontrol.custom.base')!}
+                    value={formSettings.game.tc_custom_base_seconds}
+                    options={tcBaseOptions}
+                    onChange={(v) => updateFormSettings('game', { tc_custom_base_seconds: String(v) })}
+                  />
+                  <CatalogField
+                    node={fieldById(catalog, 'timecontrol.custom.increment')!}
+                    value={formSettings.game.tc_custom_increment_seconds}
+                    options={tcIncrementOptions}
+                    onChange={(v) => updateFormSettings('game', { tc_custom_increment_seconds: String(v) })}
+                  />
+                  <CatalogField
+                    node={fieldById(catalog, 'timecontrol.custom.delay')!}
+                    value={formSettings.game.tc_custom_delay_seconds}
+                    options={tcDelayOptions}
+                    onChange={(v) => updateFormSettings('game', { tc_custom_delay_seconds: String(v) })}
+                  />
+                  <CatalogField
+                    node={fieldById(catalog, 'timecontrol.custom.mode')!}
+                    value={formSettings.game.tc_custom_delay_mode}
+                    options={tcDelayModeOptions}
+                    onChange={(v) => updateFormSettings('game', { tc_custom_delay_mode: String(v) })}
+                  />
+                  <CatalogField
+                    node={fieldById(catalog, 'timecontrol.custom.asymmetric')!}
+                    value={formSettings.game.tc_custom_asymmetric}
+                    onChange={(v) => updateFormSettings('game', { tc_custom_asymmetric: Boolean(v) })}
+                  />
+                  {formSettings.game.tc_custom_asymmetric && (
+                    <>
+                      <CatalogField
+                        node={fieldById(catalog, 'timecontrol.custom.black_base')!}
+                        value={formSettings.game.tc_custom_black_base_seconds}
+                        options={tcBaseOptions}
+                        onChange={(v) => updateFormSettings('game', { tc_custom_black_base_seconds: String(v) })}
+                      />
+                      <CatalogField
+                        node={fieldById(catalog, 'timecontrol.custom.black_increment')!}
+                        value={formSettings.game.tc_custom_black_increment_seconds}
+                        options={tcIncrementOptions}
+                        onChange={(v) => updateFormSettings('game', { tc_custom_black_increment_seconds: String(v) })}
+                      />
+                    </>
+                  )}
+                </>
+              )}
             </Card>
 
             <Card className="mb-6">

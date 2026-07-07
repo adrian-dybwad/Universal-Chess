@@ -16,7 +16,7 @@ export function GameStateProvider({ children }: { children: React.ReactNode }) {
   const lastGameIdRef = useRef<number | null>(null);
   const isInitializedRef = useRef(false);
   const isOnLiveBoardRef = useRef(false);
-  const { setGameState, setConnectionStatus, setBattery } = useGameStore();
+  const { setGameState, setConnectionStatus, setBattery, setClock } = useGameStore();
   const { toast, showToast, hideToast } = useGameStore();
   const location = useLocation();
 
@@ -91,6 +91,20 @@ export function GameStateProvider({ children }: { children: React.ReactNode }) {
               battery_level: data.battery_level ?? null,
               battery_percent: data.battery_percent ?? null,
               charger_connected: Boolean(data.charger_connected),
+            });
+            return;
+          }
+          // Live clock ticks feed the LiveBoard countdown, which interpolates
+          // the active side locally between these once-per-second snapshots.
+          if (data.type === 'clock_status') {
+            setClock({
+              white_time: data.white_time ?? null,
+              black_time: data.black_time ?? null,
+              active_color: data.active_color ?? null,
+              is_running: Boolean(data.is_running),
+              is_paused: Boolean(data.is_paused),
+              timed_mode: Boolean(data.timed_mode),
+              synced_at: data.synced_at ?? null,
             });
             return;
           }
@@ -183,7 +197,7 @@ export function GameStateProvider({ children }: { children: React.ReactNode }) {
         eventSourceRef.current = null;
       }
     };
-  }, [setGameState, setConnectionStatus, setBattery, showToast]);
+  }, [setGameState, setConnectionStatus, setBattery, setClock, showToast]);
 
   return (
     <>

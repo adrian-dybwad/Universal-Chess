@@ -108,6 +108,19 @@
   line-height: 1.4;
 }
 
+/* Full-width rules summary shown beneath the Time Control preset selector. It
+   updates with the selection so the chosen clock's behavior is explained in
+   full, keeping the dropdown labels short (just the preset name). */
+.tc-preset-description {
+  font-size: var(--text-sm);
+  color: var(--color-text-light);
+  line-height: 1.5;
+  padding: var(--space-3) var(--space-4);
+  margin-top: var(--space-3);
+  background: var(--color-gray-100);
+  border-radius: var(--radius-lg);
+}
+
 .form-help code {
   background: var(--color-gray-100);
   padding: 0.1rem 0.3rem;

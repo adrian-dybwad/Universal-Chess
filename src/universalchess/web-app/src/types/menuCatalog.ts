@@ -9,6 +9,10 @@
 export interface MenuOption {
   value: string;
   label: string;
+  /** Optional long-form description for this option, shown beneath the control
+   *  once selected (e.g. the full rules of a time-control preset). The dropdown
+   *  label stays short; this carries the detail. */
+  description?: string;
   /** Optional per-option icon (used by the board's option lists). */
   icon?: string;
   /** Optional per-option render font size in px (board option lists); lets an

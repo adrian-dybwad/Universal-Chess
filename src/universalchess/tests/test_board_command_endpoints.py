@@ -287,3 +287,119 @@ def test_setup_position_reports_board_not_running(client, monkeypatch):
     )
     assert resp.status_code == 503
     assert json.loads(resp.data)["success"] is False
+
+
+def test_board_move_forwards_make_move_command(client, monkeypatch):
+    """POST /api/board/move must forward a make_move command with the uci.
+
+    This is the happy path the interactive Board Control page relies on to play
+    a move from the browser; a wrong command name or dropped uci would leave the
+    game untouched. Asserts the exact command and params (lower-cased, trimmed)
+    handed to the board.
+    """
+    sent = []
+    monkeypatch.setattr(
+        "universalchess.services.game_broadcast.send_board_command",
+        lambda command, params=None: (
+            sent.append((command, params)) if command != "reset_inactivity" else None
+        )
+        or True,
+    )
+
+    resp = client.post(
+        "/api/board/move",
+        data=json.dumps({"move": " E2E4 "}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    assert json.loads(resp.data)["success"] is True
+    assert sent == [("make_move", {"uci": "e2e4"})]
+
+
+def test_board_move_forwards_promotion_uci(client, monkeypatch):
+    """A 5-char promotion uci must be forwarded intact.
+
+    Promotion moves carry a trailing piece letter (e.g. e7e8q). Dropping or
+    truncating it would promote to the wrong piece (or be rejected downstream),
+    so this asserts the full 5-character uci survives to the board command.
+    """
+    sent = []
+    monkeypatch.setattr(
+        "universalchess.services.game_broadcast.send_board_command",
+        lambda command, params=None: (
+            sent.append((command, params)) if command != "reset_inactivity" else None
+        )
+        or True,
+    )
+
+    resp = client.post(
+        "/api/board/move",
+        data=json.dumps({"move": "e7e8q"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    assert sent == [("make_move", {"uci": "e7e8q"})]
+
+
+def test_board_move_rejects_malformed_uci(client, monkeypatch):
+    """A malformed move string must be 400 and never reach the board.
+
+    The endpoint validates the uci shape server-side so garbage (wrong length,
+    bad files/ranks, illegal promotion piece) cannot be relayed as a board
+    command. The sender is patched to assert it is not called on rejection.
+    """
+    sent = []
+    monkeypatch.setattr(
+        "universalchess.services.game_broadcast.send_board_command",
+        lambda command, params=None: (
+            sent.append((command, params)) if command != "reset_inactivity" else None
+        )
+        or True,
+    )
+
+    for bad_move in ["", "e2", "e2e9", "x2e4", "e2e4k", "e2e4qq"]:
+        resp = client.post(
+            "/api/board/move",
+            data=json.dumps({"move": bad_move}),
+            content_type="application/json",
+        )
+        assert resp.status_code == 400, f"expected 400 for {bad_move!r}"
+    assert sent == []
+
+
+def test_board_move_requires_auth(monkeypatch):
+    """Unauthenticated move must be rejected with 401.
+
+    The endpoint mutates the live game, so it is auth-gated like the other
+    board-control endpoints. A fresh client without the auth bypass must get 401.
+    """
+    webapp.app.config.update(TESTING=True)
+    monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
+    unauth = webapp.app.test_client()
+    resp = unauth.post(
+        "/api/board/move",
+        data=json.dumps({"move": "e2e4"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 401
+
+
+def test_board_move_reports_board_not_running(client, monkeypatch):
+    """When the board is not listening, a move must report 503.
+
+    send_board_command returns False if the main process isn't running; the UI
+    needs a distinct failure (not a false success) so it can tell the user the
+    board is offline.
+    """
+    monkeypatch.setattr(
+        "universalchess.services.game_broadcast.send_board_command",
+        lambda command, params=None: False,
+    )
+
+    resp = client.post(
+        "/api/board/move",
+        data=json.dumps({"move": "e2e4"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 503
+    assert json.loads(resp.data)["success"] is False

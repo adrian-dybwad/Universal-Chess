@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { GameState, AnalysisResult, ConnectionStatus, BatteryStatus } from '../types/game';
+import type { GameState, AnalysisResult, ConnectionStatus, BatteryStatus, ClockStatus } from '../types/game';
 
 // Persist the board hostname so the browser tab title is device-prefixed on the
 // very first paint of every load after the first, instead of flashing the bare
@@ -24,6 +24,7 @@ interface GameStoreState {
   gameState: GameState | null;
   connectionStatus: ConnectionStatus;
   battery: BatteryStatus | null;
+  clock: ClockStatus | null;
   // The board's hostname (e.g. "dgt"), used to prefix the browser tab title so
   // multiple boards open in separate tabs are distinguishable. Null until read
   // from /api/system/stats.
@@ -36,6 +37,7 @@ interface GameStoreState {
   setGameState: (state: GameState) => void;
   setConnectionStatus: (status: ConnectionStatus) => void;
   setBattery: (battery: BatteryStatus) => void;
+  setClock: (clock: ClockStatus) => void;
   setDeviceName: (deviceName: string) => void;
   setAnalysis: (analysis: AnalysisResult) => void;
   addAnalysisToHistory: (analysis: AnalysisResult) => void;
@@ -49,6 +51,7 @@ export const useGameStore = create<GameStoreState>((set) => ({
   gameState: null,
   connectionStatus: 'disconnected',
   battery: null,
+  clock: null,
   deviceName: loadStoredDeviceName(),
   analysis: null,
   analysisHistory: [],
@@ -58,6 +61,7 @@ export const useGameStore = create<GameStoreState>((set) => ({
   setGameState: (gameState) => set({ gameState }),
   setConnectionStatus: (connectionStatus) => set({ connectionStatus }),
   setBattery: (battery) => set({ battery }),
+  setClock: (clock) => set({ clock }),
   setDeviceName: (deviceName) => {
     localStorage.setItem(DEVICE_NAME_KEY, deviceName);
     set({ deviceName });

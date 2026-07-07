@@ -173,3 +173,30 @@ export interface BatteryStatus {
   /** Whether the charger is connected. */
   charger_connected: boolean;
 }
+
+/**
+ * Live chess clock snapshot. Mirrors GET /api/game/clock and the board's
+ * `clock_status` SSE event. The clock counts down in the main process, which
+ * broadcasts on every tick and state change; the LiveBoard interpolates the
+ * active side locally between events using `synced_at`. Times are null and
+ * `timed_mode` is false until the board reports a reading (or for untimed games).
+ */
+export interface ClockStatus {
+  /** White's remaining whole seconds, or null if unknown. */
+  white_time: number | null;
+  /** Black's remaining whole seconds, or null if unknown. */
+  black_time: number | null;
+  /** Which side's clock is counting, or null if unknown. */
+  active_color: 'white' | 'black' | null;
+  /** Whether the countdown is actively running (not paused). */
+  is_running: boolean;
+  /** Whether the clock is paused. */
+  is_paused: boolean;
+  /** Whether the game has a running clock (false = untimed). */
+  timed_mode: boolean;
+  /**
+   * Wall-clock epoch seconds when the snapshot was produced on the board, used
+   * to age the active side locally. Null when no snapshot has been received.
+   */
+  synced_at: number | null;
+}

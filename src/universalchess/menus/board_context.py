@@ -175,25 +175,32 @@ def _run_select(outcome, ctx, menu_manager) -> Optional[MenuSelection]:
     unselected_icon = outcome.unselected_icon or "radio_empty"
 
     def _choices() -> List[tuple]:
-        """Return ``(value, label, icon, font_size)`` choices from provider/option set.
+        """Return ``(value, label, icon, font_size, help)`` choices from provider/option set.
 
         Provider rows are keyed by the value to persist (``row.key``), always carry
-        an icon, and have no per-row font size (``None``). Static option-set entries
-        may omit an icon (radio-marked) and may carry an optional ``font_size`` (px)
-        so a row can preview its own effect (the Text Size options render Small/
-        Medium/Large at small/medium/large text).
+        an icon, have no per-row font size (``None``), and may carry ``help`` (the
+        option's longer description, shown by the help dialog when focused). Static
+        option-set entries may omit an icon (radio-marked), may carry an optional
+        ``font_size`` (px) so a row can preview its own effect (the Text Size
+        options render Small/Medium/Large at small/medium/large text), and may
+        carry ``help``. Forwarding ``help`` lets an option surface a full
+        description through the standard help mechanism rather than cramming it
+        into the label (e.g. a Time Control preset's rules).
         """
         if outcome.provider:
-            return [(row.key, row.label, row.icon, None) for row in ctx.provide(outcome.provider)]
+            return [
+                (row.key, row.label, row.icon, None, row.help)
+                for row in ctx.provide(outcome.provider)
+            ]
         return [
-            (opt["value"], opt["label"], opt.get("icon"), opt.get("font_size"))
+            (opt["value"], opt["label"], opt.get("icon"), opt.get("font_size"), opt.get("description"))
             for opt in ctx.options(outcome.option_set)
         ]
 
     def build_entries() -> List[IconMenuEntry]:
         current = str(ctx.get(outcome.store, outcome.key))
         entries: List[IconMenuEntry] = []
-        for value, option_label, option_icon, option_font_size in _choices():
+        for value, option_label, option_icon, option_font_size, option_help in _choices():
             selected = str(value) == current
             if option_icon:
                 icon_name = option_icon
@@ -210,6 +217,7 @@ def _run_select(outcome, ctx, menu_manager) -> Optional[MenuSelection]:
                     label=label,
                     icon_name=icon_name,
                     enabled=True,
+                    help=option_help,
                     **extra,
                 )
             )

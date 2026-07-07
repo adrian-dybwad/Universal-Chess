@@ -70,11 +70,11 @@ def test_master_toggle_marked_bold():
 def test_toggle_icons_reflect_setting_state():
     """Each row's icon reflects its on/off state via the state-map icon.
 
-    Why: the checkbox-style icon is the only indication of whether a category is
+    Why: the checkbox icon is the only indication of whether a category is
     enabled; the engine must select it from the bound value. How the regression
-    manifests: an 'on' setting shows 'timer' (empty) or an 'off' setting shows
-    'timer_checked'.
+    manifests: an 'on' setting shows 'checkbox_empty' or an 'off' setting shows
+    'checkbox_checked'.
     """
     by_id = {r.node["id"]: r for r in _rows(enabled=True, key_press=False)}
-    assert by_id["field.sound.enabled"].icon == "timer_checked"
-    assert by_id["field.sound.key_press"].icon == "timer"
+    assert by_id["field.sound.enabled"].icon == "checkbox_checked"
+    assert by_id["field.sound.key_press"].icon == "checkbox_empty"

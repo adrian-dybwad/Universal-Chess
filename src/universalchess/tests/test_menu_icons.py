@@ -45,11 +45,28 @@ def test_new_catalog_icons_render_distinctly():
         assert _render(name) != _PLACEHOLDER, f"icon '{name}' renders as placeholder"
 
 
-# 'timer' intentionally shares the plain-square glyph with the placeholder: the
-# unchecked timer IS a bare square and 'timer_checked' adds the checkmark. It is
-# a handled id, so exclude it from the "differs from placeholder" check while
-# still rendering it to confirm it does not raise.
-_SQUARE_BY_DESIGN = {"timer"}
+# Every registered id now draws a distinct glyph (no id shares the placeholder
+# square by design): 'timer'/'timer_checked' draw a real stopwatch.
+_SQUARE_BY_DESIGN: set[str] = set()
+
+
+def test_timer_icons_are_real_stopwatch_glyphs():
+    """timer and timer_checked must be real, distinct glyphs -- not checkboxes.
+
+    Why this test exists: the time-control menus mark rows with 'timer' /
+    'timer_checked'. These used to render as a bare square and a checked square
+    (indistinguishable from a checkbox), which read as generic checkboxes rather
+    than a clock. Both must now draw a real stopwatch, and the checked variant
+    must differ from the unchecked one so the selected row is visible. How a
+    regression manifests: if 'timer' reverts to the placeholder square it equals
+    _PLACEHOLDER again; if the check is dropped the two variants render
+    identically.
+    """
+    timer = _render("timer")
+    timer_checked = _render("timer_checked")
+    assert timer != _PLACEHOLDER, "'timer' must draw a real stopwatch, not the placeholder square"
+    assert timer_checked != _PLACEHOLDER, "'timer_checked' must draw a real glyph"
+    assert timer != timer_checked, "checked/unchecked stopwatch must be visually distinct"
 
 
 def test_every_registered_icon_has_board_implementation():

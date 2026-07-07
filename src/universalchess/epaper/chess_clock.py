@@ -23,6 +23,40 @@ except ImportError:
 from universalchess.state import get_chess_clock as get_clock_state
 from universalchess.state import get_chess_game as get_game_state
 from universalchess.state.players import get_players_state
+from universalchess.state.time_control import DelayMode, TimeControl
+
+
+def format_increment_delay(time_control: TimeControl, color: str) -> str:
+    """Compact per-side increment/delay annotation for the clock display.
+
+    Summarizes the active control for one side so the board shows it inline next
+    to the clock: ``"+N"`` for a Fischer increment, ``"dN"`` for a simple/US
+    delay, ``"bN"`` for a Bronstein delay, combined with a space when both apply.
+    Returns ``""`` for an untimed game or plain sudden death (nothing to annotate).
+
+    Kept pure (derives only from the TimeControl) so it is unit-testable
+    independently of the e-paper rendering that positions it. The increment is
+    read per-side to stay correct for asymmetric / time-odds controls.
+
+    Args:
+        time_control: The resolved control for the game.
+        color: 'white' or 'black' -- the side being drawn.
+
+    Returns:
+        The annotation string (possibly empty).
+    """
+    if not time_control.is_timed:
+        return ""
+    parts: list[str] = []
+    increment = time_control.increment_after_move(color, 1)
+    if increment:
+        parts.append(f"+{increment}")
+    if time_control.delay_seconds:
+        if time_control.delay_mode is DelayMode.SIMPLE:
+            parts.append(f"d{time_control.delay_seconds}")
+        elif time_control.delay_mode is DelayMode.BRONSTEIN:
+            parts.append(f"b{time_control.delay_seconds}")
+    return " ".join(parts)
 
 
 class ChessClockWidget(Widget):
@@ -111,6 +145,15 @@ class ChessClockWidget(Widget):
         self._black_time_text = TextWidget(60, 0, 64, 20, self._handle_child_update,
                                            text="00:00", font_size=16,
                                            justify=Justify.RIGHT, transparent=True)
+        # Increment/delay annotation (small, right-aligned under each time). Shows
+        # "+3"/"d3"/"b3" for the active control, or the live simple-delay
+        # countdown for the side on move; blank for plain sudden death/untimed.
+        self._white_annot_text = TextWidget(60, 0, 64, 10, self._handle_child_update,
+                                            text="", font_size=8,
+                                            justify=Justify.RIGHT, transparent=True)
+        self._black_annot_text = TextWidget(60, 0, 64, 10, self._handle_child_update,
+                                            text="", font_size=8,
+                                            justify=Justify.RIGHT, transparent=True)
         
         # Create TextWidgets for compact mode
         # Turn indicator text (color)
@@ -375,6 +418,21 @@ class ChessClockWidget(Widget):
         else:
             return f"{minutes:02d}:{secs:02d}"
     
+    def _annotation_for(self, color: str, active_color: Optional[str]) -> str:
+        """Annotation string for one side's clock (increment/delay or live delay).
+
+        For the side on the move in SIMPLE (US) delay mode with delay still
+        remaining, shows the live delay countdown (``"delay N"``) so the frozen
+        main clock has visible feedback; otherwise the static increment/delay
+        summary from :func:`format_increment_delay`.
+        """
+        time_control = self._clock.time_control
+        if (color == active_color
+                and time_control.delay_mode is DelayMode.SIMPLE
+                and self._clock.delay_remaining > 0):
+            return f"delay {self._clock.delay_remaining}"
+        return format_increment_delay(time_control, color)
+
     def render(self, sprite: Image.Image) -> None:
         """
         Render the chess clock widget onto the sprite image.
@@ -436,6 +494,8 @@ class ChessClockWidget(Widget):
             bottom_brain_hint = self._black_brain_hint
             top_hint_widget = self._white_hint_text
             bottom_hint_widget = self._black_hint_text
+            top_annot_widget = self._white_annot_text
+            bottom_annot_widget = self._black_annot_text
         else:
             top_color = 'black'
             bottom_color = 'white'
@@ -453,6 +513,8 @@ class ChessClockWidget(Widget):
             bottom_brain_hint = self._white_brain_hint
             top_hint_widget = self._black_hint_text
             bottom_hint_widget = self._white_hint_text
+            top_annot_widget = self._black_annot_text
+            bottom_annot_widget = self._white_annot_text
         
         # === TOP SECTION ===
         # Turn indicator circle (always drawn). In timed mode the circle is the
@@ -486,6 +548,13 @@ class ChessClockWidget(Widget):
         top_time_widget.set_text(self._format_time(top_time))
         top_time_widget.draw_on(sprite, self.width - 68, top_y + 6)
         
+        # Increment/delay annotation under the time (only when the section is
+        # tall enough; compact move-history layout drops it to avoid overlap).
+        top_annot = self._annotation_for(top_color, active_color)
+        if top_annot and show_names:
+            top_annot_widget.set_text(top_annot)
+            top_annot_widget.draw_on(sprite, self.width - 68, top_y + 24)
+        
         # Horizontal separator (between the two sections)
         draw.line([(0, separator_y), (self.width, separator_y)], fill=0, width=1)
         
@@ -517,6 +586,12 @@ class ChessClockWidget(Widget):
         # Bottom time using TextWidget - draw directly onto sprite
         bottom_time_widget.set_text(self._format_time(bottom_time))
         bottom_time_widget.draw_on(sprite, self.width - 68, bottom_y + 6)
+        
+        # Increment/delay annotation under the time (see top-section note).
+        bottom_annot = self._annotation_for(bottom_color, active_color)
+        if bottom_annot and show_names:
+            bottom_annot_widget.set_text(bottom_annot)
+            bottom_annot_widget.draw_on(sprite, self.width - 68, bottom_y + 24)
     
     # Height of the turn-text line (matches self._turn_text height), used to
     # vertically center the text in the compact (circle-less) layout.

@@ -19,6 +19,7 @@ except ImportError:
     log = logging.getLogger(__name__)
 
 from universalchess.state import get_chess_clock as get_clock_state
+from universalchess.state.time_control import TimeControl
 
 # How often the countdown thread re-checks for the clock resuming while it is
 # stopped/paused. Short enough that a resume starts counting promptly, long
@@ -143,6 +144,18 @@ class ChessClockService:
         # Initial times (for reset)
         self._initial_white_time: int = 0
         self._initial_black_time: int = 0
+
+        # Active time control (increment / delay / stages / asymmetric).
+        self._time_control: TimeControl = TimeControl.sudden_death_minutes(0)
+        # Per-side completed-move counts, driving stage transitions and the
+        # increment lookup. Advanced from the game's move stack in
+        # notify_move_completed so the count is correct regardless of how many
+        # times the turn-event hook fires.
+        self._white_moves: int = 0
+        self._black_moves: int = 0
+        # Highest game ply already applied, so notify_move_completed is
+        # idempotent (a repeated turn event or a resume adds no phantom moves).
+        self._last_ply: int = 0
         
         # Countdown thread
         self._countdown_thread: Optional[threading.Thread] = None
@@ -186,28 +199,70 @@ class ChessClockService:
     # Configuration methods
     # -------------------------------------------------------------------------
     
-    def configure(self, time_control_minutes: int) -> None:
-        """Configure the clock for a new game.
-        
+    def configure(self, time_control: TimeControl) -> None:
+        """Configure the clock for a new game from a time control.
+
+        Seeds each side's initial time (supporting asymmetric controls), stores
+        the control for increment/delay/stage handling, and clears the per-side
+        move counters and applied-ply cursor so a new game starts fresh.
+
         Args:
-            time_control_minutes: Minutes per player (0 for untimed mode)
-        
+            time_control: Resolved time control (see state/time_control.py).
+
         Note: Player names are managed by PlayersState, not the clock service.
         """
         with self._lock:
-            timed = time_control_minutes > 0
-            initial_seconds = time_control_minutes * 60
-            
-            self._initial_white_time = initial_seconds
-            self._initial_black_time = initial_seconds
-            
-            self._state.set_timed_mode(timed)
-            self._state.set_times(initial_seconds, initial_seconds)
+            self._time_control = time_control
+            self._white_moves = 0
+            self._black_moves = 0
+            # Baseline the applied-ply cursor to the position already on the
+            # board so a control configured onto an in-progress position (e.g. a
+            # resumed game) does not retroactively credit increments for moves
+            # played before the clock was configured.
+            self._last_ply = self._current_ply()
+
+            white_seconds = time_control.initial_seconds("white")
+            black_seconds = time_control.initial_seconds("black")
+            self._initial_white_time = white_seconds
+            self._initial_black_time = black_seconds
+
+            self._state.set_time_control(time_control)
+            self._state.set_timed_mode(time_control.is_timed)
+            self._state.set_times(white_seconds, black_seconds)
             # Note: active_color comes from ChessGameState, not set here
             self._state.set_paused(False)
             self._state.set_running(False)
-        
-        log.info(f"[ChessClockService] Configured: {time_control_minutes} min")
+
+        log.info(f"[ChessClockService] Configured: {time_control.describe()}")
+
+    def _current_ply(self) -> int:
+        """Number of moves (plies) played in the current game, 0 if unknown."""
+        game_state = self._state._game_state
+        if game_state is None:
+            return 0
+        return len(game_state.move_stack)
+
+    def notify_move_completed(self) -> None:
+        """Apply time-control effects for moves completed since the last call.
+
+        Reads the game's move stack (via the clock state's game-state reference)
+        and, for every ply not yet applied, credits the side that made it with
+        their increment, Bronstein giveback, and any stage base time. Driving
+        this from the ply count -- rather than trusting each turn event -- makes
+        it idempotent: repeated turn events or a game resume never double-count.
+        """
+        ply = self._current_ply()
+        while self._last_ply < ply:
+            # Ply index 0 is white's first move, 1 is black's first, and so on.
+            mover = "white" if self._last_ply % 2 == 0 else "black"
+            self._last_ply += 1
+            if mover == "white":
+                self._white_moves += 1
+                move_number = self._white_moves
+            else:
+                self._black_moves += 1
+                move_number = self._black_moves
+            self._state.apply_move_completed(mover, move_number)
     
     def set_times(self, white_seconds: int, black_seconds: int) -> None:
         """Set the remaining time for both players.
@@ -298,12 +353,17 @@ class ChessClockService:
     def reset(self) -> None:
         """Reset the clock to initial times."""
         self.stop()
-        
+
         with self._lock:
+            self._white_moves = 0
+            self._black_moves = 0
+            self._last_ply = self._current_ply()
+            # Re-prime per-move delay/usage tracking for the first mover.
+            self._state.set_time_control(self._time_control)
             self._state.set_times(self._initial_white_time, self._initial_black_time)
             # Note: active_color comes from ChessGameState, not set here
             self._state.set_paused(False)
-        
+
         log.info("[ChessClockService] Reset")
     
     def get_times(self) -> tuple:

@@ -54,6 +54,30 @@ def test_menu_schema_returns_catalog(client):
     assert "optionSets" in data
 
 
+def test_menu_schema_serves_generated_time_control_preset_options(client):
+    """The payload carries a time_control_presets option set from the registry.
+
+    The board fills the preset selector from a runtime provider, but the web
+    renders from option sets. This endpoint injects the preset list (generated
+    from the Python preset registry, the single source of truth) so the web
+    dropdown stays in lockstep with the board without a second fetch. How a
+    regression manifests: dropping the injection leaves the web preset dropdown
+    empty; a stale hardcoded list would drift from the board's presets.
+    """
+    from universalchess.menus.time_control_presets import preset_options
+
+    resp = client.get("/api/menu-schema")
+    data = json.loads(resp.data)
+    served = data["optionSets"].get("time_control_presets")
+    assert served == preset_options()
+
+    # The base catalog file has no such option set; it is generated at serve time
+    # only, so the served payload must not have leaked back into the shared cache.
+    from universalchess.menus.catalog import get_catalog
+
+    assert "time_control_presets" not in get_catalog().raw_menu().get("optionSets", {})
+
+
 def test_menu_schema_includes_known_field_help(client):
     """A known field's help text must be present in the payload.
 

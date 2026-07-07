@@ -182,7 +182,23 @@ class GameSettings:
 
     Attributes:
         section: Section name in config file
-        time_control: Time per player in minutes (0 = disabled/untimed)
+        time_control: Legacy time per player in minutes (0 = disabled/untimed).
+            Used as the fallback base time when no time_control_preset is set,
+            preserving pre-existing configurations.
+        time_control_preset: Selected named time control (see
+            state/time_control.py PRESETS), the sentinel "custom" to build from
+            the tc_custom_* fields, or "" to fall back to the legacy time_control
+            minutes.
+        tc_custom_base_seconds: Custom control base time per side, in seconds.
+        tc_custom_increment_seconds: Custom Fischer increment added each move.
+        tc_custom_delay_seconds: Custom per-move delay in seconds.
+        tc_custom_delay_mode: Custom delay mode ("none", "simple", or
+            "bronstein").
+        tc_custom_asymmetric: When True, the custom control uses distinct per-
+            side times (the tc_custom_black_* fields for Black); otherwise both
+            sides use the white base/increment.
+        tc_custom_black_base_seconds: Black's base time (seconds) when asymmetric.
+        tc_custom_black_increment_seconds: Black's increment when asymmetric.
         analysis_mode: Enable analysis engine
         analysis_engine: Engine to use for position analysis
         ponder: When True, engine players think on the opponent's time (UCI
@@ -242,6 +258,14 @@ class GameSettings:
 
     section: str
     time_control: int = 0
+    time_control_preset: str = ""
+    tc_custom_base_seconds: int = 300
+    tc_custom_increment_seconds: int = 0
+    tc_custom_delay_seconds: int = 0
+    tc_custom_delay_mode: str = "none"
+    tc_custom_asymmetric: bool = False
+    tc_custom_black_base_seconds: int = 300
+    tc_custom_black_increment_seconds: int = 0
     analysis_mode: bool = True
     analysis_engine: str = "stockfish"
     ponder: bool = False
@@ -334,6 +358,14 @@ class GameSettings:
         """
         data = {
             "time_control": self.time_control,
+            "time_control_preset": self.time_control_preset,
+            "tc_custom_base_seconds": self.tc_custom_base_seconds,
+            "tc_custom_increment_seconds": self.tc_custom_increment_seconds,
+            "tc_custom_delay_seconds": self.tc_custom_delay_seconds,
+            "tc_custom_delay_mode": self.tc_custom_delay_mode,
+            "tc_custom_asymmetric": self.tc_custom_asymmetric,
+            "tc_custom_black_base_seconds": self.tc_custom_black_base_seconds,
+            "tc_custom_black_increment_seconds": self.tc_custom_black_increment_seconds,
             "analysis_mode": self.analysis_mode,
             "analysis_engine": self.analysis_engine,
             "ponder": self.ponder,
@@ -405,6 +437,14 @@ class GameSettings:
         game = cls(
             section=section,
             time_control=data["time_control"],
+            time_control_preset=data["time_control_preset"],
+            tc_custom_base_seconds=data["tc_custom_base_seconds"],
+            tc_custom_increment_seconds=data["tc_custom_increment_seconds"],
+            tc_custom_delay_seconds=data["tc_custom_delay_seconds"],
+            tc_custom_delay_mode=data["tc_custom_delay_mode"],
+            tc_custom_asymmetric=data["tc_custom_asymmetric"],
+            tc_custom_black_base_seconds=data["tc_custom_black_base_seconds"],
+            tc_custom_black_increment_seconds=data["tc_custom_black_increment_seconds"],
             analysis_mode=data["analysis_mode"],
             analysis_engine=data["analysis_engine"],
             ponder=data["ponder"],

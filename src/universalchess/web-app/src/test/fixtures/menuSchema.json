@@ -138,6 +138,134 @@
         "label": "90 min (Classical)"
       }
     ],
+    "tc_base": [
+      {
+        "value": "60",
+        "label": "1 min"
+      },
+      {
+        "value": "120",
+        "label": "2 min"
+      },
+      {
+        "value": "180",
+        "label": "3 min"
+      },
+      {
+        "value": "300",
+        "label": "5 min"
+      },
+      {
+        "value": "600",
+        "label": "10 min"
+      },
+      {
+        "value": "900",
+        "label": "15 min"
+      },
+      {
+        "value": "1200",
+        "label": "20 min"
+      },
+      {
+        "value": "1800",
+        "label": "30 min"
+      },
+      {
+        "value": "2700",
+        "label": "45 min"
+      },
+      {
+        "value": "3600",
+        "label": "60 min"
+      },
+      {
+        "value": "5400",
+        "label": "90 min"
+      },
+      {
+        "value": "7200",
+        "label": "120 min"
+      }
+    ],
+    "tc_increment": [
+      {
+        "value": "0",
+        "label": "None"
+      },
+      {
+        "value": "1",
+        "label": "1 sec"
+      },
+      {
+        "value": "2",
+        "label": "2 sec"
+      },
+      {
+        "value": "3",
+        "label": "3 sec"
+      },
+      {
+        "value": "5",
+        "label": "5 sec"
+      },
+      {
+        "value": "10",
+        "label": "10 sec"
+      },
+      {
+        "value": "15",
+        "label": "15 sec"
+      },
+      {
+        "value": "30",
+        "label": "30 sec"
+      },
+      {
+        "value": "60",
+        "label": "60 sec"
+      }
+    ],
+    "tc_delay": [
+      {
+        "value": "0",
+        "label": "None"
+      },
+      {
+        "value": "1",
+        "label": "1 sec"
+      },
+      {
+        "value": "2",
+        "label": "2 sec"
+      },
+      {
+        "value": "3",
+        "label": "3 sec"
+      },
+      {
+        "value": "5",
+        "label": "5 sec"
+      },
+      {
+        "value": "10",
+        "label": "10 sec"
+      }
+    ],
+    "tc_delay_mode": [
+      {
+        "value": "none",
+        "label": "None"
+      },
+      {
+        "value": "simple",
+        "label": "Simple (US)"
+      },
+      {
+        "value": "bronstein",
+        "label": "Bronstein"
+      }
+    ],
     "update_channel": [
       {
         "value": "stable",
@@ -249,6 +377,113 @@
       {
         "value": "Japanese",
         "label": "Japanese (\u65e5\u672c\u8a9e)"
+      }
+    ],
+    "time_control_presets": [
+      {
+        "value": "",
+        "label": "Basic",
+        "description": "No preset. Use the Base Minutes control to set a simple sudden-death clock (the same time for both sides, no increment or delay)."
+      },
+      {
+        "value": "untimed",
+        "label": "Untimed",
+        "description": "No clock; the display shows only whose turn it is."
+      },
+      {
+        "value": "bullet_1_0",
+        "label": "1|0 Bullet",
+        "description": "1 minute per side, no increment."
+      },
+      {
+        "value": "bullet_1_1",
+        "label": "1|1 Bullet",
+        "description": "1 minute per side plus 1 second added each move."
+      },
+      {
+        "value": "bullet_2_1",
+        "label": "2|1 Bullet",
+        "description": "2 minutes per side plus 1 second added each move."
+      },
+      {
+        "value": "blitz_3_0",
+        "label": "3|0 Blitz",
+        "description": "3 minutes per side, no increment."
+      },
+      {
+        "value": "blitz_3_2",
+        "label": "3|2 Blitz",
+        "description": "3 minutes per side plus 2 seconds added each move."
+      },
+      {
+        "value": "blitz_5_0",
+        "label": "5|0 Blitz",
+        "description": "5 minutes per side, no increment."
+      },
+      {
+        "value": "blitz_5_3",
+        "label": "5|3 Blitz",
+        "description": "5 minutes per side plus 3 seconds added each move."
+      },
+      {
+        "value": "rapid_10_0",
+        "label": "10|0 Rapid",
+        "description": "10 minutes per side, no increment."
+      },
+      {
+        "value": "rapid_10_5",
+        "label": "10|5 Rapid",
+        "description": "10 minutes per side plus 5 seconds added each move."
+      },
+      {
+        "value": "rapid_15_10",
+        "label": "15|10 Rapid",
+        "description": "15 minutes per side plus 10 seconds added each move."
+      },
+      {
+        "value": "classical_30_0",
+        "label": "30|0 Classical",
+        "description": "30 minutes per side, no increment."
+      },
+      {
+        "value": "classical_30_20",
+        "label": "30|20 Classical",
+        "description": "30 minutes per side plus 20 seconds added each move."
+      },
+      {
+        "value": "classical_60_30",
+        "label": "60|30 Classical",
+        "description": "60 minutes per side plus 30 seconds added each move."
+      },
+      {
+        "value": "classical_90_30",
+        "label": "90|30 Classical",
+        "description": "90 minutes per side plus 30 seconds added each move."
+      },
+      {
+        "value": "delay_5_3_simple",
+        "label": "5 min + 3s Delay",
+        "description": "5 minutes per side; the clock waits 3 seconds each move before counting down (US delay)."
+      },
+      {
+        "value": "delay_5_3_bronstein",
+        "label": "5 min + 3s Bronstein",
+        "description": "5 minutes per side; up to 3 seconds of the time used each move is given back (Bronstein delay)."
+      },
+      {
+        "value": "tournament_40_90_30",
+        "label": "40/90 + 30 (Tournament)",
+        "description": "40 moves in 90 minutes, then 30 minutes for the rest, with 30 seconds added each move (FIDE classical)."
+      },
+      {
+        "value": "tournament_40_120_20_60_30",
+        "label": "40/120, 20/60, 30 (Tournament)",
+        "description": "40 moves in 120 minutes, then 20 moves in 60 minutes, then 30 minutes for the rest."
+      },
+      {
+        "value": "custom",
+        "label": "Custom",
+        "description": "Build your own clock: base time, Fischer increment, delay (simple or Bronstein), and optionally different times for each side (time odds)."
       }
     ]
   },
@@ -476,7 +711,7 @@
         "height_ratio": 0.8
       },
       "children": [
-        "settings.timecontrol",
+        "settings.timecontrol.menu",
         "settings.chess960",
         "settings.notation",
         "analysis.enabled",
@@ -555,13 +790,13 @@
       "id": "settings.timecontrol",
       "key": "TimeControl",
       "type": "select",
-      "label": "Time Control",
-      "boardLabel": "Time\n{fn:time_control}",
+      "label": "Base Minutes",
+      "boardLabel": "Base Minutes\n{fn:time_control}",
       "icon": {
         "0": "timer",
         "default": "timer_checked"
       },
-      "help": "Minutes per player for the game clock.",
+      "help": "Minutes per player for a simple sudden-death clock (no increment or delay).",
       "section": "game",
       "bind": {
         "store": "game",
@@ -570,6 +805,290 @@
       "optionSet": "time_control",
       "selectedIcon": "timer_checked",
       "unselectedIcon": "timer",
+      "visibleWhen": {
+        "store": "game",
+        "key": "time_control_preset",
+        "equals": ""
+      },
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      }
+    },
+    {
+      "id": "settings.timecontrol.menu",
+      "key": "TimeControl",
+      "type": "submenu",
+      "target": "timecontrol",
+      "label": "Time Control",
+      "boardLabel": "Time\n{fn:time_control}",
+      "icon": {
+        "0": "timer",
+        "default": "timer_checked"
+      },
+      "bind": {
+        "store": "game",
+        "key": "time_control"
+      },
+      "help": "Choose a clock preset, build a custom clock, or set base minutes.",
+      "platforms": [
+        "board"
+      ],
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      }
+    },
+    {
+      "id": "timecontrol",
+      "type": "menu",
+      "label": "Time Control",
+      "help": "Configure the game clock: a preset, a custom clock, or base minutes.",
+      "platforms": [
+        "board"
+      ],
+      "children": [
+        "settings.timecontrol.preset",
+        "settings.timecontrol.custom",
+        "settings.timecontrol"
+      ]
+    },
+    {
+      "id": "settings.timecontrol.preset",
+      "key": "Preset",
+      "type": "select",
+      "label": "Preset",
+      "boardLabel": "Preset\n{fn:time_control_preset_label}",
+      "icon": "timer_checked",
+      "help": "Pick a ready-made time control: sudden death, increment, delay, or a tournament control. Choose Custom to use the Custom Clock settings.",
+      "bind": {
+        "store": "game",
+        "key": "time_control_preset"
+      },
+      "provider": "time_control_presets",
+      "selectedIcon": "timer_checked",
+      "unselectedIcon": "timer",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      }
+    },
+    {
+      "id": "settings.timecontrol.custom",
+      "key": "CustomClock",
+      "type": "submenu",
+      "target": "timecontrol.custom",
+      "label": "Custom Clock",
+      "icon": "timer",
+      "help": "Build your own clock: base time, increment, delay, and optional different times per side.",
+      "visibleWhen": {
+        "store": "game",
+        "key": "time_control_preset",
+        "equals": "custom"
+      },
+      "platforms": [
+        "board"
+      ],
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      }
+    },
+    {
+      "id": "timecontrol.custom",
+      "type": "menu",
+      "label": "Custom Clock",
+      "help": "Custom clock settings. Select the Custom preset to use these.",
+      "platforms": [
+        "board"
+      ],
+      "children": [
+        "timecontrol.custom.base",
+        "timecontrol.custom.increment",
+        "timecontrol.custom.delay",
+        "timecontrol.custom.mode",
+        "timecontrol.custom.asymmetric",
+        "timecontrol.custom.black_base",
+        "timecontrol.custom.black_increment"
+      ]
+    },
+    {
+      "id": "timecontrol.custom.base",
+      "key": "CustomBase",
+      "type": "select",
+      "label": "Base Time",
+      "boardLabel": "Base\n{value}",
+      "icon": "timer_checked",
+      "help": "Starting time on each player's clock.",
+      "bind": {
+        "store": "game",
+        "key": "tc_custom_base_seconds"
+      },
+      "optionSet": "tc_base",
+      "selectedIcon": "timer_checked",
+      "unselectedIcon": "timer",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      }
+    },
+    {
+      "id": "timecontrol.custom.increment",
+      "key": "CustomIncrement",
+      "type": "select",
+      "label": "Increment",
+      "boardLabel": "Increment\n{value}",
+      "icon": "timer",
+      "help": "Seconds added to the mover's clock after each move (Fischer increment).",
+      "bind": {
+        "store": "game",
+        "key": "tc_custom_increment_seconds"
+      },
+      "optionSet": "tc_increment",
+      "selectedIcon": "timer_checked",
+      "unselectedIcon": "timer",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      }
+    },
+    {
+      "id": "timecontrol.custom.delay",
+      "key": "CustomDelay",
+      "type": "select",
+      "label": "Delay",
+      "boardLabel": "Delay\n{value}",
+      "icon": "timer",
+      "help": "Seconds of delay each move, applied per the Delay Mode setting.",
+      "bind": {
+        "store": "game",
+        "key": "tc_custom_delay_seconds"
+      },
+      "optionSet": "tc_delay",
+      "selectedIcon": "timer_checked",
+      "unselectedIcon": "timer",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      }
+    },
+    {
+      "id": "timecontrol.custom.mode",
+      "key": "CustomDelayMode",
+      "type": "select",
+      "label": "Delay Mode",
+      "boardLabel": "Mode\n{value}",
+      "icon": "timer",
+      "help": "None: no delay. Simple: the clock waits before counting down. Bronstein: used time is given back, up to the delay.",
+      "bind": {
+        "store": "game",
+        "key": "tc_custom_delay_mode"
+      },
+      "optionSet": "tc_delay_mode",
+      "selectedIcon": "timer_checked",
+      "unselectedIcon": "timer",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      }
+    },
+    {
+      "id": "timecontrol.custom.asymmetric",
+      "key": "CustomAsymmetric",
+      "type": "toggle",
+      "label": "Different Per Side",
+      "boardLabel": "Asymmetric\n{value}",
+      "bind": {
+        "store": "game",
+        "key": "tc_custom_asymmetric"
+      },
+      "icon": {
+        "true": "checkbox_checked",
+        "false": "checkbox_empty"
+      },
+      "help": "Give White and Black different times (time odds). When on, set Black's base and increment below.",
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      }
+    },
+    {
+      "id": "timecontrol.custom.black_base",
+      "key": "CustomBlackBase",
+      "type": "select",
+      "label": "Black Base Time",
+      "boardLabel": "Black Base\n{value}",
+      "icon": "timer_checked",
+      "help": "Starting time on Black's clock when using different times per side.",
+      "bind": {
+        "store": "game",
+        "key": "tc_custom_black_base_seconds"
+      },
+      "optionSet": "tc_base",
+      "selectedIcon": "timer_checked",
+      "unselectedIcon": "timer",
+      "visibleWhen": {
+        "store": "game",
+        "key": "tc_custom_asymmetric",
+        "equals": true
+      },
+      "platforms": [
+        "board",
+        "web"
+      ],
+      "epaper": {
+        "font_size": 12,
+        "height_ratio": 0.8
+      }
+    },
+    {
+      "id": "timecontrol.custom.black_increment",
+      "key": "CustomBlackIncrement",
+      "type": "select",
+      "label": "Black Increment",
+      "boardLabel": "Black Inc\n{value}",
+      "icon": "timer",
+      "help": "Seconds added to Black's clock after each move when using different times per side.",
+      "bind": {
+        "store": "game",
+        "key": "tc_custom_black_increment_seconds"
+      },
+      "optionSet": "tc_increment",
+      "selectedIcon": "timer_checked",
+      "unselectedIcon": "timer",
+      "visibleWhen": {
+        "store": "game",
+        "key": "tc_custom_asymmetric",
+        "equals": true
+      },
       "platforms": [
         "board",
         "web"
@@ -818,8 +1337,8 @@
       },
       "label": "{fn:wifi_enable_state}",
       "icon": {
-        "true": "timer_checked",
-        "false": "timer"
+        "true": "checkbox_checked",
+        "false": "checkbox_empty"
       },
       "help": "WiFi connection status. Select to enable or disable the WiFi radio.",
       "platforms": [
@@ -898,8 +1417,8 @@
       },
       "label": "{fn:bluetooth_enable_state}",
       "icon": {
-        "true": "timer_checked",
-        "false": "timer"
+        "true": "checkbox_checked",
+        "false": "checkbox_empty"
       },
       "help": "Bluetooth connection and advertising status. Select to enable or disable the Bluetooth radio.",
       "platforms": [
@@ -1268,8 +1787,8 @@
         "key": "mode"
       },
       "icon": {
-        "true": "timer_checked",
-        "false": "timer"
+        "true": "checkbox_checked",
+        "false": "checkbox_empty"
       },
       "platforms": [
         "board",
@@ -2168,8 +2687,8 @@
         "key": "enabled"
       },
       "icon": {
-        "true": "timer_checked",
-        "false": "timer"
+        "true": "checkbox_checked",
+        "false": "checkbox_empty"
       },
       "epaper": {
         "font_size": 14,
@@ -2188,8 +2707,8 @@
         "key": "piece_events"
       },
       "icon": {
-        "true": "timer_checked",
-        "false": "timer"
+        "true": "checkbox_checked",
+        "false": "checkbox_empty"
       },
       "epaper": {
         "font_size": 14,
@@ -2207,8 +2726,8 @@
         "key": "game_events"
       },
       "icon": {
-        "true": "timer_checked",
-        "false": "timer"
+        "true": "checkbox_checked",
+        "false": "checkbox_empty"
       },
       "epaper": {
         "font_size": 14,
@@ -2226,8 +2745,8 @@
         "key": "errors"
       },
       "icon": {
-        "true": "timer_checked",
-        "false": "timer"
+        "true": "checkbox_checked",
+        "false": "checkbox_empty"
       },
       "epaper": {
         "font_size": 14,
@@ -2245,8 +2764,8 @@
         "key": "key_press"
       },
       "icon": {
-        "true": "timer_checked",
-        "false": "timer"
+        "true": "checkbox_checked",
+        "false": "checkbox_empty"
       },
       "epaper": {
         "font_size": 14,

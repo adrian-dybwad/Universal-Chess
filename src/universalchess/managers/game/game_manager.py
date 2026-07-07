@@ -138,6 +138,14 @@ class GameManager:
         # The emulator toggles this via set_setup_mode_active().
         self._setup_mode_active = False
 
+        # Web-move mode: armed when a move is played from the web Control page and
+        # disarmed by the first physical piece event. While armed the physical
+        # board is intentionally decoupled -- web moves apply as complete moves,
+        # engine/non-human replies auto-apply (rather than waiting for a physical
+        # placement), and post-move physical validation (correction mode) is
+        # suppressed. Touching a real piece hands control back to the board.
+        self._web_move_mode = False
+
         # Optional UI handler driven during setup mode. Injected via
         # set_setup_display_handler() so game logic stays decoupled from the
         # display layer. Signature: handler(active: bool, fen: Optional[str]).
@@ -703,7 +711,13 @@ class GameManager:
                 # move is applied but the rook has not yet been physically moved, so the
                 # physical board legitimately lags the logical board. field_events handles
                 # that follow-up; validating here would spuriously enter correction mode.
-                if self.move_state.castling_rook_pending is None:
+                #
+                # Also skip in web-move mode: a move played from the web leaves the
+                # physical pieces where they are on purpose, so validating the board
+                # would always mismatch and enter correction mode. The next physical
+                # piece event disarms web-move mode (see receive_field) and restores
+                # normal validation.
+                if self.move_state.castling_rook_pending is None and not self._web_move_mode:
                     validate_physical_board_after_move(
                         board_module=board,
                         move_uci=move_uci,
@@ -734,7 +748,16 @@ class GameManager:
         
         If the game thread is not yet ready, events are queued and will be
         replayed when the thread becomes ready.
+
+        A physical piece event ends web-move mode: touching a real piece hands
+        control back to the board, so normal behavior (including correction mode
+        when the physical board no longer matches the logical board after remote
+        play) resumes for this and every subsequent event.
         """
+        if self._web_move_mode:
+            log.info("[GameManager.receive_field] Physical piece activity - exiting web-move mode")
+            self._web_move_mode = False
+
         # Queue events if not ready
         with self._ready_lock:
             if not self._is_ready:
@@ -945,6 +968,47 @@ class GameManager:
         """Callback when a player submits a move (delegates to player_moves)."""
         ctx = self._build_player_move_context()
         return on_player_move(ctx, move)
+
+    def submit_web_move(self, uci: str) -> bool:
+        """Apply a move played from the web Control page.
+
+        The move is treated as if the piece had been moved on the physical board:
+        it is validated as a legal move for the side to move and then executed
+        through the same path an on-board move uses. It also arms web-move mode so
+        the physical board is decoupled until the user next touches a real piece
+        (see receive_field): correction mode is suppressed for this move and any
+        engine/non-human reply auto-applies (see _on_pending_move).
+
+        Unlike a physical move, an illegal or out-of-turn web move fails cleanly
+        (no beep, no correction mode) because there is no physical board to
+        reconcile -- the browser simply re-syncs from the authoritative game state.
+
+        Args:
+            uci: The move in UCI form, including any promotion piece (e.g.
+                "e2e4" or "e7e8q").
+
+        Returns:
+            True if the move was legal and executed; False if there is no game in
+            progress, the game is over, or the move is malformed/illegal.
+        """
+        if self.chess_board.is_game_over():
+            log.warning(f"[GameManager.submit_web_move] Rejected {uci!r}: game is over")
+            return False
+
+        try:
+            move = chess.Move.from_uci(uci)
+        except (ValueError, TypeError):
+            log.warning(f"[GameManager.submit_web_move] Rejected malformed uci {uci!r}")
+            return False
+
+        if move not in self.chess_board.legal_moves:
+            log.warning(f"[GameManager.submit_web_move] Rejected illegal move {uci!r}")
+            return False
+
+        log.info(f"[GameManager.submit_web_move] Applying web move {move.uci()}")
+        self._web_move_mode = True
+        self._execute_complete_move(move)
+        return True
     
     def _complete_destination_only_move(self, destination: int) -> Optional[chess.Move]:
         """Complete a destination-only move by finding the source square (delegates to player_moves)."""
@@ -1049,7 +1113,15 @@ class GameManager:
             move: The pending move to display.
         """
         log.info(f"[GameManager._on_pending_move] Pending move: {move.uci()}")
-        
+
+        # In web-move mode the human is playing from the browser and never touches
+        # the board, so an engine/Lichess reply must be applied for them instead of
+        # waiting as a pending move on the physical board. Execute it directly.
+        if self._web_move_mode:
+            log.info(f"[GameManager._on_pending_move] Web-move mode - auto-applying {move.uci()}")
+            self._execute_pending_move_directly(move)
+            return
+
         # Set up forced move state so correction mode can restore LEDs
         self.move_state.set_computer_move(move.uci(), forced=True)
         

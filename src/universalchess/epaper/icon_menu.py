@@ -467,7 +467,12 @@ class IconMenuWidget(Widget):
                 return True
             
             selected_key = self.get_selected_key()
-            if selected_key:
+            # An empty-string key is a valid selectable value (e.g. the Basic
+            # time-control preset persists ""), so distinguish it from the
+            # genuine "no entries" case (None): only None means there is nothing
+            # to select and should back out. Coercing "" to BACK would make Basic
+            # unselectable.
+            if selected_key is not None:
                 self._selection_result = selected_key
                 if self.on_select:
                     self.on_select(selected_key)

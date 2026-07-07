@@ -43,6 +43,7 @@ from sqlalchemy.sql import func
 from sqlalchemy import select
 from sqlalchemy import delete
 import os
+import re
 import time
 import pathlib
 import io
@@ -2170,6 +2171,12 @@ def generateVideoFrame(source="classic", dimensions=(VIDEO_NATIVE_WIDTH, VIDEO_N
 # reached via long_press=True, never as a tap.
 _REMOTE_KEYS = frozenset({"BACK", "TICK", "UP", "DOWN", "HELP", "PLAY"})
 
+# Shape of a UCI move the interactive board-control page may play: two squares
+# and an optional promotion piece (e.g. "e2e4" or "e7e8q"). This validates the
+# form only; legality for the current position is decided authoritatively by the
+# board's GameManager, which rejects out-of-turn or illegal moves.
+_UCI_MOVE_RE = re.compile(r"^[a-h][1-8][a-h][1-8][qrbn]?$")
+
 
 @app.route('/video')
 def video_feed():
@@ -2214,6 +2221,36 @@ def api_board_key():
         if sent:
             action = "Long-pressed" if long_press else "Pressed"
             return jsonify({"success": True, "message": f"{action} {key}"})
+        return jsonify({"success": False, "error": "Board not running"}), 503
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/board/move", methods=["POST"])
+@requires_auth
+def api_board_move():
+    """Play a move from the interactive board-control page. Requires authentication.
+
+    Forwards a ``make_move`` command to the main process, which applies it through
+    the active game exactly like an on-board move, but as a "web move": the
+    physical pieces stay put and the board is decoupled until a real piece is
+    touched. The move shape is validated here; legality for the current position
+    is decided by the board's GameManager (illegal/out-of-turn moves are dropped
+    and the browser re-syncs from the live game state).
+
+    Body: {"move": "e2e4"}  (5-char promotion form like "e7e8q" is accepted)
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        uci = (body.get("move") or "").strip().lower()
+        if not _UCI_MOVE_RE.match(uci):
+            return jsonify({"success": False, "error": "Invalid move"}), 400
+
+        from universalchess.services.game_broadcast import send_board_command
+
+        sent = send_board_command("make_move", {"uci": uci})
+        if sent:
+            return jsonify({"success": True, "message": f"Played {uci}"})
         return jsonify({"success": False, "error": "Board not running"}), 503
     except Exception as e:
         return _internal_error(e)
@@ -3141,11 +3178,26 @@ def api_get_menu_schema():
     The catalog (menu.json) is the single source of truth shared with the board.
     Served read-only and unauthenticated like /api/sprites; it contains only menu
     structure, labels, help tips, icons, and option sets - no secrets or values.
+
+    The Time Control preset list is not authored in menu.json: the board fills it
+    from the Python preset registry at runtime (a provider), so the web dropdown
+    must too. The generated ``time_control_presets`` option set is injected here
+    -- into a shallow copy so the shared cached catalog is not mutated -- keeping
+    the registry the single source of truth for both platforms without a second
+    fetch.
     """
     try:
         from universalchess.menus.catalog import get_catalog
+        from universalchess.menus.time_control_presets import preset_options
 
-        return jsonify(get_catalog().raw_menu())
+        menu = dict(get_catalog().raw_menu())
+        option_sets = dict(menu.get("optionSets", {}))
+        # The identical list the board renders: a leading Basic entry (empty key
+        # -> no preset -> the base-minutes control) and a trailing Custom entry
+        # bracket the registered presets.
+        option_sets["time_control_presets"] = preset_options()
+        menu["optionSets"] = option_sets
+        return jsonify(menu)
     except Exception as e:
         app.logger.warning(f"Failed to load menu schema: {e}")
         return _internal_error(e)
@@ -3622,6 +3674,58 @@ def api_system_battery():
                 "battery_level": cached.get("battery_level"),
                 "battery_percent": cached.get("battery_percent"),
                 "charger_connected": bool(cached.get("charger_connected", False)),
+            }
+        )
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/game/clock", methods=["GET"])
+def api_game_clock():
+    """Return the latest live clock snapshot for the LiveBoard countdown.
+
+    Read-only and unauthenticated like the other GET probes. The clock counts
+    down in the main process, which broadcasts every tick/state change over the
+    game socket; the web subscriber caches the latest snapshot. Live updates
+    reach the browser over SSE -- this endpoint just seeds the clock on load, and
+    the browser interpolates the active side between events. When nothing is
+    cached yet (fresh web start, before the board re-broadcasts), ask the board
+    to re-broadcast so the next SSE push fills it, and return the untimed/unknown
+    contract for now.
+
+    Contract: {white_time: int|null, black_time: int|null,
+    active_color: 'white'|'black'|null, is_running: bool, is_paused: bool,
+    timed_mode: bool, synced_at: float|null}.
+    """
+    try:
+        from universalchess.services.game_broadcast import (
+            get_subscriber,
+            request_clock_status_broadcast,
+        )
+
+        cached = get_subscriber().get_last_clock_status()
+        if cached is None:
+            request_clock_status_broadcast()
+            return jsonify(
+                {
+                    "white_time": None,
+                    "black_time": None,
+                    "active_color": None,
+                    "is_running": False,
+                    "is_paused": False,
+                    "timed_mode": False,
+                    "synced_at": None,
+                }
+            )
+        return jsonify(
+            {
+                "white_time": cached.get("white_time"),
+                "black_time": cached.get("black_time"),
+                "active_color": cached.get("active_color"),
+                "is_running": bool(cached.get("is_running", False)),
+                "is_paused": bool(cached.get("is_paused", False)),
+                "timed_mode": bool(cached.get("timed_mode", False)),
+                "synced_at": cached.get("synced_at"),
             }
         )
     except Exception as e:

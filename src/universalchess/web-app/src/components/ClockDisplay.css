@@ -1,0 +1,44 @@
+.clock-display {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.clock-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border-color, #dbdbdb);
+  border-radius: 6px;
+  background: var(--clock-bg, #f5f5f5);
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.clock-row--active {
+  background: var(--clock-active-bg, #eef6ff);
+  border-color: var(--clock-active-border, #3e8ed0);
+}
+
+.clock-row--expired .clock-row__time {
+  color: var(--clock-expired, #d9534f);
+}
+
+.clock-row__label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted, #7a7a7a);
+}
+
+.clock-row__time {
+  font-variant-numeric: tabular-nums;
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.clock-row--active .clock-row__label {
+  color: var(--clock-active-border, #3e8ed0);
+}

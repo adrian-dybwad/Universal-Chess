@@ -279,6 +279,11 @@ class GameSubscriber:
         # most-recent copy so GET /api/system/battery and a fresh SSE client can
         # render the indicator without waiting for the next board poll to change.
         self._last_battery_status: Optional[dict] = None
+        # Latest live clock snapshot (type == 'clock_status'). The clock counts
+        # down in the main process; this is the web process's most-recent copy so
+        # GET /api/game/clock and a fresh SSE client can render (and start
+        # interpolating) the live clock without waiting for the next tick.
+        self._last_clock_status: Optional[dict] = None
     
     def _ensure_socket(self) -> None:
         """Create and bind the Unix socket."""
@@ -358,6 +363,15 @@ class GameSubscriber:
             (e.g. after a web-service restart before the board re-broadcasts).
         """
         return self._last_battery_status
+
+    def get_last_clock_status(self) -> Optional[dict]:
+        """Get the most recent clock status snapshot received.
+
+        Returns:
+            Last ``clock_status`` payload dict, or None if none received yet
+            (e.g. after a web-service restart before the board re-broadcasts).
+        """
+        return self._last_clock_status
     
     def start(self) -> None:
         """Start the subscriber thread."""
@@ -419,6 +433,12 @@ class GameSubscriber:
                 # render at once without waiting for the next board change.
                 if parsed.get("type") == "battery_status":
                     self._last_battery_status = parsed
+
+                # Cache the latest clock snapshot for the same reason: the web
+                # live clock (REST seed, fresh SSE client) can render and start
+                # interpolating at once without waiting for the next tick.
+                if parsed.get("type") == "clock_status":
+                    self._last_clock_status = parsed
 
                 # Notify raw callbacks for all message types
                 with self._lock:
@@ -792,6 +812,36 @@ class SettingsPublisher:
             self._connected = False
             return False
 
+    def request_clock_status(self) -> bool:
+        """Ask the main process to re-broadcast the current clock status.
+
+        Sent when the web LiveBoard needs the live clock but has no cached
+        snapshot (e.g. after a web-service restart, or when the board first
+        mounts). The board -> web broadcast is one-way with no replay, so this
+        pull triggers an immediate re-broadcast of the current times instead of
+        waiting for the next tick.
+
+        Returns:
+            True if sent successfully, False otherwise.
+        """
+        if not self._connected:
+            if not self.connect():
+                return False
+
+        try:
+            socket_path = get_settings_socket_path()
+            message = json.dumps({"type": "request_clock_status"}).encode("utf-8")
+            self._socket.sendto(message, str(socket_path))
+            log.debug("[SettingsPublisher] Sent request_clock_status")
+            return True
+        except FileNotFoundError:
+            log.debug("[SettingsPublisher] Main process not listening")
+            return False
+        except Exception as e:
+            log.debug(f"[SettingsPublisher] Send failed: {e}")
+            self._connected = False
+            return False
+
     def close(self) -> None:
         """Close the socket."""
         with self._lock:
@@ -819,6 +869,7 @@ class SettingsSubscriber:
         self._request_callbacks: List[Callable[[], None]] = []
         self._bt_status_request_callbacks: List[Callable[[], None]] = []
         self._battery_status_request_callbacks: List[Callable[[], None]] = []
+        self._clock_status_request_callbacks: List[Callable[[], None]] = []
         self._command_callbacks: List[Callable[[dict], None]] = []
         self._lock = threading.Lock()
     
@@ -886,6 +937,19 @@ class SettingsSubscriber:
         """
         with self._lock:
             self._battery_status_request_callbacks.append(callback)
+
+    def add_clock_status_request_callback(self, callback: Callable[[], None]) -> None:
+        """Register a callback for clock-status re-broadcast requests.
+
+        Invoked when the web app asks the main process to re-broadcast the current
+        clock (the LiveBoard mounted/restarted with no cached snapshot). The
+        handler asks the clock to broadcast its current times now.
+
+        Args:
+            callback: Function to call on a clock-status request (no arguments).
+        """
+        with self._lock:
+            self._clock_status_request_callbacks.append(callback)
 
     def add_command_callback(self, callback: Callable[[dict], None]) -> None:
         """Register a callback for board-control commands.
@@ -990,6 +1054,16 @@ class SettingsSubscriber:
                             callback()
                         except Exception as e:
                             log.error(f"[SettingsSubscriber] Battery status request callback error: {e}")
+                elif msg_type == "request_clock_status":
+                    log.debug("[SettingsSubscriber] Received request_clock_status, notifying callbacks")
+                    with self._lock:
+                        clock_status_callbacks = list(self._clock_status_request_callbacks)
+
+                    for callback in clock_status_callbacks:
+                        try:
+                            callback()
+                        except Exception as e:
+                            log.error(f"[SettingsSubscriber] Clock status request callback error: {e}")
                 elif msg_type == "board_command":
                     log.info(f"[SettingsSubscriber] Received board_command: {parsed.get('command')}")
                     with self._lock:
@@ -1095,6 +1169,19 @@ def request_battery_status_broadcast() -> bool:
     return get_settings_publisher().request_battery_status()
 
 
+def request_clock_status_broadcast() -> bool:
+    """Ask the main process to re-broadcast the current clock status.
+
+    Called from the web app when the LiveBoard needs the live clock but has no
+    cached snapshot, so the board re-broadcasts immediately rather than the web
+    waiting for the next tick.
+
+    Returns:
+        True if the request was sent, False otherwise.
+    """
+    return get_settings_publisher().request_clock_status()
+
+
 def broadcast_battery_status(
     battery_level: Optional[int],
     battery_percent: Optional[int],
@@ -1120,6 +1207,51 @@ def broadcast_battery_status(
             "battery_level": battery_level,
             "battery_percent": battery_percent,
             "charger_connected": charger_connected,
+        },
+    )
+
+
+def broadcast_clock_status(
+    white_time: int,
+    black_time: int,
+    active_color: Optional[str],
+    is_running: bool,
+    is_paused: bool,
+    timed_mode: bool,
+) -> bool:
+    """Broadcast the current live clock to the web (board -> web).
+
+    Called from the main process on every clock tick and state change (start /
+    pause / resume / switch) and on demand for a re-broadcast request. The web
+    caches the snapshot, forwards it to SSE clients, and interpolates the active
+    side's countdown locally between events -- so a per-second event is enough
+    without streaming full game state each tick.
+
+    A ``synced_at`` wall-clock timestamp is stamped here so the browser can age
+    the snapshot (subtract elapsed real time from the active side) instead of
+    assuming the event arrived instantly.
+
+    Args:
+        white_time: White's remaining whole seconds.
+        black_time: Black's remaining whole seconds.
+        active_color: 'white'/'black' whose clock is counting, or None if unknown.
+        is_running: Whether the countdown is actively running (not paused).
+        is_paused: Whether the clock is paused.
+        timed_mode: Whether the game has a running clock (False = untimed).
+
+    Returns:
+        True if the broadcast was sent, False otherwise.
+    """
+    return get_broadcaster().broadcast_event(
+        "clock_status",
+        {
+            "white_time": white_time,
+            "black_time": black_time,
+            "active_color": active_color,
+            "is_running": is_running,
+            "is_paused": is_paused,
+            "timed_mode": timed_mode,
+            "synced_at": time.time(),
         },
     )
 

@@ -1906,44 +1906,52 @@ class IconButtonWidget(Widget):
 
     def _draw_timer_icon(self, draw: ImageDraw.Draw, x: int, y: int,
                          size: int, line_color: int, checked: bool = False):
-        """Draw a simple square icon with optional checkmark inside.
-        
-        Uses the same square outline as the default placeholder icon.
-        When checked=True, a checkmark is drawn inside the square.
-        
+        """Draw a stopwatch (round clock body + top start button + a hand).
+
+        Mirrors the web's Material ``timer`` glyph so the two platforms match,
+        replacing the old bare-square placeholder that read as a checkbox. The
+        unchecked form shows a clock hand; ``checked`` swaps the hand for an
+        inside checkmark so a selected/active clock reads as "this clock" rather
+        than an empty box.
+
         Args:
             draw: ImageDraw object
             x: X center position
             y: Y center position
             size: Icon size in pixels
             line_color: Line color (0=black, 255=white)
-            checked: Whether to draw a checkmark inside
+            checked: Draw the active/selected variant (checkmark) instead of a hand
         """
-        half = size // 2
-        left = x - half
-        top = y - half
-        right = x + half
-        bottom = y + half
-        
-        # Square outline (same as default placeholder)
-        draw.rectangle([left + 4, top + 4, right - 4, bottom - 4],
-                      outline=line_color, width=2)
-        
+        s = size / 36.0
+        line_width = max(2, int(2.2 * s))
+
+        # Clock body: a circle shifted down slightly to leave room for the top
+        # start button, so the whole glyph stays centered on (x, y).
+        radius = int(size * 0.36)
+        cy = y + int(3 * s)
+        draw.ellipse([x - radius, cy - radius, x + radius, cy + radius],
+                     outline=line_color, width=line_width)
+
+        # Top start button: a short neck rising from the body to a small bar.
+        neck_top = cy - radius - int(6 * s)
+        button_half = int(5 * s)
+        draw.line([(x, cy - radius), (x, neck_top)], fill=line_color, width=line_width)
+        draw.line([(x - button_half, neck_top), (x + button_half, neck_top)],
+                  fill=line_color, width=line_width)
+
         if checked:
-            # Draw checkmark inside the square
-            # Scale checkmark to fit nicely within the square
-            s = size / 36.0
-            
-            # Checkmark points - a V-shape centered in the square
-            # Left point of check
-            p1 = (x - int(8 * s), y)
-            # Bottom point of check (the vertex)
-            p2 = (x - int(2 * s), y + int(6 * s))
-            # Right point of check (top right)
-            p3 = (x + int(8 * s), y - int(6 * s))
-            
+            # Selected/active: a checkmark inside the body (V-shape), sized to sit
+            # within the circle so the tick reads clearly at e-paper scale.
+            p1 = (x - int(7 * s), cy)
+            p2 = (x - int(1 * s), cy + int(6 * s))
+            p3 = (x + int(8 * s), cy - int(6 * s))
             draw.line([p1, p2], fill=line_color, width=max(2, int(2.5 * s)))
             draw.line([p2, p3], fill=line_color, width=max(2, int(2.5 * s)))
+        else:
+            # Unset: a clock hand from the center pointing up-right (a "10 past"
+            # reading), the recognizable timer cue.
+            draw.line([(x, cy), (x + int(6 * s), cy - int(7 * s))],
+                      fill=line_color, width=line_width)
 
     def _draw_bluetooth_icon(self, draw: ImageDraw.Draw, x: int, y: int,
                              size: int, line_color: int):

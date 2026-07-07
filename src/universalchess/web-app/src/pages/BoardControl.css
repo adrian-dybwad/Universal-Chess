@@ -128,3 +128,42 @@
   text-align: center;
   margin: 0;
 }
+
+/* Interactive board used to play moves from the browser. Sized to sit
+   comfortably above the live video feed on both phone and desktop. */
+.board-control-play {
+  width: 100%;
+  max-width: 520px;
+}
+
+/* Promotion picker shown when a pawn reaches the last rank. */
+.promotion-choices {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-2, 0.5rem);
+}
+
+.promotion-choice {
+  appearance: none;
+  border: 1px solid var(--color-border, #3a3a3a);
+  background: var(--color-bg-card, #2a2a2a);
+  color: var(--color-text, #e9e9e9);
+  border-radius: var(--radius-md, 12px);
+  aspect-ratio: 1 / 1;
+  font-size: clamp(28px, 8vw, 40px);
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.promotion-choice:hover {
+  border-color: var(--color-primary, #aa44aa);
+}
+
+.promotion-choice:focus-visible {
+  outline: 2px solid var(--color-primary, #aa44aa);
+  outline-offset: 2px;
+}

@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { ChessBoard } from '../components/ChessBoard';
 import { Analysis } from '../components/Analysis';
+import { ClockDisplay } from '../components/ClockDisplay';
 import { CoachPanel } from '../components/CoachPanel';
 import { MoveTable } from '../components/MoveTable';
 import { useGameStore } from '../stores/gameStore';
@@ -176,6 +177,8 @@ export function LiveBoard() {
               ) : (
                 <span className="tag is-light">Move {moveNum} - {turn} to play</span>
               )}
+              {/* Live countdown clock; renders only for a timed game. */}
+              <ClockDisplay />
             </div>
           ) : (
             <p className="text-muted">Waiting for game...</p>

@@ -10,6 +10,7 @@ just tracks time remaining for the countdown.
 
 from typing import Optional, Callable, List
 
+from universalchess.state.time_control import DelayMode, TimeControl
 from universalchess.utils.observers import notify_observers
 
 
@@ -46,6 +47,22 @@ class ChessClockState:
         self._is_running: bool = False
         self._is_paused: bool = False
         self._timed_mode: bool = False
+
+        # Time control (increment / delay / stages / asymmetric). Defaults to an
+        # untimed control until configured, so queries are always well-defined.
+        self._time_control: TimeControl = TimeControl.sudden_death_minutes(0)
+
+        # Per-move tracking for the currently active side:
+        # - _delay_remaining: seconds of a SIMPLE (US) delay still to elapse
+        #   before the main clock resumes counting this move.
+        # - _time_used_this_turn: whole seconds decremented from the main clock
+        #   this move, used to compute the BRONSTEIN giveback.
+        self._delay_remaining: int = 0
+        self._time_used_this_turn: int = 0
+        # Active color at the previous tick, so a turn switch can refresh the
+        # per-move SIMPLE delay even if the move-completed hook is momentarily
+        # behind the countdown thread.
+        self._last_tick_color: Optional[str] = None
         
         # Observer callbacks
         self._on_tick: List[Callable[[], None]] = []
@@ -98,6 +115,21 @@ class ChessClockState:
     def timed_mode(self) -> bool:
         """Whether clock is in timed mode (countdown) vs untimed (turn indicator only)."""
         return self._timed_mode
+
+    @property
+    def time_control(self) -> TimeControl:
+        """The active time control (increment / delay / stages / asymmetric)."""
+        return self._time_control
+
+    @property
+    def delay_remaining(self) -> int:
+        """Seconds of the active side's simple (US) delay still to elapse.
+
+        Zero unless a SIMPLE delay is configured and the current move is still
+        within its delay window. Exposed so displays can show the delay
+        countdown and the web clock can freeze the main time accordingly.
+        """
+        return self._delay_remaining
     
     # -------------------------------------------------------------------------
     # Observer management
@@ -196,24 +228,102 @@ class ChessClockState:
         """
         self._timed_mode = timed
         self._notify_state_change()
+
+    def set_time_control(self, time_control: TimeControl) -> None:
+        """Set the active time control and initialize per-move tracking.
+
+        Resets the per-move delay/usage counters so the first mover starts a
+        fresh delay window (SIMPLE mode) and no prior usage leaks into a
+        Bronstein giveback.
+
+        Args:
+            time_control: The resolved time control for the game.
+        """
+        self._time_control = time_control
+        self._reset_turn_tracking()
+        self._notify_state_change()
+
+    def _reset_turn_tracking(self) -> None:
+        """Reset per-move counters for the side about to move.
+
+        SIMPLE (US) delay freezes the main clock for ``delay_seconds`` at the
+        start of each move, so the counter is primed to the full delay; BRONSTEIN
+        lets the main clock run immediately (giveback happens on move completion),
+        so no freeze is primed.
+        """
+        tc = self._time_control
+        self._delay_remaining = (
+            tc.delay_seconds if tc.delay_mode is DelayMode.SIMPLE else 0
+        )
+        self._time_used_this_turn = 0
+
+    def apply_move_completed(self, mover_color: str, mover_move_number: int) -> None:
+        """Apply time-control effects for a completed move by ``mover_color``.
+
+        Grants the mover their Fischer increment, any Bronstein giveback (the
+        lesser of the delay and the time actually used this move), and any stage
+        base time earned by reaching the stage's move requirement. Then resets
+        the per-move tracking for the side now on move.
+
+        Args:
+            mover_color: 'white' or 'black' -- the side that just moved.
+            mover_move_number: 1-based count of that side's completed moves,
+                used to look up the stage increment and stage boundary.
+        """
+        tc = self._time_control
+        added = tc.increment_after_move(mover_color, mover_move_number)
+        added += tc.base_added_after_move(mover_color, mover_move_number)
+        if tc.delay_mode is DelayMode.BRONSTEIN:
+            added += min(tc.delay_seconds, self._time_used_this_turn)
+
+        if added:
+            if mover_color == "white":
+                self._white_time += added
+            elif mover_color == "black":
+                self._black_time += added
+
+        # The opponent is now on move: start their delay/usage tracking fresh.
+        self._reset_turn_tracking()
+        self._notify_state_change()
     
     def tick(self) -> None:
-        """Decrement active player's time by one second.
-        
-        Called by the clock service's countdown thread.
-        Uses active_color property which reads from ChessGameState.
-        Notifies tick observers and checks for flag.
+        """Decrement the active player's time by one second.
+
+        Called by the clock service's countdown thread. Uses the active_color
+        property which reads from ChessGameState. Honors a SIMPLE (US) delay:
+        while the active side still has delay seconds remaining, the delay is
+        consumed and the main clock is left untouched. Otherwise the main clock
+        is decremented and the per-move usage counter (for a Bronstein giveback)
+        is advanced. Notifies tick observers and checks for a flag.
         """
         active = self.active_color
+
+        # A turn switch may have occurred since the last tick before the
+        # move-completed hook refreshed tracking; refresh the SIMPLE delay window
+        # for the new side so it is never skipped. Never reset time-used here --
+        # that value is consumed by the mover's Bronstein giveback.
+        if active != self._last_tick_color:
+            self._last_tick_color = active
+            if self._time_control.delay_mode is DelayMode.SIMPLE:
+                self._delay_remaining = self._time_control.delay_seconds
+
+        if self._delay_remaining > 0:
+            # Simple/US delay: freeze the main clock this second.
+            self._delay_remaining -= 1
+            self._notify_tick()
+            return
+
         if active == 'white':
             self._white_time = max(0, self._white_time - 1)
+            self._time_used_this_turn += 1
             if self._white_time == 0:
                 self._notify_flag('white')
         elif active == 'black':
             self._black_time = max(0, self._black_time - 1)
+            self._time_used_this_turn += 1
             if self._black_time == 0:
                 self._notify_flag('black')
-        
+
         self._notify_tick()
     
     def reset(self) -> None:
@@ -226,6 +336,10 @@ class ChessClockState:
         self._is_running = False
         self._is_paused = False
         self._timed_mode = False
+        self._time_control = TimeControl.sudden_death_minutes(0)
+        self._delay_remaining = 0
+        self._time_used_this_turn = 0
+        self._last_tick_color = None
         self._notify_state_change()
 
 

@@ -936,6 +936,31 @@ def _broadcast_battery_status() -> None:
         log.debug(f"[App] Failed to broadcast battery status: {e}")
 
 
+def _broadcast_clock_status() -> None:
+    """Mirror the board's live clock to the web LiveBoard (board -> web).
+
+    Registered as a ChessClockState tick and state-change observer and invoked on
+    demand for a 'request_clock_status' pull, so the web clock reflects the
+    countdown the board process owns. The web interpolates the active side
+    locally between these events. Best-effort; never raises into the observer
+    notification (a broadcast failure must not disturb the countdown thread).
+    """
+    try:
+        from universalchess.state import get_chess_clock
+        from universalchess.services.game_broadcast import broadcast_clock_status
+        clock = get_chess_clock()
+        broadcast_clock_status(
+            clock.white_time,
+            clock.black_time,
+            clock.active_color,
+            clock.is_running,
+            clock.is_paused,
+            clock.timed_mode,
+        )
+    except Exception as e:  # noqa: BLE001 - web mirror is best-effort
+        log.debug(f"[App] Failed to broadcast clock status: {e}")
+
+
 def _handle_web_chromecast_command(command: str, parsed: dict) -> None:
     """Apply a web Chromecast command (start/stop/status) on the board.
 
@@ -2038,6 +2063,12 @@ def _start_game_mode(
     led_callbacks = led_controller.get_callbacks()
     log.info(f"[App] LED controller initialized (intensity={led_intensity})")
 
+    # Resolve the full time control (preset / custom / legacy minutes) from
+    # settings so the clock supports increment, delay, stages, and asymmetric
+    # times -- not just the legacy symmetric minutes.
+    from universalchess.state.time_control import build_time_control
+    time_control_spec = build_time_control(game)
+
     # Create DisplayManager - handles all game widgets (chess board, analysis, clock)
     # Analysis runs in a background thread so it doesn't block move processing
     # Hand-brain hints are set per-player via display_manager.set_brain_hint()
@@ -2053,9 +2084,10 @@ def _start_game_mode(
         show_graph=game.show_graph,
         analysis_mode=analysis_mode,
         led_from_to_hint_callback=led_callbacks.from_to_hint,
-        led_off_callback=led_callbacks.off
+        led_off_callback=led_callbacks.off,
+        time_control_spec=time_control_spec
     )
-    log.info(f"[App] DisplayManager initialized (time_control={game.time_control} min, "
+    log.info(f"[App] DisplayManager initialized (time_control={time_control_spec.describe()}, "
              f"analysis_mode={analysis_mode}, "
              f"board={game.show_board}, clock={game.show_clock}, "
              f"analysis={game.show_analysis}, "
@@ -2385,6 +2417,12 @@ def _start_game_mode(
                 display_manager.start_clock()
                 _clock_started = True
                 log.debug("[App] Clock started")
+            # Apply time-control effects (Fischer increment, Bronstein giveback,
+            # stage time) for any move just completed. Driven by the game's ply
+            # count, so calling it on every turn event is safe and idempotent:
+            # the initial turn (no move yet) and repeated/resume events add
+            # nothing.
+            display_manager.apply_clock_move()
         elif isinstance(event, str) and event.startswith("Termination."):
             # Game ended (checkmate, stalemate, resign, draw, etc.)
             # GameOverWidget already showed itself via ChessGameState observer
@@ -2740,6 +2778,20 @@ def _process_pending_board_command() -> None:
         if protocol_manager is not None:
             _abort_current_game()
             _return_to_menu("Web abort")
+    elif command == "make_move":
+        # Move played from the web Control page. Applied through the active
+        # GameManager exactly like an on-board move (validated, executed, opponent
+        # notified), but as a "web move" that decouples the physical board until a
+        # real piece is touched. Ignored when no game is running.
+        uci = cmd.get("uci")
+        if not uci:
+            log.warning("[App] make_move command missing uci")
+        elif protocol_manager is not None and protocol_manager.game_manager is not None:
+            log.info(f"[App] Web make_move: {uci}")
+            if not protocol_manager.game_manager.submit_web_move(uci):
+                log.warning(f"[App] Web make_move rejected: {uci}")
+        else:
+            log.warning("[App] Web make_move ignored: no active game")
     elif command == "reset_settings":
         # Same reset path as the on-board Reset Settings menu (after its confirm);
         # the web confirms in the browser. Clears the sections and reloads
@@ -3661,6 +3713,12 @@ def _build_game_context():
     def game_set(key, value):
         _save_game_setting(key, value)
         log.info(f"[Settings] game.{key} changed to {value}")
+        if key == "time_control":
+            # Selecting a base-minutes value makes the legacy minutes authoritative,
+            # so clear any active preset -- otherwise build_time_control keeps
+            # resolving the preset and the chosen minutes would have no effect.
+            _save_game_setting("time_control_preset", "")
+            log.info("[Settings] game.time_control_preset cleared (base minutes chosen)")
         if key == "coach_provider":
             # Model ids are provider-specific, so a model chosen for the previous
             # provider is invalid for the new one (and would be sent verbatim,
@@ -3675,14 +3733,35 @@ def _build_game_context():
 
 
 def _time_control_label() -> str:
-    """Concise Time Control label for the Settings list: 'Disabled' or 'N min'.
+    """Concise Time Control label for the board: the resolved control summary.
 
-    Kept concise for the e-paper row (the catalog's time_control option labels --
-    e.g. "5 min (Blitz)" -- are the verbose web/select form); mirrors the prior
-    board override and the Sleep Timer label style.
+    Resolves the full control (preset / custom / legacy minutes) and returns its
+    ``describe()`` (e.g. "Untimed", "5 min", "5 min + 3 sec", "40 moves/90 min,
+    then 30 min + 30 sec"), so the board row reflects increment/delay/stages and
+    asymmetric times rather than just the legacy minutes.
     """
-    minutes = _game_settings_dict()["time_control"]
-    return "Disabled" if minutes == 0 else f"{minutes} min"
+    from universalchess.state.time_control import build_time_control
+
+    return build_time_control(_get_settings().game).describe()
+
+
+def _time_control_preset_label() -> str:
+    """Short label for the currently selected time-control preset.
+
+    Maps ``game.time_control_preset`` to its short name from the shared preset
+    builder (``Basic`` / a preset's name / ``Custom``) so the board's Preset row
+    shows which preset is active without repeating the resolved-timing summary
+    the base-minutes row already shows. An unknown/legacy key falls back to
+    ``Basic``, matching ``build_time_control`` (which treats an unrecognized
+    preset as no preset and resolves the legacy base minutes).
+    """
+    from universalchess.menus.time_control_presets import preset_options
+
+    current = str(_get_settings().game.time_control_preset or "")
+    for option in preset_options():
+        if option["value"] == current:
+            return option["label"]
+    return "Basic"
 
 
 def _build_settings_context():
@@ -4008,11 +4087,34 @@ def _build_game_menu_context():
             rows.append(MenuRow(key=info["id"], label=info["name"], icon="agents"))
         return rows
 
+    def time_control_presets():
+        """Rows for the Time Control preset select: Basic, every preset, Custom.
+
+        Sourced from the shared preset builder (single source of truth for the
+        controls the clock understands, shared with the web) so the board list
+        cannot drift from what build_time_control can resolve, and so the board
+        renders the identical list the web does. Each row carries the preset's
+        full rules as ``help``, shown by the board help dialog -- the board's
+        analog of the web's description block -- so the row label stays the short
+        name. The list is bracketed by Basic (empty key -> no preset, reveals the
+        base-minutes row) and Custom (reveals the custom builder).
+        """
+        from universalchess.menus.engine import MenuRow
+        from universalchess.menus.time_control_presets import preset_options
+
+        return [
+            MenuRow(key=opt["value"], label=opt["label"], icon="timer",
+                    help=opt["description"])
+            for opt in preset_options()
+        ]
+
     _register_analysis_store(ctx)
     ctx.register_provider("installed_engines", installed_engines)
     ctx.register_provider("coaches", coaches_rows)
     ctx.register_provider("agents_choices", agents_choices)
+    ctx.register_provider("time_control_presets", time_control_presets)
     ctx.register_value("time_control", lambda node: _time_control_label())
+    ctx.register_value("time_control_preset_label", lambda node: _time_control_preset_label())
     # Show which coach persona is active: for Auto, the Elo-resolved coach in
     # parentheses; for an explicit pick, that coach's name (falling back to the id).
     ctx.register_value("coach_selected_label", lambda node: _coach_selected_label())
@@ -6443,6 +6545,15 @@ def main():
         log.debug("[Main] Web requested current battery status, re-broadcasting")
         _broadcast_battery_status()
 
+    # Re-broadcast the current clock on demand. The web LiveBoard sends this when
+    # it mounts (or after a web-service restart) without a cached snapshot; the
+    # board -> web broadcast is one-way with no replay, so this pushes the current
+    # times immediately instead of waiting for the next tick.
+    def _on_clock_status_requested():
+        """A web client asked for the current clock status."""
+        log.debug("[Main] Web requested current clock status, re-broadcasting")
+        _broadcast_clock_status()
+
     try:
         from universalchess.services.game_broadcast import get_settings_subscriber
         settings_subscriber = get_settings_subscriber()
@@ -6450,6 +6561,7 @@ def main():
         settings_subscriber.add_request_callback(_on_game_state_requested)
         settings_subscriber.add_bt_status_request_callback(_on_bt_status_requested)
         settings_subscriber.add_battery_status_request_callback(_on_battery_status_requested)
+        settings_subscriber.add_clock_status_request_callback(_on_clock_status_requested)
         settings_subscriber.add_command_callback(_on_board_command)
         settings_subscriber.start()
         log.info("[Main] Settings subscriber started (hot reload enabled)")
@@ -6474,6 +6586,18 @@ def main():
         get_system().on_battery_change(_broadcast_battery_status)
     except Exception as e:  # noqa: BLE001 - web mirror is optional
         log.debug(f"[Main] Failed to register battery state observer: {e}")
+
+    # Mirror the live clock to the web LiveBoard. Broadcast on every tick (so the
+    # web can re-sync its interpolation each second) and on every state change
+    # (start / pause / resume / turn switch), matching the e-paper clock widget's
+    # own observers (board -> web).
+    try:
+        from universalchess.state import get_chess_clock
+        clock_state = get_chess_clock()
+        clock_state.on_tick(_broadcast_clock_status)
+        clock_state.on_state_change(_broadcast_clock_status)
+    except Exception as e:  # noqa: BLE001 - web mirror is optional
+        log.debug(f"[Main] Failed to register clock state observer: {e}")
     
     try:
         log.info("[Main] Initializing ConnectionManager...")
