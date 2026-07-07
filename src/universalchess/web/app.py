@@ -2194,6 +2194,80 @@ def video_feed():
     )
 
 
+def _read_epaper_snapshot_bytes():
+    """Return the e-paper snapshot JPEG bytes, or None if absent/mid-write.
+
+    The board rewrites ``web/static/epaper.jpg`` in place on every panel refresh,
+    so a read can catch a truncated file. A cheap SOI/EOI marker check rejects a
+    partial read (the caller retries on the next poll) without the cost of a full
+    image decode.
+    """
+    try:
+        with open(EPAPER_STATIC_JPG, "rb") as handle:
+            data = handle.read()
+    except OSError:
+        return None
+    if len(data) < 4 or data[:2] != b"\xff\xd8" or data[-2:] != b"\xff\xd9":
+        return None
+    return data
+
+
+def generateEpaperFrame():
+    """Yield an MJPEG stream of the board's e-paper display snapshot.
+
+    The board continuously writes ``web/static/epaper.jpg`` on every panel
+    refresh; streaming it gives the board-control page a live e-paper view that
+    mirrors the physical screen. The JPEG is re-read and re-sent only when the
+    file mtime changes; otherwise the cached frame is re-sent at most every
+    ``VIDEO_KEEPALIVE_SECONDS`` to keep ``<img>`` viewers connected without any
+    disk work. An idle (or stopped) board therefore performs essentially no work.
+    """
+    last_mtime = None
+    jpeg = b""
+    last_sent = 0.0
+    while True:
+        loop_started = time.monotonic()
+        changed = False
+        try:
+            mtime = os.stat(EPAPER_STATIC_JPG)[8]
+        except OSError:
+            mtime = None
+        if mtime is not None and mtime != last_mtime:
+            data = _read_epaper_snapshot_bytes()
+            if data is not None:
+                jpeg = data
+                last_mtime = mtime
+                changed = True
+        now = time.monotonic()
+        if jpeg and (changed or (now - last_sent) >= VIDEO_KEEPALIVE_SECONDS):
+            yield _build_multipart_frame(jpeg)
+            last_sent = now
+        elapsed = time.monotonic() - loop_started
+        remaining = VIDEO_POLL_INTERVAL_SECONDS - elapsed
+        if remaining > 0:
+            time.sleep(remaining)
+
+
+@app.route('/screen')
+def screen_feed():
+    """Live MJPEG stream of the board's e-paper display.
+
+    Mirrors /video's transport but streams only the e-paper snapshot, so the
+    board-control page can show the physical screen beside the interactive board
+    without the full board-composite feed.
+    """
+    return Response(
+        stream_with_context(generateEpaperFrame()),
+        mimetype='multipart/x-mixed-replace; boundary=frame',
+        headers={
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+            'X-Accel-Buffering': 'no',
+        },
+    )
+
+
 @app.route("/api/board/key", methods=["POST"])
 @requires_auth
 def api_board_key():

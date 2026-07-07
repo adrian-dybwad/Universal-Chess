@@ -142,3 +142,28 @@ describe('BoardControl interactive move', () => {
     expect(JSON.parse(apiFetchMock.mock.calls[0][1].body)).toEqual({ move: 'e7e8q' });
   });
 });
+
+describe('BoardControl layout', () => {
+  it('shows the live e-paper screen from /screen and drops the old board feed', () => {
+    // The page now shows the e-paper screen (from the /screen stream) beside the
+    // board and no longer embeds the full /video composite. A regression that
+    // reintroduced the old feed, or pointed the screen at the wrong endpoint,
+    // would fail here: the "Board display" image must exist with src "/screen"
+    // and the old "Live board feed" image must be gone.
+    render(<BoardControl />);
+    const screenImg = screen.getByAltText('Board display');
+    expect(screenImg).toBeInTheDocument();
+    expect(screenImg.getAttribute('src')).toBe('/screen');
+    expect(screen.queryByAltText('Live board feed')).not.toBeInTheDocument();
+  });
+
+  it('renders the six physical control buttons', () => {
+    // The key control moved next to the board but must still render all six
+    // device buttons; a broken layout refactor could drop the button group.
+    render(<BoardControl />);
+    for (const name of ['Up', 'Back', 'Ok / Menu', 'Down', 'Hint']) {
+      expect(screen.getByRole('button', { name })).toBeInTheDocument();
+    }
+    expect(screen.getByRole('button', { name: /Play \/ Pause/ })).toBeInTheDocument();
+  });
+});

@@ -352,43 +352,45 @@ export function BoardControl() {
       )}
 
       <div className="board-control">
-        <div className="board-control-play">
-          <Chessboard options={boardOptions} />
-        </div>
+        <div className="board-control-main">
+          <div className="board-control-play">
+            <Chessboard options={boardOptions} />
+          </div>
 
-        <div className="board-control-stage">
-          {/* Request a downscaled feed: this embedded view is small, so a
-              960x540 frame is crisp here while cutting the board's JPEG encode
-              and transfer cost to a quarter of the full 1920x1080 cast frame. */}
-          <img className="board-control-feed" src={buildApiUrl('/video?w=960')} alt="Live board feed" />
+          {/* Right column beside the board: the live e-paper screen on top and
+              the physical key control beneath it, matching where the screen and
+              buttons sit on the device. */}
+          <div className="board-control-side">
+            <img className="board-control-screen" src={buildApiUrl('/screen')} alt="Board display" />
 
-          <div className="board-remote" role="group" aria-label="Board buttons">
-            {BUTTONS.map((btn) => {
-              const isActive = activeKey === btn.key;
-              const className = [
-                'remote-key',
-                btn.wide ? 'remote-key--wide' : '',
-                btn.primary ? 'remote-key--primary' : '',
-                isActive ? 'is-pressed' : '',
-                isActive && longArmed ? 'is-long' : '',
-              ].filter(Boolean).join(' ');
-              return (
-                <button
-                  key={btn.key}
-                  type="button"
-                  className={className}
-                  aria-label={btn.ariaLabel}
-                  title={btn.ariaLabel}
-                  onPointerDown={(e) => onPointerDown(e, btn.key)}
-                  onPointerUp={(e) => onPointerUp(e, btn.key)}
-                  onPointerCancel={onPointerCancel}
-                  onKeyDown={(e) => onKeyDown(e, btn.key)}
-                  onContextMenu={(e) => e.preventDefault()}
-                >
-                  <span className="remote-key-glyph" aria-hidden="true">{btn.glyph}</span>
-                </button>
-              );
-            })}
+            <div className="board-remote" role="group" aria-label="Board buttons">
+              {BUTTONS.map((btn) => {
+                const isActive = activeKey === btn.key;
+                const className = [
+                  'remote-key',
+                  btn.wide ? 'remote-key--wide' : '',
+                  btn.primary ? 'remote-key--primary' : '',
+                  isActive ? 'is-pressed' : '',
+                  isActive && longArmed ? 'is-long' : '',
+                ].filter(Boolean).join(' ');
+                return (
+                  <button
+                    key={btn.key}
+                    type="button"
+                    className={className}
+                    aria-label={btn.ariaLabel}
+                    title={btn.ariaLabel}
+                    onPointerDown={(e) => onPointerDown(e, btn.key)}
+                    onPointerUp={(e) => onPointerUp(e, btn.key)}
+                    onPointerCancel={onPointerCancel}
+                    onKeyDown={(e) => onKeyDown(e, btn.key)}
+                    onContextMenu={(e) => e.preventDefault()}
+                  >
+                    <span className="remote-key-glyph" aria-hidden="true">{btn.glyph}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
 
