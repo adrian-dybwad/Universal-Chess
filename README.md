@@ -72,8 +72,9 @@ Universal-Chess can advertise as multiple e-board types and auto-detect which pr
 Start clean on a new SD card using the Raspberry Pi Imager. Do not reuse the
 original card from the Centaur -- keep it safe, you may want it later.
 
-1. In the Pi Imager, choose Raspberry Pi OS (32-bit) **Trixie**, with no apps or
-   desktop (Lite).
+1. In the Pi Imager, choose Raspberry Pi OS (64-bit) **Trixie**, with no apps or
+   desktop (Lite). The 32-bit image also works, but the 64-bit image supports
+   more engines.
 2. In the Imager's advanced settings, configure the hostname, a user and password
    (any username works, you are not limited to `pi` -- just remember the
    password), Wi-Fi credentials, and enable SSH. Set any other options you like.
