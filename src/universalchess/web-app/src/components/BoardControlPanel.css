@@ -1,41 +1,75 @@
-.board-control {
+/* Non-modal floating panel for the board remote control. Anchored to the
+   top-right beneath the navbar so it can stay open while the page behind it
+   (e.g. the Live Board) remains fully interactive -- no backdrop. It sits below
+   the true modals (login/shutdown confirm at z-index 1000) so those still layer
+   on top. */
+.board-control-panel {
+  position: fixed;
+  top: 4.5rem;
+  right: 1rem;
+  z-index: 900;
+  width: min(320px, calc(100vw - 2rem));
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: var(--space-4, 1rem);
+  gap: var(--space-3, 0.75rem);
+  padding: var(--space-3, 0.75rem) var(--space-4, 1rem) var(--space-4, 1rem);
+  background: var(--color-bg-card, #1e1e1e);
+  border: 1px solid var(--color-border, #2c2c2c);
+  border-radius: var(--radius-xl, 18px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
 }
 
-/* The interactive board and the device column (e-paper screen + key control)
-   sit side by side, wrapping to a stack on narrow screens. */
-.board-control-main {
+@media screen and (max-width: 480px) {
+  .board-control-panel {
+    top: auto;
+    bottom: 1rem;
+    right: 0.5rem;
+    left: auto;
+  }
+}
+
+.board-control-panel-header {
   display: flex;
-  flex-wrap: wrap;
-  align-items: stretch;
-  justify-content: center;
-  gap: var(--space-4, 1rem);
-  width: 100%;
+  align-items: center;
+  justify-content: space-between;
 }
 
-/* Right-hand column beside the board: the e-paper screen on top and the key
-   control beneath it, mirroring the device layout. The column stretches to the
-   board's height (align-items: stretch on the row) and space-between pins the
-   screen to the top and the keys to the bottom, so the screen+keys span the
-   full board height. When the row wraps to a stack the column is alone on its
-   line, so it collapses back to its content height (no gap blow-out). */
+.board-control-panel-header h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: var(--color-text, #e6e6e6);
+}
+
+.board-control-panel-close {
+  appearance: none;
+  border: none;
+  background: none;
+  color: var(--color-text-muted, #bbb);
+  font-size: 1.5rem;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+
+.board-control-panel-close:hover {
+  color: var(--color-text, #fff);
+}
+
+/* The device column: the e-paper screen on top and the key control beneath it,
+   mirroring where the screen and buttons sit on the device. */
 .board-control-side {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-3, 0.75rem);
 }
 
 /* Live e-paper snapshot streamed from /screen. Its intrinsic aspect ratio is
    preserved (height:auto); the width is clamped so it reads as the small device
-   screen rather than dominating the board. */
+   screen. */
 .board-control-screen {
   display: block;
-  width: clamp(110px, 15vw, 160px);
+  width: clamp(140px, 60%, 200px);
   height: auto;
   border-radius: var(--radius-lg, 12px);
   background: #000;
@@ -46,10 +80,10 @@
    both columns; Back/Ok and Hint/Play flank them left and right. */
 .board-remote {
   display: grid;
-  grid-template-columns: repeat(2, clamp(23px, 3vw, 32px));
-  gap: clamp(6px, 1.1vw, 12px);
+  grid-template-columns: repeat(2, clamp(34px, 22vw, 46px));
+  gap: clamp(8px, 2vw, 14px);
   justify-items: center;
-  padding: clamp(4px, 0.7vw, 8px);
+  padding: clamp(6px, 1.5vw, 10px);
   background: rgba(20, 20, 20, 0.82);
   border: 1px solid var(--color-border, #2c2c2c);
   border-radius: var(--radius-xl, 18px);
@@ -63,8 +97,8 @@
   background: #2a2a2a;
   color: #e9e9e9;
   border-radius: var(--radius-md, 12px);
-  width: clamp(23px, 3vw, 32px);
-  height: clamp(23px, 3vw, 32px);
+  width: clamp(34px, 22vw, 46px);
+  height: clamp(34px, 22vw, 46px);
   padding: 0;
   cursor: pointer;
   display: flex;
@@ -82,7 +116,7 @@
 }
 
 .remote-key-glyph {
-  font-size: clamp(10px, 1.3vw, 14px);
+  font-size: clamp(14px, 4vw, 18px);
   line-height: 1;
 }
 
@@ -104,10 +138,6 @@
   background: var(--color-primary, #aa44aa);
   border-color: var(--color-primary, #aa44aa);
   transform: scale(0.95);
-}
-
-.remote-key.is-pressed .remote-key-label {
-  color: #fff;
 }
 
 /* Long-press armed: the hold has crossed the long-press threshold, so release
@@ -137,49 +167,4 @@
   font-size: var(--text-sm, 0.875rem);
   text-align: center;
   margin: 0;
-}
-
-/* Interactive board used to play moves from the browser. Sized to sit
-   comfortably beside the device column on desktop and stack above it on
-   narrow screens. */
-.board-control-play {
-  width: 100%;
-  max-width: 520px;
-  flex: 1 1 320px;
-  /* The row uses align-items: stretch so the device column matches the board's
-     height; exempt the board so it keeps its natural square size (and thus
-     defines the row height) instead of being stretched into a rectangle. */
-  align-self: flex-start;
-}
-
-/* Promotion picker shown when a pawn reaches the last rank. */
-.promotion-choices {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--space-2, 0.5rem);
-}
-
-.promotion-choice {
-  appearance: none;
-  border: 1px solid var(--color-border, #3a3a3a);
-  background: var(--color-bg-card, #2a2a2a);
-  color: var(--color-text, #e9e9e9);
-  border-radius: var(--radius-md, 12px);
-  aspect-ratio: 1 / 1;
-  font-size: clamp(28px, 8vw, 40px);
-  line-height: 1;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.12s ease, border-color 0.12s ease;
-}
-
-.promotion-choice:hover {
-  border-color: var(--color-primary, #aa44aa);
-}
-
-.promotion-choice:focus-visible {
-  outline: 2px solid var(--color-primary, #aa44aa);
-  outline-offset: 2px;
 }

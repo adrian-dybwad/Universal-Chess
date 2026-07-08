@@ -16,7 +16,6 @@ const TITLE_SEPARATOR = ' \u00b7 ';
  */
 function pageNameForPath(pathname: string): string {
   if (pathname === '/') return 'Live Board';
-  if (pathname.startsWith('/control')) return 'Board Control';
   if (pathname.startsWith('/games')) return 'Games';
   if (pathname.startsWith('/analyze')) return 'Analysis';
   if (pathname.startsWith('/positions')) return 'Positions';

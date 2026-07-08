@@ -13,6 +13,11 @@
   font-style: italic;
 }
 
+/* Inline variant: embedded above the Analysis widget, no box/card chrome. */
+.coach-panel-inline {
+  margin-bottom: 0.75rem;
+}
+
 .coach-panel-retry {
   background: none;
   border: none;

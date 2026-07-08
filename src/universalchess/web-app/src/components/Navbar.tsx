@@ -6,6 +6,7 @@ import { ConnectivityIndicators } from './ConnectivityIndicators';
 import { CastButton } from './CastButton';
 import { MenuIcon } from './MenuIcon';
 import { UpdateIndicator } from './UpdateIndicator';
+import { BoardControlPanel } from './BoardControlPanel';
 import './Navbar.css';
 
 /**
@@ -13,6 +14,7 @@ import './Navbar.css';
  */
 export function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [controlOpen, setControlOpen] = useState(false);
   const location = useLocation();
 
   // Match the route exactly or any of its sub-paths so a nested route (e.g.
@@ -23,17 +25,19 @@ export function Navbar() {
 
   // Board Control lives in the shared status bar (left of the cast button)
   // rather than the main nav, grouped with the other live device controls, so it
-  // stays reachable on all viewports without depending on the burger menu.
+  // stays reachable on all viewports without depending on the burger menu. It
+  // toggles a non-modal floating panel so the board stays usable behind it.
   const boardControl = (
-    <Link
-      to="/control"
-      className={`navbar-control-icon ${isActive('/control') ? 'is-active' : ''}`}
-      onClick={() => setMenuOpen(false)}
+    <button
+      type="button"
+      className={`navbar-control-icon ${controlOpen ? 'is-active' : ''}`}
+      onClick={() => setControlOpen((open) => !open)}
       title="Board Control"
       aria-label="Board Control"
+      aria-pressed={controlOpen}
     >
       <MenuIcon name="remote" size={18} />
-    </Link>
+    </button>
   );
 
   return (
@@ -108,6 +112,8 @@ export function Navbar() {
         <CastButton />
         <ConnectionStatus />
       </div>
+
+      <BoardControlPanel isOpen={controlOpen} onClose={() => setControlOpen(false)} />
     </nav>
   );
 }

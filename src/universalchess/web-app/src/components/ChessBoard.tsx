@@ -17,6 +17,14 @@ interface ChessBoardProps {
    *  coexists with the green best-move arrow. */
   showLastMove?: { from: string; to: string } | null;
   boardOrientation?: 'white' | 'black';
+  /** Enable drag-to-move. Defaults to false (read-only display). When enabled,
+   *  pair with onPieceDrop/canDragPiece from useBoardMove to play into the game. */
+  allowDragging?: boolean;
+  /** Restricts which pieces can be picked up (e.g. only the side to move). */
+  canDragPiece?: ChessboardOptions['canDragPiece'];
+  /** Handles a completed drop; return false to leave the piece and let the
+   *  authoritative game state re-render the move. */
+  onPieceDrop?: ChessboardOptions['onPieceDrop'];
 }
 
 /**
@@ -31,6 +39,9 @@ export function ChessBoard({
   showPendingMove = null,
   showLastMove = null,
   boardOrientation = 'white',
+  allowDragging = false,
+  canDragPiece,
+  onPieceDrop,
 }: ChessBoardProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [boardWidth, setBoardWidth] = useState(maxBoardWidth);
@@ -119,7 +130,9 @@ export function ChessBoard({
     arrows: customArrows,
     darkSquareStyle,
     lightSquareStyle,
-    allowDragging: false,
+    allowDragging,
+    canDragPiece,
+    onPieceDrop,
     boardStyle: {
       width: boardWidth,
     },

@@ -53,6 +53,19 @@
   margin-bottom: 0.75rem;
 }
 
+/* Current game card header: title on the left, New Game button on the right */
+.current-game-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.current-game-header .box-title {
+  margin-bottom: 0;
+}
+
 /* Current game info */
 .current-game-info {
   padding: 0.5rem 0;

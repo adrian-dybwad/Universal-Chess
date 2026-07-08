@@ -16,8 +16,12 @@ interface CoachPanelProps {
    * misses the cache and refetches. Omit for static games (no takebacks).
    */
   moveKey?: string;
-  /** Container chrome: 'box' matches the live board, 'card' matches Analyze. */
-  variant?: 'box' | 'card';
+  /**
+   * Container chrome: 'box' matches the live board, 'card' matches Analyze, and
+   * 'inline' renders the coaching text with no box/card chrome so it can be
+   * embedded inside another card (e.g. above the Analysis graph).
+   */
+  variant?: 'box' | 'card' | 'inline';
 }
 
 // Wait this long after the viewed move settles before fetching, so scrubbing
@@ -149,6 +153,10 @@ export function CoachPanel({ gameId, ply, moveKey, variant = 'box' }: CoachPanel
         );
     }
   })();
+
+  if (variant === 'inline') {
+    return <div className="coach-panel-inline">{body}</div>;
+  }
 
   if (variant === 'card') {
     return (

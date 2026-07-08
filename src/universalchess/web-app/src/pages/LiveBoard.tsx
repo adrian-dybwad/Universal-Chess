@@ -1,11 +1,14 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { ChessBoard } from '../components/ChessBoard';
+import { useBoardMove } from '../components/useBoardMove';
+import { useAuthedAction } from '../components/useAuthedAction';
 import { Analysis } from '../components/Analysis';
 import { ClockDisplay } from '../components/ClockDisplay';
 import { CoachPanel } from '../components/CoachPanel';
 import { MoveTable } from '../components/MoveTable';
 import { useGameStore } from '../stores/gameStore';
 import { useNotation } from '../hooks/useNotation';
+import { apiFetch } from '../utils/api';
 import './LiveBoard.css';
 
 const SHOW_BEST_MOVE_KEY = 'universalChess.showBestMove';
@@ -139,17 +142,96 @@ export function LiveBoard() {
     return null;
   }, [pendingArrowMove, gameState?.last_move]);
 
+  // Interactive move flow. Only the live position is playable: while reviewing an
+  // earlier move (isAtLatestMove false) dragging is disabled so a move can't be
+  // played against a stale position. A move requires authentication, handled by
+  // the shared hook via its login dialog. boardFen carries the optimistic frame
+  // so a dropped piece stays at its destination until the authoritative update.
+  const { boardFen, allowDragging, canDragPiece, onPieceDrop, overlays } = useBoardMove({
+    fen: currentFen,
+    turn: gameState?.turn ?? null,
+    gameOver: gameState?.game_over ?? false,
+    enabled: isAtLatestMove,
+  });
+
+  // New Game: starts a fresh game on the board (same as the on-board players
+  // menu). Requires authentication, so 401 opens the shared login dialog and
+  // replays after login. Abandoning an in-progress game is confirmed first.
+  const { dialog: newGameLoginDialog, onUnauthorized } = useAuthedAction();
+  const [confirmNewGame, setConfirmNewGame] = useState(false);
+  const [newGameBusy, setNewGameBusy] = useState(false);
+
+  const startNewGame = useCallback(async () => {
+    setConfirmNewGame(false);
+    setNewGameBusy(true);
+    try {
+      const response = await apiFetch('/api/board/new-game', { method: 'POST', requiresAuth: true });
+      if (response.status === 401) {
+        onUnauthorized(startNewGame);
+        return;
+      }
+      // Success is reflected by the live game state over SSE; nothing to set here.
+    } catch (e) {
+      console.error('Failed to start new game:', e);
+    } finally {
+      setNewGameBusy(false);
+    }
+  }, [onUnauthorized]);
+
+  const onNewGameClick = useCallback(() => {
+    // Confirm before abandoning a game that is still in progress; a finished game
+    // (or no game) starts immediately.
+    if (gameState?.fen && !gameState.game_over) {
+      setConfirmNewGame(true);
+      return;
+    }
+    void startNewGame();
+  }, [gameState, startNewGame]);
+
   return (
     <div className="columns">
+      {overlays}
+      {newGameLoginDialog}
+
+      {confirmNewGame && (
+        <div className="dialog-overlay" onClick={() => setConfirmNewGame(false)}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="dialog-header">
+              <h3>Start a new game?</h3>
+              <button className="dialog-close" onClick={() => setConfirmNewGame(false)}>×</button>
+            </div>
+            <div className="dialog-body">
+              <p className="dialog-description">
+                The current game is still in progress. Starting a new game abandons it
+                (it is recorded in your history) and begins a fresh game with the current
+                player settings.
+              </p>
+            </div>
+            <div className="dialog-footer">
+              <div className="dialog-footer-right">
+                <button type="button" className="btn btn-secondary" onClick={() => setConfirmNewGame(false)}>
+                  Cancel
+                </button>
+                <button type="button" className="btn btn-primary" onClick={() => void startNewGame()}>
+                  New game
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Left column: Board */}
       <div className="column is-8">
         <ChessBoard 
-          fen={currentFen} 
+          fen={boardFen} 
           maxBoardWidth={700} 
           showBestMove={isAtLatestMove ? (showBestMoveEnabled ? bestMove : null) : bestMove} 
           showPlayedMove={playedMove}
           showPendingMove={isAtLatestMove ? pendingArrowMove : null}
           showLastMove={isAtLatestMove ? lastArrowMove : null}
+          allowDragging={allowDragging}
+          canDragPiece={canDragPiece}
+          onPieceDrop={onPieceDrop}
         />
       </div>
 
@@ -157,7 +239,17 @@ export function LiveBoard() {
       <div className="column is-4">
         {/* Current Game Box */}
         <div className="box">
-          <h3 className="title is-5 box-title">Current Game</h3>
+          <div className="current-game-header">
+            <h3 className="title is-5 box-title">Current Game</h3>
+            <button
+              type="button"
+              className="button is-small is-primary"
+              onClick={onNewGameClick}
+              disabled={newGameBusy}
+            >
+              New Game
+            </button>
+          </div>
           {gameState?.fen ? (
             <div className="current-game-info">
               <div className="players-line">
@@ -185,9 +277,16 @@ export function LiveBoard() {
           )}
         </div>
 
-        {/* Analysis Box */}
+        {/* Analysis Box - coaching for the viewed move renders in the white card
+            above the grey analysis widget (i.e. above the eval bar and graph). */}
         <div className="box" style={{ marginTop: '1rem' }}>
           <h3 className="title is-5 box-title">Analysis</h3>
+          <CoachPanel
+            gameId={gameState?.game_id ?? null}
+            ply={currentMoveIndex}
+            moveKey={currentMoveKey}
+            variant="inline"
+          />
           <Analysis
             positions={gameState?.positions}
             mode="live"
@@ -200,9 +299,6 @@ export function LiveBoard() {
             onToggleShowBestMove={toggleShowBestMove}
           />
         </div>
-
-        {/* AI Coach Box - statement for the move currently in view */}
-        <CoachPanel gameId={gameState?.game_id ?? null} ply={currentMoveIndex} moveKey={currentMoveKey} variant="box" />
 
         {/* Move History Box */}
         <div className="box" style={{ marginTop: '1rem' }}>
