@@ -174,7 +174,14 @@ CACHEABLE_EXTENSIONS = {
     '.ico': CACHE_LONG,
     '.bmp': CACHE_LONG,
     '.webp': CACHE_LONG,
+    '.wasm': CACHE_LONG,
 }
+
+# Path prefixes that serve immutable, content-addressed build assets (the Vite
+# bundle, icons and the Stockfish engine). Only responses under these prefixes
+# are eligible for long browser caching; everything else defaults to no-store
+# (see add_cache_headers) so dynamic data is never served stale.
+STATIC_ASSET_PREFIXES = ('/static/', '/assets/', '/icons/', '/stockfish/')
 
 
 @app.after_request
@@ -187,31 +194,40 @@ def add_cache_headers(response):
     # Skip cache handling if Cache-Control already set (e.g., SSE, dynamic).
     if 'Cache-Control' in response.headers:
         return response
-    
+
     path = request.path
-    
-    # Static files - cache based on extension
-    if path.startswith('/static/'):
+
+    # Immutable, content-addressed build assets: cache by extension. Gated on a
+    # successful response so a transient 404/500 for an asset path is never
+    # cached. Only the known static-asset prefixes qualify; a dynamic endpoint
+    # can never accidentally match (e.g. a service worker at /sw.js is a .js but
+    # is NOT under a prefix, so it stays uncached and picks up new builds).
+    if response.status_code == 200 and path.startswith(STATIC_ASSET_PREFIXES):
         ext = os.path.splitext(path)[1].lower()
         max_age = CACHEABLE_EXTENSIONS.get(ext, CACHE_SHORT)
         response.headers['Cache-Control'] = f'public, max-age={max_age}'
         return response
-    
-    # Dynamic content - no cache
-    # FEN, events, and other API endpoints
-    if path in ('/fen', '/events', '/placement') or path.startswith('/api/'):
-        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-        response.headers['Pragma'] = 'no-cache'
-        response.headers['Expires'] = '0'
-        return response
-    
-    # HTML pages - short cache with revalidation
+
+    # HTML pages - always revalidate so a new build/SPA shell is picked up.
     if response.content_type and 'text/html' in response.content_type:
         response.headers['Cache-Control'] = 'no-cache, must-revalidate'
         return response
-    
-    # Default - short cache
-    response.headers['Cache-Control'] = f'public, max-age={CACHE_SHORT}'
+
+    # Everything else is dynamic: the JSON API (including the legacy non-/api/
+    # endpoints /getgames, /getpgn, ...), SSE, generated media, the service
+    # worker and the web manifest. Never cache it.
+    #
+    # Defaulting to no-store -- rather than the previous blanket
+    # `public, max-age=CACHE_SHORT` -- is deliberate and fixes a real bug: the
+    # games list (/getgames) fell through to that default and was cached for an
+    # hour, so after deleting a game the list re-fetch was served stale from the
+    # browser cache and the deleted row remained on screen (while the game was
+    # genuinely gone from the DB, so opening it 404'd). Caching is now opt-in for
+    # static assets only; a newly added data endpoint is safe by default instead
+    # of silently cacheable.
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
     return response
 
 
