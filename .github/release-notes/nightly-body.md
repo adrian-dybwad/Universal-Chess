@@ -1,6 +1,6 @@
 ## Prepare a new SD card
 
-Follow the [install procedure](/adrian-dybwad/Universal-Chess#install-procedure)
+Follow the [install procedure](https://github.com/adrian-dybwad/Universal-Chess#install-procedure)
 in the README to prepare a new SD card before installing.
 
 ## Installation
