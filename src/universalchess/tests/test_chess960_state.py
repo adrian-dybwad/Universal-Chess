@@ -24,6 +24,7 @@ from universalchess.state.chess960 import (
     CHESS960_POSITION_COUNT,
     chess960_fen,
     random_chess960_fen,
+    variant_change_requires_restart,
 )
 from universalchess.state.chess_game import ChessGameState
 
@@ -214,6 +215,47 @@ def test_history_positions_standard_game_matches_replay():
     assert positions[0]["uci"] is None
     assert [p["san"] for p in positions[1:]] == ["e4", "e5"]
     assert positions[-1]["fen"] == state.fen
+
+
+@pytest.mark.parametrize(
+    "current_is_chess960, desired_chess960, game_has_moves, expected",
+    [
+        # No moves + variant differs -> restart so the board reflects the toggle.
+        (False, True, False, True),   # standard game, 960 switched on
+        (True, False, False, True),   # 960 game, switched back to standard
+        # No moves + variant already matches -> nothing to do.
+        (False, False, False, False),
+        (True, True, False, False),
+        # Moves played -> never restart, regardless of the toggle (defer to next
+        # new game so a game in progress is never silently abandoned).
+        (False, True, True, False),
+        (True, False, True, False),
+        (False, False, True, False),
+        (True, True, True, False),
+    ],
+)
+def test_variant_change_requires_restart(
+    current_is_chess960, desired_chess960, game_has_moves, expected
+):
+    """The 960-toggle restart predicate gates on both variant-mismatch and no-moves.
+
+    Why this exists: toggling the Chess960 switch must only reset the current
+    game (regenerating its start position) when it is safe -- i.e. no moves have
+    been played -- and only when the variant actually changed. This guards the
+    two regressions that would matter to a user:
+      1. If the ``game_has_moves`` guard were dropped, a mid-game toggle would
+         return True and the caller would abandon a game in progress (the rows
+         with ``game_has_moves=True`` would flip to True and fail here).
+      2. If the mismatch check were dropped, a no-op toggle (variant already
+         matching) would needlessly restart the game (the matching-variant rows
+         would flip to True and fail here).
+    """
+    assert (
+        variant_change_requires_restart(
+            current_is_chess960, desired_chess960, game_has_moves
+        )
+        is expected
+    )
 
 
 def test_set_position_preserves_chess960_flag():

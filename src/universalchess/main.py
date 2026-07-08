@@ -7248,9 +7248,34 @@ def main():
                     # subscriber thread that set the flag.
                     elif _pending_settings_reload:
                         _pending_settings_reload = False
-                        log.info("[App] Applying web settings change to live display")
-                        if display_manager:
-                            display_manager._init_widgets()
+                        # A Chess960 toggle changes the starting layout, which cannot be
+                        # applied to a game already in progress. When the live game has no
+                        # moves yet, restart it via the normal start path (which reads the
+                        # 960 setting and regenerates the start position) so the e-paper and
+                        # web board reflect the switch immediately. When moves have been
+                        # played, or it is a loaded position game, the change is deferred to
+                        # the next new game and only the display is refreshed.
+                        from universalchess.state import get_chess_game
+                        from universalchess.state.chess960 import (
+                            variant_change_requires_restart,
+                        )
+                        game_state = get_chess_game()
+                        desired_chess960 = bool(_get_settings().game.chess960)
+                        if not _is_position_game and variant_change_requires_restart(
+                            game_state.chess960,
+                            desired_chess960,
+                            game_state.is_game_in_progress,
+                        ):
+                            log.info(
+                                f"[App] Chess960 toggled to {desired_chess960} on an unstarted "
+                                "game - restarting to apply the new start position"
+                            )
+                            _cleanup_game()
+                            _start_game_mode()
+                        else:
+                            log.info("[App] Applying web settings change to live display")
+                            if display_manager:
+                                display_manager._init_widgets()
                     elif _pending_board_command is not None:
                         # Web set up a position / aborted while a game was running.
                         # Applied here on the main thread (rebuilds the game display).
