@@ -103,8 +103,6 @@ except ImportError as e:
     )
 
 app = Flask(__name__)
-app.config['UCI_UPLOAD_EXTENSIONS'] = ['.txt']
-app.config['UCI_UPLOAD_PATH'] = str(pathlib.Path(__file__).parent.resolve()) + "/../engines/"
 
 # React app static files directory (built during deb package build)
 # In production: /opt/universalchess/web/react-app
@@ -128,7 +126,7 @@ CACHE_NONE = 0          # No caching for dynamic content
 # Content Security Policy applied to every response.
 # Notes on the relaxations (each is required by an existing, trusted feature):
 #   - script-src 'unsafe-inline': the legacy Jinja templates (configure.html,
-#     pgn.html, analyse.html, ...) embed inline <script> blocks. The React build
+#     analyse.html, ...) embed inline <script> blocks. The React build
 #     uses external bundles and does not rely on this.
 #   - script-src 'wasm-unsafe-eval' + worker-src blob:: the React analysis board
 #     runs Stockfish compiled to WebAssembly inside a Web Worker.
@@ -249,7 +247,7 @@ _INACTIVITY_RESET_PREFIXES = ("/api/",)
 _INACTIVITY_RESET_EXACT = (
     "/configure", "/deletegame/", "/lichesskey/", "/lichessrange/",
     "/menuoptions/", "/return2dgtcentaurmods",
-    "/uploadengine", "/delengine/", "/rodentivtuner",
+    "/uploadengine", "/delengine/",
 )
 _INACTIVITY_RESET_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
@@ -273,7 +271,6 @@ def reset_board_inactivity(response):
 
 # System paths for conditional features
 ENGINES_DIR = "/opt/universalchess/engines"
-RODENTIV_PATH = os.path.join(ENGINES_DIR, "rodentIV")
 
 # WebDAV security constants
 WEBDAV_BASE_PATH = str(pathlib.Path.home())
@@ -288,11 +285,6 @@ def _internal_error(exception):
     """
     app.logger.exception("Internal error: %s", exception)
     return jsonify({"success": False, "error": "Internal server error"}), 500
-
-
-def is_rodentiv_installed() -> bool:
-    """Check if Rodent IV engine is installed."""
-    return os.path.isfile(RODENTIV_PATH) and os.access(RODENTIV_PATH, os.X_OK)
 
 
 def is_centaur_software_installed() -> bool:
@@ -323,7 +315,6 @@ def inject_template_globals():
     except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
         pass
     return {
-        'rodentiv_installed': is_rodentiv_installed(),
         'centaur_software_installed': is_centaur_software_installed(),
         'static_version': static_version,
     }
@@ -1490,12 +1481,6 @@ def legacy_index():
     return render_template('index.html', fen=get_current_placement())
 
 
-@app.route("/legacy/pgn")
-def legacy_pgn():
-    """Legacy UI games page."""
-    return render_template('pgn.html')
-
-
 @app.route("/legacy/configure")
 def legacy_configure():
     """Legacy UI configure page."""
@@ -1508,73 +1493,15 @@ def legacy_support():
     return render_template('support.html')
 
 
-@app.route("/legacy/license")
-def legacy_license():
-    """Legacy UI license page."""
-    gpl3_path = pathlib.Path(__file__).parent.parent.parent.parent / "LICENSE"
-    apache2_path = pathlib.Path(__file__).parent.parent.parent.parent / "licenses" / "Apache-2.0.txt"
-    gpl3_text = gpl3_path.read_text() if gpl3_path.exists() else "GPL-3.0 license file not found."
-    apache2_text = apache2_path.read_text() if apache2_path.exists() else "Apache-2.0 license file not found."
-    return render_template('license.html', gpl3_text=gpl3_text, apache2_text=apache2_text)
-
-
 @app.route("/legacy/analyse/<gameid>")
 def legacy_analyse(gameid):
     """Legacy UI analyse page."""
     return render_template('analyse.html', game_id=gameid)
 
 
-@app.route("/legacy/rodentivtuner")
-def legacy_rodentivtuner():
-    """Legacy UI Rodent IV tuner page."""
-    return render_template('rodentivtuner.html')
-
-
 @app.route("/fen")
 def fen():
     return get_current_placement()
-
-@app.route("/rodentivtuner")
-def tuner():
-
-        return render_template('rodentivtuner.html')
-
-@app.route("/rodentivtuner" , methods=["POST"])
-def tuner_upload_file():
-    uploaded_file = request.files['file']
-    if uploaded_file.filename != '':
-        safe_name = secure_filename(uploaded_file.filename)
-        if not safe_name:
-            abort(400)
-        file_ext = os.path.splitext(safe_name)[1]
-        file_name = os.path.splitext(safe_name)[0]
-        if file_ext not in app.config['UCI_UPLOAD_EXTENSIONS']:
-            abort(400)
-        personalities_dir = os.path.join(app.config['UCI_UPLOAD_PATH'], "personalities")
-        save_path = safe_under_base(personalities_dir, safe_name)
-        if save_path is None:
-            abort(400)
-        uploaded_file.save(str(save_path))
-        with open(app.config['UCI_UPLOAD_PATH'] + "personalities/basic.ini", "r+") as file:
-            for line in file:
-                if file_name in line:
-                    break
-            else: # not found, we are at the eof
-                file.write(file_name + '=' + file_name + '.txt\n') # append missing data
-        with open(app.config['UCI_UPLOAD_PATH'] + "rodentIV.uci", "r+") as file:
-            for line in file:
-                if file_name in line:
-                    break
-            else: # not found, we are at the eof  
-                file.write('\n') # append missing data
-                file.write('[' + file_name + ']\n') # append missing data
-                file.write('PersonalityFile = ' + file_name + ' ' + file_name + '.txt' + '\n') # append missing data
-                file.write('UCI_LimitStrength = true\n') # append missing data
-                file.write('UCI_Elo = 1200\n') # append missing data
-    return render_template('index.html')
-@app.route("/pgn")
-def pgn():
-    return render_template('pgn.html')
 
 @app.route("/configure")
 def configure():
@@ -1597,38 +1524,6 @@ def configure():
                          menuCast=showCast, 
                          menuSettings=showSettings, 
                          menuAbout=showAbout)
-
-@app.route("/support")
-def support():
-    return render_template('support.html')
-
-@app.route("/license")
-def license():
-    # Load license texts
-    gpl3_text = ""
-    apache2_text = ""
-    
-    # Try to load GPL-3.0 text
-    gpl3_path = pathlib.Path(__file__).parent.parent.parent.parent / "LICENSE"
-    if gpl3_path.exists():
-        try:
-            gpl3_text = gpl3_path.read_text()
-        except Exception:
-            gpl3_text = "See https://www.gnu.org/licenses/gpl-3.0.txt"
-    else:
-        gpl3_text = "See https://www.gnu.org/licenses/gpl-3.0.txt"
-    
-    # Try to load Apache-2.0 text for Font.ttc
-    apache2_path = pathlib.Path(__file__).parent.parent.parent.parent / "licenses" / "Apache-2.0.txt"
-    if apache2_path.exists():
-        try:
-            apache2_text = apache2_path.read_text()
-        except Exception:
-            apache2_text = "See https://www.apache.org/licenses/LICENSE-2.0"
-    else:
-        apache2_text = "See https://www.apache.org/licenses/LICENSE-2.0"
-    
-    return render_template('license.html', gpl3_text=gpl3_text, apache2_text=apache2_text)
 
 @app.route("/return2dgtcentaurmods", methods=["POST"])
 @requires_auth
