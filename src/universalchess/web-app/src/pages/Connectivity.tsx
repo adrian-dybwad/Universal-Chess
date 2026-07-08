@@ -3,7 +3,8 @@ import { useLocation } from 'react-router-dom';
 import { Button, Card, CardHeader, Input, Select, Toggle } from '../components/ui';
 import { MenuIcon } from '../components/MenuIcon';
 import { useAuthedAction } from '../components/useAuthedAction';
-import { apiFetch, buildApiUrl } from '../utils/api';
+import { apiFetch } from '../utils/api';
+import { useSseEvent, type SseEventPayload } from '../utils/sseBus';
 import type { AccountType } from '../types/menuCatalog';
 import '../components/ApiSettingsDialog.css';
 import './Connectivity.css';
@@ -514,88 +515,86 @@ function BluetoothCard() {
     return () => clearInterval(interval);
   }, [fetchStatus]);
 
-  // Listen for board -> web Bluetooth pairing events over SSE. The board mirrors
-  // the passkey it displays, incoming-pair prompts, and pairing results here so
-  // the user can pair and confirm from the web UI.
-  useEffect(() => {
-    const es = new EventSource(buildApiUrl('/events'));
-    es.onmessage = (event) => {
-      let data: {
-        type?: string;
-        passkey?: string | null;
-        active?: boolean;
-        success?: boolean;
-        status?: string;
-        // bt_status (live engine snapshot) fields, flat from the board engine.
-        enabled?: boolean;
-        powered?: boolean;
-        advertising?: BtAdvertisingStatus;
-        advertised_names?: string[];
-        adv_state?: BtAdvState;
-        connected?: boolean;
-        transport?: BtLink['transport'];
-        emulator?: string | null;
-        peer?: BtPeer | null;
-        connected_since?: number | null;
-        devices?: BtPeer[];
-        heal?: BtHeal;
-      };
-      try {
-        data = JSON.parse(event.data);
-      } catch {
-        return;
-      }
-      if (data.type === 'bt_status') {
-        // Live push from the board: merge the engine snapshot (advertising,
-        // adv_state, active link/emulator, devices) into the card, keeping the
-        // locally-read radio/paired list until the next poll refreshes them.
-        setStatus((prev) => ({
-          enabled: prev?.enabled ?? data.enabled ?? false,
-          // Identity (host name/MAC) is read locally by the poll, not carried in
-          // the board's live push; keep the last polled values across pushes.
-          host_name: prev?.host_name,
-          address: prev?.address,
-          paired: prev?.paired ?? [],
-          advertising: data.advertising,
-          advertised_names: data.advertised_names,
-          adv_state: data.adv_state,
-          link: {
-            connected: data.connected ?? false,
-            transport: data.transport ?? null,
-            emulator: data.emulator ?? null,
-            peer: data.peer ?? null,
-            connected_since: data.connected_since ?? null,
-          },
-          powered: data.powered,
-          devices: data.devices,
-          heal: data.heal ?? prev?.heal,
-        }));
-        // A connect/disconnect changes the paired list's "connected" flags too;
-        // refresh those (and the radio state) without waiting for the poll.
-        setTimeout(fetchStatus, 500);
-        return;
-      }
-      if (data.type === 'bt_passkey') {
-        setPasskey(data.passkey ?? null);
-      } else if (data.type === 'bt_pair_request') {
-        setIncoming(data.active ? { passkey: data.passkey ?? null } : null);
-      } else if (data.type === 'bt_pair_result') {
-        if (data.status === 'started') {
-          setMessage({ kind: 'success', text: 'Pairing started…' });
-        } else {
-          setPasskey(null);
-          setMessage(
-            data.success
-              ? { kind: 'success', text: 'Keyboard paired.' }
-              : { kind: 'error', text: 'Pairing failed. Try again.' }
-          );
-          setScanResults(null);
-          setTimeout(fetchStatus, 1000);
-        }
-      }
+  // Board -> web Bluetooth events, consumed off the shared app SSE connection
+  // (GameStateProvider owns the single EventSource and fans events out on the
+  // bus) so this card no longer opens its own stream. The board mirrors the
+  // passkey it displays, incoming-pair prompts, pairing results, and the live
+  // engine snapshot here so the user can pair and confirm from the web UI.
+
+  // bt_status is a state snapshot: replay the last one so a fresh mount renders
+  // the current link immediately instead of waiting for the next board change.
+  const onBtStatus = useCallback((data: SseEventPayload) => {
+    const d = data as {
+      enabled?: boolean;
+      powered?: boolean;
+      advertising?: BtAdvertisingStatus;
+      advertised_names?: string[];
+      adv_state?: BtAdvState;
+      connected?: boolean;
+      transport?: BtLink['transport'];
+      emulator?: string | null;
+      peer?: BtPeer | null;
+      connected_since?: number | null;
+      devices?: BtPeer[];
+      heal?: BtHeal;
     };
-    return () => es.close();
+    // Merge the engine snapshot (advertising, adv_state, active link/emulator,
+    // devices) into the card, keeping the locally-read radio/paired list until
+    // the next poll refreshes them.
+    setStatus((prev) => ({
+      enabled: prev?.enabled ?? d.enabled ?? false,
+      // Identity (host name/MAC) is read locally by the poll, not carried in the
+      // board's live push; keep the last polled values across pushes.
+      host_name: prev?.host_name,
+      address: prev?.address,
+      paired: prev?.paired ?? [],
+      advertising: d.advertising,
+      advertised_names: d.advertised_names,
+      adv_state: d.adv_state,
+      link: {
+        connected: d.connected ?? false,
+        transport: d.transport ?? null,
+        emulator: d.emulator ?? null,
+        peer: d.peer ?? null,
+        connected_since: d.connected_since ?? null,
+      },
+      powered: d.powered,
+      devices: d.devices,
+      heal: d.heal ?? prev?.heal,
+    }));
+    // A connect/disconnect changes the paired list's "connected" flags too;
+    // refresh those (and the radio state) without waiting for the poll.
+    setTimeout(fetchStatus, 500);
   }, [fetchStatus]);
+  useSseEvent('bt_status', onBtStatus, true);
+
+  const onBtPasskey = useCallback((data: SseEventPayload) => {
+    setPasskey((data.passkey as string | null) ?? null);
+  }, []);
+  useSseEvent('bt_passkey', onBtPasskey);
+
+  const onBtPairRequest = useCallback((data: SseEventPayload) => {
+    setIncoming(data.active ? { passkey: (data.passkey as string | null) ?? null } : null);
+  }, []);
+  useSseEvent('bt_pair_request', onBtPairRequest);
+
+  // Pairing results are transient (not replayed): a stale "failed" must not
+  // re-surface when the card remounts, so this subscription omits replayLast.
+  const onBtPairResult = useCallback((data: SseEventPayload) => {
+    if (data.status === 'started') {
+      setMessage({ kind: 'success', text: 'Pairing started…' });
+    } else {
+      setPasskey(null);
+      setMessage(
+        data.success
+          ? { kind: 'success', text: 'Keyboard paired.' }
+          : { kind: 'error', text: 'Pairing failed. Try again.' }
+      );
+      setScanResults(null);
+      setTimeout(fetchStatus, 1000);
+    }
+  }, [fetchStatus]);
+  useSseEvent('bt_pair_result', onBtPairResult);
 
   const confirmIncoming = useCallback(async (accept: boolean) => {
     setIncoming(null);
@@ -992,26 +991,24 @@ function ChromecastCard() {
   const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const { dialog, onUnauthorized } = useAuthedAction();
 
-  // Mirror the board's streaming state over SSE, and ask for it once on mount.
-  // The board may stream to several devices, so status.devices is the source of
-  // truth for the active set.
+  // Mirror the board's streaming state, read off the shared app SSE connection
+  // (GameStateProvider owns the single EventSource and fans events out on the
+  // bus) instead of opening a second stream here. The board may stream to
+  // several devices, so status.devices is the source of truth for the active
+  // set. replayLast hands us the last snapshot if one arrived before mount.
+  const onChromecastState = useCallback((data: SseEventPayload) => {
+    setStatus({
+      state: data.state as CastStateName,
+      device: (data.device as string | null) ?? null,
+      error: (data.error as string | null) ?? null,
+      devices: (data.devices as CastDevice[]) ?? [],
+    });
+  }, []);
+  useSseEvent('chromecast_state', onChromecastState, true);
+
+  // Ask the board for the current source and streaming state once on mount; the
+  // resulting chromecast_state push arrives on the shared connection above.
   useEffect(() => {
-    const es = new EventSource(buildApiUrl('/events'));
-    es.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'chromecast_state') {
-          setStatus({
-            state: data.state,
-            device: data.device ?? null,
-            error: data.error ?? null,
-            devices: data.devices ?? [],
-          });
-        }
-      } catch {
-        /* ignore non-JSON keepalives */
-      }
-    };
     apiFetch('/api/connectivity/chromecast/source')
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
@@ -1021,7 +1018,6 @@ function ChromecastCard() {
       })
       .catch(() => {});
     apiFetch('/api/connectivity/chromecast/status', { method: 'POST', requiresAuth: true }).catch(() => {});
-    return () => es.close();
   }, []);
 
   const updateSource = useCallback(

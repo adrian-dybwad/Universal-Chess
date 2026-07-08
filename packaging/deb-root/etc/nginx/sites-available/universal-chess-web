@@ -8,6 +8,14 @@
 # generates them before enabling this config.
 server {
     listen 443 ssl;
+    # HTTP/2 multiplexes many requests over one TCP connection, so it removes the
+    # browser's ~6-connections-per-host cap that HTTP/1.1 imposes. The web UI holds
+    # several long-lived streams open at once (the SSE /events channel plus the
+    # /video and /epaper MJPEG feeds); under HTTP/1.1 those idle streams consumed
+    # the whole per-host budget once a second tab was open, after which every
+    # further request queued and the site appeared frozen. HTTP/2 lets them share
+    # one connection. (Directive form for nginx >= 1.25.1; Trixie ships newer.)
+    http2 on;
     server_name _;
 
     ssl_certificate     /opt/universalchess/config/ssl/server.pem;

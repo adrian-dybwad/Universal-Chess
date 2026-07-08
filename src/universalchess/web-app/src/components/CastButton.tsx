@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MenuIcon } from './MenuIcon';
 import { useAuthedAction } from './useAuthedAction';
-import { apiFetch, buildApiUrl } from '../utils/api';
+import { apiFetch } from '../utils/api';
+import { useSseEvent, type SseEventPayload } from '../utils/sseBus';
 import './CastButton.css';
 
 type CastStateName = 'idle' | 'connecting' | 'streaming' | 'reconnecting' | 'error';
@@ -46,23 +47,15 @@ export function CastButton() {
   const { dialog, onUnauthorized } = useAuthedAction();
   const wrapperRef = useRef<HTMLDivElement>(null);
 
-  // Live streaming state from the board. The push is one-way with no replay, so
-  // the button defaults to idle until the first event arrives; that is correct
-  // because no event means nothing is streaming.
-  useEffect(() => {
-    const es = new EventSource(buildApiUrl('/events'));
-    es.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'chromecast_state') {
-          setStreaming(Array.isArray(data.devices) ? data.devices : []);
-        }
-      } catch {
-        /* ignore non-JSON keepalives */
-      }
-    };
-    return () => es.close();
+  // Live streaming state from the board, read off the shared app SSE connection
+  // (GameStateProvider owns the single EventSource and fans events out on the
+  // bus) rather than opening a second connection here. The push is one-way, so
+  // the button defaults to idle until the first event; replayLast hands us the
+  // last known snapshot if one already arrived before this mounted.
+  const onChromecastState = useCallback((data: SseEventPayload) => {
+    setStreaming(Array.isArray(data.devices) ? (data.devices as CastDevice[]) : []);
   }, []);
+  useSseEvent('chromecast_state', onChromecastState, true);
 
   // Close the popover on an outside click so it behaves like a standard menu.
   useEffect(() => {

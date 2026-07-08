@@ -5,6 +5,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import type { GameState } from '../types/game';
 import { MoveBanner } from './MoveBanner';
 import { buildApiUrl } from '../utils/api';
+import { publishSseEvent, type SseEventPayload } from '../utils/sseBus';
 
 /**
  * Global SSE connection manager.
@@ -88,6 +89,15 @@ export function GameStateProvider({ children }: { children: React.ReactNode }) {
       es.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+
+          // Fan every message out on the shared bus so other components (navbar
+          // Cast button, Connectivity cards) consume this one connection instead
+          // of opening their own EventSource. Over HTTP/1.1 each extra stream
+          // permanently holds one of the browser's ~6 per-host connection slots,
+          // so redundant streams froze the site once a second tab was open.
+          if (typeof data?.type === 'string') {
+            publishSseEvent(data.type, data as SseEventPayload);
+          }
 
           // The /events stream multiplexes several event types over one
           // connection. Battery updates feed the navbar indicator; other
