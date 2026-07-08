@@ -8,9 +8,10 @@
 
 """Unit tests for :mod:`universalchess.managers.adapter_alias`.
 
-These guard the branded-alias contract: the alias must be ``UC-`` plus the
-device-unique MAC tail, and malformed MACs must yield ``None`` (so callers fall
-back to their prior identity) rather than a fabricated, meaningless name.
+These guard the branded-alias contract: the alias must be ``Universal Chess ``
+plus the device-unique MAC tail, and malformed MACs must yield ``None`` (so
+callers fall back to their prior identity) rather than a fabricated, meaningless
+name.
 """
 
 import unittest
@@ -22,22 +23,22 @@ from universalchess.managers.adapter_alias import (
 
 
 class TestDeriveAdapterAlias(unittest.TestCase):
-    def test_uses_last_three_octets_uppercase_without_separators(self):
+    def test_uses_last_two_octets_uppercase_without_separators(self):
         # The canonical case: a Raspberry Pi MAC (B8:27:EB OUI) must yield
-        # UC- + the last three octets, uppercase, no colons. A regression that
-        # took the wrong octets or kept separators would change the branded name
-        # every board advertises.
-        assert derive_adapter_alias("B8:27:EB:21:D2:51") == "UC-21D251"
+        # "Universal Chess " + the last two octets, uppercase, no colons. A
+        # regression that took the wrong octets or kept separators would change
+        # the branded name every board advertises.
+        assert derive_adapter_alias("B8:27:EB:21:D2:51") == "Universal Chess D251"
 
     def test_lowercase_mac_is_normalised_to_uppercase(self):
         # BlueZ reports uppercase, but a lowercase MAC from any source must
         # still produce the same uppercase alias so the name is stable
         # regardless of input casing.
-        assert derive_adapter_alias("b8:27:eb:aa:bb:cc") == "UC-AABBCC"
+        assert derive_adapter_alias("b8:27:eb:aa:bb:cc") == "Universal Chess BBCC"
 
     def test_empty_mac_returns_none(self):
         # No MAC (adapter absent / unread) must return None so the caller keeps
-        # its existing identity instead of advertising a bare "UC-".
+        # its existing identity instead of advertising a bare "Universal Chess ".
         assert derive_adapter_alias("") is None
 
     def test_malformed_mac_returns_none(self):
@@ -46,9 +47,9 @@ class TestDeriveAdapterAlias(unittest.TestCase):
         assert derive_adapter_alias("not-a-mac") is None
 
     def test_too_few_octets_returns_none(self):
-        # Fewer than three octets cannot form the device-unique tail; this must
+        # Fewer than two octets cannot form the device-unique tail; this must
         # be rejected rather than padded or partially used.
-        assert derive_adapter_alias("D2:51") is None
+        assert derive_adapter_alias("51") is None
 
     def test_non_hex_octet_returns_none(self):
         # An octet with non-hex characters (right shape, wrong content) must be
@@ -72,7 +73,7 @@ class TestResolveAdapterAlias(unittest.TestCase):
         # run it through the same derivation, so board wiring gets the branded
         # alias without touching D-Bus in the test.
         manager = _FakeManager({"address": "B8:27:EB:21:D2:51", "name": "x"})
-        assert resolve_adapter_alias(manager=manager) == "UC-21D251"
+        assert resolve_adapter_alias(manager=manager) == "Universal Chess D251"
 
     def test_returns_none_when_address_missing(self):
         # An adapter with no address (BlueZ unreachable/absent) must yield None

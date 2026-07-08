@@ -22,7 +22,8 @@ alias therefore does not change app discovery; it only changes the friendly
 name shown for the board itself.
 
 The alias is derived from the adapter's own MAC so every board gets a unique,
-branded name (``UC-`` + the MAC's device-unique tail) with no per-unit config.
+branded name (``Universal Chess `` + the MAC's device-unique tail) with no
+per-unit config.
 """
 
 import logging
@@ -30,28 +31,28 @@ import re
 from typing import Optional
 
 # Branded prefix for the adapter alias.
-ALIAS_PREFIX = "UC-"
+ALIAS_PREFIX = "Universal Chess "
 
 # Trailing MAC octets that uniquely identify the board. The leading octets are
 # the vendor OUI (e.g. ``B8:27:EB`` is shared across all Raspberry Pis), so the
-# last three octets are the device-unique portion.
-UNIQUE_OCTET_COUNT = 3
+# last octets are the device-unique portion.
+UNIQUE_OCTET_COUNT = 2
 
 # A single MAC octet: exactly two hex digits.
 _OCTET_RE = re.compile(r"^[0-9A-Fa-f]{2}$")
 
 
 def derive_adapter_alias(mac_address: str) -> Optional[str]:
-    """Return the branded alias ``UC-<tail>`` for a MAC, or ``None`` if invalid.
+    """Return the branded alias ``Universal Chess <tail>``, or ``None`` if invalid.
 
     Args:
         mac_address: Colon-separated adapter MAC (e.g. ``"B8:27:EB:21:D2:51"``).
 
     Returns:
-        ``"UC-"`` followed by the last :data:`UNIQUE_OCTET_COUNT` octets,
-        uppercase and without separators (e.g. ``"UC-21D251"``). Returns
-        ``None`` -- rather than a fabricated name -- when the MAC is empty or
-        malformed, so callers fall back to their existing identity instead of
+        ``"Universal Chess "`` followed by the last :data:`UNIQUE_OCTET_COUNT`
+        octets, uppercase and without separators (e.g. ``"Universal Chess D251"``).
+        Returns ``None`` -- rather than a fabricated name -- when the MAC is empty
+        or malformed, so callers fall back to their existing identity instead of
         advertising a meaningless alias.
     """
     if not mac_address:
