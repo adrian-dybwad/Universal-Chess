@@ -82,9 +82,10 @@ export interface EngineDefinition {
   has_prebuilt: boolean;
   install_time: string | null;
   /**
-   * Whether this engine exposes user-editable personality profiles (a parameter
-   * schema served by GET /api/engines/{name}/profiles). Drives whether the
-   * "Configure profiles" action is shown. Currently true only for Rodent IV.
+   * Whether this engine exposes a user-editable UCI option schema (served by
+   * GET /api/engines/{name}/profiles). Drives whether the "Configure profiles"
+   * action is shown. True for any installed engine whose binary can be probed,
+   * including the Stockfish system package -- not limited to a curated list.
    */
   has_profiles: boolean;
   /**

@@ -2915,9 +2915,15 @@ function EngineCard({
           Installed release: <strong>{refDisplayLabel(engine.installed_ref)}</strong>
         </p>
       )}
-      {!isSystem && (
+      {/* Render the actions row for any engine that has install/uninstall
+          controls (non-system) OR that exposes the profile editor. A system
+          package (Stockfish) has no install controls but is still editable, so
+          it reaches this block solely for the "Configure profiles" button. */}
+      {(!isSystem || (engine.has_profiles && engine.installed)) && (
         <div className="engine-card-actions">
-          {isInterrupted ? (
+          {/* Install / uninstall / resume controls apply only to source-built
+              and prebuilt engines. A system package has none of these. */}
+          {!isSystem && (isInterrupted ? (
             <>
               <Button variant="primary" size="sm" onClick={onResume}>
                 Resume install
@@ -2965,9 +2971,10 @@ function EngineCard({
                 </Button>
               )}
             </>
-          )}
-          {/* Profile editor entry point: only for installed engines that expose
-              an editable parameter schema (currently Rodent IV). */}
+          ))}
+          {/* Profile editor entry point: shown for any installed engine that
+              exposes an editable UCI schema, including the Stockfish system
+              package. The backend marks such engines has_profiles=true. */}
           {engine.has_profiles && engine.installed && !isInterrupted && (
             <Button
               variant="secondary"
@@ -2978,7 +2985,7 @@ function EngineCard({
               Configure profiles
             </Button>
           )}
-          {isInstalling && !isUninstalling && !isActiveInstall && (
+          {!isSystem && isInstalling && !isUninstalling && !isActiveInstall && (
             <span className="engine-install-note">
               <span className="spinner spinner--sm" />
               This may take several minutes.
