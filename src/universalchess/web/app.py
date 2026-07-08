@@ -34,8 +34,6 @@ from universalchess.db import models
 from universalchess.paths import get_current_fen, get_current_placement, get_resource_path
 from universalchess.services.game_broadcast import get_subscriber, GameState
 from universalchess.paths import EPAPER_STATIC_JPG, CONFIG_DIR
-from .chessboard import LiveBoard
-from . import centaurflask
 from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine, MetaData
@@ -61,8 +59,6 @@ import subprocess  # nosec B404 - subprocess is only ever invoked with fixed arg
 from xml.sax.saxutils import escape  # nosec B406 - saxutils.escape performs output encoding (escaping), not XML parsing
 
 from universalchess.web.piece_svg import (
-    generate_piece_svg,
-    PieceSvgOptions,
     get_piece_images,
 )
 
@@ -125,9 +121,10 @@ CACHE_NONE = 0          # No caching for dynamic content
 
 # Content Security Policy applied to every response.
 # Notes on the relaxations (each is required by an existing, trusted feature):
-#   - script-src 'unsafe-inline': the legacy Jinja templates (configure.html,
-#     analyse.html, ...) embed inline <script> blocks. The React build
-#     uses external bundles and does not rely on this.
+#   - script-src 'unsafe-inline': the ca_install.html certificate-install page
+#     (served over plain HTTP before the CA is trusted) embeds inline <script>
+#     and onclick handlers. The React build uses external bundles and does not
+#     rely on this.
 #   - script-src 'wasm-unsafe-eval' + worker-src blob:: the React analysis board
 #     runs Stockfish compiled to WebAssembly inside a Web Worker.
 #   - connect-src 'self': SSE (/events) and the JSON API are same-origin.
@@ -200,11 +197,6 @@ def add_cache_headers(response):
         response.headers['Cache-Control'] = f'public, max-age={max_age}'
         return response
     
-    # Piece SVGs - cache long (they're generated but don't change)
-    if path.startswith('/pieces/') and path.endswith('.svg'):
-        response.headers['Cache-Control'] = f'public, max-age={CACHE_LONG}'
-        return response
-    
     # Dynamic content - no cache
     # FEN, events, and other API endpoints
     if path in ('/fen', '/events', '/placement') or path.startswith('/api/'):
@@ -245,8 +237,7 @@ def add_cache_headers(response):
 # ---------------------------------------------------------------------------
 _INACTIVITY_RESET_PREFIXES = ("/api/",)
 _INACTIVITY_RESET_EXACT = (
-    "/configure", "/deletegame/", "/lichesskey/", "/lichessrange/",
-    "/menuoptions/", "/return2dgtcentaurmods",
+    "/deletegame/",
     "/uploadengine", "/delengine/",
 )
 _INACTIVITY_RESET_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -286,38 +277,6 @@ def _internal_error(exception):
     app.logger.exception("Internal error: %s", exception)
     return jsonify({"success": False, "error": "Internal server error"}), 500
 
-
-def is_centaur_software_installed() -> bool:
-    """Check if a complete original DGT Centaur install is present.
-
-    Delegates to ``centaur_app_installed`` (the shared gate) so the template
-    flag, the /api/system/info probe, the on-board menu, and the launcher all
-    agree on one definition: the executable *plus* engines/ and fonts/. Requiring
-    the full set means a partial import is never offered for launch (it would
-    hang on the splash with no engine/fonts).
-    """
-    from universalchess.services.centaur_import import centaur_app_installed
-
-    return centaur_app_installed()
-
-
-@app.context_processor
-def inject_template_globals():
-    """Inject global variables into all templates."""
-    # Static asset versioning: used to bust caches (browser + service worker).
-    # Use installed /opt/universalchess/VERSION when available; fall back to a
-    # fixed development string so it doesn't change on every request.
-    static_version = "dev"
-    try:
-        version_path = pathlib.Path("/opt/universalchess/VERSION")
-        if version_path.exists():
-            static_version = version_path.read_text().strip() or static_version
-    except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
-        pass
-    return {
-        'centaur_software_installed': is_centaur_software_installed(),
-        'static_version': static_version,
-    }
 
 def verify_webdav_authentication():
     """
@@ -933,37 +892,6 @@ def render_chess_pieces(image, curfen, piece_images, x_offset, y_offset, sqsize)
             col = 0
             row = row + 1
 
-def convert_menu_option(value):
-    """
-    Converts menu option from true/false to checked/unchecked.
-    
-    Args:
-        value: "true", "false", "checked", or "unchecked"
-        
-    Returns:
-        "checked" or "unchecked"
-    """
-    if value == "true":
-        return "checked"
-    elif value == "false":
-        return "unchecked"
-    return value
-
-def get_menu_option_display(getter_func):
-    """
-    Gets menu option display value (checked or empty string).
-    
-    Args:
-        getter_func: Function that returns "checked" or "unchecked"
-        
-    Returns:
-        "checked" or ""
-    """
-    value = getter_func() or "checked"
-    if value == "unchecked":
-        return ""
-    return value
-
 def build_chess_game_from_id(session, game_id):
     """
     Builds a chess.pgn.Game object from a game ID in the database.
@@ -1407,12 +1335,12 @@ def handle_preflight():
 
 @app.route("/", methods=["GET"])
 def index():
-    """Serve React app if available, otherwise fall back to legacy."""
+    """Serve the React app. The build is required; there is no legacy fallback."""
     react_dir = get_react_app_dir()
     if react_dir:
         return send_file(react_dir / "index.html")
-    # Fall back to legacy
-    return render_template('index.html', fen=get_current_placement())
+    # The legacy Jinja UI was removed; the React build must be present.
+    abort(503)
 
 
 @app.route("/assets/<path:filename>")
@@ -1473,94 +1401,9 @@ def react_service_worker():
     abort(404)
 
 
-# Legacy UI routes - serve the old Flask templates
-@app.route("/legacy")
-@app.route("/legacy/")
-def legacy_index():
-    """Legacy UI index page."""
-    return render_template('index.html', fen=get_current_placement())
-
-
-@app.route("/legacy/configure")
-def legacy_configure():
-    """Legacy UI configure page."""
-    return render_template('configure.html')
-
-
-@app.route("/legacy/support")
-def legacy_support():
-    """Legacy UI support page."""
-    return render_template('support.html')
-
-
-@app.route("/legacy/analyse/<gameid>")
-def legacy_analyse(gameid):
-    """Legacy UI analyse page."""
-    return render_template('analyse.html', game_id=gameid)
-
-
 @app.route("/fen")
 def fen():
     return get_current_placement()
-
-@app.route("/configure")
-def configure():
-    # Get the lichessapikey
-    showEngines = get_menu_option_display(centaurflask.get_menuEngines)
-    showHandBrain = get_menu_option_display(centaurflask.get_menuHandBrain)
-    show1v1Analysis = get_menu_option_display(centaurflask.get_menu1v1Analysis)
-    showEmulateEB = get_menu_option_display(centaurflask.get_menuEmulateEB)
-    showCast = get_menu_option_display(centaurflask.get_menuCast)
-    showSettings = get_menu_option_display(centaurflask.get_menuSettings)
-    showAbout = get_menu_option_display(centaurflask.get_menuAbout)
-    
-    return render_template('configure.html', 
-                         lichesskey=centaurflask.get_lichess_api(), 
-                         lichessrange=centaurflask.get_lichess_range(),
-                         menuEngines=showEngines, 
-                         menuHandBrain=showHandBrain, 
-                         menu1v1Analysis=show1v1Analysis,
-                         menuEmulateEB=showEmulateEB, 
-                         menuCast=showCast, 
-                         menuSettings=showSettings, 
-                         menuAbout=showAbout)
-
-@app.route("/return2dgtcentaurmods", methods=["POST"])
-@requires_auth
-def return2dgtcentaurmods():
-    os.system("pkill centaur")  # noqa: S605,S607  # nosec B605 B607 - fixed command string, no user input; route is behind @requires_auth
-    time.sleep(1)
-    os.system("sudo systemctl restart universal-chess.service")  # noqa: S605,S607  # nosec B605 B607 - fixed command string, no user input; route is behind @requires_auth
-    return "ok"
-
-@app.route("/lichesskey/<key>", methods=["POST"])
-@requires_auth
-def lichesskey(key):
-    centaurflask.set_lichess_api(key)
-    os.system("sudo systemctl restart universal-chess.service")  # noqa: S605,S607  # nosec B605 B607 - fixed command string, no user input; route is behind @requires_auth
-    return "ok"
-
-@app.route("/lichessrange/<newrange>", methods=["POST"])
-@requires_auth
-def lichessrange(newrange):
-    centaurflask.set_lichess_range(newrange)
-    return "ok"
-
-@app.route("/menuoptions/<engines>/<handbrain>/<analysis>/<emulateeb>/<cast>/<settings>/<about>", methods=["POST"])
-@requires_auth
-def menuoptions(engines, handbrain, analysis, emulateeb, cast, settings, about):
-    centaurflask.set_menuEngines(convert_menu_option(engines))
-    centaurflask.set_menuHandBrain(convert_menu_option(handbrain))
-    centaurflask.set_menu1v1Analysis(convert_menu_option(analysis))
-    centaurflask.set_menuEmulateEB(convert_menu_option(emulateeb))
-    centaurflask.set_menuCast(convert_menu_option(cast))
-    centaurflask.set_menuSettings(convert_menu_option(settings))
-    centaurflask.set_menuAbout(convert_menu_option(about))
-    return "ok"
-
-@app.route("/analyse/<gameid>")
-def analyse(gameid):
-    return render_template('analysis.html', gameid=gameid)
 
 @app.route("/deletegame/<gameid>", methods=["POST"])
 @requires_auth
@@ -1623,7 +1466,7 @@ def uploadengine():
     # world-writable (0o777 previously allowed any local user to replace the
     # binary). 0o755: owner-writable, group/other read+execute only.
     os.chmod(str(target), 0o755)  # noqa: S103  # nosec B103 - engine needs the exec bit; 0o755 is least-permissive; path contained by safe_under_base
-    return redirect("/configure")
+    return "ok"
 
 @app.route("/delengine/<enginename>", methods=["POST"])
 @requires_auth
@@ -1720,18 +1563,6 @@ def logo_image():
     # Fallback to icon
     return redirect(url_for('static', filename='icons/icon.svg'))
 
-
-@app.route("/pieces/<piece_code>.svg")
-def piece_svg(piece_code: str):
-    """Serve an on-the-fly SVG for chessboard.js piece rendering."""
-    try:
-        svg = generate_piece_svg(piece_code, options=PieceSvgOptions(size=80))
-    except ValueError:
-        abort(404)
-
-    response = Response(svg, mimetype="image/svg+xml")
-    response.headers['Cache-Control'] = 'public, max-age=604800, immutable'  # 7 days
-    return response
 
 # Piece images are generated from SVGs on-demand (lazy-loaded and cached)
 # The size matches the original PNG pieces for video frame generation

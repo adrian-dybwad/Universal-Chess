@@ -128,13 +128,9 @@ UNAUTHED_POST_ENDPOINTS = [
     "/uploadengine",
     "/delengine/stockfish",
     "/deletegame/1",
-    "/return2dgtcentaurmods",
     "/api/system/return-to-universal",
     "/api/system/import-centaur",
     "/api/system/centaur-engine",
-    "/lichesskey/abc",
-    "/lichessrange/1500",
-    "/menuoptions/a/b/c/d/e/f/g",
 ]
 
 
@@ -154,13 +150,9 @@ STATE_CHANGING_ENDPOINTS = [
     "uploadengine",
     "delengine",
     "deletegame",
-    "return2dgtcentaurmods",
     "api_system_return_to_universal",
     "api_system_import_centaur",
     "api_set_centaur_engine",
-    "lichesskey",
-    "lichessrange",
-    "menuoptions",
 ]
 
 

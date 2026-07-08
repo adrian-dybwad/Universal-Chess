@@ -576,23 +576,14 @@ Web interface for configuration and game viewing.
 
 #### Responsibilities
 - Flask application factory
-- Web routes for configuration
-- Live board display
-- PGN viewer
-- Analysis interface
-- Rodent IV tuner
+- Serves the React single-page app (index, assets, icons, manifest, service worker)
+- JSON API (`/api/*`) for settings, engines, games, and system control
+- Server-sent events (`/events`) and media endpoints (`/screen`, `/video`, `/logo`)
+- TLS CA install page (`/ca-install`, `/ca.pem`) and WebDAV access
 
-### centaurflask.py
-
-#### Responsibilities
-- Custom Flask integration
-- Web server management
-
-### chessboard.py
-
-#### Responsibilities
-- Web chess board rendering
-- JavaScript integration for interactive board
+The legacy server-rendered Jinja UI (configure/index/PGN/analysis pages, the
+Rodent IV tuner, and the `centaurflask.py`/`chessboard.py` helpers) was removed
+once the React app superseded it.
 
 ---
 
