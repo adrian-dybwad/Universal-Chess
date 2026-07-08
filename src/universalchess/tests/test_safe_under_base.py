@@ -14,7 +14,7 @@ import os
 
 import pytest
 
-from universalchess.utils.safe_path import safe_under_base
+from universalchess.utils.safe_path import safe_leaf_under_base, safe_under_base
 
 
 @pytest.fixture
@@ -129,3 +129,93 @@ def test_sibling_prefix_is_not_treated_as_contained(tmp_path):
     base.mkdir()
     (tmp_path / "pi-evil").mkdir()
     assert safe_under_base(base, "../pi-evil") is None
+
+
+# ---------------------------------------------------------------------------
+# safe_leaf_under_base: same containment, but preserves a legitimate leaf symlink
+# ---------------------------------------------------------------------------
+
+
+def test_leaf_returns_contained_path_for_plain_name(base):
+    """A simple in-bounds name resolves to a normpath under base.
+
+    Regression: if containment broke, the result would point outside base and
+    get_engine_path would hand a wrong path to the engine registry.
+    """
+    assert safe_leaf_under_base(base, "ok.txt") == os.path.normpath(str(base / "ok.txt"))
+
+
+def test_leaf_preserves_symlink_pointing_outside_base(tmp_path):
+    """A leaf symlink to a system location is preserved, not rejected.
+
+    Regression this guards: engines installed from system packages are symlinked
+    into the engines dir (engine_manager._install_system_package) pointing to
+    e.g. /usr/games/stockfish. A realpath-based guard (safe_under_base) would
+    resolve the link outside base and return None, making get_engine_path report
+    the engine as missing. safe_leaf_under_base must return the in-base link path.
+    """
+    base = tmp_path / "engines"
+    base.mkdir()
+    outside = tmp_path / "system" / "stockfish"
+    outside.parent.mkdir()
+    outside.write_text("binary")
+    (base / "stockfish").symlink_to(outside)
+
+    result = safe_leaf_under_base(base, "stockfish")
+    # The returned path stays inside base (the link), and safe_under_base would
+    # have rejected the same input by following the link out of base.
+    assert result == os.path.normpath(str(base / "stockfish"))
+    assert safe_under_base(base, "stockfish") is None
+
+
+def test_leaf_allows_nested_subdirectory(base):
+    """Multi-segment in-bounds names (e.g. maia/lc0) stay allowed.
+
+    engine_manager installs some engines under a subdirectory of the engines
+    dir; rejecting the subpath would make those engines unresolvable.
+    """
+    assert safe_leaf_under_base(base, "sub/deep.txt") == os.path.normpath(str(base / "sub" / "deep.txt"))
+
+
+@pytest.mark.parametrize("evil", ["../secret", "../../etc/passwd", "sub/../../escape"])
+def test_leaf_rejects_traversal(base, evil):
+    """'..' payloads that normalize outside base return None.
+
+    normpath collapses '..' textually, so a traversing name is caught before it
+    can escape even though the leaf itself is not realpath-resolved.
+    """
+    assert safe_leaf_under_base(base, evil) is None
+
+
+@pytest.mark.parametrize("payload", ["/etc/passwd", "//etc/passwd"])
+def test_leaf_absolute_payload_is_contained_not_escaped(base, payload):
+    """A leading-slash payload is treated as base-relative, never an escape.
+
+    Mirrors safe_under_base: stripping leading separators maps '/etc/passwd' to
+    base/etc/passwd so an absolute-path name cannot reach the real /etc/passwd.
+    """
+    result = safe_leaf_under_base(base, payload)
+    assert result == os.path.normpath(str(base / "etc" / "passwd"))
+    assert result.startswith(os.path.realpath(str(base)) + os.sep)
+
+
+@pytest.mark.parametrize("bad", [None, ""])
+def test_leaf_rejects_empty_name(base, bad):
+    """Missing/empty name returns None rather than the bare base directory.
+
+    An empty name must not resolve to base itself (which os.path.join(base, "")
+    would produce), or get_engine_path would treat the engines dir as a binary.
+    """
+    assert safe_leaf_under_base(base, bad) is None
+
+
+def test_leaf_sibling_prefix_is_not_treated_as_contained(tmp_path):
+    """A sibling dir sharing a name prefix must not pass containment.
+
+    base '/x/engines' must not accept '/x/engines-evil'; the os.sep-anchored
+    check rejects the sibling reached via '..'.
+    """
+    base = tmp_path / "engines"
+    base.mkdir()
+    (tmp_path / "engines-evil").mkdir()
+    assert safe_leaf_under_base(base, "../engines-evil") is None

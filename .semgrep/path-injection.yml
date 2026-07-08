@@ -41,6 +41,9 @@ rules:
       # Project containment helpers: each normalises with os.path.realpath +
       # startswith, and returns a contained path or None.
       - pattern: safe_under_base(...)
+      # Same containment as safe_under_base, but preserves a legitimate leaf
+      # symlink (engine binaries are symlinked to system locations).
+      - pattern: safe_leaf_under_base(...)
       - pattern: resolve_engine_file(...)
     pattern-sinks:
       - patterns:

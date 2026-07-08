@@ -3111,18 +3111,22 @@ def _prompt_player_name(player_num: int) -> None:
     return None
 
 
-def _prompt_game_text(key: str, title: str, max_length: int = 200) -> None:
+def _prompt_game_text(field: str, title: str, max_length: int = 200) -> None:
     """Open the on-board keyboard to edit a ``game`` string setting, then save it.
 
     Board-specific interaction backing the ``edit_coach_*`` text actions of the
     data-driven Game submenu (the web edits the same nodes via text inputs).
     Saving persists to centaur.ini's ``[game]`` section via the game settings
     store, mirroring ``_prompt_player_name``. An empty result clears the value.
+
+    ``field`` is the settings field identifier (e.g. ``coach_persona`` or an
+    agent-namespaced key); only that identifier is logged, never the entered
+    ``result`` value, which may be a credential.
     """
-    log.info(f"[Settings] Opening keyboard for game.{key} entry")
+    log.info(f"[Settings] Opening keyboard for game.{field} entry")
     board.display_manager.clear_widgets(addStatusBar=False)
 
-    current_value = _game_settings_dict().get(key, "")
+    current_value = _game_settings_dict().get(field, "")
     keyboard = KeyboardWidget(board.display_manager.update, title=title, max_length=max_length)
     keyboard.text = current_value if current_value else ""
     _set_active_keyboard_widget(keyboard)
@@ -3137,11 +3141,11 @@ def _prompt_game_text(key: str, title: str, max_length: int = 200) -> None:
     try:
         result = keyboard.wait_for_input(timeout=300.0)
         if result is not None:
-            _save_game_setting(key, result)
-            log.info(f"[Settings] game.{key} saved")
+            _save_game_setting(field, result)
+            log.info(f"[Settings] game.{field} saved")
             board.beep(board.SOUND_GENERAL)
         else:
-            log.info(f"[Settings] game.{key} entry cancelled")
+            log.info(f"[Settings] game.{field} entry cancelled")
     finally:
         _set_active_keyboard_widget(None)
     return None
@@ -6711,15 +6715,21 @@ def main():
         log.error(f"[Main] Failed to start services: {e}", exc_info=True)
         # Continue anyway - services are not critical for basic operation
     
-    # Resolve the branded adapter alias (UC-<mac tail>) once from the adapter's
+    # Resolve the branded adapter alias (Universal Chess <mac tail>) once from the adapter's
     # own MAC and share it with BLE and RFCOMM so both set the same friendly
     # name. Falls back to the device name when the MAC cannot be read, so alias
     # branding never blocks Bluetooth bring-up. The alias is only the friendly
     # name a phone shows; the per-advertisement LocalNames apps discover by
     # (MILLENNIUM CHESS / DGT PEGASUS / Chessnut Air) are unaffected.
     from universalchess.managers.adapter_alias import resolve_adapter_alias
-    adapter_alias = resolve_adapter_alias(log=log) or args.device_name
-    log.info(f"[Main] Adapter alias: {adapter_alias}")
+    resolved_alias = resolve_adapter_alias(log=log)
+    adapter_alias = resolved_alias or args.device_name
+    # The alias derives from the adapter MAC (a device identifier), so log only
+    # how it was determined, not the value itself.
+    log.info(
+        "[Main] Adapter alias %s",
+        "resolved from adapter MAC" if resolved_alias else "using device-name fallback",
+    )
 
     # Setup BLE if enabled
     global ble_manager

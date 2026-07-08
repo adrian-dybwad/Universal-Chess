@@ -37,6 +37,7 @@ from universalchess.board.logging import log
 from universalchess.paths import CONFIG_DIR, ENGINES_DIR, get_engine_path
 from universalchess.services.engine_profiles import ProfileField, ProfileGroup
 from universalchess.services.engine_registry import get_engine_registry
+from universalchess.utils.safe_path import safe_under_base
 
 __all__ = [
     "EngineProbeError",
@@ -394,9 +395,16 @@ def _atomic_write(parser: configparser.ConfigParser, path: str) -> None:
         raise
 
 
-def config_path_for(engine_name: str) -> str:
-    """Return the writable ``.uci`` path for an engine under the config dir."""
-    return os.path.join(CONFIG_DIR, "engines", f"{engine_name}.uci")
+def config_path_for(engine_name: str) -> Optional[str]:
+    """Return the writable ``.uci`` path for an engine under the config dir.
+
+    ``engine_name`` may be request-derived, so it is contained under the engines
+    config dir via ``safe_under_base`` before being used as a filesystem path.
+    Returns ``None`` when the name is empty or would escape that directory (the
+    ``.uci`` is a regular file, never a symlink, so the realpath-based guard is
+    appropriate here, unlike engine binaries).
+    """
+    return safe_under_base(os.path.join(CONFIG_DIR, "engines"), f"{engine_name}.uci")
 
 
 def seed_config(
@@ -413,9 +421,13 @@ def seed_config(
     fresh install it probes the binary and writes ``[DEFAULT]`` (engine-wide
     Threads) plus the derived strength sections. Returns the config path.
 
-    Raises :class:`EngineProbeError` if the binary is missing or cannot launch.
+    Raises :class:`EngineProbeError` if the binary is missing or cannot launch,
+    or if ``engine_name`` is empty/escapes the engines config dir (no
+    ``config_path`` override was given for a name that fails containment).
     """
     path = config_path or config_path_for(engine_name)
+    if path is None:
+        raise EngineProbeError(f"invalid engine name: {engine_name!r}")
     if os.path.exists(path):
         return path
 

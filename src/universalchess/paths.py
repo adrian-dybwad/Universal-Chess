@@ -34,6 +34,8 @@ E-paper image writing is in services/chromecast.py
 import os
 from pathlib import Path
 
+from universalchess.utils.safe_path import safe_leaf_under_base
+
 # Base installation directory
 BASE_DIR = "/opt/universalchess"
 
@@ -124,19 +126,22 @@ def get_engine_path(engine_name: str) -> str:
     Returns:
         Absolute path to the engine executable, or empty string if not found
     """
-    if ".." in engine_name:
-        return ""
-    
-    # Check installed location first
-    installed_path = os.path.join(ENGINES_DIR, engine_name)
-    if os.path.exists(installed_path):
+    # engine_name may be request-derived (a selected/custom engine id), so it is
+    # contained under the engines dir before touching the filesystem. Containment
+    # uses safe_leaf_under_base rather than safe_under_base because system-package
+    # engines are installed as symlinks to /usr/games/... (see
+    # engine_manager._install_system_package); a realpath-based guard would follow
+    # the link out of the engines dir and wrongly reject the engine.
+    installed_path = safe_leaf_under_base(ENGINES_DIR, engine_name)
+    if installed_path and os.path.exists(installed_path):
         return installed_path
-    
+
     # Fall back to development location (relative to this file)
-    dev_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "engines", engine_name)
-    if os.path.exists(dev_path):
+    dev_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "engines")
+    dev_path = safe_leaf_under_base(dev_dir, engine_name)
+    if dev_path and os.path.exists(dev_path):
         return dev_path
-    
+
     return ""
 
 
