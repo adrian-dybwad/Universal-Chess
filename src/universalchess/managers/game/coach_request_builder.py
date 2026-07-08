@@ -24,6 +24,58 @@ from universalchess.utils.chess_notation import DEFAULT_NOTATION, format_move
 
 from .move_facts import summarize_move_facts
 
+# Order pieces from most to least valuable so the placement reads naturally
+# (king, queen, rooks, bishops, knights, then pawns).
+_PIECE_ORDER = ("K", "Q", "R", "B", "N", "P")
+_PIECE_LETTER = {
+    "k": "K",
+    "q": "Q",
+    "r": "R",
+    "b": "B",
+    "n": "N",
+    "p": "P",
+}
+
+
+def describe_placement(board) -> str:
+    """Return a plain-language piece placement for ``board``, by color.
+
+    Produces text like ``"White: Kg1, Qd1, Rf1, Bc4, Nf3; pawns a2, b2, c2, d3, e4.
+    Black: Ke8, ...; pawns a7, b7."`` so the coach has an authoritative, easily
+    read description of what occupies each square -- LLMs read FEN poorly and invent
+    pieces, so this is the ground truth they are told to rely on. Non-pawns are
+    listed as ``<letter><square>`` (e.g. ``Nf3``); pawns are grouped as bare
+    squares because the file/rank is what matters for structure talk.
+    """
+    import chess
+
+    def _side(color) -> str:
+        pieces: dict[str, list[str]] = {letter: [] for letter in _PIECE_ORDER}
+        for square in chess.SQUARES:
+            piece = board.piece_at(square)
+            if piece is None or piece.color != color:
+                continue
+            letter = _PIECE_LETTER[piece.symbol().lower()]
+            name = chess.square_name(square)
+            pieces[letter].append(name if letter == "P" else f"{letter}{name}")
+        officers = [
+            token
+            for letter in _PIECE_ORDER
+            if letter != "P"
+            for token in sorted(pieces[letter])
+        ]
+        parts = []
+        if officers:
+            parts.append(", ".join(officers))
+        pawns = sorted(pieces["P"])
+        if pawns:
+            parts.append("pawns " + ", ".join(pawns))
+        return "; ".join(parts) if parts else "(none)"
+
+    white = _side(chess.WHITE)
+    black = _side(chess.BLACK)
+    return f"White: {white}. Black: {black}."
+
 
 def build_coach_request(
     fen_before: str,
@@ -96,6 +148,13 @@ def build_coach_request(
         move_text = move_uci
 
     side_to_move = "white" if board.turn == chess.WHITE else "black"
+    # Authoritative piece placement of the resulting position (after the move),
+    # which is what the coach describes. When the move is illegal for the FEN
+    # (corrupt data), describe the pre-move board so the block is still truthful.
+    board_after = board.copy(stack=False)
+    if move in board_after.legal_moves:
+        board_after.push(move)
+    board_after_text = describe_placement(board_after)
     return CoachRequest(
         fen_before=fen_before,
         move_text=move_text,
@@ -109,6 +168,8 @@ def build_coach_request(
         persona=persona,
         language=language,
         chess960=chess960,
+        move_uci=move_uci,
+        board_after_text=board_after_text,
     )
 
 
@@ -181,4 +242,4 @@ def format_candidate_lines(
     return tuple(lines)
 
 
-__all__ = ["build_coach_request", "format_candidate_lines"]
+__all__ = ["build_coach_request", "describe_placement", "format_candidate_lines"]

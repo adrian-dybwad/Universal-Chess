@@ -3289,6 +3289,7 @@ def _build_coach_request(ply: int):
     import chess
     from universalchess.coaches import registry as coaches
     from universalchess.coaches.base import MoveContext
+    from universalchess.managers.game.coach_request_builder import describe_placement
     from universalchess.managers.game.move_facts import summarize_move_facts
     from universalchess.services.coach import CoachRequest
     from universalchess.state import get_chess_game
@@ -3326,6 +3327,25 @@ def _build_coach_request(ply: int):
         coaches.select_move_context(False, side_to_move, human_color)
         is MoveContext.OPPONENT_MOVE
     )
+    # Authoritative placement of the resulting position (what the coach describes),
+    # so the model relies on an explicit piece list rather than parsing the FEN.
+    position_after = position.copy(stack=False)
+    if move in position_after.legal_moves:
+        position_after.push(move)
+    board_after_text = describe_placement(position_after)
+    # Numbered-SAN history up to and including this move, for narrative context
+    # (plans/opening) -- not the source of truth for the board (that is placement).
+    history_board = board_obj.root()
+    history_parts = []
+    for played in moves[:ply]:
+        if history_board.turn == chess.WHITE:
+            history_parts.append(f"{history_board.fullmove_number}.")
+        try:
+            history_parts.append(history_board.san(played))
+        except (ValueError, AssertionError):
+            history_parts.append(played.uci())
+        history_board.push(played)
+    move_history = " ".join(history_parts)
     return CoachRequest(
         fen_before=fen_before,
         move_text=move_text,
@@ -3336,6 +3356,9 @@ def _build_coach_request(ply: int):
         persona=_coach_persona(side_to_move, is_potential_move=False),
         language=language,
         chess960=chess960,
+        move_uci=move_uci,
+        board_after_text=board_after_text,
+        move_history=move_history,
     )
 
 
@@ -3345,20 +3368,20 @@ def _build_coach_request(ply: int):
 _COACH_MULTIPV_ANALYSIS_SECONDS = 0.5
 
 
-def _coach_candidate_lines(fen_before: str, chess960: bool = False):
-    """Engine MultiPV candidate lines for a position, or () when disabled/unavailable.
+def _coach_multipv_lines(fen: str, chess960: bool = False):
+    """Engine MultiPV lines for the side to move in ``fen``, or () when unavailable.
 
-    Returns pre-formatted candidate-move strings (best first) for the AI coach
-    when ``coach_multipv`` > 1, by running a short MultiPV analysis on the shared
-    analysis engine. Best-effort: returns an empty tuple when MultiPV is disabled,
-    no analysis engine is available, or the analysis fails, so coaching proceeds
-    without alternatives rather than erroring. The pondering player uses a separate
+    Returns pre-formatted candidate-move strings (best first) for the AI coach when
+    ``coach_multipv`` > 1, by running a short MultiPV analysis on the shared analysis
+    engine. Best-effort: returns an empty tuple when MultiPV is disabled, no analysis
+    engine is available, the FEN is unusable, or the analysis fails, so coaching
+    proceeds without lines rather than erroring. The pondering player uses a separate
     dedicated engine, so this shared-engine analysis never touches a ponder search.
 
     ``chess960`` must be True for a Fischer Random game so the analysed board is
     built 960-aware: this makes python-chess auto-send ``UCI_Chess960`` to the
-    engine and generate king-onto-rook castling, and lets the candidate lines be
-    formatted (a 960 castle is illegal on a standard board).
+    engine and generate king-onto-rook castling, and lets the lines be formatted (a
+    960 castle is illegal on a standard board).
     """
     game = _get_settings().game
     try:
@@ -3383,7 +3406,7 @@ def _coach_candidate_lines(fen_before: str, chess960: bool = False):
     if handle is None:
         return ()
     try:
-        board = chess.Board(fen_before, chess960=chess960)
+        board = chess.Board(fen, chess960=chess960)
         infos = handle.analyse(
             board,
             chess.engine.Limit(time=_COACH_MULTIPV_ANALYSIS_SECONDS),
@@ -3396,7 +3419,36 @@ def _coach_candidate_lines(fen_before: str, chess960: bool = False):
         registry.release(handle)
 
     notation = _game_settings_dict().get("notation", "figurine")
-    return format_candidate_lines(fen_before, infos, notation, chess960=chess960)
+    return format_candidate_lines(fen, infos, notation, chess960=chess960)
+
+
+def _coach_candidate_lines(fen_before: str, chess960: bool = False):
+    """MultiPV candidate moves for the position before a move (the mover's options)."""
+    return _coach_multipv_lines(fen_before, chess960=chess960)
+
+
+def _coach_opponent_reply_lines(fen_before: str, move_uci: str, chess960: bool = False):
+    """MultiPV replies for the opponent in the position *after* the played move.
+
+    Grounds "what the opponent can do" in engine-verified, legal replies so the
+    coach references a real move instead of inventing one. Returns () when there is
+    no played move, the move is illegal in ``fen_before``, or MultiPV is disabled/
+    unavailable (same best-effort contract as :func:`_coach_candidate_lines`).
+    """
+    if not move_uci:
+        return ()
+
+    import chess
+
+    try:
+        board = chess.Board(fen_before, chess960=chess960)
+        played = chess.Move.from_uci(move_uci)
+    except ValueError:
+        return ()
+    if played not in board.legal_moves:
+        return ()
+    board.push(played)
+    return _coach_multipv_lines(board.fen(), chess960=chess960)
 
 
 def _wire_coach_coordinator(display_manager, game_manager):
@@ -3440,6 +3492,15 @@ def _wire_coach_coordinator(display_manager, game_manager):
         candidate_lines = _coach_candidate_lines(request.fen_before, request.chess960)
         if candidate_lines:
             request = replace(request, candidate_lines=candidate_lines)
+
+        # Ground the opponent's replies (position after the played move) so the coach
+        # references a real, legal reply instead of inventing one. Same MultiPV gate
+        # and best-effort contract as candidate lines.
+        opponent_reply_lines = _coach_opponent_reply_lines(
+            request.fen_before, request.move_uci, request.chess960
+        )
+        if opponent_reply_lines:
+            request = replace(request, opponent_reply_lines=opponent_reply_lines)
         return request
 
     coordinator = CoachCoordinator(

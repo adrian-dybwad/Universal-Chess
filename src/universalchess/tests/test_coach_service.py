@@ -505,3 +505,117 @@ def test_user_prompt_without_candidate_lines_omits_the_alternatives_block():
                            side_to_move="white")
     prompt = build_user_prompt(request)
     assert "Engine's top candidate moves" not in prompt
+
+
+def test_user_prompt_lists_opponent_reply_lines_when_present():
+    # Engine-verified opponent replies (for the position after the played move) must
+    # appear verbatim under their own header so the coach can reference a real, legal
+    # reply instead of inventing one -- the grounding that stops "what if they play
+    # cxd4" hallucinations. Regression: dropping them removes the only legal set of
+    # opponent moves the model is told about, reopening the door to invented replies.
+    request = CoachRequest(
+        fen_before="rnbqkbnr/pp1ppppp/8/2p5/3PP3/8/PPP2PPP/RNBQKBNR b KQkq d3 0 2",
+        move_text="d4",
+        side_to_move="black",
+        opponent_reply_lines=("cxd4 (-0.10)", "e6 (+0.20)"),
+    )
+    prompt = build_user_prompt(request)
+    assert "Opponent's strongest replies" in prompt
+    assert "- cxd4 (-0.10)" in prompt
+    assert "- e6 (+0.20)" in prompt
+
+
+def test_user_prompt_without_opponent_reply_lines_omits_that_block():
+    # With no opponent replies supplied the prompt must omit the header entirely
+    # rather than print an empty block. Regression: an empty header would imply the
+    # opponent has no replies, misleading the model.
+    request = CoachRequest(fen_before="8/8/8/8/8/8/8/8 w - - 0 1", move_text="e4",
+                           side_to_move="white")
+    prompt = build_user_prompt(request)
+    assert "Opponent's strongest replies" not in prompt
+
+
+def test_user_prompt_includes_authoritative_piece_placement_when_present():
+    # The resulting-position piece placement must appear as an authoritative block
+    # the coach is told to rely on, because the model cannot reliably read FEN. This
+    # is the fix for occupancy hallucinations ("the pawn on d4" when d4 is empty).
+    # Regression: dropping it forces the model back onto FEN parsing and reopens the
+    # invented-piece bug.
+    request = CoachRequest(
+        fen_before="8/8/8/8/8/8/8/8 w - - 0 1",
+        move_text="d3",
+        side_to_move="white",
+        board_after_text="White: Kg1; pawns d3, e4. Black: Kg8; pawns c5.",
+    )
+    prompt = build_user_prompt(request)
+    assert "rely on this for what is on each square" in prompt
+    assert "White: Kg1; pawns d3, e4. Black: Kg8; pawns c5." in prompt
+    assert "do not claim a piece is on a square unless it is listed here" in prompt
+
+
+def test_user_prompt_omits_placement_block_when_absent():
+    # With no placement text the block must be omitted entirely rather than printing
+    # an empty header, matching the facts/candidate handling.
+    request = CoachRequest(fen_before="8/8/8/8/8/8/8/8 w - - 0 1", move_text="e4",
+                           side_to_move="white")
+    prompt = build_user_prompt(request)
+    assert "rely on this for what is on each square" not in prompt
+
+
+def test_user_prompt_includes_move_history_for_context_when_present():
+    # The numbered-SAN history gives the coach narrative context (plans/opening). It
+    # must be labeled as context, not board truth. Regression: dropping it removes
+    # the game story the user asked for; mislabeling it invites FEN-style replay
+    # errors instead of using the authoritative placement.
+    request = CoachRequest(
+        fen_before="8/8/8/8/8/8/8/8 w - - 0 1",
+        move_text="d3",
+        side_to_move="white",
+        move_history="1. e4 c5 2. Nf3 d6 3. d3",
+    )
+    prompt = build_user_prompt(request)
+    assert "Moves so far" in prompt
+    assert "1. e4 c5 2. Nf3 d6 3. d3" in prompt
+
+
+def test_user_prompt_forbids_inventing_pieces_on_empty_squares():
+    # The tactical guard must explicitly forbid claiming a piece on a square not in
+    # the placement. This is the prompt-level defense against occupancy
+    # hallucinations (the validator is the backstop). Regression: dropping it removes
+    # the instruction that pairs with the authoritative placement block.
+    prompt = build_user_prompt(REQUEST)
+    assert "never invent a pawn or piece on an empty square" in prompt
+
+
+def test_user_prompt_requires_named_moves_to_be_legal():
+    # The tactical guard must instruct that any named move be legal and that opponent
+    # moves come only from the supplied replies. This is the prompt-level defense
+    # against hallucinated moves; a regression dropping it removes the model's
+    # instruction to stay grounded (the validator is the backstop, not the only line).
+    prompt = build_user_prompt(REQUEST)
+    assert "Any specific move you name must be legal in this position" in prompt
+
+
+def test_user_prompt_appends_retry_note_when_set():
+    # On a regeneration the retry note (naming the illegal move to avoid) must be
+    # appended so the second attempt is told exactly what went wrong. Regression:
+    # dropping it would make the retry as likely to repeat the hallucination.
+    request = CoachRequest(
+        fen_before="8/8/8/8/8/8/8/8 w - - 0 1",
+        move_text="e4",
+        side_to_move="white",
+        retry_note="A previous attempt named a move that is illegal: cxd4.",
+    )
+    prompt = build_user_prompt(request)
+    assert prompt.rstrip().endswith(
+        "A previous attempt named a move that is illegal: cxd4."
+    )
+
+
+def test_guardrails_require_substance_and_cap_questions():
+    # The base guardrails must forbid questions-only replies and require at least one
+    # concrete observation, addressing the "it only asks questions" complaint. A
+    # regression relaxing this would let the Socratic personas return pure questions.
+    prompt = coach.build_system_prompt(REQUEST)
+    assert "never reply\nwith only questions" in prompt or "never reply with only questions" in prompt
+    assert "at most one short guiding question" in prompt

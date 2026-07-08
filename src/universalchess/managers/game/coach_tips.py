@@ -27,10 +27,10 @@ from universalchess.services.coach import (
     DEFAULT_LANGUAGE,
     CoachConfig,
     CoachError,
-    generate_coach_statement,
 )
 from universalchess.utils.chess_notation import DEFAULT_NOTATION
 
+from .coach_generation import generate_validated_statement
 from .coach_request_builder import build_coach_request
 
 _lock = threading.Lock()
@@ -109,7 +109,10 @@ def get_tip_statement(
     if request is None:
         return None
 
-    generate = generate_fn or generate_coach_statement
+    # Default generation validates the statement against the position and
+    # regenerates if it names an illegal move, so a hinted-move remark never shows a
+    # hallucinated line. A test-supplied ``generate_fn`` bypasses validation.
+    generate = generate_fn or generate_validated_statement
     try:
         if generate_fn is None:
             statement = generate(config, request, http_post=http_post)

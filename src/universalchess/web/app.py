@@ -3100,12 +3100,12 @@ def api_coach_statement(gameid, ply):
         get_move_evals,
         save_coach_statement_if_absent,
     )
+    from universalchess.managers.game.coach_generation import generate_validated_statement
     from universalchess.managers.game.coach_request_builder import build_coach_request
     from universalchess.services.coach import (
         CoachError,
         error_category,
         error_message,
-        generate_coach_statement,
     )
 
     stored = get_coach_statement(gameid, ply)
@@ -3141,7 +3141,7 @@ def api_coach_statement(gameid, ply):
         return jsonify({"statement": None, "cached": False, "error": "bad_move"}), 422
 
     try:
-        statement = generate_coach_statement(config, coach_request)
+        statement = generate_validated_statement(config, coach_request)
     except CoachError as exc:
         # Log the full detail server-side. To the client, return the failure
         # *category* and a safe, user-facing sentence (never the raw provider text):

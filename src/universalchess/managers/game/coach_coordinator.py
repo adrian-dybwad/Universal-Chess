@@ -102,7 +102,9 @@ class CoachCoordinator:
             get_game_db_id: Returns the live game's DB id (<0 when none).
             set_text: Pushes text to the coach-text panel.
             fetch: Produces a statement from the AI service (defaults to
-                ``services.coach.generate_coach_statement``).
+                ``coach_generation.generate_validated_statement``, which validates
+                the statement against the position and regenerates on a hallucinated
+                move).
             load_statement: Reads a stored statement (defaults to
                 ``coach_persistence.get_coach_statement``).
             save_statement: Persists a statement first-writer-wins and returns the
@@ -125,8 +127,11 @@ class CoachCoordinator:
         self._enrich_request = enrich_request
 
         if fetch is None:
-            from universalchess.services.coach import generate_coach_statement
-            fetch = generate_coach_statement
+            # Validated generation grounds the statement against the position and
+            # regenerates if it names an illegal move, so the board never shows a
+            # hallucinated line. Tests inject a plain fetch to bypass validation.
+            from .coach_generation import generate_validated_statement
+            fetch = generate_validated_statement
         if load_statement is None:
             from .coach_persistence import get_coach_statement
             load_statement = get_coach_statement

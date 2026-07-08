@@ -15,6 +15,7 @@ import pytest
 
 from universalchess.managers.game.coach_request_builder import (
     build_coach_request,
+    describe_placement,
     format_candidate_lines,
 )
 
@@ -36,6 +37,29 @@ def test_builds_san_side_and_move_number_from_startpos():
     assert request.side_to_move == "white"
     assert request.move_number == 1
     assert request.fen_before == STARTPOS
+
+
+def test_build_coach_request_sets_board_placement_of_position_after_the_move():
+    # The request must carry an authoritative piece placement of the position AFTER
+    # the move, since LLMs read FEN poorly and invent pieces. After 1.e4 the pawn is
+    # on e4, not e2. Regression: an empty or pre-move placement would reopen the
+    # "pawn on d4 that isn't there" class of hallucination.
+    request = build_coach_request(STARTPOS, "e2e4")
+    assert request is not None
+    # White's pawn list shows e4 (moved) and not e2 (vacated) in the resulting board.
+    assert "pawns a2, b2, c2, d2, e4, f2, g2, h2" in request.board_after_text
+
+
+def test_describe_placement_lists_both_colors_officers_and_pawns():
+    # describe_placement is the ground truth the coach relies on, so it must name
+    # each side's pieces by square. Regression: a missing color or piece would let
+    # the coach "fill in" the gap with an invented piece.
+    text = describe_placement(chess.Board())
+    assert text.startswith("White: ")
+    assert "Ke1" in text and "Qd1" in text
+    assert "pawns a2, b2, c2, d2, e2, f2, g2, h2" in text
+    assert "Black: " in text
+    assert "Ke8" in text
 
 
 def test_black_to_move_is_detected_from_fen():

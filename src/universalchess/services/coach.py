@@ -38,7 +38,11 @@ DEFAULT_TIMEOUT_SECONDS = 20
 # shapes tone/focus but can never relax these.
 _BASE_GUARDRAILS = (
     "Explain the move's idea or mistake in at most two short sentences. "
-    "Do not restate the move in notation. Be specific and practical."
+    "Do not restate the move in notation. Be specific and practical. "
+    "Always give at least one concrete, useful observation about the position "
+    "(a plan, a weakness, a target, or why the move helps or hurts); never reply "
+    "with only questions. You may end with at most one short guiding question, "
+    "but the reply must stand on its own as advice without it."
 )
 
 # Persona used when no coach persona is supplied (coach framework absent or a
@@ -206,6 +210,29 @@ class CoachRequest:
             analysis) rebuilds the board chess960-aware; 960 castling is a
             king-onto-rook move that is illegal on a standard board. This field adds
             no chess dependency to the service layer -- it is a plain flag.
+        move_uci: The played (or candidate) move in UCI. Carried so a caller with a
+            chess dependency can rebuild the position after the move -- for grounding
+            the opponent's replies and for validating the moves the model names.
+            Empty adds no dependency to the service layer; it is only a plain string.
+        opponent_reply_lines: Engine-verified strongest replies for the position
+            *after* the played move (best first), each pre-formatted like
+            ``"cxd5 (-0.20)"`` in the user's notation. They let a coach reference a
+            real, legal opponent reply instead of inventing one. Empty when reply
+            grounding is disabled/unavailable, in which case no replies block is
+            added. Being engine output, these are authoritative like ``facts``.
+        retry_note: An extra, final instruction appended to the user prompt on a
+            regeneration attempt (e.g. after a first attempt named an illegal move),
+            telling the model exactly what to avoid. Empty on the first attempt.
+        board_after_text: Plain-language piece placement of the position *after* the
+            move (e.g. "White: Kg1, ... pawns a2, b2, d3, e4. Black: ..."). LLMs read
+            FEN poorly and invent pieces on squares; this authoritative placement is
+            what the coach must rely on for what occupies each square. Built in the
+            chess-aware layer so the service stays chess-free; empty adds no block.
+        move_history: The game so far in numbered SAN (e.g. "1. e4 c5 2. Nf3"), up to
+            and including this move. Gives the coach narrative context (plans, the
+            opening, what the opponent has been doing) -- it is NOT the source of
+            truth for the board state (that is ``board_after_text``). Empty when the
+            history is unavailable (e.g. a single-position request), adding no block.
     """
 
     fen_before: str
@@ -221,6 +248,11 @@ class CoachRequest:
     language: str = DEFAULT_LANGUAGE
     candidate_lines: Tuple[str, ...] = ()
     chess960: bool = False
+    move_uci: str = ""
+    opponent_reply_lines: Tuple[str, ...] = ()
+    retry_note: str = ""
+    board_after_text: str = ""
+    move_history: str = ""
 
 
 def _language_instruction(language: Optional[str]) -> str:
@@ -295,6 +327,19 @@ def build_user_prompt(request: CoachRequest) -> str:
     ]
     if request.move_number is not None:
         lines.insert(0, f"Move number: {request.move_number}")
+    if request.move_history:
+        lines.append(f"Moves so far (numbered SAN, for context only): {request.move_history}")
+    if request.board_after_text:
+        placement_label = (
+            "Piece placement if the move is played"
+            if request.is_potential_move
+            else "Piece placement now, after the move"
+        )
+        lines.append(
+            f"{placement_label} (authoritative -- rely on this for what is on each "
+            f"square; do not claim a piece is on a square unless it is listed here):"
+        )
+        lines.append(request.board_after_text)
     if request.facts:
         lines.append("Verified facts about the move (authoritative, from the board):")
         lines.extend(f"- {fact}" for fact in request.facts)
@@ -304,10 +349,23 @@ def build_user_prompt(request: CoachRequest) -> str:
             "authoritative -- use these to reference better or alternative moves):"
         )
         lines.extend(f"- {line}" for line in request.candidate_lines)
+    if request.opponent_reply_lines:
+        lines.append(
+            "Opponent's strongest replies to this move (best first, engine-verified "
+            "and authoritative -- if you mention what the opponent could play, use "
+            "only a move from this list):"
+        )
+        lines.extend(f"- {line}" for line in request.opponent_reply_lines)
     tactical_guard = (
         "Base every tactical claim (check, capture, pin, fork, threat) only on the "
         "verified facts above and the given position; do not assert a pin, fork, "
         "check, or capture that is not supported. "
+        "Any specific move you name must be legal in this position; when you refer "
+        "to a move the opponent could make, use only one of the opponent replies "
+        "listed above, and if none are listed, describe the idea without naming a "
+        "specific opponent move rather than inventing one. "
+        "Do not claim a piece stands on a square unless the piece placement above "
+        "lists it there; never invent a pawn or piece on an empty square. "
         f'When you refer to the move, write it exactly as "{request.move_text}".'
     )
     if request.is_potential_move:
@@ -328,6 +386,8 @@ def build_user_prompt(request: CoachRequest) -> str:
             "The player just played this move. Coach the player on their own move in "
             "at most two short sentences. " + tactical_guard
         )
+    if request.retry_note:
+        lines.append(request.retry_note)
     return "\n".join(lines)
 
 
