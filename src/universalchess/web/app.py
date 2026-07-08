@@ -3370,6 +3370,27 @@ def api_board_abort_game():
         return _internal_error(e)
 
 
+@app.route("/api/board/new-game", methods=["POST"])
+@requires_auth
+def api_board_new_game():
+    """Start a fresh game on the board. Requires authentication.
+
+    Asks the main process to record any in-progress game as abandoned
+    (result = "*") and start a new game with the current player settings -- the
+    same outcome as "New Game" in the on-board players menu. The web UI confirms
+    with the user before calling this when a game is in progress.
+    """
+    try:
+        from universalchess.services.game_broadcast import send_board_command
+
+        sent = send_board_command("new_game")
+        if sent:
+            return jsonify({"success": True, "message": "New game started"})
+        return jsonify({"success": False, "error": "Board not running"}), 503
+    except Exception as e:
+        return _internal_error(e)
+
+
 # ============================================================================
 # System actions (reset / power / Original Centaur)
 # ============================================================================

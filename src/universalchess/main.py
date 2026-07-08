@@ -2762,11 +2762,12 @@ def _process_pending_board_command() -> None:
     """Apply a pending web board-control command on the main thread.
 
     Handles 'setup_position' (abort any running game, then set up the position),
-    'abort_game' (abort and return to the menu), 'reset_settings', 'shutdown',
-    'reboot' and 'run_centaur'. Each runs the same board-side code path as the
-    corresponding e-paper menu action so the web and on-board behavior are
-    identical. Runs only from the main loop so display widgets, game managers and
-    in-memory settings are mutated on the main thread.
+    'abort_game' (abort and return to the menu), 'new_game' (abort and start a
+    fresh game), 'reset_settings', 'shutdown', 'reboot' and 'run_centaur'. Each
+    runs the same board-side code path as the corresponding e-paper menu action so
+    the web and on-board behavior are identical. Runs only from the main loop so
+    display widgets, game managers and in-memory settings are mutated on the main
+    thread.
     """
     global _pending_board_command
     cmd = _pending_board_command
@@ -2791,6 +2792,14 @@ def _process_pending_board_command() -> None:
         if protocol_manager is not None:
             _abort_current_game()
             _return_to_menu("Web abort")
+    elif command == "new_game":
+        # Start a fresh game with the current player settings -- the same outcome
+        # as "New Game" in the on-board players menu. Any running game is first
+        # recorded as abandoned (DB result "*") so history reflects it; then
+        # _start_game_mode tears down the prior game and starts a standard game.
+        log.info("[App] Web new_game")
+        _abort_current_game()
+        _start_game_mode()
     elif command == "make_move":
         # Move played from the web Control page. Applied through the active
         # GameManager exactly like an on-board move (validated, executed, opponent

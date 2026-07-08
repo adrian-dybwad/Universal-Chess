@@ -152,6 +152,59 @@ def test_abort_game_forwards_command(client, monkeypatch):
     assert sent == [("abort_game", None)]
 
 
+def test_new_game_forwards_command(client, monkeypatch):
+    """POST /api/board/new-game must forward a new_game command.
+
+    The Live Board's New Game button calls this to start a fresh game; a wrong
+    command name would leave the current game untouched. Asserts the exact
+    command sent (no params, mirroring abort_game).
+    """
+    sent = []
+    monkeypatch.setattr(
+        "universalchess.services.game_broadcast.send_board_command",
+        lambda command, params=None: (
+            sent.append((command, params)) if command != "reset_inactivity" else None
+        )
+        or True,
+    )
+
+    resp = client.post("/api/board/new-game")
+    assert resp.status_code == 200
+    assert json.loads(resp.data)["success"] is True
+    assert sent == [("new_game", None)]
+
+
+def test_new_game_requires_auth(monkeypatch):
+    """Unauthenticated new-game must be rejected with 401.
+
+    The endpoint abandons the running game and starts a new one, so it is
+    auth-gated like the other board-control endpoints. A fresh client without the
+    auth bypass must get 401.
+    """
+    webapp.app.config.update(TESTING=True)
+    monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
+    unauth = webapp.app.test_client()
+    resp = unauth.post("/api/board/new-game")
+    assert resp.status_code == 401
+
+
+def test_new_game_reports_board_not_running(client, monkeypatch):
+    """When the board is not listening, new-game must report 503.
+
+    send_board_command returns False if the main process isn't running; the UI
+    needs a distinct failure (not a false success) so it can tell the user the
+    board is offline rather than assume a new game started.
+    """
+    monkeypatch.setattr(
+        "universalchess.services.game_broadcast.send_board_command",
+        lambda command, params=None: False,
+    )
+
+    resp = client.post("/api/board/new-game")
+    assert resp.status_code == 503
+    assert json.loads(resp.data)["success"] is False
+
+
 def test_board_key_forwards_press_for_valid_button(client, monkeypatch):
     """POST /api/board/key must forward a key_press command for a valid button.
 
