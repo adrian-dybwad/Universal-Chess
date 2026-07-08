@@ -3129,10 +3129,13 @@ def _prompt_game_text(field: str, title: str, max_length: int = 200) -> None:
     store, mirroring ``_prompt_player_name``. An empty result clears the value.
 
     ``field`` is the settings field identifier (e.g. ``coach_persona`` or an
-    agent-namespaced key); only that identifier is logged, never the entered
-    ``result`` value, which may be a credential.
+    agent-namespaced key). Logging interpolates only the constant UI ``title``
+    (e.g. "API Key"), never ``field`` nor the entered ``result`` value: ``field``
+    can be the ``coach_api_key`` key, which static analysis (CodeQL
+    py/clear-text-logging) treats as a sensitive source, and ``result`` may be
+    the credential itself.
     """
-    log.info(f"[Settings] Opening keyboard for game.{field} entry")
+    log.info("[Settings] Opening keyboard for %s entry", title)
     board.display_manager.clear_widgets(addStatusBar=False)
 
     current_value = _game_settings_dict().get(field, "")
@@ -3151,10 +3154,10 @@ def _prompt_game_text(field: str, title: str, max_length: int = 200) -> None:
         result = keyboard.wait_for_input(timeout=300.0)
         if result is not None:
             _save_game_setting(field, result)
-            log.info(f"[Settings] game.{field} saved")
+            log.info("[Settings] %s saved", title)
             board.beep(board.SOUND_GENERAL)
         else:
-            log.info(f"[Settings] game.{field} entry cancelled")
+            log.info("[Settings] %s entry cancelled", title)
     finally:
         _set_active_keyboard_widget(None)
     return None

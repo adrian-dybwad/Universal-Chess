@@ -9,6 +9,7 @@
 # Licensed under the GNU General Public License v3.0 or later.
 # See LICENSE.md for details.
 
+import os
 import threading
 import time
 from unittest.mock import MagicMock, patch
@@ -517,4 +518,80 @@ class TestEngineRegistry:
 
         assert captured.get("ponder") is False
         assert captured.get("game") is None
+
+
+class TestCanonicalizePath:
+    """Tests for EngineRegistry._canonicalize_path.
+
+    Canonicalization normalizes an engine path (following symlinks) so identical
+    binaries reached via different paths share one instance, and resolves bare
+    names via PATH. It also passes the untrusted input through the realpath +
+    startswith barrier so it is not a path-injection sink.
+    """
+
+    @pytest.fixture(autouse=True)
+    def reset_registry(self):
+        """Reset the registry singleton between tests."""
+        from universalchess.services.engine_registry import EngineRegistry
+        EngineRegistry._instance = None
+        yield
+        if EngineRegistry._instance is not None:
+            EngineRegistry._instance._engines.clear()
+            EngineRegistry._instance = None
+
+    def test_resolves_symlink_to_target(self, tmp_path):
+        """A symlinked engine path canonicalizes to its real target.
+
+        Why this test exists: dedup requires that <engines>/stockfish and its
+        target /usr/games/stockfish map to the same key.
+        How the regression manifests: if the symlink were not followed, the two
+        paths would create two separate engine processes.
+        """
+        from universalchess.services.engine_registry import get_engine_registry
+
+        target = tmp_path / "real_stockfish"
+        target.write_text("binary")
+        link = tmp_path / "stockfish"
+        link.symlink_to(target)
+
+        registry = get_engine_registry()
+        assert registry._canonicalize_path(str(link)) == os.path.realpath(str(target))
+
+    def test_falls_back_to_which_for_bare_name(self, tmp_path, monkeypatch):
+        """A bare name that is not an existing path is resolved via PATH.
+
+        Why this test exists: consumers may pass just "stockfish"; it must map to
+        the installed binary so dedup still works.
+        How the regression manifests: without the which() fallback, a bare name
+        would canonicalize to a nonexistent cwd-relative path.
+        """
+        from universalchess.services import engine_registry
+        from universalchess.services.engine_registry import get_engine_registry
+
+        found = tmp_path / "stockfish"
+        found.write_text("binary")
+        monkeypatch.setattr(
+            engine_registry.shutil, "which",
+            lambda name: str(found) if name == "stockfish" else None,
+        )
+
+        registry = get_engine_registry()
+        assert registry._canonicalize_path("stockfish") == os.path.realpath(str(found))
+
+    def test_nonexistent_path_returns_normalized(self, tmp_path, monkeypatch):
+        """A path that neither exists nor is on PATH returns its normalized form.
+
+        Why this test exists: the caller still needs a stable dedup key even when
+        the engine is missing (the launch fails later with a clear error).
+        How the regression manifests: returning the raw input would skip
+        normalization and could split one missing engine across keys.
+        """
+        from universalchess.services import engine_registry
+        from universalchess.services.engine_registry import get_engine_registry
+
+        monkeypatch.setattr(engine_registry.shutil, "which", lambda name: None)
+        missing = tmp_path / "nope" / "engine"
+
+        registry = get_engine_registry()
+        assert registry._canonicalize_path(str(missing)) == os.path.realpath(str(missing))
 

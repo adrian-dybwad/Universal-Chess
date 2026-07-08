@@ -22,7 +22,7 @@ Implementation notes:
 
 import os
 
-__all__ = ["safe_under_base", "safe_leaf_under_base"]
+__all__ = ["safe_under_base"]
 
 
 def safe_under_base(base, *user_parts):
@@ -50,53 +50,6 @@ def safe_under_base(base, *user_parts):
     # Containment check on normalized paths: candidate must be base itself or a
     # descendant of base. The os.sep suffix prevents a sibling like
     # "/home/pi-evil" from matching base "/home/pi".
-    if candidate != base_real and not candidate.startswith(base_real + os.sep):
-        return None
-    return candidate
-
-
-def safe_leaf_under_base(base, name):
-    """Contain untrusted ``name`` under ``base`` without resolving a leaf symlink.
-
-    Same containment guarantee as :func:`safe_under_base` -- the untrusted
-    ``name`` cannot escape ``base`` via ``..`` or an absolute path -- but the
-    resolved path is normalized with ``os.path.normpath`` instead of
-    ``os.path.realpath`` so that a *legitimate* symlink at the leaf is preserved
-    rather than followed. This is required for engine binaries: the installer
-    creates ``<engines>/stockfish`` as a symlink to a system location such as
-    ``/usr/games/stockfish`` (see ``engine_manager._install_system_package``), and
-    a ``realpath``-based guard would resolve that link to a path outside the
-    engines directory and wrongly reject the engine.
-
-    Only the leaf link is spared: ``normpath`` still collapses ``..`` textually,
-    so a traversing ``name`` is rejected before it can escape. ``base`` itself is
-    resolved with ``realpath`` so the containment prefix is stable even when the
-    base directory is reached through a symlink.
-
-    Both ``os.path.normpath`` and the explicit ``startswith(base + os.sep)`` check
-    are the containment pattern static analysis (CodeQL ``py/path-injection``)
-    recognizes as a sanitizer -- it is the "GOOD" example in that query's own
-    documentation -- so callers may pass the result straight to ``os.*``.
-
-    Args:
-        base: Trusted base directory the result must stay within.
-        name: A single untrusted path segment (may contain ``/`` subdirectories).
-
-    Returns:
-        The normalized absolute path string inside ``base`` (whose leaf may be a
-        symlink pointing elsewhere), or ``None`` if ``name`` is empty or would
-        escape ``base``.
-    """
-    if name is None or str(name) == "":
-        return None
-
-    base_real = os.path.realpath(base)
-    stripped = str(name).lstrip("/").lstrip("\\")
-    candidate = os.path.normpath(os.path.join(base_real, stripped))
-
-    # Containment check on the textually normalized path: the leaf may be a
-    # symlink out of base, but the name must not traverse out of it. The os.sep
-    # suffix stops a sibling like "/opt/engines-evil" from matching "/opt/engines".
     if candidate != base_real and not candidate.startswith(base_real + os.sep):
         return None
     return candidate

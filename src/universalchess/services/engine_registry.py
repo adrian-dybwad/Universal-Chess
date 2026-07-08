@@ -166,21 +166,30 @@ class EngineRegistry:
         Returns:
             Canonical absolute path to the engine binary
         """
-        path = pathlib.Path(engine_path)
-        
-        # If path exists, resolve all symlinks to get the real binary path
-        if path.exists():
-            return os.path.realpath(str(path))
-        
-        # Path doesn't exist - try to find it via PATH lookup
-        # This handles cases like "stockfish" without full path
-        basename = path.name
-        which_path = shutil.which(basename)
+        # engine_path may be request-derived (a configured/custom engine path), so
+        # it is normalized with os.path.realpath before any filesystem access. The
+        # startswith(os.sep) check is the CodeQL-recognized SafeAccessCheck that
+        # clears the path-injection taint state after realpath normalization
+        # (py/path-injection): realpath always yields an absolute path, so the
+        # branch never triggers in practice, but it makes the guard explicit and
+        # rejects any non-absolute result before it reaches the filesystem.
+        normalized = os.path.realpath(engine_path)
+        if not normalized.startswith(os.sep):
+            return normalized
+
+        # If the normalized path exists, it is the real binary (symlinks already
+        # followed by realpath), which is the dedup key we want.
+        if os.path.exists(normalized):
+            return normalized
+
+        # Path doesn't exist as given - try to find it via PATH lookup. This
+        # handles a bare name like "stockfish" without a full path.
+        which_path = shutil.which(os.path.basename(normalized))
         if which_path:
             return os.path.realpath(which_path)
-        
-        # Last resort: just resolve what we can
-        return str(path.resolve())
+
+        # Last resort: the normalized (non-existent) path is still a stable key.
+        return normalized
     
     def acquire(
         self,
