@@ -283,10 +283,17 @@ def _on_display_refresh(image, red_image=None):
     Used by the web dashboard to mirror the e-paper display. In three-color mode
     the RED-plane snapshot is forwarded so the mirror is composed in RGB
     (white/black/red); ``red_image`` is None for mono/fast-B/W refreshes.
+
+    After the snapshot is written an ``epaper_changed`` event is pushed to the
+    web so the board-control page reloads ``/screen.jpg`` (a single JPEG) instead
+    of streaming MJPEG, which iPad Safari will not render inside an ``<img>``.
+    The file mtime is sent as the browser's cache-busting token.
     """
     try:
         from universalchess.services.chromecast import write_epaper_jpg
-        write_epaper_jpg(image, red_image=red_image)
+        from universalchess.services.game_broadcast import broadcast_epaper_changed
+        path = write_epaper_jpg(image, red_image=red_image)
+        broadcast_epaper_changed(os.stat(path).st_mtime)
     except Exception as e:
         log.debug(f"Failed to write epaper.jpg: {e}")
 

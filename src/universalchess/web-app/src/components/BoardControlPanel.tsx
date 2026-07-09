@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState, type PointerEvent, type KeyboardEvent } from 'react';
 import { LoginDialog } from './LoginDialog';
 import { apiFetch, buildApiUrl, getStoredCredentials } from '../utils/api';
+import { useSseEvent, type SseEventPayload } from '../utils/sseBus';
 import './BoardControlPanel.css';
 
 /**
@@ -8,8 +9,8 @@ import './BoardControlPanel.css';
  *
  * A non-modal floating panel (no backdrop) so the rest of the page stays usable
  * while it is open -- e.g. moving pieces on the Live Board behind it. It mirrors
- * the physical Centaur: the live e-paper display (the /screen stream) on top and
- * the six physical buttons beneath it, where they sit on the device. A tap sends
+ * the physical Centaur: the live e-paper display (a /screen.jpg snapshot) on top
+ * and the six physical buttons beneath it, where they sit on the device. A tap sends
  * a short press; press-and-hold sends a long press. Presses are injected into the
  * board's real key pipeline (POST /api/board/key), so the board reacts just like
  * it does to physical keys.
@@ -73,6 +74,20 @@ export function BoardControlPanel({ isOpen, onClose }: BoardControlPanelProps) {
   const [confirm, setConfirm] = useState<PendingPress | null>(null);
   const [activeKey, setActiveKey] = useState<RemoteKey | null>(null);
   const [longArmed, setLongArmed] = useState(false);
+
+  // Cache-busting token for the e-paper snapshot. The board pushes an
+  // `epaper_changed` event (carrying the file mtime) after each panel refresh;
+  // bumping the token reloads /screen.jpg exactly once per change. This replaces
+  // an MJPEG stream, which iPad Safari will not render inside an <img>. The
+  // handler stays subscribed even while the panel is closed (cheap, no fetch --
+  // the <img> only exists when open), so on reopen the token already reflects
+  // the latest refresh. The mtime is a plain cache-buster, not shown to users.
+  const [screenToken, setScreenToken] = useState<string>(() => `${Date.now()}`);
+  const onEpaperChanged = useCallback((data: SseEventPayload) => {
+    const mtime = data?.mtime;
+    setScreenToken(typeof mtime === 'number' ? `${mtime}` : `${Date.now()}`);
+  }, []);
+  useSseEvent('epaper_changed', onEpaperChanged);
 
   // Tracks the in-flight press so release can classify short vs long without
   // stale closures, and so login can replay the exact press that hit 401.
@@ -177,7 +192,9 @@ export function BoardControlPanel({ isOpen, onClose }: BoardControlPanelProps) {
     if (queuedPress) void doSend(queuedPress);
   }, [doSend]);
 
-  // Only mount when open so the /screen stream is not fetched in the background.
+  // Render the panel body only when open so the /screen.jpg snapshot is not
+  // fetched in the background (the SSE subscription above stays active regardless
+  // but performs no network I/O).
   if (!isOpen) return null;
 
   return (
@@ -237,7 +254,11 @@ export function BoardControlPanel({ isOpen, onClose }: BoardControlPanelProps) {
         {/* The live e-paper screen on top and the physical key control beneath
             it, matching where the screen and buttons sit on the device. */}
         <div className="board-control-side">
-          <img className="board-control-screen" src={buildApiUrl('/screen')} alt="Board display" />
+          <img
+            className="board-control-screen"
+            src={`${buildApiUrl('/screen.jpg')}?t=${screenToken}`}
+            alt="Board display"
+          />
 
           <div className="board-remote" role="group" aria-label="Board buttons">
             {BUTTONS.map((btn) => {

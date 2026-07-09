@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, cleanup, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 
 /**
@@ -22,8 +22,10 @@ vi.mock('./LoginDialog', () => ({
 }));
 
 import { BoardControlPanel } from './BoardControlPanel';
+import { publishSseEvent, __resetSseBus } from '../utils/sseBus';
 
 beforeEach(() => {
+  __resetSseBus();
   apiFetchMock.mockReset();
   apiFetchMock.mockResolvedValue({ status: 200, ok: true, json: async () => ({ success: true }) });
   // jsdom does not implement pointer capture; the buttons call it on press.
@@ -38,18 +40,38 @@ afterEach(() => {
 
 describe('BoardControlPanel', () => {
   it('renders nothing when closed', () => {
-    // Closed means unmounted so the /screen stream is not fetched in the
-    // background; the "Board display" image must be absent.
+    // Closed means the panel body (and its /screen.jpg <img>) is not rendered,
+    // so the snapshot is not fetched in the background; the "Board display"
+    // image must be absent.
     render(<BoardControlPanel isOpen={false} onClose={() => {}} />);
     expect(screen.queryByAltText('Board display')).not.toBeInTheDocument();
   });
 
-  it('shows the live e-paper screen from /screen when open', () => {
-    // Open must show the e-paper screen sourced from the /screen stream.
+  it('shows the live e-paper screen from a cache-busted /screen.jpg when open', () => {
+    // Open must show the e-paper screen sourced from the static /screen.jpg
+    // snapshot (not the old MJPEG /screen stream, which iPad Safari will not
+    // render inside an <img>). The src carries a ?t= cache-buster.
     render(<BoardControlPanel isOpen onClose={() => {}} />);
     const screenImg = screen.getByAltText('Board display');
     expect(screenImg).toBeInTheDocument();
-    expect(screenImg.getAttribute('src')).toBe('/screen');
+    expect(screenImg.getAttribute('src')).toMatch(/^\/screen\.jpg\?t=/);
+  });
+
+  it('reloads the screen with the new mtime when an epaper_changed event arrives', () => {
+    // An epaper_changed SSE event must bump the <img> src's ?t= token to the
+    // event's mtime so the browser fetches the fresh snapshot exactly once.
+    // Regression: if the handler ignored the event, the src would not change and
+    // the mirror would freeze on the first frame despite the board refreshing.
+    render(<BoardControlPanel isOpen onClose={() => {}} />);
+    const before = screen.getByAltText('Board display').getAttribute('src');
+
+    act(() => {
+      publishSseEvent('epaper_changed', { mtime: 1712345678.5 });
+    });
+
+    const after = screen.getByAltText('Board display').getAttribute('src');
+    expect(after).not.toBe(before);
+    expect(after).toBe('/screen.jpg?t=1712345678.5');
   });
 
   it('renders the six physical control buttons', () => {

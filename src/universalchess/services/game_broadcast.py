@@ -1211,6 +1211,24 @@ def broadcast_battery_status(
     )
 
 
+def broadcast_epaper_changed(mtime: float) -> bool:
+    """Broadcast that the e-paper snapshot changed (board -> web).
+
+    Emitted from the main process after it rewrites ``web/static/epaper.jpg`` on
+    a panel refresh. The web forwards it to SSE clients so the board-control page
+    reloads the single ``/screen.jpg`` snapshot instead of holding open an MJPEG
+    stream -- MJPEG inside an ``<img>`` does not render on iPad Safari.
+
+    Args:
+        mtime: The snapshot file's modification time. The browser uses it as the
+            ``?t=`` cache-busting token so it fetches each new image exactly once.
+
+    Returns:
+        True if the broadcast was sent, False otherwise (e.g. no subscriber).
+    """
+    return get_broadcaster().broadcast_event("epaper_changed", {"mtime": mtime})
+
+
 def broadcast_clock_status(
     white_time: int,
     black_time: int,

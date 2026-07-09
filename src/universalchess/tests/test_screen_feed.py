@@ -1,14 +1,18 @@
-"""Tests for the /screen e-paper display stream used by the board-control page.
+"""Tests for the /screen.jpg e-paper snapshot used by the board-control page.
 
 The board-control page shows the board's physical e-paper screen beside the
-interactive board. The web process streams the continuously-rewritten
-``web/static/epaper.jpg`` snapshot as MJPEG. These tests guard two things that
-would otherwise fail silently in the browser:
+interactive board. The board continuously rewrites ``web/static/epaper.jpg`` on
+every panel refresh; the web process serves the current snapshot as a single
+JPEG and the browser reloads it when an ``epaper_changed`` SSE event arrives.
 
-- a partial read (the board rewrites the file in place, so a read can catch a
-  half-written JPEG) must be rejected rather than streamed as a broken frame;
-- the /screen route must return an MJPEG (multipart) response with no-cache
-  headers, and the generator must emit the snapshot bytes as its first frame.
+This replaces the previous ``/screen`` MJPEG (``multipart/x-mixed-replace``)
+stream, which does not render inside an ``<img>`` on iPad Safari. These tests
+guard:
+
+- a partial read (the file is rewritten in place, so a read can catch a
+  half-written JPEG) is rejected rather than served as a broken image;
+- ``/screen.jpg`` returns a single ``image/jpeg`` with no-store headers and the
+  current snapshot bytes when present, and 503 when absent/mid-write.
 """
 
 import importlib
@@ -40,16 +44,16 @@ _COMPLETE_JPEG = b"\xff\xd8" + b"snapshot-body" + b"\xff\xd9"
 
 
 def test_read_snapshot_returns_none_when_missing(monkeypatch, tmp_path):
-    # A stopped board / absent snapshot must yield None (the generator then sends
-    # nothing) rather than raising, so the endpoint degrades quietly.
+    # A stopped board / absent snapshot must yield None (the route then 503s)
+    # rather than raising, so the endpoint degrades quietly.
     monkeypatch.setattr(webapp, "EPAPER_STATIC_JPG", str(tmp_path / "absent.jpg"))
     assert webapp._read_epaper_snapshot_bytes() is None
 
 
 def test_read_snapshot_rejects_partial_write(monkeypatch, tmp_path):
     # The board rewrites epaper.jpg in place; a read can catch it after the SOI
-    # but before the EOI. Streaming that truncated data would show a broken
-    # frame, so the reader must reject it (caller retries on the next poll).
+    # but before the EOI. Serving that truncated data would show a broken image,
+    # so the reader must reject it (the client retries on the next SSE event).
     partial = tmp_path / "epaper.jpg"
     partial.write_bytes(b"\xff\xd8" + b"half-written")  # SOI present, EOI missing
     monkeypatch.setattr(webapp, "EPAPER_STATIC_JPG", str(partial))
@@ -57,37 +61,37 @@ def test_read_snapshot_rejects_partial_write(monkeypatch, tmp_path):
 
 
 def test_read_snapshot_returns_complete_jpeg(monkeypatch, tmp_path):
-    # A fully-written JPEG (SOI..EOI) is returned verbatim for streaming.
+    # A fully-written JPEG (SOI..EOI) is returned verbatim for serving.
     complete = tmp_path / "epaper.jpg"
     complete.write_bytes(_COMPLETE_JPEG)
     monkeypatch.setattr(webapp, "EPAPER_STATIC_JPG", str(complete))
     assert webapp._read_epaper_snapshot_bytes() == _COMPLETE_JPEG
 
 
-def test_generate_epaper_frame_emits_snapshot(monkeypatch, tmp_path):
-    # The first streamed frame must be a multipart JPEG part carrying the current
-    # snapshot bytes. A regression that skipped the initial (mtime-change) send
-    # would make the first frame absent and the <img> stay blank until a refresh.
+def test_screen_jpg_serves_single_jpeg_with_no_store(monkeypatch, tmp_path):
+    # The route must return one image/jpeg carrying the current snapshot bytes,
+    # with no-store so the browser refetches on each SSE-driven cache-bust rather
+    # than serving a stale cached image. A regression returning MJPEG (multipart)
+    # or a cacheable response is what left iPad Safari blank / stuck on an old frame.
     snapshot = tmp_path / "epaper.jpg"
     snapshot.write_bytes(_COMPLETE_JPEG)
     monkeypatch.setattr(webapp, "EPAPER_STATIC_JPG", str(snapshot))
 
-    frame = next(webapp.generateEpaperFrame())
+    client = webapp.app.test_client()
+    resp = client.get("/screen.jpg")
 
-    assert b"Content-Type: image/jpeg" in frame
-    assert _COMPLETE_JPEG in frame
+    assert resp.status_code == 200
+    assert resp.mimetype == "image/jpeg"
+    assert "no-store" in resp.headers["Cache-Control"]
+    assert resp.data == _COMPLETE_JPEG
 
 
-def test_screen_route_is_mjpeg_with_no_cache(monkeypatch, tmp_path):
-    # The route must advertise the MJPEG transport and no-cache headers so an
-    # <img> keeps a live, uncached stream. The body is not consumed (the
-    # generator is infinite); only the response envelope is asserted.
-    snapshot = tmp_path / "epaper.jpg"
-    snapshot.write_bytes(_COMPLETE_JPEG)
-    monkeypatch.setattr(webapp, "EPAPER_STATIC_JPG", str(snapshot))
+def test_screen_jpg_returns_503_when_snapshot_absent(monkeypatch, tmp_path):
+    # With no snapshot (stopped board) or a caught mid-write, the route must fail
+    # with 503 (client retries) instead of serving an empty/broken image body.
+    monkeypatch.setattr(webapp, "EPAPER_STATIC_JPG", str(tmp_path / "absent.jpg"))
 
-    with webapp.app.test_request_context("/screen"):
-        resp = webapp.screen_feed()
+    client = webapp.app.test_client()
+    resp = client.get("/screen.jpg")
 
-    assert resp.mimetype == "multipart/x-mixed-replace"
-    assert resp.headers["Cache-Control"].startswith("no-cache")
+    assert resp.status_code == 503

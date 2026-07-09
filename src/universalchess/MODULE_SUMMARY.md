@@ -578,7 +578,7 @@ Web interface for configuration and game viewing.
 - Flask application factory
 - Serves the React single-page app (index, assets, icons, manifest, service worker)
 - JSON API (`/api/*`) for settings, engines, games, and system control
-- Server-sent events (`/events`) and media endpoints (`/screen`, `/video`, `/logo`)
+- Server-sent events (`/events`) and media endpoints (`/screen.jpg`, `/video`, `/logo`)
 - TLS CA install page (`/ca-install`, `/ca.pem`) and WebDAV access
 
 The legacy server-rendered Jinja UI (configure/index/PGN/analysis pages, the

@@ -64,9 +64,9 @@
   gap: var(--space-3, 0.75rem);
 }
 
-/* Live e-paper snapshot streamed from /screen. Its intrinsic aspect ratio is
-   preserved (height:auto); the width is clamped so it reads as the small device
-   screen. */
+/* Live e-paper snapshot reloaded from /screen.jpg on each epaper_changed event.
+   Its intrinsic aspect ratio is preserved (height:auto); the width is clamped so
+   it reads as the small device screen. */
 .board-control-screen {
   display: block;
   width: clamp(140px, 60%, 200px);

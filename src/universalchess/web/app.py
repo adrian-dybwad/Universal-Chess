@@ -1954,58 +1954,32 @@ def _read_epaper_snapshot_bytes():
     return data
 
 
-def generateEpaperFrame():
-    """Yield an MJPEG stream of the board's e-paper display snapshot.
+@app.route('/screen.jpg')
+def screen_snapshot():
+    """Return the board's current e-paper snapshot as a single JPEG.
 
-    The board continuously writes ``web/static/epaper.jpg`` on every panel
-    refresh; streaming it gives the board-control page a live e-paper view that
-    mirrors the physical screen. The JPEG is re-read and re-sent only when the
-    file mtime changes; otherwise the cached frame is re-sent at most every
-    ``VIDEO_KEEPALIVE_SECONDS`` to keep ``<img>`` viewers connected without any
-    disk work. An idle (or stopped) board therefore performs essentially no work.
+    Replaces the former ``/screen`` MJPEG (``multipart/x-mixed-replace``) stream,
+    which does not render inside an ``<img>`` on iPad Safari. The board rewrites
+    ``web/static/epaper.jpg`` on every panel refresh and pushes an
+    ``epaper_changed`` SSE event; the board-control page reloads this endpoint
+    (with a cache-busting ``?t=<mtime>``) on each event. That makes the live
+    mirror a sequence of discrete, cache-safe image loads instead of a held-open
+    stream.
+
+    Returns 503 when the snapshot is absent (stopped board) or was caught
+    mid-write, so the client simply retries on the next event rather than
+    rendering a broken image.
     """
-    last_mtime = None
-    jpeg = b""
-    last_sent = 0.0
-    while True:
-        loop_started = time.monotonic()
-        changed = False
-        try:
-            mtime = os.stat(EPAPER_STATIC_JPG)[8]
-        except OSError:
-            mtime = None
-        if mtime is not None and mtime != last_mtime:
-            data = _read_epaper_snapshot_bytes()
-            if data is not None:
-                jpeg = data
-                last_mtime = mtime
-                changed = True
-        now = time.monotonic()
-        if jpeg and (changed or (now - last_sent) >= VIDEO_KEEPALIVE_SECONDS):
-            yield _build_multipart_frame(jpeg)
-            last_sent = now
-        elapsed = time.monotonic() - loop_started
-        remaining = VIDEO_POLL_INTERVAL_SECONDS - elapsed
-        if remaining > 0:
-            time.sleep(remaining)
-
-
-@app.route('/screen')
-def screen_feed():
-    """Live MJPEG stream of the board's e-paper display.
-
-    Mirrors /video's transport but streams only the e-paper snapshot, so the
-    board-control page can show the physical screen beside the interactive board
-    without the full board-composite feed.
-    """
+    data = _read_epaper_snapshot_bytes()
+    if data is None:
+        abort(503)
     return Response(
-        stream_with_context(generateEpaperFrame()),
-        mimetype='multipart/x-mixed-replace; boundary=frame',
+        data,
+        mimetype='image/jpeg',
         headers={
             'Cache-Control': 'no-cache, no-store, must-revalidate',
             'Pragma': 'no-cache',
             'Expires': '0',
-            'X-Accel-Buffering': 'no',
         },
     )
 

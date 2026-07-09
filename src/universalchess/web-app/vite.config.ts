@@ -49,6 +49,13 @@ export default defineConfig(({ mode }) => {
           target: apiTarget,
           changeOrigin: true,
         },
+        // E-paper snapshot reloaded by the Board Control page on each
+        // epaper_changed SSE event. Without this the dev server would answer
+        // /screen.jpg with the SPA shell instead of the image.
+        '/screen.jpg': {
+          target: apiTarget,
+          changeOrigin: true,
+        },
         '/fen': {
           target: apiTarget,
           changeOrigin: true,
