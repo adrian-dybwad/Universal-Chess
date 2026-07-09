@@ -270,11 +270,24 @@ def process_field_event(
             return False
         
         if ChessGameState.states_match(current_physical_state, expected_state_after):
+            # Presence sensing cannot tell which piece a promotion produced: all
+            # four promotions of source->placed yield the same occupancy, so
+            # `candidate` is merely whichever `legal_moves` listed first (the
+            # queen). Committing it would silently auto-queen and skip the piece
+            # chooser. Submit the move WITHOUT a promotion piece so
+            # on_player_move's check_and_handle_promotion -- the single place that
+            # asks the user which piece to promote to -- runs. Non-promotion moves
+            # are unaffected (candidate.promotion is None, submitted unchanged).
+            submitted_move = (
+                chess.Move(candidate.from_square, candidate.to_square)
+                if candidate.promotion is not None
+                else candidate
+            )
             log.info(
                 f"[GameManager.receive_field] Physical board matches expected state after {candidate.uci()} - "
-                "accepting normal move directly"
+                f"accepting normal move {submitted_move.uci()} directly"
             )
-            accepted = bool(ctx.on_player_move_fn(candidate))
+            accepted = bool(ctx.on_player_move_fn(submitted_move))
             # Defensive: clear the source square on acceptance so subsequent PLACE events
             # during a noisy sequence don't attempt to "re-accept" the same move.
             if accepted:
