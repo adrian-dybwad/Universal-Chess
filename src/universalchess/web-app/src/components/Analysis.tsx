@@ -48,6 +48,13 @@ interface MoveData {
   uci: string | null;   // UCI notation of the move (e.g., "e2e4"), null for start position
 }
 
+// Pawn magnitude past which the headline eval number is capped for display
+// (mainstream chess-UI convention). Beyond this the exact centipawn figure no
+// longer conveys anything -- the side is simply winning -- so it is shown as
+// ">+10.0"/"<-10.0" instead of a large literal like "+60.7". Only the display
+// is capped; the stored centipawn score drives the chart/bar unchanged.
+const EVAL_DISPLAY_CAP_PAWNS = 10;
+
 /**
  * Analysis component matching the original Flask template design.
  * Features: eval score, best move, horizontal eval bar, chart, navigation.
@@ -403,9 +410,19 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
         color: m > 0 ? 'var(--color-success, green)' : 'var(--color-danger, red)',
       };
     }
-    const pawns = (currentEval.cp / 100).toFixed(1);
+    // Cap the displayed number the way mainstream chess UIs do. Stockfish emits
+    // very large centipawn scores in crushing (but not forced-mate) positions --
+    // its PV wins tons of material -- so the raw value (e.g. +60.7) is both
+    // unusual to show and meaningless once a side is clearly winning. Show
+    // ">+10.0"/"<-10.0" past the cap; the underlying currentEval.cp is left
+    // untouched so the chart and eval bar (which clamp separately) are unchanged.
+    const pawns = currentEval.cp / 100;
+    const cappedMagnitude = Math.min(Math.abs(pawns), EVAL_DISPLAY_CAP_PAWNS).toFixed(1);
+    const beyondCap = Math.abs(pawns) > EVAL_DISPLAY_CAP_PAWNS;
+    const sign = pawns < 0 ? '-' : '+';
+    const overflow = beyondCap ? (pawns < 0 ? '<' : '>') : '';
     return {
-      text: currentEval.cp >= 0 ? `+${pawns}` : pawns,
+      text: `${overflow}${sign}${cappedMagnitude}`,
       color: '',
     };
   };
