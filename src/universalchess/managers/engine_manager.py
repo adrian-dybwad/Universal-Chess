@@ -922,6 +922,28 @@ ENGINES = {
         estimated_install_minutes=12,  # Compact NNUE, faster than full NNUE engines
         has_prebuilt=True,
     ),
+    "claudia": EngineDefinition(
+        name="claudia",
+        display_name="Claudia",
+        summary="~1900 ELO, classic C",
+        description="Lightweight UCI engine written from scratch in C (0x88 board, classical hand-tuned evaluation, built-in opening book). A gentle, club-level opponent that compiles in under a minute. BSD-licensed.",
+        repo_url="https://github.com/antoniogarro/Claudia.git",
+        build_commands=[
+            # Sources and the Makefile live in the repo root (no src/ subdir); the
+            # default `make` target builds a `claudia` binary there. Portable C99
+            # with no x86 intrinsics (0x88 board + pawn bitboards) and the Makefile
+            # pins CC=gcc with no -march, so it builds unchanged on both arm64 and
+            # armhf. Parallelism comes from MAKEFLAGS (see _build_env).
+            "make",
+        ],
+        binary_path="claudia",
+        is_system_package=False,
+        package_name=None,
+        extra_files=[],
+        dependencies=["build-essential", "git"],
+        estimated_install_minutes=3,  # Small C engine, sub-minute compile
+        has_prebuilt=True,
+    ),
 }
 
 

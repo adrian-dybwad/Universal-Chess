@@ -124,6 +124,16 @@ smallbrain_build() {
 	cp smallbrain "${OUT}/"
 }
 
+claudia_build() {
+	# Sources and Makefile are in the repo root (no src/ subdir); the default
+	# `make` target builds a `claudia` binary there. Portable C99 with no x86
+	# intrinsics and a gcc-pinned Makefile with no -march, so it builds on both
+	# arm64 and armhf -- matches the device's `make`.
+	git clone --depth 1 https://github.com/antoniogarro/Claudia.git /tmp/claudia
+	cd /tmp/claudia && make -j"$(nproc)"
+	cp claudia "${OUT}/"
+}
+
 arasan_build() {
 	# arm64-only (see gating below). Pinned to a tagged release: master's NEON path
 	# has regressed and won't compile. Submodules carry the Syzygy probing code and
@@ -200,6 +210,7 @@ build_engine rodentIV
 build_engine ct800
 build_engine smallbrain
 build_engine zahak
+build_engine claudia
 build_engine maia
 
 echo "=== ${ARCH} build summary ==="
