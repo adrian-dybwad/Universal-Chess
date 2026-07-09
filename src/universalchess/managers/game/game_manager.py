@@ -1599,7 +1599,15 @@ class GameManager:
             fen: Full FEN (placement plus side-to-move/castling/etc.).
         """
         self.move_state.reset()
-        self._game_state.set_position(fen)
+        # Establish the adopted position as the game's START, not just the live
+        # board. configure_start sets _start_fen so the authoritative
+        # history_positions()/start_fen the web navigates and analyses by describe
+        # THIS position. set_position updates only the board, which left the
+        # analysis/best-move source pointing at the previous start (the opening) --
+        # the board looked right while the best-move arrow analysed the opening.
+        # The current chess960 flag is preserved (a setup position is standard
+        # unless the game already is 960).
+        self._game_state.configure_start(fen, chess960=self._game_state.chess960)
         self.game_db_id = -1
         self.led.off()
         if self.event_callback is not None:

@@ -1652,12 +1652,19 @@ def _start_from_position(fen: str, position_name: str, hint_move: str = None) ->
         
         gm = protocol_manager.game_manager
         
-        # Set the board to the loaded position using game state
-        # This ensures observers (ChessBoardWidget) are notified
+        # Establish the loaded position as the game's START, not just the live
+        # board. configure_start sets _start_fen (and notifies observers, so the
+        # ChessBoardWidget still updates), which makes the authoritative
+        # history_positions()/start_fen the web navigates and analyses by describe
+        # THIS position. set_position updates only the board, which left the
+        # analysis/best-move source pointing at the previous start (the standard
+        # opening): the board rendered the loaded position while the web best-move
+        # indicator analysed the opening and drew an opening development move.
+        # Predefined positions are standard chess, so the 960 flag is cleared.
         from universalchess.state import get_chess_game
         from universalchess.state.chess_game import ChessGameState
         game_state = get_chess_game()
-        game_state.set_position(fen)
+        game_state.configure_start(fen, chess960=False)
         
         log.info(f"[Positions] Position loaded: {game_state.fen}")
         
