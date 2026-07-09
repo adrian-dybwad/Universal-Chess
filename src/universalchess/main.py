@@ -1053,7 +1053,7 @@ _settings: Optional[AllSettings] = None
 
 # Cached engine data
 _available_engines: List[str] = []
-_engine_elo_levels: dict = {}  # engine_name -> list of ELO levels
+_engine_elo_levels: dict = {}  # engine_name -> list of {"value","label"} picker rows
 
 
 # ============================================================================
@@ -1810,22 +1810,25 @@ def _format_engine_label_with_compat(engine_name: str, is_selected: bool, show_c
     return label
 
 
-def _get_engine_elo_levels(engine_name: str) -> List[str]:
-    """Get the selectable strength/option sections for an engine.
+def _get_engine_elo_levels(engine_name: str) -> List[dict]:
+    """Get the selectable strength sections for an engine as picker rows.
 
     Sections come from the engine's writable ``config/engines/<name>.uci``,
     which is generated on first use by probing the binary
-    (``uci_schema.seed_config``) -- no ``.uci`` files are shipped. The section
-    names are read via the shared ``read_profile_names`` (same ``[DEFAULT]``
-    exclusion the web editor uses) so the on-device picker never drifts from it.
-    A ``Default`` entry is always guaranteed so the default setting resolves, and
-    the result is cached for the process lifetime.
+    (``uci_schema.seed_config``) -- no ``.uci`` files are shipped. Rows are built
+    via the shared ``strength_level_choices`` (same ``[DEFAULT]`` exclusion the
+    web editor and ``/levels`` endpoint use) so the on-device picker never drifts
+    from them. A ``Default`` entry is always guaranteed so the default setting
+    resolves, and the result is cached for the process lifetime.
 
     Args:
         engine_name: Name of the engine
 
     Returns:
-        List of section names (e.g. ``["Default", "1400 ELO", ...]``).
+        Ordered ``{"value", "label"}`` rows. ``value`` is the section name
+        persisted as the player's ``elo``; ``label`` is the display text (an
+        uncapped ``Default`` shows as ``"Unlimited"``), e.g.
+        ``[{"value": "Default", "label": "Unlimited"}, {"value": "1400 ELO", ...}]``.
     """
     global _engine_elo_levels
 
@@ -1833,16 +1836,16 @@ def _get_engine_elo_levels(engine_name: str) -> List[str]:
         return _engine_elo_levels[engine_name]
 
     from universalchess.services import uci_schema
-    from universalchess.services.engine_profiles import read_profile_names
+    from universalchess.services.engine_profiles import strength_level_choices
 
-    levels: List[str] = ['Default']
+    levels: List[dict] = [{'value': 'Default', 'label': 'Default'}]
     try:
         config_path = uci_schema.seed_config(engine_name)
-        names = read_profile_names(config_path)
-        if names:
-            levels = names
-        if 'Default' not in levels:
-            levels.insert(0, 'Default')
+        choices = strength_level_choices(config_path)
+        if choices:
+            levels = choices
+        if not any(level['value'] == 'Default' for level in levels):
+            levels.insert(0, {'value': 'Default', 'label': 'Default'})
         log.debug(f"[Settings] Engine {engine_name} levels: {levels}")
     except uci_schema.EngineProbeError as e:
         log.warning(f"[Settings] Cannot probe {engine_name} for levels: {e}")
@@ -3669,7 +3672,7 @@ def _build_player_detail_context(player_num: int):
         from universalchess.menus.engine import MenuRow
 
         return [
-            MenuRow(key=level, label=level, icon="elo")
+            MenuRow(key=level["value"], label=level["label"], icon="elo")
             for level in _get_engine_elo_levels(settings_dict()["engine"])
         ]
 

@@ -42,6 +42,8 @@ __all__ = [
     "validation_error",
     "read_profiles",
     "read_profile_names",
+    "strength_level_choices",
+    "UNLIMITED_LABEL",
     "write_profile",
     "delete_profile",
     "delete_blocked_reason",
@@ -59,6 +61,11 @@ _DEFAULTS_SECTION = "DEFAULT"
 
 _MAX_NAME_LEN = 64
 _MAX_TEXT_LEN = 200
+
+# Display label for a "Default" section that disables the strength cap. "Default"
+# there means the engine plays uncapped (stronger than any numbered ELO rung),
+# which users misread as a moderate setting; "Unlimited" states what it does.
+UNLIMITED_LABEL = "Unlimited"
 
 ProfileValue = Union[int, str, bool]
 
@@ -382,6 +389,52 @@ def read_profile_names(
     ``[DEFAULT]`` exclusion, which previously listed ``Default`` twice).
     """
     return [profile["name"] for profile in read_profiles(uci_path, defaults_path)]
+
+
+def strength_level_choices(
+    uci_path: str, defaults_path: Optional[str] = None
+) -> List[Dict[str, str]]:
+    """Return the strength sections as ordered ``{"value", "label"}`` picker rows.
+
+    ``value`` is the section name persisted as the player's ``elo`` -- it is left
+    exactly as stored so existing configs keep resolving. ``label`` is what the UI
+    shows and is identical to ``value`` except for one case: a ``Default`` section
+    that turns the strength cap *off* (``UCI_LimitStrength=false``) is labelled
+    ``"Unlimited"``.
+
+    Why relabel only that case: for a ``UCI_Elo`` engine, ``Default`` disables the
+    cap and plays the binary at full strength -- stronger than any numbered ELO
+    rung -- so the word "Default" misleads users into reading it as a moderate
+    setting. Keying the relabel off ``UCI_LimitStrength=false`` (rather than the
+    name) scopes it to engines where "uncapped" is literally true: a file-model
+    ``Default`` (e.g. Maia, whose ``Default`` merely selects a net and carries no
+    cap toggle) keeps its name, because there "Default" is not full strength.
+
+    A ``Default`` entry is always present (inserted first when the config defines
+    none) so the stored default always has a matching row.
+    """
+    profiles = read_profiles(uci_path, defaults_path)
+    names = [profile["name"] for profile in profiles]
+    default_values = next(
+        (p["values"] for p in profiles if p["name"] == "Default"), None
+    )
+    if default_values is None:
+        names.insert(0, "Default")
+        default_values = {}
+
+    default_is_uncapped = any(
+        key.lower() == "uci_limitstrength" and str(value).strip().lower() == "false"
+        for key, value in default_values.items()
+    )
+    return [
+        {
+            "value": name,
+            "label": UNLIMITED_LABEL
+            if (name == "Default" and default_is_uncapped)
+            else name,
+        }
+        for name in names
+    ]
 
 
 def write_profile(

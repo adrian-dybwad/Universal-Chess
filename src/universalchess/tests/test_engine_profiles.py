@@ -194,6 +194,82 @@ def test_read_profile_names_lists_each_profile_once_in_order(uci_file):
 
 
 # ---------------------------------------------------------------------------
+# Strength picker labels (Default -> "Unlimited" only when uncapped)
+# ---------------------------------------------------------------------------
+
+
+def test_strength_level_choices_labels_uncapped_default_as_unlimited(uci_file):
+    """An ELO engine's uncapped Default is shown as "Unlimited" without changing
+    its stored value.
+
+    Why this exists: for a UCI_Elo engine, [Default] sets
+    UCI_LimitStrength=false, so it plays uncapped/full strength -- stronger than
+    any numbered rung -- and the word "Default" misled users. The relabel must be
+    display-only: the persisted value stays "Default" so existing player configs
+    and the .uci section keep matching.
+
+    How the regression manifests: the Default row's label reverts to "Default"
+    (users confused again) or its value changes away from "Default" (stored elo
+    no longer resolves to the [Default] section).
+    """
+    choices = ep.strength_level_choices(str(uci_file))
+
+    assert choices == [
+        {"value": "Default", "label": ep.UNLIMITED_LABEL},
+        {"value": "1200 ELO", "label": "1200 ELO"},
+        {"value": "Attacker", "label": "Attacker"},
+    ]
+
+
+def test_strength_level_choices_keeps_default_name_when_not_uncapped(tmp_path):
+    """A file-model Default (no cap toggle, e.g. Maia) keeps the name "Default".
+
+    Why this exists: "Unlimited" is only truthful when Default disables the cap.
+    A file-selector engine's [Default] merely picks a net and carries no
+    UCI_LimitStrength=false, so relabelling it "Unlimited" would be a lie. The
+    relabel is keyed off the cap being off, not off the name.
+
+    How the regression manifests: a name-based relabel would mark this Default
+    "Unlimited" too, mislabelling a non-full-strength default.
+    """
+    path = tmp_path / "maia.uci"
+    path.write_text(
+        "[Default]\nWeightsFile = /nets/1500.pb\n\n"
+        "[1500 ELO]\nWeightsFile = /nets/1500.pb\n",
+        encoding="utf-8",
+    )
+
+    choices = ep.strength_level_choices(str(path))
+
+    assert choices == [
+        {"value": "Default", "label": "Default"},
+        {"value": "1500 ELO", "label": "1500 ELO"},
+    ]
+
+
+def test_strength_level_choices_always_offers_default(tmp_path):
+    """A config without a Default section still yields a Default row (first).
+
+    Why this exists: the picker must always offer Default so the stored default
+    setting resolves even for a sparse/edited config. When no Default section
+    exists there is no cap signal, so it stays labelled "Default", not
+    "Unlimited".
+
+    How the regression manifests: the picker omits Default and the stored
+    default value has no matching row (blank/again-unselectable strength).
+    """
+    path = tmp_path / "sparse.uci"
+    path.write_text("[1800 ELO]\nUCI_Elo = 1800\n", encoding="utf-8")
+
+    choices = ep.strength_level_choices(str(path))
+
+    assert choices == [
+        {"value": "Default", "label": "Default"},
+        {"value": "1800 ELO", "label": "1800 ELO"},
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Validation against a supplied (probed) schema
 # ---------------------------------------------------------------------------
 

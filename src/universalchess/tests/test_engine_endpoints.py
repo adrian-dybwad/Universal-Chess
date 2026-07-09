@@ -931,26 +931,37 @@ def test_delete_removes_profile(client, profile_paths):
     assert again.status_code == 404
 
 
-def test_levels_endpoint_seeds_and_returns_sections(client, profile_paths):
-    """GET /levels seeds the config and returns the section names for the picker.
+def test_levels_endpoint_seeds_and_returns_labeled_sections(client, profile_paths):
+    """GET /levels seeds the config and returns {value,label} rows for the picker.
 
-    The on-device ELO picker reads this. It must probe/seed on first use and
-    return the derived ladder with Default first. A regression that stopped
-    seeding would return only ["Default"] for an editable engine.
+    The picker (web and on-device) reads this. It must probe/seed on first use
+    and return the derived ladder with Default first. Because this engine
+    advertises UCI_LimitStrength, its Default runs uncapped, so its display label
+    is "Unlimited" while its persisted value stays "Default" (existing configs
+    keep resolving). A regression that stopped seeding would return only the
+    single Default row; one that relabelled by name or changed the stored value
+    would break config matching.
     """
     resp = client.get(f"/api/engines/{PROFILES_ENGINE}/levels")
     assert resp.status_code == 200
     levels = resp.get_json()
-    assert levels[0] == "Default"
-    assert set(levels) == _SEEDED_NAMES
+    assert levels[0] == {"value": "Default", "label": "Unlimited"}
+    assert {level["value"] for level in levels} == _SEEDED_NAMES
+    # Only Default is relabelled; the numbered rungs show their value verbatim.
+    assert all(
+        level["label"] == level["value"]
+        for level in levels
+        if level["value"] != "Default"
+    )
 
 
 def test_levels_endpoint_falls_back_to_default_when_not_probeable(client, profile_paths):
-    """A non-probeable engine yields just ["Default"] rather than an error.
+    """A non-probeable engine yields a single Default row rather than an error.
 
     The picker must always offer at least Default; if probing fails (engine not
-    installed) the endpoint degrades gracefully instead of 500-ing.
+    installed) the endpoint degrades gracefully instead of 500-ing. With no
+    config there is no cap signal, so Default keeps its name (not "Unlimited").
     """
     resp = client.get(f"/api/engines/{SYSTEM_ENGINE}/levels")
     assert resp.status_code == 200
-    assert resp.get_json() == ["Default"]
+    assert resp.get_json() == [{"value": "Default", "label": "Default"}]

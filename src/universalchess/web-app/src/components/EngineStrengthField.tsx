@@ -40,7 +40,7 @@ export function EngineStrengthField({
 }: {
   engineName: string;
   value: string;
-  sections: string[];
+  sections: { value: string; label: string }[];
   label: string;
   help?: string;
   disabled?: boolean;
@@ -57,10 +57,13 @@ export function EngineStrengthField({
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const sectionOptions = useMemo(() => {
-    const names = sections.length ? sections : ['Default'];
-    return names.map((n) => ({ value: n, label: n }));
-  }, [sections]);
+  // `value` is the stored section name (e.g. "Default"); `label` is the display
+  // text (an uncapped "Default" arrives as "Unlimited"). The Select persists
+  // `value`, so relabelling never changes what is saved.
+  const sectionOptions = useMemo(
+    () => (sections.length ? sections : [{ value: 'Default', label: 'Default' }]),
+    [sections],
+  );
 
   const fetchSchema = useCallback(
     async (sectionForForm: string) => {

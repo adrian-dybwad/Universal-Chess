@@ -520,7 +520,10 @@ export function Settings() {
   // account picker and default an online player's name to its account username.
   // Behind auth; a 401 at load degrades to an empty list (no picker shown).
   const [accounts, setAccounts] = useState<AccountRecord[]>([]);
-  const [engineLevels, setEngineLevels] = useState<{ [key: string]: string[] }>({});
+  // Per-engine strength picker rows from /levels: {value,label} where value is
+  // the persisted `elo` section name and label is the display text (an uncapped
+  // "Default" shows as "Unlimited").
+  const [engineLevels, setEngineLevels] = useState<{ [key: string]: MenuOption[] }>({});
   const [spriteSheets, setSpriteSheets] = useState<string[]>(['default']);
   // Every registered AI agent (built-in + user modules) from GET /api/agents,
   // with its non-secret config (model/base URL) and whether a key is stored. Backs
@@ -761,7 +764,7 @@ export function Settings() {
       setEngineLevels((prev) => ({ ...prev, [engineName]: levels }));
       return levels;
     } catch {
-      return ['Default'];
+      return [{ value: 'Default', label: 'Default' }];
     }
   }, []);
 
@@ -1644,7 +1647,7 @@ export function Settings() {
       case 'installed_engines':
         return engineOptions;
       case 'engine_levels':
-        return (engineLevels[engine ?? ''] || ['Default']).map((l) => ({ value: l, label: l }));
+        return engineLevels[engine ?? ''] ?? [{ value: 'Default', label: 'Default' }];
       default:
         return [];
     }
@@ -1733,7 +1736,7 @@ export function Settings() {
                       key={formSettings.player1.engine}
                       engineName={formSettings.player1.engine}
                       value={formSettings.player1.elo}
-                      sections={engineLevels[formSettings.player1.engine] || ['Default']}
+                      sections={engineLevels[formSettings.player1.engine] || [{ value: 'Default', label: 'Default' }]}
                       label={fieldLabel('field.player.elo')}
                       help={fieldHelp('field.player.elo')}
                       onChange={(v) => updateFormSettings('player1', { elo: v })}
@@ -1804,7 +1807,7 @@ export function Settings() {
                       key={formSettings.player2.engine}
                       engineName={formSettings.player2.engine}
                       value={formSettings.player2.elo}
-                      sections={engineLevels[formSettings.player2.engine] || ['Default']}
+                      sections={engineLevels[formSettings.player2.engine] || [{ value: 'Default', label: 'Default' }]}
                       label={fieldLabel('field.player.elo')}
                       help={fieldHelp('field.player.elo')}
                       onChange={(v) => updateFormSettings('player2', { elo: v })}

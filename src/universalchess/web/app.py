@@ -4524,23 +4524,26 @@ def api_delete_engine_profile(engine_name, profile_name):
 
 @app.route("/api/engines/<engine_name>/levels", methods=["GET"])
 def api_get_engine_levels(engine_name):
-    """Return the selectable section names for an engine.
+    """Return the selectable strength sections for an engine.
 
     Mirrors the on-device picker: seeds the writable config by probing the
-    binary, then returns its section names (``read_profile_names``), always
-    including ``Default``. Falls back to ``["Default"]`` when the engine cannot
-    be probed or the name is invalid.
+    binary, then returns its sections as ``{"value", "label"}`` rows (via
+    ``strength_level_choices``), always including ``Default``. ``value`` is the
+    section name persisted as the player's ``elo``; ``label`` is the display text
+    (an uncapped ``Default`` shows as ``"Unlimited"``). Falls back to a single
+    ``Default`` row when the engine cannot be probed or the name is invalid.
     """
+    default_only = [{"value": "Default", "label": "Default"}]
     config_path = _config_uci_path(engine_name)
     if config_path is None:
-        return jsonify(["Default"])
+        return jsonify(default_only)
     try:
         uci_schema.seed_config(engine_name, config_path=config_path)
-        levels = engine_profiles.read_profile_names(config_path)
+        levels = engine_profiles.strength_level_choices(config_path)
     except uci_schema.EngineProbeError:
-        levels = []
-    if "Default" not in levels:
-        levels.insert(0, "Default")
+        levels = default_only
+    if not any(level["value"] == "Default" for level in levels):
+        levels.insert(0, {"value": "Default", "label": "Default"})
     return jsonify(levels)
 
 
