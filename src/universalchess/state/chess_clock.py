@@ -8,6 +8,7 @@ Active player (whose turn it is) comes from ChessGameState - this state
 just tracks time remaining for the countdown.
 """
 
+import time
 from typing import Optional, Callable, List
 
 from universalchess.state.time_control import DelayMode, TimeControl
@@ -63,6 +64,20 @@ class ChessClockState:
         # per-move SIMPLE delay even if the move-completed hook is momentarily
         # behind the countdown thread.
         self._last_tick_color: Optional[str] = None
+
+        # Forced active-color override for the engine-move hand-off. When an
+        # engine shows its move, it "presses its clock": neither side counts for
+        # a short grace delay, then the human's clock starts -- all while the
+        # board turn is still the engine's (the move is not physically
+        # transcribed yet). _forced_active_color holds the side that should be
+        # counting (the human/receiving side); _forced_active_at is the monotonic
+        # instant, in _now_fn units, at which that side becomes active (before it,
+        # neither side counts). Both None means no override (normal turn-derived
+        # counting). _now_fn is injectable so the grace window is unit-testable
+        # without real sleeping.
+        self._forced_active_color: Optional[str] = None
+        self._forced_active_at: Optional[float] = None
+        self._now_fn: Callable[[], float] = time.monotonic
         
         # Observer callbacks
         self._on_tick: List[Callable[[], None]] = []
@@ -93,13 +108,67 @@ class ChessClockState:
     
     @property
     def active_color(self) -> Optional[str]:
-        """Which player's turn it is (from game state).
-        
-        Returns 'white', 'black', or 'white' as default if game state not set.
+        """Which player's clock is currently counting.
+
+        Normally the side to move (from the game state). During an engine-move
+        hand-off (see begin_forced_active_color) an override takes precedence:
+        - Before the grace delay elapses, returns None so neither side counts.
+        - After it elapses, returns the forced (human/receiving) side even though
+          the board turn is still the engine's un-transcribed move.
+        The override is ignored once the board turn has already reached the forced
+        color (transcription done), where the natural turn gives the same answer.
+
+        Returns 'white', 'black', None (grace window), or 'white' as default if
+        the game state is not set.
         """
-        if self._game_state is not None:
-            return self._game_state.turn_name
-        return 'white'  # Default before game state is connected
+        natural = self._game_state.turn_name if self._game_state is not None else 'white'
+        if self._forced_active_color is not None and natural != self._forced_active_color:
+            # Board turn is still the opponent's (engine) un-transcribed move.
+            if self._forced_active_at is not None and self._now_fn() < self._forced_active_at:
+                return None  # grace window: neither side counts
+            return self._forced_active_color
+        return natural
+
+    def begin_forced_active_color(self, color: str, delay_seconds: int) -> None:
+        """Force ``color`` to be the active clock after a grace ``delay_seconds``.
+
+        Models the engine "pressing its clock" when it shows a move: for
+        ``delay_seconds`` neither side counts (active_color is None), then
+        ``color`` (the human/receiving side) counts -- even though the board turn
+        is still the engine's un-transcribed move. Cleared automatically once the
+        board turn reaches ``color`` (see clear_forced_active_color_if_reached) or
+        explicitly via clear_forced_active_color.
+
+        Args:
+            color: 'white' or 'black' -- the side whose clock should run.
+            delay_seconds: Grace seconds during which neither side counts.
+        """
+        self._forced_active_color = color
+        self._forced_active_at = self._now_fn() + max(0, delay_seconds)
+        self._notify_state_change()
+
+    def clear_forced_active_color(self) -> None:
+        """Drop any active-color override, restoring normal turn-derived counting."""
+        if self._forced_active_color is None and self._forced_active_at is None:
+            return
+        self._forced_active_color = None
+        self._forced_active_at = None
+        self._notify_state_change()
+
+    def clear_forced_active_color_if_reached(self) -> None:
+        """Clear the override once the board turn has reached the forced color.
+
+        Called after a move completes: when the human has transcribed the
+        engine's move the board turn flips to the forced (human) side, so the
+        override is redundant and must be dropped before the human's own move
+        flips the turn back to the engine (otherwise the override would keep
+        charging the human during the engine's next turn).
+        """
+        if self._forced_active_color is None:
+            return
+        natural = self._game_state.turn_name if self._game_state is not None else None
+        if natural == self._forced_active_color:
+            self.clear_forced_active_color()
     
     @property
     def is_running(self) -> bool:
@@ -340,6 +409,8 @@ class ChessClockState:
         self._delay_remaining = 0
         self._time_used_this_turn = 0
         self._last_tick_color = None
+        self._forced_active_color = None
+        self._forced_active_at = None
         self._notify_state_change()
 
 

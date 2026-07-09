@@ -151,36 +151,43 @@ describe('Settings Time Control (web clock configuration)', () => {
   it('renders the preset selector and hides the base-minutes and custom controls for a named preset', async () => {
     // A named preset defines the whole clock, so neither the legacy base-minutes
     // select nor the custom builder should show; the card holds only the preset
-    // combobox. A gating regression would surface an inert base-minutes/custom
-    // control (an extra combobox in the card).
+    // combobox plus the always-present Engine Move Delay control. A gating
+    // regression would surface an inert base-minutes/custom control (an extra
+    // combobox in the card).
     mockFetch({ time_control_preset: 'blitz_5_3' });
     renderSettings();
 
     const card = await timeControlCard();
     const combos = within(card).getAllByRole('combobox') as HTMLSelectElement[];
-    expect(combos).toHaveLength(1);
-    expect(combos[0].value).toBe('blitz_5_3');
+    // Preset + Engine Move Delay (base-minutes and custom builder are hidden).
+    expect(combos).toHaveLength(2);
+    const preset = selectInRow(card, 'Preset');
+    expect(preset.value).toBe('blitz_5_3');
     // The option label is the short preset name only (no repeated timing).
-    expect(within(combos[0]).getByRole('option', { name: '5|3 Blitz' })).toBeInTheDocument();
+    expect(within(preset).getByRole('option', { name: '5|3 Blitz' })).toBeInTheDocument();
     // The full rules for the selected preset are shown beneath the selector.
     expect(
       within(card).getByText(/5 minutes per side plus 3 seconds added each move/)
     ).toBeInTheDocument();
+    // The engine-move clock hand-off delay is always available (defaults to 1s).
+    expect(selectInRow(card, 'Engine Move Delay').value).toBe('1');
     expect(within(card).queryByText('Base Time')).not.toBeInTheDocument();
   });
 
   it('shows the base-minutes select only for the Basic (empty) preset', async () => {
     // Empty preset means "fall back to base minutes", mirroring
-    // build_time_control's precedence; the card must hold the preset plus the
-    // minutes select (two comboboxes) and no custom field.
+    // build_time_control's precedence; the card must hold the preset, the minutes
+    // select, and the always-present Engine Move Delay control (three
+    // comboboxes) and no custom field.
     mockFetch({ time_control_preset: '', time_control: '10' });
     renderSettings();
 
     const card = await timeControlCard();
     const values = (within(card).getAllByRole('combobox') as HTMLSelectElement[]).map((c) => c.value);
-    expect(values).toHaveLength(2);
+    expect(values).toHaveLength(3);
     expect(values).toContain(''); // preset = Basic
     expect(values).toContain('10'); // base minutes
+    expect(selectInRow(card, 'Engine Move Delay').value).toBe('1'); // hand-off delay
     // The Basic description explains the base-minutes fallback.
     expect(within(card).getByText(/Use the Base Minutes control/)).toBeInTheDocument();
     expect(within(card).queryByText('Base Time')).not.toBeInTheDocument();

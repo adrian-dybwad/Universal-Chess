@@ -330,8 +330,17 @@ class ChessClockWidget(Widget):
     
     @property
     def active_color(self) -> Optional[str]:
-        """Which player's turn it is (from game state - single source of truth)."""
-        return self._game.turn_name
+        """Which player's clock is counting (drives the turn indicator/highlight).
+
+        Follows the clock state rather than the raw board turn so the highlighted
+        side matches the counting clock during the engine-move hand-off: when an
+        engine shows its move the clock is handed to the human before the move is
+        physically transcribed, so the board turn (still the engine's) would
+        otherwise disagree with the running clock. During the brief hand-off grace
+        (clock active None) fall back to the board turn so the indicator is never
+        blank.
+        """
+        return self._clock.active_color or self._game.turn_name
     
     @property
     def white_name(self) -> str:
@@ -469,10 +478,11 @@ class ChessClockWidget(Widget):
         bottom_y = separator_y + 4
         show_names = section_height >= 28
         
-        # Get times from clock state, turn from game state, names from players state
+        # Get times from clock state, active side from the clock (honors the
+        # engine-move hand-off override), names from players state.
         white_time = self._clock.white_time
         black_time = self._clock.black_time
-        active_color = self._game.turn_name  # Single source of truth for turn
+        active_color = self.active_color
         white_name = self._players.white_name
         black_name = self._players.black_name
         
@@ -603,8 +613,9 @@ class ChessClockWidget(Widget):
         
         Reads active color from clock state.
         """
-        # Get turn from game state, names from players state
-        active_color = self._game.turn_name
+        # Active side from the clock (honors the engine-move hand-off override),
+        # names from players state.
+        active_color = self.active_color
         white_name = self._players.white_name
         black_name = self._players.black_name
         

@@ -212,6 +212,11 @@ interface FormSettings {
     tc_custom_asymmetric: boolean;
     tc_custom_black_base_seconds: string;
     tc_custom_black_increment_seconds: string;
+    // Grace seconds for the engine-move clock hand-off in timed engine games:
+    // when the engine shows its move its clock stops and yours starts after this
+    // delay (while you physically move its piece). String because it is edited
+    // through a catalog select; the board coerces it to int.
+    engine_move_clock_delay_seconds: string;
     analysis_mode: boolean;
     analysis_engine: string;
     ponder: boolean;
@@ -264,6 +269,7 @@ const defaultFormSettings: FormSettings = {
     tc_custom_asymmetric: false,
     tc_custom_black_base_seconds: '300',
     tc_custom_black_increment_seconds: '0',
+    engine_move_clock_delay_seconds: '1',
     analysis_mode: true,
     analysis_engine: 'stockfish',
     ponder: false,
@@ -372,6 +378,7 @@ function parseRawSettings(data: SettingsData): FormSettings {
       tc_custom_asymmetric: parseConfigBool(data.game?.tc_custom_asymmetric, false),
       tc_custom_black_base_seconds: data.game?.tc_custom_black_base_seconds || '300',
       tc_custom_black_increment_seconds: data.game?.tc_custom_black_increment_seconds || '0',
+      engine_move_clock_delay_seconds: data.game?.engine_move_clock_delay_seconds || '1',
       analysis_mode: parseConfigBool(data.game?.analysis_mode, true),
       analysis_engine: data.game?.analysis_engine || 'stockfish',
       ponder: parseConfigBool(data.game?.ponder, false),
@@ -1538,6 +1545,7 @@ export function Settings() {
   const tcIncrementOptions = optionSet('tc_increment');
   const tcDelayOptions = optionSet('tc_delay');
   const tcDelayModeOptions = optionSet('tc_delay_mode');
+  const engineMoveDelayOptions = optionSet('engine_move_delay');
   const sleepTimerOptions = optionSet('sleep_timer');
   const notationOptions = optionSet('notation');
   const textSizeOptions = optionSet('text_size');
@@ -1951,6 +1959,12 @@ export function Settings() {
                   )}
                 </>
               )}
+              <CatalogField
+                node={fieldById(catalog, 'settings.timecontrol.engine_move_delay')!}
+                value={formSettings.game.engine_move_clock_delay_seconds}
+                options={engineMoveDelayOptions}
+                onChange={(v) => updateFormSettings('game', { engine_move_clock_delay_seconds: String(v) })}
+              />
             </Card>
 
             <Card className="mb-6">

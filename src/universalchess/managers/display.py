@@ -120,7 +120,8 @@ class DisplayManager:
                  show_graph: bool = True, analysis_mode: bool = True,
                  led_from_to_hint_callback: callable = None,
                  led_off_callback: callable = None,
-                 time_control_spec: TimeControl = None):
+                 time_control_spec: TimeControl = None,
+                 engine_move_clock_delay_seconds: int = 1):
         """Initialize the display controller.
         
         Args:
@@ -233,6 +234,10 @@ class DisplayManager:
         # The clock persists across widget creation/destruction
         self._clock = get_chess_clock_service()
         self._clock.configure(self._time_control_spec)
+        # Grace delay for the engine-move clock hand-off (engine "presses its
+        # clock" when it shows a move). Set on the persistent clock service so it
+        # survives reset() and applies for the whole game.
+        self._clock.set_engine_move_delay_seconds(engine_move_clock_delay_seconds)
         
         # Initialize widgets first (fast, non-blocking)
         self._init_widgets()

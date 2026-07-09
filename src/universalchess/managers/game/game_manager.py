@@ -40,6 +40,7 @@ from universalchess.state import get_chess_game
 from universalchess.state.chess_game import ChessGameState
 from universalchess.services import get_chess_clock_service
 from universalchess.services.game_broadcast import set_pending_move
+from universalchess.players.base import PlayerType
 
 from .correction_mode import CorrectionMode
 from universalchess.utils.led import LedCallbacks
@@ -1124,7 +1125,12 @@ class GameManager:
 
         # Set up forced move state so correction mode can restore LEDs
         self.move_state.set_computer_move(move.uci(), forced=True)
-        
+
+        # The engine has "pressed its clock": stop its clock and hand off to the
+        # human after the configured grace delay, even though the move is still
+        # being physically transcribed. Only for timed local-engine opponents.
+        self._begin_engine_move_clock_handoff()
+
         # Broadcast pending move to web interface (shown as blue arrow)
         set_pending_move(move.uci())
         # Trigger a position update to send the pending move to clients
@@ -1139,6 +1145,28 @@ class GameManager:
             import traceback
             traceback.print_exc()
     
+    def _begin_engine_move_clock_handoff(self) -> None:
+        """Start the engine-move clock hand-off for a pending local-engine move.
+
+        When a local engine shows its move, its clock should stop and the human's
+        clock should start after a short grace delay (the engine "pressed its
+        clock"), rather than counting the engine's time through the whole
+        transcription window. Gated to timed games with a local engine as the
+        pending mover -- Lichess/remote opponents (whose pending move this hook
+        also handles) keep their own server/board timing, and untimed games have
+        no clock to hand off. The receiving (human) side is the color not on move,
+        since the engine's move has not been transcribed yet.
+        """
+        if not self._clock_service.timed_mode:
+            return
+        if self._player_manager is None:
+            return
+        mover = self._player_manager.get_current_player(self.chess_board)
+        if mover.player_type != PlayerType.ENGINE:
+            return
+        receiving_color = "black" if self.chess_board.turn == chess.WHITE else "white"
+        self._clock_service.begin_opponent_turn(receiving_color)
+
     def handle_resign(self, resigning_color: chess.Color = None) -> None:
         """Handle game resignation.
         

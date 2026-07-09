@@ -147,6 +147,13 @@ class ChessClockService:
 
         # Active time control (increment / delay / stages / asymmetric).
         self._time_control: TimeControl = TimeControl.sudden_death_minutes(0)
+
+        # Grace delay (seconds) for the engine-move clock hand-off: when an engine
+        # shows its move it "presses its clock" and neither side counts for this
+        # long before the human's clock starts. Persisted per game via
+        # GameSettings.engine_move_clock_delay_seconds; defaults to 1s. Survives
+        # reset() (it is game configuration, not runtime clock state).
+        self._engine_move_delay_seconds: int = 1
         # Per-side completed-move counts, driving stage transitions and the
         # increment lookup. Advanced from the game's move stack in
         # notify_move_completed so the count is correct regardless of how many
@@ -194,6 +201,11 @@ class ChessClockService:
     def timed_mode(self) -> bool:
         """Whether in timed mode (countdown) vs untimed."""
         return self._state.timed_mode
+
+    @property
+    def engine_move_delay_seconds(self) -> int:
+        """Grace delay (seconds) for the engine-move clock hand-off."""
+        return self._engine_move_delay_seconds
     
     # -------------------------------------------------------------------------
     # Configuration methods
@@ -235,6 +247,38 @@ class ChessClockService:
 
         log.info(f"[ChessClockService] Configured: {time_control.describe()}")
 
+    def set_engine_move_delay_seconds(self, seconds: int) -> None:
+        """Set the grace delay for the engine-move clock hand-off.
+
+        Args:
+            seconds: Seconds during which neither side counts after an engine
+                shows its move (before the human's clock starts). Clamped to >= 0.
+        """
+        self._engine_move_delay_seconds = max(0, int(seconds))
+        log.info(f"[ChessClockService] Engine-move clock delay: "
+                 f"{self._engine_move_delay_seconds}s")
+
+    def begin_opponent_turn(self, receiving_color: str) -> None:
+        """Hand the clock to ``receiving_color`` after the configured grace delay.
+
+        Called when a local engine shows its move: the engine's clock stops
+        immediately, neither side counts for engine_move_delay_seconds, then the
+        receiving (human) side's clock starts -- all while the board turn is still
+        the engine's un-transcribed move. Gating (timed mode, engine opponent) is
+        the caller's responsibility.
+
+        Args:
+            receiving_color: 'white' or 'black' -- the side that should count.
+        """
+        with self._lock:
+            self._state.begin_forced_active_color(
+                receiving_color, self._engine_move_delay_seconds)
+
+    def clear_forced_active_color(self) -> None:
+        """Drop any engine-move hand-off override, restoring turn-derived counting."""
+        with self._lock:
+            self._state.clear_forced_active_color()
+
     def _current_ply(self) -> int:
         """Number of moves (plies) played in the current game, 0 if unknown."""
         game_state = self._state._game_state
@@ -263,6 +307,11 @@ class ChessClockService:
                 self._black_moves += 1
                 move_number = self._black_moves
             self._state.apply_move_completed(mover, move_number)
+        # A completed move may be the engine's move being transcribed: once the
+        # board turn reaches the forced (human) side, drop the hand-off override
+        # so it does not leak into the human's own move. Idempotent when no
+        # override is active.
+        self._state.clear_forced_active_color_if_reached()
     
     def set_times(self, white_seconds: int, black_seconds: int) -> None:
         """Set the remaining time for both players.

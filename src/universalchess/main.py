@@ -2095,7 +2095,8 @@ def _start_game_mode(
         analysis_mode=analysis_mode,
         led_from_to_hint_callback=led_callbacks.from_to_hint,
         led_off_callback=led_callbacks.off,
-        time_control_spec=time_control_spec
+        time_control_spec=time_control_spec,
+        engine_move_clock_delay_seconds=game.engine_move_clock_delay_seconds
     )
     log.info(f"[App] DisplayManager initialized (time_control={time_control_spec.describe()}, "
              f"analysis_mode={analysis_mode}, "

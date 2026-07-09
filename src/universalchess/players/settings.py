@@ -199,6 +199,11 @@ class GameSettings:
             sides use the white base/increment.
         tc_custom_black_base_seconds: Black's base time (seconds) when asymmetric.
         tc_custom_black_increment_seconds: Black's increment when asymmetric.
+        engine_move_clock_delay_seconds: Grace seconds for the engine-move clock
+            hand-off in timed local-engine games. When the engine shows its move
+            it "presses its clock": its clock stops immediately, neither side
+            counts for this many seconds, then the human's clock starts -- even
+            though the move is still being physically transcribed. Default 1.
         analysis_mode: Enable analysis engine
         analysis_engine: Engine to use for position analysis
         ponder: When True, engine players think on the opponent's time (UCI
@@ -266,6 +271,7 @@ class GameSettings:
     tc_custom_asymmetric: bool = False
     tc_custom_black_base_seconds: int = 300
     tc_custom_black_increment_seconds: int = 0
+    engine_move_clock_delay_seconds: int = 1
     analysis_mode: bool = True
     analysis_engine: str = "stockfish"
     ponder: bool = False
@@ -366,6 +372,7 @@ class GameSettings:
             "tc_custom_asymmetric": self.tc_custom_asymmetric,
             "tc_custom_black_base_seconds": self.tc_custom_black_base_seconds,
             "tc_custom_black_increment_seconds": self.tc_custom_black_increment_seconds,
+            "engine_move_clock_delay_seconds": self.engine_move_clock_delay_seconds,
             "analysis_mode": self.analysis_mode,
             "analysis_engine": self.analysis_engine,
             "ponder": self.ponder,
@@ -445,6 +452,7 @@ class GameSettings:
             tc_custom_asymmetric=data["tc_custom_asymmetric"],
             tc_custom_black_base_seconds=data["tc_custom_black_base_seconds"],
             tc_custom_black_increment_seconds=data["tc_custom_black_increment_seconds"],
+            engine_move_clock_delay_seconds=data["engine_move_clock_delay_seconds"],
             analysis_mode=data["analysis_mode"],
             analysis_engine=data["analysis_engine"],
             ponder=data["ponder"],

@@ -79,6 +79,13 @@
       { "value": "simple", "label": "Simple (US)" },
       { "value": "bronstein", "label": "Bronstein" }
     ],
+    "engine_move_delay": [
+      { "value": "0", "label": "None" },
+      { "value": "1", "label": "1 sec" },
+      { "value": "2", "label": "2 sec" },
+      { "value": "3", "label": "3 sec" },
+      { "value": "5", "label": "5 sec" }
+    ],
     "update_channel": [
       { "value": "stable", "label": "Stable (Recommended)" },
       { "value": "nightly", "label": "Nightly (Development)" }
@@ -344,7 +351,22 @@
       "label": "Time Control",
       "help": "Configure the game clock: a preset, a custom clock, or base minutes.",
       "platforms": ["board"],
-      "children": ["settings.timecontrol.preset", "settings.timecontrol.custom", "settings.timecontrol"]
+      "children": ["settings.timecontrol.preset", "settings.timecontrol.custom", "settings.timecontrol", "settings.timecontrol.engine_move_delay"]
+    },
+    {
+      "id": "settings.timecontrol.engine_move_delay",
+      "key": "EngineMoveDelay",
+      "type": "select",
+      "label": "Engine Move Delay",
+      "boardLabel": "Engine Delay\n{value}",
+      "icon": "timer",
+      "help": "In timed engine games, when the engine shows its move its clock stops and yours starts after this delay (while you move its piece).",
+      "bind": { "store": "game", "key": "engine_move_clock_delay_seconds" },
+      "optionSet": "engine_move_delay",
+      "selectedIcon": "timer_checked",
+      "unselectedIcon": "timer",
+      "platforms": ["board", "web"],
+      "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },
     {
       "id": "settings.timecontrol.preset",
