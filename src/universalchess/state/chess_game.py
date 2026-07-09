@@ -511,6 +511,11 @@ class ChessGameState:
         
         move = self._board.pop()
         self.notify_position_change()
+        # Re-derive the check/queen alert for the reverted position, mirroring
+        # push_move. Without this a takeback of a checking move left the CHECK
+        # alert on screen over a position with no check (and a takeback INTO a
+        # still-in-check position failed to re-raise it).
+        self._notify_check_and_threats()
         return move
     
     def set_position(self, fen: str) -> None:
@@ -531,6 +536,11 @@ class ChessGameState:
         self._result = None
         self._termination = None
         self.notify_position_change()
+        # Re-derive the check/queen alert for the adopted position, mirroring
+        # configure_start. Without this, loading a position never updated the
+        # alert: an in-check position showed none, and a quiet one left a stale
+        # CHECK on screen.
+        self._notify_check_and_threats()
 
     def configure_start(self, fen: str, chess960: bool = False) -> None:
         """Set the game's starting position and variant.
