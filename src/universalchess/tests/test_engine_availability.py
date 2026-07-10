@@ -19,6 +19,7 @@ can never drift apart again.
 import os
 import stat
 
+from universalchess import paths
 from universalchess.managers.engine_manager import EngineManager
 
 
@@ -79,6 +80,38 @@ def test_non_system_engine_available_when_binary_present(tmp_path):
     manager = EngineManager(engines_dir=str(tmp_path))
     assert manager.is_installed("berserk") is True
     assert manager.is_available("berserk") is True
+
+
+def test_custom_script_engine_installed_and_resolvable_agree(tmp_path, monkeypatch):
+    """is_installed and get_engine_path agree on Maia's subdirectory layout.
+
+    Why this test exists: the two "where is the binary" resolvers had drifted --
+    is_installed knew Maia installs to engines/maia/lc0 (via repo_url is None +
+    binary_path), but get_engine_path matched the top-level 'maia' directory. The
+    management list then showed Maia installed while the profile editor (which
+    probes via get_engine_path) reported it not installed. Both must resolve the
+    same layout so they can never disagree again.
+
+    How the regression manifests: with the old get_engine_path, is_installed
+    returns True but get_engine_path returns the directory (or "" after the fix's
+    partial-install guard), so this equality assertion fails -- exactly the
+    inconsistency that produced the contradictory UI.
+    """
+    engines_dir = tmp_path / "engines"
+    _make_executable_at(engines_dir / "maia" / "lc0")
+    monkeypatch.setattr(paths, "ENGINES_DIR", str(engines_dir))
+    manager = EngineManager(engines_dir=str(engines_dir))
+
+    assert manager.is_installed("maia") is True
+    assert manager.is_available("maia") is True
+    assert paths.get_engine_path("maia") == str(engines_dir / "maia" / "lc0")
+
+
+def _make_executable_at(path):
+    """Create parent dirs, an empty file at path, and mark it executable."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
 def test_unknown_engine_not_available(tmp_path):

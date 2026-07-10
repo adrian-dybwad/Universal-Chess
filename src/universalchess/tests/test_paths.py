@@ -97,3 +97,46 @@ def test_empty_name_returns_empty(engines_dir, bad):
     nothing yet a naive join would surface the base dir.
     """
     assert paths.get_engine_path(bad) == ""
+
+
+def test_custom_script_engine_resolves_binary_inside_subdirectory(tmp_path, monkeypatch):
+    """Maia resolves to engines/maia/lc0, not the engines/maia directory.
+
+    Why this test exists: Maia (a custom-script engine, repo_url=None) installs
+    its executable inside a subdirectory named after the engine
+    (engines/maia/lc0 + weights), unlike single-file engines. get_engine_path is
+    the shared choke point every consumer uses -- profile probing, game launch,
+    analysis, the centaur proxy -- so returning the directory instead of the
+    binary makes all of them fail (the reported "Maia is not installed" in the
+    profile editor is one symptom).
+
+    How the regression manifests: the pre-fix code matches the top-level entry
+    'maia' (a directory) and returns it; launching a directory as a UCI engine
+    fails. The assertion below returns the directory path (missing the '/lc0'
+    leaf) when that regression is present.
+    """
+    base = tmp_path / "engines"
+    (base / "maia").mkdir(parents=True)
+    (base / "maia" / "lc0").write_text("binary")
+    monkeypatch.setattr(paths, "ENGINES_DIR", str(base))
+
+    assert paths.get_engine_path("maia") == str(base / "maia" / "lc0")
+
+
+def test_custom_script_engine_missing_binary_reports_not_installed(tmp_path, monkeypatch):
+    """An engines/maia directory without lc0 inside resolves to "" (not installed).
+
+    Why this test exists: matching the top-level directory is not proof the
+    binary is present. An incomplete/interrupted install can leave the directory
+    without the executable; callers treat "" as "not installed", so a partial
+    install must not masquerade as a working engine.
+
+    How the regression manifests: the pre-fix code returns the existing directory
+    path (non-empty) even though no executable is inside, so the engine would be
+    reported installed and then fail to launch. The assertion expects "".
+    """
+    base = tmp_path / "engines"
+    (base / "maia").mkdir(parents=True)  # directory present, but no lc0 inside
+    monkeypatch.setattr(paths, "ENGINES_DIR", str(base))
+
+    assert paths.get_engine_path("maia") == ""

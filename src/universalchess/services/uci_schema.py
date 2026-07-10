@@ -59,8 +59,12 @@ _ENGINE_WIDE_NAMES = frozenset({"hash", "threads"})
 # (e.g. lc0/Maia report "<autodiscover>"). Maps engine name -> option name ->
 # (subdirectory under the engines dir, glob). Kept tiny on purpose: the heuristic
 # handles the common case, this is only for defaults that are not real paths.
+# Subdirectories are relative to the engines root (ENGINES_DIR). Maia installs
+# into engines/maia/, so its nets live at engines/maia/maia_weights -- the
+# subdir must include the "maia/" component or the glob resolves to a
+# nonexistent engines/maia_weights and the net picker comes up empty.
 _FILE_OPTION_OVERRIDES: Dict[str, Dict[str, Tuple[str, str]]] = {
-    "maia": {"WeightsFile": ("maia_weights", "*.pb.gz")},
+    "maia": {"WeightsFile": ("maia/maia_weights", "*.pb.gz")},
 }
 
 # Descriptions for common UCI options, keyed by the option name lower-cased.

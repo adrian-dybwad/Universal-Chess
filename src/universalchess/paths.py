@@ -139,6 +139,23 @@ def get_engine_path(engine_name: str) -> str:
     dev_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "engines")
     if not engine_name:
         return ""
+
+    # Custom-script engines (e.g. Maia) install their executable inside a
+    # subdirectory named after the engine (engines/maia/lc0 + weights) rather
+    # than as a single top-level file. The relative binary path is a trusted
+    # catalog constant (never request-derived), so descending with it does not
+    # widen the traversal surface. Imported lazily because engine_manager imports
+    # this module -- a top-level import would be circular -- and to keep this
+    # low-level module importable without the manager's dependencies present.
+    try:
+        from universalchess.managers.engine_manager import engine_binary_subpath
+    except ImportError:
+        # The catalog is an enhancement to resolution, not a prerequisite: if it
+        # cannot be imported, fall back to the plain top-level name match below.
+        subpath = None
+    else:
+        subpath = engine_binary_subpath(engine_name)
+
     for directory in (ENGINES_DIR, dev_dir):
         # A missing directory is normal (the dev engines dir is absent on an
         # installed system, and ENGINES_DIR is absent in a dev checkout), so it
@@ -150,7 +167,16 @@ def get_engine_path(engine_name: str) -> str:
         for entry in os.listdir(directory):
             if entry == engine_name:
                 candidate = os.path.join(directory, entry)
-                if os.path.exists(candidate):
+                if subpath:
+                    # The matched entry is the install subdirectory; the real
+                    # executable is inside it. Only return it when it actually
+                    # exists so a partial/interrupted install (directory present,
+                    # binary missing) reports "not installed" rather than handing
+                    # a directory to the engine launcher.
+                    binary = os.path.join(candidate, subpath)
+                    if os.path.exists(binary):
+                        return binary
+                elif os.path.exists(candidate):
                     return candidate
 
     return ""

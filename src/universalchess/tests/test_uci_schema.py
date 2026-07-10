@@ -232,9 +232,18 @@ def test_override_registry_enumerates_when_default_is_not_a_path(tmp_path):
     Maia/lc0 report ``<autodiscover>``; the override points at the weights
     subdir+glob so the picker still lists installed nets. Regression: without the
     override these engines would show an un-fillable text box.
+
+    The layout mirrors production: Maia installs into a subdirectory
+    ``engines/maia/`` whose nets live at ``engines/maia/maia_weights`` (see
+    build-maia.sh / the prebuilt directory-copy). ``engines_dir`` here is the
+    engines root (``tmp_path``), so the override subdir must include the ``maia``
+    component. If the override were ``maia_weights`` (no ``maia/`` prefix), this
+    would glob ``engines/maia_weights`` -- which does not exist in production --
+    and return None, so the net picker would be empty and no per-rating sections
+    would be seeded.
     """
-    weights = tmp_path / "maia_weights"
-    weights.mkdir()
+    weights = tmp_path / "maia" / "maia_weights"
+    weights.mkdir(parents=True)
     (weights / "maia-1100.pb.gz").write_text("a")
     (weights / "maia-1500.pb.gz").write_text("b")
 

@@ -853,7 +853,13 @@ ENGINES = {
         binary_path="lc0",  # Script installs to ENGINES_DIR/maia/lc0
         is_system_package=False,
         package_name=None,
-        extra_files=["maia_weights"],
+        # No extra_files: Maia installs as a whole directory (engines/maia/ with
+        # lc0 + maia_weights/ + leela_weights/), copied and removed wholesale via
+        # the directory branches of _try_install_prebuilt / uninstall_engine. The
+        # per-file extra_files mechanism (single-file engines like Arasan) is
+        # never reached for Maia, so declaring it here would be dead + inaccurate
+        # (it also omits leela_weights).
+        extra_files=[],
         dependencies=[],  # Build script handles dependencies
         clone_with_submodules=False,  # Build script handles cloning
         build_timeout=7200,  # 2 hours - may need swap which is slow
@@ -947,6 +953,31 @@ ENGINES = {
 }
 
 
+def engine_binary_subpath(engine_name: str) -> Optional[str]:
+    """Return the executable path relative to ``engines_dir/<name>``, or None.
+
+    Single source of truth for the one layout distinction that matters when
+    locating an installed binary: a custom-script engine (``repo_url is None``
+    with a ``binary_path``) installs into a subdirectory named after the engine
+    and places its executable *inside* it (e.g. Maia -> ``engines/maia/lc0``),
+    whereas every other engine's executable IS the top-level ``engines/<name>``
+    entry.
+
+    Returns the relative binary path (e.g. ``"lc0"``) for the former, and None
+    for the latter (no descent needed) and for unknown names. Both
+    :meth:`EngineManager.is_installed` and :func:`paths.get_engine_path` consult
+    this so the two resolvers can never disagree about where Maia's binary lives
+    -- the drift that made the profile editor report an installed Maia as "not
+    installed" while the management list showed it installed.
+    """
+    engine = ENGINES.get(engine_name)
+    if engine is None:
+        return None
+    if engine.repo_url is None and engine.binary_path:
+        return engine.binary_path
+    return None
+
+
 class EngineManager:
     """Manages installation and removal of chess engines.
     
@@ -1012,12 +1043,15 @@ class EngineManager:
             log.debug(f"[EngineManager] is_installed: {engine_name} (system package) = {is_installed}, path={system_path}")
             return is_installed
         else:
-            # Check if binary exists in engines directory
-            # Most engines: engines_dir/engine_name
-            # Engines with custom scripts (repo_url=None): engines_dir/engine_name/binary_path
-            if engine.repo_url is None and engine.binary_path:
-                # Custom script installs to subdirectory
-                engine_path = self.engines_dir / engine_name / engine.binary_path
+            # Check if binary exists in engines directory. Most engines are a
+            # single file at engines_dir/engine_name; custom-script engines
+            # (repo_url=None, e.g. Maia) install into a subdirectory and their
+            # executable lives at engines_dir/engine_name/<binary_path>. The one
+            # layout rule is defined once in engine_binary_subpath so this check
+            # and paths.get_engine_path stay in agreement.
+            subpath = engine_binary_subpath(engine_name)
+            if subpath:
+                engine_path = self.engines_dir / engine_name / subpath
             else:
                 engine_path = self.engines_dir / engine_name
             exists = engine_path.exists()
@@ -2133,30 +2167,45 @@ class EngineManager:
             log_event("engine_uninstall", f"Uninstalled {engine.display_name}", level="info")
             return True
         
-        # Remove binary
-        binary_path = self.engines_dir / engine.name
-        if binary_path.exists():
-            try:
-                binary_path.unlink()
-                log.info(f"[EngineManager] uninstall_engine: Removed binary {binary_path}")
-            except OSError as e:
-                log.error(f"[EngineManager] uninstall_engine: Failed to remove binary {binary_path}: {e}")
+        install_path = self.engines_dir / engine.name
+        if engine_binary_subpath(engine_name):
+            # Custom-script engine (e.g. Maia): the whole engines/<name>/ tree is
+            # this engine's install (binary + weight subdirectories), so remove
+            # it wholesale. Its extra_files live inside that tree, so no separate
+            # extra-files cleanup is needed. The previous single-file logic called
+            # unlink() on this directory (raising, and leaving the tree behind).
+            if install_path.is_dir():
+                try:
+                    shutil.rmtree(install_path)
+                    log.info(f"[EngineManager] uninstall_engine: Removed directory {install_path}")
+                except OSError as e:
+                    log.error(f"[EngineManager] uninstall_engine: Failed to remove directory {install_path}: {e}")
+            else:
+                log.debug(f"[EngineManager] uninstall_engine: Install directory not found at {install_path}")
         else:
-            log.debug(f"[EngineManager] uninstall_engine: Binary not found at {binary_path}")
-        
-        # Remove extra files. Resolved with the same glob-aware helper as install so
-        # version-specific names (e.g. *.nnue) are matched in engines_dir.
-        for extra_path in expand_extra_files(self.engines_dir, engine.extra_files):
-            try:
-                if extra_path.is_dir():
-                    shutil.rmtree(extra_path)
-                    log.info(f"[EngineManager] uninstall_engine: Removed directory {extra_path}")
-                else:
-                    extra_path.unlink()
-                    log.info(f"[EngineManager] uninstall_engine: Removed file {extra_path}")
-            except OSError as e:
-                log.error(f"[EngineManager] uninstall_engine: Failed to remove {extra_path}: {e}")
-        
+            # Single-file engine: remove the binary and any declared extra files.
+            if install_path.exists():
+                try:
+                    install_path.unlink()
+                    log.info(f"[EngineManager] uninstall_engine: Removed binary {install_path}")
+                except OSError as e:
+                    log.error(f"[EngineManager] uninstall_engine: Failed to remove binary {install_path}: {e}")
+            else:
+                log.debug(f"[EngineManager] uninstall_engine: Binary not found at {install_path}")
+
+            # Remove extra files. Resolved with the same glob-aware helper as install
+            # so version-specific names (e.g. *.nnue) are matched in engines_dir.
+            for extra_path in expand_extra_files(self.engines_dir, engine.extra_files):
+                try:
+                    if extra_path.is_dir():
+                        shutil.rmtree(extra_path)
+                        log.info(f"[EngineManager] uninstall_engine: Removed directory {extra_path}")
+                    else:
+                        extra_path.unlink()
+                        log.info(f"[EngineManager] uninstall_engine: Removed file {extra_path}")
+                except OSError as e:
+                    log.error(f"[EngineManager] uninstall_engine: Failed to remove {extra_path}: {e}")
+
         # Clean build directory
         build_dir = self.build_tmp / engine.name
         if build_dir.exists():
