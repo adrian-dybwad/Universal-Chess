@@ -113,3 +113,25 @@ def test_menu_schema_includes_known_field_help(client):
     data = json.loads(resp.data)
     by_id = {n["id"]: n for n in data["nodes"]}
     assert by_id["field.player.type"]["help"] == "Human, Engine, Hand+Brain, or Lichess"
+
+
+def test_menu_schema_is_localized_to_device_language(client, monkeypatch):
+    """The payload is localized to the device UI language.
+
+    Why: the web Settings fields render their labels/help/option labels from this
+    schema, so when the device language is Spanish the schema must arrive in
+    Spanish (not English) for the web UI to match the board. How a regression
+    manifests: the endpoint ignores the language and always serves English, so
+    Settings fields stay English even with the device set to Spanish.
+    """
+    from universalchess.services import language_service
+
+    monkeypatch.setattr(language_service, "get_language", lambda: "es")
+    resp = client.get("/api/menu-schema")
+    assert resp.status_code == 200
+    data = json.loads(resp.data)
+    by_id = {n["id"]: n for n in data["nodes"]}
+    # A representative field label and a section label must be Spanish.
+    assert by_id["field.player.type"]["label"] == "Tipo de jugador"
+    sections = {s["id"]: s["label"] for s in data["sections"]}
+    assert sections["players"] == "Jugadores"

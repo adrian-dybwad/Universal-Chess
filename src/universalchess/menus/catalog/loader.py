@@ -12,13 +12,31 @@ raised with a precise message (which id, which dangling reference) so the
 mistake is fixed at the source rather than degrading the menu silently.
 """
 
+import copy
 import json
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional
+
+log = logging.getLogger(__name__)
 
 _CATALOG_DIR = Path(__file__).parent
 _MENU_FILE = _CATALOG_DIR / "menu.json"
 _ICONS_FILE = _CATALOG_DIR / "icons.json"
+
+# Per-locale translation overlays keyed by node id / option-set name / section
+# id. English is the authored source in ``menu.json`` and needs no overlay; each
+# other locale supplies only the strings it translates, and any key absent from
+# the overlay falls back to the English original. Kept as sidecar files (rather
+# than inline in menu.json) so the structural catalog stays a single untouched
+# source of truth and adding a language is one new file, no schema churn.
+_TRANSLATIONS_DIR = _CATALOG_DIR / "translations"
+
+# The source locale, authored directly in ``menu.json``; it has no overlay and
+# ``localize_catalog`` returns the catalog unchanged for it. Matches
+# ``language_service.DEFAULT`` but is duplicated here to keep the loader free of
+# a hard dependency on the service for the common (English) path.
+_SOURCE_LOCALE = "en"
 
 # Web control types a node's optional ``webType`` may name. ``webType`` overrides
 # the board ``type`` for the web renderer only -- used where the same node is an
@@ -414,17 +432,178 @@ def load_catalog(
     return MenuCatalog(menu_data, icons_data)
 
 
-_cached_catalog: Optional[MenuCatalog] = None
+def load_overlay(locale: str) -> Optional[dict]:
+    """Return the parsed translation overlay for ``locale``, or None if absent.
+
+    A missing overlay file is not an error: it means the locale has no
+    translations yet, and :func:`localize_catalog` falls back to the English
+    source. Only a present-but-unparseable file is surfaced (as a warning +
+    None) so a broken overlay degrades to English rather than crashing the menu.
+    """
+    path = _TRANSLATIONS_DIR / f"{locale}.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except json.JSONDecodeError as exc:
+        log.warning("menu translation overlay %s is not valid JSON: %s", path, exc)
+        return None
+
+
+def localize_catalog(menu_data: dict, locale: str, *, overlay: Optional[dict] = None) -> dict:
+    """Return a copy of ``menu_data`` with ``locale``'s translations applied.
+
+    English (:data:`_SOURCE_LOCALE`) is the authored source, so it is returned
+    unchanged (the same object) with no copy. For any other locale the overlay
+    is applied over a deep copy so the shared English catalog is never mutated:
+
+    - ``overlay["nodes"][<id>]`` may carry ``label``/``help``/``boardLabel`` and
+      the user-facing ``label_in_progress``/``valueDefault``; only the present
+      keys are overwritten (a node absent from the overlay, or a key it omits,
+      keeps its English text).
+    - ``overlay["optionSets"][<name>]`` maps an option ``value`` to its
+      translated label; values not listed keep their English label.
+    - ``overlay["sections"][<id>]`` and ``overlay["accountTypes"]`` translate the
+      web tab labels and the account-form chrome the same way.
+
+    A missing overlay (no file for the locale) leaves the catalog in English so
+    an untranslated language degrades gracefully rather than rendering blank.
+
+    Args:
+        menu_data: The parsed English ``menu.json`` (as from
+            :meth:`MenuCatalog.raw_menu`).
+        locale: Target locale code (e.g. ``"es"``).
+        overlay: Explicit overlay dict (tests); when None the packaged
+            ``translations/<locale>.json`` is loaded.
+    """
+    if locale == _SOURCE_LOCALE:
+        return menu_data
+    if overlay is None:
+        overlay = load_overlay(locale)
+    if not overlay:
+        log.warning("no menu translation overlay for locale %r; using English", locale)
+        return menu_data
+
+    localized = copy.deepcopy(menu_data)
+
+    node_overlay = overlay.get("nodes", {})
+    for node in localized.get("nodes", []):
+        strings = node_overlay.get(node.get("id"))
+        if not strings:
+            continue
+        # ``label_in_progress`` (the board's RESUME text) and ``valueDefault``
+        # (the placeholder shown for an unset bound value, e.g. an unnamed human)
+        # both render to the user, so they are translated alongside the label.
+        for key in ("label", "boardLabel", "help", "label_in_progress", "valueDefault"):
+            if key in strings:
+                node[key] = strings[key]
+
+    option_overlay = overlay.get("optionSets", {})
+    for name, options in localized.get("optionSets", {}).items():
+        value_labels = option_overlay.get(name)
+        if not value_labels:
+            continue
+        for option in options:
+            translated = value_labels.get(str(option.get("value")))
+            if translated is not None:
+                option["label"] = translated
+
+    section_overlay = overlay.get("sections", {})
+    for section in localized.get("sections", []):
+        translated = section_overlay.get(section.get("id"))
+        if translated is not None:
+            section["label"] = translated
+
+    account_overlay = overlay.get("accountTypes", {})
+    for account in localized.get("accountTypes", []):
+        strings = account_overlay.get(account.get("id"))
+        if not strings:
+            continue
+        if "label" in strings:
+            account["label"] = strings["label"]
+        field_labels = strings.get("fields", {})
+        for field_def in account.get("fields", []):
+            field_strings = field_labels.get(field_def.get("key"))
+            if not field_strings:
+                continue
+            for key in ("label", "help", "placeholder"):
+                if key in field_strings:
+                    field_def[key] = field_strings[key]
+
+    return localized
+
+
+_base_catalog: Optional[MenuCatalog] = None
+_localized_catalogs: Dict[str, MenuCatalog] = {}
+_active_locale: Optional[str] = None
+
+
+def _base() -> MenuCatalog:
+    """Return the validated English base catalog, loading it once."""
+    global _base_catalog
+    if _base_catalog is None:
+        _base_catalog = load_catalog()
+    return _base_catalog
+
+
+def get_localized_catalog(locale: str) -> MenuCatalog:
+    """Return the catalog localized to ``locale``, cached per locale.
+
+    The English base is validated once; each localized view is derived from it by
+    applying the overlay's string replacements (structure is untouched, so no
+    re-validation is needed) and cached so repeated renders don't re-copy. Callers
+    that need a specific locale regardless of the device setting (e.g. the web
+    ``/api/menu-schema`` serving the requested device locale) use this directly.
+    """
+    base = _base()
+    if locale == _SOURCE_LOCALE:
+        return base
+    cached = _localized_catalogs.get(locale)
+    if cached is None:
+        localized_menu = localize_catalog(base.raw_menu(), locale)
+        cached = MenuCatalog(localized_menu, base._icons)  # noqa: SLF001 - same-module access to the base's icon data
+        _localized_catalogs[locale] = cached
+    return cached
+
+
+def _read_active_locale() -> str:
+    """Read the device UI locale from the language service, defaulting to English.
+
+    Isolated so :func:`get_catalog` reads the setting at most once per process
+    (cached in ``_active_locale``) rather than hitting the ini on every menu row,
+    and so a refresh has a single source. Any failure to resolve the service
+    degrades to the source locale rather than breaking menu rendering.
+    """
+    try:
+        from universalchess.services.language_service import get_language
+        return get_language()
+    except Exception:  # noqa: BLE001 - locale resolution must never break the menu; fall back to English
+        log.warning("could not resolve UI language; using %r", _SOURCE_LOCALE, exc_info=True)
+        return _SOURCE_LOCALE
+
+
+def refresh_active_language() -> str:
+    """Re-read the device UI locale and return it (call after a language change).
+
+    The board's settings hot-reload path invokes this so the next
+    :func:`get_catalog` (and thus the next menu render) picks up the new locale
+    without restarting the process.
+    """
+    global _active_locale
+    _active_locale = _read_active_locale()
+    return _active_locale
 
 
 def get_catalog() -> MenuCatalog:
-    """Return the process-wide cached catalog, loading it on first use.
+    """Return the catalog localized to the active device UI locale.
 
-    The catalog is static data deployed with the package, so a single validated
-    instance is shared. Tests that need a fresh/overridden catalog should call
+    The active locale is resolved from the language service on first use and
+    cached (see :func:`_read_active_locale`); :func:`refresh_active_language`
+    updates it after a change. The English base is a single validated instance
+    shared across locales. Tests that need a fresh/overridden catalog should call
     :func:`load_catalog` directly rather than this cached accessor.
     """
-    global _cached_catalog
-    if _cached_catalog is None:
-        _cached_catalog = load_catalog()
-    return _cached_catalog
+    global _active_locale
+    if _active_locale is None:
+        _active_locale = _read_active_locale()
+    return get_localized_catalog(_active_locale)

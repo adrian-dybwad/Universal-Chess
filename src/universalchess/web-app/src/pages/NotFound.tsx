@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 
 /**
  * Catch-all page shown for any route that matches no defined path. Gives an
@@ -6,15 +7,15 @@ import { Link } from 'react-router-dom';
  * dead-end with a way back to the live board, instead of rendering a blank page.
  */
 export function NotFound() {
+  const { t } = useTranslation();
   return (
     <div className="page container--lg">
-      <h1 className="page-title mb-4">404 &mdash; Page not found</h1>
+      <h1 className="page-title mb-4">{t('notFound.title')}</h1>
       <p className="text-muted mb-6" style={{ lineHeight: 'var(--leading-relaxed)' }}>
-        The page you are looking for does not exist. It may have been moved or the
-        address may be mistyped.
+        {t('notFound.body')}
       </p>
       <Link to="/" className="btn btn--primary">
-        Back to board
+        {t('notFound.back')}
       </Link>
     </div>
   );

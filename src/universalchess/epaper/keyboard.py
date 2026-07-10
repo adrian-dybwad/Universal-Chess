@@ -16,6 +16,7 @@ from .framework.widget import Widget
 from typing import Optional, Callable
 import threading
 
+from universalchess.i18n import t
 from universalchess.resources import get_font
 
 try:
@@ -344,9 +345,9 @@ class KeyboardWidget(Widget):
         
         # Page indicator
         page_y = input_y + 26
-        page_text = f"Page {self.current_page}/{self.max_pages}"
+        page_text = t("keyboard.page", current=self.current_page, max=self.max_pages)
         draw.text((4, page_y), page_text, font=self._font_tiny, fill=0)
-        draw.text((70, page_y), "UP/DOWN", font=self._font_tiny, fill=0)
+        draw.text((70, page_y), t("keyboard.up_down"), font=self._font_tiny, fill=0)
         
         # Character grid (8x8)
         grid_y = page_y + 14
@@ -382,6 +383,6 @@ class KeyboardWidget(Widget):
         
         # Instructions at bottom
         inst_y = grid_y + 8 * cell_h + 2
-        draw.text((2, inst_y), "Place piece: type", font=self._font_tiny, fill=0)
-        draw.text((2, inst_y + 11), "BACK:del TICK:ok", font=self._font_tiny, fill=0)
-        draw.text((2, inst_y + 22), "PLAY: cancel", font=self._font_tiny, fill=0)
+        draw.text((2, inst_y), t("keyboard.place_piece"), font=self._font_tiny, fill=0)
+        draw.text((2, inst_y + 11), t("keyboard.back_del_tick_ok"), font=self._font_tiny, fill=0)
+        draw.text((2, inst_y + 22), t("keyboard.play_cancel"), font=self._font_tiny, fill=0)

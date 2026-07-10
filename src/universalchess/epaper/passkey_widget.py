@@ -9,6 +9,7 @@ it once pairing completes or is cancelled.
 
 from PIL import Image, ImageDraw
 from .framework.widget import Widget
+from universalchess.i18n import t
 from universalchess.resources import get_font
 
 try:
@@ -54,13 +55,13 @@ class PasskeyWidget(Widget):
         passkey_font = get_font(28)
         body_font = get_font(11)
 
-        draw.text((64, self.TITLE_Y), "Pair Keyboard",
+        draw.text((64, self.TITLE_Y), t("passkey.title"),
                   font=title_font, fill=0, anchor="mm")
-        draw.text((64, self.PROMPT_Y), "Type this code",
+        draw.text((64, self.PROMPT_Y), t("passkey.type_code"),
                   font=body_font, fill=0, anchor="mm")
         draw.text((64, self.PASSKEY_Y), self._passkey,
                   font=passkey_font, fill=0, anchor="mm")
-        draw.text((64, self.INSTRUCTION_Y), "then press Enter",
+        draw.text((64, self.INSTRUCTION_Y), t("passkey.then_enter"),
                   font=body_font, fill=0, anchor="mm")
 
         if self._device_name:

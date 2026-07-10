@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { ConnectionStatus } from './ConnectionStatus';
 import { BatteryIndicator } from './BatteryIndicator';
 import { ConnectivityIndicators } from './ConnectivityIndicators';
@@ -13,6 +14,7 @@ import './Navbar.css';
  * Main navigation bar - matches the original Bulma-based navbar.
  */
 export function Navbar() {
+  const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
   const [controlOpen, setControlOpen] = useState(false);
   const location = useLocation();
@@ -32,8 +34,8 @@ export function Navbar() {
       type="button"
       className={`navbar-control-icon ${controlOpen ? 'is-active' : ''}`}
       onClick={() => setControlOpen((open) => !open)}
-      title="Board Control"
-      aria-label="Board Control"
+      title={t('nav.boardControl')}
+      aria-label={t('nav.boardControl')}
       aria-pressed={controlOpen}
     >
       <MenuIcon name="remote" size={18} />
@@ -48,7 +50,7 @@ export function Navbar() {
             <img src="/logo" alt="" className="navbar-logo-img" />
             <div className="brand-text">
               <span className="brand-title">Universal Chess</span>
-              <span className="brand-tagline">Your smart chess companion</span>
+              <span className="brand-tagline">{t('brand.tagline')}</span>
             </div>
           </Link>
           {/* Mobile: burger sits alone on the right. The status icons that used to
@@ -72,28 +74,28 @@ export function Navbar() {
               className={`navbar-item ${isActive('/') ? 'is-active' : ''}`}
               onClick={() => setMenuOpen(false)}
             >
-              Live Board
+              {t('nav.liveBoard')}
             </Link>
             <Link
               to="/games"
               className={`navbar-item ${isActive('/games') ? 'is-active' : ''}`}
               onClick={() => setMenuOpen(false)}
             >
-              Games
+              {t('nav.games')}
             </Link>
             <Link
               to="/positions"
               className={`navbar-item ${isActive('/positions') ? 'is-active' : ''}`}
               onClick={() => setMenuOpen(false)}
             >
-              Positions
+              {t('nav.positions')}
             </Link>
             <Link
               to="/settings"
               className={`navbar-item ${isActive('/settings') ? 'is-active' : ''}`}
               onClick={() => setMenuOpen(false)}
             >
-              Settings
+              {t('nav.settings')}
             </Link>
           </div>
         </div>

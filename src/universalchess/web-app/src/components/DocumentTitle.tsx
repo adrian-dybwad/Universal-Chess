@@ -1,5 +1,7 @@
 import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { useGameStore } from '../stores/gameStore';
 import { apiFetch } from '../utils/api';
 
@@ -12,17 +14,18 @@ const TITLE_SEPARATOR = ' \u00b7 ';
  * A path prefix match (rather than an exhaustive union) is used deliberately:
  * `pathname` is open-ended (includes params like /analyze/:id and unknown URLs),
  * so a default fallback is required to give every reachable URL a sane title
- * instead of a blank tab. The fallback is the product name.
+ * instead of a blank tab. The fallback is the product name. Names are localized
+ * so the browser-tab title follows the device UI language.
  */
-function pageNameForPath(pathname: string): string {
-  if (pathname === '/') return 'Live Board';
-  if (pathname.startsWith('/games')) return 'Games';
-  if (pathname.startsWith('/analyze')) return 'Analysis';
-  if (pathname.startsWith('/positions')) return 'Positions';
-  if (pathname.startsWith('/settings')) return 'Settings';
-  if (pathname.startsWith('/licenses')) return 'Licenses';
-  if (pathname.startsWith('/support')) return 'Support';
-  return 'Universal Chess';
+function pageNameForPath(pathname: string, t: TFunction): string {
+  if (pathname === '/') return t('docTitle.liveBoard');
+  if (pathname.startsWith('/games')) return t('docTitle.games');
+  if (pathname.startsWith('/analyze')) return t('docTitle.analysis');
+  if (pathname.startsWith('/positions')) return t('docTitle.positions');
+  if (pathname.startsWith('/settings')) return t('docTitle.settings');
+  if (pathname.startsWith('/licenses')) return t('docTitle.licenses');
+  if (pathname.startsWith('/support')) return t('docTitle.support');
+  return t('docTitle.app');
 }
 
 /**
@@ -38,6 +41,7 @@ function pageNameForPath(pathname: string): string {
  * or fabricated placeholder).
  */
 export function DocumentTitle() {
+  const { t, i18n } = useTranslation();
   const { pathname } = useLocation();
   const deviceName = useGameStore((s) => s.deviceName);
   const setDeviceName = useGameStore((s) => s.setDeviceName);
@@ -64,9 +68,11 @@ export function DocumentTitle() {
   }, [connectionStatus, deviceName, setDeviceName]);
 
   useEffect(() => {
-    const page = pageNameForPath(pathname);
+    const page = pageNameForPath(pathname, t);
     document.title = deviceName ? `${deviceName}${TITLE_SEPARATOR}${page}` : page;
-  }, [pathname, deviceName]);
+    // i18n.language is a dependency so the title re-derives when the device
+    // language changes, not just on navigation.
+  }, [pathname, deviceName, t, i18n.language]);
 
   return null;
 }

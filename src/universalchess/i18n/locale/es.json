@@ -1,0 +1,47 @@
+{
+  "_comment": "Spanish (es) string bundle for the Python board UI. Any key omitted here falls back to the English source in en.json. Keep every key that en.json defines translated so no English leaks into the Spanish UI (guarded by test_i18n).",
+
+  "common.enabled": "Activado",
+  "common.disabled": "Desactivado",
+
+  "splash.starting": "Iniciando...",
+  "splash.loading": "Cargando...",
+  "splash.graphics": "Gráficos...",
+  "splash.managers": "Gestores...",
+  "splash.chess": "Ajedrez...",
+  "splash.initializing": "Inicializando...",
+
+  "game_over.result.white_wins": "Ganan las blancas",
+  "game_over.result.black_wins": "Ganan las negras",
+  "game_over.result.draw": "Tablas",
+  "game_over.termination.checkmate": "Jaque mate",
+  "game_over.termination.stalemate": "Ahogado",
+  "game_over.termination.insufficient_material": "Material insuf.",
+  "game_over.termination.seventyfive_moves": "Regla de 75 jugadas",
+  "game_over.termination.fivefold_repetition": "Repetición x5",
+  "game_over.termination.fifty_moves": "Regla de 50 jugadas",
+  "game_over.termination.threefold_repetition": "Repetición x3",
+  "game_over.termination.resign": "Abandono",
+  "game_over.termination.timeout": "Tiempo agotado",
+  "game_over.termination.time_forfeit": "Tiempo agotado",
+  "game_over.termination.abandoned": "Abandonada",
+
+  "setup.mode_title": "PREPARACIÓN",
+  "setup.arrange_pieces": "Coloca las piezas",
+
+  "keyboard.page": "Página {current}/{max}",
+  "keyboard.up_down": "ARR/ABA",
+  "keyboard.place_piece": "Pon pieza: escribir",
+  "keyboard.back_del_tick_ok": "BACK:borrar TICK:ok",
+  "keyboard.play_cancel": "PLAY: cancelar",
+
+  "passkey.title": "Emparejar teclado",
+  "passkey.type_code": "Escribe este código",
+  "passkey.then_enter": "y pulsa Enter",
+
+  "about.get_support": "Soporte",
+  "about.incomplete_shutdown": "Apagado incompleto",
+  "about.press_any_button": "Pulsa cualquier botón",
+
+  "wifi.no_networks": "No se encontraron redes"
+}

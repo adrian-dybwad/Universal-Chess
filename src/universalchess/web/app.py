@@ -2151,6 +2151,13 @@ def get_all_settings():
     from universalchess.services.timezone_service import get_timezone
     result.setdefault("system", {})["timezone"] = get_timezone()
 
+    # Surface the device UI locale from the language service (which normalises an
+    # empty/unsupported ini value to a real, renderable locale) so the web app
+    # initialises react-i18next to the same language the board renders, rather
+    # than trusting the raw ini value.
+    from universalchess.services.language_service import get_language
+    result.setdefault("system", {})["ui_language"] = get_language()
+
     # Coach settings: expose the non-secret selection (coach_id/coach_provider) and
     # the per-agent model/base_url (namespaced keys pass through from the ini), but
     # never the stored API keys. Each coach API key is redacted to a boolean
@@ -3012,11 +3019,16 @@ def api_get_menu_schema():
     zone, sourced at runtime from the stdlib so it stays current with the OS.
     """
     try:
-        from universalchess.menus.catalog import get_catalog
+        from universalchess.menus.catalog import get_localized_catalog
         from universalchess.menus.time_control_presets import preset_options
+        from universalchess.services.language_service import get_language
         from universalchess.services.timezone_service import list_timezones
 
-        menu = dict(get_catalog().raw_menu())
+        # Serve the catalog localized to the device UI language so the web
+        # Settings fields (labels, help, option labels) match the board. Read the
+        # locale fresh here rather than via the board's cached active locale so a
+        # language change is reflected on the next Settings load in this process.
+        menu = dict(get_localized_catalog(get_language()).raw_menu())
         option_sets = dict(menu.get("optionSets", {}))
         # The identical list the board renders: a leading Basic entry (empty key
         # -> no preset -> the base-minutes control) and a trailing Custom entry
@@ -5370,6 +5382,44 @@ def api_timezone_set():
         from universalchess.services.game_broadcast import notify_main_process_settings_changed
         notify_main_process_settings_changed()
         return jsonify({"success": True, "timezone": tz, "applied": applied})
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/language", methods=["GET"])
+def api_language_get():
+    """Return the device's current UI language (locale code, defaults to en)."""
+    try:
+        from universalchess.services.language_service import get_language
+        return jsonify({"language": get_language()})
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/language", methods=["POST"])
+@requires_auth
+def api_language_set():
+    """Set the device UI language.
+
+    Body: {"language": "en" | "es"}
+
+    Persists the locale in [system] ui_language. An unsupported code is a 400.
+    Unlike timezone there is no OS apply step -- the locale only selects
+    translations -- but the main process is still notified so the e-paper menu
+    re-renders in the new language, and the SSE ``settings_changed`` fan-out
+    (via the notify path) lets the web app switch its own locale.
+    """
+    try:
+        from universalchess.services.language_service import set_language
+        data = request.get_json(force=True)
+        code = (data or {}).get("language", "")
+        try:
+            set_language(code)
+        except ValueError:
+            return jsonify({"error": f"Invalid language: {code}"}), 400
+        from universalchess.services.game_broadcast import notify_main_process_settings_changed
+        notify_main_process_settings_changed()
+        return jsonify({"success": True, "language": code})
     except Exception as e:
         return _internal_error(e)
 

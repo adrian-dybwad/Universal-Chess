@@ -74,6 +74,10 @@ beforeEach(() => {
       posts.push({ url, body: JSON.parse((init?.body as string) ?? '{}') });
       return jsonResponse({ success: true, timezone: 'Asia/Tokyo', applied: true });
     }
+    if (url === '/api/system/language' && method === 'POST') {
+      posts.push({ url, body: JSON.parse((init?.body as string) ?? '{}') });
+      return jsonResponse({ success: true, language: 'es' });
+    }
     // SystemInfoCard fetches these on mount; report them unavailable so the card
     // renders its telemetry/hardware rows as absent (not the concern of this test)
     // rather than crashing on a badge lookup against a partial payload.
@@ -140,6 +144,47 @@ describe('System tab timezone selector', () => {
     const tzPost = posts.find((p) => p.url === '/api/system/timezone');
     expect(tzPost?.body).toEqual({ timezone: 'Asia/Tokyo' });
     // Must not be routed through the generic settings save.
+    expect(posts.some((p) => p.url === '/api/settings')).toBe(false);
+  });
+});
+
+// The language select is the only combobox whose value is a UI locale code, so
+// identify it that way rather than by a fragile positional index.
+function findLanguageSelect(): HTMLSelectElement {
+  const selects = screen.getAllByRole('combobox') as HTMLSelectElement[];
+  const match = selects.find((s) => s.value === 'en');
+  if (!match) throw new Error('Language select not found');
+  return match;
+}
+
+describe('System tab language selector', () => {
+  it('renders the language selector from the ui_language option set', async () => {
+    // Why this exists: field.system.language is present in the catalog, but the
+    // System tab renders fields explicitly (not by iterating the section), so the
+    // control only appears if it is wired in. A regression (the field left
+    // unrendered, as it originally shipped) leaves no en-valued select here.
+    renderSystemTab();
+    const select = await waitFor(findLanguageSelect);
+    // Defaults to English (the payload omits ui_language -> "en" fallback).
+    expect(select.value).toBe('en');
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toEqual(['en', 'es']);
+  });
+
+  it('POSTs to /api/system/language (not /api/settings) when changed', async () => {
+    // Why: the language must go through the dedicated endpoint so the board is
+    // notified to re-render; a regression routing it through the generic save
+    // would persist the value but never notify the board. Manifests as a missing
+    // /api/system/language post (or a stray /api/settings post) here.
+    renderSystemTab();
+    const select = await waitFor(findLanguageSelect);
+    fireEvent.change(select, { target: { value: 'es' } });
+
+    await waitFor(() => {
+      expect(posts.some((p) => p.url === '/api/system/language')).toBe(true);
+    });
+    const langPost = posts.find((p) => p.url === '/api/system/language');
+    expect(langPost?.body).toEqual({ language: 'es' });
     expect(posts.some((p) => p.url === '/api/settings')).toBe(false);
   });
 });

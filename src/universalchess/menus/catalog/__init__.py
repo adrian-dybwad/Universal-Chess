@@ -8,12 +8,18 @@ from universalchess.menus.catalog.loader import (
     CatalogError,
     MenuCatalog,
     get_catalog,
+    get_localized_catalog,
     load_catalog,
+    localize_catalog,
+    refresh_active_language,
 )
 
 __all__ = [
     "CatalogError",
     "MenuCatalog",
     "get_catalog",
+    "get_localized_catalog",
     "load_catalog",
+    "localize_catalog",
+    "refresh_active_language",
 ]

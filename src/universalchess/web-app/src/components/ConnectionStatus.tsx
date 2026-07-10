@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useGameStore } from '../stores/gameStore';
 import { ApiSettingsDialog } from './ApiSettingsDialog';
 import { getApiUrl, isCrossOriginApi } from '../utils/api';
@@ -14,6 +15,7 @@ interface ConnectionStatusProps {
  * Clicking opens the API settings dialog to change the chess board URL.
  */
 export function ConnectionStatus({ compact = false }: ConnectionStatusProps) {
+  const { t } = useTranslation();
   const connectionStatus = useGameStore((state) => state.connectionStatus);
   const [dialogOpen, setDialogOpen] = useState(false);
 
@@ -33,13 +35,13 @@ export function ConnectionStatus({ compact = false }: ConnectionStatusProps) {
   const getStatusText = () => {
     switch (connectionStatus) {
       case 'connected':
-        return 'Connected';
+        return t('connection.connected');
       case 'reconnecting':
-        return 'Reconnecting...';
+        return t('connection.reconnecting');
       case 'disconnected':
-        return 'Offline';
+        return t('connection.offline');
       default:
-        return 'Unknown';
+        return t('connection.unknown');
     }
   };
 
@@ -65,7 +67,7 @@ export function ConnectionStatus({ compact = false }: ConnectionStatusProps) {
         className={`tag tag-button ${getStatusClass()} ${compact ? 'tag-compact' : ''}`}
         id="connection-status"
         onClick={() => setDialogOpen(true)}
-        title={`Click to change connection settings\n${showApiIndicator ? `Connected to: ${apiHost}` : 'Using local server'}`}
+        title={`${t('connection.changeSettings')}\n${showApiIndicator ? t('connection.connectedTo', { host: apiHost }) : t('connection.localServer')}`}
       >
         <span className={`status-dot ${connectionStatus}`} />
         {!compact && (

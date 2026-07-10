@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { Button, Card, Badge } from '../components/ui';
 import { LoginDialog } from '../components/LoginDialog';
 import type { GameRecord } from '../types/game';
@@ -11,6 +12,7 @@ import './Games.css';
  * Games history page.
  */
 export function Games() {
+  const { i18n } = useTranslation();
   const [games, setGames] = useState<GameRecord[]>([]);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -131,8 +133,8 @@ export function Games() {
               </div>
 
               <div className="game-meta">
-                {formatDateTime(game.created_at) && (
-                  <span>{formatDateTime(game.created_at)}</span>
+                {formatDateTime(game.created_at, i18n.language) && (
+                  <span>{formatDateTime(game.created_at, i18n.language)}</span>
                 )}
                 {game.source && <span>{game.source}</span>}
               </div>

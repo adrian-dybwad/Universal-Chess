@@ -1,0 +1,72 @@
+{
+  "nav": {
+    "liveBoard": "Tablero en vivo",
+    "games": "Partidas",
+    "positions": "Posiciones",
+    "settings": "Ajustes",
+    "boardControl": "Control del tablero"
+  },
+  "brand": {
+    "tagline": "Tu compañero de ajedrez inteligente"
+  },
+  "connection": {
+    "connected": "Conectado",
+    "reconnecting": "Reconectando...",
+    "offline": "Sin conexión",
+    "unknown": "Desconocido",
+    "changeSettings": "Haz clic para cambiar los ajustes de conexión",
+    "connectedTo": "Conectado a: {{host}}",
+    "localServer": "Usando el servidor local"
+  },
+  "docTitle": {
+    "liveBoard": "Tablero en vivo",
+    "games": "Partidas",
+    "analysis": "Análisis",
+    "positions": "Posiciones",
+    "settings": "Ajustes",
+    "licenses": "Licencias",
+    "support": "Soporte",
+    "app": "Universal Chess"
+  },
+  "notFound": {
+    "title": "404 — Página no encontrada",
+    "body": "La página que buscas no existe. Puede que se haya movido o que la dirección esté mal escrita.",
+    "back": "Volver al tablero"
+  },
+  "footer": {
+    "tagline": "Software de código abierto para tableros de ajedrez inteligentes",
+    "github": "GitHub",
+    "licenses": "Licencias",
+    "support": "Soporte"
+  },
+  "settingsTabs": {
+    "support": "Soporte",
+    "licenses": "Licencias"
+  },
+  "support": {
+    "title": "Soporte",
+    "reportBug": {
+      "title": "Informar de un error",
+      "description": "¿Encontraste un problema? Abre una incidencia en GitHub con los detalles de lo ocurrido."
+    },
+    "discussions": {
+      "title": "Debates",
+      "description": "Únete al debate de la comunidad, haz preguntas y comparte ideas."
+    },
+    "documentation": {
+      "title": "Documentación",
+      "description": "Lee el README y la documentación del proyecto en GitHub."
+    },
+    "contribute": {
+      "title": "Contribuir",
+      "description": "¿Quieres ayudar? Consulta la guía de contribución para empezar."
+    },
+    "acknowledgments": {
+      "title": "Agradecimientos",
+      "basedOnPre": "Universal Chess se basa en ",
+      "basedOnLink": "DGTCentaur Mods",
+      "basedOnPost": ", creado originalmente por Ed Nekebno y colaboradores de la comunidad.",
+      "thanks": "Un agradecimiento especial a todos los autores de motores de ajedrez de código abierto cuyo trabajo hace posible este proyecto."
+    }
+  }
+}

@@ -16,10 +16,12 @@
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@tanstack/react-query": "^5.90.12",
     "chart.js": "^4.5.1",
+    "i18next": "^26.3.6",
     "react": "^19.2.0",
     "react-chartjs-2": "^5.3.1",
     "react-chessboard": "^5.8.6",
     "react-dom": "^19.2.0",
+    "react-i18next": "^17.0.9",
     "react-router-dom": "^7.15.0",
     "zustand": "^5.0.9"
   },

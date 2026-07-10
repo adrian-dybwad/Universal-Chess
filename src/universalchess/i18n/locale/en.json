@@ -1,0 +1,47 @@
+{
+  "_comment": "English (source) string bundle for the Python board UI (widgets, splash, computed menu labels). Flat dot-keyed; {name} placeholders are filled via str.format. English is also the fallback for any key missing from another locale.",
+
+  "common.enabled": "Enabled",
+  "common.disabled": "Disabled",
+
+  "splash.starting": "Starting...",
+  "splash.loading": "Loading...",
+  "splash.graphics": "Graphics...",
+  "splash.managers": "Managers...",
+  "splash.chess": "Chess...",
+  "splash.initializing": "Initializing...",
+
+  "game_over.result.white_wins": "White wins",
+  "game_over.result.black_wins": "Black wins",
+  "game_over.result.draw": "Draw",
+  "game_over.termination.checkmate": "Checkmate",
+  "game_over.termination.stalemate": "Stalemate",
+  "game_over.termination.insufficient_material": "Insuff. material",
+  "game_over.termination.seventyfive_moves": "75-move rule",
+  "game_over.termination.fivefold_repetition": "5x repetition",
+  "game_over.termination.fifty_moves": "50-move rule",
+  "game_over.termination.threefold_repetition": "3x repetition",
+  "game_over.termination.resign": "Resignation",
+  "game_over.termination.timeout": "Time forfeit",
+  "game_over.termination.time_forfeit": "Time forfeit",
+  "game_over.termination.abandoned": "Abandoned",
+
+  "setup.mode_title": "SETUP MODE",
+  "setup.arrange_pieces": "Arrange pieces",
+
+  "keyboard.page": "Page {current}/{max}",
+  "keyboard.up_down": "UP/DOWN",
+  "keyboard.place_piece": "Place piece: type",
+  "keyboard.back_del_tick_ok": "BACK:del TICK:ok",
+  "keyboard.play_cancel": "PLAY: cancel",
+
+  "passkey.title": "Pair Keyboard",
+  "passkey.type_code": "Type this code",
+  "passkey.then_enter": "then press Enter",
+
+  "about.get_support": "Get Support",
+  "about.incomplete_shutdown": "Incomplete shutdown",
+  "about.press_any_button": "Press any button",
+
+  "wifi.no_networks": "No networks found"
+}

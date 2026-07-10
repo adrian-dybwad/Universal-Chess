@@ -13,6 +13,7 @@ scan-results -> rows builder (so row construction is tested, not buried inline).
 
 from typing import List
 
+from universalchess.i18n import t
 from universalchess.menus.engine import MenuRow
 
 
@@ -61,7 +62,7 @@ def wifi_network_rows(networks: list) -> List[MenuRow]:
     pure so row construction is unit-tested rather than buried in a board closure.
     """
     if not networks:
-        return [MenuRow(key="__none__", label="No networks found", icon="wifi_disconnected", selectable=False)]
+        return [MenuRow(key="__none__", label=t("wifi.no_networks"), icon="wifi_disconnected", selectable=False)]
     rows: List[MenuRow] = []
     for net in networks[:10]:
         ssid = net["ssid"]

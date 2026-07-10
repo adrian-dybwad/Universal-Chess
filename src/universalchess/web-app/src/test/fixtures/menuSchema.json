@@ -603,6 +603,16 @@
         "value": "Australia/Sydney",
         "label": "Australia/Sydney"
       }
+    ],
+    "ui_language": [
+      {
+        "value": "en",
+        "label": "English"
+      },
+      {
+        "value": "es",
+        "label": "Español"
+      }
     ]
   },
   "accountTypes": [
@@ -2970,6 +2980,17 @@
       "label": "Timezone",
       "help": "Sets the device clock's timezone. Game times are always stored in UTC and shown here in your browser's timezone; this changes the board's own clock display. The full list is provided by the board at runtime.",
       "provider": "timezones",
+      "section": "system",
+      "platforms": [
+        "web"
+      ]
+    },
+    {
+      "id": "field.system.language",
+      "type": "select",
+      "label": "Language",
+      "help": "Language for the board menus, display, and this web app. The AI coach's remarks use the separate Coach Language setting under Game.",
+      "optionSet": "ui_language",
       "section": "system",
       "platforms": [
         "web"

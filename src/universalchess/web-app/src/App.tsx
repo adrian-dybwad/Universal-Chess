@@ -1,4 +1,6 @@
 import { BrowserRouter, Routes, Route, Link, Navigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { useDeviceLanguage } from './i18n/useDeviceLanguage';
 import { BackgroundActivityBanner } from './components/BackgroundActivityBanner';
 import { UpdateBanner } from './components/UpdateBanner';
 import { Navbar } from './components/Navbar';
@@ -45,16 +47,23 @@ export function AppRoutes() {
  * Main application component.
  * Layout matches original Flask template structure with Bulma classes.
  */
-function App() {
+/**
+ * App shell inside the providers. Kept as a separate component so it can use the
+ * settings-store-driven `useDeviceLanguage` hook (which must run under the
+ * GameStateProvider that seeds the store) and the translation hook.
+ */
+function AppShell() {
+  const { t } = useTranslation();
+  useDeviceLanguage();
+
   return (
-    <BrowserRouter>
-      <GameStateProvider>
-        <DocumentTitle />
-        <div className="app">
-          <UpdateBanner />
-          <BackgroundActivityBanner />
-          <Navbar />
-        
+    <>
+      <DocumentTitle />
+      <div className="app">
+        <UpdateBanner />
+        <BackgroundActivityBanner />
+        <Navbar />
+
         <section className="section">
           <div className="container">
             <AppRoutes />
@@ -64,19 +73,28 @@ function App() {
         <footer className="footer">
           <div className="content has-text-centered">
             <p>
-              <strong>Universal Chess</strong> &mdash; Open source software for smart chess boards
+              <strong>Universal Chess</strong> &mdash; {t('footer.tagline')}
               <br />
               <a href="https://github.com/adrian-dybwad/Universal-Chess" target="_blank" rel="noopener noreferrer">
-                GitHub
+                {t('footer.github')}
               </a>
               {' • '}
-              <Link to="/licenses">Licenses</Link>
+              <Link to="/licenses">{t('footer.licenses')}</Link>
               {' • '}
-              <Link to="/support">Support</Link>
+              <Link to="/support">{t('footer.support')}</Link>
             </p>
           </div>
         </footer>
-        </div>
+      </div>
+    </>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <GameStateProvider>
+        <AppShell />
       </GameStateProvider>
     </BrowserRouter>
   );

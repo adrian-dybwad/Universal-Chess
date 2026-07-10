@@ -30,14 +30,21 @@ function parse(value: string | null | undefined): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-/** Local-timezone date + time (e.g. "7/10/2026, 3:22 AM"), or "" if absent/invalid. */
-export function formatDateTime(value: string | null | undefined): string {
+/**
+ * Local-timezone date + time (e.g. "7/10/2026, 3:22 AM"), or "" if absent/invalid.
+ *
+ * `locale` (a BCP-47 tag such as "en" or "es") selects the localized formatting;
+ * callers pass the active UI language so dates follow the device locale. Omitted,
+ * it falls back to the runtime default locale. This module stays free of any i18n
+ * import so it remains a pure, independently testable formatter.
+ */
+export function formatDateTime(value: string | null | undefined, locale?: string): string {
   const date = parse(value);
-  return date ? date.toLocaleString() : '';
+  return date ? date.toLocaleString(locale) : '';
 }
 
-/** Local-timezone date only (e.g. "7/10/2026"), or "" if absent/invalid. */
-export function formatDate(value: string | null | undefined): string {
+/** Local-timezone date only (e.g. "7/10/2026"), or "" if absent/invalid. See `formatDateTime` for `locale`. */
+export function formatDate(value: string | null | undefined, locale?: string): string {
   const date = parse(value);
-  return date ? date.toLocaleDateString() : '';
+  return date ? date.toLocaleDateString(locale) : '';
 }

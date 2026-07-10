@@ -52,6 +52,20 @@ describe('datetime formatting', () => {
     expect(formatDate(dateOnly)).toBe(new Date('2026-07-10').toLocaleDateString());
   });
 
+  it('applies the given locale to the formatted output', () => {
+    // Why: dates must follow the device UI language (the SPA passes the active
+    // i18n language through). A regression that ignored the locale argument would
+    // render both calls identically. Comparing each call to the platform's own
+    // toLocale* for the same locale keeps the assertion locale-data-independent
+    // while still proving the argument is threaded through. es and en month/day
+    // ordering and separators differ, so the two rendered strings must diverge.
+    const iso = '2026-07-10T01:22:33+00:00';
+    const date = new Date(iso);
+    expect(formatDateTime(iso, 'es')).toBe(date.toLocaleString('es'));
+    expect(formatDate(iso, 'en')).toBe(date.toLocaleDateString('en'));
+    expect(formatDate(iso, 'es')).not.toBe(formatDate(iso, 'en'));
+  });
+
   it.each([undefined, null, '', 'not-a-date'])(
     'returns "" for absent/invalid input: %s',
     (value) => {

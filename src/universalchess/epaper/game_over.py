@@ -16,6 +16,7 @@ game state, rather than being externally managed by other widgets.
 from PIL import Image, ImageDraw, ImageFont, ImageChops
 from .framework.widget import Widget
 from .text import TextWidget, Justify
+from universalchess.i18n import t
 import os
 import sys
 import logging
@@ -183,11 +184,11 @@ class GameOverWidget(Widget):
             
             # Determine winner from result
             if result == "1-0":
-                self.winner = "White wins"
+                self.winner = t("game_over.result.white_wins")
             elif result == "0-1":
-                self.winner = "Black wins"
+                self.winner = t("game_over.result.black_wins")
             elif result == "1/2-1/2":
-                self.winner = "Draw"
+                self.winner = t("game_over.result.draw")
             else:
                 self.winner = result
         
@@ -256,22 +257,25 @@ class GameOverWidget(Widget):
         # Remove "Termination." prefix if present
         term = termination.replace("Termination.", "")
         
-        # Convert to readable format - use short forms for compact display
-        termination_map = {
-            "CHECKMATE": "Checkmate",
-            "STALEMATE": "Stalemate",
-            "INSUFFICIENT_MATERIAL": "Insuff. material",
-            "SEVENTYFIVE_MOVES": "75-move rule",
-            "FIVEFOLD_REPETITION": "5x repetition",
-            "FIFTY_MOVES": "50-move rule",
-            "THREEFOLD_REPETITION": "3x repetition",
-            "RESIGN": "Resignation",
-            "TIMEOUT": "Time forfeit",
-            "TIME_FORFEIT": "Time forfeit",
-            "ABANDONED": "Abandoned",
+        # Convert to readable format - use short forms for compact display.
+        # Localized via i18n; keys mirror the raw termination constants so a new
+        # termination without a mapping still falls through to term.title().
+        termination_keys = {
+            "CHECKMATE": "game_over.termination.checkmate",
+            "STALEMATE": "game_over.termination.stalemate",
+            "INSUFFICIENT_MATERIAL": "game_over.termination.insufficient_material",
+            "SEVENTYFIVE_MOVES": "game_over.termination.seventyfive_moves",
+            "FIVEFOLD_REPETITION": "game_over.termination.fivefold_repetition",
+            "FIFTY_MOVES": "game_over.termination.fifty_moves",
+            "THREEFOLD_REPETITION": "game_over.termination.threefold_repetition",
+            "RESIGN": "game_over.termination.resign",
+            "TIMEOUT": "game_over.termination.timeout",
+            "TIME_FORFEIT": "game_over.termination.time_forfeit",
+            "ABANDONED": "game_over.termination.abandoned",
         }
-        
-        return termination_map.get(term.upper(), term.title())
+
+        key = termination_keys.get(term.upper())
+        return t(key) if key else term.title()
     
     def _format_time(self, seconds: int) -> str:
         """

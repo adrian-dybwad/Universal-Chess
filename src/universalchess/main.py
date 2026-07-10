@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 # Initialize display FIRST, before board module is imported
 # This allows showing a splash screen while the board initializes
 from universalchess.board.logging import log
+from universalchess.i18n import t
 from universalchess.epaper import Manager, SplashScreen, IconMenuWidget, IconMenuEntry, KeyboardWidget, show_fullscreen_splash
 from universalchess.epaper.status_bar import STATUS_BAR_HEIGHT
 from universalchess.menus import (
@@ -413,7 +414,7 @@ def _init_display_early():
         _early_display_manager = manager
         # Show splash screen immediately (full screen, no status bar)
         _early_display_manager.clear_widgets(addStatusBar=False)
-        _startup_splash = SplashScreen(_early_display_manager.update, message="Starting...", leave_room_for_status_bar=False)
+        _startup_splash = SplashScreen(_early_display_manager.update, message=t("splash.starting"), leave_room_for_status_bar=False)
         promise = _early_display_manager.add_widget(_startup_splash)
         # Don't block - monitor in background thread
         _wait_for_display_promise(promise, "add_splash", timeout=10.0)
@@ -463,7 +464,7 @@ board.init_board()
 
 # Board is now ready - update splash
 if _startup_splash:
-    _startup_splash.set_message("Loading...")
+    _startup_splash.set_message(t("splash.loading"))
 
 # Continue with remaining imports
 import time as _import_time
@@ -491,7 +492,7 @@ except Exception as e:
 
 try:
     if _startup_splash:
-        _startup_splash.set_message("Chess...")
+        _startup_splash.set_message(t("splash.chess"))
     log.info("[Startup] Importing chess...")
     import chess
     log.debug(f"[Import timing] chess: {(_import_time.time() - _import_start)*1000:.0f}ms"); _import_start = _import_time.time()
@@ -507,7 +508,7 @@ log.debug(f"[Import timing] pathlib: {(_import_time.time() - _import_start)*1000
 
 try:
     if _startup_splash:
-        _startup_splash.set_message("Graphics...")
+        _startup_splash.set_message(t("splash.graphics"))
     log.info("[Startup] Importing PIL...")
     from PIL import Image, ImageDraw, ImageFont
     log.debug(f"[Import timing] PIL: {(_import_time.time() - _import_start)*1000:.0f}ms"); _import_start = _import_time.time()
@@ -517,7 +518,7 @@ except Exception as e:
 
 try:
     if _startup_splash:
-        _startup_splash.set_message("Managers...")
+        _startup_splash.set_message(t("splash.managers"))
     log.info("[Startup] Importing managers...")
     from universalchess.managers import (
         RfcommManager,
@@ -544,7 +545,7 @@ log.info("[Startup] All imports completed successfully")
 
 # All imports complete
 if _startup_splash:
-    _startup_splash.set_message("Initializing...")
+    _startup_splash.set_message(t("splash.initializing"))
 
 # App States
 class AppState(Enum):
@@ -4577,7 +4578,7 @@ def _build_updates_context():
     ctx.register_store("update", update_get, update_set)
     ctx.register_value(
         "auto_update_state",
-        lambda node: "Enabled" if update_get("auto_update") else "Disabled",
+        lambda node: t("common.enabled") if update_get("auto_update") else t("common.disabled"),
     )
     ctx.register_action("check_updates", do_check)
     ctx.register_action("download_update", do_download)
@@ -4627,16 +4628,20 @@ def _build_system_context():
     effect (reset, shutdown, reboot, cancel) via actions. (Live Analysis moved to
     the Game submenu, matching the web.)
     """
+    from universalchess import i18n
     from universalchess.menus.board_context import BoardMenuContext
+    from universalchess.menus.catalog import loader as catalog_loader
     from universalchess.services.power import perform_shutdown, perform_reboot
 
-    from universalchess.services import timezone_service
+    from universalchess.services import language_service, timezone_service
 
     def system_get(key):
         if key == "sleep_seconds":
             return board.get_inactivity_timeout()
         if key == "timezone":
             return timezone_service.get_timezone()
+        if key == "ui_language":
+            return language_service.get_language()
         raise KeyError(f"unknown system store key: {key!r}")
 
     def system_set(key, value):
@@ -4653,6 +4658,19 @@ def _build_system_context():
                 log.info(f"[Settings] Timezone set to {value} (applied={applied})")
             except ValueError:
                 log.warning(f"[Settings] Rejected invalid timezone: {value!r}")
+            return
+        if key == "ui_language":
+            # Persist the UI locale, then refresh the cached catalog language so
+            # the very next menu render (below) is drawn in the new language. An
+            # unsupported code from the fixed board list should not happen, but a
+            # bad value is logged (not raised) so the menu still redraws.
+            try:
+                language_service.set_language(str(value))
+                catalog_loader.refresh_active_language()
+                i18n.refresh_active_language()
+                log.info(f"[Settings] UI language set to {value}")
+            except ValueError:
+                log.warning(f"[Settings] Rejected invalid UI language: {value!r}")
             return
         raise NotImplementedError(f"unknown system store key: {key!r}")
 
@@ -4723,7 +4741,7 @@ def _wifi_status_rows():
             selectable=True,
             # Enable-state footer so the merged status row reads as a toggle: a
             # checkbox + Enabled/Disabled drawn under the status readout.
-            description="Enabled" if enabled else "Disabled",
+            description=t("common.enabled") if enabled else t("common.disabled"),
             trailing_icon="checkbox_checked" if enabled else "checkbox_empty",
         )
     ]
@@ -4733,7 +4751,7 @@ def _wifi_no_networks_splash():
     """Show a brief 'No networks found' splash (matches the pre-engine scaffold)."""
     board.display_manager.clear_widgets(addStatusBar=False)
     promise = board.display_manager.add_widget(
-        SplashScreen(board.display_manager.update, message="No networks found", leave_room_for_status_bar=False)
+        SplashScreen(board.display_manager.update, message=t("wifi.no_networks"), leave_room_for_status_bar=False)
     )
     if promise:
         try:
@@ -4807,7 +4825,7 @@ def _build_wifi_context():
     ctx.register_store("wifi", wifi_get, wifi_set)
     ctx.register_provider("wifi_status", _wifi_status_rows)
     ctx.register_provider("wifi_networks", lambda: wifi_network_rows(scan_cache["networks"]))
-    ctx.register_value("wifi_enable_state", lambda node: "Enabled" if wifi_get("enabled") else "Disabled")
+    ctx.register_value("wifi_enable_state", lambda node: t("common.enabled") if wifi_get("enabled") else t("common.disabled"))
     ctx.register_action("wifi_scan", wifi_scan)
     ctx.register_action("wifi_connect", wifi_connect)
     return ctx
@@ -4905,7 +4923,7 @@ def _bluetooth_status_rows():
             selectable=True,
             # Enable-state footer so the button reads as a toggle: a checkbox +
             # Enabled/Disabled drawn under the status readout.
-            description="Enabled" if enabled else "Disabled",
+            description=t("common.enabled") if enabled else t("common.disabled"),
             trailing_icon="checkbox_checked" if enabled else "checkbox_empty",
         )
         for row in rows
@@ -5159,7 +5177,7 @@ def _build_bluetooth_context():
     ctx.register_provider("bluetooth_keyboards", keyboards_provider)
     ctx.register_value(
         "bluetooth_enable_state",
-        lambda node: "Enabled" if bt_get("enabled") else "Disabled",
+        lambda node: t("common.enabled") if bt_get("enabled") else t("common.disabled"),
     )
     ctx.register_value(
         "bt_device_status",
@@ -6624,6 +6642,13 @@ def main():
         if hasattr(time, "tzset"):
             time.tzset()
         _load_game_settings()
+        # The UI language may have changed via the web; re-read it so the cached
+        # localized catalog and the i18n string bundles switch locale before the
+        # menu below re-renders. Harmless when the language is unchanged.
+        from universalchess import i18n
+        from universalchess.menus.catalog import loader as catalog_loader
+        catalog_loader.refresh_active_language()
+        i18n.refresh_active_language()
         # Refresh the current menu if one is active (so it shows updated values)
         if _menu_manager is not None:
             _menu_manager.refresh_menu()

@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw
 from .framework.widget import Widget
 from typing import Optional
 
+from universalchess.i18n import t
 from universalchess.resources import get_font
 
 try:
@@ -76,7 +77,7 @@ class AboutWidget(Widget):
         version_font = get_font(10)
         
         # Draw title
-        draw.text((64, self.TITLE_Y), "Get Support", 
+        draw.text((64, self.TITLE_Y), t("about.get_support"), 
                   font=title_font, fill=0, anchor="mm")
         
         # Draw QR code or fallback text
@@ -113,11 +114,11 @@ class AboutWidget(Widget):
         with contextlib.suppress(ImportError, AttributeError):
             import universalchess.main as universal_module
             if universal_module.incomplete_shutdown:
-                draw.text((64, self.WARNING_Y), "Incomplete shutdown", 
+                draw.text((64, self.WARNING_Y), t("about.incomplete_shutdown"), 
                           font=version_font, fill=0, anchor="mm")
         
         # Draw dismiss instruction
-        draw.text((64, self.INSTRUCTION_Y), "Press any button", 
+        draw.text((64, self.INSTRUCTION_Y), t("about.press_any_button"), 
                   font=version_font, fill=0, anchor="mm")
     
     def dismiss(self) -> None:

@@ -46,7 +46,7 @@ class _FakeMenuManager:
                 return result
 
 
-def _system_ctx(*, timeout_seconds=0, timezone="UTC", calls=None, saved=None):
+def _system_ctx(*, timeout_seconds=0, timezone="UTC", ui_language="en", calls=None, saved=None):
     """Board context for the System subtree, mirroring main._build_system_context.
 
     The ``system`` store exposes ``sleep_seconds`` (the inactivity timeout) and is
@@ -65,6 +65,8 @@ def _system_ctx(*, timeout_seconds=0, timezone="UTC", calls=None, saved=None):
             return timeout_seconds
         if key == "timezone":
             return timezone
+        if key == "ui_language":
+            return ui_language
         raise KeyError(key)
 
     def system_set(key, value):
@@ -103,10 +105,10 @@ def test_system_menu_lists_all_rows_in_order():
     layout; the data-driven build must reproduce the exact order the bespoke
     builder produced. How a regression manifests: a row is dropped, reordered,
     or a new child leaks in, changing this key list. Timezone was added after
-    the Sleep Timer (Inactivity) row.
+    the Sleep Timer (Inactivity) row; Language was added after Timezone.
     """
     keys = [r.key for r in _system_rows()]
-    assert keys == ["Engines", "Inactivity", "Timezone", "ResetSettings", "About", "Power"]
+    assert keys == ["Engines", "Inactivity", "Timezone", "Language", "ResetSettings", "About", "Power"]
 
 
 def test_selecting_timezone_persists_iana_name():
@@ -123,6 +125,23 @@ def test_selecting_timezone_persists_iana_name():
     mm = _FakeMenuManager(["Timezone", "Europe/Paris", "BACK"])
     run_engine_menu("system", ctx, mm, catalog=load_catalog())
     assert saved["timezone"] == "Europe/Paris"
+
+
+def test_selecting_language_persists_locale_code():
+    """Picking a Language option writes the locale code to the system store.
+
+    Why this test exists: Language is a board ``select`` over the ``ui_language``
+    option set bound to system.ui_language; the board setter persists the UI
+    locale and refreshes the catalog language. How a regression manifests: the
+    select is inert (nothing written), so the board can no longer change its
+    language. The stored value is the code ("es"), not the display label.
+    """
+    saved = {}
+    ctx = _system_ctx(ui_language="en", saved=saved)
+    # System: open Language; inner list: pick Espanol (es); System: BACK.
+    mm = _FakeMenuManager(["Language", "es", "BACK"])
+    run_engine_menu("system", ctx, mm, catalog=load_catalog())
+    assert saved["ui_language"] == "es"
 
 
 def test_power_submenu_contains_only_shutdown_and_reboot():

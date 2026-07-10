@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { Button, Card, CardHeader, FormRow, Input, Select, Toggle, Badge, ProgressBar } from '../components/ui';
 import { CatalogField } from '../components/CatalogField';
 import { EngineProfileEditor } from '../components/EngineProfileEditor';
@@ -149,11 +150,13 @@ const SETTINGS_TAB_IDS: SettingsTab[] = ['players', 'game', 'display', 'sound', 
 // Web-only Settings tabs, appended beneath the catalog-backed sections. Support
 // and Licenses are informational web pages, not board menu sections, so they are
 // declared here with web-defined labels/icons instead of in the shared catalog
-// (which is mirrored on the e-paper board). 'info' (help) and 'document' (a
+// (which is mirrored on the e-paper board). The label is an i18n key (resolved at
+// render) rather than literal text, so these tabs localize with the device UI
+// language like the catalog-backed sections do. 'info' (help) and 'document' (a
 // page/doc glyph) are existing MenuIcon ids.
-const WEB_ONLY_TABS: { id: SettingsTab; label: string; icon: string }[] = [
-  { id: 'support', label: 'Support', icon: 'info' },
-  { id: 'licenses', label: 'Licenses', icon: 'document' },
+const WEB_ONLY_TABS: { id: SettingsTab; labelKey: string; icon: string }[] = [
+  { id: 'support', labelKey: 'settingsTabs.support', icon: 'info' },
+  { id: 'licenses', labelKey: 'settingsTabs.licenses', icon: 'document' },
 ];
 
 // Every id the sub-nav accepts: catalog-backed sections plus the web-only tabs.
@@ -255,6 +258,7 @@ interface FormSettings {
     database_uri: string;
     inactivity_timeout: string;
     timezone: string;
+    ui_language: string;
   };
 }
 
@@ -292,7 +296,7 @@ const defaultFormSettings: FormSettings = {
   },
   lichess: { api_token: '', range: '', username: '' },
   sound: { enabled: true, key_press: true, game_events: true, piece_events: true, errors: true },
-  system: { database_uri: '', inactivity_timeout: '900', timezone: 'UTC' },
+  system: { database_uri: '', inactivity_timeout: '900', timezone: 'UTC', ui_language: 'en' },
 };
 
 /**
@@ -421,6 +425,11 @@ function parseRawSettings(data: SettingsData): FormSettings {
       // but changed only through the dedicated /api/system/timezone endpoint (which
       // also applies it to the OS), never the generic settings save.
       timezone: data.system?.timezone || 'UTC',
+      // Device UI locale (en/es). Persisted in [system] ui_language and changed
+      // only through the dedicated /api/system/language endpoint (which notifies
+      // the board to re-render), never the generic settings save. Defaults to the
+      // English source locale when unset.
+      ui_language: data.system?.ui_language || 'en',
     },
   };
 }
@@ -514,6 +523,7 @@ interface AgentEdit {
  * Settings page with tabbed navigation matching the Flask version.
  */
 export function Settings() {
+  const { t } = useTranslation();
   const { tab: tabParam } = useParams();
   const navigate = useNavigate();
   const activeTab = parseSettingsTab(tabParam);
@@ -606,6 +616,10 @@ export function Settings() {
   // endpoint (not the generic settings save). Stash the target zone so a login
   // retry re-applies exactly the zone the user picked.
   const pendingTimezoneRef = useRef<string | null>(null);
+  // Changing the device UI language is auth-gated and applied through a dedicated
+  // endpoint (not the generic settings save) so the board is notified to
+  // re-render. Stash the target locale so a login retry re-applies the user's pick.
+  const pendingLanguageRef = useRef<string | null>(null);
   // Busy/error for the custom-engine add forms. URL installs hand off to the
   // shared install-status watcher; uploads complete in-request and refresh.
   const [customEngineBusy, setCustomEngineBusy] = useState(false);
@@ -635,12 +649,17 @@ export function Settings() {
   const storeRevision = useSettingsStore((s) => s.revision);
   const storeBeginPending = useSettingsStore((s) => s.beginPending);
   const storeEndPending = useSettingsStore((s) => s.endPending);
+  // The device UI language drives the *server-localized* catalog: /api/menu-schema
+  // returns labels/help/options in this locale. Tracked so a language change (from
+  // the board or another tab) re-fetches the catalog in the new language.
+  const deviceLanguage = useSettingsStore((s) => s.raw?.system?.ui_language);
 
-  // Load the shared menu catalog. It is immutable for the lifetime of the
-  // running backend version (a static menu.json read server-side), so it is
-  // fetched exactly once on mount -- not on every settings refresh. Treated as a
-  // required dependency: a failure surfaces via the load error path rather than
-  // silently rendering hardcoded labels that may have drifted from the catalog.
+  // Load the shared menu catalog. Its structure is fixed for the running backend
+  // version, but its strings are localized server-side to the device UI language,
+  // so it is fetched on mount and again whenever that language changes (below) --
+  // not on every settings refresh. Treated as a required dependency: a failure
+  // surfaces via the load error path rather than silently rendering hardcoded
+  // labels that may have drifted from the catalog.
   const loadCatalog = useCallback(async () => {
     const data = await apiFetch('/api/menu-schema').then((r) => r.json());
     if (!data || data.error) {
@@ -732,6 +751,19 @@ export function Settings() {
     // stable useCallback, so listing it does not cause extra runs; parse/merge
     // helpers are module-level and the store/refs are read imperatively.
   }, [storeRevision, fetchAgents]);
+
+  // Re-fetch the catalog when the device UI language changes so the Settings
+  // field labels, help, and option labels switch to the new locale. Skipped on
+  // the initial load (the mount effect already fetched it); only a genuine later
+  // change -- e.g. the language selector saved here, or a change on the board --
+  // triggers a refetch. Failures are non-fatal: the previously loaded (other
+  // language) catalog stays rendered rather than blanking the page.
+  useEffect(() => {
+    if (!initialLoadedRef.current) return;
+    void loadCatalog().catch((e) => {
+      console.error('Failed to reload localized catalog:', e);
+    });
+  }, [deviceLanguage, loadCatalog]);
 
   // Cancel a pending debounced save if the page unmounts, so a save never fires
   // against a torn-down component.
@@ -1124,6 +1156,32 @@ export function Settings() {
     }
   };
 
+  // Change the device UI language through the dedicated /api/system/language
+  // endpoint (auth-gated). Unlike the timezone there is no OS apply step -- the
+  // locale only selects translations -- but the endpoint notifies the board so
+  // its e-paper menu re-renders, and the resulting settings_changed refresh
+  // switches this SPA's own language (via useDeviceLanguage) and re-fetches the
+  // localized catalog. The form is updated optimistically so the selector and the
+  // store-derived language reflect the choice immediately.
+  const saveLanguage = async (code: string) => {
+    updateFormSettings('system', { ui_language: code });
+    try {
+      const response = await apiFetch('/api/system/language', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ language: code }),
+        requiresAuth: true,
+      });
+      if (response.status === 401) {
+        setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
+        pendingLanguageRef.current = code;
+        setLoginDialogOpen(true);
+      }
+    } catch (e) {
+      console.error('Failed to set language:', e);
+    }
+  };
+
   // Keep the auto-save's refs pointing at the latest closures/state. Synced in an
   // effect (never mutated during render) so the debounced save and per-agent Save,
   // which run outside render, always see the current form and coach requirement.
@@ -1160,6 +1218,13 @@ export function Settings() {
       const tz = pendingTimezoneRef.current;
       pendingTimezoneRef.current = null;
       await saveTimezone(tz);
+      return;
+    }
+
+    if (pendingLanguageRef.current) {
+      const code = pendingLanguageRef.current;
+      pendingLanguageRef.current = null;
+      await saveLanguage(code);
       return;
     }
 
@@ -1564,7 +1629,7 @@ export function Settings() {
       const section = catalog.sections.find((s) => s.id === id);
       return section ? [{ id, label: section.label, icon: section.icon }] : [];
     }),
-    ...WEB_ONLY_TABS,
+    ...WEB_ONLY_TABS.map((tab) => ({ id: tab.id, label: t(tab.labelKey), icon: tab.icon })),
   ];
 
   const optionSet = (name: string): MenuOption[] => catalog.optionSets[name] ?? [];
@@ -1590,6 +1655,9 @@ export function Settings() {
   const sleepTimerOptions = optionSet('sleep_timer');
   // Full IANA zone list injected by the board into /api/menu-schema at runtime.
   const timezoneOptions = optionSet('timezones');
+  // Device UI locales (en/es) from the shared catalog option set; the source for
+  // both the board Language menu and this selector, so they cannot drift.
+  const languageOptions = optionSet('ui_language');
   const notationOptions = optionSet('notation');
   const textSizeOptions = optionSet('text_size');
   const coachLanguageOptions = optionSet('coach_language');
@@ -2609,6 +2677,25 @@ export function Settings() {
                   value={formSettings.system.timezone}
                   options={timezoneOptions}
                   onChange={(e) => saveTimezone(e.target.value)}
+                />
+              </FormRow>
+            </Card>
+
+            {/* Language selects the device UI locale via the dedicated
+                /api/system/language endpoint (persist + notify the board). The
+                option list comes from the shared `ui_language` catalog option set,
+                so it stays in lockstep with the board's Language menu. This is
+                distinct from the AI coach's commentary language (Game tab). */}
+            <Card className="mb-6">
+              <CardHeader title={fieldLabel('field.system.language')} />
+              <FormRow
+                label={fieldLabel('field.system.language')}
+                help={fieldHelp('field.system.language')}
+              >
+                <Select
+                  value={formSettings.system.ui_language}
+                  options={languageOptions}
+                  onChange={(e) => saveLanguage(e.target.value)}
                 />
               </FormRow>
             </Card>

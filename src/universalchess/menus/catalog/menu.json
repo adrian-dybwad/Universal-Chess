@@ -109,6 +109,10 @@
       { "value": "medium", "label": "Medium", "font_size": 16 },
       { "value": "large", "label": "Large", "font_size": 20 }
     ],
+    "ui_language": [
+      { "value": "en", "label": "English" },
+      { "value": "es", "label": "Espa\u00f1ol" }
+    ],
     "coach_language": [
       { "value": "English", "label": "English" },
       { "value": "Spanish", "label": "Spanish (Espa\u00f1ol)" },
@@ -892,7 +896,7 @@
       "type": "menu",
       "label": "System",
       "platforms": ["board"],
-      "children": ["system.engines", "system.inactivity", "system.timezone", "system.reset", "system.about", "system.power"]
+      "children": ["system.engines", "system.inactivity", "system.timezone", "system.language", "system.reset", "system.about", "system.power"]
     },
     {
       "id": "system.engines",
@@ -927,6 +931,18 @@
       "help": "Set the device clock's timezone. Stored game times stay in UTC; this affects the board clock display.",
       "bind": { "store": "system", "key": "timezone" },
       "icon": "timer",
+      "platforms": ["board"]
+    },
+    {
+      "id": "system.language",
+      "key": "Language",
+      "type": "select",
+      "optionSet": "ui_language",
+      "label": "Language",
+      "boardLabel": "Language\n{value}",
+      "help": "Language for the board menus, display, and web app. The AI coach's remarks use the separate Coach Language setting.",
+      "bind": { "store": "system", "key": "ui_language" },
+      "icon": "settings",
       "platforms": ["board"]
     },
     {
@@ -1612,6 +1628,15 @@
       "label": "Timezone",
       "help": "Sets the device clock's timezone. Game times are always stored in UTC and shown here in your browser's timezone; this changes the board's own clock display. The full list is provided by the board at runtime.",
       "provider": "timezones",
+      "section": "system",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.system.language",
+      "type": "select",
+      "label": "Language",
+      "help": "Language for the board menus, display, and this web app. The AI coach's remarks use the separate Coach Language setting under Game.",
+      "optionSet": "ui_language",
       "section": "system",
       "platforms": ["web"]
     },

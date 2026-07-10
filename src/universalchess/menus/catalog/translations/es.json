@@ -1,0 +1,684 @@
+{
+  "_comment": "Spanish (es) translation overlay for menu.json. Keyed by node id / optionSet name / section id. Only translated strings are listed; anything omitted falls back to the English source in menu.json. Language names in the 'ui_language' optionSet are intentionally left untranslated (endonyms).",
+
+  "sections": {
+    "players": "Jugadores",
+    "game": "Partida",
+    "agents": "Agentes",
+    "display": "Pantalla",
+    "sound": "Sonido",
+    "connectivity": "Conectividad",
+    "accounts": "Cuentas",
+    "engines": "Motores",
+    "system": "Sistema"
+  },
+
+  "optionSets": {
+    "color": {
+      "white": "Blancas",
+      "black": "Negras"
+    },
+    "player_type": {
+      "human": "Humano",
+      "engine": "Motor",
+      "hand_brain": "Mano + Cerebro",
+      "lichess": "Lichess"
+    },
+    "hand_brain_mode": {
+      "normal": "Normal (Motor = Cerebro)",
+      "reverse": "Inverso (Humano = Cerebro)"
+    },
+    "time_control": {
+      "0": "Sin reloj",
+      "1": "1 min (Bala)",
+      "3": "3 min (Blitz)",
+      "5": "5 min (Blitz)",
+      "10": "10 min (Rápido)",
+      "15": "15 min (Rápido)",
+      "30": "30 min (Clásico)",
+      "60": "60 min (Clásico)",
+      "90": "90 min (Clásico)"
+    },
+    "tc_increment": {
+      "0": "Ninguno",
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s",
+      "10": "10 s",
+      "15": "15 s",
+      "30": "30 s",
+      "60": "60 s"
+    },
+    "tc_delay": {
+      "0": "Ninguno",
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s",
+      "10": "10 s"
+    },
+    "tc_delay_mode": {
+      "none": "Ninguno",
+      "simple": "Simple (EE. UU.)",
+      "bronstein": "Bronstein"
+    },
+    "engine_move_delay": {
+      "0": "Ninguno",
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s"
+    },
+    "update_channel": {
+      "stable": "Estable (Recomendado)",
+      "nightly": "Nightly (Desarrollo)"
+    },
+    "sleep_timer": {
+      "0": "Desactivado",
+      "300": "5 min",
+      "600": "10 min",
+      "900": "15 min",
+      "1800": "30 min",
+      "3600": "1 hora"
+    },
+    "notation": {
+      "figurine": "Figuras (♘f3)",
+      "san": "Estándar (Nf3)",
+      "lan": "Larga (Ng1-f3)",
+      "uci": "Coordenadas (g1f3)"
+    },
+    "text_size": {
+      "small": "Pequeño",
+      "medium": "Mediano",
+      "large": "Grande"
+    },
+    "coach_language": {
+      "English": "Inglés",
+      "Spanish": "Español",
+      "Chinese": "Chino (中文)",
+      "Hindi": "Hindi (हिन्दी)",
+      "Arabic": "Árabe (العربية)",
+      "French": "Francés (Français)",
+      "Russian": "Ruso (Русский)",
+      "Portuguese": "Portugués (Português)",
+      "German": "Alemán (Deutsch)",
+      "Japanese": "Japonés (日本語)"
+    },
+    "timezones_common": {
+      "Europe/London": "Londres",
+      "Europe/Moscow": "Moscú",
+      "America/New_York": "Nueva York",
+      "America/Los_Angeles": "Los Ángeles",
+      "Asia/Tokyo": "Tokio"
+    }
+  },
+
+  "accountTypes": {
+    "lichess": {
+      "fields": {
+        "api_token": {
+          "label": "Token de API",
+          "help": "Obtén un token en lichess.org con los permisos challenge:write y board:play"
+        },
+        "range": {
+          "label": "Rango de rating",
+          "help": "Rango de rating preferido de los rivales para el emparejamiento"
+        }
+      }
+    }
+  },
+
+  "nodes": {
+    "main": { "label": "Menú principal" },
+    "main.play": {
+      "label": "JUGAR",
+      "label_in_progress": "REANUDAR",
+      "help": "Inicia una nueva partida. Cuando hay una partida suspendida muestra REANUDAR y la continúa."
+    },
+    "main.settings": {
+      "label": "Ajustes",
+      "help": "Configura jugadores, control de tiempo, posiciones, pantalla, conectividad y opciones del sistema."
+    },
+    "main.centaur": {
+      "label": "Centaur\noriginal",
+      "help": "Vuelve al software original de DGT Centaur."
+    },
+
+    "settings": { "label": "Ajustes" },
+    "settings.players": {
+      "label": "Jugadores",
+      "help": "Configura nombres de jugadores, tipos y preferencias de motor."
+    },
+    "players.player1": {
+      "label": "Jugador 1\n{fn:player1_summary}",
+      "help": "Configura al Jugador 1 (quien controla el color elegido)."
+    },
+    "players.player2": {
+      "label": "Jugador 2\n{fn:player2_summary}",
+      "help": "Configura al Jugador 2."
+    },
+    "players.start": {
+      "label": "Nueva\npartida",
+      "help": "Inicia una nueva partida con la configuración actual de jugadores. Finaliza cualquier partida en curso."
+    },
+    "settings.player_detail": {
+      "label": "Jugador",
+      "help": "Configura un jugador."
+    },
+    "settings.game": {
+      "label": "Partida",
+      "help": "Control de tiempo y análisis de la posición en vivo."
+    },
+    "settings.agents": {
+      "label": "Agentes",
+      "help": "Configura los agentes de IA (servicios) que impulsan funciones como el entrenador: clave API, modelo y endpoint."
+    },
+    "settings.notation": {
+      "label": "Notación de jugadas",
+      "boardLabel": "Notación\n{value}",
+      "help": "Notación de ajedrez usada para el historial de jugadas en el tablero y la web."
+    },
+    "settings.chess960": {
+      "help": "Inicia cada nueva partida desde una posición aleatoria de Chess960 (Fischer Random). La posición objetivo se muestra en la pantalla; coloca las piezas para que coincidan."
+    },
+    "settings.timecontrol": {
+      "label": "Minutos base",
+      "boardLabel": "Min. base\n{fn:time_control}",
+      "help": "Minutos por jugador para un reloj simple de muerte súbita (sin incremento ni retardo)."
+    },
+    "settings.timecontrol.menu": {
+      "label": "Control de tiempo",
+      "boardLabel": "Reloj\n{fn:time_control}",
+      "help": "Elige un preajuste de reloj, crea uno personalizado o define los minutos base."
+    },
+    "timecontrol": {
+      "label": "Control de tiempo",
+      "help": "Configura el reloj de la partida: un preajuste, un reloj personalizado o los minutos base."
+    },
+    "settings.timecontrol.engine_move_delay": {
+      "label": "Retardo de jugada del motor",
+      "boardLabel": "Retardo motor\n{value}",
+      "help": "En partidas cronometradas contra el motor, cuando el motor muestra su jugada su reloj se detiene y el tuyo arranca tras este retardo (mientras mueves su pieza)."
+    },
+    "settings.timecontrol.preset": {
+      "label": "Preajuste",
+      "boardLabel": "Preajuste\n{fn:time_control_preset_label}",
+      "help": "Elige un control de tiempo predefinido: muerte súbita, incremento, retardo o un control de torneo. Elige Personalizado para usar el reloj personalizado."
+    },
+    "settings.timecontrol.custom": {
+      "label": "Reloj personalizado",
+      "help": "Crea tu propio reloj: tiempo base, incremento, retardo y, opcionalmente, tiempos distintos por bando."
+    },
+    "timecontrol.custom": {
+      "label": "Reloj personalizado",
+      "help": "Ajustes del reloj personalizado. Selecciona el preajuste Personalizado para usarlos."
+    },
+    "timecontrol.custom.base": {
+      "label": "Tiempo base",
+      "boardLabel": "Base\n{value}",
+      "help": "Tiempo inicial en el reloj de cada jugador."
+    },
+    "timecontrol.custom.increment": {
+      "label": "Incremento",
+      "boardLabel": "Incremento\n{value}",
+      "help": "Segundos añadidos al reloj del jugador tras cada jugada (incremento Fischer)."
+    },
+    "timecontrol.custom.delay": {
+      "label": "Retardo",
+      "boardLabel": "Retardo\n{value}",
+      "help": "Segundos de retardo por jugada, aplicados según el ajuste Modo de retardo."
+    },
+    "timecontrol.custom.mode": {
+      "label": "Modo de retardo",
+      "boardLabel": "Modo\n{value}",
+      "help": "Ninguno: sin retardo. Simple: el reloj espera antes de descontar. Bronstein: se devuelve el tiempo usado, hasta el retardo."
+    },
+    "timecontrol.custom.asymmetric": {
+      "label": "Distinto por bando",
+      "boardLabel": "Asimétrico\n{value}",
+      "help": "Da a Blancas y Negras tiempos distintos (ventaja de tiempo). Cuando está activado, define abajo la base y el incremento de las Negras."
+    },
+    "timecontrol.custom.black_base": {
+      "label": "Tiempo base de las negras",
+      "boardLabel": "Base negras\n{value}",
+      "help": "Tiempo inicial en el reloj de las Negras cuando se usan tiempos distintos por bando."
+    },
+    "timecontrol.custom.black_increment": {
+      "label": "Incremento de las negras",
+      "boardLabel": "Inc. negras\n{value}",
+      "help": "Segundos añadidos al reloj de las Negras tras cada jugada cuando se usan tiempos distintos por bando."
+    },
+    "settings.positions": {
+      "label": "Posiciones",
+      "help": "Coloca una posición predefinida en el tablero para practicar o analizar."
+    },
+    "settings.display": {
+      "label": "Pantalla",
+      "help": "Controla lo que aparece en la pantalla de tinta electrónica y los LED."
+    },
+    "settings.display.board": {
+      "label": "Tablero",
+      "help": "Visibilidad del tablero y hoja de sprites usada para dibujar las piezas."
+    },
+    "settings.sound": {
+      "label": "Sonido",
+      "help": "Controla el sonido y los pitidos."
+    },
+    "settings.connectivity": {
+      "label": "Conectividad",
+      "help": "Red, periféricos, duplicación de pantalla y conexiones de cuentas."
+    },
+    "settings.system": {
+      "label": "Sistema",
+      "help": "Motores, mantenimiento, actualizaciones de software y energía."
+    },
+
+    "connectivity": { "label": "Conectividad" },
+    "connectivity.wifi": {
+      "help": "Conecta el tablero a una red inalámbrica."
+    },
+    "connectivity.bluetooth": {
+      "help": "Empareja un teclado Bluetooth con el tablero."
+    },
+    "connectivity.chromecast": {
+      "help": "Duplica el tablero en un dispositivo Chromecast."
+    },
+    "connectivity.accounts": {
+      "label": "Cuentas",
+      "help": "Conecta servicios externos como Lichess."
+    },
+
+    "wifi": {
+      "label": "WiFi",
+      "help": "Estado del WiFi, buscar redes y activar o desactivar la radio."
+    },
+    "wifi.scan": {
+      "label": "Buscar",
+      "help": "Busca redes inalámbricas disponibles y conéctate."
+    },
+    "wifi.networks": {
+      "label": "Redes",
+      "help": "Redes inalámbricas encontradas en la última búsqueda."
+    },
+    "wifi.networks.list": {
+      "help": "Selecciona una red para conectar; las redes seguras piden una contraseña."
+    },
+    "wifi.status": {
+      "help": "Estado y potencia de señal de la conexión WiFi actual."
+    },
+    "wifi.enabled": {
+      "help": "Estado de la conexión WiFi. Selecciona para activar o desactivar la radio WiFi."
+    },
+
+    "bluetooth": {
+      "label": "Bluetooth",
+      "help": "Estado del Bluetooth, difusión y dispositivos emparejados."
+    },
+    "bluetooth.status": {
+      "help": "Estado actual de la conexión Bluetooth y de la difusión BLE."
+    },
+    "bluetooth.enabled": {
+      "help": "Estado de la conexión y difusión Bluetooth. Selecciona para activar o desactivar la radio Bluetooth."
+    },
+    "bluetooth.devices": {
+      "label": "Dispositivos",
+      "help": "Empareja un teclado nuevo y consulta o gestiona los dispositivos Bluetooth emparejados."
+    },
+    "bluetooth.pair": {
+      "label": "Emparejar teclado",
+      "help": "Busca y empareja un teclado Bluetooth."
+    },
+    "bluetooth.devices.list": {
+      "label": "Dispositivos",
+      "help": "Selecciona un dispositivo emparejado para conectarlo, desconectarlo u olvidarlo, o empareja un teclado nuevo."
+    },
+    "bluetooth.devices.list.items": {
+      "help": "Selecciona un dispositivo emparejado para gestionarlo."
+    },
+    "bluetooth.device.detail": {
+      "label": "Dispositivo",
+      "help": "Conecta, desconecta u olvida el dispositivo Bluetooth seleccionado."
+    },
+    "bluetooth.device.info": {
+      "help": "El dispositivo seleccionado y su estado de conexión."
+    },
+    "bluetooth.device.connect": {
+      "label": "Conectar",
+      "help": "Conectar con este dispositivo."
+    },
+    "bluetooth.device.disconnect": {
+      "label": "Desconectar",
+      "help": "Desconectar este dispositivo."
+    },
+    "bluetooth.device.forget": {
+      "label": "Olvidar",
+      "help": "Elimina el emparejamiento de este dispositivo."
+    },
+    "bluetooth.device.stale": {
+      "label": "Emparejamiento rechazado",
+      "help": "El dispositivo rechazó el emparejamiento guardado; elimínalo o consérvalo."
+    },
+    "bluetooth.device.stale.remove": {
+      "label": "Quitar\nemparejamiento",
+      "help": "Olvida el emparejamiento rechazado para poder volver a emparejar."
+    },
+    "bluetooth.device.stale.keep": {
+      "label": "Conservar\nemparejamiento",
+      "help": "Conserva el emparejamiento actual y vuelve."
+    },
+    "bluetooth.keyboards": {
+      "label": "Emparejar teclado",
+      "help": "Teclados Bluetooth detectados; selecciona uno para emparejar."
+    },
+    "bluetooth.keyboards.list": {
+      "help": "Selecciona un teclado para emparejar; se muestra un código de acceso si es necesario."
+    },
+
+    "system": { "label": "Sistema" },
+    "system.engines": {
+      "label": "Gestor de\nmotores",
+      "help": "Instala y gestiona motores de ajedrez para jugar y analizar."
+    },
+    "system.inactivity": {
+      "label": "Temporizador de suspensión",
+      "boardLabel": "Suspensión\n{value}",
+      "help": "Pone el tablero en reposo automáticamente tras un periodo de inactividad."
+    },
+    "system.timezone": {
+      "label": "Zona horaria",
+      "boardLabel": "Zona horaria\n{value}",
+      "help": "Ajusta la zona horaria del reloj del dispositivo. Los tiempos de las partidas se guardan en UTC; esto afecta a la pantalla del reloj del tablero."
+    },
+    "system.language": {
+      "label": "Idioma",
+      "boardLabel": "Idioma\n{value}",
+      "help": "Idioma de los menús del tablero, la pantalla y la app web. Las observaciones del entrenador de IA usan el ajuste independiente Idioma del entrenador."
+    },
+    "system.reset": {
+      "label": "Restablecer\najustes",
+      "help": "Restaura todos los ajustes a sus valores predeterminados."
+    },
+    "system.about": {
+      "label": "Acerca de",
+      "help": "Versión e información de soporte."
+    },
+    "system.power": {
+      "label": "Energía",
+      "help": "Apaga o reinicia el tablero."
+    },
+    "system.reset.confirm": {
+      "label": "Restablecer ajustes",
+      "help": "Confirma restaurar todos los ajustes a sus valores predeterminados."
+    },
+    "system.reset.confirm.yes": {
+      "label": "¿Restablecer\ntodo?",
+      "help": "Borra todos los ajustes de partida y jugadores y restaura los predeterminados."
+    },
+    "system.reset.confirm.no": {
+      "label": "Cancelar",
+      "help": "Vuelve sin cambiar los ajustes."
+    },
+
+    "analysis.enabled": {
+      "label": "Análisis en vivo",
+      "help": "Muestra la evaluación del motor de la posición actual durante la partida."
+    },
+    "analysis.engine": {
+      "label": "Motor de análisis",
+      "boardLabel": "Motor\n{value}",
+      "help": "Motor usado para el análisis de la posición (es mejor cambiarlo entre partidas)."
+    },
+    "coach.id": {
+      "label": "Entrenador",
+      "boardLabel": "Entrenador\n{fn:coach_selected_label}",
+      "help": "Personalidad y estilo del entrenador. Auto ajusta el entrenador al rating del rival; es independiente del agente que lo impulsa."
+    },
+    "coach.provider": {
+      "label": "Agente",
+      "boardLabel": "Agente\n{value}",
+      "help": "Qué agente de IA impulsa al entrenador. Solo se listan los agentes con clave API y todos los ajustes necesarios; configúralos en Ajustes > Agentes. Se desactiva cuando el Entrenador está desactivado."
+    },
+    "coach.language": {
+      "label": "Idioma del entrenador",
+      "boardLabel": "Idioma\n{value}",
+      "help": "Idioma en que el entrenador de IA escribe sus observaciones y consejos. Predeterminado: inglés."
+    },
+    "agents.list.items": {
+      "help": "Selecciona un agente para configurar su clave API, modelo y endpoint."
+    },
+    "agents.detail": {
+      "label": "Agente",
+      "help": "Configura el agente seleccionado: clave API, modelo y endpoint."
+    },
+    "agents.detail.clear_key": {
+      "label": "Borrar clave API",
+      "boardLabel": "Borrar clave API",
+      "help": "Elimina la clave API guardada de este agente. Solo se muestra cuando hay una clave."
+    },
+    "agents.detail.api_key": {
+      "label": "Clave API",
+      "boardLabel": "Clave API\n{fn:agent_key_status}",
+      "help": "Clave API para este agente de IA."
+    },
+    "agents.detail.model": {
+      "label": "Modelo",
+      "boardLabel": "Modelo\n{fn:agent_model_label}",
+      "help": "Modelo para este agente (obtenido en vivo; en blanco usa el predeterminado del agente)."
+    },
+    "agents.detail.model_custom": {
+      "label": "Modelo",
+      "boardLabel": "Modelo\n{fn:agent_model_label}",
+      "help": "Id del modelo para este endpoint (en blanco usa el predeterminado del agente)."
+    },
+    "agents.detail.base_url": {
+      "label": "URL base",
+      "boardLabel": "URL base\n{fn:agent_base_url_label}",
+      "help": "URL base para este endpoint de agente compatible con OpenAI."
+    },
+
+    "power": { "label": "Energía" },
+    "power.shutdown": {
+      "label": "Apagar",
+      "help": "Apaga el tablero."
+    },
+    "power.reboot": {
+      "label": "Reiniciar",
+      "help": "Reinicia el tablero."
+    },
+
+    "about": {
+      "label": "Acerca de",
+      "help": "Versión, estado de actualización y telemetría del sistema en vivo."
+    },
+    "about.version": {
+      "label": "Versión",
+      "boardLabel": "Versión\n{value}",
+      "valueDefault": "Desconocida",
+      "help": "Versión de software instalada."
+    },
+    "about.updates": {
+      "label": "Actualizaciones",
+      "boardLabel": "Actualiz.\n{fn:updates_status}",
+      "help": "Busca e instala actualizaciones de software."
+    },
+    "about.telemetry": {
+      "help": "Telemetría del sistema en vivo (CPU, memoria, almacenamiento, tiempo activo)."
+    },
+
+    "updates": {
+      "label": "Actualizaciones",
+      "help": "Actualización automática, canal de versiones e instalación de actualizaciones."
+    },
+    "updates.auto": {
+      "label": "Descarga automática",
+      "boardLabel": "Descarga auto.\n{fn:auto_update_state}",
+      "help": "Descarga las actualizaciones en segundo plano; instálalas tú cuando quieras."
+    },
+    "updates.channel": {
+      "label": "Canal",
+      "boardLabel": "Canal\n{value}",
+      "help": "Se recomiendan las versiones estables. Las compilaciones nightly pueden contener errores."
+    },
+    "updates.check": {
+      "label": "Buscar\nactualizaciones",
+      "help": "Consulta ahora el servidor de actualizaciones por una versión más reciente."
+    },
+    "updates.install_pending": {
+      "label": "Instalar\nactualización",
+      "help": "Instala la actualización descargada; el tablero se reinicia con la nueva versión."
+    },
+    "updates.download": {
+      "label": "Descargar actualización",
+      "boardLabel": "Descargar\nv{value}",
+      "help": "Descarga la actualización disponible."
+    },
+    "updates.install_local": {
+      "label": "Instalar\n.deb local",
+      "help": "Instala un paquete .deb encontrado en el directorio de inicio."
+    },
+    "updates.install_local.confirm": {
+      "label": "Instalar .deb local",
+      "help": "Confirma la instalación del paquete .deb encontrado."
+    },
+    "updates.install_local.confirm.yes": {
+      "label": "¿Instalar {value}?",
+      "boardLabel": "¿Instalar\n{value}?",
+      "help": "Instala el paquete encontrado; el tablero se reinicia con la nueva versión."
+    },
+    "updates.install_local.confirm.no": {
+      "label": "Cancelar",
+      "help": "Vuelve sin instalar."
+    },
+
+    "field.player.color": {
+      "label": "Color",
+      "boardLabel": "Color\n{value}",
+      "help": "El color que controla este jugador"
+    },
+    "field.player.type": {
+      "label": "Tipo de jugador",
+      "boardLabel": "Tipo\n{value}",
+      "help": "Humano, Motor, Mano+Cerebro o Lichess"
+    },
+    "field.player.name": {
+      "label": "Nombre del jugador",
+      "boardLabel": "Nombre\n{value}",
+      "valueDefault": "Humano",
+      "help": "Nombre opcional para las cabeceras PGN"
+    },
+    "field.player.hand_brain_mode": {
+      "label": "Modo Mano+Cerebro",
+      "boardLabel": "Inverso",
+      "help": "Cómo colaboran el humano y el motor"
+    },
+    "field.player.engine": {
+      "label": "Motor",
+      "boardLabel": "Motor\n{value}",
+      "help": "Motor de ajedrez a usar"
+    },
+    "field.player.elo": {
+      "label": "ELO / Estilo",
+      "boardLabel": "ELO\n{value}",
+      "help": "Fuerza o personalidad del motor"
+    },
+    "field.player.account": {
+      "label": "Cuenta",
+      "boardLabel": "Cuenta\n{fn:player_account}",
+      "help": "Con qué cuenta guardada juega este jugador"
+    },
+    "field.player.lichess": {
+      "label": "Ajustes de Lichess",
+      "boardLabel": "Ajustes\nLichess",
+      "help": "Configura la cuenta de Lichess y el emparejamiento para este jugador"
+    },
+    "field.display.show_board": {
+      "label": "Mostrar tablero",
+      "help": "Muestra el tablero de ajedrez en la pantalla"
+    },
+    "field.display.sprites": {
+      "label": "Piezas",
+      "help": "Hoja de sprites usada para dibujar las piezas en el tablero de tinta electrónica"
+    },
+    "field.display.text_size": {
+      "label": "Tamaño del texto",
+      "boardLabel": "Texto\n{value}",
+      "help": "Tamaño del texto del entrenador y de la lista de jugadas en la pantalla de tinta electrónica."
+    },
+    "field.display.show_clock": {
+      "label": "Mostrar reloj",
+      "boardLabel": "Reloj",
+      "help": "Muestra el reloj de la partida y el indicador de turno"
+    },
+    "field.display.show_analysis": {
+      "label": "Mostrar análisis",
+      "help": "Muestra el widget de análisis del motor"
+    },
+    "field.display.show_graph": {
+      "label": "Mostrar gráfico de evaluación",
+      "boardLabel": "Gráfico",
+      "help": "Muestra el gráfico del historial de evaluación"
+    },
+    "field.display.led_brightness": {
+      "label": "Brillo de los LED",
+      "boardLabel": "LED: {value}",
+      "help": "Nivel de brillo de los LED del tablero"
+    },
+    "field.display.pegasus_override_brightness": {
+      "label": "Anular el brillo de Pegasus",
+      "help": "La app de DGT Chess envía un brillo de LED fijo. Cuando está activado, usa para los LED de Pegasus el ajuste Brillo de los LED de arriba."
+    },
+    "field.sound.enabled": {
+      "label": "Sonido activado",
+      "help": "Interruptor general de todos los efectos de sonido"
+    },
+    "field.sound.piece_events": {
+      "label": "Eventos de piezas",
+      "help": "Pita cuando se levantan o colocan piezas"
+    },
+    "field.sound.game_events": {
+      "label": "Eventos de partida",
+      "help": "Pita en jaque, jaque mate y otros eventos de la partida"
+    },
+    "field.sound.errors": {
+      "label": "Errores",
+      "help": "Pita ante condiciones de error"
+    },
+    "field.sound.key_press": {
+      "label": "Pulsación de botón",
+      "help": "Pita cuando se pulsan botones"
+    },
+    "field.lichess.api_token": {
+      "label": "Token de API",
+      "help": "Obtén un token en lichess.org con los permisos challenge:write y board:play"
+    },
+    "field.lichess.range": {
+      "label": "Rango de rating",
+      "help": "Rango de rating preferido de los rivales para el emparejamiento"
+    },
+    "field.system.sleep_timer": {
+      "label": "Temporizador de suspensión",
+      "help": "Pone el tablero en reposo automáticamente tras un periodo de inactividad"
+    },
+    "field.system.timezone": {
+      "label": "Zona horaria",
+      "help": "Ajusta la zona horaria del reloj del dispositivo. Los tiempos de las partidas siempre se guardan en UTC y aquí se muestran en la zona horaria de tu navegador; esto cambia la pantalla del reloj del tablero. El tablero proporciona la lista completa en tiempo de ejecución."
+    },
+    "field.system.language": {
+      "label": "Idioma",
+      "help": "Idioma de los menús del tablero, la pantalla y esta app web. Las observaciones del entrenador de IA usan el ajuste independiente Idioma del entrenador, en Partida."
+    },
+    "field.system.update_channel": {
+      "label": "Canal de actualización",
+      "help": "Se recomiendan las versiones estables. Las compilaciones nightly pueden contener errores."
+    },
+    "field.system.auto_update": {
+      "label": "Descargar actualizaciones automáticamente",
+      "help": "Descarga automáticamente las versiones nuevas en segundo plano para tenerlas listas. Las actualizaciones nunca se instalan solas; tú eliges cuándo instalarlas."
+    },
+    "field.system.database_uri": {
+      "label": "URI de base de datos",
+      "help": "Déjalo vacío para el SQLite predeterminado. Admite cualquier URI compatible con SQLAlchemy."
+    }
+  }
+}
