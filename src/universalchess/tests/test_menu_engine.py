@@ -156,6 +156,60 @@ def test_resolve_label_mixes_value_and_computed_tokens():
     assert resolve_label(node, ctx, platform="board") == "human / X"
 
 
+def test_resolve_label_value_placeholder_uses_provider_label():
+    """A {value} template resolves through the provider's rows for a provider-backed select.
+
+    Why this test exists: provider-backed selects (ELO/Engine) carry a
+    ``provider`` instead of an ``optionSet``, and their submenu shows the
+    provider row's *label* (e.g. an uncapped "Default" section displays as
+    "Unlimited"). The parent {value} button must resolve the same label source
+    so it does not drift from the submenu. How a regression manifests: the
+    parent button shows the raw stored value ("ELO\\nDefault") while opening the
+    submenu correctly shows "Unlimited" -- the exact mismatch this guards.
+    """
+    node = {
+        "id": "field.player.elo",
+        "type": "select",
+        "label": "ELO / Style",
+        "boardLabel": "ELO\n{value}",
+        "bind": {"store": "player", "key": "elo"},
+        "provider": "engine_levels",
+    }
+    ctx = _FakeContext(
+        state={"player": {"elo": "Default"}},
+        providers={
+            "engine_levels": [
+                MenuRow(key="Default", label="Unlimited", icon="elo"),
+                MenuRow(key="1400 ELO", label="1400 ELO", icon="elo"),
+            ]
+        },
+    )
+    assert resolve_label(node, ctx, platform="board") == "ELO\nUnlimited"
+
+
+def test_resolve_label_provider_value_falls_back_to_raw_when_unmatched():
+    """A provider-backed {value} with no matching row falls back to the raw value.
+
+    Why this test exists: if the stored value is not among the provider's
+    current rows (e.g. a level from a previously selected engine), the label
+    must degrade to the raw stored text rather than rendering blank. How a
+    regression manifests: an unmatched value renders "ELO\\n" (empty) instead of
+    the stored value.
+    """
+    node = {
+        "id": "field.player.elo",
+        "type": "select",
+        "boardLabel": "ELO\n{value}",
+        "bind": {"store": "player", "key": "elo"},
+        "provider": "engine_levels",
+    }
+    ctx = _FakeContext(
+        state={"player": {"elo": "1800 ELO"}},
+        providers={"engine_levels": [MenuRow(key="Default", label="Unlimited", icon="elo")]},
+    )
+    assert resolve_label(node, ctx, platform="board") == "ELO\n1800 ELO"
+
+
 def test_resolve_label_value_placeholder_without_option_set_uses_raw_value():
     """Without an option set, {value} substitutes the raw bound value as text.
 

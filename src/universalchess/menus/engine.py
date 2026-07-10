@@ -163,9 +163,13 @@ def _display_value(node: dict, ctx: MenuContext) -> str:
     """Resolve the bound value's display text for a ``{value}`` label.
 
     Uses the node's option set label when present (so a stored value like ``5``
-    shows as ``"5 min (Blitz)"``); otherwise the raw value as text. Returns an
-    empty string when the node has no binding, so a stray placeholder collapses
-    rather than raising.
+    shows as ``"5 min (Blitz)"``). For a provider-backed ``select`` (which has a
+    ``provider`` instead of an ``optionSet``, e.g. ELO/Engine), the label is
+    resolved from the provider's rows -- the same source the submenu renders --
+    so the parent ``{value}`` button cannot drift from the submenu (an uncapped
+    ELO "Default" section shows as "Unlimited" in both). Falls back to the raw
+    value as text when no label is found. Returns an empty string when the node
+    has no binding, so a stray placeholder collapses rather than raising.
 
     When the bound value is unset (``None`` or empty string) and the node
     declares ``valueDefault``, that default is shown instead. This keeps the
@@ -182,12 +186,18 @@ def _display_value(node: dict, ctx: MenuContext) -> str:
         default = node.get("valueDefault")
         if default is not None:
             return default
+    target = str(value)
     option_set = node.get("optionSet")
     if option_set:
-        target = str(value)
         for option in ctx.options(option_set):
             if str(option.get("value")) == target:
                 return option["label"]
+        return target
+    provider = node.get("provider")
+    if provider:
+        for row in ctx.provide(provider):
+            if str(row.key) == target:
+                return row.label
         return target
     return str(value)
 
