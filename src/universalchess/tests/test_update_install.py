@@ -33,6 +33,8 @@ import pytest
 import universalchess.services.update_service as us
 from universalchess.services.update_service import (
     UpdateService,
+    UpdateChannel,
+    ReleaseInfo,
     INSTALL_UNIT,
     INSTALL_HELPER,
 )
@@ -525,3 +527,52 @@ class TestNightlyVersionComparison:
         assert service._is_newer(
             "nightly-2026-06-17-f0e809a", "2.0.0-nightly"
         ) is True
+
+
+class TestLastCheckTimestamp:
+    """last_check must be an ISO string with an explicit UTC designator.
+
+    The web UI renders it via ``new Date(last_check).toLocaleString()``. A naive
+    ``datetime.utcnow().isoformat()`` (no ``+00:00``/``Z``) is parsed by the
+    browser as *local* time, so "Last checked" shows the raw UTC digits shifted
+    by nothing -- i.e. the wrong wall-clock for every non-UTC viewer. These pin
+    the designator on both branches that stamp last_check.
+    """
+
+    @staticmethod
+    def _assert_utc_designator(ts):
+        assert ts is not None, "last_check was not stamped"
+        assert ts.endswith("+00:00") or ts.endswith("Z"), f"missing UTC designator: {ts!r}"
+
+    def test_up_to_date_branch_stamps_utc_designated_last_check(self, service, monkeypatch):
+        """The "up to date" branch stamps last_check with +00:00/Z.
+
+        Regression: reverting to datetime.utcnow().isoformat() drops the
+        designator, so the browser reads it as local time and the displayed
+        "Last checked" is wrong by the viewer's offset.
+        """
+        current = "2.0.0-nightly"
+        same = ReleaseInfo(tag="v2.0.0", version=current, name="", published_at="",
+                           is_prerelease=False, is_nightly=False, download_url=None, download_size=0)
+        monkeypatch.setattr(service, "get_current_version", lambda: current)
+        monkeypatch.setattr(service, "get_channel", lambda: UpdateChannel.STABLE)
+        monkeypatch.setattr(service, "_fetch_releases", lambda: [same])
+
+        assert service.check_for_updates() is None
+        self._assert_utc_designator(service._state.last_check)
+
+    def test_update_available_branch_stamps_utc_designated_last_check(self, service, monkeypatch):
+        """The "update available" branch stamps last_check with +00:00/Z too.
+
+        Same regression as the up-to-date branch, guarded on the second write
+        site so a fix to only one branch is still caught.
+        """
+        newer = ReleaseInfo(tag="v2.1.0", version="2.1.0", name="", published_at="",
+                            is_prerelease=False, is_nightly=False, download_url="https://x", download_size=1)
+        monkeypatch.setattr(service, "get_current_version", lambda: "2.0.0")
+        monkeypatch.setattr(service, "get_channel", lambda: UpdateChannel.STABLE)
+        monkeypatch.setattr(service, "_is_newer", lambda a, b: True)
+        monkeypatch.setattr(service, "_fetch_releases", lambda: [newer])
+
+        assert service.check_for_updates() is not None
+        self._assert_utc_designator(service._state.last_check)

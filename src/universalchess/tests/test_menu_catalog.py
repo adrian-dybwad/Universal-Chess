@@ -276,6 +276,7 @@ def test_web_settings_field_ids_resolve_with_labels():
         "field.sound.errors",
         "field.sound.key_press",
         "field.system.sleep_timer",
+        "field.system.timezone",
         "field.system.update_channel",
         "field.system.auto_update",
         "field.system.database_uri",

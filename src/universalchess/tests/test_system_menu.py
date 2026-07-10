@@ -46,7 +46,7 @@ class _FakeMenuManager:
                 return result
 
 
-def _system_ctx(*, timeout_seconds=0, calls=None, saved=None):
+def _system_ctx(*, timeout_seconds=0, timezone="UTC", calls=None, saved=None):
     """Board context for the System subtree, mirroring main._build_system_context.
 
     The ``system`` store exposes ``sleep_seconds`` (the inactivity timeout) and is
@@ -63,6 +63,8 @@ def _system_ctx(*, timeout_seconds=0, calls=None, saved=None):
     def system_get(key):
         if key == "sleep_seconds":
             return timeout_seconds
+        if key == "timezone":
+            return timezone
         raise KeyError(key)
 
     def system_set(key, value):
@@ -95,15 +97,32 @@ def _system_rows(**ctx_kwargs):
 
 
 def test_system_menu_lists_all_rows_in_order():
-    """The System menu lists its six rows in declared order.
+    """The System menu lists its rows in declared order.
 
     Why this test exists: the System container's children define the on-board
     layout; the data-driven build must reproduce the exact order the bespoke
     builder produced. How a regression manifests: a row is dropped, reordered,
-    or a new child leaks in, changing this key list.
+    or a new child leaks in, changing this key list. Timezone was added after
+    the Sleep Timer (Inactivity) row.
     """
     keys = [r.key for r in _system_rows()]
-    assert keys == ["Engines", "Inactivity", "ResetSettings", "About", "Power"]
+    assert keys == ["Engines", "Inactivity", "Timezone", "ResetSettings", "About", "Power"]
+
+
+def test_selecting_timezone_persists_iana_name():
+    """Picking a Timezone option writes the IANA name to the system store.
+
+    Why this test exists: Timezone is a board ``select`` over the curated
+    ``timezones_common`` option set bound to system.timezone; the board setter
+    applies it to the OS clock. How a regression manifests: the select is inert
+    (nothing written), so the board can no longer change its timezone.
+    """
+    saved = {}
+    ctx = _system_ctx(timezone="UTC", saved=saved)
+    # System: open Timezone; inner list: pick Europe/Paris; System: BACK.
+    mm = _FakeMenuManager(["Timezone", "Europe/Paris", "BACK"])
+    run_engine_menu("system", ctx, mm, catalog=load_catalog())
+    assert saved["timezone"] == "Europe/Paris"
 
 
 def test_power_submenu_contains_only_shutdown_and_reboot():

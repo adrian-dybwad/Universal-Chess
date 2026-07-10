@@ -15,6 +15,7 @@ import type { EngineDefinition, EngineRef, EngineRefsResponse } from '../types/g
 import type { MenuCatalog, MenuOption, MenuCondition, MenuNode } from '../types/menuCatalog';
 import { fieldById, fieldsForSection } from '../types/menuCatalog';
 import { apiFetch, buildApiUrl, getStoredCredentials, encodeBasicAuth, storeCredentials, isCrossOriginApi } from '../utils/api';
+import { formatDateTime } from '../utils/datetime';
 import { useSettingsStore } from '../stores/settingsStore';
 import './Settings.css';
 
@@ -253,6 +254,7 @@ interface FormSettings {
   system: {
     database_uri: string;
     inactivity_timeout: string;
+    timezone: string;
   };
 }
 
@@ -290,7 +292,7 @@ const defaultFormSettings: FormSettings = {
   },
   lichess: { api_token: '', range: '', username: '' },
   sound: { enabled: true, key_press: true, game_events: true, piece_events: true, errors: true },
-  system: { database_uri: '', inactivity_timeout: '900' },
+  system: { database_uri: '', inactivity_timeout: '900', timezone: 'UTC' },
 };
 
 /**
@@ -415,6 +417,10 @@ function parseRawSettings(data: SettingsData): FormSettings {
       // ([system] inactivity_timeout) live, so saving it here matches the
       // on-board Sleep Timer menu. Default mirrors the board's 900s default.
       inactivity_timeout: data.system?.inactivity_timeout || '900',
+      // IANA zone applied to the device OS clock. Persisted in [system] timezone,
+      // but changed only through the dedicated /api/system/timezone endpoint (which
+      // also applies it to the OS), never the generic settings save.
+      timezone: data.system?.timezone || 'UTC',
     },
   };
 }
@@ -596,6 +602,10 @@ export function Settings() {
   // so the retry is stored as a closure that recaptures them rather than as a
   // plain argument record. Re-run by handleLoginSuccess after a successful login.
   const pendingCustomActionRef = useRef<(() => Promise<unknown>) | null>(null);
+  // Changing the device timezone is auth-gated and applied through a dedicated
+  // endpoint (not the generic settings save). Stash the target zone so a login
+  // retry re-applies exactly the zone the user picked.
+  const pendingTimezoneRef = useRef<string | null>(null);
   // Busy/error for the custom-engine add forms. URL installs hand off to the
   // shared install-status watcher; uploads complete in-request and refresh.
   const [customEngineBusy, setCustomEngineBusy] = useState(false);
@@ -1090,6 +1100,30 @@ export function Settings() {
     }
   };
 
+  // Apply a timezone through the dedicated /api/system/timezone endpoint, which
+  // both persists it and sets the OS clock. Kept separate from the generic
+  // settings save because only this endpoint applies the change to the device;
+  // the local form state is updated optimistically so the selector reflects the
+  // choice immediately.
+  const saveTimezone = async (tz: string) => {
+    updateFormSettings('system', { timezone: tz });
+    try {
+      const response = await apiFetch('/api/system/timezone', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timezone: tz }),
+        requiresAuth: true,
+      });
+      if (response.status === 401) {
+        setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
+        pendingTimezoneRef.current = tz;
+        setLoginDialogOpen(true);
+      }
+    } catch (e) {
+      console.error('Failed to set timezone:', e);
+    }
+  };
+
   // Keep the auto-save's refs pointing at the latest closures/state. Synced in an
   // effect (never mutated during render) so the debounced save and per-agent Save,
   // which run outside render, always see the current form and coach requirement.
@@ -1119,6 +1153,13 @@ export function Settings() {
       const run = pendingCustomActionRef.current;
       pendingCustomActionRef.current = null;
       await run();
+      return;
+    }
+
+    if (pendingTimezoneRef.current) {
+      const tz = pendingTimezoneRef.current;
+      pendingTimezoneRef.current = null;
+      await saveTimezone(tz);
       return;
     }
 
@@ -1547,6 +1588,8 @@ export function Settings() {
   const tcDelayModeOptions = optionSet('tc_delay_mode');
   const engineMoveDelayOptions = optionSet('engine_move_delay');
   const sleepTimerOptions = optionSet('sleep_timer');
+  // Full IANA zone list injected by the board into /api/menu-schema at runtime.
+  const timezoneOptions = optionSet('timezones');
   const notationOptions = optionSet('notation');
   const textSizeOptions = optionSet('text_size');
   const coachLanguageOptions = optionSet('coach_language');
@@ -2552,6 +2595,24 @@ export function Settings() {
               </FormRow>
             </Card>
 
+            {/* Timezone applies to the device OS clock via the dedicated
+                /api/system/timezone endpoint (persist + timedatectl). Game times
+                are stored in UTC and shown on this page in the browser's own
+                timezone regardless of this setting. */}
+            <Card className="mb-6">
+              <CardHeader title="Timezone" />
+              <FormRow
+                label={fieldLabel('field.system.timezone')}
+                help={fieldHelp('field.system.timezone')}
+              >
+                <Select
+                  value={formSettings.system.timezone}
+                  options={timezoneOptions}
+                  onChange={(e) => saveTimezone(e.target.value)}
+                />
+              </FormRow>
+            </Card>
+
             <Card className="mb-6">
               <CardHeader title="Software Updates" />
               <UpdateManager catalog={catalog} />
@@ -3250,9 +3311,9 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
             <strong>Current Version:</strong>{' '}
             <code>{status.current_version || 'Unknown'}</code>
           </div>
-          {status.last_check && (
+          {formatDateTime(status.last_check) && (
             <div className="update-last-check text-muted">
-              Last checked: {new Date(status.last_check).toLocaleString()}
+              Last checked: {formatDateTime(status.last_check)}
             </div>
           )}
         </div>
@@ -3567,12 +3628,11 @@ function formatEventDuration(ms?: number): string | null {
   return `${minutes}m ${seconds}s`;
 }
 
-// Render the stored UTC instant in the viewer's local time; fall back to the
-// raw string if it does not parse (so a malformed ts is still visible).
+// Render the stored UTC instant in the viewer's local time via the shared
+// formatter (which assumes UTC for a zoneless string). Fall back to the raw
+// string if it does not parse, so a malformed ts is still visible.
 function formatEventTimestamp(ts: string): string {
-  const parsed = new Date(ts);
-  if (Number.isNaN(parsed.getTime())) return ts;
-  return parsed.toLocaleString();
+  return formatDateTime(ts) || ts;
 }
 
 // System -> Event Log viewer. Shows the persistent record of important events

@@ -156,6 +156,26 @@ if ! visudo -cf "\$SUDOERS" >/dev/null 2>&1; then
 	exit 1
 fi
 echo "Granted \$PRIMARY_USER NOPASSWD -> \$HELPER"
+# Timezone grant: the timezone selector applies the OS zone via the pinned
+# uc-set-timezone helper under sudo. A runtime deploy ships the helper but not
+# the sudoers drop-in the .deb postinst would create, so without this grant the
+# selector saves the choice but cannot set the clock. Same pinned-helper +
+# visudo-validated pattern as build-memory above.
+TZ_HELPER="${REMOTE_PATH%/}/scripts/uc-set-timezone"
+TZ_SUDOERS='/etc/sudoers.d/universal-chess-timezone'
+if [ -f "\$TZ_HELPER" ]; then
+	chmod +x "\$TZ_HELPER"
+	echo "\$PRIMARY_USER ALL=(root) NOPASSWD: \$TZ_HELPER" > "\$TZ_SUDOERS"
+	chmod 440 "\$TZ_SUDOERS"
+	if ! visudo -cf "\$TZ_SUDOERS" >/dev/null 2>&1; then
+		echo 'WARNING: timezone sudoers entry invalid; removing'
+		rm -f "\$TZ_SUDOERS"
+	else
+		echo "Granted \$PRIMARY_USER NOPASSWD -> \$TZ_HELPER"
+	fi
+else
+	echo "WARNING: timezone helper missing at \$TZ_HELPER; skipping grant"
+fi
 # Pre-create the persistent event-log dir+file owned by the service user (see
 # postinst): lets the app append+rotate it and the root self-heal append to it.
 EVENT_LOG_DIR='/var/lib/universalchess/logs'

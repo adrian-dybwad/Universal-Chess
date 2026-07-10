@@ -4630,15 +4630,29 @@ def _build_system_context():
     from universalchess.menus.board_context import BoardMenuContext
     from universalchess.services.power import perform_shutdown, perform_reboot
 
+    from universalchess.services import timezone_service
+
     def system_get(key):
         if key == "sleep_seconds":
             return board.get_inactivity_timeout()
+        if key == "timezone":
+            return timezone_service.get_timezone()
         raise KeyError(f"unknown system store key: {key!r}")
 
     def system_set(key, value):
         if key == "sleep_seconds":
             board.set_inactivity_timeout(int(value))
             log.info(f"[Settings] Inactivity timeout set to {int(value)}s")
+            return
+        if key == "timezone":
+            # Persist + apply to the OS clock; an invalid zone from the curated
+            # board list should not happen, but a failed apply is logged (not
+            # raised) so the menu still records the choice.
+            try:
+                applied = timezone_service.set_timezone(str(value))
+                log.info(f"[Settings] Timezone set to {value} (applied={applied})")
+            except ValueError:
+                log.warning(f"[Settings] Rejected invalid timezone: {value!r}")
             return
         raise NotImplementedError(f"unknown system store key: {key!r}")
 
@@ -6604,6 +6618,11 @@ def main():
         """
         global _pending_settings_reload
         log.info("[Main] Settings changed from web app, reloading...")
+        # The timezone may have changed via the web; refresh this process's libc
+        # timezone cache so the e-paper wall clock (datetime.now()) reflects the
+        # new zone without a restart. Harmless when the zone is unchanged.
+        if hasattr(time, "tzset"):
+            time.tzset()
         _load_game_settings()
         # Refresh the current menu if one is active (so it shows updated values)
         if _menu_manager is not None:

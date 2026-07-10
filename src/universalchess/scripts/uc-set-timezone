@@ -1,0 +1,84 @@
+#!/bin/bash
+# uc-set-timezone -- set the device's OS timezone to a validated IANA zone.
+#
+# WHY THIS EXISTS
+#   The web/board Settings offer a timezone selector; applying it changes the
+#   whole device's clock zone via `timedatectl set-timezone`, which requires
+#   root. The service runs unprivileged, so -- as with bt-admin and
+#   uc-build-memory -- passwordless sudo is granted to exactly this one pinned
+#   helper (see package postinst / deploy provisioning):
+#     <service-user> ALL=(root) NOPASSWD: /opt/universalchess/scripts/uc-set-timezone
+#
+# SECURITY BOUNDARY
+#   The single positional argument is the IANA zone name (e.g. "Europe/Oslo").
+#   It is validated two ways before use: a strict character/shape regex, and
+#   membership as a real zoneinfo file. Only then is it passed -- as a single
+#   argv element, never through a shell -- to `timedatectl set-timezone`. This
+#   keeps the grant from becoming an arbitrary-command or arbitrary-string
+#   primitive. Reject everything else.
+#
+# TEST SEAMS (exercise validation + the intended action without root)
+#   UC_SET_TZ_ZONEINFO_DIR   override the zoneinfo dir used for validation
+#                            (default /usr/share/zoneinfo)
+#   UC_SET_TZ_DRY_RUN=1      print the intended `timedatectl` invocation to
+#                            $UC_SET_TZ_ACTION_LOG instead of running it
+#   UC_SET_TZ_ACTION_LOG     file to append dry-run actions to
+set -u
+
+ZONEINFO_DIR="${UC_SET_TZ_ZONEINFO_DIR:-/usr/share/zoneinfo}"
+DRY_RUN="${UC_SET_TZ_DRY_RUN:-0}"
+ACTION_LOG="${UC_SET_TZ_ACTION_LOG:-}"
+LOG_TAG="uc-set-timezone"
+
+log() { logger -t "$LOG_TAG" -- "$*" 2>/dev/null || true; echo "[$LOG_TAG] $*" >&2; }
+
+usage() {
+    echo "usage: uc-set-timezone <Area/Location>" >&2
+    exit 2
+}
+
+run_priv() {
+    if [ "$DRY_RUN" = "1" ]; then
+        if [ -n "$ACTION_LOG" ]; then echo "$*" >> "$ACTION_LOG"; fi
+        return 0
+    fi
+    "$@"
+}
+
+# Reject anything that is not a plausible IANA zone name. Allowed: letters,
+# digits, '/', '_', '+', '-'. This alone blocks shell metacharacters, spaces,
+# and path traversal ('..' cannot form because '.' is disallowed).
+valid_shape() {
+    case "$1" in
+        ''|*[!A-Za-z0-9/_+-]*) return 1 ;;
+        /*|*/) return 1 ;;   # no leading/trailing slash
+    esac
+    return 0
+}
+
+main() {
+    [ "$#" -eq 1 ] || usage
+    local tz="$1"
+
+    if ! valid_shape "$tz"; then
+        log "ERROR: rejected timezone (bad characters): $tz"
+        exit 2
+    fi
+
+    # Must resolve to a real zoneinfo entry. This is the authoritative check that
+    # the string names an actual zone the OS knows, and it is what makes the
+    # validation testable off-device (the zoneinfo db exists on the dev box too).
+    if [ ! -f "${ZONEINFO_DIR}/${tz}" ]; then
+        log "ERROR: unknown timezone: $tz"
+        exit 3
+    fi
+
+    if run_priv timedatectl set-timezone "$tz"; then
+        log "timezone set to $tz"
+        exit 0
+    fi
+    log "ERROR: timedatectl set-timezone failed for $tz"
+    exit 1
+}
+
+main "$@"

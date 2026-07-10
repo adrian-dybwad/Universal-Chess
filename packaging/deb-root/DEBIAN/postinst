@@ -351,6 +351,29 @@ else
     echo -e "::: Warning: build-memory helper not found at $BUILD_MEM_HELPER"
 fi
 
+# Allow the service user to set the device OS timezone from the web/board
+# Settings. `timedatectl set-timezone` is root-only, so -- as with bt-admin and
+# the updater -- grant passwordless sudo to exactly one pinned helper. The
+# helper validates its single argument (shape + zoneinfo membership) before
+# calling timedatectl, so the grant cannot become an arbitrary-string or
+# arbitrary-command primitive. Without it the timezone selector saves the choice
+# but cannot apply it to the clock.
+echo -e "::: Configuring sudoers for timezone"
+SET_TZ_HELPER="${DGTCM_PATH}/scripts/uc-set-timezone"
+if [ -f "$SET_TZ_HELPER" ]; then
+    chmod +x "$SET_TZ_HELPER"
+    SET_TZ_SUDOERS_FILE="/etc/sudoers.d/universal-chess-timezone"
+    echo "$PRIMARY_USER ALL=(root) NOPASSWD: $SET_TZ_HELPER" > "$SET_TZ_SUDOERS_FILE"
+    chmod 440 "$SET_TZ_SUDOERS_FILE"
+    # Validate before it can take effect; a malformed drop-in can lock out sudo.
+    if ! visudo -cf "$SET_TZ_SUDOERS_FILE" >/dev/null 2>&1; then
+        echo -e "::: Warning: timezone sudoers entry invalid; removing"
+        rm -f "$SET_TZ_SUDOERS_FILE"
+    fi
+else
+    echo -e "::: Warning: timezone helper not found at $SET_TZ_HELPER"
+fi
+
 # Allow the service user to loop-mount an uploaded Centaur SD image read-only
 # during import. `mount` is a general primitive (any device/target/options), so
 # granting it directly would let the service mount arbitrary filesystems

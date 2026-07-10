@@ -20,7 +20,6 @@ import subprocess  # nosec B404 - only runs fixed, trusted argv lists (dpkg-quer
 import threading
 import time
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Optional, Callable, List
@@ -32,6 +31,7 @@ except ImportError:
     log = logging.getLogger(__name__)
 
 from universalchess.services.event_log import log_event
+from universalchess.utils.timeutils import utcnow_iso
 
 
 # Configuration
@@ -318,7 +318,11 @@ class UpdateService:
                 if self._is_newer(release.version, current):
                     self._state.available_version = release.version
                     self._state.available_release_tag = release.tag
-                    self._state.last_check = datetime.utcnow().isoformat()
+                    # UTC-designated (+00:00) so the web UI parses it as UTC and
+                    # renders it in the viewer's local timezone. A bare
+                    # datetime.utcnow().isoformat() is naive (no designator) and
+                    # would be read as browser-local, showing the UTC digits.
+                    self._state.last_check = utcnow_iso()
                     self._save_state()
                     
                     log.info(f"[UpdateService] Update available: {release.version}")
@@ -327,7 +331,8 @@ class UpdateService:
             
             self._state.available_version = None
             self._state.available_release_tag = None
-            self._state.last_check = datetime.utcnow().isoformat()
+            # UTC-designated: see the update-available branch above.
+            self._state.last_check = utcnow_iso()
             self._save_state()
             
             log.info("[UpdateService] Up to date")

@@ -24,6 +24,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from universalchess.db.uri import get_database_uri
+from universalchess.utils.timeutils import utcnow_naive
 
 Base = declarative_base()
 
@@ -32,7 +33,11 @@ class Game(Base):
     __tablename__ = "game"
 
     id = Column(Integer, primary_key=True, autoincrement="auto")
-    created_at = Column(DateTime, server_default=func.now())
+    # Stored as naive UTC. The Python-side default guarantees UTC on every engine
+    # (not just SQLite's UTC CURRENT_TIMESTAMP) and stays UTC regardless of the
+    # device's configured OS timezone; server_default is kept as a raw-INSERT
+    # safety net. See universalchess.utils.timeutils.
+    created_at = Column(DateTime, default=utcnow_naive, server_default=func.now())
     source = Column(String(255), nullable=False) # centaur, lichess, eboard, ct800, etc
     event = Column(String(255), nullable=True)
     site = Column(String(255), nullable=True)
@@ -66,7 +71,8 @@ class GameMove(Base):
     __tablename__ = "gameMove"
     id = Column(Integer, primary_key=True, autoincrement="auto")
     gameid = Column(Integer, ForeignKey("game.id"), index=True)
-    move_at = Column(DateTime, server_default=func.now())
+    # Naive UTC, guaranteed UTC by the Python default (see Game.created_at).
+    move_at = Column(DateTime, default=utcnow_naive, server_default=func.now())
     move = Column(String(10), nullable=True)
     fen = Column(String(255), nullable=True)
     # Clock times in seconds remaining after this move (nullable for existing databases)

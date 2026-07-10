@@ -30,6 +30,7 @@ from flask import Flask, render_template, Response, request, redirect, send_file
 from werkzeug.exceptions import NotFound
 from werkzeug.utils import secure_filename
 from universalchess.utils.safe_path import safe_under_base
+from universalchess.utils.timeutils import to_utc_iso
 from universalchess.db import models
 from universalchess.paths import get_current_fen, get_current_placement, get_resource_path
 from universalchess.services.game_broadcast import get_subscriber, GameState
@@ -573,27 +574,37 @@ def normalize_path(path):
 
 def format_date_iso(timestamp):
     """
-    Formats a timestamp as ISO 8601 date string.
-    
+    Formats a Unix timestamp as an ISO 8601 UTC string (``...Z``).
+
+    Uses ``time.gmtime`` (not ``localtime``) so the ``Z`` designator is
+    truthful: the value is UTC. A ``localtime`` value labelled ``Z`` is local
+    time mislabelled as UTC, which a WebDAV client would parse as an instant
+    shifted by the device's offset.
+
     Args:
-        timestamp: Unix timestamp or datetime
-        
+        timestamp: Unix timestamp (seconds since the epoch)
+
     Returns:
-        ISO 8601 formatted date string
+        ISO 8601 UTC date string, e.g. ``2026-07-10T01:22:33Z``
     """
-    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.localtime(timestamp))
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(timestamp))
 
 def format_date_rfc(timestamp):
     """
-    Formats a timestamp as RFC 1123 date string.
-    
+    Formats a Unix timestamp as an RFC 1123 date string in GMT.
+
+    HTTP dates must be GMT (RFC 7231); ``time.gmtime`` with a literal ``GMT``
+    keeps the value and its label consistent. A ``localtime``/``%Z`` value emits
+    a local zone abbreviation, which is both non-conformant and off by the
+    device's offset.
+
     Args:
-        timestamp: Unix timestamp or datetime
-        
+        timestamp: Unix timestamp (seconds since the epoch)
+
     Returns:
-        RFC 1123 formatted date string
+        RFC 1123 date string, e.g. ``Fri, 10 Jul 2026 01:22:33 GMT``
     """
-    return time.strftime('%a, %d %b %Y %H:%M:%S %Z', time.localtime(timestamp))
+    return time.strftime('%a, %d %b %Y %H:%M:%S GMT', time.gmtime(timestamp))
 
 def build_file_properties_xml(file_path, href_path):
     """
@@ -679,8 +690,9 @@ def build_pgn_properties_xml(gameitem, href_base="/PGNs/"):
     safe_pgn_name = escape_xml(pgn_name)
     href_path = href_base + safe_pgn_name
     
-    created_at = gameitem["created_at"]
-    creation_date_iso = created_at.replace(" ", "T") + "Z"
+    # created_at is already an ISO-8601 UTC string (e.g. 2026-07-10T01:22:33+00:00),
+    # which is a valid WebDAV creationdate; use it directly. Empty when absent.
+    creation_date_iso = gameitem["created_at"]
     
     props = []
     props.append('<D:response>')
@@ -690,7 +702,7 @@ def build_pgn_properties_xml(gameitem, href_base="/PGNs/"):
     props.append('<D:getcontentlength>0</D:getcontentlength>')
     props.append('<D:resourcetype></D:resourcetype>')
     props.append('<D:creationdate>' + creation_date_iso + '</D:creationdate>')
-    props.append('<D:lastmodified>' + created_at + '</D:lastmodified>')
+    props.append('<D:lastmodified>' + creation_date_iso + '</D:lastmodified>')
     props.append('</D:prop>')
     props.append('<D:status>HTTP/1.1 200 OK</D:status>')
     props.append('</D:propstat>')
@@ -744,7 +756,10 @@ def build_gameitem_from_gamedata(gamedata):
     """
     gameitem = {}
     gameitem["id"] = str(gamedata[8])
-    gameitem["created_at"] = str(gamedata[0])
+    # created_at is stored as naive UTC; serialize with an explicit +00:00 so the
+    # browser parses it as UTC and renders it in the viewer's local timezone.
+    # Empty string (not "None") when absent so the UI can omit it cleanly.
+    gameitem["created_at"] = to_utc_iso(gamedata[0]) or ""
     src = os.path.basename(str(gamedata[1]))
     if src.endswith('.py'):
         src = src[:-3]
@@ -936,9 +951,17 @@ def build_chess_game_from_id(session, game_id):
     if src.endswith('.py'):
         src = src[:-3]
     
-    # Set headers
+    # Set headers. created_at is a naive UTC datetime; emit standard PGN date/time
+    # tags in UTC (Date is the PGN YYYY.MM.DD form, plus the explicit UTCDate/
+    # UTCTime tags) instead of the raw datetime string. Unknown -> PGN placeholder.
     g.headers["Source"] = src
-    g.headers["Date"] = str(gamedata[0])
+    created_at = gamedata[0]
+    if isinstance(created_at, datetime.datetime):
+        g.headers["Date"] = created_at.strftime("%Y.%m.%d")
+        g.headers["UTCDate"] = created_at.strftime("%Y.%m.%d")
+        g.headers["UTCTime"] = created_at.strftime("%H:%M:%S")
+    else:
+        g.headers["Date"] = "????.??.??"
     g.headers["Event"] = str(gamedata[2])
     g.headers["Site"] = str(gamedata[3])
     g.headers["Round"] = str(gamedata[4])
@@ -2120,6 +2143,14 @@ def get_all_settings():
                 if key not in result[section]:
                     result[section][key] = value
 
+    # The device timezone is owned by the OS clock, not centaur.ini: the ini key
+    # is only a fallback cache, and get_timezone() reads the live OS zone
+    # (/etc/timezone). Surface that here so the web Settings selector matches the
+    # board clock instead of showing the stale ini/default value (which is "UTC"
+    # on any device whose zone was set outside our UI, e.g. during imaging).
+    from universalchess.services.timezone_service import get_timezone
+    result.setdefault("system", {})["timezone"] = get_timezone()
+
     # Coach settings: expose the non-secret selection (coach_id/coach_provider) and
     # the per-agent model/base_url (namespaced keys pass through from the ini), but
     # never the stored API keys. Each coach API key is redacted to a boolean
@@ -2975,10 +3006,15 @@ def api_get_menu_schema():
     -- into a shallow copy so the shared cached catalog is not mutated -- keeping
     the registry the single source of truth for both platforms without a second
     fetch.
+
+    The full IANA ``timezones`` list is injected the same way: the board menu uses
+    a small curated set (``timezones_common``), but the web selector offers every
+    zone, sourced at runtime from the stdlib so it stays current with the OS.
     """
     try:
         from universalchess.menus.catalog import get_catalog
         from universalchess.menus.time_control_presets import preset_options
+        from universalchess.services.timezone_service import list_timezones
 
         menu = dict(get_catalog().raw_menu())
         option_sets = dict(menu.get("optionSets", {}))
@@ -2986,6 +3022,9 @@ def api_get_menu_schema():
         # -> no preset -> the base-minutes control) and a trailing Custom entry
         # bracket the registered presets.
         option_sets["time_control_presets"] = preset_options()
+        # Full IANA zone list for the web timezone selector (field.system.timezone
+        # references it by the provider name "timezones").
+        option_sets["timezones"] = [{"value": tz, "label": tz} for tz in list_timezones()]
         menu["optionSets"] = option_sets
         return jsonify(menu)
     except Exception as e:
@@ -5293,6 +5332,44 @@ def api_update_channel_set():
             "success": True,
             "channel": channel.value,
         })
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/timezone", methods=["GET"])
+def api_timezone_get():
+    """Return the device's configured timezone (IANA name, defaults to UTC)."""
+    try:
+        from universalchess.services.timezone_service import get_timezone
+        return jsonify({"timezone": get_timezone()})
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/timezone", methods=["POST"])
+@requires_auth
+def api_timezone_set():
+    """Set the device's OS timezone.
+
+    Body: {"timezone": "Area/Location"}
+
+    Persists the IANA zone and applies it to the OS clock via the pinned
+    uc-set-timezone helper. An unknown zone is a 400. If the OS apply step fails
+    (e.g. missing sudo grant), the choice is still saved and the response marks
+    ``applied: false`` so the UI can reflect the selection and surface that it is
+    not yet active. The main process is notified so its clock display refreshes.
+    """
+    try:
+        from universalchess.services.timezone_service import set_timezone
+        data = request.get_json(force=True)
+        tz = (data or {}).get("timezone", "")
+        try:
+            applied = set_timezone(tz)
+        except ValueError:
+            return jsonify({"error": f"Invalid timezone: {tz}"}), 400
+        from universalchess.services.game_broadcast import notify_main_process_settings_changed
+        notify_main_process_settings_changed()
+        return jsonify({"success": True, "timezone": tz, "applied": applied})
     except Exception as e:
         return _internal_error(e)
 

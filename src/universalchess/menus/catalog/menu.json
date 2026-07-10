@@ -120,6 +120,24 @@
       { "value": "Portuguese", "label": "Portuguese (Portugu\u00eas)" },
       { "value": "German", "label": "German (Deutsch)" },
       { "value": "Japanese", "label": "Japanese (\u65e5\u672c\u8a9e)" }
+    ],
+    "timezones_common": [
+      { "value": "UTC", "label": "UTC" },
+      { "value": "Europe/London", "label": "London" },
+      { "value": "Europe/Paris", "label": "Paris" },
+      { "value": "Europe/Berlin", "label": "Berlin" },
+      { "value": "Europe/Moscow", "label": "Moscow" },
+      { "value": "America/New_York", "label": "New York" },
+      { "value": "America/Chicago", "label": "Chicago" },
+      { "value": "America/Denver", "label": "Denver" },
+      { "value": "America/Los_Angeles", "label": "Los Angeles" },
+      { "value": "America/Sao_Paulo", "label": "S\u00e3o Paulo" },
+      { "value": "Asia/Dubai", "label": "Dubai" },
+      { "value": "Asia/Kolkata", "label": "Kolkata" },
+      { "value": "Asia/Shanghai", "label": "Shanghai" },
+      { "value": "Asia/Tokyo", "label": "Tokyo" },
+      { "value": "Australia/Sydney", "label": "Sydney" },
+      { "value": "Pacific/Auckland", "label": "Auckland" }
     ]
   },
 
@@ -874,7 +892,7 @@
       "type": "menu",
       "label": "System",
       "platforms": ["board"],
-      "children": ["system.engines", "system.inactivity", "system.reset", "system.about", "system.power"]
+      "children": ["system.engines", "system.inactivity", "system.timezone", "system.reset", "system.about", "system.power"]
     },
     {
       "id": "system.engines",
@@ -898,6 +916,18 @@
       "bind": { "store": "system", "key": "sleep_seconds" },
       "icon": { "0": "timer", "default": "timer_checked" },
       "platforms": ["board", "web"]
+    },
+    {
+      "id": "system.timezone",
+      "key": "Timezone",
+      "type": "select",
+      "optionSet": "timezones_common",
+      "label": "Timezone",
+      "boardLabel": "Timezone\n{value}",
+      "help": "Set the device clock's timezone. Stored game times stay in UTC; this affects the board clock display.",
+      "bind": { "store": "system", "key": "timezone" },
+      "icon": "timer",
+      "platforms": ["board"]
     },
     {
       "id": "system.reset",
@@ -1573,6 +1603,15 @@
       "label": "Sleep Timer",
       "help": "Automatically put the board to sleep after a period of inactivity",
       "optionSet": "sleep_timer",
+      "section": "system",
+      "platforms": ["web"]
+    },
+    {
+      "id": "field.system.timezone",
+      "type": "select",
+      "label": "Timezone",
+      "help": "Sets the device clock's timezone. Game times are always stored in UTC and shown here in your browser's timezone; this changes the board's own clock display. The full list is provided by the board at runtime.",
+      "provider": "timezones",
       "section": "system",
       "platforms": ["web"]
     },

@@ -4,6 +4,7 @@ import { Button, Card, Badge } from '../components/ui';
 import { LoginDialog } from '../components/LoginDialog';
 import type { GameRecord } from '../types/game';
 import { apiFetch, getStoredCredentials } from '../utils/api';
+import { formatDateTime } from '../utils/datetime';
 import './Games.css';
 
 /**
@@ -130,8 +131,8 @@ export function Games() {
               </div>
 
               <div className="game-meta">
-                {game.created_at && (
-                  <span>{new Date(game.created_at).toLocaleDateString()}</span>
+                {formatDateTime(game.created_at) && (
+                  <span>{formatDateTime(game.created_at)}</span>
                 )}
                 {game.source && <span>{game.source}</span>}
               </div>
