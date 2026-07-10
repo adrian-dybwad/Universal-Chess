@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { Button } from './ui';
 import { useAuthedAction } from './useAuthedAction';
 import { apiFetch, buildApiUrl } from '../utils/api';
@@ -30,6 +31,7 @@ interface UpdateStatusLite {
  * updates, so the banner stays hidden to avoid competing with that path.
  */
 export function UpdateBanner() {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<UpdateStatusLite | null>(null);
   const [installing, setInstalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,15 +63,15 @@ export function UpdateBanner() {
       }
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(data.error || 'Install failed');
+        setError(data.error || t('update.installFailed'));
       }
       await fetchStatus();
     } catch {
-      setError('Network error');
+      setError(t('update.networkError'));
     } finally {
       setInstalling(false);
     }
-  }, [fetchStatus, onUnauthorized]);
+  }, [fetchStatus, onUnauthorized, t]);
 
   const autoOn = Boolean(status?.auto_update);
   const showInstall = autoOn && Boolean(status?.has_pending_update) && !status?.is_installing;
@@ -81,22 +83,22 @@ export function UpdateBanner() {
       {showInstalling && (
         <div className="update-banner update-banner--busy" role="status" aria-live="polite">
           <span className="update-banner__text">
-            Installing update… the board will restart and this page may briefly disconnect.
+            {t('update.installing')}
           </span>
         </div>
       )}
       {showInstall && (
         <div className="update-banner" role="status" aria-live="polite">
           <span className="update-banner__text">
-            An update has been downloaded and is ready to install.
+            {t('update.ready')}
           </span>
           <span className="update-banner__actions">
             {error && <span className="update-banner__error">{error}</span>}
             <Link to="/settings/system" className="update-banner__link">
-              Details
+              {t('update.details')}
             </Link>
             <Button variant="success" onClick={install} disabled={installing}>
-              {installing ? 'Installing…' : 'Install now'}
+              {installing ? t('update.installingShort') : t('update.installNow')}
             </Button>
           </span>
         </div>

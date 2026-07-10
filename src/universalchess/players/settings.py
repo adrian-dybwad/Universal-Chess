@@ -249,9 +249,6 @@ class GameSettings:
         coach_id: Selected coach id from the coaches framework, or "auto" (default)
             to pick a coach by the opponent's Elo. Controls the coaching persona,
             independent of the provider/key.
-        coach_language: Natural language the AI coach responds in (e.g. "Spanish").
-            Defaults to "English", which adds no prompt instruction; any other value
-            asks the model to write its remark in that language.
         coach_multipv: Number of engine candidate lines (1-5) the AI coach is given
             for a reviewed move. 1 (default) sends no alternatives (current
             behavior); higher values run a multi-line analysis so the coach can
@@ -294,7 +291,6 @@ class GameSettings:
     coach_model_custom: str = ""
     coach_base_url_custom: str = ""
     coach_id: str = "auto"
-    coach_language: str = "English"
     coach_multipv: int = 1
     _log: Optional[Any] = field(default=None, repr=False)
 
@@ -388,7 +384,6 @@ class GameSettings:
             "text_size": self.text_size,
             "coach_provider": self.coach_provider,
             "coach_id": self.coach_id,
-            "coach_language": self.coach_language,
             "coach_multipv": self.coach_multipv,
         }
         for key in per_provider_keys():
@@ -475,7 +470,6 @@ class GameSettings:
             coach_model_custom=coach.get("coach_model_custom", ""),
             coach_base_url_custom=coach.get("coach_base_url_custom", ""),
             coach_id=data["coach_id"],
-            coach_language=data["coach_language"],
             coach_multipv=data["coach_multipv"],
             _log=log,
         )

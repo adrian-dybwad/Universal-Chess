@@ -3203,14 +3203,17 @@ def _coach_config():
 
 
 def _coach_language():
-    """Return the language the AI coach should respond in, from game settings.
+    """Return the language name the AI coach should respond in.
 
-    Defaults to English (which adds no prompt instruction) when unset, so an
-    upgraded config with no ``coach_language`` key keeps the prior English output.
+    Derived from the single device UI locale ([system] ui_language) rather than a
+    separate coach setting: the coach writes in whatever language the device is
+    set to. The locale code is mapped to the plain-English language name the coach
+    prompt expects (e.g. "es" -> "Spanish"); an English locale yields "English",
+    which adds no prompt directive (the model's native default).
     """
-    from universalchess.services.coach import DEFAULT_LANGUAGE
+    from universalchess.services import language_service
 
-    return _game_settings_dict().get("coach_language", DEFAULT_LANGUAGE)
+    return language_service.coach_language_name(language_service.get_language())
 
 
 def _agent_is_configured(agent_id, game):

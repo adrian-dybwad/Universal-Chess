@@ -1,4 +1,5 @@
 import { useState, useEffect, type FormEvent } from 'react';
+import { useTranslation } from 'react-i18next';
 import { encodeBasicAuth, storeCredentials, getStoredCredentials, clearCredentials, buildApiUrl } from '../utils/api';
 import './ApiSettingsDialog.css'; // Reuse the same dialog styles
 
@@ -14,6 +15,7 @@ interface LoginDialogProps {
  * Uses the same credentials as WebDAV (Linux system user).
  */
 export function LoginDialog({ isOpen, onClose, onSuccess, errorMessage }: LoginDialogProps) {
+  const { t } = useTranslation();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
@@ -50,12 +52,12 @@ export function LoginDialog({ isOpen, onClose, onSuccess, errorMessage }: LoginD
     e.preventDefault();
     
     if (!username.trim()) {
-      setError('Please enter a username');
+      setError(t('login.enterUsername'));
       return;
     }
     
     if (!password) {
-      setError('Please enter a password');
+      setError(t('login.enterPassword'));
       return;
     }
 
@@ -83,19 +85,18 @@ export function LoginDialog({ isOpen, onClose, onSuccess, errorMessage }: LoginD
     <div className="dialog-overlay" onClick={onClose}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <div className="dialog-header">
-          <h3>Authentication Required</h3>
+          <h3>{t('login.title')}</h3>
           <button className="dialog-close" onClick={onClose}>×</button>
         </div>
 
         <form onSubmit={handleSubmit}>
           <div className="dialog-body">
             <p className="dialog-description">
-              Enter your Raspberry Pi credentials to modify settings.
-              This is the same username and password you use for SSH or WebDAV.
+              {t('login.description')}
             </p>
 
             <div className="form-group">
-              <label htmlFor="auth-username">Username</label>
+              <label htmlFor="auth-username">{t('login.username')}</label>
               <input
                 id="auth-username"
                 type="text"
@@ -104,13 +105,13 @@ export function LoginDialog({ isOpen, onClose, onSuccess, errorMessage }: LoginD
                   setUsername(e.target.value);
                   setError('');
                 }}
-                placeholder={systemUsername || 'username'}
+                placeholder={systemUsername || t('login.usernamePlaceholder')}
                 autoComplete="username"
               />
             </div>
 
             <div className="form-group">
-              <label htmlFor="auth-password">Password</label>
+              <label htmlFor="auth-password">{t('login.password')}</label>
               <input
                 id="auth-password"
                 type="password"
@@ -119,7 +120,7 @@ export function LoginDialog({ isOpen, onClose, onSuccess, errorMessage }: LoginD
                   setPassword(e.target.value);
                   setError('');
                 }}
-                placeholder="Enter your password"
+                placeholder={t('login.passwordPlaceholder')}
                 autoComplete="current-password"
                 autoFocus
               />
@@ -132,7 +133,7 @@ export function LoginDialog({ isOpen, onClose, onSuccess, errorMessage }: LoginD
                   checked={rememberMe}
                   onChange={(e) => setRememberMe(e.target.checked)}
                 />
-                Remember me on this device
+                {t('login.rememberMe')}
               </label>
             </div>
 
@@ -142,15 +143,15 @@ export function LoginDialog({ isOpen, onClose, onSuccess, errorMessage }: LoginD
           <div className="dialog-footer">
             {hasStoredCredentials && (
               <button type="button" className="btn btn-ghost" onClick={handleLogout}>
-                Clear Saved Credentials
+                {t('login.clearSaved')}
               </button>
             )}
             <div className="dialog-footer-right">
               <button type="button" className="btn btn-secondary" onClick={onClose}>
-                Cancel
+                {t('common.cancel')}
               </button>
               <button type="submit" className="btn btn-primary">
-                Login
+                {t('login.login')}
               </button>
             </div>
           </div>

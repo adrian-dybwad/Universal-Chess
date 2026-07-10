@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState, type PointerEvent, type KeyboardEvent } from 'react';
+import { useTranslation } from 'react-i18next';
 import { LoginDialog } from './LoginDialog';
 import { apiFetch, buildApiUrl, getStoredCredentials } from '../utils/api';
 import { useSseEvent, type SseEventPayload } from '../utils/sseBus';
@@ -35,7 +36,8 @@ type RemoteKey = 'BACK' | 'TICK' | 'UP' | 'DOWN' | 'HELP' | 'PLAY';
 interface ButtonSpec {
   key: RemoteKey;
   glyph: string;
-  ariaLabel: string;
+  // i18n key for the button's accessible name (resolved at render via t()).
+  labelKey: string;
   // wide buttons (Up/Down) sit centered, spanning both columns, to reproduce the
   // device's cross/diamond arrangement.
   wide?: boolean;
@@ -49,12 +51,12 @@ interface ButtonSpec {
 //   [ Hint ]  [ Play/Pause ]
 // Buttons are icon-only like the device; names are exposed via aria-label.
 const BUTTONS: ButtonSpec[] = [
-  { key: 'UP', glyph: '\u25B2', ariaLabel: 'Up', wide: true },
-  { key: 'BACK', glyph: '\u21A9', ariaLabel: 'Back' },
-  { key: 'TICK', glyph: '\u2713', ariaLabel: 'Ok / Menu' },
-  { key: 'DOWN', glyph: '\u25BC', ariaLabel: 'Down', wide: true },
-  { key: 'HELP', glyph: '?', ariaLabel: 'Hint' },
-  { key: 'PLAY', glyph: '\u23EF', ariaLabel: 'Play / Pause (hold to power off)', primary: true },
+  { key: 'UP', glyph: '\u25B2', labelKey: 'boardControl.keyUp', wide: true },
+  { key: 'BACK', glyph: '\u21A9', labelKey: 'boardControl.keyBack' },
+  { key: 'TICK', glyph: '\u2713', labelKey: 'boardControl.keyOk' },
+  { key: 'DOWN', glyph: '\u25BC', labelKey: 'boardControl.keyDown', wide: true },
+  { key: 'HELP', glyph: '?', labelKey: 'boardControl.keyHint' },
+  { key: 'PLAY', glyph: '\u23EF', labelKey: 'boardControl.keyPlay', primary: true },
 ];
 
 interface PendingPress {
@@ -68,6 +70,7 @@ interface BoardControlPanelProps {
 }
 
 export function BoardControlPanel({ isOpen, onClose }: BoardControlPanelProps) {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const [loginOpen, setLoginOpen] = useState(false);
   const [loginError, setLoginError] = useState<string | undefined>();
@@ -114,7 +117,7 @@ export function BoardControlPanel({ isOpen, onClose }: BoardControlPanelProps) {
 
       if (response.status === 401) {
         pendingSendRef.current = press;
-        setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
+        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
         setLoginOpen(true);
         return;
       }
@@ -124,16 +127,16 @@ export function BoardControlPanel({ isOpen, onClose }: BoardControlPanelProps) {
         // Quiet success: the live feed reflects the change. Surface only the
         // shutdown gesture, which has no immediate on-screen feedback.
         if (press.key === 'PLAY' && press.longPress) {
-          setStatus({ kind: 'success', text: 'Powering off the board...' });
+          setStatus({ kind: 'success', text: t('boardControl.poweringOff') });
         }
       } else {
-        setStatus({ kind: 'error', text: data.error || 'Button press failed.' });
+        setStatus({ kind: 'error', text: data.error || t('boardControl.buttonFailed') });
       }
     } catch (e) {
       console.error('Failed to send board key:', e);
-      setStatus({ kind: 'error', text: 'Network error contacting the board.' });
+      setStatus({ kind: 'error', text: t('common.networkError') });
     }
-  }, []);
+  }, [t]);
 
   // Long-press PLAY is the shutdown gesture; confirm before sending it.
   const requestPress = useCallback((press: PendingPress): void => {
@@ -210,26 +213,25 @@ export function BoardControlPanel({ isOpen, onClose }: BoardControlPanelProps) {
         <div className="dialog-overlay" onClick={() => setConfirm(null)}>
           <div className="dialog" onClick={(e) => e.stopPropagation()}>
             <div className="dialog-header">
-              <h3>Power off the board?</h3>
+              <h3>{t('boardControl.confirmTitle')}</h3>
               <button className="dialog-close" onClick={() => setConfirm(null)}>×</button>
             </div>
             <div className="dialog-body">
               <p className="dialog-description">
-                Holding <strong>Play</strong> starts the board's shutdown countdown, just like
-                on the device. The board will power off.
+                {t('boardControl.confirmBodyPre')}<strong>{t('boardControl.playLabel')}</strong>{t('boardControl.confirmBodyPost')}
               </p>
             </div>
             <div className="dialog-footer">
               <div className="dialog-footer-right">
                 <button type="button" className="btn btn-secondary" onClick={() => setConfirm(null)}>
-                  Cancel
+                  {t('common.cancel')}
                 </button>
                 <button
                   type="button"
                   className="btn btn-primary"
                   onClick={() => { const p = confirm; setConfirm(null); void doSend(p); }}
                 >
-                  Power off
+                  {t('boardControl.powerOff')}
                 </button>
               </div>
             </div>
@@ -237,15 +239,15 @@ export function BoardControlPanel({ isOpen, onClose }: BoardControlPanelProps) {
         </div>
       )}
 
-      <div className="board-control-panel" role="dialog" aria-label="Board Control">
+      <div className="board-control-panel" role="dialog" aria-label={t('boardControl.title')}>
         <div className="board-control-panel-header">
-          <h3>Board Control</h3>
+          <h3>{t('boardControl.title')}</h3>
           <button
             type="button"
             className="board-control-panel-close"
             onClick={onClose}
-            aria-label="Close board control"
-            title="Close"
+            aria-label={t('boardControl.closeAria')}
+            title={t('boardControl.close')}
           >
             ×
           </button>
@@ -257,10 +259,10 @@ export function BoardControlPanel({ isOpen, onClose }: BoardControlPanelProps) {
           <img
             className="board-control-screen"
             src={`${buildApiUrl('/screen.jpg')}?t=${screenToken}`}
-            alt="Board display"
+            alt={t('boardControl.boardDisplayAlt')}
           />
 
-          <div className="board-remote" role="group" aria-label="Board buttons">
+          <div className="board-remote" role="group" aria-label={t('boardControl.boardButtonsAria')}>
             {BUTTONS.map((btn) => {
               const isActive = activeKey === btn.key;
               const className = [
@@ -275,8 +277,8 @@ export function BoardControlPanel({ isOpen, onClose }: BoardControlPanelProps) {
                   key={btn.key}
                   type="button"
                   className={className}
-                  aria-label={btn.ariaLabel}
-                  title={btn.ariaLabel}
+                  aria-label={t(btn.labelKey)}
+                  title={t(btn.labelKey)}
                   onPointerDown={(e) => onPointerDown(e, btn.key)}
                   onPointerUp={(e) => onPointerUp(e, btn.key)}
                   onPointerCancel={onPointerCancel}
@@ -297,8 +299,7 @@ export function BoardControlPanel({ isOpen, onClose }: BoardControlPanelProps) {
         )}
 
         <p className="board-control-hint text-muted">
-          Tap a button for a short press; press and hold for a long press. Holding Play powers
-          the board off. To play a move from the browser, use the Live Board.
+          {t('boardControl.hint')}
         </p>
       </div>
     </>

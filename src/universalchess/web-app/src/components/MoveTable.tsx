@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { formatMove, DEFAULT_NOTATION, type Notation, type VerboseMove } from '../utils/notation';
 import { renderFigurineText } from '../utils/figurineText';
 import type { PositionEntry } from '../types/game';
@@ -70,6 +71,7 @@ interface MoveRow {
  * Clicking a move navigates to that position.
  */
 export function MoveTable({ currentMoveIndex, positions, notation = DEFAULT_NOTATION, evalHistory = [], onMoveClick }: MoveTableProps) {
+  const { t } = useTranslation();
   const rows = useMemo(() => {
     if (!Array.isArray(positions) || positions.length === 0) return [];
     // positions[0] is the start (no move); each subsequent entry is one ply.
@@ -114,7 +116,7 @@ export function MoveTable({ currentMoveIndex, positions, notation = DEFAULT_NOTA
   };
 
   if (rows.length === 0) {
-    return <p className="text-muted">No moves</p>;
+    return <p className="text-muted">{t('moves.empty')}</p>;
   }
 
   return (

@@ -43,13 +43,13 @@ export function Navbar() {
   );
 
   return (
-    <nav className="navbar" role="navigation" aria-label="main navigation">
+    <nav className="navbar" role="navigation" aria-label={t('nav.mainNav')}>
       <div className="navbar-top">
         <div className="navbar-brand">
           <Link to="/" className="navbar-item navbar-logo-item">
             <img src="/logo" alt="" className="navbar-logo-img" />
             <div className="brand-text">
-              <span className="brand-title">Universal Chess</span>
+              <span className="brand-title">{t('nav.appName')}</span>
               <span className="brand-tagline">{t('brand.tagline')}</span>
             </div>
           </Link>
@@ -57,7 +57,7 @@ export function Navbar() {
               share this row now live in the status bar below the main nav. */}
           <button
             className={`navbar-burger ${menuOpen ? 'is-active' : ''}`}
-            aria-label="menu"
+            aria-label={t('nav.menu')}
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen(!menuOpen)}
           >

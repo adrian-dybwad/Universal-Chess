@@ -236,7 +236,6 @@ interface FormSettings {
     text_size: string;
     coach_provider: string;
     coach_id: string;
-    coach_language: string;
     coach_multipv: number;
   };
   lichess: {
@@ -291,7 +290,6 @@ const defaultFormSettings: FormSettings = {
     text_size: 'medium',
     coach_provider: 'none',
     coach_id: 'off',
-    coach_language: 'English',
     coach_multipv: 1,
   },
   lichess: { api_token: '', range: '', username: '' },
@@ -400,7 +398,6 @@ function parseRawSettings(data: SettingsData): FormSettings {
       text_size: data.game?.text_size || 'medium',
       coach_provider: data.game?.coach_provider || 'none',
       coach_id: data.game?.coach_id || 'off',
-      coach_language: data.game?.coach_language || 'English',
       coach_multipv: parseCoachMultipv(data.game?.coach_multipv),
     },
     lichess: {
@@ -786,11 +783,11 @@ export function Settings() {
         setLoading(false);
       } catch (e) {
         console.error('Failed to load settings:', e);
-        setLoadError('Could not connect to the Universal Chess backend. Make sure the board is running and accessible.');
+        setLoadError(t('settingsPage.connectError'));
         setLoading(false);
       }
     })();
-  }, [fetchSettings, loadCatalog]);
+  }, [fetchSettings, loadCatalog, t]);
 
   // Mirror engineLevels into a ref so the cache check below can read the latest
   // cache without making loadEngineLevels depend on engineLevels. Depending on the
@@ -1511,7 +1508,7 @@ export function Settings() {
   if (loading) {
     return (
       <div className="page container--lg">
-        <div className="loading">Loading settings...</div>
+        <div className="loading">{t('settingsPage.loading')}</div>
       </div>
     );
   }
@@ -1520,7 +1517,7 @@ export function Settings() {
     return (
       <div className="page container--lg">
         <Card>
-          <h2 className="page-title">Settings</h2>
+          <h2 className="page-title">{t('settingsPage.title')}</h2>
           <div className="error mt-6">
             <p>{loadError}</p>
             <p className="mt-4" style={{ fontSize: 'var(--text-sm)' }}>
@@ -1660,7 +1657,6 @@ export function Settings() {
   const languageOptions = optionSet('ui_language');
   const notationOptions = optionSet('notation');
   const textSizeOptions = optionSet('text_size');
-  const coachLanguageOptions = optionSet('coach_language');
   // Agent selector options (Game tab): every *configured* registered agent, built
   // from the live /api/agents list so a user-dropped agent module appears without
   // any catalog change. Only agents with a key and all required settings are
@@ -1805,8 +1801,8 @@ export function Settings() {
         {/* PLAYERS TAB */}
         {activeTab === 'players' && (
           <section>
-            <h2 className="page-title">Player Settings</h2>
-            <p className="text-muted mb-6">Configure player names, types, and engine preferences</p>
+            <h2 className="page-title">{t('settingsPage.players.title')}</h2>
+            <p className="text-muted mb-6">{t('settingsPage.players.description')}</p>
 
             {/* Player 1 */}
             <Card className="mb-6">
@@ -1984,8 +1980,8 @@ export function Settings() {
         {/* GAME TAB */}
         {activeTab === 'game' && (
           <section>
-            <h2 className="page-title">Game Settings</h2>
-            <p className="text-muted mb-6">Time controls and game behavior</p>
+            <h2 className="page-title">{t('settingsPage.game.title')}</h2>
+            <p className="text-muted mb-6">{t('settingsPage.game.description')}</p>
 
             {/* Time Control, Live Analysis, and Analysis Engine all render from
                 the shared catalog nodes (the same ones the board's Game submenu
@@ -2205,16 +2201,8 @@ export function Settings() {
                   save.
                 </p>
               )}
-              {/* Coach language: the natural language the AI writes its remarks
-                  and tips in. Greyed out while coaching is disabled, matching the
-                  agent selector. */}
-              <CatalogField
-                node={fieldById(catalog, 'coach.language')!}
-                value={formSettings.game.coach_language}
-                options={coachLanguageOptions}
-                disabled={coachDisabled}
-                onChange={(v) => updateFormSettings('game', { coach_language: String(v) })}
-              />
+              {/* The coach writes in the device UI language (Settings > System >
+                  Language); there is no separate coach-language control. */}
               {/* Candidate lines (MultiPV): how many engine top moves the coach is
                   given for a reviewed move so it can reference better/alternative
                   moves. 1 sends none (fastest). */}
@@ -2254,10 +2242,9 @@ export function Settings() {
         {/* AGENTS TAB */}
         {activeTab === 'agents' && (
           <section>
-            <h2 className="page-title">Agents</h2>
+            <h2 className="page-title">{t('settingsPage.agents.title')}</h2>
             <p className="text-muted mb-6">
-              Configure the AI agents (services) that power features like coaching. Each agent stores its
-              own API key and model; choose which one powers the coach under Game &rarr; Coach.
+              {t('settingsPage.agents.description')}
             </p>
 
             {agents.length === 0 ? (
@@ -2426,8 +2413,8 @@ export function Settings() {
         {/* DISPLAY TAB */}
         {activeTab === 'display' && (
           <section>
-            <h2 className="page-title">Display</h2>
-            <p className="text-muted mb-6">Control what appears on the e-paper display and the LEDs</p>
+            <h2 className="page-title">{t('settingsPage.display.title')}</h2>
+            <p className="text-muted mb-6">{t('settingsPage.display.description')}</p>
 
             {/* The visibility toggles render from the catalog's display section
                 (the same nodes as the board's Display menu). Both disable while
@@ -2567,8 +2554,8 @@ export function Settings() {
         {/* SOUND TAB */}
         {activeTab === 'sound' && (
           <section>
-            <h2 className="page-title">Sound</h2>
-            <p className="text-muted mb-6">Control audio feedback and beeps</p>
+            <h2 className="page-title">{t('settingsPage.sound.title')}</h2>
+            <p className="text-muted mb-6">{t('settingsPage.sound.description')}</p>
 
             {/* Rendered from the catalog's sound section: row order, labels, and
                 help all come from menu.json (matching the board's Sound submenu --
@@ -2610,8 +2597,8 @@ export function Settings() {
               />
             ) : (
               <>
-                <h2 className="page-title">Chess Engines</h2>
-                <p className="text-muted mb-6">Install and manage chess engines for play and analysis</p>
+                <h2 className="page-title">{t('settingsPage.engines.title')}</h2>
+                <p className="text-muted mb-6">{t('settingsPage.engines.description')}</p>
 
                 <EnginesList
                   engines={engines}
@@ -2641,8 +2628,8 @@ export function Settings() {
         {/* SYSTEM TAB */}
         {activeTab === 'system' && (
           <section>
-            <h2 className="page-title">System Settings</h2>
-            <p className="text-muted mb-6">Device status, software updates, and system configuration</p>
+            <h2 className="page-title">{t('settingsPage.system.title')}</h2>
+            <p className="text-muted mb-6">{t('settingsPage.system.description')}</p>
 
             <SystemInfoCard />
 
@@ -2747,9 +2734,9 @@ export function Settings() {
           board. A failure surfaces here rather than silently dropping the edit. */}
       {saveState !== 'idle' && (
         <div className={`save-indicator save-indicator-${saveState}`} role="status" aria-live="polite">
-          {saveState === 'saving' && 'Saving\u2026'}
-          {saveState === 'saved' && 'Saved'}
-          {saveState === 'error' && 'Could not save. Check your connection and try again.'}
+          {saveState === 'saving' && t('settingsPage.saving')}
+          {saveState === 'saved' && t('settingsPage.saved')}
+          {saveState === 'error' && t('settingsPage.saveError')}
         </div>
       )}
       </div>

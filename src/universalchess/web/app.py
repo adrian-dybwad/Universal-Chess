@@ -2445,15 +2445,19 @@ def _read_notation():
 
 
 def _read_coach_language():
-    """Return the coach's response language from centaur.ini, defaulting English.
+    """Return the coach's response language name from the device UI locale.
+
+    Derived from the single device-wide [system] ui_language (mapped to a
+    plain-English language name) rather than a separate coach-language setting, so
+    the coach writes in whatever language the device is set to. English yields
+    "English", which adds no prompt directive.
 
     Shared by the coach endpoints so web and board ask the AI to respond in the
     same language. English (the default) adds no prompt instruction.
     """
-    from universalchess.board.settings import Settings
-    from universalchess.services.coach import DEFAULT_LANGUAGE
+    from universalchess.services import language_service
 
-    return Settings.read("game", "coach_language", DEFAULT_LANGUAGE) or DEFAULT_LANGUAGE
+    return language_service.coach_language_name(language_service.get_language())
 
 
 def _read_player_dicts():

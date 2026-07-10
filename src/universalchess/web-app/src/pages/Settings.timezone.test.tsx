@@ -168,7 +168,9 @@ describe('System tab language selector', () => {
     // Defaults to English (the payload omits ui_language -> "en" fallback).
     expect(select.value).toBe('en');
     const values = Array.from(select.options).map((o) => o.value);
-    expect(values).toEqual(['en', 'es']);
+    // The full launch set: English/Spanish plus the languages the coach can write
+    // in (the selector now drives both UI and coach language).
+    expect(values).toEqual(['en', 'es', 'zh', 'hi', 'ar', 'fr', 'ru', 'pt', 'de', 'ja']);
   });
 
   it('POSTs to /api/system/language (not /api/settings) when changed', async () => {

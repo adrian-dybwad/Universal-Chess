@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { MenuIcon } from './MenuIcon';
 import { buildApiUrl } from '../utils/api';
 import './UpdateIndicator.css';
@@ -21,6 +22,7 @@ const POLL_INTERVAL_MS = 60000;
  * the navbar is unchanged in the common case.
  */
 export function UpdateIndicator() {
+  const { t } = useTranslation();
   const [pending, setPending] = useState(false);
   const [autoUpdate, setAutoUpdate] = useState(false);
 
@@ -53,8 +55,8 @@ export function UpdateIndicator() {
     <Link
       to="/settings/system"
       className="navbar-control-icon navbar-update-icon"
-      title="Update ready to install"
-      aria-label="Update ready to install"
+      title={t('update.indicatorReady')}
+      aria-label={t('update.indicatorReady')}
     >
       <MenuIcon name="update" size={18} />
     </Link>

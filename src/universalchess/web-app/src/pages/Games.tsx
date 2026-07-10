@@ -12,7 +12,7 @@ import './Games.css';
  * Games history page.
  */
 export function Games() {
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [games, setGames] = useState<GameRecord[]>([]);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -63,7 +63,7 @@ export function Games() {
   // POST. On 401 the login dialog is shown and the delete is retried once the
   // user authenticates (pendingDeleteId drives the retry).
   const deleteGame = async (gameId: number, skipConfirm = false) => {
-    if (!skipConfirm && !confirm('Delete this game? This cannot be undone.')) return;
+    if (!skipConfirm && !confirm(t('games.confirmDelete'))) return;
     try {
       const response = await apiFetch(`/deletegame/${gameId}`, {
         method: 'POST',
@@ -71,7 +71,7 @@ export function Games() {
       });
 
       if (response.status === 401) {
-        setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
+        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
         setPendingDeleteId(gameId);
         setLoginDialogOpen(true);
         return;
@@ -101,32 +101,32 @@ export function Games() {
   return (
     <div className="page container--lg">
       <div className="page-header">
-        <h1 className="page-title">Game History</h1>
+        <h1 className="page-title">{t('games.title')}</h1>
         <div className="flex gap-4 items-center">
           <Button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-            ◀ Previous
+            {t('games.previous')}
           </Button>
-          <span className="text-muted">Page {page}</span>
+          <span className="text-muted">{t('games.page', { page })}</span>
           <Button onClick={() => setPage((p) => p + 1)} disabled={games.length === 0}>
-            Next ▶
+            {t('games.next')}
           </Button>
         </div>
       </div>
 
       {loading ? (
-        <div className="loading">Loading games...</div>
+        <div className="loading">{t('games.loading')}</div>
       ) : games.length === 0 ? (
-        <div className="empty">No games found</div>
+        <div className="empty">{t('games.empty')}</div>
       ) : (
         <div className="flex flex-col gap-4">
           {games.map((game) => (
             <Card key={game.id}>
               <div className="game-header">
                 <div className="game-players">
-                  <strong>{game.white || 'Player'}</strong>
+                  <strong>{game.white || t('games.player')}</strong>
                   <span className="text-muted">(W)</span>
-                  <span className="game-vs">vs</span>
-                  <strong>{game.black || 'Player'}</strong>
+                  <span className="game-vs">{t('games.vs')}</span>
+                  <strong>{game.black || t('games.player')}</strong>
                   <span className="text-muted">(B)</span>
                 </div>
                 {game.result && <Badge>{game.result}</Badge>}
@@ -145,13 +145,13 @@ export function Games() {
 
               <div className="flex gap-2 mt-4">
                 <Button size="sm" onClick={() => togglePgn(game.id)}>
-                  {expandedPgn[game.id] ? 'Hide PGN' : 'Show PGN'}
+                  {expandedPgn[game.id] ? t('games.hidePgn') : t('games.showPgn')}
                 </Button>
                 <Link to={`/analyze/${game.id}`}>
-                  <Button size="sm" variant="primary">Analyze</Button>
+                  <Button size="sm" variant="primary">{t('games.analyze')}</Button>
                 </Link>
                 <Button size="sm" variant="danger" onClick={() => deleteGame(game.id)}>
-                  Delete
+                  {t('games.delete')}
                 </Button>
               </div>
             </Card>

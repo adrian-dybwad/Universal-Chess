@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useGameStore } from '../stores/gameStore';
 import type { ClockStatus } from '../types/game';
 import { buildApiUrl } from '../utils/api';
@@ -35,6 +36,7 @@ function ClockRow({ label, seconds, active }: ClockRowProps) {
  * orientation (White at the near edge).
  */
 export function ClockDisplay() {
+  const { t } = useTranslation();
   const clock = useGameStore((state) => state.clock);
   const setClock = useGameStore((state) => state.setClock);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -73,9 +75,9 @@ export function ClockDisplay() {
   const { white, black } = interpolateClock(clock, nowMs);
 
   return (
-    <div className="clock-display" role="timer" aria-label="Game clock">
-      <ClockRow label="Black" seconds={black} active={clock.active_color === 'black' && clock.is_running} />
-      <ClockRow label="White" seconds={white} active={clock.active_color === 'white' && clock.is_running} />
+    <div className="clock-display" role="timer" aria-label={t('clock.aria')}>
+      <ClockRow label={t('color.black')} seconds={black} active={clock.active_color === 'black' && clock.is_running} />
+      <ClockRow label={t('color.white')} seconds={white} active={clock.active_color === 'white' && clock.is_running} />
     </div>
   );
 }

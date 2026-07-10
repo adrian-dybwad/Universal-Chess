@@ -4,10 +4,24 @@
     "games": "Games",
     "positions": "Positions",
     "settings": "Settings",
-    "boardControl": "Board Control"
+    "boardControl": "Board Control",
+    "appName": "Universal Chess",
+    "mainNav": "main navigation",
+    "menu": "menu"
   },
   "brand": {
     "tagline": "Your smart chess companion"
+  },
+  "common": {
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "retry": "Retry",
+    "invalidCredentials": "Invalid credentials. Please try again.",
+    "networkError": "Network error contacting the board."
+  },
+  "color": {
+    "white": "White",
+    "black": "Black"
   },
   "connection": {
     "connected": "Connected",
@@ -67,6 +81,177 @@
       "basedOnLink": "DGTCentaur Mods",
       "basedOnPost": ", originally created by Ed Nekebno and community contributors.",
       "thanks": "Special thanks to all the open source chess engine authors whose work makes this project possible."
+    }
+  },
+  "games": {
+    "title": "Game History",
+    "previous": "◀ Previous",
+    "next": "Next ▶",
+    "page": "Page {{page}}",
+    "loading": "Loading games...",
+    "empty": "No games found",
+    "player": "Player",
+    "vs": "vs",
+    "showPgn": "Show PGN",
+    "hidePgn": "Hide PGN",
+    "analyze": "Analyze",
+    "delete": "Delete",
+    "confirmDelete": "Delete this game? This cannot be undone."
+  },
+  "liveBoard": {
+    "confirmNewGameTitle": "Start a new game?",
+    "confirmNewGameBody": "The current game is still in progress. Starting a new game abandons it (it is recorded in your history) and begins a fresh game with the current player settings.",
+    "newGame": "New game",
+    "currentGame": "Current Game",
+    "newGameButton": "New Game",
+    "moveToPlay": "Move {{num}} - {{turn}} to play",
+    "waiting": "Waiting for game...",
+    "analysis": "Analysis",
+    "moves": "Moves",
+    "currentPgn": "Current PGN",
+    "pgnPlaceholder": "PGN will appear here during play..."
+  },
+  "clock": {
+    "aria": "Game clock"
+  },
+  "positions": {
+    "loading": "Loading positions...",
+    "loadError": "Could not load positions from the board.",
+    "setupSuccess": "Set up \"{{name}}\" on the board.",
+    "setupFailed": "Failed to set up position.",
+    "confirmTitle": "End current game?",
+    "confirmBodyPre": "A game is in progress. Setting up ",
+    "confirmBodyPost": " will end it. The game will be recorded as aborted.",
+    "endGameSetup": "End game & set up",
+    "title": "Positions",
+    "descCategory": "Set up a predefined position on the board to practice or analyze.",
+    "descIndex": "Choose a category to browse positions.",
+    "none": "No positions are defined.",
+    "allCategories": "← All categories",
+    "notFound": "That category was not found.",
+    "setupAria": "Set up {{name}}",
+    "openAria": "Open {{name}} ({{count}} positions)",
+    "positionCount_one": "{{count}} position",
+    "positionCount_other": "{{count}} positions"
+  },
+  "analyze": {
+    "notFound": "Game not found",
+    "loading": "Loading game...",
+    "title": "Game Analysis",
+    "moves": "Moves",
+    "pgn": "PGN"
+  },
+  "coach": {
+    "title": "Coach",
+    "selectMove": "Select a move to see coaching.",
+    "loading": "Coaching…",
+    "pending": "Coaching will appear once the move is saved.",
+    "unavailable": "Coaching unavailable."
+  },
+  "moves": {
+    "empty": "No moves"
+  },
+  "moveBanner": {
+    "played": "played",
+    "viewLiveBoard": "View Live Board →",
+    "dismiss": "Dismiss"
+  },
+  "login": {
+    "enterUsername": "Please enter a username",
+    "enterPassword": "Please enter a password",
+    "title": "Authentication Required",
+    "description": "Enter your Raspberry Pi credentials to modify settings. This is the same username and password you use for SSH or WebDAV.",
+    "username": "Username",
+    "usernamePlaceholder": "username",
+    "password": "Password",
+    "passwordPlaceholder": "Enter your password",
+    "rememberMe": "Remember me on this device",
+    "clearSaved": "Clear Saved Credentials",
+    "login": "Login"
+  },
+  "apiSettings": {
+    "invalidUrl": "Please enter a valid URL (e.g., http://dgt.local)",
+    "invalidHttpUrl": "Please enter a valid http(s) URL",
+    "serverStatus": "Server returned status {{status}}",
+    "timedOut": "Connection timed out",
+    "couldNotConnect": "Could not connect to server",
+    "title": "Connection Settings",
+    "descriptionPre": "Enter the address of your chess board. This is typically ",
+    "descriptionPost": " or the IP address of your Raspberry Pi.",
+    "boardUrl": "Chess Board URL",
+    "testing": "Testing...",
+    "test": "Test",
+    "success": "Connection successful!",
+    "apiUrlInUse": "API URL in use:",
+    "currentOrigin": "Current origin:",
+    "resetDefault": "Reset to Default",
+    "saveReconnect": "Save & Reconnect"
+  },
+  "update": {
+    "installing": "Installing update… the board will restart and this page may briefly disconnect.",
+    "ready": "An update has been downloaded and is ready to install.",
+    "details": "Details",
+    "installNow": "Install now",
+    "installingShort": "Installing…",
+    "installFailed": "Install failed",
+    "networkError": "Network error",
+    "indicatorReady": "Update ready to install"
+  },
+  "boardControl": {
+    "keyUp": "Up",
+    "keyBack": "Back",
+    "keyOk": "Ok / Menu",
+    "keyDown": "Down",
+    "keyHint": "Hint",
+    "keyPlay": "Play / Pause (hold to power off)",
+    "poweringOff": "Powering off the board...",
+    "buttonFailed": "Button press failed.",
+    "confirmTitle": "Power off the board?",
+    "confirmBodyPre": "Holding ",
+    "playLabel": "Play",
+    "confirmBodyPost": " starts the board's shutdown countdown, just like on the device. The board will power off.",
+    "powerOff": "Power off",
+    "title": "Board Control",
+    "closeAria": "Close board control",
+    "close": "Close",
+    "boardDisplayAlt": "Board display",
+    "boardButtonsAria": "Board buttons",
+    "hint": "Tap a button for a short press; press and hold for a long press. Holding Play powers the board off. To play a move from the browser, use the Live Board."
+  },
+  "settingsPage": {
+    "title": "Settings",
+    "loading": "Loading settings...",
+    "connectError": "Could not connect to the Universal Chess backend. Make sure the board is running and accessible.",
+    "saving": "Saving…",
+    "saved": "Saved",
+    "saveError": "Could not save. Check your connection and try again.",
+    "players": {
+      "title": "Player Settings",
+      "description": "Configure player names, types, and engine preferences"
+    },
+    "game": {
+      "title": "Game Settings",
+      "description": "Time controls and game behavior"
+    },
+    "agents": {
+      "title": "Agents",
+      "description": "Configure the AI agents (services) that power features like coaching. Each agent stores its own API key and model; choose which one powers the coach under Game → Coach."
+    },
+    "display": {
+      "title": "Display",
+      "description": "Control what appears on the e-paper display and the LEDs"
+    },
+    "sound": {
+      "title": "Sound",
+      "description": "Control audio feedback and beeps"
+    },
+    "engines": {
+      "title": "Chess Engines",
+      "description": "Install and manage chess engines for play and analysis"
+    },
+    "system": {
+      "title": "System Settings",
+      "description": "Device status, software updates, and system configuration"
     }
   }
 }

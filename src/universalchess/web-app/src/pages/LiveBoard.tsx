@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ChessBoard } from '../components/ChessBoard';
 import { useBoardMove } from '../components/useBoardMove';
 import { useAuthedAction } from '../components/useAuthedAction';
@@ -18,6 +19,7 @@ const SHOW_BEST_MOVE_KEY = 'universalChess.showBestMove';
  * Layout matches original: 2/3 board, 1/3 widgets stacked.
  */
 export function LiveBoard() {
+  const { t } = useTranslation();
   // Use store directly - SSE connection is managed by GameStateProvider
   const gameState = useGameStore((state) => state.gameState);
   const [displayFen, setDisplayFen] = useState<string | null>(null);
@@ -100,9 +102,9 @@ export function LiveBoard() {
   const currentMoveKey = currentMoveIndex >= 1 ? moveUcis[currentMoveIndex - 1] : undefined;
 
   // Game info - using snake_case property names from backend
-  const white = gameState?.white || 'White';
-  const black = gameState?.black || 'Black';
-  const turn = gameState?.turn === 'w' ? 'White' : 'Black';
+  const white = gameState?.white || t('color.white');
+  const black = gameState?.black || t('color.black');
+  const turn = gameState?.turn === 'w' ? t('color.white') : t('color.black');
   const moveNum = gameState?.move_number || 1;
   const result = gameState?.result;
   const gameOver = gameState?.game_over;
@@ -197,23 +199,21 @@ export function LiveBoard() {
         <div className="dialog-overlay" onClick={() => setConfirmNewGame(false)}>
           <div className="dialog" onClick={(e) => e.stopPropagation()}>
             <div className="dialog-header">
-              <h3>Start a new game?</h3>
+              <h3>{t('liveBoard.confirmNewGameTitle')}</h3>
               <button className="dialog-close" onClick={() => setConfirmNewGame(false)}>×</button>
             </div>
             <div className="dialog-body">
               <p className="dialog-description">
-                The current game is still in progress. Starting a new game abandons it
-                (it is recorded in your history) and begins a fresh game with the current
-                player settings.
+                {t('liveBoard.confirmNewGameBody')}
               </p>
             </div>
             <div className="dialog-footer">
               <div className="dialog-footer-right">
                 <button type="button" className="btn btn-secondary" onClick={() => setConfirmNewGame(false)}>
-                  Cancel
+                  {t('common.cancel')}
                 </button>
                 <button type="button" className="btn btn-primary" onClick={() => void startNewGame()}>
-                  New game
+                  {t('liveBoard.newGame')}
                 </button>
               </div>
             </div>
@@ -240,14 +240,14 @@ export function LiveBoard() {
         {/* Current Game Box */}
         <div className="box">
           <div className="current-game-header">
-            <h3 className="title is-5 box-title">Current Game</h3>
+            <h3 className="title is-5 box-title">{t('liveBoard.currentGame')}</h3>
             <button
               type="button"
               className="button is-small is-primary"
               onClick={onNewGameClick}
               disabled={newGameBusy}
             >
-              New Game
+              {t('liveBoard.newGameButton')}
             </button>
           </div>
           {gameState?.fen ? (
@@ -267,20 +267,20 @@ export function LiveBoard() {
                   )}
                 </div>
               ) : (
-                <span className="tag is-light">Move {moveNum} - {turn} to play</span>
+                <span className="tag is-light">{t('liveBoard.moveToPlay', { num: moveNum, turn })}</span>
               )}
               {/* Live countdown clock; renders only for a timed game. */}
               <ClockDisplay />
             </div>
           ) : (
-            <p className="text-muted">Waiting for game...</p>
+            <p className="text-muted">{t('liveBoard.waiting')}</p>
           )}
         </div>
 
         {/* Analysis Box - coaching for the viewed move renders in the white card
             above the grey analysis widget (i.e. above the eval bar and graph). */}
         <div className="box" style={{ marginTop: '1rem' }}>
-          <h3 className="title is-5 box-title">Analysis</h3>
+          <h3 className="title is-5 box-title">{t('liveBoard.analysis')}</h3>
           <CoachPanel
             gameId={gameState?.game_id ?? null}
             ply={currentMoveIndex}
@@ -302,7 +302,7 @@ export function LiveBoard() {
 
         {/* Move History Box */}
         <div className="box" style={{ marginTop: '1rem' }}>
-          <h3 className="title is-5 box-title">Moves</h3>
+          <h3 className="title is-5 box-title">{t('liveBoard.moves')}</h3>
           <MoveTable
             positions={positions}
             currentMoveIndex={currentMoveIndex}
@@ -319,14 +319,14 @@ export function LiveBoard() {
             onClick={() => setPgnExpanded(!pgnExpanded)}
             aria-expanded={pgnExpanded}
           >
-            <h3 className="title is-5 box-title" style={{ margin: 0 }}>Current PGN</h3>
+            <h3 className="title is-5 box-title" style={{ margin: 0 }}>{t('liveBoard.currentPgn')}</h3>
             <span className="pgn-toggle-icon">{pgnExpanded ? '▼' : '▶'}</span>
           </button>
           {pgnExpanded && (
             <textarea
               id="lastpgn"
               className="textarea"
-              placeholder="PGN will appear here during play..."
+              placeholder={t('liveBoard.pgnPlaceholder')}
               rows={8}
               readOnly
               value={currentPgn}

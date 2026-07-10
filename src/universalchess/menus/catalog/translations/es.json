@@ -93,18 +93,6 @@
       "medium": "Mediano",
       "large": "Grande"
     },
-    "coach_language": {
-      "English": "Inglés",
-      "Spanish": "Español",
-      "Chinese": "Chino (中文)",
-      "Hindi": "Hindi (हिन्दी)",
-      "Arabic": "Árabe (العربية)",
-      "French": "Francés (Français)",
-      "Russian": "Ruso (Русский)",
-      "Portuguese": "Portugués (Português)",
-      "German": "Alemán (Deutsch)",
-      "Japanese": "Japonés (日本語)"
-    },
     "timezones_common": {
       "Europe/London": "Londres",
       "Europe/Moscow": "Moscú",
@@ -438,11 +426,6 @@
       "label": "Agente",
       "boardLabel": "Agente\n{value}",
       "help": "Qué agente de IA impulsa al entrenador. Solo se listan los agentes con clave API y todos los ajustes necesarios; configúralos en Ajustes > Agentes. Se desactiva cuando el Entrenador está desactivado."
-    },
-    "coach.language": {
-      "label": "Idioma del entrenador",
-      "boardLabel": "Idioma\n{value}",
-      "help": "Idioma en que el entrenador de IA escribe sus observaciones y consejos. Predeterminado: inglés."
     },
     "agents.list.items": {
       "help": "Selecciona un agente para configurar su clave API, modelo y endpoint."

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { ChessBoard } from '../components/ChessBoard';
 import { Analysis } from '../components/Analysis';
 import { CoachPanel } from '../components/CoachPanel';
@@ -15,6 +16,7 @@ import './Analyze.css';
  */
 export function Analyze() {
   const { gameId } = useParams<{ gameId: string }>();
+  const { t } = useTranslation();
   const notation = useNotation();
   const [pgn, setPgn] = useState('');
   // Authoritative per-ply positions (python-chess computed). This is the source
@@ -41,7 +43,7 @@ export function Analyze() {
 
     apiFetch(`/getpgn/${gameId}`)
       .then((res) => {
-        if (!res.ok) throw new Error('Game not found');
+        if (!res.ok) throw new Error(t('analyze.notFound'));
         return res.text();
       })
       .then((data) => {
@@ -66,7 +68,7 @@ export function Analyze() {
       .catch(() => {
         /* leave positions null; the move list stays empty */
       });
-  }, [gameId]);
+  }, [gameId, t]);
 
   const handlePositionChange = useCallback((fen: string, _moveIndex: number) => {
     setCurrentFen(fen);
@@ -97,7 +99,7 @@ export function Analyze() {
   if (loading) {
     return (
       <div className="page container--lg">
-        <div className="loading">Loading game...</div>
+        <div className="loading">{t('analyze.loading')}</div>
       </div>
     );
   }
@@ -112,7 +114,7 @@ export function Analyze() {
 
   return (
     <div className="page container--xl">
-      <h1 className="page-title mb-6">Game Analysis</h1>
+      <h1 className="page-title mb-6">{t('analyze.title')}</h1>
 
       <div className="analyze-layout">
         <section className="analyze-board">
@@ -139,7 +141,7 @@ export function Analyze() {
 
           {/* Move table */}
           <Card className="mt-4">
-            <CardHeader title="Moves" />
+            <CardHeader title={t('analyze.moves')} />
             <MoveTable
               positions={positions}
               currentMoveIndex={currentMoveIndex}
@@ -152,7 +154,7 @@ export function Analyze() {
       </div>
 
       <Card className="mt-6">
-        <CardHeader title="PGN" />
+        <CardHeader title={t('analyze.pgn')} />
         <pre>{pgn}</pre>
       </Card>
     </div>

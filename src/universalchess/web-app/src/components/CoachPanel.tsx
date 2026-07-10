@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Card, CardHeader } from './ui';
 import { apiFetch } from '../utils/api';
 import { renderFigurineText } from '../utils/figurineText';
@@ -58,6 +59,7 @@ type Status =
  * ``not_configured`` response) so it never nags a board without a coach set up.
  */
 export function CoachPanel({ gameId, ply, moveKey, variant = 'box' }: CoachPanelProps) {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<Status>({ kind: 'prompt' });
   // undefined until the first response tells us whether a coach is configured;
   // false hides the panel for the rest of the session.
@@ -108,13 +110,13 @@ export function CoachPanel({ gameId, ply, moveKey, variant = 'box' }: CoachPanel
           const permanent = data.reason === 'quota' || data.reason === 'auth';
           setStatus({
             kind: 'error',
-            message: data.message ?? 'Coaching unavailable.',
+            message: data.message ?? t('coach.unavailable'),
             retryable: !permanent,
           });
         }
       } catch {
         if (!cancelled) {
-          setStatus({ kind: 'error', message: 'Coaching unavailable.', retryable: true });
+          setStatus({ kind: 'error', message: t('coach.unavailable'), retryable: true });
         }
       }
     }, DEBOUNCE_MS);
@@ -123,7 +125,7 @@ export function CoachPanel({ gameId, ply, moveKey, variant = 'box' }: CoachPanel
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [gameId, ply, moveKey, retryToken]);
+  }, [gameId, ply, moveKey, retryToken, t]);
 
   // Hidden entirely when there is no game to coach or no coach is configured.
   if (gameId === null || configured === false) {
@@ -133,20 +135,20 @@ export function CoachPanel({ gameId, ply, moveKey, variant = 'box' }: CoachPanel
   const body = (() => {
     switch (status.kind) {
       case 'prompt':
-        return <p className="coach-panel-muted">Select a move to see coaching.</p>;
+        return <p className="coach-panel-muted">{t('coach.selectMove')}</p>;
       case 'loading':
-        return <p className="coach-panel-muted">Coaching…</p>;
+        return <p className="coach-panel-muted">{t('coach.loading')}</p>;
       case 'ready':
         return <p className="coach-panel-text">{renderFigurineText(status.text)}</p>;
       case 'pending':
-        return <p className="coach-panel-muted">Coaching will appear once the move is saved.</p>;
+        return <p className="coach-panel-muted">{t('coach.pending')}</p>;
       case 'error':
         return (
           <p className="coach-panel-muted">
             {status.message}{' '}
             {status.retryable && (
-              <button className="coach-panel-retry" onClick={() => setRetryToken((t) => t + 1)}>
-                Retry
+              <button className="coach-panel-retry" onClick={() => setRetryToken((n) => n + 1)}>
+                {t('common.retry')}
               </button>
             )}
           </p>
@@ -161,7 +163,7 @@ export function CoachPanel({ gameId, ply, moveKey, variant = 'box' }: CoachPanel
   if (variant === 'card') {
     return (
       <Card className="mt-4">
-        <CardHeader title="Coach" />
+        <CardHeader title={t('coach.title')} />
         <div className="coach-panel-body">{body}</div>
       </Card>
     );
@@ -169,7 +171,7 @@ export function CoachPanel({ gameId, ply, moveKey, variant = 'box' }: CoachPanel
 
   return (
     <div className="box coach-panel" style={{ marginTop: '1rem' }}>
-      <h3 className="title is-5 box-title">Coach</h3>
+      <h3 className="title is-5 box-title">{t('coach.title')}</h3>
       <div className="coach-panel-body">{body}</div>
     </div>
   );

@@ -79,38 +79,6 @@ def test_load_reads_stored_notation(monkeypatch):
     assert settings.to_dict()["notation"] == "uci"
 
 
-def test_coach_language_defaults_to_english():
-    # The coach response language must default to English so a fresh install adds no
-    # language directive to the prompt (English is the model's native default). A
-    # missing field or wrong default would silently force a language on every prompt.
-    settings = GameSettings(section="game")
-    assert settings.to_dict()["coach_language"] == "English"
-
-
-def test_to_dict_includes_selected_coach_language():
-    # Guards the to_dict() round-trip the menu/web read the current language
-    # through. Without the field this raises TypeError on construction; a broken
-    # to_dict() KeyErrors here.
-    settings = GameSettings(section="game", coach_language="Spanish")
-    assert settings.to_dict()["coach_language"] == "Spanish"
-
-
-def test_load_reads_stored_coach_language(monkeypatch):
-    # load() must surface a persisted language; otherwise the board/web always
-    # re-read English and the user's Coach Language choice is silently ignored. The
-    # fake omits coach_language from its explicit defaults to prove load() seeds the
-    # read default itself (setdefault), so load_section actually reads the stored key.
-    def fake_load_section(section, defaults):
-        data = dict(defaults)
-        data["coach_language"] = "Japanese"
-        return data
-
-    monkeypatch.setattr(settings_mod, "load_section", fake_load_section)
-    settings = GameSettings.load("game", {})
-    assert settings.coach_language == "Japanese"
-    assert settings.to_dict()["coach_language"] == "Japanese"
-
-
 def test_text_size_defaults_to_medium():
     # The display text size must default to medium so a fresh install renders the
     # existing (unscaled) coach and move-list layout. A missing field or wrong

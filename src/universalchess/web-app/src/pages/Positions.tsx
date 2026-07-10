@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { Card, CardHeader } from '../components/ui';
 import { ChessBoard } from '../components/ChessBoard';
 import { LoginDialog } from '../components/LoginDialog';
@@ -96,6 +97,7 @@ function PositionPreview({ fen, hint }: { fen: string; hint: string | null }) {
 export function Positions() {
   const { category: categoryParam } = useParams();
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const [categories, setCategories] = useState<PositionCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -137,10 +139,10 @@ export function Positions() {
       })
       .catch((e) => {
         console.error('Failed to load positions:', e);
-        setLoadError('Could not load positions from the board.');
+        setLoadError(t('positions.loadError'));
         setLoading(false);
       });
-  }, []);
+  }, [t]);
 
   const sendSetup = useCallback(async (entry: PositionEntry): Promise<void> => {
     setStatus(null);
@@ -153,22 +155,22 @@ export function Positions() {
       });
 
       if (response.status === 401) {
-        setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
+        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
         setLoginOpen(true);
         return;
       }
 
       const data = await response.json().catch(() => ({}));
       if (response.ok && data.success) {
-        setStatus({ kind: 'success', text: `Set up "${prettify(entry.name)}" on the board.` });
+        setStatus({ kind: 'success', text: t('positions.setupSuccess', { name: prettify(entry.name) }) });
       } else {
-        setStatus({ kind: 'error', text: data.error || 'Failed to set up position.' });
+        setStatus({ kind: 'error', text: data.error || t('positions.setupFailed') });
       }
     } catch (e) {
       console.error('Failed to set up position:', e);
-      setStatus({ kind: 'error', text: 'Network error contacting the board.' });
+      setStatus({ kind: 'error', text: t('common.networkError') });
     }
-  }, []);
+  }, [t]);
 
   const onSelect = (entry: PositionEntry) => {
     setPending(entry);
@@ -206,7 +208,7 @@ export function Positions() {
         }
       }}
       title={entry.fen}
-      aria-label={`Set up ${prettify(entry.name)}`}
+      aria-label={t('positions.setupAria', { name: prettify(entry.name) })}
     >
       <PositionPreview fen={entry.fen} hint={entry.hint} />
       <span className="position-name">{prettify(entry.name)}</span>
@@ -216,7 +218,7 @@ export function Positions() {
   if (loading) {
     return (
       <div className="page container--lg">
-        <div className="loading">Loading positions...</div>
+        <div className="loading">{t('positions.loading')}</div>
       </div>
     );
   }
@@ -234,22 +236,21 @@ export function Positions() {
         <div className="dialog-overlay" onClick={() => setConfirmOpen(false)}>
           <div className="dialog" onClick={(e) => e.stopPropagation()}>
             <div className="dialog-header">
-              <h3>End current game?</h3>
+              <h3>{t('positions.confirmTitle')}</h3>
               <button className="dialog-close" onClick={() => setConfirmOpen(false)}>×</button>
             </div>
             <div className="dialog-body">
               <p className="dialog-description">
-                A game is in progress. Setting up <strong>{prettify(pending.name)}</strong> will end it.
-                The game will be recorded as aborted.
+                {t('positions.confirmBodyPre')}<strong>{prettify(pending.name)}</strong>{t('positions.confirmBodyPost')}
               </p>
             </div>
             <div className="dialog-footer">
               <div className="dialog-footer-right">
                 <button type="button" className="btn btn-secondary" onClick={() => setConfirmOpen(false)}>
-                  Cancel
+                  {t('common.cancel')}
                 </button>
                 <button type="button" className="btn btn-primary" onClick={onConfirm}>
-                  End game &amp; set up
+                  {t('positions.endGameSetup')}
                 </button>
               </div>
             </div>
@@ -260,12 +261,10 @@ export function Positions() {
       <div className="page container--lg">
         <h2 className="page-title">
           <MenuIcon name="positions" size={24} style={{ verticalAlign: 'text-bottom', marginRight: 8 }} />
-          Positions
+          {t('positions.title')}
         </h2>
         <p className="text-muted mb-6">
-          {categoryParam
-            ? 'Set up a predefined position on the board to practice or analyze.'
-            : 'Choose a category to browse positions.'}
+          {categoryParam ? t('positions.descCategory') : t('positions.descIndex')}
         </p>
 
         {status && (
@@ -277,7 +276,7 @@ export function Positions() {
         {loadError ? (
           <Card variant="danger">{loadError}</Card>
         ) : categories.length === 0 ? (
-          <Card variant="muted">No positions are defined.</Card>
+          <Card variant="muted">{t('positions.none')}</Card>
         ) : categoryParam ? (
           <>
             <button
@@ -285,7 +284,7 @@ export function Positions() {
               className="btn btn--secondary btn--sm mb-4"
               onClick={() => navigate('/positions')}
             >
-              ← All categories
+              {t('positions.allCategories')}
             </button>
             {selectedCategory ? (
               <Card>
@@ -295,7 +294,7 @@ export function Positions() {
                 </div>
               </Card>
             ) : (
-              <Card variant="muted">That category was not found.</Card>
+              <Card variant="muted">{t('positions.notFound')}</Card>
             )}
           </>
         ) : (
@@ -313,7 +312,7 @@ export function Positions() {
                     openCategory(category.name);
                   }
                 }}
-                aria-label={`Open ${prettify(category.name)} (${category.positions.length} positions)`}
+                aria-label={t('positions.openAria', { name: prettify(category.name), count: category.positions.length })}
               >
                 {category.positions[0] ? (
                   <PositionPreview fen={category.positions[0].fen} hint={null} />
@@ -322,7 +321,7 @@ export function Positions() {
                 )}
                 <span className="position-name">{prettify(category.name)}</span>
                 <span className="category-count">
-                  {category.positions.length} position{category.positions.length === 1 ? '' : 's'}
+                  {t('positions.positionCount', { count: category.positions.length })}
                 </span>
               </div>
             ))}

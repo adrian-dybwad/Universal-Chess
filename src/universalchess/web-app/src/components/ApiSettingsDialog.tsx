@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { getApiUrl, setApiUrl, resetApiUrl, getDefaultApiUrl, sanitizeApiUrl } from '../utils/api';
 import './ApiSettingsDialog.css';
 
@@ -13,6 +14,7 @@ interface ApiSettingsDialogProps {
  * Allows users to change which chess board the PWA connects to.
  */
 export function ApiSettingsDialog({ isOpen, onClose, onSave }: ApiSettingsDialogProps) {
+  const { t } = useTranslation();
   const [url, setUrl] = useState('');
   const [error, setError] = useState('');
   const [testing, setTesting] = useState(false);
@@ -33,7 +35,7 @@ export function ApiSettingsDialog({ isOpen, onClose, onSave }: ApiSettingsDialog
 
   const handleTest = async () => {
     if (!validateUrl(url)) {
-      setError('Please enter a valid URL (e.g., http://dgt.local)');
+      setError(t('apiSettings.invalidUrl'));
       return;
     }
 
@@ -70,15 +72,15 @@ export function ApiSettingsDialog({ isOpen, onClose, onSave }: ApiSettingsDialog
         setTestResult('success');
       } else {
         setTestResult('error');
-        setError(`Server returned status ${response.status}`);
+        setError(t('apiSettings.serverStatus', { status: response.status }));
       }
     } catch (e) {
       setTestResult('error');
       if (e instanceof Error) {
         if (e.name === 'TimeoutError') {
-          setError('Connection timed out');
+          setError(t('apiSettings.timedOut'));
         } else {
-          setError('Could not connect to server');
+          setError(t('apiSettings.couldNotConnect'));
         }
       }
     } finally {
@@ -88,7 +90,7 @@ export function ApiSettingsDialog({ isOpen, onClose, onSave }: ApiSettingsDialog
 
   const handleSave = () => {
     if (!validateUrl(url)) {
-      setError('Please enter a valid http(s) URL');
+      setError(t('apiSettings.invalidHttpUrl'));
       return;
     }
 
@@ -97,7 +99,7 @@ export function ApiSettingsDialog({ isOpen, onClose, onSave }: ApiSettingsDialog
     } catch {
       // Defensive: validateUrl already guarantees validity, but keep the UI
       // responsive if setApiUrl's own sanitizer ever rejects the value.
-      setError('Please enter a valid http(s) URL');
+      setError(t('apiSettings.invalidHttpUrl'));
       return;
     }
     onSave();
@@ -117,18 +119,17 @@ export function ApiSettingsDialog({ isOpen, onClose, onSave }: ApiSettingsDialog
     <div className="dialog-overlay" onClick={onClose}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <div className="dialog-header">
-          <h3>Connection Settings</h3>
+          <h3>{t('apiSettings.title')}</h3>
           <button className="dialog-close" onClick={onClose}>×</button>
         </div>
 
         <div className="dialog-body">
           <p className="dialog-description">
-            Enter the address of your chess board. This is typically <code>http://dgt.local</code> or
-            the IP address of your Raspberry Pi.
+            {t('apiSettings.descriptionPre')}<code>http://dgt.local</code>{t('apiSettings.descriptionPost')}
           </p>
 
           <div className="form-group">
-            <label htmlFor="api-url">Chess Board URL</label>
+            <label htmlFor="api-url">{t('apiSettings.boardUrl')}</label>
             <div className="input-with-button">
               <input
                 id="api-url"
@@ -147,18 +148,18 @@ export function ApiSettingsDialog({ isOpen, onClose, onSave }: ApiSettingsDialog
                 onClick={handleTest}
                 disabled={testing}
               >
-                {testing ? 'Testing...' : 'Test'}
+                {testing ? t('apiSettings.testing') : t('apiSettings.test')}
               </button>
             </div>
             {error && <span className="form-error">{error}</span>}
-            {testResult === 'success' && <span className="form-success">Connection successful!</span>}
+            {testResult === 'success' && <span className="form-success">{t('apiSettings.success')}</span>}
           </div>
 
           <div className="dialog-info">
-            <div><strong>API URL in use:</strong> {getApiUrl()}</div>
+            <div><strong>{t('apiSettings.apiUrlInUse')}</strong> {getApiUrl()}</div>
             {getApiUrl() !== window.location.origin && (
               <div style={{ marginTop: '0.5rem' }}>
-                <strong>Current origin:</strong> {window.location.origin}
+                <strong>{t('apiSettings.currentOrigin')}</strong> {window.location.origin}
               </div>
             )}
           </div>
@@ -166,14 +167,14 @@ export function ApiSettingsDialog({ isOpen, onClose, onSave }: ApiSettingsDialog
 
         <div className="dialog-footer">
           <button className="btn btn-ghost" onClick={handleReset}>
-            Reset to Default
+            {t('apiSettings.resetDefault')}
           </button>
           <div className="dialog-footer-right">
             <button className="btn btn-secondary" onClick={onClose}>
-              Cancel
+              {t('common.cancel')}
             </button>
             <button className="btn btn-primary" onClick={handleSave}>
-              Save & Reconnect
+              {t('apiSettings.saveReconnect')}
             </button>
           </div>
         </div>

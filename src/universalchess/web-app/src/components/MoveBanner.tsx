@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import type { MoveToastData } from '../stores/gameStore';
 import './MoveBanner.css';
 
@@ -15,6 +16,7 @@ interface MoveBannerProps {
  * Auto-dismisses after 8 seconds or on click.
  */
 export function MoveBanner({ toast, onDismiss }: MoveBannerProps) {
+  const { t } = useTranslation();
   useEffect(() => {
     const timer = setTimeout(onDismiss, 8000);
     return () => clearTimeout(timer);
@@ -33,12 +35,12 @@ export function MoveBanner({ toast, onDismiss }: MoveBannerProps) {
       <div className="move-banner-content">
         <span className="move-banner-icon">♟</span>
         <span className="move-banner-text">
-          <strong>{playerWhoMoved}</strong> played <strong className="move-notation">{moveNotation}</strong>
+          <strong>{playerWhoMoved}</strong> {t('moveBanner.played')} <strong className="move-notation">{moveNotation}</strong>
         </span>
         <Link to="/" className="move-banner-link">
-          View Live Board →
+          {t('moveBanner.viewLiveBoard')}
         </Link>
-        <button className="move-banner-close" onClick={onDismiss} aria-label="Dismiss">
+        <button className="move-banner-close" onClick={onDismiss} aria-label={t('moveBanner.dismiss')}>
           ×
         </button>
       </div>

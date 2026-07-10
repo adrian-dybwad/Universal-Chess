@@ -4,10 +4,24 @@
     "games": "Partidas",
     "positions": "Posiciones",
     "settings": "Ajustes",
-    "boardControl": "Control del tablero"
+    "boardControl": "Control del tablero",
+    "appName": "Universal Chess",
+    "mainNav": "navegación principal",
+    "menu": "menú"
   },
   "brand": {
     "tagline": "Tu compañero de ajedrez inteligente"
+  },
+  "common": {
+    "cancel": "Cancelar",
+    "delete": "Eliminar",
+    "retry": "Reintentar",
+    "invalidCredentials": "Credenciales no válidas. Inténtalo de nuevo.",
+    "networkError": "Error de red al contactar con el tablero."
+  },
+  "color": {
+    "white": "Blancas",
+    "black": "Negras"
   },
   "connection": {
     "connected": "Conectado",
@@ -67,6 +81,177 @@
       "basedOnLink": "DGTCentaur Mods",
       "basedOnPost": ", creado originalmente por Ed Nekebno y colaboradores de la comunidad.",
       "thanks": "Un agradecimiento especial a todos los autores de motores de ajedrez de código abierto cuyo trabajo hace posible este proyecto."
+    }
+  },
+  "games": {
+    "title": "Historial de partidas",
+    "previous": "◀ Anterior",
+    "next": "Siguiente ▶",
+    "page": "Página {{page}}",
+    "loading": "Cargando partidas...",
+    "empty": "No se encontraron partidas",
+    "player": "Jugador",
+    "vs": "vs",
+    "showPgn": "Mostrar PGN",
+    "hidePgn": "Ocultar PGN",
+    "analyze": "Analizar",
+    "delete": "Eliminar",
+    "confirmDelete": "¿Eliminar esta partida? Esto no se puede deshacer."
+  },
+  "liveBoard": {
+    "confirmNewGameTitle": "¿Iniciar una nueva partida?",
+    "confirmNewGameBody": "La partida actual sigue en curso. Iniciar una nueva partida la abandona (queda registrada en tu historial) y comienza una partida nueva con los ajustes de jugador actuales.",
+    "newGame": "Nueva partida",
+    "currentGame": "Partida actual",
+    "newGameButton": "Nueva partida",
+    "moveToPlay": "Jugada {{num}} - juegan {{turn}}",
+    "waiting": "Esperando la partida...",
+    "analysis": "Análisis",
+    "moves": "Jugadas",
+    "currentPgn": "PGN actual",
+    "pgnPlaceholder": "El PGN aparecerá aquí durante la partida..."
+  },
+  "clock": {
+    "aria": "Reloj de la partida"
+  },
+  "positions": {
+    "loading": "Cargando posiciones...",
+    "loadError": "No se pudieron cargar las posiciones desde el tablero.",
+    "setupSuccess": "Se configuró \"{{name}}\" en el tablero.",
+    "setupFailed": "No se pudo configurar la posición.",
+    "confirmTitle": "¿Terminar la partida actual?",
+    "confirmBodyPre": "Hay una partida en curso. Configurar ",
+    "confirmBodyPost": " la terminará. La partida quedará registrada como abortada.",
+    "endGameSetup": "Terminar y configurar",
+    "title": "Posiciones",
+    "descCategory": "Configura una posición predefinida en el tablero para practicar o analizar.",
+    "descIndex": "Elige una categoría para explorar las posiciones.",
+    "none": "No hay posiciones definidas.",
+    "allCategories": "← Todas las categorías",
+    "notFound": "No se encontró esa categoría.",
+    "setupAria": "Configurar {{name}}",
+    "openAria": "Abrir {{name}} ({{count}} posiciones)",
+    "positionCount_one": "{{count}} posición",
+    "positionCount_other": "{{count}} posiciones"
+  },
+  "analyze": {
+    "notFound": "Partida no encontrada",
+    "loading": "Cargando partida...",
+    "title": "Análisis de la partida",
+    "moves": "Jugadas",
+    "pgn": "PGN"
+  },
+  "coach": {
+    "title": "Entrenador",
+    "selectMove": "Selecciona una jugada para ver el análisis del entrenador.",
+    "loading": "Analizando…",
+    "pending": "El comentario aparecerá cuando se guarde la jugada.",
+    "unavailable": "Entrenador no disponible."
+  },
+  "moves": {
+    "empty": "Sin jugadas"
+  },
+  "moveBanner": {
+    "played": "jugó",
+    "viewLiveBoard": "Ver tablero en vivo →",
+    "dismiss": "Descartar"
+  },
+  "login": {
+    "enterUsername": "Introduce un nombre de usuario",
+    "enterPassword": "Introduce una contraseña",
+    "title": "Autenticación requerida",
+    "description": "Introduce las credenciales de tu Raspberry Pi para modificar los ajustes. Son el mismo usuario y contraseña que usas para SSH o WebDAV.",
+    "username": "Usuario",
+    "usernamePlaceholder": "usuario",
+    "password": "Contraseña",
+    "passwordPlaceholder": "Introduce tu contraseña",
+    "rememberMe": "Recordarme en este dispositivo",
+    "clearSaved": "Borrar credenciales guardadas",
+    "login": "Iniciar sesión"
+  },
+  "apiSettings": {
+    "invalidUrl": "Introduce una URL válida (p. ej., http://dgt.local)",
+    "invalidHttpUrl": "Introduce una URL http(s) válida",
+    "serverStatus": "El servidor devolvió el estado {{status}}",
+    "timedOut": "Se agotó el tiempo de conexión",
+    "couldNotConnect": "No se pudo conectar con el servidor",
+    "title": "Ajustes de conexión",
+    "descriptionPre": "Introduce la dirección de tu tablero de ajedrez. Normalmente es ",
+    "descriptionPost": " o la dirección IP de tu Raspberry Pi.",
+    "boardUrl": "URL del tablero de ajedrez",
+    "testing": "Probando...",
+    "test": "Probar",
+    "success": "¡Conexión correcta!",
+    "apiUrlInUse": "URL de API en uso:",
+    "currentOrigin": "Origen actual:",
+    "resetDefault": "Restablecer a predeterminado",
+    "saveReconnect": "Guardar y reconectar"
+  },
+  "update": {
+    "installing": "Instalando la actualización… el tablero se reiniciará y esta página puede desconectarse brevemente.",
+    "ready": "Se ha descargado una actualización y está lista para instalar.",
+    "details": "Detalles",
+    "installNow": "Instalar ahora",
+    "installingShort": "Instalando…",
+    "installFailed": "La instalación falló",
+    "networkError": "Error de red",
+    "indicatorReady": "Actualización lista para instalar"
+  },
+  "boardControl": {
+    "keyUp": "Arriba",
+    "keyBack": "Atrás",
+    "keyOk": "Ok / Menú",
+    "keyDown": "Abajo",
+    "keyHint": "Pista",
+    "keyPlay": "Reproducir / Pausar (mantén para apagar)",
+    "poweringOff": "Apagando el tablero...",
+    "buttonFailed": "Error al pulsar el botón.",
+    "confirmTitle": "¿Apagar el tablero?",
+    "confirmBodyPre": "Mantener ",
+    "playLabel": "Play",
+    "confirmBodyPost": " inicia la cuenta atrás de apagado del tablero, igual que en el dispositivo. El tablero se apagará.",
+    "powerOff": "Apagar",
+    "title": "Control del tablero",
+    "closeAria": "Cerrar el control del tablero",
+    "close": "Cerrar",
+    "boardDisplayAlt": "Pantalla del tablero",
+    "boardButtonsAria": "Botones del tablero",
+    "hint": "Toca un botón para una pulsación corta; mantén pulsado para una pulsación larga. Mantener Play apaga el tablero. Para jugar un movimiento desde el navegador, usa el Tablero en vivo."
+  },
+  "settingsPage": {
+    "title": "Ajustes",
+    "loading": "Cargando ajustes...",
+    "connectError": "No se pudo conectar con el backend de Universal Chess. Asegúrate de que el tablero esté encendido y accesible.",
+    "saving": "Guardando…",
+    "saved": "Guardado",
+    "saveError": "No se pudo guardar. Revisa tu conexión e inténtalo de nuevo.",
+    "players": {
+      "title": "Ajustes de jugadores",
+      "description": "Configura los nombres de jugador, los tipos y las preferencias de motor"
+    },
+    "game": {
+      "title": "Ajustes de partida",
+      "description": "Controles de tiempo y comportamiento de la partida"
+    },
+    "agents": {
+      "title": "Agentes",
+      "description": "Configura los agentes de IA (servicios) que impulsan funciones como el entrenador. Cada agente guarda su propia clave API y modelo; elige cuál impulsa al entrenador en Partida → Entrenador."
+    },
+    "display": {
+      "title": "Pantalla",
+      "description": "Controla lo que aparece en la pantalla de tinta electrónica y los LED"
+    },
+    "sound": {
+      "title": "Sonido",
+      "description": "Controla el sonido de respuesta y los pitidos"
+    },
+    "engines": {
+      "title": "Motores de ajedrez",
+      "description": "Instala y gestiona motores de ajedrez para jugar y analizar"
+    },
+    "system": {
+      "title": "Ajustes del sistema",
+      "description": "Estado del dispositivo, actualizaciones de software y configuración del sistema"
     }
   }
 }
