@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-type BadgeVariant = 'default' | 'success' | 'danger' | 'primary';
+type BadgeVariant = 'default' | 'success' | 'danger' | 'primary' | 'warning';
 
 interface BadgeProps {
   variant?: BadgeVariant;
@@ -12,6 +12,7 @@ const variantClasses: Record<BadgeVariant, string> = {
   success: 'badge badge--success',
   danger: 'badge badge--danger',
   primary: 'badge badge--primary',
+  warning: 'badge badge--warning',
 };
 
 /**

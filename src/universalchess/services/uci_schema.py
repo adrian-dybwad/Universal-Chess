@@ -55,17 +55,29 @@ _STRENGTH_NAMES = frozenset({"uci_limitstrength", "uci_elo", "skill level", "str
 # Engine-wide resources written to the shared [DEFAULT] section, not per profile.
 _ENGINE_WIDE_NAMES = frozenset({"hash", "threads"})
 
-# Options whose file list the path heuristic cannot infer from the default value
-# (e.g. lc0/Maia report "<autodiscover>"). Maps engine name -> option name ->
-# (subdirectory under the engines dir, glob). Kept tiny on purpose: the heuristic
-# handles the common case, this is only for defaults that are not real paths.
-# Subdirectories are relative to the engines root (ENGINES_DIR). Maia installs
-# into engines/maia/, so its nets live at engines/maia/maia_weights -- the
-# subdir must include the "maia/" component or the glob resolves to a
-# nonexistent engines/maia_weights and the net picker comes up empty.
-_FILE_OPTION_OVERRIDES: Dict[str, Dict[str, Tuple[str, str]]] = {
-    "maia": {"WeightsFile": ("maia/maia_weights", "*.pb.gz")},
-}
+def _file_option_overrides() -> Dict[str, Dict[str, Tuple[str, str]]]:
+    """Build the file-option override registry from the engine catalog.
+
+    Some engines report a non-path default (e.g. lc0/Maia's ``<autodiscover>``),
+    so the generic path heuristic in :func:`enumerate_file_choices` cannot infer
+    which installed files the option can point at. Such an engine declares its net
+    in the catalog as an ``EngineDefinition.required_net`` (option name +
+    subdirectory + glob). Deriving the override map from that single declaration
+    -- instead of hardcoding the same paths here -- keeps the net picker and the
+    installed/repair health checks (``EngineManager.has_required_nets``) from ever
+    disagreeing about where the nets live.
+
+    Returns ``{engine_name: {option_name: (subdir, glob)}}``. The import is lazy
+    to avoid a module-load dependency on the (heavy) engine manager and any import
+    cycle; the catalog is a process constant, so this is cheap to recompute.
+    """
+    from universalchess.managers.engine_manager import ENGINES
+    overrides: Dict[str, Dict[str, Tuple[str, str]]] = {}
+    for name, engine in ENGINES.items():
+        net = getattr(engine, "required_net", None)
+        if net is not None:
+            overrides[name] = {net.option_name: (net.subdir, net.glob)}
+    return overrides
 
 # Descriptions for common UCI options, keyed by the option name lower-cased.
 # The UCI handshake carries no help text, so these supply the inline hint / info
@@ -151,7 +163,7 @@ def enumerate_file_choices(
     files sharing the same suffix). Returns a sorted list, or None when the
     option is not file-backed or nothing matches.
     """
-    override = _FILE_OPTION_OVERRIDES.get(engine_name, {}).get(getattr(option, "name", ""))
+    override = _file_option_overrides().get(engine_name, {}).get(getattr(option, "name", ""))
     if override is not None:
         subdir, pattern = override
         matches = sorted(glob.glob(os.path.join(engines_dir, subdir, pattern)))
@@ -451,4 +463,79 @@ def seed_config(
     _atomic_write(parser, path)
     log.info("[uci_schema] Seeded config for %s at %s (%d sections)",
              engine_name, path, len(sections))
+    return path
+
+
+def reconcile_config(
+    engine_name: str,
+    *,
+    engine_path: Optional[str] = None,
+    config_path: Optional[str] = None,
+    engines_dir: str = ENGINES_DIR,
+    threads: int = 1,
+) -> str:
+    """Add any missing strength sections/keys to the config, preserving edits.
+
+    :func:`seed_config` only writes when the config is absent, so once a config
+    exists it never reflects a later change to the on-disk net set. After a
+    repair or top-up fetches nets, the existing config is stale in two ways: it
+    lacks sections for the newly present nets, and a config first seeded while
+    the engine had no nets even has an empty ``[Default]`` (no net selected).
+    This reconciles the config with the CURRENT binary + nets:
+
+    * absent config -> a full :func:`seed_config`.
+    * present config -> for each section the current layout should have, add it
+      when missing and fill in any missing keys (e.g. the empty ``Default``'s
+      net), but NEVER overwrite a value already in the file, so user edits
+      survive.
+
+    It only adds; it does not prune sections whose net was removed -- a
+    deliberately conservative choice, since pruning could delete user-authored
+    sections. The file is rewritten only when something actually changed, so a
+    complete config is left byte-identical.
+
+    Documented behavior guarded by tests in ``test_uci_schema.py``: net sections
+    fetched after the first seed appear as strength profiles, and a net-less
+    ``[Default]`` gets its net filled once nets exist.
+
+    Returns the config path. Raises :class:`EngineProbeError` if the name is
+    invalid or the binary is missing/unlaunchable.
+    """
+    path = config_path or config_path_for(engine_name)
+    if path is None:
+        raise EngineProbeError(f"invalid engine name: {engine_name!r}")
+    if not os.path.exists(path):
+        return seed_config(
+            engine_name,
+            engine_path=engine_path,
+            config_path=path,
+            engines_dir=engines_dir,
+            threads=threads,
+        )
+
+    binary = engine_path or get_engine_path(engine_name)
+    if not binary:
+        raise EngineProbeError(f"engine binary not found: {engine_name}")
+
+    options = probe_options(binary)
+    desired = derive_sections(options, engine_name=engine_name, engines_dir=engines_dir)
+
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.optionxform = str
+    parser.read(path, encoding="utf-8")
+
+    changed = False
+    for section, values in desired:
+        if section not in parser:
+            parser[section] = dict(values)
+            changed = True
+            continue
+        for key, value in values.items():
+            if key not in parser[section]:
+                parser[section][key] = value
+                changed = True
+
+    if changed:
+        _atomic_write(parser, path)
+        log.info("[uci_schema] Reconciled config for %s at %s", engine_name, path)
     return path

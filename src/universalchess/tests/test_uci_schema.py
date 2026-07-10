@@ -528,3 +528,137 @@ def test_seed_config_creates_missing_parent_directories(monkeypatch, tmp_path):
 
     us.seed_config("eng", engine_path="/fake/eng", config_path=str(config))
     assert config.exists()
+
+
+# ---------------------------------------------------------------------------
+# reconcile_config: add-only merge with the current on-disk net set
+# ---------------------------------------------------------------------------
+
+
+def _maia_net_paths(tmp_path, elos):
+    """Create maia_weights nets for the given ELOs; return their sorted paths."""
+    weights = tmp_path / "maia" / "maia_weights"
+    weights.mkdir(parents=True, exist_ok=True)
+    created = []
+    for elo in elos:
+        path = weights / f"maia-{elo}.pb.gz"
+        path.write_text("net")
+        created.append(str(path))
+    return created
+
+
+def test_reconcile_config_seeds_when_absent(monkeypatch, tmp_path):
+    """With no config yet, reconcile behaves exactly like a fresh seed.
+
+    Why: reconcile is the post-repair entry point; a first install that reaches
+    it before any seed must still produce the full config, not error.
+
+    How the regression manifests: reconcile assumes an existing file and raises
+    (or writes nothing) when the config is absent, so a repaired engine ends up
+    with no profiles at all.
+    """
+    monkeypatch.setattr(us, "probe_options", lambda path: [
+        FakeOption("UCI_Elo", "spin", 1500, 1400, 1800),
+    ])
+    config = tmp_path / "config" / "engines" / "eng.uci"
+    assert not config.exists()
+
+    us.reconcile_config("eng", engine_path="/fake/eng", config_path=str(config))
+
+    assert ep.read_profile_names(str(config)) == ["Default", "1400 ELO", "1600 ELO", "1800 ELO"]
+
+
+def test_reconcile_config_adds_missing_sections_and_preserves_edits(monkeypatch, tmp_path):
+    """Nets that appeared after the first seed get sections; user edits survive.
+
+    Why: this is the core of the "weights not listed after repair" fix. A config
+    seeded while only some nets existed lacks sections for nets fetched later.
+    Reconcile must add exactly the missing sections while leaving hand-tuned
+    values (Threads, a chosen Default net) untouched.
+
+    How the regression manifests: either the new net sections are absent (the
+    fetched nets never show as strength profiles) or a full reseed clobbers the
+    user's Threads/Default edits.
+    """
+    nets = _maia_net_paths(tmp_path, [1100, 1300, 1500])
+    monkeypatch.setattr(us, "probe_options", lambda path: [
+        FakeOption("WeightsFile", "string", "<autodiscover>"),
+    ])
+    config = tmp_path / "config" / "engines" / "maia.uci"
+    config.parent.mkdir(parents=True)
+    # A partial seed: Threads hand-tuned to 2, Default points at a user-chosen
+    # net, and only the 1100 section exists (1300/1500 were fetched later).
+    config.write_text(
+        "[DEFAULT]\nThreads = 2\n\n"
+        f"[Default]\nWeightsFile = {nets[0]}\n\n"
+        f"[1100 ELO]\nWeightsFile = {nets[0]}\n\n",
+        encoding="utf-8",
+    )
+
+    us.reconcile_config("maia", engine_path="/fake/lc0",
+                        config_path=str(config), engines_dir=str(tmp_path))
+
+    raw = configparser.ConfigParser(interpolation=None)
+    raw.optionxform = str
+    raw.read(str(config))
+    # The nets fetched after the first seed are now selectable strength profiles.
+    assert raw.get("1300 ELO", "WeightsFile") == nets[1]
+    assert raw.get("1500 ELO", "WeightsFile") == nets[2]
+    # User edits survive: reconcile never overwrites an existing value.
+    assert raw.defaults() == {"Threads": "2"}
+    assert raw.get("Default", "WeightsFile") == nets[0]
+
+
+def test_reconcile_config_fills_empty_default_weightsfile(monkeypatch, tmp_path):
+    """A net-less-seeded empty [Default] gets its WeightsFile filled in.
+
+    Why: when Maia was first probed with zero nets, the seed wrote an empty
+    [Default] (no WeightsFile). After nets arrive, playing "Default" would launch
+    lc0 with no network. Reconcile must fill the missing key on the existing
+    Default section, not just add new sections.
+
+    How the regression manifests: Default stays empty after repair, so selecting
+    it crashes lc0 at move time even though other ELO profiles work.
+    """
+    nets = _maia_net_paths(tmp_path, [1100, 1500, 1900])
+    monkeypatch.setattr(us, "probe_options", lambda path: [
+        FakeOption("WeightsFile", "string", "<autodiscover>"),
+    ])
+    config = tmp_path / "maia.uci"
+    config.write_text("[DEFAULT]\nThreads = 1\n\n[Default]\n\n", encoding="utf-8")
+
+    us.reconcile_config("maia", engine_path="/fake/lc0",
+                        config_path=str(config), engines_dir=str(tmp_path))
+
+    raw = configparser.ConfigParser(interpolation=None)
+    raw.optionxform = str
+    raw.read(str(config))
+    # derive_sections picks the median net (of [1100,1500,1900]) for Default.
+    assert raw.get("Default", "WeightsFile") == nets[1]
+    assert raw.has_section("1100 ELO")
+    assert raw.has_section("1900 ELO")
+
+
+def test_reconcile_config_is_noop_when_already_complete(monkeypatch, tmp_path):
+    """A complete config is left byte-identical (reconcile only writes on change).
+
+    Why: reconcile runs after every repair/top-up; when there is nothing to add
+    it must not rewrite the file (which would churn user formatting and risk
+    losing comments/order for no benefit).
+
+    How the regression manifests: reconcile unconditionally rewrites, so the file
+    changes on every call even when the net set already matches.
+    """
+    _maia_net_paths(tmp_path, [1100, 1500])
+    monkeypatch.setattr(us, "probe_options", lambda path: [
+        FakeOption("WeightsFile", "string", "<autodiscover>"),
+    ])
+    config = tmp_path / "maia.uci"
+    us.reconcile_config("maia", engine_path="/fake/lc0",
+                        config_path=str(config), engines_dir=str(tmp_path))
+    before = config.read_text(encoding="utf-8")
+
+    us.reconcile_config("maia", engine_path="/fake/lc0",
+                        config_path=str(config), engines_dir=str(tmp_path))
+
+    assert config.read_text(encoding="utf-8") == before

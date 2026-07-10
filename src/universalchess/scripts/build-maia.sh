@@ -6,10 +6,15 @@
 # This script builds lc0 with BLAS backend for CPU-only operation, using
 # single-threaded compilation to keep peak memory low on RAM-constrained boards.
 #
-# Usage: ./build-maia.sh [install_dir]
-#   install_dir: Where to place the built binary (default: /opt/universalchess/engines/maia)
+# Usage: ./build-maia.sh [--weights-only] [install_dir]
+#   install_dir:     Where to place the built binary (default: /opt/universalchess/engines/maia)
+#   --weights-only:  Skip the entire build; only (re)download the neural-net
+#                    weights into an EXISTING install. Used by the in-place
+#                    "repair" path to heal a Maia whose binary is present but
+#                    whose weight download previously failed, WITHOUT the 45-60
+#                    minute lc0 rebuild.
 #
-# The script will:
+# The script will (full mode):
 #   1. Install build dependencies
 #   2. Clone lc0 and configure for ARM with BLAS backend
 #   3. Build with -j1 to avoid OOM kills
@@ -31,7 +36,19 @@ set -euo pipefail
 SCRIPT_NAME="$(basename "$0")"
 LOG_PREFIX="[Maia Build]"
 LC0_VERSION="v0.32.1"
-INSTALL_DIR="${1:-/opt/universalchess/engines/maia}"
+
+# Parse arguments. --weights-only may appear before or after the install dir;
+# the single positional argument is the install directory. Keeping the flag
+# order-independent avoids a brittle "flag must be $1" contract for the caller.
+WEIGHTS_ONLY=false
+_positional=()
+for _arg in "$@"; do
+    case "$_arg" in
+        --weights-only) WEIGHTS_ONLY=true ;;
+        *) _positional+=("$_arg") ;;
+    esac
+done
+INSTALL_DIR="${_positional[0]:-/opt/universalchess/engines/maia}"
 # Build on disk, never under /tmp. On a Pi /tmp is a small tmpfs (e.g. 208 MB on
 # a 512 MB board) and RAM-backed, so it can hold neither the lc0 checkout+build
 # tree nor any useful swap. Place the build beside the install dir on the SD
@@ -55,7 +72,21 @@ MAIA_WEIGHTS=(
     "maia-1800.pb.gz"
     "maia-1900.pb.gz"
 )
-MAIA_WEIGHTS_URL="https://github.com/CSSLab/maia-chess/raw/main/maia_weights"
+# Fetch nets from the tagged GitHub *release* assets, not raw/main: the
+# maia_weights are no longer served at raw/main (that path now 404s), so the
+# previous URL silently failed every download and left the install with no nets.
+# The release assets are the real binaries and match what the CI prebuilt uses.
+MAIA_WEIGHTS_URL="https://github.com/CSSLab/maia-chess/releases/download/v1.0"
+
+# Attempts per net before giving up on that net. A single transient failure (a
+# flaky mirror, a dropped connection, a momentary 5xx) previously left that net
+# permanently absent -- the exact way one ELO (e.g. maia-1300) went missing while
+# the rest downloaded. Retrying a few times with a short linear backoff makes the
+# common transient case self-heal within one run. The per-net loop stays
+# best-effort overall (one net that is genuinely unreachable must not fail the
+# whole install), and the "at least one net or abort" guard still protects
+# against a wholesale outage.
+MAX_NET_ATTEMPTS=3
 
 # =============================================================================
 # Logging functions
@@ -86,6 +117,18 @@ log_warn() {
 
 cleanup() {
     local exit_code=$?
+
+    # Weights-only (repair) mode never creates a build tree, so the build-tree
+    # resume/reclaim messaging below would be misleading. Report the download
+    # outcome and return.
+    if [[ "$WEIGHTS_ONLY" == true ]]; then
+        if [[ $exit_code -eq 0 ]]; then
+            log "Weights download completed successfully!"
+        else
+            log_error "Weights download failed with exit code $exit_code"
+        fi
+        exit $exit_code
+    fi
 
     log "Cleaning up..."
 
@@ -172,6 +215,18 @@ report_memory() {
 # =============================================================================
 # Dependencies
 # =============================================================================
+
+require_wget() {
+    # Weights-only mode skips install_dependencies (no apt/build), so it cannot
+    # assume wget was just installed. download_weights uses wget, so verify it is
+    # present and fail with an actionable message rather than letting every
+    # download fail and tripping the "no nets" guard with a confusing cause.
+    if ! command -v wget &>/dev/null; then
+        log_error "wget is required to download weights but is not installed."
+        log_error "Install it with: sudo apt-get install -y wget"
+        exit 1
+    fi
+}
 
 install_dependencies() {
     log_step "Installing build dependencies"
@@ -407,6 +462,26 @@ install_binary() {
     fi
 }
 
+# Download one file with retries. Returns 0 on the first success, non-zero when
+# every attempt failed. A partial/truncated file is removed between attempts (and
+# after the final failure) so a broken download is never left on disk to be
+# mistaken for a good net. $3 is a human label used only for log lines.
+download_with_retries() {
+    local url="$1" dest="$2" label="$3"
+    local attempt
+    for ((attempt = 1; attempt <= MAX_NET_ATTEMPTS; attempt++)); do
+        if wget -q --show-progress -O "$dest" "$url"; then
+            return 0
+        fi
+        rm -f "$dest"
+        log_warn "$label - attempt $attempt/$MAX_NET_ATTEMPTS failed"
+        if ((attempt < MAX_NET_ATTEMPTS)); then
+            sleep $((attempt * 2))
+        fi
+    done
+    return 1
+}
+
 download_weights() {
     log_step "Downloading Maia neural network weights"
     
@@ -425,16 +500,30 @@ download_weights() {
             log "[$count/$total] $weight - already exists, skipping"
         else
             log "[$count/$total] Downloading $weight..."
-            if wget -q --show-progress -O "$dest" "$url"; then
+            if download_with_retries "$url" "$dest" "$weight"; then
                 log "[$count/$total] $weight - OK"
             else
-                log_warn "[$count/$total] $weight - FAILED (continuing)"
-                rm -f "$dest"
+                log_warn "[$count/$total] $weight - FAILED after $MAX_NET_ATTEMPTS attempts (continuing)"
             fi
         fi
     done
     
-    log "Weights downloaded to $weights_dir"
+    # A Maia install with zero nets is unusable: lc0 has no human-like weights to
+    # load, the ELO picker/profile editor have nothing to offer, and the engine
+    # cannot play its intended style. The per-net loop above is best-effort (one
+    # flaky net must not fail the whole install), but zero successful nets means
+    # the source URL is wrong or the network is down -- a hard failure. Surface it
+    # instead of reporting a successful-but-broken install (the exact failure mode
+    # the raw/main 404 produced: install "succeeded" with empty weight dirs).
+    local downloaded
+    downloaded=$(find "$weights_dir" -maxdepth 1 -name '*.pb.gz' | wc -l)
+    if [[ "$downloaded" -eq 0 ]]; then
+        log_error "No Maia nets downloaded from $MAIA_WEIGHTS_URL (all fetches failed)."
+        log_error "Cannot install a Maia with no weights; aborting."
+        exit 1
+    fi
+
+    log "Downloaded $downloaded Maia net(s) to $weights_dir"
     ls -lh "$weights_dir"
     
     # Download Leela weights (stronger networks)
@@ -449,12 +538,12 @@ download_weights() {
         log "t1-256x10.pb.gz - already exists, skipping"
     else
         log "Downloading T1-256x10 (small/fast, ~25MB)..."
-        if wget -q --show-progress -O "$t1_dest" \
-            "https://training.lczero.org/get_network?sha=00af53b081e80147172e6f281c01571016924e9aac89cdf6666a1cc3a4ecf5bf"; then
+        if download_with_retries \
+            "https://training.lczero.org/get_network?sha=00af53b081e80147172e6f281c01571016924e9aac89cdf6666a1cc3a4ecf5bf" \
+            "$t1_dest" "t1-256x10.pb.gz"; then
             log "t1-256x10.pb.gz - OK"
         else
-            log_warn "t1-256x10.pb.gz - FAILED (continuing)"
-            rm -f "$t1_dest"
+            log_warn "t1-256x10.pb.gz - FAILED after $MAX_NET_ATTEMPTS attempts (continuing)"
         fi
     fi
     
@@ -504,9 +593,22 @@ main() {
     log "Maia (lc0) Build Script for Raspberry Pi"
     log "=========================================="
     log "Install directory: $INSTALL_DIR"
-    log "Build directory: $BUILD_DIR"
     log "lc0 version: $LC0_VERSION"
-    
+
+    # Repair path: fetch only the nets into an existing install, no build. This
+    # heals a Maia whose binary is present but whose weight download previously
+    # failed, without the 45-60 minute rebuild. download_weights still enforces
+    # the "at least one net or abort" guard, so a repair that fetches nothing is
+    # reported as a failure.
+    if [[ "$WEIGHTS_ONLY" == true ]]; then
+        log "Mode: weights-only (repair) -- skipping build, downloading nets only"
+        require_wget
+        download_weights
+        show_summary
+        return
+    fi
+
+    log "Build directory: $BUILD_DIR"
     check_architecture
     report_memory
     install_dependencies

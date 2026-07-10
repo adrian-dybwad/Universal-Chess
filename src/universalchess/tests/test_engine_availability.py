@@ -96,9 +96,15 @@ def test_custom_script_engine_installed_and_resolvable_agree(tmp_path, monkeypat
     returns True but get_engine_path returns the directory (or "" after the fix's
     partial-install guard), so this equality assertion fails -- exactly the
     inconsistency that produced the contradictory UI.
+
+    A Maia net is placed alongside the binary so is_available (which is now
+    weight-aware -- a weightless Maia is not offered for play) stays True; this
+    test is about the two path resolvers agreeing, not about the weight gate.
     """
     engines_dir = tmp_path / "engines"
     _make_executable_at(engines_dir / "maia" / "lc0")
+    (engines_dir / "maia" / "maia_weights").mkdir(parents=True, exist_ok=True)
+    (engines_dir / "maia" / "maia_weights" / "maia-1500.pb.gz").write_bytes(b"net")
     monkeypatch.setattr(paths, "ENGINES_DIR", str(engines_dir))
     manager = EngineManager(engines_dir=str(engines_dir))
 

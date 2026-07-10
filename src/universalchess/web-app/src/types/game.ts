@@ -89,6 +89,28 @@ export interface EngineDefinition {
    */
   has_profiles: boolean;
   /**
+   * Whether this engine is installed but missing required companion files (a
+   * net-backed engine like Maia whose weight download failed): the binary is
+   * present yet it cannot play. Drives a "Needs repair" badge and the Repair
+   * action in place of the normal profile editor. False for ordinary engines.
+   */
+  needs_repair: boolean;
+  /**
+   * Whether a net fetch (repair OR top-up) is possible: the engine is installed,
+   * has a repair procedure, and has something to fetch -- either it
+   * `needs_repair` (no usable net) or it is usable but still missing some
+   * expected nets. Gates the repair/top-up button; the label depends on
+   * `needs_repair` + `missing_net_count`.
+   */
+  can_repair: boolean;
+  /**
+   * How many expected companion nets are still missing. 0 for a complete or
+   * non-net engine. When the engine is usable (not `needs_repair`) but this is
+   * > 0, the UI offers a quiet "download N missing weights" top-up rather than
+   * an alarming Repair.
+   */
+  missing_net_count: number;
+  /**
    * Whether this engine can be installed on the current device's CPU
    * architecture. False for engines that cannot build/run here (e.g. Berserk on
    * 32-bit ARM). When false the install button is disabled.

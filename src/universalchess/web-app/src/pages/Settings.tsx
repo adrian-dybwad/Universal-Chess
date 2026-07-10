@@ -603,7 +603,7 @@ export function Settings() {
   // stashed -- not a callback that closes over toggleEngine, which would access
   // it before declaration and trip the react-hooks immutability rule -- and
   // re-applied by handleLoginSuccess once the login dialog succeeds.
-  const pendingEngineActionRef = useRef<{ engineName: string; install: boolean; ref?: string } | null>(null);
+  const pendingEngineActionRef = useRef<{ engineName: string; install: boolean; ref?: string; repair?: boolean } | null>(null);
   // Adding a custom engine (upload / install-from-URL) is also auth-gated. Unlike
   // the catalog install above, the action carries a File and/or free-form fields,
   // so the retry is stored as a closure that recaptures them rather than as a
@@ -681,7 +681,10 @@ export function Settings() {
     ]);
     setRawSettings(settingsData);
     setEngines(enginesData);
-    setInstalledEngines(enginesData.filter((e: EngineDefinition) => e.installed));
+    // Only engines that can actually play are offered as opponents: an installed
+    // engine missing its required files (a Maia awaiting repair) is excluded so
+    // it is not selectable until repaired.
+    setInstalledEngines(enginesData.filter((e: EngineDefinition) => e.installed && !e.needs_repair));
     setSpriteSheets(Array.isArray(spritesData) && spritesData.length > 0 ? spritesData : ['default']);
     setAccounts(Array.isArray(accountsData?.accounts) ? accountsData.accounts : []);
 
@@ -1196,9 +1199,13 @@ export function Settings() {
     // from the save/apply string). Runs first and returns; pendingAction is null
     // for these, so the save/apply branches below never fire here.
     if (pendingEngineActionRef.current) {
-      const { engineName, install, ref } = pendingEngineActionRef.current;
+      const { engineName, install, ref, repair } = pendingEngineActionRef.current;
       pendingEngineActionRef.current = null;
-      await toggleEngine(engineName, install, ref);
+      if (repair) {
+        await repairEngine(engineName);
+      } else {
+        await toggleEngine(engineName, install, ref);
+      }
       return;
     }
 
@@ -1237,7 +1244,9 @@ export function Settings() {
   const refreshEngines = useCallback(async (): Promise<EngineDefinition[]> => {
     const enginesData: EngineDefinition[] = await apiFetch('/api/engines/all').then((r) => r.json());
     setEngines(enginesData);
-    setInstalledEngines(enginesData.filter((e) => e.installed));
+    // Exclude installed-but-incomplete engines (a Maia awaiting repair) from the
+    // playable set, mirroring the initial load.
+    setInstalledEngines(enginesData.filter((e) => e.installed && !e.needs_repair));
     return enginesData;
   }, []);
 
@@ -1418,6 +1427,57 @@ export function Settings() {
       setEngineError({ engine: engineName, message: `Failed to ${endpoint} ${engineName}. Check the connection and try again.` });
     }
   }, [refreshEngines]);
+
+  // Repair an installed-but-incomplete engine in place (a net-backed engine like
+  // Maia whose weight download failed). The endpoint is @requires_auth and runs
+  // asynchronously through the SAME install-status store as an install, so on
+  // success this hands off to the shared status watcher exactly like a catalog
+  // install (optimistic progress, completion/failure handled by the poll). On
+  // 401 the action is re-queued and re-run after login, mirroring toggleEngine.
+  const repairEngine = useCallback(async (engineName: string) => {
+    setEngineError(null);
+    setInstallingEngine(engineName);
+    try {
+      const response = await apiFetch('/api/engines/repair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ engine: engineName }),
+        requiresAuth: true,
+      });
+      if (response.status === 401) {
+        setInstallingEngine(null);
+        setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
+        // Repair carries no ref and always installs=false semantics; the queued
+        // action re-runs the repair itself rather than toggleEngine.
+        pendingEngineActionRef.current = { engineName, install: false, ref: undefined, repair: true };
+        setLoginDialogOpen(true);
+        return;
+      }
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.success === false) {
+        setInstallingEngine(null);
+        setEngineError({ engine: engineName, message: data.error || `Failed to repair ${engineName}.` });
+        return;
+      }
+      // Hand off to the status watcher exactly like an install.
+      installTrackRef.current = engineName;
+      setInstallStatus({
+        active: true,
+        installing: true,
+        engine: engineName,
+        display_name: null,
+        stage: 'starting',
+        message: 'Starting...',
+        percent: 0,
+        interrupted: false,
+        result: null,
+      });
+    } catch (e) {
+      console.error('Failed to repair engine:', e);
+      setInstallingEngine(null);
+      setEngineError({ engine: engineName, message: `Failed to repair ${engineName}. Check the connection and try again.` });
+    }
+  }, []);
 
   // Upload a custom engine binary or .tar.gz. The endpoint is @requires_auth and
   // completes in-request (no install thread), so on success the engine list is
@@ -2606,6 +2666,7 @@ export function Settings() {
                   installStatus={installStatus}
                   engineError={engineError}
                   onToggle={toggleEngine}
+                  onRepair={repairEngine}
                   onResume={resumeInstall}
                   onCancel={cancelInstall}
                   onConfigureProfiles={setProfileEngine}
@@ -2881,6 +2942,7 @@ function EnginesList({
   installStatus,
   engineError,
   onToggle,
+  onRepair,
   onResume,
   onCancel,
   onConfigureProfiles,
@@ -2890,6 +2952,7 @@ function EnginesList({
   installStatus: EngineInstallStatus | null;
   engineError: { engine: string; message: string } | null;
   onToggle: (name: string, install: boolean, ref?: string) => void;
+  onRepair: (name: string) => void;
   onResume: () => void;
   onCancel: () => void;
   onConfigureProfiles: (engine: EngineDefinition) => void;
@@ -2933,6 +2996,7 @@ function EnginesList({
                   status={installStatus?.engine === engine.name ? installStatus : null}
                   error={engineError?.engine === engine.name ? engineError.message : null}
                   onToggle={onToggle}
+                  onRepair={onRepair}
                   onResume={onResume}
                   onCancel={onCancel}
                   onConfigureProfiles={onConfigureProfiles}
@@ -2953,6 +3017,7 @@ function EngineCard({
   status,
   error,
   onToggle,
+  onRepair,
   onResume,
   onCancel,
   onConfigureProfiles,
@@ -2970,6 +3035,7 @@ function EngineCard({
   // there is no error for this card.
   error: string | null;
   onToggle: (name: string, install: boolean, ref?: string) => void;
+  onRepair: (name: string) => void;
   onResume: () => void;
   onCancel: () => void;
   onConfigureProfiles: (engine: EngineDefinition) => void;
@@ -3041,6 +3107,11 @@ function EngineCard({
           <strong>{engine.display_name}</strong>
           {isSystem ? (
             <Badge variant="success">System Package</Badge>
+          ) : engine.needs_repair ? (
+            // Installed but missing required files (e.g. Maia's nets): the binary
+            // is present but it cannot play until repaired, so it is neither a
+            // plain "Installed" nor "Not Installed" state.
+            <Badge variant="warning">Needs Repair</Badge>
           ) : engine.installed ? (
             <Badge variant="success">Installed</Badge>
           ) : !engine.supported ? (
@@ -3124,6 +3195,27 @@ function EngineCard({
               )}
             </>
           ))}
+          {/* Net fetch entry point. The same in-place weights-only download backs
+              two cases the backend distinguishes: a BROKEN install (needs_repair:
+              no usable net) shows an alarming primary "Repair"; a USABLE install
+              still missing some expected nets (a straggler a flaky download
+              skipped) shows a quiet secondary "Download N missing weight(s)"
+              top-up. Both call onRepair; the backend fetches only what is
+              missing. Shown only when can_repair. */}
+          {engine.can_repair && !isInterrupted && (
+            <Button
+              variant={engine.needs_repair ? 'primary' : 'secondary'}
+              size="sm"
+              disabled={installInProgress}
+              onClick={() => onRepair(engine.name)}
+            >
+              {engine.needs_repair
+                ? 'Repair'
+                : `Download ${engine.missing_net_count} missing ${
+                    engine.missing_net_count === 1 ? 'weight' : 'weights'
+                  }`}
+            </Button>
+          )}
           {/* Profile editor entry point: shown for any installed engine that
               exposes an editable UCI schema, including the Stockfish system
               package. The backend marks such engines has_profiles=true. */}
@@ -3156,6 +3248,20 @@ function EngineCard({
       {!isSystem && !engine.installed && !engine.supported && engine.unsupported_reason && (
         <p className="engine-card-error" role="note">
           {engine.unsupported_reason}
+        </p>
+      )}
+      {engine.needs_repair && !isActiveInstall && (
+        <p className="engine-install-note" role="note">
+          Installed, but its required files are missing so it cannot play yet.
+          Repair downloads them in place -- no full reinstall.
+        </p>
+      )}
+      {!engine.needs_repair && engine.can_repair && engine.missing_net_count > 0 && !isActiveInstall && (
+        <p className="engine-install-note" role="note">
+          Playable now, but {engine.missing_net_count} optional weight
+          {engine.missing_net_count === 1 ? '' : 's'} did not download. Top up to
+          add the missing strength level
+          {engine.missing_net_count === 1 ? '' : 's'}.
         </p>
       )}
       {!isSystem && isInterrupted && (

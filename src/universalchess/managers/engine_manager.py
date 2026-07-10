@@ -255,6 +255,41 @@ def _safe_extract_tar(tar: tarfile.TarFile, dest: Path) -> None:
     tar.extractall(dest)  # noqa: S202  # nosec B202  # members validated by _assert_tar_members_safe above
 
 
+@dataclass(frozen=True)
+class RequiredNet:
+    """A companion neural-net file an engine needs before it can actually play.
+
+    Some engines install only an executable from the catalog and are useless
+    until a weights file sits beside it -- Maia's lc0 refuses to search with no
+    network loaded. This captures, in ONE place, everything the app needs to know
+    about that requirement:
+
+    - ``option_name``: the UCI option that selects the net (e.g. ``WeightsFile``).
+      Drives the profile editor's net picker (see :mod:`services.uci_schema`).
+    - ``subdir``: where nets live, relative to the engines root
+      (``engines_dir``), e.g. ``maia/maia_weights``.
+    - ``glob``: the net filename pattern, e.g. ``*.pb.gz``.
+    - ``expected_files``: the full set of net filenames the engine ships with,
+      e.g. every Maia ELO net. Empty means "unknown/unbounded" -- then only
+      "at least one net" usability is checked. When populated it is the basis for
+      the OPTIONAL top-up: the difference between "usable (>=1 net present)" and
+      "complete (every expected net present)". A best-effort download that skips
+      one flaky net leaves a usable-but-incomplete install; ``expected_files``
+      is what lets the app name and re-fetch just the stragglers.
+
+    Consumed by :meth:`EngineManager.has_required_nets` / ``needs_repair`` (is a
+    usable net present on disk?), :meth:`EngineManager.missing_nets` (which
+    expected nets are absent), AND by :mod:`services.uci_schema` (build the
+    picker), so they can never disagree about where an engine's nets live or what
+    the full set is -- the drift that made a weightless Maia look installed yet
+    offer no nets.
+    """
+    option_name: str
+    subdir: str
+    glob: str
+    expected_files: FrozenSet[str] = frozenset()
+
+
 @dataclass
 class EngineDefinition:
     """Definition of a chess engine that can be installed."""
@@ -288,6 +323,19 @@ class EngineDefinition:
     # engine builds on no architecture this project targets (e.g. Koivisto is
     # x86-SIMD only with a broken upstream ARM NEON path).
     supported_archs: Optional[FrozenSet[str]] = None
+    # Companion net this engine needs before it can play (see RequiredNet). None
+    # for ordinary single-binary engines (nothing to require). When set (Maia),
+    # the binary being present is NOT sufficient -- at least one matching net must
+    # exist on disk for the engine to be usable/available; otherwise it is
+    # "installed but needs repair". Kept as catalog metadata so has_required_nets
+    # and the uci_schema net picker share one definition of the net location.
+    required_net: Optional[RequiredNet] = None
+    # Commands to fetch/restore a net-backed engine's missing companion files in
+    # place, WITHOUT a full rebuild (for Maia, build-maia.sh --weights-only).
+    # Empty for engines that cannot be repaired in place (the fresh-install path
+    # is used instead). Runs through the same command runner and progress
+    # plumbing as a source build (see EngineManager.repair_engine).
+    repair_commands: List[str] = field(default_factory=list)
 
 
 def engine_supports_arch(engine: "EngineDefinition", arch: str) -> bool:
@@ -865,6 +913,32 @@ ENGINES = {
         build_timeout=7200,  # 2 hours - may need swap which is slow
         estimated_install_minutes=60,
         has_prebuilt=True,  # Pre-built includes lc0 binary + all Maia weights
+        # Maia is unusable without at least one net: lc0 has nothing to load and
+        # the ELO picker/profile editor have nothing to offer. Nets install to
+        # engines/maia/maia_weights (subdir is relative to the engines root, so it
+        # includes the "maia/" component). This is the single source of truth for
+        # the net location, shared with the uci_schema WeightsFile picker.
+        required_net=RequiredNet(
+            option_name="WeightsFile",
+            subdir="maia/maia_weights",
+            glob="*.pb.gz",
+            # The nine human-like ELO nets build-maia.sh fetches (1100..1900).
+            # Kept in lockstep with MAIA_WEIGHTS in build-maia.sh: this set is
+            # what "complete" means, so missing_nets can name the exact ELO a
+            # flaky download skipped and the top-up can re-fetch just it.
+            expected_files=frozenset(
+                f"maia-{elo}.pb.gz" for elo in range(1100, 2000, 100)
+            ),
+        ),
+        # In-place repair: re-download just the nets (no 45-60 min lc0 rebuild)
+        # into the existing install. This heals the broken state an install left
+        # when its weight download silently failed (the historical raw/main 404):
+        # lc0 present but the weight dir empty. build-maia.sh --weights-only skips
+        # the build entirely and fetches nets only, and aborts if zero nets
+        # download so a still-broken repair is reported as a failure.
+        repair_commands=[
+            f"sudo {SCRIPTS_DIR}/build-maia.sh --weights-only {ENGINES_DIR}/maia",
+        ],
     ),
     
     # === LIGHTWEIGHT/FAST COMPILE ===
@@ -1084,8 +1158,113 @@ class EngineManager:
         """
         if engine_name not in ENGINES:
             return False
-        return ENGINES[engine_name].is_system_package or self.is_installed(engine_name)
-    
+        return ENGINES[engine_name].is_system_package or self.is_usable(engine_name)
+
+    def has_required_nets(self, engine_name: str) -> bool:
+        """Whether the engine's required companion nets are present on disk.
+
+        True for any engine that declares no ``required_net`` (nothing to check).
+        For a net-backed engine (Maia) it globs the declared net subdir under the
+        engines directory and returns whether at least one net file exists.
+
+        This is the "does it have weights" half of usability, kept separate from
+        :meth:`is_installed` (binary present) so a binary-present-but-weightless
+        Maia -- the state an install left when its weight download silently failed
+        -- is detectable instead of masquerading as a healthy install.
+        """
+        engine = ENGINES.get(engine_name)
+        if engine is None or engine.required_net is None:
+            return True
+        net = engine.required_net
+        return any((self.engines_dir / net.subdir).glob(net.glob))
+
+    def present_nets(self, engine_name: str) -> FrozenSet[str]:
+        """Basenames of the engine's companion nets currently on disk.
+
+        Empty for an engine that declares no ``required_net``. This is the raw
+        on-disk fact that :meth:`has_required_nets` (any present) and
+        :meth:`missing_nets` (expected minus present) are both derived from.
+        """
+        engine = ENGINES.get(engine_name)
+        if engine is None or engine.required_net is None:
+            return frozenset()
+        net = engine.required_net
+        return frozenset(
+            path.name for path in (self.engines_dir / net.subdir).glob(net.glob)
+        )
+
+    def missing_nets(self, engine_name: str) -> FrozenSet[str]:
+        """Expected companion nets that are declared but absent on disk.
+
+        The difference between "complete" and merely "usable": returns the
+        entries of ``required_net.expected_files`` that are not present. Empty
+        when the engine declares no required net, declares no expected set (the
+        full set is unknown, so nothing specific can be named to fetch), or is
+        already complete.
+
+        This drives the OPTIONAL top-up -- fetching the specific nets a
+        best-effort download skipped -- without treating a usable-but-incomplete
+        engine as broken. "Broken" stays :meth:`needs_repair` (no usable net at
+        all); an engine can have ``missing_nets`` yet not ``needs_repair``.
+        """
+        engine = ENGINES.get(engine_name)
+        if engine is None or engine.required_net is None:
+            return frozenset()
+        expected = engine.required_net.expected_files
+        if not expected:
+            return frozenset()
+        return frozenset(expected) - self.present_nets(engine_name)
+
+    def is_usable(self, engine_name: str) -> bool:
+        """Whether the engine can actually play: binary present AND nets present.
+
+        :meth:`is_installed` only checks the binary. A net-backed engine
+        additionally requires at least one net, so a weightless Maia is
+        installed-but-not-usable. This is what gates offering an engine for play
+        (see :meth:`is_available`); for engines with no required net it is exactly
+        ``is_installed``.
+        """
+        if engine_name not in ENGINES:
+            return False
+        return self.is_installed(engine_name) and self.has_required_nets(engine_name)
+
+    def needs_repair(self, engine_name: str) -> bool:
+        """Installed (binary present) but missing required nets -> repairable.
+
+        Distinguishes "not installed at all" (fresh-install case) from "installed
+        but incomplete" (repair case): True only when the binary is present yet
+        the required nets are absent. Drives the UI's Repair affordance and lets
+        the management list flag the engine instead of silently offering an engine
+        that will fail at move time. Always False for engines with no required
+        net.
+        """
+        if engine_name not in ENGINES:
+            return False
+        return self.is_installed(engine_name) and not self.has_required_nets(engine_name)
+
+    def can_repair(self, engine_name: str) -> bool:
+        """Whether a net fetch (repair OR top-up) is both possible and worthwhile.
+
+        True when the engine is installed, declares ``repair_commands``, and has
+        something to fetch -- either it :meth:`needs_repair` (no usable net at
+        all) OR it is usable but still :meth:`missing_nets` (some expected nets
+        never arrived). One gate backs the API's repair endpoint so the SAME
+        weights-only download serves both cases.
+
+        The UI decides how loud to be from ``needs_repair`` + ``missing_nets``,
+        not from this flag: a broken install shows an alarming "Repair", a usable
+        install with stragglers shows a quiet "download N missing weights". A
+        complete install has nothing missing, so this is False and neither action
+        is offered.
+        """
+        if engine_name not in ENGINES:
+            return False
+        if not ENGINES[engine_name].repair_commands:
+            return False
+        if not self.is_installed(engine_name):
+            return False
+        return self.needs_repair(engine_name) or bool(self.missing_nets(engine_name))
+
     def get_engine_list(self) -> List[dict]:
         """Get list of all engines with installation status.
         
@@ -1833,11 +2012,29 @@ class EngineManager:
         """Return an ``on_line`` callback that surfaces throttled build progress.
 
         Each non-empty build-output line becomes the live install message (still in
-        the BUILDING stage, so the time-based percent creep keeps running). Updates
-        are throttled to :data:`_BUILD_PROGRESS_THROTTLE_SECONDS` because every
-        update persists the install state to the (SD-card) store and build output
+        the BUILDING stage, so the time-based percent creep keeps running).
+        """
+        return self._make_line_progress_updater(
+            display_name, update_progress, InstallStage.BUILDING, "Building"
+        )
+
+    def _make_line_progress_updater(
+        self,
+        display_name: str,
+        update_progress: Callable[..., None],
+        stage: InstallStage,
+        verb: str,
+    ) -> Callable[[str], None]:
+        """Return an ``on_line`` callback that surfaces throttled line progress.
+
+        Each non-empty output line becomes the live message (kept in ``stage`` so
+        the time-based percent creep for that stage keeps running), prefixed with
+        ``verb`` (e.g. "Building" for a compile, "Downloading" for a repair).
+        Updates are throttled to :data:`_BUILD_PROGRESS_THROTTLE_SECONDS` because
+        every update persists the install state to the (SD-card) store and output
         can be chatty; the throttle keeps the message current without hammering the
-        disk.
+        disk. Shared by the source build and the in-place repair so both stream
+        live progress the same way.
         """
         last_update = {"at": 0.0}
 
@@ -1849,9 +2046,112 @@ class EngineManager:
             if now - last_update["at"] < _BUILD_PROGRESS_THROTTLE_SECONDS:
                 return
             last_update["at"] = now
-            update_progress(f"Building {display_name}: {text[:80]}", InstallStage.BUILDING)
+            update_progress(f"{verb} {display_name}: {text[:80]}", stage)
 
         return on_line
+
+    def repair_engine(
+        self,
+        engine_name: str,
+        progress_callback: Optional[Callable[[str], None]] = None,
+        stage_callback: Optional[Callable[[InstallStage, str, Optional[float]], None]] = None,
+    ) -> bool:
+        """Repair an installed-but-incomplete engine in place.
+
+        The narrow case this exists for: a net-backed engine (Maia) whose binary
+        is present but whose companion nets are missing -- the state an install
+        left when its weight download silently failed (the historical raw/main
+        404). Rather than force a 45-60 min full rebuild, this runs the engine's
+        ``repair_commands`` (for Maia, ``build-maia.sh --weights-only``) to fetch
+        just the nets into the existing install, then VERIFIES the nets are
+        present so a repair that did not actually fetch nets is reported as a
+        failure instead of a false success.
+
+        Reuses the install progress plumbing (``stage_callback``) so the web
+        progress bar/banner reflect a repair exactly like an install.
+
+        Args:
+            engine_name: Engine to repair.
+            progress_callback: Optional free-text progress callback (legacy shape).
+            stage_callback: Optional ``(stage, message, fraction)`` callback that
+                drives the structured progress UI.
+
+        Returns:
+            True only when every repair command succeeds AND the required nets are
+            present afterward.
+        """
+        log.info(f"[EngineManager] repair_engine: Starting repair of '{engine_name}'")
+
+        if engine_name not in ENGINES:
+            self._install_error = f"Unknown engine: {engine_name}"
+            log.error(f"[EngineManager] repair_engine: Unknown engine '{engine_name}'")
+            return False
+
+        engine = ENGINES[engine_name]
+        if not engine.repair_commands:
+            self._install_error = f"{engine.display_name} does not support repair."
+            log.warning(f"[EngineManager] repair_engine: '{engine_name}' has no repair_commands")
+            return False
+
+        self._installing_engine = engine_name
+        self._install_error = None
+        current_stage = InstallStage.STARTING
+
+        def update_progress(msg: str, stage: Optional[InstallStage] = None,
+                            fraction: Optional[float] = None):
+            nonlocal current_stage
+            if stage is not None:
+                current_stage = stage
+            self._install_progress = msg
+            log.info(f"[EngineManager] [Repair] {msg}")
+            if progress_callback:
+                progress_callback(msg)
+            if stage_callback:
+                stage_callback(current_stage, msg, fraction)
+
+        try:
+            update_progress(f"Repairing {engine.display_name}...", InstallStage.DOWNLOADING)
+            # The repair commands are self-contained (they write into the install
+            # dir); the engines dir is a stable, existing cwd for them.
+            self.engines_dir.mkdir(parents=True, exist_ok=True)
+            on_line = self._make_line_progress_updater(
+                engine.display_name, update_progress, InstallStage.DOWNLOADING, "Downloading"
+            )
+            for i, cmd in enumerate(engine.repair_commands):
+                log.info(f"[EngineManager] repair_engine: Running repair command "
+                         f"{i+1}/{len(engine.repair_commands)}: {cmd}")
+                try:
+                    returncode, tail = self._run_build_command(
+                        cmd, self.engines_dir, engine.build_timeout, on_line
+                    )
+                except subprocess.TimeoutExpired:
+                    self._install_error = f"Repair timed out after {engine.build_timeout}s"
+                    log.error(f"[EngineManager] repair_engine: command timed out: {cmd}")
+                    return False
+                if returncode != 0:
+                    detail = tail.strip()[-160:] or f"exit code {returncode}"
+                    self._install_error = f"Repair failed: {detail}"
+                    log.error(f"[EngineManager] repair_engine: command failed ({returncode}): {cmd}")
+                    log.error(f"[EngineManager] repair_engine: output tail:\n{tail[-1000:]}")
+                    return False
+
+            # A zero exit is not proof the nets arrived (a transient path, a
+            # partial fetch). Verify on-disk so a still-incomplete install is a
+            # failure, never a false "repaired".
+            if not self.has_required_nets(engine_name):
+                self._install_error = (
+                    f"{engine.display_name} repair completed but its required "
+                    f"files are still missing."
+                )
+                log.error(f"[EngineManager] repair_engine: nets still missing after repair of '{engine_name}'")
+                return False
+
+            update_progress(f"{engine.display_name} repaired successfully",
+                            InstallStage.INSTALLING_FILES)
+            log.info(f"[EngineManager] repair_engine: Successfully repaired '{engine_name}'")
+            return True
+        finally:
+            self._installing_engine = None
 
     def _install_from_source(
         self,

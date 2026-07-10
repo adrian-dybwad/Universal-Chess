@@ -352,6 +352,136 @@ def test_install_while_installing_returns_409(client, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Repair contract
+#
+# Repair fetches a net-backed engine's missing companion files in place (Maia
+# whose weight download failed). It is auth-gated like install, accepts only an
+# engine the manager reports can_repair, serializes against installs via the
+# shared store, and dispatches through the same background-worker plumbing.
+# ---------------------------------------------------------------------------
+
+REPAIRABLE_ENGINE = "maia"
+
+
+def test_repair_requires_auth(monkeypatch):
+    """Repairing must require authentication (401 when unauthenticated).
+
+    Why: repair runs a privileged helper that downloads into the managed install
+    dir, so it is as privileged as install. Manifestation if @requires_auth is
+    dropped: an unauthenticated POST starts a system-mutating repair.
+    """
+    webapp.app.config.update(TESTING=True)
+    monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
+    unauth = webapp.app.test_client()
+
+    resp = unauth.post(
+        "/api/engines/repair",
+        data=json.dumps({"engine": REPAIRABLE_ENGINE}),
+        content_type="application/json",
+    )
+
+    assert resp.status_code == 401
+
+
+def test_repair_starts_when_engine_is_repairable(client, monkeypatch):
+    """POST /api/engines/repair starts the repair when the engine can_repair.
+
+    This is the supported contract: the client posts {"engine": name} and the
+    endpoint dispatches the repair worker and flips the shared status to active.
+    Manifestation if the route/body handling regressed: no worker dispatched and
+    the status singleton never activates.
+    """
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.EngineManager.can_repair",
+        lambda self, name: True,
+    )
+    dispatched = []
+    monkeypatch.setattr(webapp, "_run_engine_repair", lambda name: dispatched.append(name))
+    monkeypatch.setattr(threading, "Thread", _SyncThread)
+
+    resp = client.post(
+        "/api/engines/repair",
+        data=json.dumps({"engine": REPAIRABLE_ENGINE}),
+        content_type="application/json",
+    )
+
+    assert resp.status_code == 200
+    assert json.loads(resp.data)["success"] is True
+    assert dispatched == [REPAIRABLE_ENGINE]
+    status = webapp._engine_install_store.status_dict()
+    assert status["active"] is True
+    assert status["engine"] == REPAIRABLE_ENGINE
+
+
+def test_repair_rejected_when_nothing_to_repair(client, monkeypatch):
+    """An engine the manager says cannot be repaired is rejected with 400.
+
+    Why: repair is only meaningful for an installed engine missing its nets. A
+    healthy or not-installed engine has nothing to repair, so the endpoint must
+    refuse rather than start a no-op repair. Manifestation if the guard is
+    dropped: a repair worker is dispatched for an engine with nothing to fetch.
+    """
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.EngineManager.can_repair",
+        lambda self, name: False,
+    )
+    dispatched = []
+    monkeypatch.setattr(webapp, "_run_engine_repair", lambda name: dispatched.append(name))
+    monkeypatch.setattr(threading, "Thread", _SyncThread)
+
+    resp = client.post(
+        "/api/engines/repair",
+        data=json.dumps({"engine": REPAIRABLE_ENGINE}),
+        content_type="application/json",
+    )
+
+    assert resp.status_code == 400
+    assert json.loads(resp.data)["success"] is False
+    assert dispatched == []
+
+
+def test_repair_unknown_engine_returns_400(client):
+    """Repairing an engine absent from the catalog is a clean 400.
+
+    Guards against dispatching a repair for a name the app has no definition for.
+    """
+    resp = client.post(
+        "/api/engines/repair",
+        data=json.dumps({"engine": "does-not-exist"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 400
+    assert json.loads(resp.data)["success"] is False
+
+
+def test_repair_while_installing_returns_409(client, monkeypatch):
+    """A repair while an install/repair is already running is rejected with 409.
+
+    The board runs one engine operation at a time; repair shares the install
+    store, so it must honor the same serialization. Manifestation if dropped:
+    a repair races an in-flight install over the same install dir.
+    """
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.EngineManager.can_repair",
+        lambda self, name: True,
+    )
+    dispatched = []
+    monkeypatch.setattr(webapp, "_run_engine_repair", lambda name: dispatched.append(name))
+    monkeypatch.setattr(threading, "Thread", _SyncThread)
+    webapp._engine_install_store.start(SYSTEM_ENGINE, "Stockfish", estimated_seconds=0)
+
+    resp = client.post(
+        "/api/engines/repair",
+        data=json.dumps({"engine": REPAIRABLE_ENGINE}),
+        content_type="application/json",
+    )
+
+    assert resp.status_code == 409
+    assert json.loads(resp.data)["success"] is False
+    assert dispatched == []
+
+
+# ---------------------------------------------------------------------------
 # Uninstall contract
 # ---------------------------------------------------------------------------
 
@@ -626,6 +756,9 @@ def test_all_engines_list_shape(client, monkeypatch):
         "estimated_install_minutes",
         "has_prebuilt",
         "has_profiles",
+        "needs_repair",
+        "can_repair",
+        "missing_net_count",
         "supported",
         "unsupported_reason",
     }

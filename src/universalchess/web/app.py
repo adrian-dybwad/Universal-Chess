@@ -4459,6 +4459,12 @@ def _config_uci_path(engine_name):
 def _seed_and_probe_schema(engine_name, config_path):
     """Seed the writable config (if absent) and probe the engine's schema.
 
+    Deliberately uses ``seed_config`` (create-if-absent), NOT ``reconcile_config``:
+    opening the editor is a read, not a net-change event, and an add-only
+    reconcile here would re-add sections the user intentionally deleted (fighting
+    the user). Reconciliation with the on-disk net set happens only when the nets
+    actually change -- after a repair/top-up (see ``_run_engine_repair``).
+
     Returns the schema groups. Raises ``uci_schema.EngineProbeError`` when the
     binary is missing or cannot be launched, which callers translate into a
     "not editable"/"not installed" response.
@@ -4592,7 +4598,17 @@ def api_get_all_engines():
         engines_list = []
 
         for name, engine_def in ENGINES.items():
-            is_installed = engine_manager.is_available(name)
+            # "Installed" for the management list means present enough to show as
+            # installed rather than offer a fresh Install: a system package is
+            # always present; any other engine counts once its binary exists. A
+            # net-backed engine whose nets are missing (a Maia whose weight
+            # download failed) is still "installed" here -- it surfaces a Repair
+            # action, not Install -- but it is NOT usable/available for play.
+            binary_present = engine_manager.is_installed(name)
+            installed = engine_def.is_system_package or binary_present
+            needs_repair = engine_manager.needs_repair(name)
+            can_repair = engine_manager.can_repair(name)
+            missing_net_count = len(engine_manager.missing_nets(name))
             unsupported_reason = arch_unsupported_reason(engine_def, arch)
             # Source-built engines support the ref picker; system packages and
             # bundled engines (no repo_url) do not. Reported here so the list view
@@ -4604,14 +4620,28 @@ def api_get_all_engines():
                 "display_name": engine_def.display_name,
                 "summary": engine_def.summary,
                 "description": engine_def.description,
-                "installed": is_installed,
+                "installed": installed,
+                # A net-backed engine missing its nets is installed but broken:
+                # `needs_repair` drives the UI's Repair affordance and a "needs
+                # repair" badge; `can_repair` is True only when an in-place repair
+                # procedure exists. False for every ordinary engine.
+                "needs_repair": needs_repair,
+                "can_repair": can_repair,
+                # How many expected companion nets are still missing. 0 for a
+                # complete or non-net engine. Drives the quiet "download N missing
+                # weights" top-up label for a usable-but-incomplete engine (one
+                # that can_repair yet does NOT need_repair).
+                "missing_net_count": missing_net_count,
                 "is_system_package": engine_def.is_system_package,
                 "can_uninstall": engine_def.can_uninstall,
                 "estimated_install_minutes": engine_def.estimated_install_minutes,
                 "has_prebuilt": engine_def.has_prebuilt,
                 # Every installed engine is editable now: its option schema is
                 # discovered by probing the binary, not gated by a curated list.
-                "has_profiles": is_installed,
+                # A net-backed engine that needs repair is excluded: with no nets
+                # its schema has nothing to offer (only an empty Default), so the
+                # Repair action is surfaced instead of a broken profile editor.
+                "has_profiles": installed and not needs_repair,
                 # Architecture support for THIS device. `supported` drives the UI's
                 # install button state; `unsupported_reason` explains why when False.
                 "supported": unsupported_reason is None,
@@ -4646,6 +4676,11 @@ def api_get_all_engines():
                 "summary": "Custom engine",
                 "description": description,
                 "installed": installed,
+                # Custom engines declare no companion nets, so they are never a
+                # repair candidate; keep the field shape identical to catalog rows.
+                "needs_repair": False,
+                "can_repair": False,
+                "missing_net_count": 0,
                 "is_system_package": False,
                 "can_uninstall": True,
                 "estimated_install_minutes": 0,
@@ -4908,6 +4943,64 @@ def _start_engine_install(engine_name: str, ref: Optional[str] = None):
     thread.start()
 
 
+def _run_engine_repair(engine_name: str):
+    """Background thread to repair an engine in place, persisting progress.
+
+    Mirrors :func:`_run_engine_install` but calls ``repair_engine`` (fetch the
+    missing companion nets without a rebuild). It writes to the SAME install-state
+    store, so the existing status poll, progress bar, and activity banner reflect
+    a repair with no extra UI wiring.
+    """
+    from universalchess.managers.engine_manager import EngineManager
+
+    def on_stage(stage, message, fraction):
+        _engine_install_store.update(stage, message, fraction)
+
+    try:
+        engine_manager = EngineManager()
+        success = engine_manager.repair_engine(engine_name, stage_callback=on_stage)
+        error = None if success else (engine_manager.get_install_error() or "Repair failed")
+        if success:
+            # The nets on disk just changed. The writable config was seeded before
+            # they arrived (net-less: no per-net profiles, possibly an empty
+            # Default), and seed_config is one-shot, so without this the fetched
+            # nets never become selectable profiles -- the "weights not listed
+            # after repair" bug. Reconcile ADDS the missing sections/keys and
+            # preserves user edits. A reconcile failure does not undo a successful
+            # net fetch, so it is logged, not promoted to a repair failure.
+            try:
+                config_path = _config_uci_path(engine_name)
+                if config_path is not None:
+                    uci_schema.reconcile_config(engine_name, config_path=config_path)
+            except uci_schema.EngineProbeError as reconcile_error:
+                app.logger.warning(
+                    "Repair of %s succeeded but profile reconcile failed: %s",
+                    engine_name, reconcile_error,
+                )
+        _engine_install_store.finish(success=success, error=error)
+    except Exception as e:
+        app.logger.exception("Engine repair failed: %s", e)
+        _engine_install_store.finish(success=False, error="Repair failed")
+
+
+def _start_engine_repair(engine_name: str):
+    """Initialize the persisted state and spawn the repair thread.
+
+    Caller validates the engine name, that it is repairable, and that no install
+    is already active. The estimate paces the progress creep; a weights-only
+    repair is a few minutes of downloads, not a full build.
+    """
+    from universalchess.managers.engine_manager import ENGINES
+    engine = ENGINES[engine_name]
+    _engine_install_store.start(
+        engine_name,
+        engine.display_name,
+        estimated_seconds=5 * 60,
+    )
+    thread = threading.Thread(target=_run_engine_repair, args=(engine_name,), daemon=True)
+    thread.start()
+
+
 @app.route("/api/engines/<engine_name>/refs", methods=["GET"])
 def api_get_engine_refs(engine_name):
     """List the selectable git refs (tags/branches) for a source-built engine.
@@ -4962,6 +5055,48 @@ def api_install_engine():
 
         _start_engine_install(engine_name, ref=ref)
         return jsonify({"success": True, "message": f"Installing {engine_name}"})
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/engines/repair", methods=["POST"])
+@requires_auth
+def api_repair_engine():
+    """Repair an installed-but-incomplete engine in place (e.g. Maia's nets).
+
+    Requires authentication: repair runs a privileged helper (downloads nets into
+    the managed install dir), so it is gated like install. Only an engine the
+    manager reports as ``can_repair`` (installed, missing its required nets, and
+    with a repair procedure) is accepted; anything else is a 400 so the client
+    cannot start a meaningless repair. Runs asynchronously through the shared
+    install-state store (one operation at a time), so the existing status poll
+    shows progress exactly like an install.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        engine_name = data.get("engine")
+
+        if not engine_name:
+            return jsonify({"success": False, "error": "No engine specified"}), 400
+
+        from universalchess.managers.engine_manager import ENGINES, EngineManager
+        if engine_name not in ENGINES:
+            return jsonify({"success": False, "error": f"Unknown engine: {engine_name}"}), 400
+
+        if not EngineManager().can_repair(engine_name):
+            return jsonify({
+                "success": False,
+                "error": f"{engine_name} has nothing to repair.",
+            }), 400
+
+        if _engine_install_store.status_dict()["active"]:
+            return jsonify({
+                "success": False,
+                "error": f"Already installing {_engine_install_store.status_dict()['engine']}",
+            }), 409
+
+        _start_engine_repair(engine_name)
+        return jsonify({"success": True, "message": f"Repairing {engine_name}"})
     except Exception as e:
         return _internal_error(e)
 
