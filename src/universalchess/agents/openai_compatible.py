@@ -72,13 +72,25 @@ class OpenAICompatibleAgent(Agent):
         }
         body = {
             "model": self.resolved_model(config),
-            "max_tokens": max_tokens,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
         }
+        body.update(self.completion_limit_params(config, max_tokens))
         return url, headers, body
+
+    def completion_limit_params(self, config: AgentConfig, max_tokens: int) -> dict:
+        """Body keys that cap the completion length, merged into the chat request.
+
+        The default is the legacy ``max_tokens``, which is the most widely accepted
+        key across arbitrary OpenAI-compatible servers (local runtimes, proxies,
+        older deployments) -- so this protocol-level base stays conservative and
+        vendor-neutral. A vendor whose newer models reject ``max_tokens`` (OpenAI's
+        reasoning models return HTTP 400 ``unsupported_parameter`` and require
+        ``max_completion_tokens``) overrides this in its vendor agent.
+        """
+        return {"max_tokens": max_tokens}
 
     def parse_chat_response(self, data: dict) -> str:
         try:

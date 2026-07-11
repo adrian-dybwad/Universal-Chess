@@ -20,7 +20,12 @@ from universalchess.agents.builtin.anthropic import (
     Anthropic,
 )
 from universalchess.agents.builtin.custom import CustomAgent
-from universalchess.agents.builtin.openai import OpenAIAgent
+from universalchess.agents.builtin.openai import (
+    _REASONING_EFFORT,
+    _REASONING_TOKEN_HEADROOM,
+    OpenAIAgent,
+    is_reasoning_model,
+)
 
 SYSTEM = "You are a concise coach.\n\nBe brief."
 USER = "Position: ...\nMove played: e4"
@@ -41,6 +46,74 @@ def test_openai_chat_request_targets_default_endpoint_with_bearer_auth():
     assert [m["role"] for m in body["messages"]] == ["system", "user"]
     assert body["messages"][0]["content"] == SYSTEM
     assert body["messages"][1]["content"] == USER
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["gpt-5", "gpt-5-mini", "gpt-5-nano", "o1", "o1-mini", "o3-mini", "o4-mini"],
+)
+def test_openai_reasoning_models_use_max_completion_tokens_with_headroom(model):
+    # Reasoning models (GPT-5/o-series) reject the legacy `max_tokens` with HTTP 400
+    # ("Use 'max_completion_tokens' instead"), which surfaced to the user as the
+    # coach's generic "AI service unavailable". They also spend hidden reasoning
+    # tokens from the budget, so the cap must add headroom over the requested output
+    # or the response comes back with an empty message. This pins the fix: the body
+    # must carry `max_completion_tokens` (output + headroom) and low reasoning
+    # effort, and must NOT carry `max_tokens`. Regression manifests as `max_tokens`
+    # reappearing (400) or the budget dropping to the bare output size (empty reply).
+    _url, _headers, body = OpenAIAgent().build_chat_request(
+        AgentConfig(api_key="k", model=model), SYSTEM, USER, MAX_TOKENS
+    )
+    assert "max_tokens" not in body
+    assert body["max_completion_tokens"] == MAX_TOKENS + _REASONING_TOKEN_HEADROOM
+    assert body["reasoning_effort"] == _REASONING_EFFORT
+    assert body["model"] == model
+    assert [m["role"] for m in body["messages"]] == ["system", "user"]
+
+
+@pytest.mark.parametrize("model", ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-5-chat"])
+def test_openai_classic_models_keep_max_tokens(model):
+    # Classic chat models (gpt-4o/gpt-4.1 families) and the non-reasoning `gpt-5-chat`
+    # variant accept `max_tokens` and reject reasoning-only options, so the legacy
+    # parameter must be preserved unchanged. Regression: sending
+    # `max_completion_tokens`/`reasoning_effort` to `gpt-4`-era or `gpt-5-chat`
+    # models would 400.
+    _url, _headers, body = OpenAIAgent().build_chat_request(
+        AgentConfig(api_key="k", model=model), SYSTEM, USER, MAX_TOKENS
+    )
+    assert body["max_tokens"] == MAX_TOKENS
+    assert "max_completion_tokens" not in body
+    assert "reasoning_effort" not in body
+
+
+def test_is_reasoning_model_classification():
+    # Guards the id-prefix classification the parameter selection depends on: the
+    # GPT-5 reasoning family and the o-series are reasoning; the gpt-4o/gpt-4.1
+    # families, the `gpt-5-chat` variant, and `chatgpt-4o-latest` are not.
+    assert is_reasoning_model("gpt-5-mini")
+    assert is_reasoning_model("o4-mini")
+    assert is_reasoning_model("GPT-5")  # case-insensitive
+    assert not is_reasoning_model("gpt-5-chat")
+    assert not is_reasoning_model("gpt-4o-mini")
+    assert not is_reasoning_model("gpt-4.1")
+    assert not is_reasoning_model("chatgpt-4o-latest")
+
+
+def test_custom_agent_keeps_max_tokens_even_for_reasoning_model_id():
+    # The reasoning-model mapping is an OpenAI-vendor fact and lives on OpenAIAgent;
+    # the shared transport (used by the custom agent for arbitrary compatible
+    # servers) stays vendor-neutral and always sends `max_tokens`, even when the
+    # user types a GPT-5 model id. Regression: leaking the OpenAI mapping into the
+    # shared transport would send `max_completion_tokens` to servers that only
+    # understand `max_tokens`.
+    _url, _headers, body = CustomAgent().build_chat_request(
+        AgentConfig(api_key="k", base_url="http://host/v1", model="gpt-5-mini"),
+        SYSTEM,
+        USER,
+        MAX_TOKENS,
+    )
+    assert body["max_tokens"] == MAX_TOKENS
+    assert "max_completion_tokens" not in body
 
 
 def test_openai_ignores_configured_base_url():
