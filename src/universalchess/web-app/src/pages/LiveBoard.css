@@ -75,19 +75,6 @@
   margin-bottom: 0.5rem;
 }
 
-/* Game over display */
-.game-over-info {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.termination-reason {
-  color: #7a7a7a;
-  font-size: 0.875rem;
-}
-
 /* Textarea styling - matches Bulma */
 .textarea {
   appearance: none;

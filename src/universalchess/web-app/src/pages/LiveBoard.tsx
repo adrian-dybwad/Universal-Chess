@@ -5,6 +5,7 @@ import { useBoardMove } from '../components/useBoardMove';
 import { useAuthedAction } from '../components/useAuthedAction';
 import { Analysis } from '../components/Analysis';
 import { ClockDisplay } from '../components/ClockDisplay';
+import { GameOverPanel } from '../components/GameOverPanel';
 import { CoachPanel } from '../components/CoachPanel';
 import { MoveTable } from '../components/MoveTable';
 import { useGameStore } from '../stores/gameStore';
@@ -106,21 +107,7 @@ export function LiveBoard() {
   const black = gameState?.black || t('color.black');
   const turn = gameState?.turn === 'w' ? t('color.white') : t('color.black');
   const moveNum = gameState?.move_number || 1;
-  const result = gameState?.result;
   const gameOver = gameState?.game_over;
-  const termination = gameState?.termination;
-  
-  // Format termination reason for display
-  const formatTermination = (term: string | null | undefined): string => {
-    if (!term) return '';
-    // Convert snake_case or lowercase to Title Case with spaces
-    const formatted = term
-      .replace(/_/g, ' ')
-      .replace(/\./g, ' ')
-      .toLowerCase()
-      .replace(/\b\w/g, (c) => c.toUpperCase());
-    return formatted;
-  };
   
   // Blue arrow, pending: engine/Lichess move the player must physically make.
   // This is an action, so the board shows it alone (suppresses the best-move arrow).
@@ -259,18 +246,18 @@ export function LiveBoard() {
                 <strong>{black}</strong>
                 <span className="text-muted"> (B)</span>
               </div>
-              {gameOver && result ? (
-                <div className="game-over-info">
-                  <span className="tag is-info">{result}</span>
-                  {termination && (
-                    <span className="termination-reason">{formatTermination(termination)}</span>
-                  )}
-                </div>
+              {gameOver ? (
+                /* End-game widget: winner, termination, moves, final times.
+                   Replaces the move indicator and the live clock, mirroring the
+                   e-paper GameOverWidget. */
+                <GameOverPanel />
               ) : (
-                <span className="tag is-light">{t('liveBoard.moveToPlay', { num: moveNum, turn })}</span>
+                <>
+                  <span className="tag is-light">{t('liveBoard.moveToPlay', { num: moveNum, turn })}</span>
+                  {/* Live countdown clock; renders only for a timed game. */}
+                  <ClockDisplay />
+                </>
               )}
-              {/* Live countdown clock; renders only for a timed game. */}
-              <ClockDisplay />
             </div>
           ) : (
             <p className="text-muted">{t('liveBoard.waiting')}</p>

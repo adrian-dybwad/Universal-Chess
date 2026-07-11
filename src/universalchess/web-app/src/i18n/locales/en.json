@@ -109,7 +109,30 @@
     "analysis": "Analysis",
     "moves": "Moves",
     "currentPgn": "Current PGN",
-    "pgnPlaceholder": "PGN will appear here during play..."
+    "pgnPlaceholder": "PGN will appear here during play...",
+    "gameOver": {
+      "moveCount": "{{count}} moves",
+      "finalTimes": "W {{white}}  B {{black}}",
+      "result": {
+        "white_wins": "White wins",
+        "black_wins": "Black wins",
+        "draw": "Draw",
+        "unknown": "Game over"
+      },
+      "termination": {
+        "checkmate": "Checkmate",
+        "stalemate": "Stalemate",
+        "insufficient_material": "Insufficient material",
+        "seventyfive_moves": "75-move rule",
+        "fivefold_repetition": "5x repetition",
+        "fifty_moves": "50-move rule",
+        "threefold_repetition": "3x repetition",
+        "resign": "Resignation",
+        "timeout": "Time forfeit",
+        "time_forfeit": "Time forfeit",
+        "abandoned": "Abandoned"
+      }
+    }
   },
   "clock": {
     "aria": "Game clock"

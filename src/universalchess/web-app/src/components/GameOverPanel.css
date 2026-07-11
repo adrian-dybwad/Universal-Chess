@@ -1,0 +1,42 @@
+/* End-of-game panel: replaces the clock + "move to play" indicator on the
+   LiveBoard when a game ends, mirroring the e-paper GameOverWidget layout
+   (winner, termination, move count, final times). */
+.game-over-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.75rem 0.5rem;
+  text-align: center;
+}
+
+.game-over-panel__winner {
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.game-over-panel__result {
+  display: inline-block;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.9rem;
+  color: #363636;
+  background: #f0f0f0;
+  border-radius: 4px;
+  padding: 0.05rem 0.4rem;
+}
+
+.game-over-panel__termination {
+  font-size: 0.95rem;
+  color: #4a4a4a;
+}
+
+.game-over-panel__moves,
+.game-over-panel__times {
+  font-size: 0.8rem;
+  color: #7a7a7a;
+}
+
+.game-over-panel__times {
+  font-family: var(--font-mono, monospace);
+}

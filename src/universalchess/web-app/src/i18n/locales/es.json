@@ -109,7 +109,30 @@
     "analysis": "Análisis",
     "moves": "Jugadas",
     "currentPgn": "PGN actual",
-    "pgnPlaceholder": "El PGN aparecerá aquí durante la partida..."
+    "pgnPlaceholder": "El PGN aparecerá aquí durante la partida...",
+    "gameOver": {
+      "moveCount": "{{count}} jugadas",
+      "finalTimes": "B {{white}}  N {{black}}",
+      "result": {
+        "white_wins": "Ganan las blancas",
+        "black_wins": "Ganan las negras",
+        "draw": "Tablas",
+        "unknown": "Fin de la partida"
+      },
+      "termination": {
+        "checkmate": "Jaque mate",
+        "stalemate": "Ahogado",
+        "insufficient_material": "Material insuficiente",
+        "seventyfive_moves": "Regla de 75 jugadas",
+        "fivefold_repetition": "Repetición x5",
+        "fifty_moves": "Regla de 50 jugadas",
+        "threefold_repetition": "Repetición x3",
+        "resign": "Abandono",
+        "timeout": "Tiempo agotado",
+        "time_forfeit": "Tiempo agotado",
+        "abandoned": "Abandonada"
+      }
+    }
   },
   "clock": {
     "aria": "Reloj de la partida"

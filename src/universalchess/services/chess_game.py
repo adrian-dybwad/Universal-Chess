@@ -44,6 +44,15 @@ class ChessGameService:
         
         # Register for position changes to write FEN log
         self._state.on_position_change(self._on_position_change)
+        # Register for game-over so the web is re-broadcast when the game ends
+        # without a position change. push_move() fires position_change BEFORE it
+        # inspects the outcome, and a claim-only draw (threefold repetition,
+        # fifty-move) or an externally set result (resignation, draw agreement,
+        # time forfeit) is applied via set_result() -> notify_game_over() with no
+        # accompanying position_change. Without this subscription the web keeps
+        # the last position_change snapshot (game_over False) while the board's
+        # game-over widget shows, so the game ends on the e-paper but not the web.
+        self._state.on_game_over(self._on_game_over)
     
     # -------------------------------------------------------------------------
     # Properties (delegate to state for reads)
@@ -265,7 +274,19 @@ class ChessGameService:
         
         # Broadcast to web clients
         self.broadcast_state()
-    
+
+    def _on_game_over(self, result: str, termination: str) -> None:
+        """Called when the game ends; re-broadcast so the web reflects game over.
+
+        The position does not change when a game ends by a claimed draw or an
+        external result, so the position-change broadcast (which already fired
+        for the final move) carried game_over False. Re-broadcasting here makes
+        the web's game_over/result/termination match the board. broadcast_state()
+        reads the now-updated state, so the args are unused (the state is the
+        single source of truth).
+        """
+        self.broadcast_state()
+
     def broadcast_state(self) -> None:
         """Broadcast current game state to web clients.
         
