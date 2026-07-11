@@ -391,6 +391,51 @@ def read_profile_names(
     return [profile["name"] for profile in read_profiles(uci_path, defaults_path)]
 
 
+def _default_profile_analysis(
+    profiles: List[dict],
+) -> Tuple[bool, Optional[str]]:
+    """Classify the ``Default`` profile: (is_uncapped, alias_rung_name).
+
+    Two engine families give ``Default`` different meanings, and both are
+    display-relevant:
+
+    * ``is_uncapped`` -- the ``Default`` section turns the strength cap *off*
+      (``UCI_LimitStrength=false``), so the engine plays at full strength. True
+      only for ``UCI_Elo`` engines whose Default disables the cap.
+    * ``alias_rung_name`` -- the name of a numbered rung whose settings are
+      byte-for-byte identical to ``Default``'s. A file-selector engine (Maia)
+      seeds ``[Default]`` as a *copy* of one net rung (the middle net), so
+      ``Default`` is not "unlimited" -- it resolves to a concrete ELO. Detecting
+      the alias lets callers surface that ELO while leaving the stored value
+      ``Default`` (so it keeps tracking whatever the default resolves to).
+
+    An uncapped Default is never treated as an alias (the cap-off meaning wins).
+    Returns ``(False, None)`` when there is no Default or it has no local values.
+    """
+    default_values = next(
+        (p["values"] for p in profiles if p["name"] == "Default"), None
+    )
+    if not default_values:
+        return (False, None)
+
+    is_uncapped = any(
+        key.lower() == "uci_limitstrength" and str(value).strip().lower() == "false"
+        for key, value in default_values.items()
+    )
+    if is_uncapped:
+        return (True, None)
+
+    alias = next(
+        (
+            p["name"]
+            for p in profiles
+            if p["name"] != "Default" and p["values"] == default_values
+        ),
+        None,
+    )
+    return (False, alias)
+
+
 def strength_level_choices(
     uci_path: str, defaults_path: Optional[str] = None
 ) -> List[Dict[str, str]]:
@@ -398,43 +443,70 @@ def strength_level_choices(
 
     ``value`` is the section name persisted as the player's ``elo`` -- it is left
     exactly as stored so existing configs keep resolving. ``label`` is what the UI
-    shows and is identical to ``value`` except for one case: a ``Default`` section
-    that turns the strength cap *off* (``UCI_LimitStrength=false``) is labelled
-    ``"Unlimited"``.
+    shows; ``Default`` is relabelled in two cases so it never hides its meaning:
 
-    Why relabel only that case: for a ``UCI_Elo`` engine, ``Default`` disables the
-    cap and plays the binary at full strength -- stronger than any numbered ELO
-    rung -- so the word "Default" misleads users into reading it as a moderate
-    setting. Keying the relabel off ``UCI_LimitStrength=false`` (rather than the
-    name) scopes it to engines where "uncapped" is literally true: a file-model
-    ``Default`` (e.g. Maia, whose ``Default`` merely selects a net and carries no
-    cap toggle) keeps its name, because there "Default" is not full strength.
+    * An uncapped ``Default`` (``UCI_LimitStrength=false``, e.g. a ``UCI_Elo``
+      engine) plays at full strength, so it shows as ``"Unlimited"`` -- "Default"
+      misled users into reading it as a moderate setting.
+    * A net-selected ``Default`` that is a copy of a numbered rung (e.g. Maia,
+      whose ``Default`` picks the middle net) shows as ``"Default (<rung>)"``
+      (e.g. ``"Default (1500 ELO)"``) so the picker reveals which ELO it plays
+      while ``Default`` stays selectable -- pick it and the slot tracks the
+      default if that net ever changes.
 
-    A ``Default`` entry is always present (inserted first when the config defines
-    none) so the stored default always has a matching row.
+    Otherwise the label is the section name. A ``Default`` entry is always present
+    (inserted first when the config defines none) so the stored default always
+    has a matching row.
     """
     profiles = read_profiles(uci_path, defaults_path)
     names = [profile["name"] for profile in profiles]
-    default_values = next(
-        (p["values"] for p in profiles if p["name"] == "Default"), None
-    )
-    if default_values is None:
+    if not any(name == "Default" for name in names):
         names.insert(0, "Default")
-        default_values = {}
 
-    default_is_uncapped = any(
-        key.lower() == "uci_limitstrength" and str(value).strip().lower() == "false"
-        for key, value in default_values.items()
-    )
-    return [
-        {
-            "value": name,
-            "label": UNLIMITED_LABEL
-            if (name == "Default" and default_is_uncapped)
-            else name,
-        }
-        for name in names
-    ]
+    is_uncapped, alias = _default_profile_analysis(profiles)
+
+    def label_for(name: str) -> str:
+        if name != "Default":
+            return name
+        if is_uncapped:
+            return UNLIMITED_LABEL
+        if alias:
+            return f"Default ({alias})"
+        return name
+
+    return [{"value": name, "label": label_for(name)} for name in names]
+
+
+def strength_section_display(
+    uci_path: str, section: str, defaults_path: Optional[str] = None
+) -> str:
+    """Resolve a stored strength ``section`` to its display strength.
+
+    Used where a player's strength is *shown* (the web Current Game card, PGN),
+    as opposed to the picker (:func:`strength_level_choices`). The stored value is
+    the raw section (e.g. ``Default``); this resolves it to what the engine
+    actually plays:
+
+    * a non-``Default`` section is its own name (``"1500 ELO"``);
+    * an uncapped ``Default`` -> ``"Unlimited"``;
+    * a net-selected ``Default`` that copies a rung -> that rung (``"1500 ELO"``),
+      so the card shows the concrete ELO rather than a bare, uninformative
+      ``Default`` -- while the stored value stays ``Default`` and keeps tracking;
+    * otherwise ``"Default"`` (a Default that matches no rung, e.g. a custom edit).
+
+    Unlike the picker, an aliased Default is shown as the bare rung (not
+    ``"Default (1500 ELO)"``) so the composed name reads ``"Maia (1500 ELO)"``
+    without nested parentheses.
+    """
+    if section != "Default":
+        return section
+    profiles = read_profiles(uci_path, defaults_path)
+    is_uncapped, alias = _default_profile_analysis(profiles)
+    if is_uncapped:
+        return UNLIMITED_LABEL
+    if alias:
+        return alias
+    return "Default"
 
 
 def write_profile(

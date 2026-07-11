@@ -1864,6 +1864,29 @@ def _get_engine_elo_levels(engine_name: str) -> List[dict]:
     return levels
 
 
+def _elo_display_label(engine_name: str, elo_section: str) -> str:
+    """Resolve a player's stored strength section to its display strength.
+
+    The player's ``elo`` is persisted as the raw section name (e.g. ``Default``),
+    but the game card / PGN must show what the engine actually plays: an uncapped
+    ``Default`` as ``Unlimited`` and a net-selected ``Default`` (Maia) as the
+    concrete rung it copies (``1500 ELO``), while the stored value stays
+    ``Default`` so it keeps tracking. Delegates to ``strength_section_display``,
+    reading the engine's writable ``.uci`` (seeded on first use; the call is a
+    cheap no-op once the file exists). Falls back to the raw section if the config
+    cannot be produced (unprobed/missing binary), so the name is always defined.
+    """
+    from universalchess.services import uci_schema
+    from universalchess.services.engine_profiles import strength_section_display
+
+    try:
+        config_path = uci_schema.seed_config(engine_name)
+    except Exception as e:
+        log.warning(f"[Settings] Cannot resolve strength label for {engine_name}: {e}")
+        return elo_section
+    return strength_section_display(config_path, elo_section)
+
+
 # ============================================================================
 # Menu Functions (moved to DGTCentaurMods.menus helpers)
 # ============================================================================
@@ -1990,8 +2013,11 @@ def _start_game_mode(
             return HumanPlayer(config)
         elif ps.type == 'engine':
             engine_display = get_engine_display_name(ps.engine)
-            # Use custom name if provided, otherwise use engine display name
-            name = ps.name if ps.name else f"{engine_display} ({ps.elo})"
+            # Use custom name if provided, otherwise use engine display name with
+            # the picker's strength label (an uncapped "Default" -> "Unlimited")
+            # so the game card / PGN never show a bare "(Default)".
+            elo_label = _elo_display_label(ps.engine, ps.elo)
+            name = ps.name if ps.name else f"{engine_display} ({elo_label})"
             config = EnginePlayerConfig(
                 name=name,
                 color=color,

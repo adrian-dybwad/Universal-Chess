@@ -221,8 +221,8 @@ def test_strength_level_choices_labels_uncapped_default_as_unlimited(uci_file):
     ]
 
 
-def test_strength_level_choices_keeps_default_name_when_not_uncapped(tmp_path):
-    """A file-model Default (no cap toggle, e.g. Maia) keeps the name "Default".
+def test_strength_level_choices_never_labels_capped_default_unlimited(tmp_path):
+    """A file-model Default (no cap toggle, e.g. Maia) is never "Unlimited".
 
     Why this exists: "Unlimited" is only truthful when Default disables the cap.
     A file-selector engine's [Default] merely picks a net and carries no
@@ -230,11 +230,12 @@ def test_strength_level_choices_keeps_default_name_when_not_uncapped(tmp_path):
     relabel is keyed off the cap being off, not off the name.
 
     How the regression manifests: a name-based relabel would mark this Default
-    "Unlimited" too, mislabelling a non-full-strength default.
+    "Unlimited" too, mislabelling a non-full-strength default. Here the Default net
+    matches no rung (custom /nets path), so it stays the bare "Default".
     """
     path = tmp_path / "maia.uci"
     path.write_text(
-        "[Default]\nWeightsFile = /nets/1500.pb\n\n"
+        "[Default]\nWeightsFile = /nets/only.pb\n\n"
         "[1500 ELO]\nWeightsFile = /nets/1500.pb\n",
         encoding="utf-8",
     )
@@ -243,6 +244,35 @@ def test_strength_level_choices_keeps_default_name_when_not_uncapped(tmp_path):
 
     assert choices == [
         {"value": "Default", "label": "Default"},
+        {"value": "1500 ELO", "label": "1500 ELO"},
+    ]
+
+
+def test_strength_level_choices_labels_net_default_with_resolved_rung(tmp_path):
+    """A net-selected Default that copies a rung shows "Default (<rung>)".
+
+    Why this exists: Maia seeds [Default] as a copy of the middle net rung, so
+    "Default" actually plays a concrete ELO. The picker must reveal that ELO
+    ("Default (1500 ELO)") while keeping the value "Default" selectable, so a user
+    can pick the tracking default and still see what it currently plays.
+
+    How the regression manifests: the Default row reverts to a bare "Default"
+    (hiding the ELO it plays) or its value changes away from "Default" (the slot
+    would pin to a fixed rung and stop tracking).
+    """
+    path = tmp_path / "maia.uci"
+    path.write_text(
+        "[Default]\nWeightsFile = /nets/1500.pb\n\n"
+        "[1300 ELO]\nWeightsFile = /nets/1300.pb\n\n"
+        "[1500 ELO]\nWeightsFile = /nets/1500.pb\n",
+        encoding="utf-8",
+    )
+
+    choices = ep.strength_level_choices(str(path))
+
+    assert choices == [
+        {"value": "Default", "label": "Default (1500 ELO)"},
+        {"value": "1300 ELO", "label": "1300 ELO"},
         {"value": "1500 ELO", "label": "1500 ELO"},
     ]
 
@@ -267,6 +297,68 @@ def test_strength_level_choices_always_offers_default(tmp_path):
         {"value": "Default", "label": "Default"},
         {"value": "1800 ELO", "label": "1800 ELO"},
     ]
+
+
+# ---------------------------------------------------------------------------
+# strength_section_display: stored section -> shown strength (game card / PGN)
+# ---------------------------------------------------------------------------
+
+
+def test_strength_section_display_uncapped_default_is_unlimited(uci_file):
+    """A stored uncapped "Default" is shown as "Unlimited" in the card/PGN.
+
+    Why this exists: the player name (web Current Game card, PGN) must show what
+    the engine plays, not the raw section. An uncapped Default plays full strength,
+    so the card should read "<engine> (Unlimited)".
+
+    How the regression manifests: the card shows a bare "(Default)" again while
+    the settings picker says "Unlimited".
+    """
+    assert ep.strength_section_display(str(uci_file), "Default") == ep.UNLIMITED_LABEL
+
+
+def test_strength_section_display_net_default_resolves_to_bare_rung(tmp_path):
+    """A net-selected Default resolves to the bare rung it copies (e.g. Maia).
+
+    Why this exists: the reported case -- Maia's "Default" is a specific ELO (the
+    middle net), so the card must show that ELO. It resolves to the bare rung
+    ("1500 ELO"), NOT "Default (1500 ELO)", so the composed player name reads
+    "Maia (1500 ELO)" without nested parentheses. The stored value stays "Default"
+    (tested separately) so it keeps tracking the default net.
+
+    How the regression manifests: the card shows a bare "Default" (hiding the ELO)
+    or "Default (1500 ELO)" (nested parens once composed into the name).
+    """
+    path = tmp_path / "maia.uci"
+    path.write_text(
+        "[Default]\nWeightsFile = /nets/1500.pb\n\n"
+        "[1500 ELO]\nWeightsFile = /nets/1500.pb\n",
+        encoding="utf-8",
+    )
+    assert ep.strength_section_display(str(path), "Default") == "1500 ELO"
+
+
+def test_strength_section_display_numbered_section_is_itself(tmp_path):
+    # A concrete rung is shown as its own name; only Default is ever resolved.
+    path = tmp_path / "maia.uci"
+    path.write_text(
+        "[Default]\nWeightsFile = /nets/1500.pb\n\n"
+        "[1500 ELO]\nWeightsFile = /nets/1500.pb\n",
+        encoding="utf-8",
+    )
+    assert ep.strength_section_display(str(path), "1500 ELO") == "1500 ELO"
+
+
+def test_strength_section_display_unmatched_default_stays_default(tmp_path):
+    # A Default that is neither uncapped nor a copy of any rung (a custom edit)
+    # has no concrete ELO to show, so it legitimately stays "Default".
+    path = tmp_path / "maia.uci"
+    path.write_text(
+        "[Default]\nWeightsFile = /nets/custom.pb\n\n"
+        "[1500 ELO]\nWeightsFile = /nets/1500.pb\n",
+        encoding="utf-8",
+    )
+    assert ep.strength_section_display(str(path), "Default") == "Default"
 
 
 # ---------------------------------------------------------------------------
