@@ -164,7 +164,25 @@ class ResourceLoader:
     _SPRITE_SHEET_PREFIX = "chesssprites_"
     _SPRITE_SHEET_SUFFIX = ".bmp"
     _SPRITE_SHEET_SUFFIXES = (".bmp", ".png")
+    # The ``default`` id is the sentinel default sheet: listed first, used as the
+    # fresh-install/fallback selection, and the value ``chess_sprites`` defaults
+    # to. It ships as ``chesssprites_default.png`` (the Cburnett COLORWAY set).
+    # Keeping the id stable means a persisted ``chess_sprites = default`` silently
+    # resolves to whatever art the default file currently holds -- so the default
+    # style can be swapped (the previous Mods set now ships as ``original_mods``)
+    # without a settings migration or a broken selection.
     DEFAULT_SPRITE_SHEET = "default"
+
+    @staticmethod
+    def sprite_sheet_label(sheet_id: str) -> str:
+        """Human-readable label for a sprite-sheet id (``original_mods`` -> "Original Mods").
+
+        Sheet ids come from filenames (``chesssprites_<id>``), so they are
+        lower_snake_case. The e-paper Sprites list would otherwise show the raw id
+        (``original_mods``); title-casing each ``_``-separated word matches the web
+        selector's humanising, so both surfaces label a sheet identically.
+        """
+        return " ".join(word.capitalize() for word in sheet_id.split("_") if word)
 
     def list_chess_sprite_sheets(self) -> "list[str]":
         """List the identifiers of all available chess sprite sheets.
@@ -217,8 +235,9 @@ class ResourceLoader:
         return a stale image.
 
         Args:
-            name: Sheet identifier (e.g. ``"default"``, ``"onebit"``). Defaults to
-                the built-in ``default`` sheet.
+            name: Sheet identifier (e.g. ``"default"``, ``"onebit"``,
+                ``"original_mods"``). Defaults to the built-in ``default`` sheet
+                (``chesssprites_default.png``, the Cburnett set).
 
         Returns:
             PIL Image in mode '1' (LEGACY/SPLIT) or 'RGBA' (COLORWAY), or None if

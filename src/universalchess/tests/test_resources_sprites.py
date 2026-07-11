@@ -3,8 +3,9 @@
 Background / why these tests exist
 ----------------------------------
 The display menu lets the user pick a chess sprite set among all resources named
-``chesssprites_<id>.bmp`` (``chesssprites_default.bmp`` is the default). These
-tests pin the two pieces of behavior the menu and board widget rely on:
+``chesssprites_<id>.<ext>`` (the sentinel ``default`` id ships as
+``chesssprites_default.png``, the Cburnett set). These tests pin the pieces of
+behavior the menu and board widget rely on:
 
 1. list_chess_sprite_sheets() discovers every ``chesssprites_*`` sheet across the
    user and system resource directories, returns their identifiers (the part
@@ -126,6 +127,59 @@ def test_list_sheets_discovers_png_and_merges_with_bmp(tmp_path):
 
     loader = ResourceLoader(str(system_dir))
     assert loader.list_chess_sprite_sheets() == ["default", "onebit"]
+
+
+def test_default_sheet_listed_first_with_original_mods_present(tmp_path):
+    """The renamed legacy 'original_mods' sheet sorts after the sentinel 'default'.
+
+    Why this exists: the Mods artwork was renamed from the sentinel 'default' to
+    'original_mods' when Cburnett became the default (shipped as
+    chesssprites_default.png). Discovery must still list 'default' first (it is
+    the sentinel) with 'original_mods' among the alphabetical remainder, so the
+    Sprites list opens on the default and offers the old set as a normal entry.
+
+    How the regression manifests: 'original_mods' sorts ahead of 'default' (a
+    plain alphabetical sort without the sentinel hoist), so the list no longer
+    opens on the default sheet.
+    """
+    system_dir = tmp_path / "system"
+    system_dir.mkdir()
+    Path(system_dir, "chesssprites_default.png").touch()
+    Path(system_dir, "chesssprites_onebit.png").touch()
+    _touch_sheet(str(system_dir), "original_mods")
+
+    loader = ResourceLoader(str(system_dir))
+    assert loader.list_chess_sprite_sheets() == ["default", "onebit", "original_mods"]
+
+
+# ---------------------------------------------------------------------------
+# Labels: sprite_sheet_label(sheet_id)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sheet_id, expected",
+    [
+        ("original_mods", "Original Mods"),  # the renamed legacy Mods set
+        ("default", "Default"),              # the sentinel default (Cburnett art)
+        ("onebit", "Onebit"),                # single-word id, still title-cased
+        ("wood_dark_v2", "Wood Dark V2"),    # multi-word user pack
+        ("", ""),                            # empty id yields empty label, no crash
+        ("__weird__", "Weird"),              # empty _-separated parts are dropped
+    ],
+)
+def test_sprite_sheet_label_humanises_ids(sheet_id, expected):
+    """sprite_sheet_label title-cases _-separated ids so the e-paper list reads well.
+
+    Why this exists: sheet ids come from filenames (lower_snake_case), and the
+    e-paper Sprites list would otherwise show the raw id ("original_mods"). The
+    label must match the web selector's humanising so both surfaces agree.
+
+    How the regression manifests: the raw id leaks to the board menu (e.g.
+    "original_mods" instead of "Original Mods"), or empty/dup underscores crash or
+    produce doubled spaces.
+    """
+    assert ResourceLoader.sprite_sheet_label(sheet_id) == expected
 
 
 # ---------------------------------------------------------------------------

@@ -7,8 +7,8 @@ Source: https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces
 The author released these chess piece images on Wikimedia Commons under a
 multi-license: the GNU General Public License version 2 or later, the GNU Free
 Documentation License, and the BSD-style license reproduced below. This project
-distributes the artwork (Chess_Pieces_Sprite.svg and the derived
-chesssprites_cburnett.png sprite sheet) under the BSD-style option.
+distributes the artwork (the derived chesssprites_default.png sprite sheet, the
+default board sprite style) under the BSD-style option.
 
 --------------------------------------------------------------------------------
 

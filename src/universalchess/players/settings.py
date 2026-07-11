@@ -235,11 +235,14 @@ class GameSettings:
             DGT Chess app transmits. The app sends a fixed constant (it exposes no
             brightness control), so honoring it pins Pegasus brightness; the flag
             lets the app value be honored again if a future app varies it.
-        chess_sprites: Identifier of the selected chesssprites_ sheet ("default"
-            maps to chesssprites_default.bmp). Must be a real field so the
-            Display > Board > Sprites selector can read the current selection via
-            to_dict() and persist changes via set(); otherwise the menu always
-            reads the default and cycling never advances.
+        chess_sprites: Identifier of the selected chesssprites_ sheet. Defaults to
+            "default", the sentinel default sheet (chesssprites_default.png, the
+            Cburnett set); the previous Mods artwork now ships as "original_mods".
+            Because the id is stable, a persisted "default" silently resolves to
+            the current default art, so the default style swaps with no migration.
+            Must be a real field so the Display > Board > Sprites selector can read
+            the current selection via to_dict() and persist changes via set();
+            otherwise the menu always reads the default and cycling never advances.
         notation: Chess notation used for move history on the board and web
             ("figurine", "san", "lan", or "uci"). Defaults to figurine.
         coach_provider: Active AI coach service ("none", "openai", "anthropic",

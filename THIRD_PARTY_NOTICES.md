@@ -38,12 +38,12 @@ This project includes third-party components. Each component is governed by its 
 - **Note**:
   - CC0 places the work in the public domain and does not require attribution; this notice is provided as a courtesy.
 
-### Cburnett chess pieces (`chesssprites_cburnett.png`)
+### Cburnett chess pieces (`chesssprites_default.png`)
 
 - **Files**:
-  - `src/universalchess/resources/chesssprites_cburnett.png` (16x16 sprite sheet for the "cburnett" board sprite style)
+  - `src/universalchess/resources/chesssprites_default.png` (16x16 sprite sheet; the default board sprite style, shown as "Default")
 - **What it is**:
-  - The classic Cburnett/Wikimedia vector chess set, widely used across chess software. `chesssprites_cburnett.png` is a downsampled 16x16 COLORWAY sheet produced from the upstream SVG via `scripts/make-svg-sprite-sheet.py`. The source SVG is not shipped; see the converter for regeneration.
+  - The classic Cburnett/Wikimedia vector chess set, widely used across chess software. `chesssprites_default.png` is a downsampled 16x16 COLORWAY sheet produced from the upstream SVG via `scripts/make-svg-sprite-sheet.py`. It is the default sprite style; the previous DGTCentaur Mods artwork now ships as `chesssprites_original_mods.bmp` ("Original Mods"). The source SVG is not shipped; see the converter for regeneration.
 - **Author**:
   - Colin M.L. Burnett (Wikimedia Commons user "Cburnett"), `https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces`
 - **License**:

@@ -4016,12 +4016,17 @@ def _build_display_context():
         are owned by the engine via the catalog node's ``itemBind`` -- this
         provider returns only the list and each sheet's preview image/mask.
         """
+        from universalchess.resources import ResourceLoader
+
         rows = []
         for sheet in _list_chess_sprite_sheets():
             preview = _chess_sprite_preview(sheet)
             image, mask = preview if preview is not None else (None, None)
+            # Humanise the id so the e-paper list shows "Original Mods", not the
+            # raw "original_mods" -- matching the web selector's labelling.
+            label = ResourceLoader.sprite_sheet_label(sheet)
             rows.append(
-                MenuRow(key=sheet, label=sheet, icon="positions", icon_image=image, icon_mask=mask)
+                MenuRow(key=sheet, label=label, icon="positions", icon_image=image, icon_mask=mask)
             )
         return rows
 

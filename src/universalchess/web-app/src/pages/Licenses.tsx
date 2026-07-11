@@ -43,7 +43,7 @@ const licenses: License[] = [
   {
     name: 'Cburnett chess pieces',
     type: 'BSD-3-Clause',
-    description: 'The classic Cburnett/Wikimedia vector chess set, rasterised to a 16x16 sprite sheet for the "cburnett" e-paper board sprite style. Multi-licensed by the author under GPLv2+, GFDL and a BSD-style license; used here under the BSD option.',
+    description: 'The classic Cburnett/Wikimedia vector chess set, rasterised to a 16x16 sprite sheet. It is the default e-paper board sprite style (shown as "Default"); the previous DGTCentaur Mods set is still available as "Original Mods". Multi-licensed by the author under GPLv2+, GFDL and a BSD-style license; used here under the BSD option.',
     copyright: 'Colin M.L. Burnett',
     url: 'https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces',
   },

@@ -30,7 +30,7 @@ https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces to regenerate.
 Usage:
     python scripts/make-svg-sprite-sheet.py \
         --svg Chess_Pieces_Sprite.svg \
-        --output src/universalchess/resources/chesssprites_cburnett.png
+        --output src/universalchess/resources/chesssprites_default.png
 """
 
 import argparse
@@ -123,7 +123,7 @@ def main(argv=None) -> int:
     parser.add_argument("--svg", type=Path, required=True,
                         help="Input SVG packing the twelve pieces in a grid.")
     parser.add_argument("--output", type=Path, required=True,
-                        help="Output PNG path (e.g. resources/chesssprites_cburnett.png).")
+                        help="Output PNG path (e.g. resources/chesssprites_default.png).")
     parser.add_argument("--columns", type=int, default=len(COLUMN_ORDER),
                         help=f"Columns in the source grid. Default {len(COLUMN_ORDER)} "
                              f"({''.join(COLUMN_ORDER)}).")
