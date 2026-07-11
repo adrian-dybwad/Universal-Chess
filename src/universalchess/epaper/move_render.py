@@ -21,14 +21,6 @@ _FIGURINE_TO_LETTER = {
     "\u2658": "N",
 }
 
-# Piece letter -> x offset in the 16px sprite sheet (uppercase = white art,
-# lowercase = black art), mirroring ChessBoardWidget._piece_x.
-_PIECE_SPRITE_X = {
-    "P": 16, "R": 32, "N": 48, "B": 64, "Q": 80, "K": 96,
-    "p": 112, "r": 128, "n": 144, "b": 160, "q": 176, "k": 192,
-}
-
-
 def sprite_sheet(explicit: Optional[Image.Image] = None) -> Optional[Image.Image]:
     """The piece sprite sheet to composite from.
 
@@ -43,16 +35,35 @@ def sprite_sheet(explicit: Optional[Image.Image] = None) -> Optional[Image.Image
 
 
 def _piece_glyph_image(sheet, letter: str, size: int) -> Optional[Image.Image]:
-    """Crop (and scale) the piece sprite for ``letter`` from the sheet."""
+    """Build (and scale) the figurine glyph for ``letter`` from the sheet.
+
+    LEGACY/SPLIT: crop row 0, which is black-on-white glyph art (LEGACY light-
+    square piece, SPLIT ink), directly usable as a figurine. The column is
+    resolved from the layout (LEGACY reserves column 0 for the empty square).
+    COLORWAY: the sheet has no black-on-white row, so compose the glyph in code
+    (white tile + alpha/ink), giving a hollow white-piece / filled black-piece
+    figurine consistent with the board.
+    """
     if sheet is None:
         return None
-    x = _PIECE_SPRITE_X.get(letter)
-    if x is None:
-        return None
-    crop = sheet.crop((x, 0, x + 16, 16))
-    if size != 16:
-        crop = crop.resize((size, size), Image.NEAREST)
-    return crop
+    from .chess_board import (
+        TILE, detect_sheet_layout, image_has_alpha, composite_piece,
+    )
+
+    layout = detect_sheet_layout(sheet.width, sheet.height,
+                                 has_alpha=image_has_alpha(sheet))
+    if layout.is_colorway:
+        glyph = Image.new("1", (TILE, TILE), 255)  # 255 == white
+        if not composite_piece(glyph, 0, 0, TILE, sheet, layout, letter):
+            return None
+    else:
+        x = layout.piece_column_x(letter)
+        if x < 0 or x + TILE > sheet.width:
+            return None
+        glyph = sheet.crop((x, 0, x + TILE, TILE))
+    if size != TILE:
+        glyph = glyph.resize((size, size), Image.NEAREST)
+    return glyph
 
 
 def measure_move_string(draw, text: str, font, glyph_size: int) -> int:

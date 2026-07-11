@@ -4384,21 +4384,35 @@ def api_get_sprite_image(sheet):
 
     Renders every piece in the sheet (both the light-square and dark-square
     rows) so the web Sprites selector can show exactly what the board draws.
-    The sheet name is validated against the discovered set, so it cannot be
-    used for path traversal.
+    For code-drawn sheets (SPLIT and COLORWAY), which store pieces separately
+    from the board, a small board/piece preview is composed in code so the
+    selector shows the composited result rather than the raw ink/mask/alpha
+    data. The sheet name is validated against the discovered set, so it cannot
+    be used for path traversal.
     """
     try:
         from universalchess.resources import ResourceLoader
         from universalchess.paths import RESOURCES_DIR, USER_RESOURCES_DIR
+        from universalchess.epaper.chess_board import (
+            detect_sheet_layout, image_has_alpha, compose_preview_strip,
+        )
 
         loader = ResourceLoader(RESOURCES_DIR, USER_RESOURCES_DIR)
         if sheet not in loader.list_chess_sprite_sheets():
             abort(404)
 
-        filename = f"{ResourceLoader._SPRITE_SHEET_PREFIX}{sheet}{ResourceLoader._SPRITE_SHEET_SUFFIX}"
-        img = loader.get_image(filename)
+        # get_chess_sprites resolves the .bmp/.png file and returns the renderer-
+        # ready image (1-bit for LEGACY/SPLIT, RGBA for COLORWAY).
+        img = loader.get_chess_sprites(sheet)
         if img is None:
             abort(404)
+
+        layout = detect_sheet_layout(img.width, img.height, has_alpha=image_has_alpha(img))
+        if layout.draws_squares:
+            # Code-drawn layouts have no baked squares: compose a 12-col x 2-row
+            # preview (each piece on a light row 0 and a dithered dark row 1) so
+            # the selector shows what the board actually composites.
+            img = compose_preview_strip(img, layout)
 
         if img.mode not in ("L", "RGB"):
             img = img.convert("L")

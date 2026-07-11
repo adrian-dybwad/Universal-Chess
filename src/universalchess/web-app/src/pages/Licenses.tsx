@@ -34,6 +34,20 @@ const licenses: License[] = [
     url: 'https://github.com/Clariity/react-chessboard',
   },
   {
+    name: 'Chess Pieces 16x16 One-bit',
+    type: 'CC0-1.0',
+    description: 'One-bit 16x16 pixel-art chess piece sprites used by the "onebit" e-paper board sprite style. Released into the public domain (CC0); attribution provided as a courtesy.',
+    copyright: 'BerryArray',
+    url: 'https://berryarray.itch.io/chess-pieces-16x16-one-bit',
+  },
+  {
+    name: 'Cburnett chess pieces',
+    type: 'BSD-3-Clause',
+    description: 'The classic Cburnett/Wikimedia vector chess set, rasterised to a 16x16 sprite sheet for the "cburnett" e-paper board sprite style. Multi-licensed by the author under GPLv2+, GFDL and a BSD-style license; used here under the BSD option.',
+    copyright: 'Colin M.L. Burnett',
+    url: 'https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces',
+  },
+  {
     name: 'Stockfish',
     type: 'GPL-3.0',
     description: 'The default chess engine for play and analysis. Stockfish is the strongest open source chess engine, providing move evaluation, best move suggestions, and opponent play.',
@@ -133,7 +147,7 @@ function LicenseItem({ license }: { license: License }) {
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
           >
-            View on GitHub →
+            {license.url.includes('github.com') ? 'View on GitHub →' : 'View source →'}
           </a>
         )}
       </div>

@@ -107,6 +107,27 @@ def test_list_sheets_empty_when_none_present(tmp_path):
     assert loader.list_chess_sprite_sheets() == []
 
 
+def test_list_sheets_discovers_png_and_merges_with_bmp(tmp_path):
+    """PNG sheets are discovered alongside BMP, and a .bmp/.png id merges to one.
+
+    Why: users supply transparent PNG packs (e.g. the one-bit colourway sheet)
+    as well as BMPs; both must appear as selectable styles, and an id present as
+    both extensions must not list twice.
+
+    How the regression manifests: if discovery still hard-coded .bmp, the PNG id
+    ('onebit') would be missing; if it failed to de-dupe, 'default' would appear
+    twice.
+    """
+    system_dir = tmp_path / "system"
+    system_dir.mkdir()
+    _touch_sheet(str(system_dir), "default")                       # default.bmp
+    Path(system_dir, "chesssprites_default.png").touch()           # same id, .png
+    Path(system_dir, "chesssprites_onebit.png").touch()            # png-only id
+
+    loader = ResourceLoader(str(system_dir))
+    assert loader.list_chess_sprite_sheets() == ["default", "onebit"]
+
+
 # ---------------------------------------------------------------------------
 # Loading: get_chess_sprites(name)
 # ---------------------------------------------------------------------------
@@ -185,6 +206,43 @@ def test_get_chess_sprites_missing_returns_none():
         "chesssprites_default.bmp": Image.new("L", (16, 16), 255),
     })
     assert loader.get_chess_sprites("does_not_exist") is None
+
+
+def test_get_chess_sprites_keeps_rgba_for_colorway_png():
+    """A 96x32 RGBA PNG (COLORWAY) is kept in RGBA so its alpha mask survives.
+
+    Why: the colourway board composites pieces from the alpha channel; flattening
+    to 1-bit (as opaque sheets do) would discard the mask and the pieces could
+    not be separated from the dithered squares.
+
+    How the regression manifests: if the loader always converted to '1', the
+    returned mode would be '1' and the alpha channel would be gone.
+    """
+    loader = _loader_with_stubbed_images({
+        "chesssprites_onebit.png": Image.new("RGBA", (96, 32), (0, 0, 0, 255)),
+    })
+    img = loader.get_chess_sprites("onebit")
+    assert img is not None
+    assert img.mode == "RGBA"
+    assert img.size == (96, 32)
+
+
+def test_get_chess_sprites_prefers_bmp_over_png_for_same_id():
+    """When an id exists as both .bmp and .png, the .bmp is loaded (shipped wins).
+
+    Why: bundled default styles ship as BMP; a stray same-named PNG must not
+    silently override them. The BMP is opaque, so the result is 1-bit.
+
+    How the regression manifests: picking the PNG would return an RGBA image
+    instead of the expected 1-bit BMP.
+    """
+    loader = _loader_with_stubbed_images({
+        "chesssprites_dup.bmp": Image.new("L", (208, 32), 0),
+        "chesssprites_dup.png": Image.new("RGBA", (96, 32), (0, 0, 0, 255)),
+    })
+    img = loader.get_chess_sprites("dup")
+    assert img is not None
+    assert img.mode == "1"
 
 
 # ---------------------------------------------------------------------------

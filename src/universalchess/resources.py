@@ -156,19 +156,24 @@ class ResourceLoader:
         except Exception:
             return None
     
-    # Prefix and suffix of selectable chess sprite-sheet resources. A sheet named
-    # ``chesssprites_<id>.bmp`` is exposed in the display menu under ``<id>``.
+    # Prefix and suffixes of selectable chess sprite-sheet resources. A sheet
+    # named ``chesssprites_<id>.<ext>`` is exposed in the display menu under
+    # ``<id>``. Both BMP (opaque 1-bit sheets) and PNG (which may carry an alpha
+    # mask for the COLORWAY layout) are recognised; ``.bmp`` takes precedence
+    # when an id exists as both, so shipped defaults win over a stray PNG.
     _SPRITE_SHEET_PREFIX = "chesssprites_"
     _SPRITE_SHEET_SUFFIX = ".bmp"
+    _SPRITE_SHEET_SUFFIXES = (".bmp", ".png")
     DEFAULT_SPRITE_SHEET = "default"
 
     def list_chess_sprite_sheets(self) -> "list[str]":
         """List the identifiers of all available chess sprite sheets.
 
         Scans the user and system resource directories for files named
-        ``chesssprites_<id>.bmp`` and returns each ``<id>`` once (user overrides
-        merge with system sheets). ``default`` is always listed first so the menu
-        cycles from a known starting point; the remaining ids are alphabetical.
+        ``chesssprites_<id>.bmp`` or ``chesssprites_<id>.png`` and returns each
+        ``<id>`` once (user overrides and .bmp/.png variants merge to a single
+        id). ``default`` is always listed first so the menu cycles from a known
+        starting point; the remaining ids are alphabetical.
 
         Returns:
             Ordered list of sheet identifiers, or empty if none are present.
@@ -186,10 +191,14 @@ class ResourceLoader:
                 log.debug("Skipping unreadable resource directory '%s': %s", directory, e)
                 continue
             for name in names:
-                if name.startswith(self._SPRITE_SHEET_PREFIX) and name.endswith(self._SPRITE_SHEET_SUFFIX):
-                    identifier = name[len(self._SPRITE_SHEET_PREFIX):-len(self._SPRITE_SHEET_SUFFIX)]
-                    if identifier:
-                        ids.add(identifier)
+                if not name.startswith(self._SPRITE_SHEET_PREFIX):
+                    continue
+                for suffix in self._SPRITE_SHEET_SUFFIXES:
+                    if name.endswith(suffix):
+                        identifier = name[len(self._SPRITE_SHEET_PREFIX):-len(suffix)]
+                        if identifier:
+                            ids.add(identifier)
+                        break
 
         ordered = sorted(ids)
         if self.DEFAULT_SPRITE_SHEET in ids:
@@ -200,44 +209,52 @@ class ResourceLoader:
     def get_chess_sprites(self, name: str = DEFAULT_SPRITE_SHEET) -> Optional[Image.Image]:
         """Get a chess piece sprite sheet by identifier.
 
-        Loads ``chesssprites_<name>.bmp`` and converts it to 1-bit mode for the
-        e-paper display. Results are cached per-name so switching sheets does not
+        Resolves ``chesssprites_<name>.<ext>`` (``.bmp`` preferred over ``.png``)
+        and returns it ready for the renderer. COLORWAY sheets -- a transparent
+        6-column RGBA PNG whose alpha is the piece mask -- are kept in RGBA so the
+        mask survives; every other sheet is converted to 1-bit for the e-paper
+        display. Results are cached per resolved file so switching sheets does not
         return a stale image.
 
         Args:
-            name: Sheet identifier (e.g. ``"default"``, ``"fen"``). Defaults to
+            name: Sheet identifier (e.g. ``"default"``, ``"onebit"``). Defaults to
                 the built-in ``default`` sheet.
 
         Returns:
-            PIL Image in mode '1', or None if the sheet is not found.
+            PIL Image in mode '1' (LEGACY/SPLIT) or 'RGBA' (COLORWAY), or None if
+            the sheet is not found.
         """
-        filename = f"{self._SPRITE_SHEET_PREFIX}{name}{self._SPRITE_SHEET_SUFFIX}"
-        cache_key = f"{filename}:1bit"
-        if cache_key in self._image_cache:
-            return self._image_cache[cache_key]
+        from universalchess.epaper.chess_board import detect_sheet_layout, image_has_alpha, SheetMode
 
-        img = self.get_image(filename)
+        img = None
+        filename = None
+        for suffix in self._SPRITE_SHEET_SUFFIXES:
+            candidate = f"{self._SPRITE_SHEET_PREFIX}{name}{suffix}"
+            loaded = self.get_image(candidate)
+            if loaded is not None:
+                img, filename = loaded, candidate
+                break
         if img is None:
             return None
 
-        # Convert to 1-bit mode
-        if img.mode != "1":
-            if img.mode != "L":
-                img = img.convert("L")
-            img = img.point(lambda x: 0 if x < 128 else 255, mode="1")
+        layout = detect_sheet_layout(img.width, img.height, has_alpha=image_has_alpha(img))
+        cache_key = f"{filename}:{layout.mode.value}"
+        if cache_key in self._image_cache:
+            return self._image_cache[cache_key]
 
-        self._image_cache[cache_key] = img
-        return img
+        if layout.mode is SheetMode.COLORWAY:
+            # Keep the alpha mask and RGB ink; the board composites from both.
+            result = img if img.mode == "RGBA" else img.convert("RGBA")
+        elif img.mode != "1":
+            # Opaque sheets render as 1-bit on the e-paper panel.
+            gray = img if img.mode == "L" else img.convert("L")
+            result = gray.point(lambda x: 0 if x < 128 else 255, mode="1")
+        else:
+            result = img
+
+        self._image_cache[cache_key] = result
+        return result
     
-    # Column x-position of each piece in the 16px sprite sheet. Row 0 (y=0..15)
-    # renders the piece on a light-square background, which composites cleanly
-    # onto the white menu. Matches ChessBoardWidget._piece_x.
-    _PIECE_SHEET_X = {
-        "P": 16, "R": 32, "N": 48, "B": 64, "Q": 80, "K": 96,
-        "p": 112, "r": 128, "n": 144, "b": 160, "q": 176, "k": 192,
-    }
-    _PIECE_CELL = 16
-
     def get_chess_piece_preview(
         self,
         sheet_name: str,
@@ -245,13 +262,18 @@ class ResourceLoader:
         size: Optional[int] = None,
         on_dark_square: bool = True,
     ) -> Tuple[Optional[Image.Image], Optional[Image.Image]]:
-        """Get a single chess piece preview tile cropped from a sprite sheet.
+        """Get a single chess piece preview tile composed from a sprite sheet.
 
-        Crops ``piece`` from ``chesssprites_<sheet_name>.bmp`` and returns the
-        whole 16px cell as an opaque tile (the square plus the piece). The sheet
-        has light-square pieces in row 0 (y=0) and dark-square pieces in row 1
-        (y=16); ``on_dark_square`` selects the row, defaulting to the dark square
-        so the black king is shown on its black square.
+        Returns the whole 16px cell (square plus piece) as an opaque tile. The
+        composition depends on the sheet's layout (detected from its dimensions,
+        the same trigger the board uses):
+
+        - LEGACY sheets bake the piece onto the square, with light-square pieces
+          in row 0 (y=0) and dark-square pieces in row 1 (y=16). The row is
+          cropped directly; ``on_dark_square`` selects it.
+        - SPLIT and COLORWAY sheets store only the piece (ink + silhouette mask,
+          or RGBA ink + alpha mask), so the square is drawn in code (white light
+          square or 50% dither dark square) and the piece composited on top.
 
         Args:
             sheet_name: Sprite sheet identifier (e.g. ``"default"``).
@@ -259,29 +281,45 @@ class ResourceLoader:
                 black). Defaults to the black king ``"k"``.
             size: Optional square size to scale to, using nearest-neighbour to
                 preserve the pixel art. ``None`` keeps the native 16px cell.
-            on_dark_square: Crop the dark-square row (row 1) when True, else the
-                light-square row (row 0).
+            on_dark_square: Show the piece on a dark square when True, else a
+                light square.
 
         Returns:
             ``(image, None)`` in mode '1' - the full opaque tile and no mask
             (the whole square is shown). ``(None, None)`` if the piece letter is
-            unknown or the sheet/row is unavailable.
+            unknown or the sheet is unavailable.
         """
-        if piece not in self._PIECE_SHEET_X:
+        from universalchess.epaper.chess_board import (
+            TILE, _PIECE_INDEX, detect_sheet_layout, image_has_alpha,
+            fill_dither_dark, composite_piece,
+        )
+
+        if piece not in _PIECE_INDEX:
             return None, None
 
         sheet = self.get_chess_sprites(sheet_name)
         if sheet is None:
             return None, None
 
-        x = self._PIECE_SHEET_X[piece]
-        cell = self._PIECE_CELL
-        py = cell if on_dark_square else 0
-        if x + cell > sheet.width or py + cell > sheet.height:
-            return None, None
+        layout = detect_sheet_layout(sheet.width, sheet.height,
+                                     has_alpha=image_has_alpha(sheet))
 
-        piece_img = sheet.crop((x, py, x + cell, py + cell))
-        if size is not None and size != cell:
+        if layout.draws_squares:
+            # No baked square: draw the square, then composite the piece
+            # (SPLIT ink/mask or COLORWAY alpha/ink).
+            piece_img = Image.new("1", (TILE, TILE), 255)  # 255 == white
+            if on_dark_square:
+                fill_dither_dark(piece_img, 0, 0, TILE)
+            if not composite_piece(piece_img, 0, 0, TILE, sheet, layout, piece):
+                return None, None
+        else:
+            x = layout.piece_column_x(piece)
+            py = TILE if on_dark_square else 0
+            if x < 0 or x + TILE > sheet.width or py + TILE > sheet.height:
+                return None, None
+            piece_img = sheet.crop((x, py, x + TILE, py + TILE))
+
+        if size is not None and size != TILE:
             piece_img = piece_img.resize((size, size), Image.NEAREST)
         if piece_img.mode != "1":
             piece_img = piece_img.convert("1")
