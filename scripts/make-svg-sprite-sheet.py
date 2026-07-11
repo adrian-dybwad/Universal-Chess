@@ -23,9 +23,13 @@ configurable for other packed vector sets.
 
 Requires cairosvg for rasterisation (``pip install cairosvg``).
 
+The source SVG is not shipped in the repository (only the generated sheet is);
+download the Cburnett/Wikimedia set from
+https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces to regenerate.
+
 Usage:
     python scripts/make-svg-sprite-sheet.py \
-        --svg src/universalchess/resources/Chess_Pieces_Sprite.svg \
+        --svg Chess_Pieces_Sprite.svg \
         --output src/universalchess/resources/chesssprites_cburnett.png
 """
 
@@ -35,13 +39,34 @@ import sys
 from pathlib import Path
 
 import cairosvg
-from PIL import Image
+from PIL import Image, ImageChops, ImageFilter
 
 TILE = 16
 
 # Column order the COLORWAY layout expects (King, Queen, Bishop, Knight, Rook,
 # Pawn). The Cburnett SVG is authored in exactly this order.
 COLUMN_ORDER = ("K", "Q", "B", "N", "R", "P")
+
+
+def darken_silhouette_edge(tile: Image.Image) -> Image.Image:
+    """Force a solid 1px dark ring just inside the piece silhouette edge.
+
+    Downsampling the detailed vector strokes to 16px thins and breaks the
+    outline, so a white piece (light body, thin outline) reads as a nearly
+    invisible white-on-white blob on a light square. Stamping the silhouette
+    boundary black in the RGB channel guarantees a closed dark outline the
+    renderer will ink, without changing the silhouette (alpha) or the body.
+
+    For a black piece the boundary is already dark, so this is a no-op there.
+    Operates in place on an RGBA tile and returns it.
+    """
+    alpha = tile.getchannel("A")
+    mask = alpha.point(lambda a: 255 if a >= 128 else 0)  # 'L' silhouette
+    # The 1px ring inside the edge = mask minus its erosion. MinFilter erodes
+    # the white (opaque) region; the difference is the boundary pixels.
+    edge = ImageChops.subtract(mask, mask.filter(ImageFilter.MinFilter(3)))
+    tile.paste((0, 0, 0, 255), (0, 0), edge)  # black ink where the ring is set
+    return tile
 
 
 def rasterise(svg_path: Path, sheet_width: int, sheet_height: int) -> Image.Image:
@@ -55,13 +80,15 @@ def rasterise(svg_path: Path, sheet_width: int, sheet_height: int) -> Image.Imag
 
 
 def build_sheet(svg_path: Path, columns: int, cell: int, scale: int,
-                white_row: int, black_row: int) -> Image.Image:
+                white_row: int, black_row: int, outline: bool) -> Image.Image:
     """Compose the 96x32 RGBA COLORWAY sheet from the packed SVG grid.
 
     The source cells are rendered at ``cell * scale`` px and downsampled with
     LANCZOS so the vector art antialiases into the 16px tile before the renderer
     thresholds it. The white and black source rows are placed into the COLORWAY
-    rows the renderer reads (black in row 0, white in row 1).
+    rows the renderer reads (black in row 0, white in row 1). When ``outline``
+    is set each tile gets a crisp 1px dark silhouette edge so white pieces stay
+    legible on light squares (see ``darken_silhouette_edge``).
     """
     if columns != len(COLUMN_ORDER):
         raise ValueError(
@@ -80,6 +107,9 @@ def build_sheet(svg_path: Path, columns: int, cell: int, scale: int,
                           cx + src_cell, (black_row + 1) * src_cell))
         white = white.resize((TILE, TILE), Image.LANCZOS)
         black = black.resize((TILE, TILE), Image.LANCZOS)
+        if outline:
+            darken_silhouette_edge(white)
+            darken_silhouette_edge(black)
         sheet.paste(black, (column * TILE, 0))          # row 0 = black colourway
         sheet.paste(white, (column * TILE, TILE))       # row 1 = white colourway
     return sheet
@@ -105,6 +135,9 @@ def main(argv=None) -> int:
                         help="Grid row holding the white pieces. Default 0.")
     parser.add_argument("--black-row", type=int, default=1,
                         help="Grid row holding the black pieces. Default 1.")
+    parser.add_argument("--no-outline", action="store_true",
+                        help="Skip the crisp 1px dark silhouette outline "
+                             "(white pieces get muddy on light squares).")
     args = parser.parse_args(argv)
 
     if not args.svg.exists():
@@ -112,7 +145,7 @@ def main(argv=None) -> int:
         return 1
 
     sheet = build_sheet(args.svg, args.columns, args.cell, args.scale,
-                        args.white_row, args.black_row)
+                        args.white_row, args.black_row, not args.no_outline)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     sheet.save(args.output, format="PNG")
     print(f"wrote {args.output} ({sheet.width}x{sheet.height}, RGBA COLORWAY sheet)")

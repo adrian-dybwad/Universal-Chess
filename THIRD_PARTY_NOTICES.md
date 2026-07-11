@@ -38,13 +38,12 @@ This project includes third-party components. Each component is governed by its 
 - **Note**:
   - CC0 places the work in the public domain and does not require attribution; this notice is provided as a courtesy.
 
-### Cburnett chess pieces (`Chess_Pieces_Sprite.svg`, `chesssprites_cburnett.png`)
+### Cburnett chess pieces (`chesssprites_cburnett.png`)
 
 - **Files**:
-  - `src/universalchess/resources/Chess_Pieces_Sprite.svg` (source vector art)
-  - `src/universalchess/resources/chesssprites_cburnett.png` (16x16 sprite sheet rasterised from the SVG for the "cburnett" board sprite style)
+  - `src/universalchess/resources/chesssprites_cburnett.png` (16x16 sprite sheet for the "cburnett" board sprite style)
 - **What it is**:
-  - The classic Cburnett/Wikimedia vector chess set, widely used across chess software. `chesssprites_cburnett.png` is a downsampled 16x16 COLORWAY sheet produced from the SVG via `scripts/make-svg-sprite-sheet.py`.
+  - The classic Cburnett/Wikimedia vector chess set, widely used across chess software. `chesssprites_cburnett.png` is a downsampled 16x16 COLORWAY sheet produced from the upstream SVG via `scripts/make-svg-sprite-sheet.py`. The source SVG is not shipped; see the converter for regeneration.
 - **Author**:
   - Colin M.L. Burnett (Wikimedia Commons user "Cburnett"), `https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces`
 - **License**:
