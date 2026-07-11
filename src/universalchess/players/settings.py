@@ -94,10 +94,19 @@ class PlayerSettings:
     def set(self, key: str, value: Any) -> None:
         """Set a setting value and save to config file.
 
+        ``think_time`` is coerced to ``int`` because the board menu writes the
+        shared catalog's option values, which are strings (``"5"``), while the
+        field is declared ``int`` and read back as ``int`` by ``load``. Coercing
+        here keeps the in-memory value consistent with its declared type and with
+        the persisted/reloaded value, so ``player_config_signature`` does not
+        differ purely by type (``"5"`` vs ``5``) after a board edit.
+
         Args:
             key: Setting key to set
             value: New value
         """
+        if key == "think_time":
+            value = int(value)
         setattr(self, key, value)
         self.save(key)
 

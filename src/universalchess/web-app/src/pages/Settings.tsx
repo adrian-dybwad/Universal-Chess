@@ -1692,6 +1692,7 @@ export function Settings() {
   const optionSet = (name: string): MenuOption[] => catalog.optionSets[name] ?? [];
   const playerTypeOptions = optionSet('player_type');
   const handBrainModeOptions = optionSet('hand_brain_mode');
+  const thinkTimeOptions = optionSet('think_time');
   const timeControlOptions = optionSet('time_control');
   // Enhanced clock option lists. The preset list is generated server-side from
   // the Python preset registry (injected into /api/menu-schema) so it stays in
@@ -1893,20 +1894,6 @@ export function Settings() {
                       options={providerOptions(playerEngineNode)}
                       onChange={(v) => updateFormSettings('player1', { engine: String(v), elo: 'Default' })}
                     />
-                    <FormRow
-                      label="Think time"
-                      help="Seconds the engine may think per move."
-                    >
-                      <Input
-                        type="number"
-                        min={THINK_TIME_MIN}
-                        max={THINK_TIME_MAX}
-                        value={formSettings.player1.think_time}
-                        onChange={(e) =>
-                          updateFormSettings('player1', { think_time: parseThinkTime(e.target.value) })
-                        }
-                      />
-                    </FormRow>
                     <EngineStrengthField
                       key={formSettings.player1.engine}
                       engineName={formSettings.player1.engine}
@@ -1915,6 +1902,12 @@ export function Settings() {
                       label={fieldLabel('field.player.elo')}
                       help={fieldHelp('field.player.elo')}
                       onChange={(v) => updateFormSettings('player1', { elo: v })}
+                    />
+                    <CatalogField
+                      node={fieldById(catalog, 'field.player.think_time')!}
+                      value={formSettings.player1.think_time}
+                      options={thinkTimeOptions}
+                      onChange={(v) => updateFormSettings('player1', { think_time: parseThinkTime(String(v)) })}
                     />
                   </>
                 )}
@@ -1964,20 +1957,6 @@ export function Settings() {
                       options={providerOptions(playerEngineNode)}
                       onChange={(v) => updateFormSettings('player2', { engine: String(v), elo: 'Default' })}
                     />
-                    <FormRow
-                      label="Think time"
-                      help="Seconds the engine may think per move."
-                    >
-                      <Input
-                        type="number"
-                        min={THINK_TIME_MIN}
-                        max={THINK_TIME_MAX}
-                        value={formSettings.player2.think_time}
-                        onChange={(e) =>
-                          updateFormSettings('player2', { think_time: parseThinkTime(e.target.value) })
-                        }
-                      />
-                    </FormRow>
                     <EngineStrengthField
                       key={formSettings.player2.engine}
                       engineName={formSettings.player2.engine}
@@ -1986,6 +1965,12 @@ export function Settings() {
                       label={fieldLabel('field.player.elo')}
                       help={fieldHelp('field.player.elo')}
                       onChange={(v) => updateFormSettings('player2', { elo: v })}
+                    />
+                    <CatalogField
+                      node={fieldById(catalog, 'field.player.think_time')!}
+                      value={formSettings.player2.think_time}
+                      options={thinkTimeOptions}
+                      onChange={(v) => updateFormSettings('player2', { think_time: parseThinkTime(String(v)) })}
                     />
                   </>
                 )}

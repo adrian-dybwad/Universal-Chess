@@ -70,6 +70,17 @@
       "3": "3 s",
       "5": "5 s"
     },
+    "think_time": {
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s",
+      "10": "10 s",
+      "15": "15 s",
+      "20": "20 s",
+      "30": "30 s",
+      "60": "60 s"
+    },
     "update_channel": {
       "stable": "Estable (Recomendado)",
       "nightly": "Nightly (Desarrollo)"
@@ -559,6 +570,11 @@
       "label": "Motor",
       "boardLabel": "Motor\n{value}",
       "help": "Motor de ajedrez a usar"
+    },
+    "field.player.think_time": {
+      "label": "Tiempo de reflexión",
+      "boardLabel": "Reflexión\n{value}",
+      "help": "Cuánto tiempo puede pensar el motor por jugada"
     },
     "field.player.elo": {
       "label": "ELO / Estilo",

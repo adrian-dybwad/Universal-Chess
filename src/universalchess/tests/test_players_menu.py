@@ -54,6 +54,7 @@ def _player_state(**overrides):
         "name": "Alice",
         "engine": "stockfish",
         "elo": "1500",
+        "think_time": 5,
         "hand_brain_mode": "normal",
         "account": "",
     }
@@ -150,10 +151,11 @@ def test_human_shows_color_type_name_only():
 
 
 def test_engine_hides_name_and_hand_brain_rows():
-    """An engine player drops Name and Hand+Brain, keeping Engine and ELO.
+    """An engine player drops Name and Hand+Brain, keeping Engine, ELO, Think Time.
 
     How a regression manifests: the Name row (human-only) or the Hand+Brain mode
-    row (hand_brain-only) reappears for an engine player.
+    row (hand_brain-only) reappears for an engine player, or the Think Time row
+    (engine/hand_brain-only) stops appearing after Engine/ELO.
     """
     ids = [r.node["id"] for r in _detail_rows(_player_state(type="engine"))]
     assert ids == [
@@ -161,7 +163,49 @@ def test_engine_hides_name_and_hand_brain_rows():
         "field.player.type",
         "field.player.engine",
         "field.player.elo",
+        "field.player.think_time",
     ]
+
+
+def test_think_time_row_visibility_and_board_label():
+    """Think Time shows for engine/hand_brain (with its {value} label), not human/lichess.
+
+    Why this test exists: per-move think time only applies when a player is driven
+    by an engine (engine or hand_brain); a human/lichess slot has no engine to
+    time, so the row is gated to ["engine", "hand_brain"]. The board label uses
+    the "Think\\n{value}" template resolved through the ``think_time`` option set
+    (stored int 5 -> "5 sec"). How a regression manifests: the row leaks onto a
+    human/lichess slot, disappears for an engine slot, or the label shows the raw
+    value ("Think\\n5") or the long web label instead of "Think\\n5 sec".
+    """
+    engine_rows = {r.node["id"]: r for r in _detail_rows(_player_state(type="engine", think_time=5))}
+    assert engine_rows["field.player.think_time"].label == "Think\n5 sec"
+
+    hb_ids = [r.node["id"] for r in _detail_rows(_player_state(type="hand_brain"))]
+    assert "field.player.think_time" in hb_ids
+
+    human_ids = [r.node["id"] for r in _detail_rows(_player_state(type="human"))]
+    assert "field.player.think_time" not in human_ids
+    lichess_ids = [r.node["id"] for r in _detail_rows(_player_state(type="lichess"))]
+    assert "field.player.think_time" not in lichess_ids
+
+
+def test_selecting_think_time_writes_chosen_option_value():
+    """Selecting Think Time opens the option set and writes the chosen value.
+
+    Why this test exists: think_time is a static-optionSet ``select`` bound to
+    player.think_time; drilling in must open the seconds list and persist the
+    pick. The board writes the option value verbatim (a string, e.g. "10"); the
+    ``int`` coercion to match the declared field type is enforced by
+    PlayerSettings.set (see test_player_config_rebuild.test_set_think_time_
+    coerces_string_to_int), not by the menu engine. How a regression manifests:
+    Think Time no longer opens the list, or the chosen value is not written.
+    """
+    state = _player_state(type="engine", think_time=5)
+    ctx = _detail_ctx(state)
+    mm = _FakeMenuManager(["field.player.think_time", "10", "BACK"])
+    run_engine_menu("settings.player_detail", ctx, mm, catalog=load_catalog())
+    assert state["think_time"] == "10"
 
 
 def test_hand_brain_shows_mode_row_with_checkbox_icon():

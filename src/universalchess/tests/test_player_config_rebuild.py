@@ -136,6 +136,36 @@ def test_think_time_round_trips_through_to_dict_and_load(monkeypatch):
     assert loaded.to_dict()["think_time"] == 20
 
 
+def test_set_think_time_coerces_string_to_int(monkeypatch):
+    """PlayerSettings.set('think_time', '5') stores an int, not a string.
+
+    Why this test exists: the board menu drives think_time through the shared
+    catalog's ``think_time`` select, whose option values are strings ("5"). The
+    field is declared ``int`` and read back as ``int`` by load(); if set() stored
+    the raw string, the in-memory value would disagree with its declared type and
+    with the reloaded value, and player_config_signature would differ purely by
+    type ("5" vs 5) after a board edit -- forcing a spurious game rebuild.
+
+    How the regression manifests: without the coercion, ``think_time`` is the
+    string "5" (assertion on ``is int``/equality-to-int fails), so the signature
+    tuple carries a string where load() would later place an int.
+    """
+    import universalchess.players.settings as settings_mod
+
+    # Boundary mock: avoid touching the on-disk config during set().
+    monkeypatch.setattr(settings_mod, "save_setting", lambda *a, **k: True)
+
+    ps = PlayerSettings(section="PlayerTwo")
+    ps.set("think_time", "5")
+    assert ps.think_time == 5
+    assert isinstance(ps.think_time, int)
+
+    # An int passes through unchanged (web sends an int on this same path).
+    ps.set("think_time", 10)
+    assert ps.think_time == 10
+    assert isinstance(ps.think_time, int)
+
+
 def test_signature_models_the_changed_detection():
     """A captured start signature differs from settings after an engine swap.
 

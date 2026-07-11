@@ -288,6 +288,44 @@
         "label": "5 sec"
       }
     ],
+    "think_time": [
+      {
+        "value": "1",
+        "label": "1 sec"
+      },
+      {
+        "value": "2",
+        "label": "2 sec"
+      },
+      {
+        "value": "3",
+        "label": "3 sec"
+      },
+      {
+        "value": "5",
+        "label": "5 sec"
+      },
+      {
+        "value": "10",
+        "label": "10 sec"
+      },
+      {
+        "value": "15",
+        "label": "15 sec"
+      },
+      {
+        "value": "20",
+        "label": "20 sec"
+      },
+      {
+        "value": "30",
+        "label": "30 sec"
+      },
+      {
+        "value": "60",
+        "label": "60 sec"
+      }
+    ],
     "update_channel": [
       {
         "value": "stable",
@@ -782,6 +820,7 @@
         "field.player.hand_brain_mode",
         "field.player.engine",
         "field.player.elo",
+        "field.player.think_time",
         "field.player.lichess"
       ]
     },
@@ -2569,6 +2608,32 @@
         "key": "elo"
       },
       "icon": "elo",
+      "visibleWhen": {
+        "store": "player",
+        "key": "type",
+        "in": [
+          "engine",
+          "hand_brain"
+        ]
+      },
+      "section": "players",
+      "platforms": [
+        "board",
+        "web"
+      ]
+    },
+    {
+      "id": "field.player.think_time",
+      "type": "select",
+      "label": "Think Time",
+      "boardLabel": "Think\n{value}",
+      "help": "How long the engine may think per move",
+      "optionSet": "think_time",
+      "bind": {
+        "store": "player",
+        "key": "think_time"
+      },
+      "icon": "timer",
       "visibleWhen": {
         "store": "player",
         "key": "type",
