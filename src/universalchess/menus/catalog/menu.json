@@ -1628,8 +1628,9 @@
       "label": "E-Paper Display",
       "platforms": ["web"],
       "children": [
-        "field.display.text_size",
+        "field.display.show_board",
         "field.display.sprites",
+        "field.display.text_size",
         "field.display.show_clock",
         "field.display.show_analysis",
         "field.display.show_graph"
