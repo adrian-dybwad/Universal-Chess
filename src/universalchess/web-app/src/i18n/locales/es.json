@@ -161,7 +161,14 @@
     "loading": "Cargando partida...",
     "title": "Análisis de la partida",
     "moves": "Jugadas",
-    "pgn": "PGN"
+    "pgn": "PGN",
+    "gameInfoTitle": "Partida",
+    "playGame": "Jugar partida",
+    "playGameSaving": "Preparando...",
+    "playGameName": "Jugar desde la posición",
+    "playGameFailed": "No se pudo preparar la posición.",
+    "confirmPlayTitle": "¿Jugar desde esta posición?",
+    "confirmPlayBody": "Hay una partida en curso en el tablero. Jugar desde aquí la finaliza (queda registrada en tu historial) y coloca el tablero en la posición que estás viendo, para que puedas continuar desde ahí."
   },
   "coach": {
     "title": "Entrenador",

@@ -1,5 +1,7 @@
 /**
- * LiveBoard page - matches original Bulma columns layout
+ * GameView - shared board + analysis layout used by the live board and the game
+ * review page. Owns the Bulma-style columns/box/button/tag primitives both pages
+ * rely on (previously in LiveBoard.css).
  */
 
 /* Bulma-style columns grid */
@@ -53,7 +55,7 @@
   margin-bottom: 0.75rem;
 }
 
-/* Current game card header: title on the left, New Game button on the right */
+/* Current game / game info card header: title on the left, action on the right */
 .current-game-header {
   display: flex;
   align-items: center;
@@ -66,7 +68,6 @@
   margin-bottom: 0;
 }
 
-/* Current game info */
 .current-game-info {
   padding: 0.5rem 0;
 }

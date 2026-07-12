@@ -1512,13 +1512,17 @@ def _resume_game(game_data: dict) -> bool:
         from universalchess.state.chess_game import ChessGameState
         game_state = get_chess_game()
         
-        # For a Chess960 game, configure the variant and generated start FEN
-        # BEFORE replaying moves. The stored castling moves use the king-onto-rook
-        # encoding (e.g. "e1h1"), which is only legal on a board with the chess960
-        # flag set; replaying them onto a standard board would fail. Standard games
-        # keep the default start (GameManager.__init__ already reset to standard).
-        if game_data.get('chess960'):
-            game_state.configure_start(game_data['start_fen'], chess960=True)
+        # Configure a non-standard start BEFORE replaying moves. This covers two
+        # cases: a Chess960 game (whose stored castling moves use the king-onto-rook
+        # encoding, e.g. "e1h1", legal only with the chess960 flag set) and a game
+        # set up from a mid-game position ("Play Game from here"), whose moves are
+        # only legal from that start. Replaying either onto the standard opening
+        # would fail. A game begun from the standard opening keeps the default start
+        # (GameManager.__init__ already reset to standard).
+        start_fen = game_data.get('start_fen')
+        is_chess960 = bool(game_data.get('chess960'))
+        if is_chess960 or (start_fen and start_fen != chess.STARTING_FEN):
+            game_state.configure_start(start_fen, chess960=is_chess960)
 
         # Replay all the moves to get to the current position
         # Use game_state.push_uci() to ensure observers are notified
@@ -1566,6 +1570,15 @@ def _resume_game(game_data: dict) -> bool:
                 game_state.set_result(result, termination)
             if display_manager:
                 display_manager.stop_clock()
+            # Run a fresh evaluation of the final position so the board shows a
+            # running analysis score while reviewing a finished game, matching
+            # the web client (which analyzes regardless of game-over state). The
+            # score is already in the restored history graph when evals were
+            # stored, so refresh the displayed score without extending the graph;
+            # when nothing was stored, seed the graph with this single point.
+            if display_manager is not None and display_manager.analysis_widget is not None:
+                from universalchess.services.analysis import get_analysis_service
+                get_analysis_service().analyze_current_position(add_to_history=not eval_scores)
             log.info(f"[Resume] Restored finished game (result={result}, termination={termination})")
             return True
         
@@ -1602,20 +1615,33 @@ def _resume_game(game_data: dict) -> bool:
 # Position Loading Functions
 # ============================================================================
 
-def _start_from_position(fen: str, position_name: str, hint_move: str = None) -> bool:
+def _start_from_position(
+    fen: str,
+    position_name: str,
+    hint_move: str = None,
+    record: bool = False,
+) -> bool:
     """Start a game from a predefined position.
-    
+
     Sets up the game with the given FEN position and enters correction mode
     to guide the user in setting up the physical board.
-    
-    Position games are practice/testing and are NOT saved to the database.
-    Back button returns directly to menu without resign prompt.
-    
+
+    By default the game is practice/testing: it is NOT saved to the database and
+    the back button returns directly to the menu without a resign prompt. When
+    ``record`` is True the game is a normal recorded game instead (saved to
+    history, resign prompt on back). This is used by "Play Game from here" on the
+    web review page, where the user plays a real game from a reviewed position.
+    Recording a non-standard start relies on the start FEN being persisted (see
+    ``move_persistence.persist_move_and_maybe_create_game``) so the game resumes
+    from that position after a restart rather than the standard opening.
+
     Args:
         fen: FEN string of the position to load
         position_name: Display name of the position (for logging)
         hint_move: Optional UCI move string (e.g., 'e2e4') to show as LED hint
-        
+        record: When True, save the game to the database (recorded game) instead
+            of treating it as an unsaved practice position.
+
     Returns:
         True if position was loaded successfully, False otherwise
     """
@@ -1655,8 +1681,10 @@ def _start_from_position(fen: str, position_name: str, hint_move: str = None) ->
                 hint_from_sq = None
                 hint_to_sq = None
         
-        # Start game mode with position game flag (disables DB, changes back behavior)
-        _start_game_mode(starting_fen=fen, is_position_game=True)
+        # Start game mode. A practice position disables DB saving and changes the
+        # back behavior; a recorded "play from here" game (record=True) is a normal
+        # game whose non-standard start FEN is persisted so it resumes correctly.
+        _start_game_mode(starting_fen=fen, is_position_game=not record)
         
         if protocol_manager is None or protocol_manager.game_manager is None:
             log.error("[Positions] Failed to start game mode")
@@ -1738,6 +1766,70 @@ def _start_from_position(fen: str, position_name: str, hint_move: str = None) ->
     except Exception as e:
         log.error(f"[Positions] Error loading position: {e}")
         return False
+
+
+def _play_from_history(
+    start_fen: str,
+    moves_uci: list,
+    white: Optional[str],
+    black: Optional[str],
+    chess960: bool = False,
+) -> bool:
+    """Start a recorded game seeded with a transferred move history.
+
+    Backs "Play Game from here" on the web review page when the viewed ply is past
+    the start: instead of setting up a bare FEN (which starts cold with no
+    history), the reviewed game's moves up to the viewed ply are transferred so
+    the live board continues with the full PGN intact.
+
+    Reuses the existing resume machinery rather than duplicating game setup: the
+    validated sequence is persisted as a fresh in-progress game
+    (:func:`move_persistence.create_game_from_moves`), then that game is resumed
+    (:func:`_resume_game`) exactly as an interrupted game would be -- replaying the
+    history, restoring the position, and prompting the player to correct the
+    physical board and continue. The new game is created BEFORE the current game
+    is aborted so a failure to build it leaves the running game untouched.
+
+    Args:
+        start_fen: FEN the transferred sequence starts from.
+        moves_uci: UCI moves (reviewed game up to the viewed ply); non-empty.
+        white: White player name for the new record (from the reviewed game).
+        black: Black player name for the new record.
+        chess960: True to build/persist the game as Chess960 so king-onto-rook
+            castling UCIs replay correctly.
+
+    Returns:
+        True if the game was created and resumed; False otherwise.
+    """
+    from sqlalchemy.orm import sessionmaker
+    from universalchess.db import models
+    from universalchess.managers.game.move_persistence import create_game_from_moves
+
+    Session = sessionmaker(bind=models.engine)
+    session = Session()
+    try:
+        game_id = create_game_from_moves(
+            session,
+            start_fen=start_fen,
+            moves_uci=moves_uci,
+            game_info={"white": white or "", "black": black or ""},
+            chess960=chess960,
+        )
+    finally:
+        session.close()
+
+    if not game_id:
+        log.warning("[PlayFromHistory] Could not persist transferred history")
+        return False
+
+    # Only now discard the running game (records it abandoned), matching the plain
+    # setup_position path, then resume the freshly built one for continued play.
+    _abort_current_game()
+    game_data = _get_game_by_id(game_id)
+    if game_data is None:
+        log.warning(f"[PlayFromHistory] New game id={game_id} not resumable")
+        return False
+    return _resume_game(game_data)
 
 
 # ============================================================================
@@ -2080,6 +2172,18 @@ def _start_game_mode(
     game = settings.game
     analysis_mode = game.analysis_mode
     analysis_engine_path = get_engine_path(game.analysis_engine) if analysis_mode else None
+
+    # Apply the per-position analysis time preset. Set before the first position is
+    # queued (each request captures the current limit), so a game starts analysing
+    # at the configured depth/time. "quick" (0.3s) is the historical default.
+    if analysis_mode:
+        from universalchess.services.analysis import get_analysis_service
+        from universalchess.players.settings import analysis_time_seconds
+        seconds = analysis_time_seconds(game.analysis_time_preset)
+        get_analysis_service().set_time_limit(seconds)
+        log.info(
+            f"[App] Analysis time: {game.analysis_time_preset} ({seconds}s per position)"
+        )
 
     # Chess960: generate a random Fischer Random start for a fresh normal game.
     # Skipped for position games (they load a specific FEN), for resume
@@ -2832,10 +2936,28 @@ def _process_pending_board_command() -> None:
             return
         name = cmd.get("name") or "Position"
         hint = cmd.get("hint")
-        log.info(f"[App] Web setup_position: {name}")
-        _abort_current_game()
-        if not _start_from_position(fen, name, hint):
-            log.warning(f"[App] Web setup_position failed for {name}")
+        record = bool(cmd.get("record"))
+        moves = cmd.get("moves")
+        # "Play Game from here" past the opening ply transfers the reviewed game's
+        # move history into a fresh recorded game so the live board continues with
+        # the full PGN, not from a bare FEN. Recording is implied by carrying a
+        # history; without moves (or ply 0) this is the plain position setup.
+        if record and moves:
+            start_fen = cmd.get("start_fen") or fen
+            chess960 = bool(cmd.get("chess960"))
+            log.info(
+                f"[App] Web setup_position with history: {name} "
+                f"({len(moves)} moves, chess960={chess960})"
+            )
+            if not _play_from_history(
+                start_fen, moves, cmd.get("white"), cmd.get("black"), chess960
+            ):
+                log.warning(f"[App] Web play-from-history failed for {name}")
+        else:
+            log.info(f"[App] Web setup_position: {name} (record={record})")
+            _abort_current_game()
+            if not _start_from_position(fen, name, hint, record=record):
+                log.warning(f"[App] Web setup_position failed for {name}")
     elif command == "abort_game":
         log.info("[App] Web abort_game")
         if protocol_manager is not None:

@@ -161,7 +161,14 @@
     "loading": "Loading game...",
     "title": "Game Analysis",
     "moves": "Moves",
-    "pgn": "PGN"
+    "pgn": "PGN",
+    "gameInfoTitle": "Game",
+    "playGame": "Play Game",
+    "playGameSaving": "Setting up...",
+    "playGameName": "Play from position",
+    "playGameFailed": "Could not set up the position.",
+    "confirmPlayTitle": "Play from this position?",
+    "confirmPlayBody": "A game is in progress on the board. Playing from here ends it (it is recorded in your history) and sets the board to the position you are viewing, so you can play on from there."
   },
   "coach": {
     "title": "Coach",

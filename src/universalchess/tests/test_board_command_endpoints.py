@@ -92,7 +92,9 @@ def test_setup_position_forwards_command_with_fen_and_name(client, monkeypatch):
 
     This is the happy path the Positions page relies on; a regression in the
     payload (missing FEN/name/hint) would set up the wrong position. Asserts the
-    exact command and params handed to the board.
+    exact command and params handed to the board. The Positions page omits
+    ``record``, so it must default to False (an unrecorded practice game); a
+    truthy default here would start recording every position setup.
     """
     sent = []
     monkeypatch.setattr(
@@ -111,7 +113,9 @@ def test_setup_position_forwards_command_with_fen_and_name(client, monkeypatch):
     )
     assert resp.status_code == 200
     assert json.loads(resp.data)["success"] is True
-    assert sent == [("setup_position", {"fen": fen, "name": "Start", "hint": "e2e4"})]
+    assert sent == [
+        ("setup_position", {"fen": fen, "name": "Start", "record": False, "hint": "e2e4"})
+    ]
 
 
 def test_setup_position_requires_auth(monkeypatch):

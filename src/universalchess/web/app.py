@@ -3158,7 +3158,23 @@ def api_board_setup_position():
     when a game is in progress before calling this (the board records the
     interrupted game as abandoned, result = "*").
 
-    Body: {"fen": str, "name"?: str, "hint"?: str}
+    ``record`` opts the resulting game into the normal database history (used by
+    "Play Game from here" on the review page, where the user plays a real game
+    from a reviewed position). It defaults to False so predefined-position setups
+    stay practice games that are not recorded.
+
+    ``moves`` carries the reviewed game's history (UCI, from ``start_fen`` up to
+    the viewed ply) so a recorded "Play Game from here" continues with the full
+    PGN instead of starting cold from ``fen``. When present with ``record``, the
+    board persists a fresh in-progress game seeded with that history and resumes
+    it; each move's legality is re-checked board-side. ``start_fen`` (defaulting
+    to ``fen``) and ``chess960`` describe the board the history replays on;
+    ``white``/``black`` name the transferred players. At the opening ply
+    (``moves`` empty) this stays the plain ``fen`` setup.
+
+    Body: {"fen": str, "name"?: str, "hint"?: str, "record"?: bool,
+           "moves"?: [str], "start_fen"?: str, "chess960"?: bool,
+           "white"?: str, "black"?: str}
     """
     try:
         import chess
@@ -3174,9 +3190,36 @@ def api_board_setup_position():
 
         name = (body.get("name") or "Position").strip()
         hint = body.get("hint")
-        params = {"fen": fen, "name": name}
+        params = {"fen": fen, "name": name, "record": bool(body.get("record"))}
         if hint:
             params["hint"] = hint
+
+        # Transferred history for "Play Game from here". Accept only a list of
+        # UCI-shaped strings; the board re-validates each move's legality before
+        # persisting, so this is a shape guard, not full validation.
+        moves = body.get("moves")
+        if moves is not None:
+            if not isinstance(moves, list) or not all(
+                isinstance(m, str) and 4 <= len(m) <= 5 for m in moves
+            ):
+                return jsonify({"success": False, "error": "Invalid moves"}), 400
+            if moves:
+                start_fen = (body.get("start_fen") or fen).strip()
+                try:
+                    chess.Board(start_fen, chess960=bool(body.get("chess960")))
+                except ValueError:
+                    return jsonify(
+                        {"success": False, "error": "Invalid start_fen"}
+                    ), 400
+                params["moves"] = moves
+                params["start_fen"] = start_fen
+                params["chess960"] = bool(body.get("chess960"))
+                white = body.get("white")
+                black = body.get("black")
+                if isinstance(white, str):
+                    params["white"] = white
+                if isinstance(black, str):
+                    params["black"] = black
 
         from universalchess.services.game_broadcast import send_board_command
 

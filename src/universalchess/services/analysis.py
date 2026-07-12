@@ -189,22 +189,53 @@ class AnalysisService:
     def _on_position_change(self) -> None:
         """Handle position change from game state.
         
-        Queues the position for analysis if game is in progress.
+        Queues the position for analysis if game is in progress. The first move
+        is shown but not graphed (the opening evaluation is the graph baseline,
+        not a data point), so it is queued with add_to_history=False.
         """
         # Only analyze if game has started
         if not self._game_state.is_game_in_progress:
             return
         
-        # Queue analysis request
+        is_first_move = len(self._game_state.move_stack) == 1
+        self._queue_position(add_to_history=not is_first_move)
+    
+    def analyze_current_position(self, add_to_history: bool = True) -> None:
+        """Queue the current position for a fresh evaluation on demand.
+        
+        Used when a position is reached outside normal play and the board must
+        still show a running evaluation - e.g. resuming a finished game for
+        review, mirroring the web client which analyzes any position regardless
+        of game-over state. No position change is emitted in that flow, so the
+        evaluation must be requested explicitly.
+        
+        Args:
+            add_to_history: When False, only the displayed score is refreshed;
+                the history graph is left unchanged. Pass False when the current
+                position's score is already present in the restored history so
+                the graph is not extended with a duplicate trailing point.
+        """
+        # Nothing to evaluate at the standard start; matches _on_position_change.
+        if not self._game_state.is_game_in_progress:
+            return
+        
+        self._queue_position(add_to_history=add_to_history)
+    
+    def _queue_position(self, add_to_history: bool) -> None:
+        """Enqueue the current game position for the worker to analyze.
+        
+        Args:
+            add_to_history: Whether the resulting score should be appended to
+                the history graph (see analyze_current_position).
+        """
         try:
             fen = self._game_state.fen
             # Copy through the state (not chess.Board(fen)) so the chess960 flag
             # is carried over; python-chess only emits UCI_Chess960 and applies
             # 960 castling when the analysed board has chess960 set.
             board_copy = self._game_state.board_copy()
-            is_first_move = len(self._game_state.move_stack) == 1
             
-            request = (board_copy, fen, is_first_move, self._time_limit, self._reset_generation)
+            request = (board_copy, fen, add_to_history, self._time_limit, self._reset_generation)
             self._analysis_queue.put_nowait(request)
             
         except queue.Full:
@@ -257,7 +288,7 @@ class AnalysisService:
                     continue
                 
                 # Unpack request
-                board_copy, fen, is_first_move, time_limit, request_generation = request
+                board_copy, fen, add_to_history, time_limit, request_generation = request
                 
                 # Check if stale
                 if request_generation != self._reset_generation:
@@ -276,7 +307,7 @@ class AnalysisService:
                         continue
                     
                     # Update state
-                    self._update_state_from_analysis(info, is_first_move)
+                    self._update_state_from_analysis(info, add_to_history)
                     
                 except Exception as e:
                     log.warning(f"[AnalysisService] Analysis error: {e}")
@@ -286,12 +317,12 @@ class AnalysisService:
             except Exception as e:
                 log.error(f"[AnalysisService] Worker error: {e}")
     
-    def _update_state_from_analysis(self, analysis_info: dict, is_first_move: bool) -> None:
+    def _update_state_from_analysis(self, analysis_info: dict, add_to_history: bool) -> None:
         """Update AnalysisState from engine analysis result.
         
         Args:
             analysis_info: Raw analysis dict from chess engine.
-            is_first_move: Whether this is the first move.
+            add_to_history: Whether to append the score to the history graph.
         """
         if "score" not in analysis_info:
             return
@@ -309,7 +340,7 @@ class AnalysisService:
             if "BLACK" in score_str:
                 mate_value = -mate_value
             
-            self._analysis_state.set_mate_score(mate_value, add_to_history=not is_first_move)
+            self._analysis_state.set_mate_score(mate_value, add_to_history=add_to_history)
         else:
             # Extract centipawn value
             cp_str = score_str[11:24]
@@ -323,7 +354,7 @@ class AnalysisService:
             # Clamp for display
             display_score = max(-12.0, min(12.0, score_value))
             
-            self._analysis_state.set_score(display_score, add_to_history=not is_first_move)
+            self._analysis_state.set_score(display_score, add_to_history=add_to_history)
 
 
 # -----------------------------------------------------------------------------

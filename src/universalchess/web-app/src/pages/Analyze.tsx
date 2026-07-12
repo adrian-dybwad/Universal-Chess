@@ -1,38 +1,85 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams } from 'react-router-dom';
+import { useState, useEffect, useCallback } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ChessBoard } from '../components/ChessBoard';
-import { Analysis } from '../components/Analysis';
-import { CoachPanel } from '../components/CoachPanel';
-import { MoveTable } from '../components/MoveTable';
-import { Card, CardHeader } from '../components/ui';
+import { GameView } from '../components/GameView';
+import { useAuthedAction } from '../components/useAuthedAction';
+import { useGameStore } from '../stores/gameStore';
 import { apiFetch } from '../utils/api';
-import { useNotation } from '../hooks/useNotation';
 import type { PositionEntry } from '../types/game';
-import './Analyze.css';
+
+const RESULT_KEYS: Record<string, string> = {
+  '1-0': 'white_wins',
+  '0-1': 'black_wins',
+  '1/2-1/2': 'draw',
+};
 
 /**
- * Game analysis page for historical games.
+ * Extract the standard PGN seven-tag roster (plus Termination) from a PGN string.
+ * The board exports PGNs with headers, so the reviewed game's players, result and
+ * termination are read locally from the PGN already fetched -- no extra request.
+ */
+function parsePgnHeaders(pgn: string): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const re = /\[(\w+)\s+"([^"]*)"\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(pgn)) !== null) {
+    headers[match[1]] = match[2];
+  }
+  return headers;
+}
+
+/** Normalize a raw termination string to the lower_snake_case i18n key segment. */
+function terminationKey(termination: string): string {
+  return termination
+    .replace(/^Termination\./i, '')
+    .replace(/\./g, '')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Game review page for historical games. Renders the shared {@link GameView} in
+ * static (read-only) mode with a game-info header in place of the live board's
+ * current-game box, plus a "Play Game" action that sets the board up to play
+ * from the position currently in view (recorded as a normal game).
  */
 export function Analyze() {
   const { gameId } = useParams<{ gameId: string }>();
   const { t } = useTranslation();
-  const notation = useNotation();
+  const navigate = useNavigate();
+
   const [pgn, setPgn] = useState('');
-  // Authoritative per-ply positions (python-chess computed). This is the source
-  // the move list and navigation use for both variants; the web no longer
-  // replays the PGN with chess.js. `pgn` is kept only for the raw PGN display.
+  // Authoritative per-ply positions (python-chess computed) drive the move list
+  // and navigation for both variants. `pgn` is kept only for the raw PGN display
+  // and its headers (players/result/termination).
   const [positions, setPositions] = useState<PositionEntry[] | null>(null);
-  const [currentFen, setCurrentFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR');
-  const [bestMove, setBestMove] = useState<{ from: string; to: string } | null>(null);
-  const [playedMove, setPlayedMove] = useState<{ from: string; to: string } | null>(null);
-  const [currentMoveIndex, setCurrentMoveIndex] = useState(0);
-  const [evalHistory, setEvalHistory] = useState<(number | null)[]>([]);
+  // The board the stored game replays on, needed to transfer its history exactly
+  // when playing from here (960 castling is only legal with the flag/start set).
+  const [startFen, setStartFen] = useState<string | null>(null);
+  const [chess960, setChess960] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  
-  // Ref to allow MoveTable to navigate Analysis
-  const goToMoveRef = useRef<((index: number) => void) | null>(null);
+
+  // FULL FEN and ply index of the position currently in view, reported by
+  // GameView. The FEN drives the fallback (ply 0) setup; the ply index slices the
+  // history transferred to "Play Game from here" (moves 1..ply).
+  const [viewedFen, setViewedFen] = useState<string | null>(null);
+  const [viewedPly, setViewedPly] = useState(0);
+
+  // Play Game: sets the board up to play from the viewed position as a recorded
+  // game. A game in progress on the board is confirmed first (it would be ended).
+  const { dialog: playLoginDialog, onUnauthorized } = useAuthedAction();
+  const [confirmPlay, setConfirmPlay] = useState(false);
+  const [playBusy, setPlayBusy] = useState(false);
+  const [playError, setPlayError] = useState<string | null>(null);
+
+  // A live game "in progress" (unfinished, at least one move) would be ended by
+  // playing from here, so it is confirmed first. Reading the store here is
+  // read-only and does not affect the live game.
+  const liveGame = useGameStore((s) => s.gameState);
+  const gameInProgress = Boolean(
+    liveGame && !liveGame.game_over && ((liveGame.pgn?.length ?? 0) > 0 || liveGame.move_number > 0),
+  );
 
   useEffect(() => {
     if (!gameId) return;
@@ -40,6 +87,8 @@ export function Analyze() {
     setLoading(true);
     setError(null);
     setPositions(null);
+    setStartFen(null);
+    setChess960(false);
 
     apiFetch(`/getpgn/${gameId}`)
       .then((res) => {
@@ -55,14 +104,16 @@ export function Analyze() {
         setLoading(false);
       });
 
-    // Fetch the authoritative positions that drive the move list and navigation
-    // for both variants. Runs in parallel with the PGN fetch (the PGN is only
-    // shown raw). A 404 (game with no moves) or failure just leaves the list empty.
+    // Authoritative positions that drive the move list/navigation for both
+    // variants. Runs in parallel with the PGN fetch. A 404/failure leaves the
+    // list empty.
     apiFetch(`/api/games/${gameId}/positions`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data && Array.isArray(data.positions)) {
           setPositions(data.positions as PositionEntry[]);
+          if (typeof data.start_fen === 'string') setStartFen(data.start_fen);
+          setChess960(Boolean(data.chess960));
         }
       })
       .catch(() => {
@@ -70,93 +121,164 @@ export function Analyze() {
       });
   }, [gameId, t]);
 
-  const handlePositionChange = useCallback((fen: string, _moveIndex: number) => {
-    setCurrentFen(fen);
-    // Clear arrows when position changes - new analysis will provide them
-    setBestMove(null);
-    setPlayedMove(null);
+  const handleViewedPositionChange = useCallback((fen: string, ply: number) => {
+    setViewedFen(fen);
+    setViewedPly(ply);
   }, []);
 
-  const handleBestMoveChange = useCallback((move: { from: string; to: string } | null) => {
-    setBestMove(move);
-  }, []);
-
-  const handlePlayedMoveChange = useCallback((move: { from: string; to: string } | null) => {
-    setPlayedMove(move);
-  }, []);
-
-  const handleMoveDataChange = useCallback((moveIndex: number, evals: (number | null)[]) => {
-    setCurrentMoveIndex(moveIndex);
-    setEvalHistory(evals);
-  }, []);
-
-  const handleMoveTableClick = useCallback((moveIndex: number) => {
-    if (goToMoveRef.current) {
-      goToMoveRef.current(moveIndex);
+  const playFromHere = useCallback(async () => {
+    setConfirmPlay(false);
+    if (!viewedFen) return;
+    setPlayBusy(true);
+    setPlayError(null);
+    try {
+      // Transfer the reviewed game's history so the new live game keeps the full
+      // PGN, not just the viewed position. Moves 1..viewedPly are the UCIs that
+      // produced the viewed ply; at ply 0 there is no history and the board falls
+      // back to a plain setup from `fen`. The board re-validates every move.
+      const moves = (positions ?? [])
+        .slice(1, viewedPly + 1)
+        .map((p) => p.uci)
+        .filter((uci): uci is string => Boolean(uci));
+      const body: Record<string, unknown> = {
+        fen: viewedFen,
+        name: t('analyze.playGameName'),
+        record: true,
+      };
+      if (moves.length > 0) {
+        const pgnHeaders = parsePgnHeaders(pgn);
+        body.moves = moves;
+        body.start_fen = startFen ?? positions?.[0]?.fen ?? viewedFen;
+        body.chess960 = chess960;
+        if (pgnHeaders.White) body.white = pgnHeaders.White;
+        if (pgnHeaders.Black) body.black = pgnHeaders.Black;
+      }
+      const response = await apiFetch('/api/board/setup-position', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        requiresAuth: true,
+      });
+      if (response.status === 401) {
+        onUnauthorized(playFromHere);
+        return;
+      }
+      const data = await response.json().catch(() => ({}));
+      if (response.ok && data.success) {
+        // The board is set up; go to the live board to play the game.
+        navigate('/board');
+      } else {
+        setPlayError(data.error || t('analyze.playGameFailed'));
+      }
+    } catch (e) {
+      console.error('Failed to set up play-from-here:', e);
+      setPlayError(t('analyze.playGameFailed'));
+    } finally {
+      setPlayBusy(false);
     }
-  }, []);
+  }, [viewedFen, viewedPly, positions, startFen, chess960, pgn, onUnauthorized, navigate, t]);
+
+  const onPlayClick = useCallback(() => {
+    if (!viewedFen) return;
+    if (gameInProgress) {
+      setConfirmPlay(true);
+      return;
+    }
+    void playFromHere();
+  }, [viewedFen, gameInProgress, playFromHere]);
 
   if (loading) {
-    return (
-      <div className="page container--lg">
-        <div className="loading">{t('analyze.loading')}</div>
-      </div>
-    );
+    return <div className="loading">{t('analyze.loading')}</div>;
   }
 
   if (error) {
-    return (
-      <div className="page container--lg">
-        <div className="error">{error}</div>
-      </div>
-    );
+    return <div className="error">{error}</div>;
   }
 
-  return (
-    <div className="page container--xl">
-      <h1 className="page-title mb-6">{t('analyze.title')}</h1>
+  const headers = parsePgnHeaders(pgn);
+  const white = headers.White || t('color.white');
+  const black = headers.Black || t('color.black');
+  const result = headers.Result || '*';
+  const resultLabel = t(`liveBoard.gameOver.result.${RESULT_KEYS[result] ?? 'unknown'}`);
+  const rawTermination = headers.Termination || '';
+  const terminationLabel = rawTermination
+    ? t(`liveBoard.gameOver.termination.${terminationKey(rawTermination)}`, { defaultValue: rawTermination })
+    : '';
+  const coachGameId = gameId && /^\d+$/.test(gameId) ? Number(gameId) : null;
 
-      <div className="analyze-layout">
-        <section className="analyze-board">
-          <ChessBoard fen={currentFen} maxBoardWidth={600} showBestMove={bestMove} showPlayedMove={playedMove} />
-        </section>
-
-        <section className="analyze-panel">
-          <Analysis
-            positions={positions}
-            mode="static"
-            onPositionChange={handlePositionChange}
-            onBestMoveChange={handleBestMoveChange}
-            onPlayedMoveChange={handlePlayedMoveChange}
-            onMoveDataChange={handleMoveDataChange}
-            goToMoveRef={goToMoveRef}
-          />
-          
-          {/* AI Coach statement for the move currently in view */}
-          <CoachPanel
-            gameId={gameId && /^\d+$/.test(gameId) ? Number(gameId) : null}
-            ply={currentMoveIndex}
-            variant="card"
-          />
-
-          {/* Move table */}
-          <Card className="mt-4">
-            <CardHeader title={t('analyze.moves')} />
-            <MoveTable
-              positions={positions}
-              currentMoveIndex={currentMoveIndex}
-              notation={notation}
-              evalHistory={evalHistory}
-              onMoveClick={handleMoveTableClick}
-            />
-          </Card>
-        </section>
+  const header = (
+    <div className="box">
+      <div className="current-game-header">
+        <h3 className="title is-5 box-title">{t('analyze.gameInfoTitle')}</h3>
+        <button
+          type="button"
+          className="button is-small is-primary"
+          onClick={onPlayClick}
+          disabled={playBusy || !viewedFen}
+        >
+          {playBusy ? t('analyze.playGameSaving') : t('analyze.playGame')}
+        </button>
       </div>
-
-      <Card className="mt-6">
-        <CardHeader title={t('analyze.pgn')} />
-        <pre>{pgn}</pre>
-      </Card>
+      <div className="current-game-info">
+        <div className="players-line">
+          <strong>{white}</strong>
+          <span className="text-muted"> (W)</span>
+          {' vs '}
+          <strong>{black}</strong>
+          <span className="text-muted"> (B)</span>
+        </div>
+        <span className="tag is-light">{resultLabel}</span>
+        {terminationLabel && (
+          <span className="tag is-light" style={{ marginLeft: '0.5rem' }}>
+            {terminationLabel}
+          </span>
+        )}
+        {playError && (
+          <p className="text-muted" style={{ marginTop: '0.5rem' }}>
+            {playError}
+          </p>
+        )}
+      </div>
     </div>
+  );
+
+  return (
+    <>
+      {playLoginDialog}
+
+      {confirmPlay && (
+        <div className="dialog-overlay" onClick={() => setConfirmPlay(false)}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="dialog-header">
+              <h3>{t('analyze.confirmPlayTitle')}</h3>
+              <button className="dialog-close" onClick={() => setConfirmPlay(false)}>&times;</button>
+            </div>
+            <div className="dialog-body">
+              <p className="dialog-description">{t('analyze.confirmPlayBody')}</p>
+            </div>
+            <div className="dialog-footer">
+              <div className="dialog-footer-right">
+                <button type="button" className="btn btn-secondary" onClick={() => setConfirmPlay(false)}>
+                  {t('common.cancel')}
+                </button>
+                <button type="button" className="btn btn-primary" onClick={() => void playFromHere()}>
+                  {t('analyze.playGame')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <GameView
+        live={false}
+        positions={positions}
+        pgn={pgn}
+        coachGameId={coachGameId}
+        header={header}
+        boardMaxWidth={600}
+        onViewedPositionChange={handleViewedPositionChange}
+      />
+    </>
   );
 }
