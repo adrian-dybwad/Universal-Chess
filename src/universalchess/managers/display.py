@@ -918,6 +918,23 @@ class DisplayManager:
         self._clock.stop()
         self._sync_clock_refresh_mode()
     
+    def set_time_control_spec(self, time_control_spec: TimeControl) -> None:
+        """Re-resolve the active time control for an in-place new game.
+
+        The spec is captured once at construction. A board-reset new game (pieces
+        returned to the start position) and physical setup-mode adoption restart
+        play while reusing this manager, so a time-control setting changed since
+        game start (notably the delay mode) would otherwise be ignored. The app
+        layer resolves the current settings into a spec and pushes it here so the
+        clock is reconfigured before the following reset_clock() seeds it, keeping
+        an in-place new game consistent with a full _start_game_mode start.
+
+        Args:
+            time_control_spec: Freshly resolved control (see state/time_control.py).
+        """
+        self._time_control_spec = time_control_spec
+        self._clock.configure(time_control_spec)
+
     def reset_clock(self) -> None:
         """Reset the chess clock to initial time and stop it.
         

@@ -2564,6 +2564,18 @@ def _start_game_mode(
         if event == EVENT_NEW_GAME:
             from universalchess.services.analysis import get_analysis_service
             get_analysis_service().reset()
+            # A board-reset / setup-position new game restarts play in place,
+            # reusing this DisplayManager whose time-control spec was captured at
+            # game start. Re-resolve it from the current settings so a control
+            # changed since (notably the delay/"timer" mode from the web or board
+            # menu) takes effect for this fresh game, matching the full
+            # _start_game_mode start path. build_time_control only reads in-memory
+            # settings, so this is safe on the controller event thread (as is the
+            # existing reset_clock below).
+            from universalchess.state.time_control import build_time_control
+            display_manager.set_time_control_spec(
+                build_time_control(_get_settings().game)
+            )
             display_manager.reset_clock()
             # Clear brain hints for both players on new game
             display_manager.clear_brain_hint('white')
