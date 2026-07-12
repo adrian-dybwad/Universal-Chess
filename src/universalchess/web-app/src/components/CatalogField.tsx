@@ -197,6 +197,12 @@ export function CatalogField({
         <FormRow label={label} help={helpContent}>
           <Input
             aria-label={label}
+            // Placeholder is the node's default value, so an empty optional field
+            // hints the value that will be used if left blank (e.g. Player Name ->
+            // "Human"). This mirrors what the board shows for an unset field
+            // (boardLabel "{value}" resolves to valueDefault), keeping the hint
+            // truthful and consistent across platforms.
+            placeholder={node.valueDefault}
             value={String(value)}
             disabled={disabled}
             onChange={(e) => onChange(e.target.value)}

@@ -147,4 +147,16 @@ describe('Player Name field is collected for human players only', () => {
     renderSettings();
     await waitFor(() => expect(screen.getAllByLabelText('Player Name')).toHaveLength(2));
   });
+
+  it('hints the default name ("Human") in the empty Name field', async () => {
+    // The empty optional Name field must hint the value used if left blank -- the
+    // catalog default "Human", matching what the board shows for an unset name.
+    // Guards the placeholder restored after the catalog migration dropped the old
+    // (misleading) "Player N" placeholder; a regression shows as a blank field
+    // with no hint, or a hint other than the field's valueDefault.
+    mockFetch({ type: 'human' }, { type: 'engine' });
+    renderSettings();
+    const nameField = await screen.findByLabelText('Player Name');
+    expect(nameField).toHaveAttribute('placeholder', 'Human');
+  });
 });
