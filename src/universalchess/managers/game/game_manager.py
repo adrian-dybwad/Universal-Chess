@@ -277,10 +277,16 @@ class GameManager:
             else:
                 self.event_callback(EVENT_BLACK_TURN)
         
-        # Prompt the current player to move
-        # For human players, this is a no-op (they're always ready)
-        # For engine/Lichess players, this triggers move computation
-        if self._player_manager:
+        # Prompt the current player to move.
+        # For human players, this is a no-op (they're always ready).
+        # For engine/Lichess players, this triggers move computation.
+        #
+        # Skip when the game is over. A time forfeit (or resignation/draw
+        # agreement) ends the game via an external result while the board stays
+        # playable, so is_game_over -- not chess_board.is_game_over() -- is the
+        # authoritative check. Without it, an engine opponent would be asked to
+        # compute a reply for a finished game.
+        if self._player_manager and not self._game_state.is_game_over:
             self._player_manager.request_move(self.chess_board)
     
     def _get_clock_times_for_db(self) -> tuple:
@@ -343,7 +349,13 @@ class GameManager:
         
         # Notify game over observers via state (sets result and notifies)
         self._game_state.set_result(result_string, termination)
-        
+
+        # Cancel any in-flight engine computation so a move started before the
+        # game ended (e.g. the engine was thinking when the opponent's flag fell)
+        # is discarded rather than submitted onto a finished game.
+        if self._player_manager is not None:
+            self._player_manager.clear_pending_moves()
+
         if self.event_callback is not None:
             self.event_callback(termination)
     
@@ -992,7 +1004,11 @@ class GameManager:
             True if the move was legal and executed; False if there is no game in
             progress, the game is over, or the move is malformed/illegal.
         """
-        if self.chess_board.is_game_over():
+        # Authoritative game-over check: a time forfeit / resignation / draw
+        # agreement ends the game via an external result while the board stays
+        # playable, so chess_board.is_game_over() alone would let a web move
+        # through after the flag fell.
+        if self._game_state.is_game_over:
             log.warning(f"[GameManager.submit_web_move] Rejected {uci!r}: game is over")
             return False
 
@@ -1472,10 +1488,14 @@ class GameManager:
         Validates that the move is legal at the current position and that the game
         is not already over before setting up the forced move.
         """
-        # Check if game is already over
-        outcome = self.chess_board.outcome(claim_draw=True)
-        if outcome is not None:
-            log.warning(f"[GameManager.computer_move] Attempted to set forced move after game ended. Result: {self.chess_board.result()}, Termination: {outcome.termination}")
+        # Check if game is already over. Uses the authoritative game state so a
+        # time forfeit / resignation / draw agreement (which leaves the board
+        # playable) also blocks setting up a forced move.
+        if self._game_state.is_game_over:
+            log.warning(
+                "[GameManager.computer_move] Attempted to set forced move after game ended. "
+                f"Result: {self._game_state.result}, Termination: {self._game_state.termination}"
+            )
             return
         
         # Validate move UCI format

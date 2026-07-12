@@ -143,12 +143,20 @@ def _abort_move_attempt(ctx: PlayerMoveContext) -> None:
 
 
 def execute_complete_move(ctx: PlayerMoveContext, move: chess.Move) -> None:
-    """Execute a complete move submitted by a player (behavior-identical to prior GameManager impl)."""
-    outcome = ctx.chess_board.outcome(claim_draw=True)
-    if outcome is not None:
+    """Execute a complete move submitted by a player (behavior-identical to prior GameManager impl).
+
+    The game-over guard consults the authoritative ``game_state.is_game_over``
+    (board terminal OR an external result such as a time forfeit, resignation, or
+    draw agreement), NOT ``chess.Board`` alone. A time forfeit ends the game while
+    leaving the board playable (legal moves still exist and ``board.outcome()`` is
+    None); a board-only check let moves and engine replies continue after the flag
+    fell. Once the game is over the only permitted behaviour is correction mode
+    insisting on the final position, which ``_abort_move_attempt`` provides.
+    """
+    if ctx.game_state.is_game_over:
         log.warning(
             "[GameManager._execute_complete_move] Attempted to execute move after game ended. "
-            f"Result: {ctx.chess_board.result()}, Termination: {outcome.termination}"
+            f"Result: {ctx.game_state.result}, Termination: {ctx.game_state.termination}"
         )
         _abort_move_attempt(ctx)
         return

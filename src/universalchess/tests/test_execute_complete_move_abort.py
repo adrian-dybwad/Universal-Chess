@@ -15,6 +15,12 @@ not reachable in normal operation. These tests pin the defensive contract so the
 branch cannot silently become a real bug: every rejected attempt must (a) reset
 move_state and (b) recover via correction mode + guidance, mirroring the
 illegal-move handling in on_player_move.
+
+The game-over guard reads the authoritative ChessGameState.is_game_over (board
+terminal OR external result such as a time forfeit / resignation / draw
+agreement), NOT chess.Board.is_game_over(). A time forfeit leaves the board
+playable (legal moves still exist), so a board-only check would let moves and
+engine replies continue after the flag fell -- the exact bug these tests guard.
 """
 
 import chess
@@ -26,7 +32,7 @@ from universalchess.managers.game.player_moves import (
 from universalchess.utils.led import LedCallbacks
 
 # Checkmate position (1.f3 e5 2.g4 Qh4#): white to move, board.outcome() is not
-# None, so it triggers the game-over guard at the top of execute_complete_move.
+# None, so the position is terminal on the board itself.
 CHECKMATE_FEN = "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3"
 
 
@@ -58,10 +64,40 @@ class _RecordingMoveState:
 
 
 class _RaisingGameState:
-    """game_state whose push_move always raises, to force the failure guard."""
+    """game_state (game not over) whose push_move always raises.
+
+    Used to force the push-failure guard: is_game_over is False so the game-over
+    guard is passed and the push is attempted.
+    """
+
+    is_game_over = False
+    result = None
+    termination = None
 
     def push_move(self, move):
         raise ValueError(f"forced push failure for {move.uci()}")
+
+
+class _EndedGameState:
+    """game_state that reports the game is over via the authoritative property.
+
+    push_move records any call so the game-over guard can be proven to short
+    circuit before a push is ever attempted. Model both endings the guard must
+    catch: a board-terminal ending and an external result (time forfeit) that
+    leaves the board playable.
+    """
+
+    def __init__(self, result: str, termination: str):
+        self.result = result
+        self.termination = termination
+        self.pushed = []
+
+    @property
+    def is_game_over(self) -> bool:
+        return True
+
+    def push_move(self, move):
+        self.pushed.append(move)
 
 
 def _noop_led():
@@ -137,7 +173,7 @@ def test_push_failure_resets_move_state_and_enters_correction():
 
 
 def test_game_over_guard_resets_move_state_and_enters_correction():
-    """A move arriving after game end must clean up and recover too.
+    """A move arriving after a board-terminal game end must clean up and recover.
 
     Why: the same cleanup gap exists in the game-over guard. A disturbed physical
     board after the game ended needs reconciliation, and stale move_state must not
@@ -146,7 +182,9 @@ def test_game_over_guard_resets_move_state_and_enters_correction():
     How the regression manifests: if the guard reverts to beep+return, reset_count
     stays 0 and correction_entered stays empty.
     """
-    game_state = _RaisingGameState()  # never reached; guard returns first
+    # Board is terminal (checkmate) and the game state reports it via the
+    # authoritative property, matching how a real ChessGameState behaves.
+    game_state = _EndedGameState("0-1", "Termination.CHECKMATE")
     fake_board = _FakeBoard()
     move_state = _RecordingMoveState()
     recorder = _fresh_recorder()
@@ -160,3 +198,41 @@ def test_game_over_guard_resets_move_state_and_enters_correction():
     assert ("wrong", "error") in fake_board.beeps
     assert recorder["turn_switched"] == []
     assert recorder["post_move"] == []
+    # The guard must short-circuit before the push is attempted.
+    assert game_state.pushed == []
+
+
+def test_time_forfeit_rejects_move_on_playable_board():
+    """A move after a time forfeit must be rejected even though the board is legal.
+
+    Why this test exists: a time forfeit ends the game via an external result
+    (ChessGameState.set_result), which leaves the board fully playable --
+    chess.Board.is_game_over()/outcome() stay false and the attempted move is
+    legal. The guard MUST consult the authoritative game_state.is_game_over, not
+    the board, otherwise the flagged game keeps accepting moves and the engine
+    keeps replying (the reported bug).
+
+    How the regression manifests: if the guard checks board outcome only, the
+    legal move is pushed (game_state.pushed is non-empty) and the turn switches
+    (turn_switched non-empty) instead of the move being aborted into correction
+    mode that insists on the final position.
+    """
+    # Standard opening position: not terminal, e2e4 is a legal move.
+    game_state = _EndedGameState("1-0", "Termination.TIME_FORFEIT")
+    fake_board = _FakeBoard()
+    move_state = _RecordingMoveState()
+    recorder = _fresh_recorder()
+    ctx = _context(chess.Board(), game_state, fake_board, move_state, recorder)
+
+    execute_complete_move(ctx, chess.Move.from_uci("e2e4"))
+
+    # Move rejected: never pushed, turn never switched, no post-move tasks.
+    assert game_state.pushed == []
+    assert recorder["turn_switched"] == []
+    assert recorder["post_move"] == []
+    # Only correction mode is allowed after game over: it must insist on the
+    # final position via guidance.
+    assert move_state.reset_count == 1
+    assert recorder["correction_entered"] == [True]
+    assert recorder["guidance"] == [([0] * 64, [0] * 64)]
+    assert ("wrong", "error") in fake_board.beeps
