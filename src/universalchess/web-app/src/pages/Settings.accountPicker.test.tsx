@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, fireEvent, within } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
@@ -8,9 +8,10 @@ import menuSchemaFixture from '../test/fixtures/menuSchema.json';
 
 /**
  * Guards the Settings account picker: an online player type (Lichess) exposes a
- * picker scoped to accounts of the matching type, and the player's name field
- * defaults to the selected account's username. Offline types (human) show no
- * picker and keep the generic "Player N". Drives the real <Settings> against a
+ * picker scoped to accounts of the matching type; offline types (human) show no
+ * picker and keep an editable "Player N" name. Online/engine players collect no
+ * name field (they carry their own identity / auto-name), which the sibling
+ * name-visibility suite below asserts. Drives the real <Settings> against a
  * mocked API so the fetch -> render -> select path is exercised end to end.
  */
 
@@ -119,25 +120,6 @@ describe('Settings account picker for online player types', () => {
     expect(screen.getByRole('option', { name: /default account/i })).toBeInTheDocument();
   });
 
-  it('defaults the Lichess player name to the bound account username', async () => {
-    // With the slot bound to 'second', the name placeholder must be that
-    // account's username. A regression shows as the first account or "Lichess".
-    mockFetch({ type: 'lichess', account: 'second' }, { type: 'human' });
-    renderSettings();
-    await waitFor(() => expect(screen.getByPlaceholderText('SecondUser')).toBeInTheDocument());
-    // The human player keeps the generic default (never an account name).
-    expect(screen.getByPlaceholderText('Player 2')).toBeInTheDocument();
-  });
-
-  it('defaults to the first account when the slot is unbound', async () => {
-    // An unbound online slot borrows the default (first) account's name, matching
-    // the board's default-account resolution. A regression shows as a blank/type
-    // label instead of the first account username.
-    mockFetch({ type: 'lichess', account: '' }, { type: 'human' });
-    renderSettings();
-    await waitFor(() => expect(screen.getByPlaceholderText('MagnusC')).toBeInTheDocument());
-  });
-
   it('shows no account picker for offline (human) player types', async () => {
     // Offline types must not get an account picker and must keep "Player N".
     // A regression shows as an "Account" control appearing for a human player.
@@ -146,17 +128,6 @@ describe('Settings account picker for online player types', () => {
     await waitFor(() => expect(screen.getByPlaceholderText('Player 1')).toBeInTheDocument());
     expect(screen.queryByLabelText('Account')).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText('Player 2')).toBeInTheDocument();
-  });
-
-  it('updates the name default when a different account is picked', async () => {
-    // Selecting another account must re-default the name placeholder to it. A
-    // regression shows as the placeholder not tracking the selection.
-    mockFetch({ type: 'lichess', account: '' }, { type: 'human' });
-    renderSettings();
-    const picker = await screen.findByLabelText('Account');
-    await waitFor(() => expect(screen.getByPlaceholderText('MagnusC')).toBeInTheDocument());
-    fireEvent.change(picker, { target: { value: 'second' } });
-    await waitFor(() => expect(screen.getByPlaceholderText('SecondUser')).toBeInTheDocument());
   });
 });
 

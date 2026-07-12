@@ -1625,44 +1625,15 @@ export function Settings() {
   };
 
   // Online account types from the catalog (a player type is "online" iff it has
-  // a matching accountTypes entry). Drives the per-player account picker and the
-  // online-name defaulting below.
+  // a matching accountTypes entry). Drives the per-player account picker below.
+  // A player's PGN name is not collected for online (or engine) types -- online
+  // players carry their own account identity and engines auto-name -- so the Name
+  // field, and any account-name defaulting, applies to human players only.
   const accountTypes = catalog?.accountTypes ?? [];
   const isOnlineType = (type: string): boolean => accountTypes.some((t) => t.id === type);
   const accountTypeLabel = (type: string): string =>
     accountTypes.find((t) => t.id === type)?.label ?? type;
   const accountsForType = (type: string): AccountRecord[] => accounts.filter((a) => a.type === type);
-
-  // Legacy fallback name for a Lichess player before migration to accounts: the
-  // username cached on the single [lichess] token. Superseded by the account
-  // list once accounts exist, but kept so an unmigrated board still auto-fills.
-  const lichessDefaultName =
-    formSettings.lichess.api_token.trim() !== '' && formSettings.lichess.username.trim() !== ''
-      ? formSettings.lichess.username.trim()
-      : '';
-
-  // Placeholder (default) name for a player's name field, by player type:
-  //  - engine / Hand+Brain: the engine's display name
-  //  - online (e.g. lichess): the bound account's username, else the default
-  //    (first) account's, else the legacy cached name, else the type label
-  //  - human: the generic "Player N"
-  // Only online types borrow an account name; a plain human must not.
-  const playerNamePlaceholder = (
-    type: string,
-    engine: string,
-    account: string,
-    humanFallback: string
-  ): string => {
-    if (type === 'engine' || type === 'hand_brain') return getEngineDisplayName(engine);
-    if (isOnlineType(type)) {
-      const list = accountsForType(type);
-      const bound = list.find((a) => a.id === account) ?? list[0];
-      if (bound) return bound.identity;
-      if (type === 'lichess' && lichessDefaultName) return lichessDefaultName;
-      return accountTypeLabel(type);
-    }
-    return humanFallback;
-  };
 
   // Account picker for an online player slot: a select scoped to accounts of the
   // matching type (so a Lichess slot can only choose a Lichess account). Empty
@@ -1961,13 +1932,19 @@ export function Settings() {
 
                 {renderAccountPicker('player1')}
 
-                <FormRow label={fieldLabel('field.player.name')} help={fieldHelp('field.player.name')}>
-                  <Input
-                    value={formSettings.player1.name}
-                    placeholder={playerNamePlaceholder(formSettings.player1.type, formSettings.player1.engine, formSettings.player1.account, 'Player 1')}
-                    onChange={(e) => updateFormSettings('player1', { name: e.target.value })}
-                  />
-                </FormRow>
+                {/* Name is collected for human players only (matching the board's
+                    field.player.name visibleWhen). Engines auto-name from the
+                    engine + strength label, and online players carry their own
+                    account identity, so neither needs an editable PGN name. */}
+                {formSettings.player1.type === 'human' && (
+                  <FormRow label={fieldLabel('field.player.name')} help={fieldHelp('field.player.name')}>
+                    <Input
+                      value={formSettings.player1.name}
+                      placeholder="Player 1"
+                      onChange={(e) => updateFormSettings('player1', { name: e.target.value })}
+                    />
+                  </FormRow>
+                )}
 
                 {(formSettings.player1.type === 'engine' || formSettings.player1.type === 'hand_brain') && (
                   <>
@@ -2021,13 +1998,16 @@ export function Settings() {
 
                 {renderAccountPicker('player2')}
 
-                <FormRow label={fieldLabel('field.player.name')} help={fieldHelp('field.player.name')}>
-                  <Input
-                    value={formSettings.player2.name}
-                    placeholder={playerNamePlaceholder(formSettings.player2.type, formSettings.player2.engine, formSettings.player2.account, 'Player 2')}
-                    onChange={(e) => updateFormSettings('player2', { name: e.target.value })}
-                  />
-                </FormRow>
+                {/* Name is collected for human players only (see Player 1). */}
+                {formSettings.player2.type === 'human' && (
+                  <FormRow label={fieldLabel('field.player.name')} help={fieldHelp('field.player.name')}>
+                    <Input
+                      value={formSettings.player2.name}
+                      placeholder="Player 2"
+                      onChange={(e) => updateFormSettings('player2', { name: e.target.value })}
+                    />
+                  </FormRow>
+                )}
 
                 {(formSettings.player2.type === 'engine' || formSettings.player2.type === 'hand_brain') && (
                   <>
