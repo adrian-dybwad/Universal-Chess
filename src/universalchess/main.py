@@ -605,6 +605,14 @@ _pending_settings_reload = False  # Flag: web changed settings, rebuild live gam
 # change can be detected; see _player_config_signature.
 _pending_player_rebuild = False
 _active_player_signature: Optional[tuple] = None
+# A board-reset / setup-mode new game reuses the current DisplayManager and its
+# widgets. When a layout-affecting setting changed since the widgets were built
+# (in practice a deferred time-control change that flips timed<->untimed), the
+# reused widgets no longer match the new game. This flag, set when EVENT_NEW_GAME
+# detects that mismatch, defers the layout rebuild (_init_widgets) to the main
+# thread -- widget teardown must not run on the event/subscriber thread. Keeps
+# every new-game start consistent with a full _start_game_mode start.
+_pending_layout_rebuild = False
 # Board-control command pushed from the web app (set up a position / abort the
 # game) over the settings socket. Set on the subscriber thread and applied on
 # the main thread (see _process_pending_board_command), since it rebuilds the
@@ -2046,7 +2054,7 @@ def _start_game_mode(
                                       resume, where moves are replayed AFTER game mode starts.
     """
     global app_state, protocol_manager, display_manager, controller_manager, _is_position_game
-    global _active_player_signature, _pending_player_rebuild
+    global _active_player_signature, _pending_player_rebuild, _pending_layout_rebuild
 
     log.info(f"[App] Transitioning to GAME mode (position_game={is_position_game})")
 
@@ -2085,6 +2093,10 @@ def _start_game_mode(
     # board-reset new game compares against this to detect a settings change.
     _active_player_signature = settings.player_config_signature()
     _pending_player_rebuild = False
+    # A fresh start rebuilds the DisplayManager and its layout from current
+    # settings, so any layout rebuild an interrupted new game had scheduled is
+    # already satisfied here.
+    _pending_layout_rebuild = False
 
     # Player 1 is at the bottom of the board
     # Determine which color each player plays
@@ -2561,6 +2573,7 @@ def _start_game_mode(
     def _on_game_event(event):
         nonlocal _clock_started
         global _switch_to_normal_game, _is_position_game, _pending_player_rebuild
+        global _pending_layout_rebuild
         if event == EVENT_NEW_GAME:
             from universalchess.services.analysis import get_analysis_service
             get_analysis_service().reset()
@@ -2601,9 +2614,18 @@ def _start_game_mode(
                 # engine was changed from the web). Defer a full rebuild to the main
                 # thread so the new game uses the new players/engine. This callback
                 # runs on the controller event thread; game/display teardown must
-                # run on the main thread (mirrors _switch_to_normal_game).
+                # run on the main thread (mirrors _switch_to_normal_game). A full
+                # rebuild also re-lays-out the display, so no separate layout
+                # rebuild is needed in this branch.
                 log.info("[App] New game on board with changed player settings - scheduling player rebuild")
                 _pending_player_rebuild = True
+            elif display_manager.layout_needs_rebuild():
+                # The reused widgets no longer match current settings (the
+                # set_time_control_spec above may have flipped timed<->untimed).
+                # Defer the layout rebuild to the main thread so this new game is
+                # laid out like a full start, regardless of how it began.
+                log.info("[App] New game on board with layout-affecting setting change - scheduling layout rebuild")
+                _pending_layout_rebuild = True
         elif event == EVENT_WHITE_TURN or event == EVENT_BLACK_TURN:
             # Start clock on first turn event (game has truly started)
             # Turn indicator is handled by ChessClockWidget observing ChessGameState directly
@@ -6767,7 +6789,7 @@ def main():
     global running, kill
     global mainloop, relay_mode, protocol_manager, relay_manager, app_state, _args
     global _pending_piece_events, _return_to_positions_menu, _switch_to_normal_game, _menu_manager
-    global _pending_settings_reload, _pending_player_rebuild
+    global _pending_settings_reload, _pending_player_rebuild, _pending_layout_rebuild
     
     try:
         log.info("[Main] Parsing arguments...")
@@ -7516,6 +7538,17 @@ def main():
                         log.info("[App] Rebuilding game with updated player settings (new engine/players)")
                         _cleanup_game()
                         _start_game_mode()
+                    # A board-reset / setup-mode new game reused widgets that no
+                    # longer match a layout-affecting setting changed since they
+                    # were built (e.g. a deferred time-control change that flipped
+                    # timed<->untimed). Rebuild only the layout here on the main
+                    # thread -- lighter than a full game rebuild, and enough since
+                    # the players/engine are unchanged.
+                    elif _pending_layout_rebuild:
+                        _pending_layout_rebuild = False
+                        log.info("[App] Rebuilding display layout for new game (layout-affecting setting changed)")
+                        if display_manager:
+                            display_manager._init_widgets()
                     # Apply a settings change pushed from the web app during a game so
                     # display/sprite toggles take effect live, matching the on-board
                     # display menu. Rebuilt here (main thread) - never from the
@@ -7533,6 +7566,10 @@ def main():
                         from universalchess.state.chess960 import (
                             variant_change_requires_restart,
                         )
+                        from universalchess.state.time_control import (
+                            build_time_control,
+                            time_control_change_requires_reconfigure,
+                        )
                         game_state = get_chess_game()
                         desired_chess960 = bool(_get_settings().game.chess960)
                         if not _is_position_game and variant_change_requires_restart(
@@ -7549,6 +7586,23 @@ def main():
                         else:
                             log.info("[App] Applying web settings change to live display")
                             if display_manager:
+                                # Re-resolve the time control so a timer/delay-mode
+                                # change reaches the live e-paper clock and turn
+                                # indicator, matching the web (which re-fetches
+                                # settings on change). Reconfigure the clock only
+                                # when the control changed and no moves have been
+                                # played; a mid-game change is deferred to the next
+                                # new game so a running clock is never reset (same
+                                # policy as the Chess960 start parameter above).
+                                # Applied before _init_widgets so the rebuilt clock
+                                # widget adopts the new spec (times + timed layout).
+                                desired_tc = build_time_control(_get_settings().game)
+                                if time_control_change_requires_reconfigure(
+                                    display_manager.time_control_spec,
+                                    desired_tc,
+                                    game_state.is_game_in_progress,
+                                ):
+                                    display_manager.set_time_control_spec(desired_tc)
                                 display_manager._init_widgets()
                     elif _pending_board_command is not None:
                         # Web set up a position / aborted while a game was running.

@@ -23,6 +23,7 @@ from universalchess.state.time_control import (
     TimeControl,
     build_time_control,
     list_presets,
+    time_control_change_requires_reconfigure,
 )
 
 
@@ -364,3 +365,55 @@ def test_build_custom_asymmetric_uses_black_fields():
     assert tc.initial_seconds("white") == 300
     assert tc.initial_seconds("black") == 120
     assert tc.increment_after_move("black", 1) == 1
+
+
+# ---------------------------------------------------------------------------
+# Live-reapply predicate: time_control_change_requires_reconfigure
+# ---------------------------------------------------------------------------
+
+_TC_5MIN = TimeControl.sudden_death_minutes(5)
+_TC_10MIN = TimeControl.sudden_death_minutes(10)
+# Same base time as _TC_5MIN but a different delay ("timer") mode -- the exact
+# change the user reports. It must be seen as different so the live clock is
+# reconfigured, even though the displayed minutes are unchanged.
+_TC_5MIN_BRONSTEIN = TimeControl.symmetric(
+    (Stage(0, 300, 0),), delay_seconds=3, delay_mode=DelayMode.BRONSTEIN
+)
+
+
+@pytest.mark.parametrize(
+    "current,desired,game_has_moves,expected",
+    [
+        # No moves + control differs -> reconfigure so the live clock/display
+        # adopts the change made from the web or board menu.
+        (_TC_5MIN, _TC_10MIN, False, True),
+        # No moves + only the delay/"timer" mode differs (same minutes) -> still
+        # reconfigure: this is the reported regression, and value equality on the
+        # frozen dataclass must treat the delay_mode change as different.
+        (_TC_5MIN, _TC_5MIN_BRONSTEIN, False, True),
+        # No moves + control already matches -> nothing to do (avoid needlessly
+        # resetting the seeded clock).
+        (_TC_5MIN, _TC_5MIN, False, False),
+        # Moves played -> never reconfigure, regardless of the change (defer to
+        # the next new game so a running clock is not reset mid-game).
+        (_TC_5MIN, _TC_10MIN, True, False),
+        (_TC_5MIN, _TC_5MIN_BRONSTEIN, True, False),
+        (_TC_5MIN, _TC_5MIN, True, False),
+    ],
+)
+def test_time_control_change_requires_reconfigure(current, desired, game_has_moves, expected):
+    """The live-reapply predicate gates on both control-mismatch and no-moves.
+
+    Why this exists: a time-control change from the web (notably the delay/timer
+    mode) must reach the live e-paper clock, but only when it is safe to reseed
+    the clock -- i.e. no moves have been played. It guards two regressions:
+      1. Dropping the ``game_has_moves`` guard would reset a running clock
+         mid-game (a moves-played row below would flip to True and fail).
+      2. Comparing anything but full value-equality (e.g. only minutes) would
+         miss a delay-mode-only change, leaving the live clock stale -- the
+         (_TC_5MIN, _TC_5MIN_BRONSTEIN, False, True) row fails in that case.
+    """
+    assert (
+        time_control_change_requires_reconfigure(current, desired, game_has_moves)
+        is expected
+    )

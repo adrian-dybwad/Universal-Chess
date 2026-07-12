@@ -201,6 +201,10 @@ class DisplayManager:
         # lazily fetch/show a statement; set via set_coach_selection_callback.
         self._coach_selection_callback = None
         self.setup_status_widget = None
+        # Settings snapshot the current widget layout was built from, set at the
+        # end of a successful _init_widgets. None until the first build; used by
+        # layout_needs_rebuild to detect a layout-affecting settings change.
+        self._layout_signature = None
         
         # Suspend/resume state. The game can be suspended back to the full menu
         # (clock paused, LEDs off) while its managers stay alive; resume() then
@@ -528,6 +532,45 @@ class DisplayManager:
         # king-lift resign or kings-in-center menu is cancelled) re-shows it rather
         # than silently dropping it.
         self._game_state.refresh_alerts()
+
+        # Record the settings this layout was built from so an in-place new game
+        # can tell whether the widgets still match current settings (see
+        # layout_needs_rebuild). Captured after a successful build only.
+        self._layout_signature = self._compute_layout_signature()
+
+    def _compute_layout_signature(self) -> tuple:
+        """Snapshot the settings that determine the built widget layout.
+
+        Covers which widgets exist and how they are sized/laid out: the board /
+        clock / analysis / graph visibility, the notation and text size, and
+        whether the clock is timed (timed vs untimed changes the clock widget's
+        layout and height). Compared against a later recompute to detect a
+        layout-affecting change; excludes purely observed runtime state (times,
+        turn) which the widgets track live.
+        """
+        return (
+            self._show_board,
+            self._show_clock,
+            self._show_analysis,
+            self._show_graph,
+            self._notation,
+            self._text_size,
+            self._time_control_spec.is_timed,
+        )
+
+    def layout_needs_rebuild(self) -> bool:
+        """True when a layout-affecting setting differs from the built widgets.
+
+        The widget layout is fixed when :meth:`_init_widgets` builds it and its
+        signature recorded. A time-control change is deferred to the next new game
+        and applied via :meth:`set_time_control_spec`, which can flip ``is_timed``
+        without recreating the widgets. An in-place new game (``EVENT_NEW_GAME``:
+        board reset or setup-mode adoption) consults this so it rebuilds the
+        layout when -- and only when -- the built widgets no longer match the
+        current settings, keeping every new-game start consistent with a full
+        ``_start_game_mode`` start regardless of how the game began.
+        """
+        return self._layout_signature != self._compute_layout_signature()
     
     def set_key_callback(self, callback: callable):
         """Set the key callback for routing keys during normal play.
@@ -918,6 +961,16 @@ class DisplayManager:
         self._clock.stop()
         self._sync_clock_refresh_mode()
     
+    @property
+    def time_control_spec(self) -> TimeControl:
+        """The time control the live clock and clock widget are currently built from.
+
+        Read by the settings-apply path to compare against freshly resolved
+        settings and decide whether to reconfigure the live clock (see
+        time_control_change_requires_reconfigure).
+        """
+        return self._time_control_spec
+
     def set_time_control_spec(self, time_control_spec: TimeControl) -> None:
         """Re-resolve the active time control for an in-place new game.
 

@@ -124,3 +124,72 @@ def test_set_time_control_spec_updates_cached_spec(display_manager_with_real_clo
     dm.set_time_control_spec(new_spec)
 
     assert dm._time_control_spec is new_spec
+
+
+def test_time_control_spec_property_exposes_current_control(display_manager_with_real_clock):
+    """The public getter must return the control the widgets are built from.
+
+    The settings-apply path compares the live control against freshly resolved
+    settings to decide whether to reconfigure the clock. It reads this property
+    rather than the private field, so the getter must track set_time_control_spec.
+    If it returned a stale value the change-detection would misfire (reconfigure
+    when nothing changed, or skip a real change).
+    """
+    dm, _service = display_manager_with_real_clock
+
+    assert dm.time_control_spec == TimeControl.sudden_death_minutes(5)
+
+    new_spec = TimeControl.fischer_minutes(3, 2)
+    dm.set_time_control_spec(new_spec)
+    assert dm.time_control_spec is new_spec
+
+
+def test_layout_needs_rebuild_false_when_settings_unchanged(display_manager_with_real_clock):
+    """A new game with no layout-affecting change must not rebuild the layout.
+
+    Guards the common path: an in-place new game (board reset) with the same
+    settings must reuse the existing widgets, avoiding a needless full-screen
+    e-paper refresh. If the signature compared unequal here, every new game would
+    flash a rebuild.
+    """
+    dm, _service = display_manager_with_real_clock
+    # Simulate a completed _init_widgets build (patched in the fixture) by
+    # recording the signature the built widgets would carry.
+    dm._layout_signature = dm._compute_layout_signature()
+
+    assert dm.layout_needs_rebuild() is False
+
+
+def test_layout_needs_rebuild_true_when_timed_mode_flips(display_manager_with_real_clock):
+    """Flipping timed<->untimed via a deferred change must schedule a rebuild.
+
+    This is the reported gap: a time-control change deferred while a game was in
+    progress is applied at the next new game via set_time_control_spec, which can
+    flip is_timed without recreating the widgets. The clock widget's timed/untimed
+    layout and height are fixed at build time, so the built layout no longer
+    matches. If is_timed were excluded from the signature this would return False
+    and the untimed layout would never appear until a full game start.
+    """
+    dm, _service = display_manager_with_real_clock
+    dm._layout_signature = dm._compute_layout_signature()  # built timed (5 min)
+
+    dm.set_time_control_spec(TimeControl.sudden_death_minutes(0))  # untimed
+
+    assert dm.layout_needs_rebuild() is True
+
+
+def test_layout_needs_rebuild_false_for_timed_to_timed_change(display_manager_with_real_clock):
+    """A timed->timed control change must NOT force a layout rebuild.
+
+    Changing minutes/increment/delay mode keeps the clock timed, so the widget
+    layout is unchanged -- times and increment/delay annotations update live from
+    the reconfigured clock state. Rebuilding here would be a needless refresh; if
+    the signature keyed on the full control (not just is_timed) this would return
+    True and over-rebuild on every clock tweak.
+    """
+    dm, _service = display_manager_with_real_clock
+    dm._layout_signature = dm._compute_layout_signature()  # built timed (5 min)
+
+    dm.set_time_control_spec(TimeControl.fischer_minutes(10, 5))  # still timed
+
+    assert dm.layout_needs_rebuild() is False

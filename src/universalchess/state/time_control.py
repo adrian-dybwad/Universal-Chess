@@ -400,3 +400,30 @@ def build_time_control(settings) -> TimeControl:
     if preset is not None:
         return preset.time_control
     return TimeControl.sudden_death_minutes(int(getattr(settings, "time_control", 0)))
+
+
+def time_control_change_requires_reconfigure(
+    current: TimeControl, desired: TimeControl, game_has_moves: bool
+) -> bool:
+    """Decide whether a settings change should re-apply the time control live.
+
+    The time control (base time, increment, and delay/"timer" mode) is resolved
+    into the live clock once at game start. When it is changed from the web or
+    board menu, the change should reach the running e-paper clock/turn widgets
+    only when it is safe to reseed the clock:
+
+    - the desired control differs from the one the live clock is using, and
+    - no moves have been played yet.
+
+    When moves exist the change is deferred to the next new game rather than
+    resetting a running clock mid-game; the caller must not reconfigure in that
+    case. This mirrors :func:`variant_change_requires_restart` for the Chess960
+    start parameter -- both are game-setup parameters applied live only before the
+    first move. ``TimeControl`` is a frozen dataclass, so ``!=`` is full
+    value-equality: a delay-mode-only change (same minutes) is correctly seen as
+    different. Kept a pure predicate so the settings-apply path stays a thin
+    wiring layer over ``DisplayManager.set_time_control_spec``.
+    """
+    if game_has_moves:
+        return False
+    return current != desired
