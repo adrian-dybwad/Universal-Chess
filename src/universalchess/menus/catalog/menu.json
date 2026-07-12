@@ -1616,6 +1616,39 @@
       "icon": { "true": "checkbox_checked", "false": "checkbox_empty" }
     },
     {
+      "id": "settings.display.web",
+      "type": "menu",
+      "label": "Display",
+      "platforms": ["web"],
+      "children": ["group.display.epaper", "group.display.pieces", "group.display.leds"]
+    },
+    {
+      "id": "group.display.epaper",
+      "type": "group",
+      "label": "E-Paper Display",
+      "platforms": ["web"],
+      "children": [
+        "field.display.text_size",
+        "field.display.show_clock",
+        "field.display.show_analysis",
+        "field.display.show_graph"
+      ]
+    },
+    {
+      "id": "group.display.pieces",
+      "type": "group",
+      "label": "Piece Sprites",
+      "platforms": ["web"],
+      "children": ["field.display.sprites"]
+    },
+    {
+      "id": "group.display.leds",
+      "type": "group",
+      "label": "LEDs",
+      "platforms": ["web"],
+      "children": ["field.display.led_brightness", "field.display.pegasus_override_brightness"]
+    },
+    {
       "id": "field.sound.enabled",
       "type": "toggle",
       "label": "Sound Enabled",

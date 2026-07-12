@@ -5,6 +5,7 @@ import {
   conditionMet,
   isVisible,
   isEnabled,
+  isRenderable,
   buildSections,
 } from './engine';
 
@@ -105,6 +106,25 @@ describe('isVisible / isEnabled', () => {
     };
     expect(isEnabled(agentRow, g)).toBe(false); // coach is off -> disabled
     expect(isEnabled({ id: 'x', type: 'toggle' }, g)).toBe(true); // no gate -> enabled
+  });
+});
+
+describe('isRenderable', () => {
+  // Guards which node types become web controls. The subtle case is `dynamic`:
+  // it is a value control (renderable) only with an itemBind (a radio that
+  // writes a value, e.g. the sprite picker); an itemAction-only dynamic (a
+  // scanned-network list) is an action list, not a field, and must not render as
+  // a control. A regression here either drops the sprite picker or renders a
+  // bogus control for an action list.
+  it('renders standard field types and a dynamic node only when it has itemBind', () => {
+    expect(isRenderable({ id: 't', type: 'toggle' })).toBe(true);
+    expect(isRenderable({ id: 's', type: 'select' })).toBe(true);
+    expect(isRenderable({ id: 'r', type: 'range' })).toBe(true);
+    expect(isRenderable({ id: 'a', type: 'action' })).toBe(false);
+    expect(
+      isRenderable({ id: 'd', type: 'dynamic', itemBind: { store: 'game', key: 'chess_sprites' } }),
+    ).toBe(true);
+    expect(isRenderable({ id: 'd2', type: 'dynamic', itemAction: 'wifi_connect' })).toBe(false);
   });
 });
 

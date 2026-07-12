@@ -26,7 +26,11 @@ interface MenuContainerProps {
 }
 
 function renderRow(node: MenuNode, ctx: WebMenuContext) {
-  const bind = node.bind;
+  // A `dynamic` value control (e.g. the sprite picker) binds through `itemBind`
+  // -- the value written when one of its provider rows is chosen -- whereas
+  // ordinary fields bind through `bind`. Fall back accordingly so both render
+  // from one path.
+  const bind = node.bind ?? (node.type === 'dynamic' ? node.itemBind : undefined);
   // A renderable leaf without a bind cannot read/write a value; skip it rather
   // than render a control wired to nothing (the engine only yields renderable
   // nodes, but a mis-authored node without a bind should fail visibly-absent

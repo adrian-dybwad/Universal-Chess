@@ -13,8 +13,8 @@ import { LoginDialog } from '../components/LoginDialog';
 import { MenuIcon } from '../components/MenuIcon';
 import { ConnectivityPanel } from './Connectivity';
 import type { EngineDefinition, EngineRef, EngineRefsResponse } from '../types/game';
-import type { MenuCatalog, MenuOption, MenuCondition, MenuNode } from '../types/menuCatalog';
-import { fieldById, fieldsForSection } from '../types/menuCatalog';
+import type { MenuCatalog, MenuOption, MenuNode } from '../types/menuCatalog';
+import { fieldById } from '../types/menuCatalog';
 import { apiFetch, buildApiUrl, getStoredCredentials, encodeBasicAuth, storeCredentials, isCrossOriginApi } from '../utils/api';
 import { formatDateTime } from '../utils/datetime';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -320,15 +320,6 @@ function parseThinkTime(value: string | undefined): number {
 const COACH_MULTIPV_MIN = 1;
 const COACH_MULTIPV_MAX = 5;
 const COACH_MULTIPV_DEFAULT = 1;
-
-// Relative font multipliers for the e-paper Text Size setting, mirrored from the
-// board's single source of truth (src/universalchess/epaper/text_scale.py _SCALE)
-// so each option's preview shows the same proportion the display actually uses.
-// Keep these in sync with that file; medium is the identity factor.
-const TEXT_SIZE_SCALE: Record<string, number> = { small: 0.8, medium: 1.0, large: 1.25 };
-// Base (medium) pixel size for the preview sample; small/large derive from it via
-// TEXT_SIZE_SCALE so the three previews sit in the board's relative proportions.
-const TEXT_SIZE_PREVIEW_BASE_PX = 16;
 
 /** Parse a persisted coach_multipv string into a clamped integer value. */
 function parseCoachMultipv(value: string | undefined): number {
@@ -1682,7 +1673,6 @@ export function Settings() {
   // are authored option sets the menu engine resolves by name from the catalog,
   // so they no longer need per-list consts here.
   const timeControlPresetOptions = optionSet('time_control_presets');
-  const textSizeOptions = optionSet('text_size');
   // Agent selector options (Game tab): every *configured* registered agent, built
   // from the live /api/agents list so a user-dropped agent module appears without
   // any catalog change. Only agents with a key and all required settings are
@@ -1738,35 +1728,6 @@ export function Settings() {
   // a catalog gap is visible rather than silently blank (guarded by a test).
   const fieldLabel = (id: string): string => fieldById(catalog, id)?.label ?? id;
   const fieldHelp = (id: string): string => fieldById(catalog, id)?.help ?? '';
-
-  // Evaluate a catalog visibleWhen/enabledWhen condition against the current form
-  // state. The condition's store maps to a FormSettings section (e.g. "game"),
-  // so row gating is driven by the same catalog nodes the board engine uses
-  // rather than hand-coded per control.
-  const boundValue = (store: string, key: string): FieldValue | undefined => {
-    // The catalog models analysis under its own store (analysis.mode/engine),
-    // but the web persists both in the game section (analysis_mode/_engine).
-    // Translate here -- the web's equivalent of the board adapter's analysis
-    // store mapping -- so catalog conditions referencing analysis.* resolve
-    // against the real form state instead of an absent section (which would
-    // read undefined and wrongly fail every gate).
-    if (store === 'analysis') {
-      if (key === 'mode') return formSettings.game.analysis_mode;
-      if (key === 'engine') return formSettings.game.analysis_engine;
-      return undefined;
-    }
-    const section = (formSettings as unknown as Record<string, Record<string, FieldValue>>)[store];
-    return section ? section[key] : undefined;
-  };
-  const conditionMet = (cond?: MenuCondition): boolean => {
-    if (!cond) return true;
-    // Compound: every subcondition must hold (mirrors the board engine's allOf).
-    if (cond.allOf) return cond.allOf.every((sub) => conditionMet(sub));
-    const current = boundValue(cond.store ?? '', cond.key ?? '');
-    if (cond.equals !== undefined) return current === cond.equals;
-    if (cond.in) return cond.in.includes(String(current));
-    return true;
-  };
 
   // The player Engine picker is an imperative `action` on the board that renders
   // as a plain select on the web via the node's webType. (The analysis engine
@@ -1836,6 +1797,20 @@ export function Settings() {
   gameMenuCtx.registerProvider('time_control_presets', () => timeControlPresetOptions);
   gameMenuCtx.registerProvider('coaches', () => coachOptions);
   gameMenuCtx.registerProvider('agents_choices', () => agentChoiceOptions);
+  // Piece-sprite picker (Display tab): the board's sprite list as image options,
+  // so field.display.sprites renders as an image radio grid straight from the
+  // catalog (CatalogField picks the image presentation from option.image). The
+  // label is the humanized id; the image is the served sheet preview.
+  gameMenuCtx.registerProvider('sprite_sheets', () =>
+    spriteSheets.map((id) => ({
+      value: id,
+      label: id
+        .split('_')
+        .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+        .join(' '),
+      image: buildApiUrl(`/api/sprites/${id}/image`),
+    })),
+  );
 
   // Sound tab context: a single `sound` store over formSettings.sound. Every
   // sound row (master + per-category toggles) binds here, so the tab is rendered
@@ -2272,133 +2247,15 @@ export function Settings() {
             <h2 className="page-title">{t('settingsPage.display.title')}</h2>
             <p className="text-muted mb-6">{t('settingsPage.display.description')}</p>
 
-            {/* The visibility toggles render from the catalog's display section
-                (the same nodes as the board's Display menu). Both disable while
-                Live Analysis (Game tab) is off via the nodes' enabledWhen on
-                analysis.mode, since the analysis widget they control never
-                renders then; Show Graph additionally requires Show Analysis
-                (allOf) -- all gating driven by the catalog, not hand-coded. */}
-            <Card className="mb-6">
-              <CardHeader title="E-Paper Display" />
-              {/* Text Size is a visual pick: each option renders a sample line at
-                  the same relative scale the e-paper uses (TEXT_SIZE_SCALE) so the
-                  choice can be made by eye rather than guessing from a label. */}
-              <FormRow
-                label={fieldLabel('field.display.text_size')}
-                help={fieldHelp('field.display.text_size')}
-              >
-                <div
-                  className="text-size-options"
-                  role="radiogroup"
-                  aria-label={fieldLabel('field.display.text_size')}
-                >
-                  {textSizeOptions.map((opt) => {
-                    const selected = formSettings.game.text_size === opt.value;
-                    const scale = TEXT_SIZE_SCALE[opt.value] ?? 1;
-                    return (
-                      <label
-                        key={opt.value}
-                        className={`text-size-option${selected ? ' text-size-option--selected' : ''}`}
-                      >
-                        <input
-                          type="radio"
-                          name="text_size"
-                          value={opt.value}
-                          checked={selected}
-                          onChange={() => updateFormSettings('game', { text_size: opt.value })}
-                        />
-                        <span className="text-size-option-body">
-                          <span className="text-size-option-label">{opt.label}</span>
-                          <span
-                            className="text-size-option-sample"
-                            style={{ fontSize: `${Math.round(TEXT_SIZE_PREVIEW_BASE_PX * scale)}px` }}
-                          >
-                            12. Nf3 Nc6 - knight eyes d5
-                          </span>
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </FormRow>
-              {fieldsForSection(catalog, 'display')
-                .filter((node) => node.type === 'toggle')
-                // LED settings live in the LEDs card below, not among the e-paper
-                // widget-visibility toggles, even though they share the display section.
-                .filter((node) => node.id !== 'field.display.pegasus_override_brightness')
-                .map((node) => {
-                  const key = node.bind?.key as keyof FormSettings['game'];
-                  return (
-                    <CatalogField
-                      key={node.id}
-                      node={node}
-                      value={formSettings.game[key]}
-                      disabled={!conditionMet(node.enabledWhen)}
-                      onChange={(v) =>
-                        updateFormSettings('game', { [key]: v } as Partial<FormSettings['game']>)
-                      }
-                    />
-                  );
-                })}
-            </Card>
-
-            {/* Sprite sheet selects the piece artwork drawn on the board widget.
-                Mirrors the board's Display -> Board -> Sprites list; each option
-                renders the full sheet (every piece, both square rows) served by
-                /api/sprites/<id>/image so the choice is visual. */}
-            <Card className="mb-6">
-              <CardHeader title={fieldLabel('field.display.sprites')} />
-              <p className="text-muted mb-4" style={{ fontSize: '0.875rem' }}>
-                {fieldHelp('field.display.sprites')}
-              </p>
-              <div className="sprite-options" role="radiogroup" aria-label="Piece sprites">
-                {spriteSheets.map((id) => {
-                  const selected = formSettings.game.chess_sprites === id;
-                  const label = id
-                    .split('_')
-                    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
-                    .join(' ');
-                  return (
-                    <label
-                      key={id}
-                      className={`sprite-option${selected ? ' sprite-option--selected' : ''}`}
-                    >
-                      <input
-                        type="radio"
-                        name="chess_sprites"
-                        value={id}
-                        checked={selected}
-                        onChange={() => updateFormSettings('game', { chess_sprites: id })}
-                      />
-                      <img
-                        className="sprite-option-image"
-                        src={buildApiUrl(`/api/sprites/${id}/image`)}
-                        alt={`${label} sprite sheet`}
-                        loading="lazy"
-                      />
-                      <span className="sprite-option-label">{label}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            </Card>
-
-            <Card className="mb-6">
-              <CardHeader title="LEDs" />
-              <CatalogField
-                node={fieldById(catalog, 'field.display.led_brightness')!}
-                value={formSettings.game.led_brightness}
-                help={`Level: ${formSettings.game.led_brightness}`}
-                onChange={(v) => updateFormSettings('game', { led_brightness: Number(v) })}
-              />
-              <CatalogField
-                node={fieldById(catalog, 'field.display.pegasus_override_brightness')!}
-                value={formSettings.game.pegasus_override_brightness}
-                onChange={(v) =>
-                  updateFormSettings('game', { pegasus_override_brightness: Boolean(v) })
-                }
-              />
-            </Card>
+            {/* The whole Display tab renders from the catalog's web-only
+                settings.display.web container (E-Paper Display, Piece Sprites,
+                LEDs cards). gameMenuCtx supplies the shared game/analysis stores
+                and the sprite_sheets image provider: Text Size and Sprites use
+                CatalogField's option-metadata presentations (font_size -> scaled
+                text preview; image -> image radio grid), and the visibility
+                toggles disable via their catalog enabledWhen on analysis.mode
+                (Show Graph additionally requires Show Analysis). */}
+            <MenuContainer catalog={catalog} containerId="settings.display.web" ctx={gameMenuCtx} />
 
             {/* E-paper waveform/refresh tuning. Lives under Display (not System)
                 because it configures the display hardware; the card self-gates

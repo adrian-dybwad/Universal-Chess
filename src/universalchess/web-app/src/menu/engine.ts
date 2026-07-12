@@ -83,9 +83,19 @@ export function isEnabled(node: MenuNode, get: MenuValueGetter): boolean {
   return true;
 }
 
-/** Whether a leaf node renders as a web control. */
+/**
+ * Whether a leaf node renders as a web control.
+ *
+ * A `dynamic` node is a provider-backed list: on the web it renders as a value
+ * control (a radio/select over its provider rows) ONLY when it carries an
+ * `itemBind` -- i.e. selecting a row writes a value (e.g. the piece-sprite
+ * picker). A `dynamic` node backed by an `itemAction` (e.g. a scanned Wi-Fi
+ * list, where a row triggers a connect) is not a value control and is not
+ * rendered here.
+ */
 export function isRenderable(node: MenuNode): boolean {
   const effective = node.webType ?? node.type;
+  if (effective === 'dynamic') return Boolean(node.itemBind);
   return RENDERABLE_TYPES.has(effective);
 }
 
