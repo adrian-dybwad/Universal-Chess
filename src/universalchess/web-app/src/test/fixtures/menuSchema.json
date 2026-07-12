@@ -5417,7 +5417,6 @@
       ],
       "children": [
         "group.display.epaper",
-        "group.display.pieces",
         "group.display.leds"
       ]
     },
@@ -5430,20 +5429,10 @@
       ],
       "children": [
         "field.display.text_size",
+        "field.display.sprites",
         "field.display.show_clock",
         "field.display.show_analysis",
         "field.display.show_graph"
-      ]
-    },
-    {
-      "id": "group.display.pieces",
-      "type": "group",
-      "label": "Piece Sprites",
-      "platforms": [
-        "web"
-      ],
-      "children": [
-        "field.display.sprites"
       ]
     },
     {

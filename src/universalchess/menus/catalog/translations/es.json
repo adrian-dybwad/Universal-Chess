@@ -448,7 +448,6 @@
     "group.game.coach": { "label": "Entrenador" },
     "group.game.history": { "label": "Historial de jugadas" },
     "group.display.epaper": { "label": "Pantalla de tinta electrónica" },
-    "group.display.pieces": { "label": "Sprites de piezas" },
     "group.display.leds": { "label": "LEDs" },
     "agents.list.items": {
       "help": "Selecciona un agente para configurar su clave API, modelo y endpoint."
