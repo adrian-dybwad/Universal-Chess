@@ -25,7 +25,13 @@ interface MenuContainerProps {
   ctx: WebMenuContext;
 }
 
-function renderRow(node: MenuNode, ctx: WebMenuContext) {
+/**
+ * Render one catalog leaf as its web control, wiring value/options/gating through
+ * the context. Exported so a page that supplies its own card shell (e.g. the
+ * Players tab's per-slot cards) renders rows identically to MenuContainer instead
+ * of hand-composing CatalogFields.
+ */
+export function renderCatalogRow(node: MenuNode, ctx: WebMenuContext) {
   // A `dynamic` value control (e.g. the sprite picker) binds through `itemBind`
   // -- the value written when one of its provider rows is chosen -- whereas
   // ordinary fields bind through `bind`. Fall back accordingly so both render
@@ -53,7 +59,7 @@ export function MenuContainer({ catalog, containerId, ctx }: MenuContainerProps)
   return (
     <>
       {sections.map((section, index) => {
-        const rows = section.rows.map((node) => renderRow(node, ctx));
+        const rows = section.rows.map((node) => renderCatalogRow(node, ctx));
         if (section.group) {
           return (
             <Card key={section.group.id} className="mb-6">

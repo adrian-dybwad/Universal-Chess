@@ -18,8 +18,10 @@ import menuSchemaFixture from '../test/fixtures/menuSchema.json';
  * FormRow label is the observable signal (FormRow renders it as plain text).
  *
  * How a regression manifests: the Name field reappears for a non-human slot, so
- * the count of "Player Name" labels exceeds the number of human slots, or the
- * non-human slot's "Player N" placeholder input is present again.
+ * the count of "Player Name" fields exceeds the number of human slots.
+ *
+ * The Name field is the catalog's field.player.name rendered from
+ * settings.player_detail (accessible name "Player Name"), queried by label.
  */
 
 const menuSchema: unknown = menuSchemaFixture;
@@ -118,35 +120,31 @@ describe('Player Name field is collected for human players only', () => {
   });
 
   it('shows the Name field for a human slot but not for an engine slot', async () => {
-    // P1 human keeps an editable "Player 1" name; P2 engine has no Name field.
-    // A regression (Name leaking onto the engine) shows as a second "Player Name"
-    // label or a "Player 2" name input appearing below.
+    // P1 human keeps a Name field; P2 engine has none. A regression (Name leaking
+    // onto the engine) shows as a second "Player Name" field, so the count is 2.
     mockFetch({ type: 'human' }, { type: 'engine' });
     renderSettings();
-    await waitFor(() => expect(screen.getByPlaceholderText('Player 1')).toBeInTheDocument());
-    expect(screen.queryByPlaceholderText('Player 2')).not.toBeInTheDocument();
-    expect(screen.getAllByText('Player Name')).toHaveLength(1);
+    await waitFor(() => expect(screen.getByLabelText('Player Name')).toBeInTheDocument());
+    expect(screen.getAllByLabelText('Player Name')).toHaveLength(1);
   });
 
   it('shows no Name field for an online (Lichess) slot', async () => {
-    // P1 Lichess carries its account identity -> no Name field; P2 human keeps
-    // its "Player 2" name. A regression shows as a "Player 1" name input for the
-    // Lichess slot or a second "Player Name" label.
+    // P1 Lichess carries its account identity -> no Name field; P2 human keeps its
+    // Name. A regression shows as a second "Player Name" field for the Lichess slot.
     mockFetch({ type: 'lichess' }, { type: 'human' });
     renderSettings();
-    await waitFor(() => expect(screen.getByPlaceholderText('Player 2')).toBeInTheDocument());
-    expect(screen.queryByPlaceholderText('Player 1')).not.toBeInTheDocument();
-    expect(screen.getAllByText('Player Name')).toHaveLength(1);
+    await waitFor(() => expect(screen.getByLabelText('Player Name')).toBeInTheDocument());
+    expect(screen.getAllByLabelText('Player Name')).toHaveLength(1);
+    // The Lichess slot shows the Account picker in place of a Name field.
+    expect(screen.getByLabelText('Account')).toBeInTheDocument();
   });
 
   it('shows a Name field for each of two human slots', async () => {
     // Both human -> both cards collect a name. Guards that the human gate did not
-    // over-restrict (e.g. only ever rendering one card's Name). A regression
-    // shows as fewer than two "Player Name" labels.
+    // over-restrict (e.g. only ever rendering one card's Name). A regression shows
+    // as fewer than two "Player Name" fields.
     mockFetch({ type: 'human' }, { type: 'human' });
     renderSettings();
-    await waitFor(() => expect(screen.getByPlaceholderText('Player 1')).toBeInTheDocument());
-    expect(screen.getByPlaceholderText('Player 2')).toBeInTheDocument();
-    expect(screen.getAllByText('Player Name')).toHaveLength(2);
+    await waitFor(() => expect(screen.getAllByLabelText('Player Name')).toHaveLength(2));
   });
 });

@@ -3,16 +3,16 @@ import type { ReactNode } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button, Card, CardHeader, FormRow, Input, Select, Toggle, Badge, ProgressBar } from '../components/ui';
-import { CatalogField } from '../components/CatalogField';
 import { WebMenuContext } from '../menu/context';
-import { MenuContainer } from '../menu/MenuContainer';
+import { MenuContainer, renderCatalogRow } from '../menu/MenuContainer';
+import { buildSections } from '../menu/engine';
 import { EngineProfileEditor } from '../components/EngineProfileEditor';
 import type { FieldValue } from '../components/CatalogField';
 import { LoginDialog } from '../components/LoginDialog';
 import { MenuIcon } from '../components/MenuIcon';
 import { ConnectivityPanel } from './Connectivity';
 import type { EngineDefinition, EngineRef, EngineRefsResponse } from '../types/game';
-import type { MenuCatalog, MenuOption, MenuNode } from '../types/menuCatalog';
+import type { MenuCatalog, MenuOption } from '../types/menuCatalog';
 import { fieldById } from '../types/menuCatalog';
 import { apiFetch, buildApiUrl, getStoredCredentials, encodeBasicAuth, storeCredentials, isCrossOriginApi } from '../utils/api';
 import { formatDateTime } from '../utils/datetime';
@@ -1625,52 +1625,14 @@ export function Settings() {
   };
 
   // Online account types from the catalog (a player type is "online" iff it has
-  // a matching accountTypes entry). Drives the per-player account picker below.
+  // a matching accountTypes entry). Backs the per-slot `player_accounts` provider
+  // (below), which the catalog's field.player.account renders as its select.
   // A player's PGN name is not collected for online (or engine) types -- online
   // players carry their own account identity and engines auto-name -- so the Name
   // field, and any account-name defaulting, applies to human players only.
   const accountTypes = catalog?.accountTypes ?? [];
   const isOnlineType = (type: string): boolean => accountTypes.some((t) => t.id === type);
-  const accountTypeLabel = (type: string): string =>
-    accountTypes.find((t) => t.id === type)?.label ?? type;
   const accountsForType = (type: string): AccountRecord[] => accounts.filter((a) => a.type === type);
-
-  // Account picker for an online player slot: a select scoped to accounts of the
-  // matching type (so a Lichess slot can only choose a Lichess account). Empty
-  // value means "default account". Offline types render nothing; an online type
-  // with no accounts yet points the user to where they are added.
-  const renderAccountPicker = (playerKey: 'player1' | 'player2') => {
-    const ps = formSettings[playerKey];
-    if (!isOnlineType(ps.type)) return null;
-    const list = accountsForType(ps.type);
-    const label = accountTypeLabel(ps.type);
-    if (list.length === 0) {
-      return (
-        <p className="text-muted" style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
-          No {label} accounts yet. Add one in Connectivity → Accounts.
-        </p>
-      );
-    }
-    // One online account may not play both sides: drop the account the other
-    // slot resolves to (and "Default account" when it would resolve to the same
-    // one), so the colliding option never appears here -- the same exclusion the
-    // board picker applies via selectable_accounts_for_slot.
-    const other = formSettings[playerKey === 'player1' ? 'player2' : 'player1'];
-    const choices = selectableAccountsForSlot(list, other.type === ps.type, other.account);
-    return (
-      <FormRow label="Account" help={`Which ${label} account this player uses`}>
-        <Select
-          aria-label="Account"
-          value={ps.account}
-          options={[
-            ...(choices.defaultAllowed ? [{ value: '', label: 'Default account' }] : []),
-            ...choices.accounts.map((a) => ({ value: a.id, label: a.identity })),
-          ]}
-          onChange={(e) => updateFormSettings(playerKey, { account: e.target.value })}
-        />
-      </FormRow>
-    );
-  };
 
   // Tabs are the catalog sections this page owns, rendered in the page's declared
   // order. Labels and icons come from the catalog; SETTINGS_TAB_IDS only selects
@@ -1681,9 +1643,6 @@ export function Settings() {
   });
 
   const optionSet = (name: string): MenuOption[] => catalog.optionSets[name] ?? [];
-  const playerTypeOptions = optionSet('player_type');
-  const handBrainModeOptions = optionSet('hand_brain_mode');
-  const thinkTimeOptions = optionSet('think_time');
   // The enhanced-clock preset list is generated server-side from the Python
   // preset registry (injected into /api/menu-schema) so it stays in lockstep
   // with the board. It is exposed to the Game tab through the `time_control_presets`
@@ -1746,34 +1705,6 @@ export function Settings() {
   // a catalog gap is visible rather than silently blank (guarded by a test).
   const fieldLabel = (id: string): string => fieldById(catalog, id)?.label ?? id;
   const fieldHelp = (id: string): string => fieldById(catalog, id)?.help ?? '';
-
-  // The player Engine picker is an imperative `action` on the board that renders
-  // as a plain select on the web via the node's webType. (The analysis engine
-  // select is now rendered by the Game MenuContainer via the `installed_engines`
-  // provider, so it no longer needs a hand-referenced node here.)
-  const playerEngineNode = fieldById(catalog, 'field.player.engine')!;
-
-  // The player strength control is the section select the board also renders:
-  // it picks which engine profile/level (persisted as the player's `elo`) is
-  // applied. Editing those profiles lives solely in the Engines tab
-  // ("Configure profiles"); the Players tab used to embed a second, less-capable
-  // copy of that editor, which duplicated the UCI-schema probe/save flow.
-  const playerEloNode = fieldById(catalog, 'field.player.elo')!;
-
-  // Resolve the runtime option list a provider-backed select renders. The
-  // catalog names the provider; the data is runtime and read from the same
-  // backend the board uses (installed engines / per-engine levels). `engine`
-  // scopes the per-engine level list -- the only context a provider needs here.
-  const providerOptions = (node: MenuNode, engine?: string): MenuOption[] => {
-    switch (node.provider) {
-      case 'installed_engines':
-        return engineOptions;
-      case 'engine_levels':
-        return engineLevels[engine ?? ''] ?? [{ value: 'Default', label: 'Default' }];
-      default:
-        return [];
-    }
-  };
 
   // Coach persona options for the provider-backed `coaches` select: Disabled +
   // Auto + every registered coach (name/elo/style). Same roster the board renders
@@ -1882,6 +1813,79 @@ export function Settings() {
   );
   systemMenuCtx.registerProvider('timezones', () => optionSet('timezones'));
 
+  // Per-slot Players context: each card is rendered from the shared catalog
+  // container `settings.player_detail` (the same nodes the board renders), so the
+  // web no longer hand-composes one CatalogField per player field. One context is
+  // built per slot because the slot is the store scope -- the `player` store maps
+  // the catalog's player.* keys onto that slot's form state, and the providers
+  // (installed engines, per-engine levels, and the slot's account list) close over
+  // the slot. Rebuilt each render so gating (visibleWhen/enabledWhen) tracks edits.
+  const buildPlayerCtx = (playerKey: 'player1' | 'player2'): WebMenuContext => {
+    const ctx = new WebMenuContext(optionSet);
+    ctx.registerStore(
+      'player',
+      (key) => (formSettings[playerKey] as unknown as Record<string, FieldValue>)[key],
+      (key, value) => {
+        // Changing the engine resets the strength to Default: an engine's levels
+        // are engine-specific, so carrying the old selection to a new engine would
+        // bind a level it does not have. Think Time is stored as a number.
+        if (key === 'engine')
+          updateFormSettings(playerKey, { engine: String(value), elo: 'Default' });
+        else if (key === 'think_time')
+          updateFormSettings(playerKey, { think_time: parseThinkTime(String(value)) });
+        else
+          updateFormSettings(playerKey, { [key]: value } as unknown as Partial<PlayerSettings>);
+      },
+    );
+    ctx.registerProvider('installed_engines', () => engineOptions);
+    ctx.registerProvider(
+      'engine_levels',
+      () =>
+        engineLevels[formSettings[playerKey].engine] ?? [{ value: 'Default', label: 'Default' }],
+    );
+    // Account options for this slot: "Default account" plus each saved account of
+    // the slot's online type, with the one-account-per-side exclusion applied (the
+    // account the other slot resolves to is dropped, and Default withheld when it
+    // would resolve to that same account) -- the web twin of the board's
+    // player_accounts provider. Non-online types get no rows, so the catalog's
+    // field.player.account (visibleWhen type == lichess) renders nothing.
+    ctx.registerProvider('player_accounts', () => {
+      const ps = formSettings[playerKey];
+      if (!isOnlineType(ps.type)) return [];
+      const list = accountsForType(ps.type);
+      const other = formSettings[playerKey === 'player1' ? 'player2' : 'player1'];
+      const choices = selectableAccountsForSlot(list, other.type === ps.type, other.account);
+      return [
+        ...(choices.defaultAllowed ? [{ value: '', label: 'Default account' }] : []),
+        ...choices.accounts.map((a) => ({ value: a.id, label: a.identity })),
+      ];
+    });
+    return ctx;
+  };
+
+  // One player card: the catalog-driven fields (from settings.player_detail, in
+  // the board's order) inside the slot's Card, plus the human-only analysis-engine
+  // hint (the Hand+Brain explainer is a separate card rendered once, below).
+  const renderPlayerCard = (playerKey: 'player1' | 'player2', title: string) => {
+    const ctx = buildPlayerCtx(playerKey);
+    const rows = buildSections(catalog, 'settings.player_detail', ctx.get).flatMap((section) =>
+      section.rows.map((node) => renderCatalogRow(node, ctx)),
+    );
+    return (
+      <Card className="mb-6">
+        <CardHeader title={title} />
+        {rows}
+        {formSettings[playerKey].type === 'human' && (
+          <p className="text-muted" style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
+            Hints will use{' '}
+            <strong>{getEngineDisplayName(formSettings.game.analysis_engine || 'stockfish')}</strong>{' '}
+            (configured in Game Settings → Analysis Engine)
+          </p>
+        )}
+      </Card>
+    );
+  };
+
   return (
     <>
       <LoginDialog
@@ -1919,134 +1923,11 @@ export function Settings() {
             <h2 className="page-title">{t('settingsPage.players.title')}</h2>
             <p className="text-muted mb-6">{t('settingsPage.players.description')}</p>
 
-            {/* Player 1 */}
-            <Card className="mb-6">
-              <CardHeader title="Player 1 (White by default)" />
-                
-                <CatalogField
-                  node={fieldById(catalog, 'field.player.type')!}
-                  value={formSettings.player1.type}
-                  options={playerTypeOptions}
-                  onChange={(v) => updateFormSettings('player1', { type: String(v) })}
-                />
-
-                {renderAccountPicker('player1')}
-
-                {/* Name is collected for human players only (matching the board's
-                    field.player.name visibleWhen). Engines auto-name from the
-                    engine + strength label, and online players carry their own
-                    account identity, so neither needs an editable PGN name. */}
-                {formSettings.player1.type === 'human' && (
-                  <FormRow label={fieldLabel('field.player.name')} help={fieldHelp('field.player.name')}>
-                    <Input
-                      value={formSettings.player1.name}
-                      placeholder="Player 1"
-                      onChange={(e) => updateFormSettings('player1', { name: e.target.value })}
-                    />
-                  </FormRow>
-                )}
-
-                {(formSettings.player1.type === 'engine' || formSettings.player1.type === 'hand_brain') && (
-                  <>
-                    <CatalogField
-                      node={playerEngineNode}
-                      value={formSettings.player1.engine}
-                      options={providerOptions(playerEngineNode)}
-                      onChange={(v) => updateFormSettings('player1', { engine: String(v), elo: 'Default' })}
-                    />
-                    <CatalogField
-                      node={playerEloNode}
-                      value={formSettings.player1.elo}
-                      options={providerOptions(playerEloNode, formSettings.player1.engine)}
-                      onChange={(v) => updateFormSettings('player1', { elo: String(v) })}
-                    />
-                    <CatalogField
-                      node={fieldById(catalog, 'field.player.think_time')!}
-                      value={formSettings.player1.think_time}
-                      options={thinkTimeOptions}
-                      onChange={(v) => updateFormSettings('player1', { think_time: parseThinkTime(String(v)) })}
-                    />
-                  </>
-                )}
-
-                {formSettings.player1.type === 'hand_brain' && (
-                  <CatalogField
-                    node={fieldById(catalog, 'field.player.hand_brain_mode')!}
-                    value={formSettings.player1.hand_brain_mode}
-                    options={handBrainModeOptions}
-                    onChange={(v) => updateFormSettings('player1', { hand_brain_mode: String(v) })}
-                  />
-                )}
-
-                {formSettings.player1.type === 'human' && (
-                  <p className="text-muted" style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
-                    Hints will use <strong>{getEngineDisplayName(formSettings.game.analysis_engine || 'stockfish')}</strong> (configured in Game Settings → Analysis Engine)
-                  </p>
-                )}
-            </Card>
-
-            {/* Player 2 */}
-            <Card className="mb-6">
-              <CardHeader title="Player 2 (Black by default)" />
-                
-                <CatalogField
-                  node={fieldById(catalog, 'field.player.type')!}
-                  value={formSettings.player2.type}
-                  options={playerTypeOptions}
-                  onChange={(v) => updateFormSettings('player2', { type: String(v) })}
-                />
-
-                {renderAccountPicker('player2')}
-
-                {/* Name is collected for human players only (see Player 1). */}
-                {formSettings.player2.type === 'human' && (
-                  <FormRow label={fieldLabel('field.player.name')} help={fieldHelp('field.player.name')}>
-                    <Input
-                      value={formSettings.player2.name}
-                      placeholder="Player 2"
-                      onChange={(e) => updateFormSettings('player2', { name: e.target.value })}
-                    />
-                  </FormRow>
-                )}
-
-                {(formSettings.player2.type === 'engine' || formSettings.player2.type === 'hand_brain') && (
-                  <>
-                    <CatalogField
-                      node={playerEngineNode}
-                      value={formSettings.player2.engine}
-                      options={providerOptions(playerEngineNode)}
-                      onChange={(v) => updateFormSettings('player2', { engine: String(v), elo: 'Default' })}
-                    />
-                    <CatalogField
-                      node={playerEloNode}
-                      value={formSettings.player2.elo}
-                      options={providerOptions(playerEloNode, formSettings.player2.engine)}
-                      onChange={(v) => updateFormSettings('player2', { elo: String(v) })}
-                    />
-                    <CatalogField
-                      node={fieldById(catalog, 'field.player.think_time')!}
-                      value={formSettings.player2.think_time}
-                      options={thinkTimeOptions}
-                      onChange={(v) => updateFormSettings('player2', { think_time: parseThinkTime(String(v)) })}
-                    />
-                  </>
-                )}
-
-                {formSettings.player2.type === 'hand_brain' && (
-                  <CatalogField
-                    node={fieldById(catalog, 'field.player.hand_brain_mode')!}
-                    value={formSettings.player2.hand_brain_mode}
-                    options={handBrainModeOptions}
-                    onChange={(v) => updateFormSettings('player2', { hand_brain_mode: String(v) })}
-                  />
-                )}
-
-                {formSettings.player2.type === 'human' && (
-                  <p className="text-muted" style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
-                    Hints will use <strong>{getEngineDisplayName(formSettings.game.analysis_engine || 'stockfish')}</strong> (configured in Game Settings → Analysis Engine)
-                  </p>
-                )}
-            </Card>
+            {/* Both cards are rendered from the shared catalog container
+                settings.player_detail via renderPlayerCard, so the web and board
+                show the same fields, order, and gating. */}
+            {renderPlayerCard('player1', 'Player 1 (White by default)')}
+            {renderPlayerCard('player2', 'Player 2 (Black by default)')}
 
             {/* Hand+Brain Explanation */}
             {showHandBrainExplanation && (

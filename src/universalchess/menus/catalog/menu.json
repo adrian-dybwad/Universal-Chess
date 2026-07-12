@@ -1494,7 +1494,7 @@
       "bind": { "store": "player", "key": "account" },
       "icon": "lichess",
       "visibleWhen": { "store": "player", "key": "type", "equals": "lichess" },
-      "platforms": ["board"]
+      "platforms": ["board", "web"]
     },
     {
       "id": "field.player.lichess",

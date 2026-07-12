@@ -9,10 +9,12 @@ import menuSchemaFixture from '../test/fixtures/menuSchema.json';
 /**
  * Guards the Settings account picker: an online player type (Lichess) exposes a
  * picker scoped to accounts of the matching type; offline types (human) show no
- * picker and keep an editable "Player N" name. Online/engine players collect no
- * name field (they carry their own identity / auto-name), which the sibling
- * name-visibility suite below asserts. Drives the real <Settings> against a
- * mocked API so the fetch -> render -> select path is exercised end to end.
+ * picker and keep an editable Name field. Online/engine players collect no name
+ * field (they carry their own identity / auto-name), which the sibling
+ * name-visibility suite asserts. The picker is the catalog's field.player.account
+ * rendered from settings.player_detail (accessible name "Account"), not a bespoke
+ * control. Drives the real <Settings> against a mocked API so the
+ * fetch -> render -> select path is exercised end to end.
  */
 
 const menuSchema: unknown = menuSchemaFixture;
@@ -121,13 +123,13 @@ describe('Settings account picker for online player types', () => {
   });
 
   it('shows no account picker for offline (human) player types', async () => {
-    // Offline types must not get an account picker and must keep "Player N".
+    // Offline types must not get an account picker and must keep their Name field.
     // A regression shows as an "Account" control appearing for a human player.
+    // Both slots human -> two Name fields and no Account control anywhere.
     mockFetch({ type: 'human' }, { type: 'human' });
     renderSettings();
-    await waitFor(() => expect(screen.getByPlaceholderText('Player 1')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByLabelText('Player Name')).toHaveLength(2));
     expect(screen.queryByLabelText('Account')).not.toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Player 2')).toBeInTheDocument();
   });
 });
 

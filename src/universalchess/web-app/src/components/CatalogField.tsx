@@ -158,6 +158,7 @@ export function CatalogField({
         <>
           <FormRow label={label} help={helpContent}>
             <Select
+              aria-label={label}
               value={String(value)}
               options={options}
               disabled={disabled}
@@ -195,6 +196,7 @@ export function CatalogField({
       return (
         <FormRow label={label} help={helpContent}>
           <Input
+            aria-label={label}
             value={String(value)}
             disabled={disabled}
             onChange={(e) => onChange(e.target.value)}
