@@ -244,10 +244,6 @@
       "label": "Pantalla",
       "help": "Controla lo que aparece en la pantalla de tinta electrónica y los LED."
     },
-    "settings.display.board": {
-      "label": "Tablero",
-      "help": "Visibilidad del tablero y hoja de sprites usada para dibujar las piezas."
-    },
     "settings.sound": {
       "label": "Sonido",
       "help": "Controla el sonido y los pitidos."

@@ -2247,15 +2247,17 @@ export function Settings() {
             <h2 className="page-title">{t('settingsPage.display.title')}</h2>
             <p className="text-muted mb-6">{t('settingsPage.display.description')}</p>
 
-            {/* The whole Display tab renders from the catalog's web-only
-                settings.display.web container (E-Paper Display, Piece Sprites,
-                LEDs cards). gameMenuCtx supplies the shared game/analysis stores
-                and the sprite_sheets image provider: Text Size and Sprites use
+            {/* The whole Display tab renders from the SAME settings.display
+                container the board flattens onto its Display screen -- one shared
+                tree, no web-only duplicate. Its transparent groups become the
+                E-Paper Display and LEDs cards here (the board renders their rows
+                flat). gameMenuCtx supplies the shared game/analysis stores and the
+                sprite_sheets image provider: Text Size and Sprites use
                 CatalogField's option-metadata presentations (font_size -> scaled
                 text preview; image -> image radio grid), and the visibility
                 toggles disable via their catalog enabledWhen on analysis.mode
                 (Show Graph additionally requires Show Analysis). */}
-            <MenuContainer catalog={catalog} containerId="settings.display.web" ctx={gameMenuCtx} />
+            <MenuContainer catalog={catalog} containerId="settings.display" ctx={gameMenuCtx} />
 
             {/* E-paper waveform/refresh tuning. Lives under Display (not System)
                 because it configures the display hardware; the card self-gates

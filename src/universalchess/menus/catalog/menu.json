@@ -575,26 +575,7 @@
       "help": "Control what appears on the e-paper display and the LEDs.",
       "section": "display",
       "epaper": { "font_size": 12, "height_ratio": 0.8 },
-      "children": [
-        "settings.display.board",
-        "field.display.text_size",
-        "field.display.show_clock",
-        "field.display.show_analysis",
-        "field.display.show_graph",
-        "field.display.led_brightness"
-      ]
-    },
-    {
-      "id": "settings.display.board",
-      "key": "board",
-      "type": "submenu",
-      "target": "settings.display.board",
-      "label": "Board",
-      "icon": "display",
-      "help": "Board visibility and the sprite sheet used to draw pieces.",
-      "platforms": ["board"],
-      "epaper": { "font_size": 14, "height_ratio": 0.8 },
-      "children": ["field.display.show_board", "field.display.sprites"]
+      "children": ["group.display.epaper", "group.display.leds"]
     },
     {
       "id": "settings.sound",
@@ -1609,24 +1590,16 @@
       "id": "field.display.pegasus_override_brightness",
       "type": "toggle",
       "label": "Override Pegasus Brightness",
+      "boardLabel": "Pegasus LED",
       "help": "The DGT Chess app sends a fixed LED brightness. When on, use the LED Brightness setting above for Pegasus LEDs instead.",
       "section": "display",
-      "platforms": ["web"],
       "bind": { "store": "game", "key": "pegasus_override_brightness" },
       "icon": { "true": "checkbox_checked", "false": "checkbox_empty" }
-    },
-    {
-      "id": "settings.display.web",
-      "type": "menu",
-      "label": "Display",
-      "platforms": ["web"],
-      "children": ["group.display.epaper", "group.display.leds"]
     },
     {
       "id": "group.display.epaper",
       "type": "group",
       "label": "E-Paper Display",
-      "platforms": ["web"],
       "children": [
         "field.display.show_board",
         "field.display.sprites",
@@ -1640,7 +1613,6 @@
       "id": "group.display.leds",
       "type": "group",
       "label": "LEDs",
-      "platforms": ["web"],
       "children": ["field.display.led_brightness", "field.display.pegasus_override_brightness"]
     },
     {

@@ -4,12 +4,18 @@ Background / why these tests exist
 ----------------------------------
 The Display menu was migrated off bespoke builders onto the data-driven engine.
 Its structure, labels (including board-only abbreviations), the LED range
-cycler, the Show-Graph-requires-Show-Analysis gating, and the Board submenu
-(Show Board checkbox + a radio row per installed sprite sheet, each with a
-preview glyph) all come from the ``settings.display`` catalog node. These tests
-build the menu from the *real* catalog through the engine with a dict-backed
-game store and a fake sprite provider, pinning the same guarantees the deleted
-``display_menu`` module used to enforce.
+cycler, the Show-Graph-requires-Show-Analysis gating, and the Show Board
+checkbox + a radio row per installed sprite sheet (each with a preview glyph)
+all come from the ``settings.display`` catalog node. These tests build the menu
+from the *real* catalog through the engine with a dict-backed game store and a
+fake sprite provider, pinning the same guarantees the deleted ``display_menu``
+module used to enforce.
+
+Board/web parity: ``settings.display`` is a single shared tree -- transparent
+``group`` nodes (E-Paper Display, LEDs) that the board flattens into one screen
+and the web wraps in cards. There is no board-only sub-screen and no web-only
+duplicate container, so the two platforms render the same field set/order; these
+tests pin the board's flattened sequence.
 """
 
 from universalchess.managers.menu import MenuResult, MenuSelection
@@ -52,6 +58,7 @@ def _state(**overrides):
         "show_analysis": True,
         "show_graph": True,
         "led_brightness": 5,
+        "pegasus_override_brightness": True,
         "chess_sprites": "default",
         "text_size": "medium",
         # Master analysis compute switch (Game menu's Live Analysis). The Display
@@ -106,28 +113,31 @@ def _display_rows(state):
     return build_rows("settings.display", _ctx(state), platform="board", catalog=load_catalog())
 
 
-def _board_rows(state):
-    return build_rows("settings.display.board", _ctx(state), platform="board", catalog=load_catalog())
+def test_display_flattens_the_shared_groups_in_order_without_sound():
+    """The board's Display screen is the shared tree flattened, in one sequence.
 
-
-def test_top_level_lists_display_controls_without_sound():
-    """The Display menu lists Board + display toggles + LED, and no Sound row.
-
-    Why this test exists: Display and Sound are separate Settings submenus, and
-    the board toggle moved into a Board submenu. How the regression manifests: a
-    sound/show_board row leaks in at the top level, or the control set/order in
-    the catalog children changes.
+    Why this test exists: settings.display is a single shared tree of transparent
+    groups (E-Paper Display, LEDs) rendered identically on web (as cards) and
+    board (flattened here) -- there is no board-only Board sub-screen anymore. How
+    the regression manifests: a group stops flattening (a bare group/submenu row
+    leaks in), the show_board+sprite rows drop back into a separate screen, the
+    LEDs rows (including the now-shared Pegasus toggle) go missing, a Sound row
+    leaks in, or the order drifts from the catalog.
     """
-    ids = [r.node["id"] for r in _display_rows(_state())]
-    assert ids == [
-        "settings.display.board",
+    keys = [r.key for r in _display_rows(_state())]
+    assert keys == [
+        "field.display.show_board",
+        # field.display.sprites is a dynamic radio: one row per installed sheet.
+        "default",
+        "fen",
+        "retro",
         "field.display.text_size",
         "field.display.show_clock",
         "field.display.show_analysis",
         "field.display.show_graph",
         "field.display.led_brightness",
+        "field.display.pegasus_override_brightness",
     ]
-    assert "field.display.show_board" not in ids  # lives inside the Board submenu
 
 
 def test_board_labels_use_abbreviations_and_led_shows_value():
@@ -138,11 +148,15 @@ def test_board_labels_use_abbreviations_and_led_shows_value():
     and LED renders 'LED: <n>' from the bound value. How the regression
     manifests: the long web label renders on the board, or LED loses its value.
     """
-    by_id = {r.node["id"]: r for r in _display_rows(_state(led_brightness=7))}
-    assert by_id["field.display.show_clock"].label == "Clock"
-    assert by_id["field.display.show_analysis"].label == "Show Analysis"
-    assert by_id["field.display.show_graph"].label == "Show Graph"
-    assert by_id["field.display.led_brightness"].label == "LED: 7"
+    # Key by row key (a regular field's key is its node id); the inlined sprite
+    # rows key by sheet id and don't collide with these field ids.
+    by_key = {r.key: r for r in _display_rows(_state(led_brightness=7))}
+    assert by_key["field.display.show_clock"].label == "Clock"
+    assert by_key["field.display.show_analysis"].label == "Show Analysis"
+    assert by_key["field.display.show_graph"].label == "Show Graph"
+    assert by_key["field.display.led_brightness"].label == "LED: 7"
+    # Pegasus override is now shared onto the board with its short board label.
+    assert by_key["field.display.pegasus_override_brightness"].label == "Pegasus LED"
 
 
 def test_graph_row_disabled_when_analysis_widget_off():
@@ -152,8 +166,8 @@ def test_graph_row_disabled_when_analysis_widget_off():
     meaningless with the widget hidden. How the regression manifests: Show Graph
     stays enabled with the widget off, letting the user toggle a no-op setting.
     """
-    on = {r.node["id"]: r for r in _display_rows(_state(show_analysis=True))}
-    off = {r.node["id"]: r for r in _display_rows(_state(show_analysis=False))}
+    on = {r.key: r for r in _display_rows(_state(show_analysis=True))}
+    off = {r.key: r for r in _display_rows(_state(show_analysis=False))}
     assert on["field.display.show_graph"].enabled is True
     assert off["field.display.show_graph"].enabled is False
 
@@ -168,7 +182,7 @@ def test_analysis_rows_disabled_when_live_analysis_off():
     allOf gate, Show Graph too) while no analysis is being computed -- the gap
     this dependency was added to close.
     """
-    off = {r.node["id"]: r for r in _display_rows(_state(analysis_mode=False, show_analysis=True))}
+    off = {r.key: r for r in _display_rows(_state(analysis_mode=False, show_analysis=True))}
     assert off["field.display.show_analysis"].enabled is False
     # Show Graph stays disabled even with the widget toggle on, because the
     # master switch is off (allOf requires *both*).
@@ -183,28 +197,21 @@ def test_analysis_rows_enabled_when_live_analysis_on():
     regression manifests: an inverted or mis-keyed condition leaves Show Analysis
     disabled even while analysis is on, hiding a working control.
     """
-    rows = {r.node["id"]: r for r in _display_rows(_state(analysis_mode=True, show_analysis=True))}
+    rows = {r.key: r for r in _display_rows(_state(analysis_mode=True, show_analysis=True))}
     assert rows["field.display.show_analysis"].enabled is True
     assert rows["field.display.show_graph"].enabled is True
 
 
-def test_board_submenu_show_board_first_then_radio_rows_per_sheet():
-    """Board submenu is Show Board (checkbox) then one radio row per sheet.
+def test_display_shows_show_board_then_a_radio_row_per_sheet():
+    """Show Board (checkbox) is immediately followed by one radio row per sheet.
 
-    Why: the redesign is a list with the toggle on top and a radio selection of
-    sprite sheets, each keyed sprite:<id> with the sheet's preview as its glyph.
-    How the regression manifests: a missing/duplicated sprite row, wrong key
-    scheme, or a row whose preview image was dropped between provider and entry.
+    Why: the sprite picker is a radio selection of sprite sheets inlined right
+    after the Show Board toggle, each keyed by sheet id with the sheet's preview
+    as its glyph. How the regression manifests: a missing/duplicated sprite row,
+    wrong key scheme, or a row whose preview image was dropped between provider
+    and entry.
     """
-    rows = _board_rows(_state(show_board=True, chess_sprites="fen"))
-    assert [r.key for r in rows] == [
-        "field.display.show_board",
-        "default",
-        "fen",
-        "retro",
-    ]
-
-    by_key = {r.key: r for r in rows}
+    by_key = {r.key: r for r in _display_rows(_state(show_board=True, chess_sprites="fen"))}
     assert by_key["field.display.show_board"].label == "Show Board"
     assert by_key["field.display.show_board"].icon == "checkbox_checked"
     for sheet in _SHEETS:
@@ -216,13 +223,13 @@ def test_board_submenu_show_board_first_then_radio_rows_per_sheet():
         assert entry.icon_mask == f"mask:{sheet}"
 
 
-def test_board_submenu_marks_current_sheet_with_filled_radio():
+def test_display_marks_current_sheet_with_filled_radio():
     """Only the active sheet shows radio_checked; the rest show radio_empty.
 
     Why: the radio indicator tells the user which sheet is selected. If more than
     one (or none) were filled, the selection would be ambiguous.
     """
-    by_key = {r.key: r for r in _board_rows(_state(chess_sprites="fen"))}
+    by_key = {r.key: r for r in _display_rows(_state(chess_sprites="fen"))}
     assert by_key["fen"].trailing_icon == "radio_checked"
     assert by_key["default"].trailing_icon == "radio_empty"
     assert by_key["retro"].trailing_icon == "radio_empty"
@@ -231,15 +238,15 @@ def test_board_submenu_marks_current_sheet_with_filled_radio():
 def test_selecting_sprite_sets_that_sheet_as_radio():
     """Pressing a sprite row selects exactly that sheet (radio, not cycle).
 
-    Why this test exists: the selector is a radio list; selecting sprite:retro
-    must store 'retro' regardless of the previously active sheet. How the
-    regression manifests: a cycle would store the wrong neighbour, or set_value
-    not persisting would leave the old sheet.
+    Why this test exists: the selector is a radio list; selecting 'retro' must
+    store 'retro' regardless of the previously active sheet. How the regression
+    manifests: a cycle would store the wrong neighbour, or set_value not
+    persisting would leave the old sheet.
     """
     state = _state(chess_sprites="default")
     mm = _FakeMenuManager(["retro", "BACK"])
 
-    run_engine_menu("settings.display.board", _ctx(state), mm, catalog=load_catalog())
+    run_engine_menu("settings.display", _ctx(state), mm, catalog=load_catalog())
 
     assert state["chess_sprites"] == "retro"
 
@@ -253,7 +260,7 @@ def test_selecting_show_board_toggles_it():
     state = _state(show_board=True)
     mm = _FakeMenuManager(["field.display.show_board", "BACK"])
 
-    run_engine_menu("settings.display.board", _ctx(state), mm, catalog=load_catalog())
+    run_engine_menu("settings.display", _ctx(state), mm, catalog=load_catalog())
 
     assert state["show_board"] is False
 
