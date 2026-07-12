@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
@@ -157,5 +157,40 @@ describe('Settings account picker for online player types', () => {
     await waitFor(() => expect(screen.getByPlaceholderText('MagnusC')).toBeInTheDocument());
     fireEvent.change(picker, { target: { value: 'second' } });
     await waitFor(() => expect(screen.getByPlaceholderText('SecondUser')).toBeInTheDocument());
+  });
+});
+
+describe('Settings account picker excludes the other slot (both-sides rule)', () => {
+  beforeEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it("removes each slot's account from the other slot's picker", async () => {
+    // One online account may not play both sides. With both slots Lichess and
+    // bound to distinct accounts (P1=magnusc, P2=second), each picker must omit
+    // the account the *other* slot uses so it can never be chosen twice:
+    //  - P2's picker excludes 'MagnusC' AND 'Default account' (Default resolves
+    //    to the first account 'magnusc', which is taken), leaving only SecondUser.
+    //  - P1's picker excludes 'SecondUser'; Default (-> magnusc, its own) stays.
+    // A regression (no exclusion, or comparing only raw ids so 'Default' slips
+    // through) shows as the forbidden option reappearing in a picker below.
+    mockFetch({ type: 'lichess', account: 'magnusc' }, { type: 'lichess', account: 'second' });
+    renderSettings();
+    const pickers = await screen.findAllByLabelText('Account');
+    expect(pickers).toHaveLength(2);
+    const [p1Picker, p2Picker] = pickers;
+
+    // P2 (bound 'second') must not offer P1's 'magnusc', nor Default (=> magnusc).
+    expect(within(p2Picker).queryByRole('option', { name: 'MagnusC' })).not.toBeInTheDocument();
+    expect(within(p2Picker).queryByRole('option', { name: /default account/i })).not.toBeInTheDocument();
+    expect(within(p2Picker).getByRole('option', { name: 'SecondUser' })).toBeInTheDocument();
+
+    // P1 (bound 'magnusc') must not offer P2's 'second', but keeps its own +
+    // Default (which resolves to magnusc, not the taken 'second').
+    expect(within(p1Picker).queryByRole('option', { name: 'SecondUser' })).not.toBeInTheDocument();
+    expect(within(p1Picker).getByRole('option', { name: 'MagnusC' })).toBeInTheDocument();
+    expect(within(p1Picker).getByRole('option', { name: /default account/i })).toBeInTheDocument();
   });
 });

@@ -3791,10 +3791,12 @@ def _build_player_detail_context(player_num: int):
 
     if player_num == 1:
         settings_dict = _player1_settings_dict
+        other_settings_dict = _player2_settings_dict
         save_setting = _save_player1_setting
         has_color = True
     else:
         settings_dict = _player2_settings_dict
+        other_settings_dict = _player1_settings_dict
         save_setting = _save_player2_setting
         has_color = False
 
@@ -3847,6 +3849,12 @@ def _build_player_detail_context(player_num: int):
         Lichess player can only bind a Lichess account. The empty-key "Default
         account" row leaves the slot unbound so it uses the default account
         (back-compat). Returns no rows for a non-online type, so the row hides.
+
+        Enforces "one online account cannot play both sides": the account the
+        other slot resolves to is excluded, and the "Default account" row is
+        dropped when Default would resolve to that same account -- so a colliding
+        account can never be picked here (the same exclusion the web dropdown
+        applies, both from account_store.selectable_accounts_for_slot).
         """
         from universalchess.menus.catalog import get_catalog
         from universalchess.menus.engine import MenuRow
@@ -3858,8 +3866,14 @@ def _build_player_detail_context(player_num: int):
             return []
         definition = catalog.account_type(type_id)
         icon = definition.get("icon", "account")
-        rows = [MenuRow(key="", label="Default account", icon=icon)]
-        for account in account_store.list_accounts(type_id):
+        other = other_settings_dict()
+        choices = account_store.selectable_accounts_for_slot(
+            type_id, other.get("type", ""), other.get("account", "")
+        )
+        rows = []
+        if choices.default_allowed:
+            rows.append(MenuRow(key="", label="Default account", icon=icon))
+        for account in choices.accounts:
             identity = account.get(definition["identityField"], account.id)
             rows.append(MenuRow(key=account.id, label=identity, icon=icon))
         return rows
