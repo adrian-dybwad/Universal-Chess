@@ -7,7 +7,6 @@ import { CatalogField } from '../components/CatalogField';
 import { WebMenuContext } from '../menu/context';
 import { MenuContainer } from '../menu/MenuContainer';
 import { EngineProfileEditor } from '../components/EngineProfileEditor';
-import { EngineStrengthField } from '../components/EngineStrengthField';
 import type { FieldValue } from '../components/CatalogField';
 import { LoginDialog } from '../components/LoginDialog';
 import { MenuIcon } from '../components/MenuIcon';
@@ -1735,6 +1734,13 @@ export function Settings() {
   // provider, so it no longer needs a hand-referenced node here.)
   const playerEngineNode = fieldById(catalog, 'field.player.engine')!;
 
+  // The player strength control is the section select the board also renders:
+  // it picks which engine profile/level (persisted as the player's `elo`) is
+  // applied. Editing those profiles lives solely in the Engines tab
+  // ("Configure profiles"); the Players tab used to embed a second, less-capable
+  // copy of that editor, which duplicated the UCI-schema probe/save flow.
+  const playerEloNode = fieldById(catalog, 'field.player.elo')!;
+
   // Resolve the runtime option list a provider-backed select renders. The
   // catalog names the provider; the data is runtime and read from the same
   // backend the board uses (installed engines / per-engine levels). `engine`
@@ -1923,14 +1929,11 @@ export function Settings() {
                       options={providerOptions(playerEngineNode)}
                       onChange={(v) => updateFormSettings('player1', { engine: String(v), elo: 'Default' })}
                     />
-                    <EngineStrengthField
-                      key={formSettings.player1.engine}
-                      engineName={formSettings.player1.engine}
+                    <CatalogField
+                      node={playerEloNode}
                       value={formSettings.player1.elo}
-                      sections={engineLevels[formSettings.player1.engine] || [{ value: 'Default', label: 'Default' }]}
-                      label={fieldLabel('field.player.elo')}
-                      help={fieldHelp('field.player.elo')}
-                      onChange={(v) => updateFormSettings('player1', { elo: v })}
+                      options={providerOptions(playerEloNode, formSettings.player1.engine)}
+                      onChange={(v) => updateFormSettings('player1', { elo: String(v) })}
                     />
                     <CatalogField
                       node={fieldById(catalog, 'field.player.think_time')!}
@@ -1986,14 +1989,11 @@ export function Settings() {
                       options={providerOptions(playerEngineNode)}
                       onChange={(v) => updateFormSettings('player2', { engine: String(v), elo: 'Default' })}
                     />
-                    <EngineStrengthField
-                      key={formSettings.player2.engine}
-                      engineName={formSettings.player2.engine}
+                    <CatalogField
+                      node={playerEloNode}
                       value={formSettings.player2.elo}
-                      sections={engineLevels[formSettings.player2.engine] || [{ value: 'Default', label: 'Default' }]}
-                      label={fieldLabel('field.player.elo')}
-                      help={fieldHelp('field.player.elo')}
-                      onChange={(v) => updateFormSettings('player2', { elo: v })}
+                      options={providerOptions(playerEloNode, formSettings.player2.engine)}
+                      onChange={(v) => updateFormSettings('player2', { elo: String(v) })}
                     />
                     <CatalogField
                       node={fieldById(catalog, 'field.player.think_time')!}
