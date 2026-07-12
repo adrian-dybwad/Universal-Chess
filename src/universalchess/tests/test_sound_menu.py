@@ -78,3 +78,54 @@ def test_toggle_icons_reflect_setting_state():
     by_id = {r.node["id"]: r for r in _rows(enabled=True, key_press=False)}
     assert by_id["field.sound.enabled"].icon == "checkbox_checked"
     assert by_id["field.sound.key_press"].icon == "checkbox_empty"
+
+
+def test_category_toggles_disabled_but_present_when_master_off():
+    """Per-category rows stay visible but non-selectable while sound is off.
+
+    Why this test exists: a category has no effect while the master is off, so it
+    is gated by ``enabledWhen`` on ``sound.enabled`` -- which now means "visible
+    but disabled" on both platforms (the board renders it faded/non-selectable,
+    the web greys it), rather than hidden. This preserves the original web
+    behavior (greyed categories) without deleting the rows. How the regression
+    manifests: switching the gate back to ``visibleWhen`` drops the four rows
+    when the master is off (fewer than five build), or losing the gate leaves
+    them enabled so a no-op category looks active.
+    """
+    rows = {r.node["id"]: r for r in _rows(enabled=False)}
+    assert list(rows) == [
+        "field.sound.enabled",
+        "field.sound.piece_events",
+        "field.sound.game_events",
+        "field.sound.errors",
+        "field.sound.key_press",
+    ]
+    assert rows["field.sound.enabled"].enabled is True
+    assert all(
+        rows[cid].enabled is False
+        for cid in (
+            "field.sound.piece_events",
+            "field.sound.game_events",
+            "field.sound.errors",
+            "field.sound.key_press",
+        )
+    )
+
+
+def test_category_toggles_enabled_when_master_on():
+    """All five rows are present and enabled once the master switch is on.
+
+    Why this test exists: the ``enabledWhen`` gate must re-enable the categories
+    when sound is on; this is the positive counterpart to the disabled case. How
+    the regression manifests: an inverted or over-broad gate leaves a category
+    disabled even with sound on, so a real setting cannot be toggled.
+    """
+    rows = _rows(enabled=True)
+    assert [r.node["id"] for r in rows] == [
+        "field.sound.enabled",
+        "field.sound.piece_events",
+        "field.sound.game_events",
+        "field.sound.errors",
+        "field.sound.key_press",
+    ]
+    assert all(r.enabled for r in rows)

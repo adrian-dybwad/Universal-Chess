@@ -70,17 +70,28 @@ export function CatalogField({
     // the natural equivalent of that same optionSet is a dropdown, so both render
     // identically here.
     case 'select':
-    case 'cycle':
+    case 'cycle': {
+      // Show the selected option's long-form description beneath the control when
+      // it carries one (e.g. a time-control preset's full rules). This keeps the
+      // dropdown label short while surfacing the detail declaratively, replacing
+      // the hand-built preset-description block the Game tab used to render.
+      const selected = options.find((o) => String(o.value) === String(value));
       return (
-        <FormRow label={label} help={helpContent}>
-          <Select
-            value={String(value)}
-            options={options}
-            disabled={disabled}
-            onChange={(e) => onChange(e.target.value)}
-          />
-        </FormRow>
+        <>
+          <FormRow label={label} help={helpContent}>
+            <Select
+              value={String(value)}
+              options={options}
+              disabled={disabled}
+              onChange={(e) => onChange(e.target.value)}
+            />
+          </FormRow>
+          {selected?.description && (
+            <p className="tc-preset-description">{selected.description}</p>
+          )}
+        </>
       );
+    }
 
     case 'range': {
       // Defaults keep a malformed/absent range usable rather than crashing; the

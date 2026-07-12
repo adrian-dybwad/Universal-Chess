@@ -17,7 +17,11 @@ How the regression manifests
 import pytest
 
 import universalchess.players.settings as settings_mod
-from universalchess.players.settings import GameSettings
+from universalchess.players.settings import (
+    ANALYSIS_TIME_PRESETS,
+    GameSettings,
+    analysis_time_seconds,
+)
 
 
 def test_to_dict_includes_selected_chess_sprites():
@@ -109,6 +113,59 @@ def test_load_reads_stored_text_size(monkeypatch):
     settings = GameSettings.load("game", {})
     assert settings.text_size == "small"
     assert settings.to_dict()["text_size"] == "small"
+
+
+def test_analysis_time_preset_defaults_to_quick():
+    # A fresh install must keep the historical 0.3s behavior so nothing changes for
+    # existing users until they opt into a longer analysis. A missing field or wrong
+    # default would silently lengthen every board analysis (more CPU/battery).
+    settings = GameSettings(section="game")
+    assert settings.to_dict()["analysis_time_preset"] == "quick"
+
+
+def test_to_dict_includes_selected_analysis_time_preset():
+    # Guards the to_dict() round-trip the board menu and web read the current preset
+    # through (game store -> to_dict). Without the field this raises TypeError on
+    # construction; a broken to_dict() KeyErrors here.
+    settings = GameSettings(section="game", analysis_time_preset="deep")
+    assert settings.to_dict()["analysis_time_preset"] == "deep"
+
+
+def test_load_reads_stored_analysis_time_preset(monkeypatch):
+    # load() must surface a persisted preset; otherwise the board and web always
+    # re-read "quick" and the user's choice is silently ignored. The fake omits the
+    # key from explicit defaults to prove load() seeds the read default itself.
+    def fake_load_section(section, defaults):
+        data = dict(defaults)
+        data["analysis_time_preset"] = "standard"
+        return data
+
+    monkeypatch.setattr(settings_mod, "load_section", fake_load_section)
+    settings = GameSettings.load("game", {})
+    assert settings.analysis_time_preset == "standard"
+    assert settings.to_dict()["analysis_time_preset"] == "standard"
+
+
+@pytest.mark.parametrize(
+    "preset, expected",
+    [("quick", 0.3), ("standard", 0.8), ("deep", 2.0)],
+)
+def test_analysis_time_seconds_maps_each_preset(preset, expected):
+    # The preset name is stored, but AnalysisService needs seconds; this mapping is
+    # the single conversion point. A wrong mapping would make the board search for
+    # the wrong duration (e.g. "deep" behaving like "quick"), defeating the setting.
+    assert analysis_time_seconds(preset) == expected
+    # The preset table and the mapping must agree (no drift between the two).
+    assert analysis_time_seconds(preset) == ANALYSIS_TIME_PRESETS[preset]
+
+
+@pytest.mark.parametrize("bad", ["", "turbo", "0.3", None])
+def test_analysis_time_seconds_unknown_falls_back_to_quick(bad):
+    # A stale/typo'd config value must resolve to the safe historical default rather
+    # than raising on the game thread or fabricating an arbitrary number. Regression:
+    # a KeyError here would crash game start; a made-up value would search for an
+    # undocumented duration.
+    assert analysis_time_seconds(bad) == 0.3
 
 
 def test_ponder_defaults_to_off():

@@ -110,37 +110,41 @@ def _container_context(current_preset):
 
 
 def test_container_shows_base_minutes_only_for_basic():
-    """The container reveals the base-minutes row only when no preset is set.
+    """The clock group reveals the base-minutes row only when no preset is set.
 
     Why: this is the concrete effect of the base-minutes ``visibleWhen`` -- the
     exact "wrong logic" fix, so an inert base-minutes row cannot appear beside an
-    active preset. How a regression manifests: with a named preset active the
-    base-minutes row still renders, letting the user edit minutes that
-    build_time_control ignores.
+    active preset. The clock is now inlined under ``group.game.clock`` (no
+    submenu), so the group's rows are rendered directly. How a regression
+    manifests: with a named preset active the base-minutes row still renders,
+    letting the user edit minutes that build_time_control ignores.
     """
     ctx_basic, _ = _container_context("")
-    keys_basic = [r.key for r in render_container("timecontrol", ctx_basic)]
+    keys_basic = [r.key for r in render_container("group.game.clock", ctx_basic)]
     assert "TimeControl" in keys_basic  # base minutes visible for Basic
-    assert "CustomClock" not in keys_basic  # custom hidden
+    assert "CustomBase" not in keys_basic  # custom rows hidden
 
     ctx_named, _ = _container_context("blitz_5_3")
-    keys_named = [r.key for r in render_container("timecontrol", ctx_named)]
+    keys_named = [r.key for r in render_container("group.game.clock", ctx_named)]
     assert "TimeControl" not in keys_named  # base minutes hidden
-    assert "CustomClock" not in keys_named  # custom hidden
+    assert "CustomBase" not in keys_named  # custom rows hidden
     assert "Preset" in keys_named  # master always present
 
 
 def test_container_shows_custom_clock_only_for_custom_preset():
-    """The container reveals the Custom Clock submenu only for the Custom preset.
+    """The clock group reveals the inline custom-clock rows only for Custom.
 
     Why: the custom builder edits fields build_time_control reads only when the
-    preset is ``custom``; showing it otherwise invites edits that do nothing. How
-    a regression manifests: dropping the custom ``visibleWhen`` shows the builder
-    for every preset, reintroducing the inert-control confusion.
+    preset is ``custom``; showing them otherwise invites edits that do nothing.
+    board_inline replaced the Custom Clock submenu with rows gated on
+    ``time_control_preset == custom``. How a regression manifests: dropping a
+    custom ``visibleWhen`` shows the custom rows for every preset, reintroducing
+    the inert-control confusion.
     """
     ctx, _ = _container_context(CUSTOM_PRESET_KEY)
-    keys = [r.key for r in render_container("timecontrol", ctx)]
-    assert "CustomClock" in keys  # custom builder visible
+    keys = [r.key for r in render_container("group.game.clock", ctx)]
+    assert "CustomBase" in keys  # custom rows visible
+    assert "CustomIncrement" in keys
     assert "TimeControl" not in keys  # base minutes hidden
     assert "Preset" in keys  # master always present
 
@@ -188,25 +192,28 @@ def test_preset_options_lead_with_basic_and_end_with_custom():
     assert len(options) == len(PRESETS) + 2  # Basic + presets + Custom
 
 
-def test_catalog_wires_time_control_submenu():
-    """The Game submenu opens a Time Control submenu containing preset + custom.
+def test_catalog_inlines_time_control_under_clock_group():
+    """The Game menu inlines the clock under a ``group.game.clock`` container.
 
-    Why: the board renders these nodes; the submenu must exist, be reachable from
-    settings.game, and group the preset selector and custom builder. How a
+    Why: board_inline + unify_new replaced the Time Control submenu with a
+    transparent clock group whose rows the board flattens and the web renders as a
+    card. The group must be reachable from settings.game and contain the master
+    Preset select, the base-minutes row, and the inline custom fields. How a
     regression manifests: a missing/dangling node dead-ends navigation (caught by
-    the catalog validator) or the Game tab loses time-control config.
+    the validator) or the Game tab loses time-control config.
     """
     catalog = load_catalog()
     game_children = catalog.child_ids("settings.game")
-    assert "settings.timecontrol.menu" in game_children
+    assert "group.game.clock" in game_children
 
-    menu_node = catalog.get_node("settings.timecontrol.menu")
-    assert menu_node["type"] == "submenu"
-    assert menu_node["target"] == "timecontrol"
+    clock_group = catalog.get_node("group.game.clock")
+    assert clock_group["type"] == "group"
 
-    tc_children = catalog.child_ids("timecontrol")
-    assert "settings.timecontrol.preset" in tc_children
-    assert "settings.timecontrol.custom" in tc_children
+    clock_children = catalog.child_ids("group.game.clock")
+    assert "settings.timecontrol.preset" in clock_children
+    assert "settings.timecontrol" in clock_children
+    assert "timecontrol.custom.base" in clock_children
+    assert "settings.timecontrol.engine_move_delay" in clock_children
 
 
 def test_preset_node_is_provider_backed_select_bound_to_preset_key():
@@ -249,7 +256,8 @@ def test_timecontrol_children_gate_base_minutes_and_custom_by_preset():
     base = catalog.get_node("settings.timecontrol")
     assert base["visibleWhen"] == {"store": "game", "key": "time_control_preset", "equals": ""}
 
-    custom = catalog.get_node("settings.timecontrol.custom")
+    # Each inline custom field is gated on the Custom preset (no submenu now).
+    custom = catalog.get_node("timecontrol.custom.base")
     assert custom["visibleWhen"] == {
         "store": "game", "key": "time_control_preset", "equals": "custom",
     }
@@ -266,10 +274,14 @@ def test_custom_fields_bind_tc_custom_keys():
     custom control. Per-side black fields are gated on the asymmetric toggle.
     """
     catalog = load_catalog()
-    children = catalog.child_ids("timecontrol.custom")
+    custom_fields = [
+        "timecontrol.custom.base", "timecontrol.custom.increment", "timecontrol.custom.delay",
+        "timecontrol.custom.mode", "timecontrol.custom.asymmetric",
+        "timecontrol.custom.black_base", "timecontrol.custom.black_increment",
+    ]
     bindings = {
         cid: catalog.get_node(cid).get("bind", {}).get("key")
-        for cid in children
+        for cid in custom_fields
     }
     assert bindings["timecontrol.custom.base"] == "tc_custom_base_seconds"
     assert bindings["timecontrol.custom.increment"] == "tc_custom_increment_seconds"
@@ -279,10 +291,15 @@ def test_custom_fields_bind_tc_custom_keys():
     assert bindings["timecontrol.custom.black_base"] == "tc_custom_black_base_seconds"
     assert bindings["timecontrol.custom.black_increment"] == "tc_custom_black_increment_seconds"
 
-    # Black fields appear only when asymmetric is enabled.
+    # Black fields appear only for the Custom preset AND when asymmetric is on
+    # (an allOf gate), since the fields are now inline rather than behind the
+    # Custom submenu that used to imply the preset.
     for black_field in ("timecontrol.custom.black_base", "timecontrol.custom.black_increment"):
         visible_when = catalog.get_node(black_field)["visibleWhen"]
-        assert visible_when == {"store": "game", "key": "tc_custom_asymmetric", "equals": True}
+        assert visible_when == {"allOf": [
+            {"store": "game", "key": "time_control_preset", "equals": "custom"},
+            {"store": "game", "key": "tc_custom_asymmetric", "equals": True},
+        ]}
 
 
 def test_board_preset_select_forwards_help_and_keeps_single_line_labels():

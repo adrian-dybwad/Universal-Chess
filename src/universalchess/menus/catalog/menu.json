@@ -109,6 +109,18 @@
       { "value": "1800", "label": "30 min" },
       { "value": "3600", "label": "1 hour" }
     ],
+    "analysis_time": [
+      { "value": "quick", "label": "Quick (0.3s)" },
+      { "value": "standard", "label": "Standard (0.8s)" },
+      { "value": "deep", "label": "Deep (2s)" }
+    ],
+    "coach_multipv": [
+      { "value": "1", "label": "1 (off)" },
+      { "value": "2", "label": "2" },
+      { "value": "3", "label": "3" },
+      { "value": "4", "label": "4" },
+      { "value": "5", "label": "5" }
+    ],
     "notation": [
       { "value": "figurine", "label": "Figurine (\u2658f3)" },
       { "value": "san", "label": "Standard (Nf3)" },
@@ -304,7 +316,49 @@
       "help": "Time control and live position analysis.",
       "section": "game",
       "epaper": { "font_size": 12, "height_ratio": 0.8 },
-      "children": ["settings.timecontrol.menu", "settings.chess960", "settings.notation", "analysis.enabled", "analysis.engine", "coach.id", "coach.provider"]
+      "children": ["group.game.clock", "group.game.variant", "group.game.analysis", "group.game.pondering", "group.game.coach", "group.game.history"]
+    },
+    {
+      "id": "group.game.clock",
+      "type": "group",
+      "label": "Chess Clock",
+      "section": "game",
+      "children": ["settings.timecontrol.preset", "settings.timecontrol", "timecontrol.custom.base", "timecontrol.custom.increment", "timecontrol.custom.delay", "timecontrol.custom.mode", "timecontrol.custom.asymmetric", "timecontrol.custom.black_base", "timecontrol.custom.black_increment", "settings.timecontrol.engine_move_delay"]
+    },
+    {
+      "id": "group.game.variant",
+      "type": "group",
+      "label": "Variant",
+      "section": "game",
+      "children": ["settings.chess960"]
+    },
+    {
+      "id": "group.game.analysis",
+      "type": "group",
+      "label": "Analysis",
+      "section": "game",
+      "children": ["analysis.enabled", "analysis.engine", "analysis.time"]
+    },
+    {
+      "id": "group.game.pondering",
+      "type": "group",
+      "label": "Pondering",
+      "section": "game",
+      "children": ["game.ponder"]
+    },
+    {
+      "id": "group.game.coach",
+      "type": "group",
+      "label": "Coach",
+      "section": "game",
+      "children": ["coach.id", "coach.provider", "coach.multipv"]
+    },
+    {
+      "id": "group.game.history",
+      "type": "group",
+      "label": "Move History",
+      "section": "game",
+      "children": ["settings.notation"]
     },
     {
       "id": "settings.agents",
@@ -363,27 +417,6 @@
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },
     {
-      "id": "settings.timecontrol.menu",
-      "key": "TimeControl",
-      "type": "submenu",
-      "target": "timecontrol",
-      "label": "Time Control",
-      "boardLabel": "Time\n{fn:time_control}",
-      "icon": { "0": "timer", "default": "timer_checked" },
-      "bind": { "store": "game", "key": "time_control" },
-      "help": "Choose a clock preset, build a custom clock, or set base minutes.",
-      "platforms": ["board"],
-      "epaper": { "font_size": 12, "height_ratio": 0.8 }
-    },
-    {
-      "id": "timecontrol",
-      "type": "menu",
-      "label": "Time Control",
-      "help": "Configure the game clock: a preset, a custom clock, or base minutes.",
-      "platforms": ["board"],
-      "children": ["settings.timecontrol.preset", "settings.timecontrol.custom", "settings.timecontrol", "settings.timecontrol.engine_move_delay"]
-    },
-    {
       "id": "settings.timecontrol.engine_move_delay",
       "key": "EngineMoveDelay",
       "type": "select",
@@ -414,26 +447,6 @@
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },
     {
-      "id": "settings.timecontrol.custom",
-      "key": "CustomClock",
-      "type": "submenu",
-      "target": "timecontrol.custom",
-      "label": "Custom Clock",
-      "icon": "timer",
-      "help": "Build your own clock: base time, increment, delay, and optional different times per side.",
-      "visibleWhen": { "store": "game", "key": "time_control_preset", "equals": "custom" },
-      "platforms": ["board"],
-      "epaper": { "font_size": 12, "height_ratio": 0.8 }
-    },
-    {
-      "id": "timecontrol.custom",
-      "type": "menu",
-      "label": "Custom Clock",
-      "help": "Custom clock settings. Select the Custom preset to use these.",
-      "platforms": ["board"],
-      "children": ["timecontrol.custom.base", "timecontrol.custom.increment", "timecontrol.custom.delay", "timecontrol.custom.mode", "timecontrol.custom.asymmetric", "timecontrol.custom.black_base", "timecontrol.custom.black_increment"]
-    },
-    {
       "id": "timecontrol.custom.base",
       "key": "CustomBase",
       "type": "select",
@@ -445,6 +458,7 @@
       "optionSet": "tc_base",
       "selectedIcon": "timer_checked",
       "unselectedIcon": "timer",
+      "visibleWhen": { "store": "game", "key": "time_control_preset", "equals": "custom" },
       "platforms": ["board", "web"],
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },
@@ -460,6 +474,7 @@
       "optionSet": "tc_increment",
       "selectedIcon": "timer_checked",
       "unselectedIcon": "timer",
+      "visibleWhen": { "store": "game", "key": "time_control_preset", "equals": "custom" },
       "platforms": ["board", "web"],
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },
@@ -475,6 +490,7 @@
       "optionSet": "tc_delay",
       "selectedIcon": "timer_checked",
       "unselectedIcon": "timer",
+      "visibleWhen": { "store": "game", "key": "time_control_preset", "equals": "custom" },
       "platforms": ["board", "web"],
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },
@@ -490,6 +506,7 @@
       "optionSet": "tc_delay_mode",
       "selectedIcon": "timer_checked",
       "unselectedIcon": "timer",
+      "visibleWhen": { "store": "game", "key": "time_control_preset", "equals": "custom" },
       "platforms": ["board", "web"],
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },
@@ -502,6 +519,7 @@
       "bind": { "store": "game", "key": "tc_custom_asymmetric" },
       "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
       "help": "Give White and Black different times (time odds). When on, set Black's base and increment below.",
+      "visibleWhen": { "store": "game", "key": "time_control_preset", "equals": "custom" },
       "platforms": ["board", "web"],
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },
@@ -517,7 +535,7 @@
       "optionSet": "tc_base",
       "selectedIcon": "timer_checked",
       "unselectedIcon": "timer",
-      "visibleWhen": { "store": "game", "key": "tc_custom_asymmetric", "equals": true },
+      "visibleWhen": { "allOf": [ { "store": "game", "key": "time_control_preset", "equals": "custom" }, { "store": "game", "key": "tc_custom_asymmetric", "equals": true } ] },
       "platforms": ["board", "web"],
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },
@@ -533,7 +551,7 @@
       "optionSet": "tc_increment",
       "selectedIcon": "timer_checked",
       "unselectedIcon": "timer",
-      "visibleWhen": { "store": "game", "key": "tc_custom_asymmetric", "equals": true },
+      "visibleWhen": { "allOf": [ { "store": "game", "key": "time_control_preset", "equals": "custom" }, { "store": "game", "key": "tc_custom_asymmetric", "equals": true } ] },
       "platforms": ["board", "web"],
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },
@@ -934,12 +952,13 @@
       "key": "Timezone",
       "type": "select",
       "optionSet": "timezones_common",
+      "webProvider": "timezones",
       "label": "Timezone",
       "boardLabel": "Timezone\n{value}",
       "help": "Set the device clock's timezone. Stored game times stay in UTC; this affects the board clock display.",
       "bind": { "store": "system", "key": "timezone" },
       "icon": "timer",
-      "platforms": ["board"]
+      "platforms": ["board", "web"]
     },
     {
       "id": "system.language",
@@ -951,7 +970,7 @@
       "help": "Language for the board menus, display, and web app. The AI coach's remarks use the separate Coach Language setting.",
       "bind": { "store": "system", "key": "ui_language" },
       "icon": "settings",
-      "platforms": ["board"]
+      "platforms": ["board", "web"]
     },
     {
       "id": "system.reset",
@@ -1043,6 +1062,21 @@
       "epaper": { "font_size": 14, "height_ratio": 0.8, "layout": "horizontal" }
     },
     {
+      "id": "analysis.time",
+      "key": "time",
+      "type": "select",
+      "label": "Analysis Time",
+      "boardLabel": "Analysis\n{value}",
+      "bind": { "store": "game", "key": "analysis_time_preset" },
+      "optionSet": "analysis_time",
+      "icon": "timer",
+      "help": "How long the board's engine analyses each position for its evaluation. Longer is more accurate (closer to the web's number) but uses more CPU and battery.",
+      "section": "game",
+      "visibleWhen": { "store": "analysis", "key": "mode", "equals": true },
+      "platforms": ["board", "web"],
+      "epaper": { "font_size": 14, "height_ratio": 0.8, "layout": "horizontal" }
+    },
+    {
       "id": "coach.id",
       "key": "coach_id",
       "type": "select",
@@ -1053,7 +1087,7 @@
       "help": "Coaching personality and style. Auto matches the coach to the opponent's rating; independent of the agent that powers it.",
       "section": "game",
       "bind": { "store": "game", "key": "coach_id" },
-      "platforms": ["board"],
+      "platforms": ["board", "web"],
       "epaper": { "font_size": 14, "height_ratio": 0.8, "layout": "horizontal" }
     },
     {
@@ -1070,6 +1104,34 @@
       "enabledWhen": { "store": "game", "key": "coach_id", "notEquals": "off" },
       "platforms": ["board", "web"],
       "epaper": { "font_size": 14, "height_ratio": 0.8, "layout": "horizontal" }
+    },
+    {
+      "id": "coach.multipv",
+      "key": "coach_multipv",
+      "type": "select",
+      "label": "Candidate lines",
+      "boardLabel": "Lines\n{value}",
+      "icon": "engine",
+      "help": "Number of engine candidate moves the coach considers for a move. Higher values let it suggest alternatives but cost extra analysis; 1 disables alternatives.",
+      "section": "game",
+      "bind": { "store": "game", "key": "coach_multipv" },
+      "optionSet": "coach_multipv",
+      "enabledWhen": { "store": "game", "key": "coach_id", "notEquals": "off" },
+      "platforms": ["board", "web"],
+      "epaper": { "font_size": 14, "height_ratio": 0.8, "layout": "horizontal" }
+    },
+    {
+      "id": "game.ponder",
+      "key": "ponder",
+      "type": "toggle",
+      "label": "Ponder",
+      "boardLabel": "Ponder",
+      "help": "Let engine opponents think on your time. Improves engine play but continuously runs a dedicated engine process, using more CPU and power (best on a mains-powered board, not battery).",
+      "section": "game",
+      "bind": { "store": "game", "key": "ponder" },
+      "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
+      "platforms": ["board", "web"],
+      "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },
     {
       "id": "agents.list.items",
@@ -1570,6 +1632,7 @@
       "help": "Beep when pieces are lifted or placed",
       "section": "sound",
       "bind": { "store": "sound", "key": "piece_events" },
+      "enabledWhen": { "store": "sound", "key": "enabled", "equals": true },
       "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
       "epaper": { "font_size": 14, "height_ratio": 0.8 }
     },
@@ -1580,6 +1643,7 @@
       "help": "Beep for check, checkmate, and other game events",
       "section": "sound",
       "bind": { "store": "sound", "key": "game_events" },
+      "enabledWhen": { "store": "sound", "key": "enabled", "equals": true },
       "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
       "epaper": { "font_size": 14, "height_ratio": 0.8 }
     },
@@ -1590,6 +1654,7 @@
       "help": "Beep on error conditions",
       "section": "sound",
       "bind": { "store": "sound", "key": "errors" },
+      "enabledWhen": { "store": "sound", "key": "enabled", "equals": true },
       "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
       "epaper": { "font_size": 14, "height_ratio": 0.8 }
     },
@@ -1600,6 +1665,7 @@
       "help": "Beep when buttons are pressed",
       "section": "sound",
       "bind": { "store": "sound", "key": "key_press" },
+      "enabledWhen": { "store": "sound", "key": "enabled", "equals": true },
       "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
       "epaper": { "font_size": 14, "height_ratio": 0.8 }
     },
@@ -1620,31 +1686,12 @@
       "platforms": ["web"]
     },
     {
-      "id": "field.system.sleep_timer",
-      "type": "select",
-      "label": "Sleep Timer",
-      "help": "Automatically put the board to sleep after a period of inactivity",
-      "optionSet": "sleep_timer",
-      "section": "system",
-      "platforms": ["web"]
-    },
-    {
-      "id": "field.system.timezone",
-      "type": "select",
-      "label": "Timezone",
-      "help": "Sets the device clock's timezone. Game times are always stored in UTC and shown here in your browser's timezone; this changes the board's own clock display. The full list is provided by the board at runtime.",
-      "provider": "timezones",
-      "section": "system",
-      "platforms": ["web"]
-    },
-    {
-      "id": "field.system.language",
-      "type": "select",
-      "label": "Language",
-      "help": "Language for the board menus, display, and this web app. The AI coach's remarks use the separate Coach Language setting under Game.",
-      "optionSet": "ui_language",
-      "section": "system",
-      "platforms": ["web"]
+      "id": "group.system.device",
+      "type": "group",
+      "label": "Device",
+      "help": "Sleep, timezone, and language preferences for this board.",
+      "platforms": ["web"],
+      "children": ["system.inactivity", "system.timezone", "system.language"]
     },
     {
       "id": "field.system.update_channel",

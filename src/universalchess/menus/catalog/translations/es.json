@@ -93,6 +93,11 @@
       "1800": "30 min",
       "3600": "1 hora"
     },
+    "analysis_time": {
+      "quick": "Rápido (0.3s)",
+      "standard": "Estándar (0.8s)",
+      "deep": "Profundo (2s)"
+    },
     "notation": {
       "figurine": "Figuras (♘f3)",
       "san": "Estándar (Nf3)",
@@ -186,15 +191,6 @@
       "boardLabel": "Min. base\n{fn:time_control}",
       "help": "Minutos por jugador para un reloj simple de muerte súbita (sin incremento ni retardo)."
     },
-    "settings.timecontrol.menu": {
-      "label": "Control de tiempo",
-      "boardLabel": "Reloj\n{fn:time_control}",
-      "help": "Elige un preajuste de reloj, crea uno personalizado o define los minutos base."
-    },
-    "timecontrol": {
-      "label": "Control de tiempo",
-      "help": "Configura el reloj de la partida: un preajuste, un reloj personalizado o los minutos base."
-    },
     "settings.timecontrol.engine_move_delay": {
       "label": "Retardo de jugada del motor",
       "boardLabel": "Retardo motor\n{value}",
@@ -204,14 +200,6 @@
       "label": "Preajuste",
       "boardLabel": "Preajuste\n{fn:time_control_preset_label}",
       "help": "Elige un control de tiempo predefinido: muerte súbita, incremento, retardo o un control de torneo. Elige Personalizado para usar el reloj personalizado."
-    },
-    "settings.timecontrol.custom": {
-      "label": "Reloj personalizado",
-      "help": "Crea tu propio reloj: tiempo base, incremento, retardo y, opcionalmente, tiempos distintos por bando."
-    },
-    "timecontrol.custom": {
-      "label": "Reloj personalizado",
-      "help": "Ajustes del reloj personalizado. Selecciona el preajuste Personalizado para usarlos."
     },
     "timecontrol.custom.base": {
       "label": "Tiempo base",
@@ -428,6 +416,11 @@
       "boardLabel": "Motor\n{value}",
       "help": "Motor usado para el análisis de la posición (es mejor cambiarlo entre partidas)."
     },
+    "analysis.time": {
+      "label": "Tiempo de análisis",
+      "boardLabel": "Análisis\n{value}",
+      "help": "Cuánto tiempo analiza el motor cada posición para su evaluación. Más tiempo es más preciso (más cercano al número de la web) pero consume más CPU y batería."
+    },
     "coach.id": {
       "label": "Entrenador",
       "boardLabel": "Entrenador\n{fn:coach_selected_label}",
@@ -438,6 +431,22 @@
       "boardLabel": "Agente\n{value}",
       "help": "Qué agente de IA impulsa al entrenador. Solo se listan los agentes con clave API y todos los ajustes necesarios; configúralos en Ajustes > Agentes. Se desactiva cuando el Entrenador está desactivado."
     },
+    "coach.multipv": {
+      "label": "Líneas candidatas",
+      "boardLabel": "Líneas\n{value}",
+      "help": "Número de jugadas candidatas del motor que el entrenador considera para una jugada. Valores más altos permiten sugerir alternativas pero cuestan análisis extra; 1 desactiva las alternativas."
+    },
+    "game.ponder": {
+      "label": "Rumiar",
+      "boardLabel": "Rumiar",
+      "help": "Deja que los motores rivales piensen en tu tiempo. Mejora el juego del motor pero ejecuta continuamente un proceso de motor dedicado, usando más CPU y energía (mejor con el tablero conectado a la corriente, no con batería)."
+    },
+    "group.game.clock": { "label": "Reloj de ajedrez" },
+    "group.game.variant": { "label": "Variante" },
+    "group.game.analysis": { "label": "Análisis" },
+    "group.game.pondering": { "label": "Rumiar" },
+    "group.game.coach": { "label": "Entrenador" },
+    "group.game.history": { "label": "Historial de jugadas" },
     "agents.list.items": {
       "help": "Selecciona un agente para configurar su clave API, modelo y endpoint."
     },
@@ -654,18 +663,6 @@
     "field.lichess.range": {
       "label": "Rango de rating",
       "help": "Rango de rating preferido de los rivales para el emparejamiento"
-    },
-    "field.system.sleep_timer": {
-      "label": "Temporizador de suspensión",
-      "help": "Pone el tablero en reposo automáticamente tras un periodo de inactividad"
-    },
-    "field.system.timezone": {
-      "label": "Zona horaria",
-      "help": "Ajusta la zona horaria del reloj del dispositivo. Los tiempos de las partidas siempre se guardan en UTC y aquí se muestran en la zona horaria de tu navegador; esto cambia la pantalla del reloj del tablero. El tablero proporciona la lista completa en tiempo de ejecución."
-    },
-    "field.system.language": {
-      "label": "Idioma",
-      "help": "Idioma de los menús del tablero, la pantalla y esta app web. Las observaciones del entrenador de IA usan el ajuste independiente Idioma del entrenador, en Partida."
     },
     "field.system.update_channel": {
       "label": "Canal de actualización",

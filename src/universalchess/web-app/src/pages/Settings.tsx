@@ -4,6 +4,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button, Card, CardHeader, FormRow, Input, Select, Toggle, Badge, ProgressBar } from '../components/ui';
 import { CatalogField } from '../components/CatalogField';
+import { WebMenuContext } from '../menu/context';
+import { MenuContainer } from '../menu/MenuContainer';
 import { EngineProfileEditor } from '../components/EngineProfileEditor';
 import { EngineStrengthField } from '../components/EngineStrengthField';
 import type { FieldValue } from '../components/CatalogField';
@@ -550,7 +552,6 @@ export function Settings() {
   // current selection resolves to (so "Auto" can show which coach it picked).
   // Fetched from GET /api/coaches. Independent of the AI provider/key.
   const [coaches, setCoaches] = useState<CoachInfo[]>([]);
-  const [resolvedCoach, setResolvedCoach] = useState<CoachInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   // Live save state for the inline indicator. Value settings save automatically
@@ -862,11 +863,9 @@ export function Settings() {
         const data = await res.json();
         if (cancelled) return;
         setCoaches(Array.isArray(data.coaches) ? (data.coaches as CoachInfo[]) : []);
-        setResolvedCoach((data.resolved as CoachInfo | null) ?? null);
       } catch {
         if (!cancelled) {
           setCoaches([]);
-          setResolvedCoach(null);
         }
       }
     })();
@@ -1676,30 +1675,13 @@ export function Settings() {
   const playerTypeOptions = optionSet('player_type');
   const handBrainModeOptions = optionSet('hand_brain_mode');
   const thinkTimeOptions = optionSet('think_time');
-  const timeControlOptions = optionSet('time_control');
-  // Enhanced clock option lists. The preset list is generated server-side from
-  // the Python preset registry (injected into /api/menu-schema) so it stays in
-  // lockstep with the board; the custom-builder lists are authored option sets
-  // shared with the board's Custom Clock submenu.
+  // The enhanced-clock preset list is generated server-side from the Python
+  // preset registry (injected into /api/menu-schema) so it stays in lockstep
+  // with the board. It is exposed to the Game tab through the `time_control_presets`
+  // provider on gameMenuCtx; the custom-builder/base/notation/engine-delay lists
+  // are authored option sets the menu engine resolves by name from the catalog,
+  // so they no longer need per-list consts here.
   const timeControlPresetOptions = optionSet('time_control_presets');
-  // Full rules sentence for the selected preset, shown beneath the selector so
-  // the dropdown labels can stay short (just the preset name). Falls back to the
-  // Basic entry's description when no value matches.
-  const selectedPresetDescription =
-    timeControlPresetOptions.find((o) => o.value === formSettings.game.time_control_preset)
-      ?.description ?? '';
-  const tcBaseOptions = optionSet('tc_base');
-  const tcIncrementOptions = optionSet('tc_increment');
-  const tcDelayOptions = optionSet('tc_delay');
-  const tcDelayModeOptions = optionSet('tc_delay_mode');
-  const engineMoveDelayOptions = optionSet('engine_move_delay');
-  const sleepTimerOptions = optionSet('sleep_timer');
-  // Full IANA zone list injected by the board into /api/menu-schema at runtime.
-  const timezoneOptions = optionSet('timezones');
-  // Device UI locales (en/es) from the shared catalog option set; the source for
-  // both the board Language menu and this selector, so they cannot drift.
-  const languageOptions = optionSet('ui_language');
-  const notationOptions = optionSet('notation');
   const textSizeOptions = optionSet('text_size');
   // Agent selector options (Game tab): every *configured* registered agent, built
   // from the live /api/agents list so a user-dropped agent module appears without
@@ -1728,18 +1710,12 @@ export function Settings() {
       label: known ? `${known.name} (no key)` : 'Select an agent',
     });
   }
-  const hasConfiguredAgent = configuredAgents.length > 0;
   // The Coach selector always shows the real stored persona -- it is never masked
   // by agent availability. Masking it (forcing "Disabled" until an agent existed)
   // made the coach appear to flip from Disabled to Auto the moment an API key was
   // entered, because the un-masked default ("auto") was revealed. Entering a key
   // must never change the coach setting.
   const coachDisabled = formSettings.game.coach_id === 'off';
-  // Any enabled coach (anything but "Disabled") requires an agent to power it, so a
-  // configured agent must be selected. This is enforced at save time rather than by
-  // silently choosing an agent for the user.
-  const coachAgentMissing = coachAgentRequirementUnmet();
-
   // Build the Model dropdown options for one agent: a Default entry (blank -> the
   // agent's default model), then its live-fetched models. A currently-saved model
   // not in the live list is appended so it stays selectable rather than being
@@ -1792,10 +1768,11 @@ export function Settings() {
     return true;
   };
 
-  // Nodes that are imperative `action`s on the board (chained engine -> ELO
-  // picker) but render as plain selects on the web via their catalog webType.
+  // The player Engine picker is an imperative `action` on the board that renders
+  // as a plain select on the web via the node's webType. (The analysis engine
+  // select is now rendered by the Game MenuContainer via the `installed_engines`
+  // provider, so it no longer needs a hand-referenced node here.)
   const playerEngineNode = fieldById(catalog, 'field.player.engine')!;
-  const analysisEngineNode = fieldById(catalog, 'analysis.engine')!;
 
   // Resolve the runtime option list a provider-backed select renders. The
   // catalog names the provider; the data is runtime and read from the same
@@ -1811,6 +1788,99 @@ export function Settings() {
         return [];
     }
   };
+
+  // Coach persona options for the provider-backed `coaches` select: Disabled +
+  // Auto + every registered coach (name/elo/style). Same roster the board renders
+  // from its `coaches` provider, so the two platforms cannot drift.
+  const coachOptions: MenuOption[] = [
+    { value: 'off', label: 'Disabled' },
+    { value: 'auto', label: 'Auto (match opponent)' },
+    ...coaches.map((c) => ({
+      value: c.id,
+      label: `${c.name} \u2014 ${c.elo} \u2014 ${c.character_type}`,
+    })),
+  ];
+
+  // The web MenuContext: the injected side-effect boundary the catalog-driven
+  // renderer reads/writes through. Stores map catalog stores to the form state
+  // (with the analysis->game key translation the board adapter also does), and
+  // providers back the runtime selects from the data this page already fetches.
+  // Rebuilt each render so its getters read the latest form state; the engine is
+  // pure over these getters, so visibility/enablement track edits immediately.
+  const gameMenuCtx = new WebMenuContext(optionSet);
+  gameMenuCtx.registerStore(
+    'game',
+    (key) => (formSettings.game as unknown as Record<string, FieldValue>)[key],
+    (key, value) => {
+      // coach_multipv is the one numeric key edited as a string select; coerce it
+      // to the int the backend stores. Toggles arrive as booleans and selects as
+      // strings, matching what the hand-built rows persisted.
+      const coerced = key === 'coach_multipv' ? parseCoachMultipv(String(value)) : value;
+      updateFormSettings('game', { [key]: coerced } as unknown as Partial<FormSettings['game']>);
+    },
+  );
+  gameMenuCtx.registerStore(
+    'analysis',
+    (key) =>
+      key === 'mode'
+        ? formSettings.game.analysis_mode
+        : key === 'engine'
+          ? formSettings.game.analysis_engine
+          : undefined,
+    (key, value) => {
+      if (key === 'mode') updateFormSettings('game', { analysis_mode: Boolean(value) });
+      else if (key === 'engine') updateFormSettings('game', { analysis_engine: String(value) });
+    },
+  );
+  gameMenuCtx.registerProvider('installed_engines', () => engineOptions);
+  gameMenuCtx.registerProvider('time_control_presets', () => timeControlPresetOptions);
+  gameMenuCtx.registerProvider('coaches', () => coachOptions);
+  gameMenuCtx.registerProvider('agents_choices', () => agentChoiceOptions);
+
+  // Sound tab context: a single `sound` store over formSettings.sound. Every
+  // sound row (master + per-category toggles) binds here, so the tab is rendered
+  // entirely from the catalog's settings.sound children. The per-category
+  // toggles carry an `enabledWhen` on `sound.enabled`, so they stay visible but
+  // disabled while the master switch is off (a category has no effect then) --
+  // the same catalog gate greys them here and renders them faded/non-selectable
+  // on the board, so both platforms behave identically.
+  const soundMenuCtx = new WebMenuContext(optionSet);
+  soundMenuCtx.registerStore(
+    'sound',
+    (key) => (formSettings.sound as unknown as Record<string, FieldValue>)[key],
+    (key, value) =>
+      updateFormSettings('sound', { [key]: value } as Partial<FormSettings['sound']>),
+  );
+
+  // System tab device preferences (Sleep Timer, Timezone, Language), rendered from
+  // the catalog's web-only `group.system.device`, which lists the *shared*
+  // system.* nodes the board also renders -- so there is one node set, not a web
+  // copy. The `system` store maps each shared bind key onto this page's form/APIs:
+  // Sleep Timer's `sleep_seconds` is the form's `inactivity_timeout` (applied live
+  // on Save), while Timezone and Language each apply through their dedicated device
+  // endpoint (saveTimezone/saveLanguage) rather than the generic settings save, so
+  // the setter routes those two keys there. The `timezones` provider backs the
+  // node's `webProvider` override with the full runtime list the board injects
+  // (the board itself uses its curated `timezones_common`).
+  const systemMenuCtx = new WebMenuContext(optionSet);
+  systemMenuCtx.registerStore(
+    'system',
+    (key) =>
+      key === 'sleep_seconds'
+        ? formSettings.system.inactivity_timeout
+        : (formSettings.system as unknown as Record<string, FieldValue>)[key],
+    (key, value) => {
+      if (key === 'timezone') saveTimezone(String(value));
+      else if (key === 'ui_language') saveLanguage(String(value));
+      else if (key === 'sleep_seconds')
+        updateFormSettings('system', { inactivity_timeout: String(value) });
+      else
+        updateFormSettings('system', {
+          [key]: value,
+        } as unknown as Partial<FormSettings['system']>);
+    },
+  );
+  systemMenuCtx.registerProvider('timezones', () => optionSet('timezones'));
 
   return (
     <>
@@ -2012,259 +2082,16 @@ export function Settings() {
             <h2 className="page-title">{t('settingsPage.game.title')}</h2>
             <p className="text-muted mb-6">{t('settingsPage.game.description')}</p>
 
-            {/* Time Control, Live Analysis, and Analysis Engine all render from
-                the shared catalog nodes (the same ones the board's Game submenu
-                uses). Analysis Engine is an `action` on the board but renders as a
-                select on the web via the node's webType, with options resolved
-                from the `installed_engines` provider. */}
-            {/* Time Control: the preset selector is primary and mirrors the
-                board's Time Control submenu. A named preset defines the whole
-                clock; "Basic" ('' preset) falls back to the legacy base-minutes
-                select; "Custom" reveals the custom-clock builder. The gating
-                below follows build_time_control's precedence so the web only
-                shows the control that actually takes effect. */}
-            <Card className="mb-6">
-              <CardHeader title="Chess Clock" />
-              {/* Suppress the node's static label-side hint: the full rules of
-                  the selected preset are shown in the description block below, so
-                  a second hint beside the dropdown would just crowd the row. */}
-              <CatalogField
-                node={fieldById(catalog, 'settings.timecontrol.preset')!}
-                value={formSettings.game.time_control_preset}
-                options={timeControlPresetOptions}
-                help=""
-                onChange={(v) => updateFormSettings('game', { time_control_preset: String(v) })}
-              />
-              {selectedPresetDescription && (
-                <p className="tc-preset-description">{selectedPresetDescription}</p>
-              )}
-              {formSettings.game.time_control_preset === '' && (
-                <CatalogField
-                  node={fieldById(catalog, 'settings.timecontrol')!}
-                  value={formSettings.game.time_control}
-                  options={timeControlOptions}
-                  onChange={(v) => updateFormSettings('game', { time_control: String(v) })}
-                />
-              )}
-              {formSettings.game.time_control_preset === 'custom' && (
-                <>
-                  <CatalogField
-                    node={fieldById(catalog, 'timecontrol.custom.base')!}
-                    value={formSettings.game.tc_custom_base_seconds}
-                    options={tcBaseOptions}
-                    onChange={(v) => updateFormSettings('game', { tc_custom_base_seconds: String(v) })}
-                  />
-                  <CatalogField
-                    node={fieldById(catalog, 'timecontrol.custom.increment')!}
-                    value={formSettings.game.tc_custom_increment_seconds}
-                    options={tcIncrementOptions}
-                    onChange={(v) => updateFormSettings('game', { tc_custom_increment_seconds: String(v) })}
-                  />
-                  <CatalogField
-                    node={fieldById(catalog, 'timecontrol.custom.delay')!}
-                    value={formSettings.game.tc_custom_delay_seconds}
-                    options={tcDelayOptions}
-                    onChange={(v) => updateFormSettings('game', { tc_custom_delay_seconds: String(v) })}
-                  />
-                  <CatalogField
-                    node={fieldById(catalog, 'timecontrol.custom.mode')!}
-                    value={formSettings.game.tc_custom_delay_mode}
-                    options={tcDelayModeOptions}
-                    onChange={(v) => updateFormSettings('game', { tc_custom_delay_mode: String(v) })}
-                  />
-                  <CatalogField
-                    node={fieldById(catalog, 'timecontrol.custom.asymmetric')!}
-                    value={formSettings.game.tc_custom_asymmetric}
-                    onChange={(v) => updateFormSettings('game', { tc_custom_asymmetric: Boolean(v) })}
-                  />
-                  {formSettings.game.tc_custom_asymmetric && (
-                    <>
-                      <CatalogField
-                        node={fieldById(catalog, 'timecontrol.custom.black_base')!}
-                        value={formSettings.game.tc_custom_black_base_seconds}
-                        options={tcBaseOptions}
-                        onChange={(v) => updateFormSettings('game', { tc_custom_black_base_seconds: String(v) })}
-                      />
-                      <CatalogField
-                        node={fieldById(catalog, 'timecontrol.custom.black_increment')!}
-                        value={formSettings.game.tc_custom_black_increment_seconds}
-                        options={tcIncrementOptions}
-                        onChange={(v) => updateFormSettings('game', { tc_custom_black_increment_seconds: String(v) })}
-                      />
-                    </>
-                  )}
-                </>
-              )}
-              <CatalogField
-                node={fieldById(catalog, 'settings.timecontrol.engine_move_delay')!}
-                value={formSettings.game.engine_move_clock_delay_seconds}
-                options={engineMoveDelayOptions}
-                onChange={(v) => updateFormSettings('game', { engine_move_clock_delay_seconds: String(v) })}
-              />
-            </Card>
-
-            <Card className="mb-6">
-              <CardHeader title="Variant" />
-              <CatalogField
-                node={fieldById(catalog, 'settings.chess960')!}
-                value={formSettings.game.chess960}
-                onChange={(v) => updateFormSettings('game', { chess960: Boolean(v) })}
-              />
-            </Card>
-
-            <Card className="mb-6">
-              <CardHeader title="Analysis" />
-              <CatalogField
-                node={fieldById(catalog, 'analysis.enabled')!}
-                value={formSettings.game.analysis_mode}
-                onChange={(v) => updateFormSettings('game', { analysis_mode: Boolean(v) })}
-              />
-              <CatalogField
-                node={analysisEngineNode}
-                value={formSettings.game.analysis_engine}
-                options={providerOptions(analysisEngineNode)}
-                onChange={(v) => updateFormSettings('game', { analysis_engine: String(v) })}
-              />
-            </Card>
-
-            <Card className="mb-6">
-              <CardHeader title="Pondering" />
-              <Toggle
-                label="Ponder"
-                help="Let engine opponents think on your time. Improves engine play but continuously runs a dedicated engine process, using more CPU and power (best on a mains-powered board, not battery)."
-                checked={formSettings.game.ponder}
-                onChange={(v) => updateFormSettings('game', { ponder: Boolean(v) })}
-              />
-            </Card>
-
-            {/* Coach: pick the coaching persona and which AI agent powers it. The
-                agent's credentials (key/model/endpoint) are configured under the
-                Agents tab -- coach persona and agent choice live here in Game. */}
-            <Card className="mb-6">
-              <CardHeader title="Coach" />
-              {/* Coach persona: who is coaching and in what style. Independent of
-                  the agent that powers it. "Auto" picks a coach by the opponent's
-                  rating; the resolved coach is shown so the choice is visible. */}
-              <FormRow
-                label="Coach"
-                help={
-                  // Keep the static hint and the resolved-coach note in the left
-                  // help column (which fills the row) rather than in the
-                  // fixed-width control column, where the multi-sentence coach
-                  // description forces the column wide and collapses the label
-                  // column to one word per line. Matches every other settings row.
-                  <>
-                    The coaching personality and style.{' '}
-                    {coachDisabled ? (
-                      <>
-                        Coaching is disabled &mdash; the agent selector below is
-                        greyed out; choose a coach to enable it.
-                      </>
-                    ) : coachAgentMissing ? (
-                      <>
-                        Coaching requires an agent: select one below.{' '}
-                        {!hasConfiguredAgent && (
-                          <>
-                            No AI agents are configured yet &mdash; add an API key to
-                            an agent under <strong>Agents</strong> first.
-                          </>
-                        )}
-                      </>
-                    ) : formSettings.game.coach_id === 'auto' ? (
-                      <>
-                        Auto matches the coach to the opponent's rating
-                        {resolvedCoach ? (
-                          <>
-                            {' '}and currently selects{' '}
-                            <strong>{resolvedCoach.name}</strong> (
-                            {resolvedCoach.elo}, {resolvedCoach.character_type}).{' '}
-                            {resolvedCoach.description}
-                          </>
-                        ) : (
-                          '.'
-                        )}
-                      </>
-                    ) : (
-                      (() => {
-                        const selected =
-                          coaches.find((c) => c.id === formSettings.game.coach_id) ?? null;
-                        if (!selected) return null;
-                        return (
-                          <>
-                            <strong>{selected.name}</strong> ({selected.elo},{' '}
-                            {selected.character_type}). {selected.description}
-                          </>
-                        );
-                      })()
-                    )}
-                  </>
-                }
-              >
-                <Select
-                  value={formSettings.game.coach_id}
-                  options={[
-                    { value: 'off', label: 'Disabled' },
-                    { value: 'auto', label: 'Auto (match opponent)' },
-                    ...coaches.map((c) => ({
-                      value: c.id,
-                      label: `${c.name} \u2014 ${c.elo} \u2014 ${c.character_type}`,
-                    })),
-                  ]}
-                  onChange={(e) => updateFormSettings('game', { coach_id: e.target.value })}
-                />
-              </FormRow>
-              {/* Agent selector: which configured AI agent powers the coach. Its
-                  key/model/endpoint are set under the Agents tab. Options come from
-                  the live agents list (Disabled + every registered agent). */}
-              <CatalogField
-                node={fieldById(catalog, 'coach.provider')!}
-                value={formSettings.game.coach_provider}
-                options={agentChoiceOptions}
-                disabled={coachDisabled}
-                onChange={(v) => updateFormSettings('game', { coach_provider: String(v) })}
-              />
-              {coachAgentMissing && (
-                <p className="text-danger" style={{ fontSize: '0.8em', marginTop: '0.4em' }}>
-                  An agent is required when coaching is enabled. Select an agent
-                  {hasConfiguredAgent ? '' : ' after adding an API key under Agents'} to
-                  save.
-                </p>
-              )}
-              {/* The coach writes in the device UI language (Settings > System >
-                  Language); there is no separate coach-language control. */}
-              {/* Candidate lines (MultiPV): how many engine top moves the coach is
-                  given for a reviewed move so it can reference better/alternative
-                  moves. 1 sends none (fastest). */}
-              <FormRow
-                label="Candidate lines"
-                help="Number of engine candidate moves the coach considers for a move. Higher values let it suggest alternatives but cost extra analysis; 1 disables alternatives."
-              >
-                <Select
-                  value={String(formSettings.game.coach_multipv)}
-                  disabled={coachDisabled}
-                  options={[
-                    { value: '1', label: '1 (off)' },
-                    { value: '2', label: '2' },
-                    { value: '3', label: '3' },
-                    { value: '4', label: '4' },
-                    { value: '5', label: '5' },
-                  ]}
-                  onChange={(e) =>
-                    updateFormSettings('game', { coach_multipv: parseCoachMultipv(e.target.value) })
-                  }
-                />
-              </FormRow>
-            </Card>
-
-            <Card className="mb-6">
-              <CardHeader title="Move History" />
-              <CatalogField
-                node={fieldById(catalog, 'settings.notation')!}
-                value={formSettings.game.notation}
-                options={notationOptions}
-                onChange={(v) => updateFormSettings('game', { notation: String(v) })}
-              />
-            </Card>
+            {/* The whole Game tab is now rendered from the shared catalog's
+                `settings.game` container by the web menu engine: its `group`
+                nodes (Chess Clock, Variant, Analysis, Pondering, Coach, Move
+                History) become cards and each leaf becomes a control, driven by
+                the same nodes the board flattens into rows. gameMenuCtx supplies
+                values, runtime option lists, and gating (incl. the analysis->game
+                key translation and coach enable gating). Adding or re-gating a
+                node in menu.json (e.g. Analysis Time) now surfaces on both
+                platforms with no hand-edited JSX. */}
+            <MenuContainer catalog={catalog} containerId="settings.game" ctx={gameMenuCtx} />
           </section>
         )}
 
@@ -2586,29 +2413,11 @@ export function Settings() {
             <h2 className="page-title">{t('settingsPage.sound.title')}</h2>
             <p className="text-muted mb-6">{t('settingsPage.sound.description')}</p>
 
-            {/* Rendered from the catalog's sound section: row order, labels, and
-                help all come from menu.json (matching the board's Sound submenu --
-                master switch first, then per-category toggles). The master switch
-                gates the rest on the web only, so the board's behavior is
-                unchanged. */}
-            <Card className="mb-6">
-              <CardHeader title="Sound" />
-              {fieldsForSection(catalog, 'sound').map((node) => {
-                const key = node.bind?.key as keyof FormSettings['sound'];
-                const isMaster = key === 'enabled';
-                return (
-                  <CatalogField
-                    key={node.id}
-                    node={node}
-                    value={formSettings.sound[key]}
-                    disabled={!isMaster && !formSettings.sound.enabled}
-                    onChange={(v) =>
-                      updateFormSettings('sound', { [key]: v } as Partial<FormSettings['sound']>)
-                    }
-                  />
-                );
-              })}
-            </Card>
+            {/* Fully catalog-driven: row order, labels, help, and state icons all
+                come from the settings.sound children in menu.json, rendered by the
+                shared web menu engine -- the same nodes the board flattens into its
+                Sound submenu. soundMenuCtx supplies the `sound` store. */}
+            <MenuContainer catalog={catalog} containerId="settings.sound" ctx={soundMenuCtx} />
           </section>
         )}
 
@@ -2663,59 +2472,14 @@ export function Settings() {
 
             <SystemInfoCard />
 
-            {/* Sleep Timer writes [system] inactivity_timeout, the same key the
-                board's Sleep Timer menu sets and the board reads live, so this
-                applies on Save & Apply without a restart. */}
-            <Card className="mb-6">
-              <CardHeader title="Sleep Timer" />
-              <FormRow
-                label={fieldLabel('field.system.sleep_timer')}
-                help={fieldHelp('field.system.sleep_timer')}
-              >
-                <Select
-                  value={formSettings.system.inactivity_timeout}
-                  options={sleepTimerOptions}
-                  onChange={(e) => updateFormSettings('system', { inactivity_timeout: e.target.value })}
-                />
-              </FormRow>
-            </Card>
-
-            {/* Timezone applies to the device OS clock via the dedicated
-                /api/system/timezone endpoint (persist + timedatectl). Game times
-                are stored in UTC and shown on this page in the browser's own
-                timezone regardless of this setting. */}
-            <Card className="mb-6">
-              <CardHeader title="Timezone" />
-              <FormRow
-                label={fieldLabel('field.system.timezone')}
-                help={fieldHelp('field.system.timezone')}
-              >
-                <Select
-                  value={formSettings.system.timezone}
-                  options={timezoneOptions}
-                  onChange={(e) => saveTimezone(e.target.value)}
-                />
-              </FormRow>
-            </Card>
-
-            {/* Language selects the device UI locale via the dedicated
-                /api/system/language endpoint (persist + notify the board). The
-                option list comes from the shared `ui_language` catalog option set,
-                so it stays in lockstep with the board's Language menu. This is
-                distinct from the AI coach's commentary language (Game tab). */}
-            <Card className="mb-6">
-              <CardHeader title={fieldLabel('field.system.language')} />
-              <FormRow
-                label={fieldLabel('field.system.language')}
-                help={fieldHelp('field.system.language')}
-              >
-                <Select
-                  value={formSettings.system.ui_language}
-                  options={languageOptions}
-                  onChange={(e) => saveLanguage(e.target.value)}
-                />
-              </FormRow>
-            </Card>
+            {/* Sleep Timer, Timezone, and Language are rendered from the shared
+                catalog's web-only `group.system.device`, which lists the same
+                system.* nodes the board's System menu renders. systemMenuCtx maps
+                each bind: Sleep Timer -> [system] inactivity_timeout (applied live
+                on Save & Apply); Timezone/Language -> their dedicated device
+                endpoints. The timezone list is the full runtime set (the node's
+                webProvider override); the board uses its curated list. */}
+            <MenuContainer catalog={catalog} containerId="group.system.device" ctx={systemMenuCtx} />
 
             <Card className="mb-6">
               <CardHeader title="Software Updates" />

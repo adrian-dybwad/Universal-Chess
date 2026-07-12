@@ -192,6 +192,33 @@ class MenuCatalog:
         ]
 
 
+def _validate_condition(node_id: str, gate: str, condition: dict) -> None:
+    """Validate a ``visibleWhen``/``enabledWhen`` condition shape.
+
+    A leaf condition must carry ``store`` and ``key`` (the value it reads); a
+    compound ``{"allOf": [...]}`` must carry a non-empty list of leaf conditions,
+    each validated recursively. This mirrors what :func:`engine._condition_met`
+    can evaluate, so a shape the engine cannot read (a missing key, or an ``allOf``
+    that is not a list of conditions) fails at load rather than as a row that
+    never shows/hides at runtime.
+    """
+    if not isinstance(condition, dict):
+        raise CatalogError(f"node '{node_id}' has malformed '{gate}' (not an object): {condition!r}")
+    if "allOf" in condition:
+        subs = condition["allOf"]
+        if not isinstance(subs, list) or not subs:
+            raise CatalogError(
+                f"node '{node_id}' has malformed '{gate}' allOf (need a non-empty list): {subs!r}"
+            )
+        for sub in subs:
+            _validate_condition(node_id, gate, sub)
+        return
+    if "store" not in condition or "key" not in condition:
+        raise CatalogError(
+            f"node '{node_id}' has malformed '{gate}' (need store and key): {condition!r}"
+        )
+
+
 def _validate(menu_data: dict, icons_data: dict) -> None:
     """Validate the catalog cross-references, raising :class:`CatalogError`.
 
@@ -257,13 +284,10 @@ def _validate(menu_data: dict, icons_data: dict) -> None:
                 f"node '{node_id}' has malformed 'itemBind' (need store and key): {item_bind!r}"
             )
 
-        visible_when = node.get("visibleWhen")
-        if visible_when is not None and not (
-            isinstance(visible_when, dict) and "store" in visible_when and "key" in visible_when
-        ):
-            raise CatalogError(
-                f"node '{node_id}' has malformed 'visibleWhen' (need store and key): {visible_when!r}"
-            )
+        for gate in ("visibleWhen", "enabledWhen"):
+            condition = node.get(gate)
+            if condition is not None:
+                _validate_condition(node_id, gate, condition)
 
         for child_id in node.get("children", []):
             if child_id not in ids:

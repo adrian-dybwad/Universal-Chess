@@ -15,6 +15,9 @@ export interface MenuOption {
   description?: string;
   /** Optional per-option icon (used by the board's option lists). */
   icon?: string;
+  /** Optional per-option image thumbnail URL (web) shown next to the label, e.g.
+   *  a sprite-sheet preview. The board uses `icon`/provider row glyphs instead. */
+  image?: string;
   /** Optional per-option render font size in px (board option lists); lets an
    *  option preview its own effect, e.g. the Text Size choices render at their
    *  own size. */
@@ -39,6 +42,9 @@ export interface MenuCondition {
   key?: string;
   in?: string[];
   equals?: string | number | boolean;
+  /** Satisfied when the bound value differs from this (e.g. Agent row shown
+   *  while coach is not "off"). Mirrors the board engine's `notEquals`. */
+  notEquals?: string | number | boolean;
   allOf?: MenuCondition[];
 }
 
@@ -62,6 +68,7 @@ export interface MenuNode {
   type:
     | 'menu'
     | 'submenu'
+    | 'group'
     | 'action'
     | 'toggle'
     | 'cycle'
@@ -91,6 +98,16 @@ export interface MenuNode {
   section?: string;
   /** Named option set for select/cycle fields. */
   optionSet?: string;
+  /**
+   * Web-only override of the option source. When set, the web resolves this
+   * node's options from `webProvider` (a runtime provider) or `webOptionSet` (a
+   * static set) instead of the board's `provider`/`optionSet`. Used where the two
+   * platforms need different lists for the same node -- e.g. Timezone offers a
+   * curated `timezones_common` on the e-paper but the full runtime list on the
+   * web. The board ignores both.
+   */
+  webProvider?: string;
+  webOptionSet?: string;
   /** Value store/key this node reads and writes. */
   bind?: MenuBind;
   /** Gate the row's visibility on a bound value. */
@@ -107,12 +124,21 @@ export interface MenuNode {
   action?: string;
   /** Dynamic-list provider name for `dynamic` nodes. */
   provider?: string;
+  /** On a `dynamic` node, the action run when one of its provider rows is
+   *  selected, called with the row's key (e.g. connect to a scanned network). */
+  itemAction?: string;
+  /** On a `dynamic` node, makes its provider rows a radio set: selecting a row
+   *  writes the row's key to this bound value. */
+  itemBind?: MenuBind;
   /** Per-row icons for the option list a `select` opens. */
   selectedIcon?: string;
   unselectedIcon?: string;
+  /** A `text` field whose value is a secret (never returned in cleartext,
+   *  rendered as a password input on the web). */
+  secret?: boolean;
   /** Board selection key (e-paper renderer). */
   key?: string;
-  /** Container child ids. */
+  /** Container child ids (menu/submenu/group). */
   children?: string[];
   /** Navigation target for submenu nodes. */
   target?: string;
@@ -154,6 +180,8 @@ export interface AccountType {
 
 export interface MenuCatalog {
   version: number;
+  /** Human-readable catalog purpose (top-level metadata). */
+  description?: string;
   roots: string[];
   sections: MenuSection[];
   optionSets: Record<string, MenuOption[]>;
@@ -172,4 +200,22 @@ export function fieldsForSection(catalog: MenuCatalog, sectionId: string): MenuN
 /** Look up a field node by id, or undefined if absent. */
 export function fieldById(catalog: MenuCatalog, id: string): MenuNode | undefined {
   return catalog.nodes.find((n) => n.id === id);
+}
+
+/**
+ * Return the direct child nodes of a container (menu/submenu/group), in declared
+ * order. This is the web engine's equivalent of the board's
+ * MenuCatalog.children(): it walks the `children` id list rather than the
+ * `field.`-prefix `section` convention, so any container - including the `game`
+ * subtree whose ids are not `field.*` - can be rendered generically. Unknown
+ * child ids are skipped (the backend validates references, but a stale fixture
+ * should degrade rather than throw).
+ */
+export function childrenOf(catalog: MenuCatalog, containerId: string): MenuNode[] {
+  const container = fieldById(catalog, containerId);
+  if (!container?.children) return [];
+  const byId = new Map(catalog.nodes.map((n) => [n.id, n]));
+  return container.children
+    .map((id) => byId.get(id))
+    .filter((n): n is MenuNode => n !== undefined);
 }

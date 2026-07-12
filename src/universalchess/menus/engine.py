@@ -16,7 +16,10 @@ Separation of concerns:
 Node behavior schema (fields read here; all optional unless noted):
 - ``type`` (required): ``submenu`` | ``select`` | ``toggle`` | ``cycle`` |
   ``range`` | ``set_value`` | ``dynamic`` | ``action`` | ``text`` | ``info``
-  (plus container types the renderer walks). ``text`` is a free-string field
+  (plus container types the renderer walks: ``menu``, and ``group`` -- a
+  transparent container whose children are inlined into the parent's rows so the
+  web can wrap them in a titled card while the board renders them flat).
+  ``text`` is a free-string field
   edited via its ``action`` on the board and rendered as an input on the web.
   ``info`` is a display-only readout (typically with ``epaper.selectable`` false)
   whose label may carry ``{value}``/``{fn:NAME}`` tokens.
@@ -299,12 +302,32 @@ def is_enabled(node: dict, ctx: MenuContext) -> bool:
     return node.get("enabled", True)
 
 
+def applies_to_platform(node: dict, platform: str) -> bool:
+    """Return whether ``node`` should render on ``platform``.
+
+    A node's ``platforms`` lists the platforms it applies to; absent means both.
+    Filtering here (rather than only via which container is opened) lets a shared
+    container hold platform-specific rows - e.g. a board-only coach picker or a
+    web-only field - without either renderer showing the other's rows. This is
+    required now that the web renders containers generically from ``children``
+    (previously it referenced node ids by hand, so it never saw board-only rows).
+    """
+    return platform in node.get("platforms", ["board", "web"])
+
+
 def build_rows(container_id: str, ctx: MenuContext, *, platform: str, catalog) -> List[MenuRow]:
     """Build the resolved rows for a container's children, in declared order.
 
     The generic constructor that replaces the per-menu builders: it filters
-    hidden rows (``visibleWhen``), expands ``dynamic`` nodes via their provider,
-    and resolves each remaining node's label/icon/enabled for the platform.
+    hidden rows (``visibleWhen`` and ``platforms``), inlines transparent
+    ``group`` containers, expands ``dynamic`` nodes via their provider, and
+    resolves each remaining node's label/icon/enabled for the platform.
+
+    ``group`` nodes are structural-only: they carry no row of their own but their
+    children are inlined here in place (recursively), so the web can wrap a group
+    in a titled card while the board renders the same flat sequence it always
+    has. A group may itself declare ``visibleWhen``/``platforms`` to hide its
+    whole subtree.
 
     Args:
         container_id: Catalog id of the container whose children to render.
@@ -314,7 +337,13 @@ def build_rows(container_id: str, ctx: MenuContext, *, platform: str, catalog) -
     """
     rows: List[MenuRow] = []
     for child in catalog.children(container_id):
+        if not applies_to_platform(child, platform):
+            continue
         if not is_visible(child, ctx):
+            continue
+        if child.get("type") == "group":
+            # Transparent container: inline its children as rows in place.
+            rows.extend(build_rows(child["id"], ctx, platform=platform, catalog=catalog))
             continue
         if child.get("type") == "dynamic":
             # A dynamic node may declare an ``itemAction`` run when one of its

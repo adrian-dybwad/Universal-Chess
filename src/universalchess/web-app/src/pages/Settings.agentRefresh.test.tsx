@@ -198,9 +198,12 @@ describe('Settings agent list refresh after saving an API key', () => {
     const user = userEvent.setup();
     renderSettings('game');
 
-    // Baseline: no agent configured yet, so the coach is disabled and the agent
-    // selector offers no configured agent to choose.
-    expect(await screen.findByText(/Coaching is disabled/i)).toBeInTheDocument();
+    // Baseline: no agent configured yet, so the agent selector offers no
+    // configured agent to choose. The Game tab is now catalog-driven (rendered
+    // from settings.game), so "coaching disabled" is enforced by the save guard
+    // rather than inline help text; wait on a stable catalog row (Candidate
+    // lines) to confirm the Game tab has rendered.
+    expect(await screen.findByText('Candidate lines')).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'OpenAI' })).not.toBeInTheDocument();
 
     // Switch to Agents (same mounted component), enter a key, and save it.
@@ -234,22 +237,19 @@ describe('Settings agent list refresh after saving an API key', () => {
   it('does not auto-persist an enabled coach until an agent is selected', async () => {
     // Requirement: any coach other than Disabled requires a selected, configured
     // agent. With none configured, selecting a coach must NOT auto-save (the
-    // debounced save is blocked) and must surface the inline requirement message.
-    // A regression dropping the rule would POST an agentless coach that silently
-    // never runs.
+    // debounced save is blocked by the coach-requirement guard). A regression
+    // dropping the rule would POST an agentless coach that silently never runs.
+    // The guard is behavioral (coachUnmetRef gating the debounced save); the Game
+    // tab is now catalog-driven, so this asserts the save is withheld rather than
+    // the presence of the old inline notice.
     const user = userEvent.setup();
     renderSettings('game');
 
     const autoOption = await screen.findByRole('option', { name: /Auto \(match opponent\)/ });
     await user.selectOptions(autoOption.closest('select') as HTMLSelectElement, 'auto');
 
-    // The inline requirement message appears next to the coach selector...
-    expect(
-      await screen.findByText(/An agent is required when coaching is enabled/i)
-    ).toBeInTheDocument();
-
-    // ...and no save carrying the enabled coach is issued (give the debounce
-    // window time to have fired had the guard been missing).
+    // No save carrying the enabled coach is issued (give the debounce window time
+    // to have fired had the guard been missing).
     await new Promise((r) => setTimeout(r, 600));
     expect(lastSettingsPost?.game?.coach_id).not.toBe('auto');
   });

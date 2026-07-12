@@ -24,6 +24,40 @@ from universalchess.utils.settings_persistence import load_section, save_setting
 # so both paths agree on which keys are "effective, per-provider" aliases.
 _COACH_EFFECTIVE_BASES = (API_KEY_BASE, MODEL_BASE, BASE_URL_BASE)
 
+# Board position-analysis time presets. The board's AnalysisService searches each
+# position for a fixed WALL-CLOCK time (UCI ``go movetime``), so the preset maps a
+# user-facing name to seconds rather than a depth: a fixed depth can stall for many
+# seconds in sharp positions on the slow Pi, whereas a time cap keeps per-move cost
+# bounded. Longer time reaches greater depth -> a more accurate eval that lands
+# closer to the web's fixed-depth number, at the cost of more CPU/battery. Stored as
+# the preset NAME (not the seconds) so the seconds can be retuned later without
+# invalidating saved configs. "quick" is the historical 0.3s default, so leaving the
+# setting untouched changes nothing.
+ANALYSIS_TIME_PRESETS: Dict[str, float] = {
+    "quick": 0.3,
+    "standard": 0.8,
+    "deep": 2.0,
+}
+ANALYSIS_TIME_DEFAULT = "quick"
+
+
+def analysis_time_seconds(preset: str) -> float:
+    """Return the per-position analysis time in seconds for a preset name.
+
+    An unknown/empty preset falls back to the default rather than raising: the
+    value comes from persisted config that a downgrade/typo could leave stale, and
+    the correct response is the safe historical default, not a crash on the game
+    thread. Never fabricates an arbitrary number -- the fallback is an explicit,
+    documented preset.
+
+    Args:
+        preset: Preset name (one of ``ANALYSIS_TIME_PRESETS``).
+
+    Returns:
+        Seconds per position for that preset, or the default preset's seconds.
+    """
+    return ANALYSIS_TIME_PRESETS.get(preset, ANALYSIS_TIME_PRESETS[ANALYSIS_TIME_DEFAULT])
+
 
 def _field_defaults(cls) -> Dict[str, Any]:
     """Default value for every persisted field of a settings dataclass.
@@ -215,6 +249,11 @@ class GameSettings:
             though the move is still being physically transcribed. Default 1.
         analysis_mode: Enable analysis engine
         analysis_engine: Engine to use for position analysis
+        analysis_time_preset: How long the board analyses each position, as a
+            preset name ("quick"/"standard"/"deep", default "quick"). Maps to
+            seconds via ``analysis_time_seconds``; longer is more accurate but
+            uses more CPU/battery. Stored as the name so the seconds can be
+            retuned without invalidating saved configs.
         ponder: When True, engine players think on the opponent's time (UCI
             pondering). A             pondering engine runs in a dedicated process so its
             background search is never interrupted by analysis or the opponent;
@@ -283,6 +322,7 @@ class GameSettings:
     engine_move_clock_delay_seconds: int = 1
     analysis_mode: bool = True
     analysis_engine: str = "stockfish"
+    analysis_time_preset: str = ANALYSIS_TIME_DEFAULT
     ponder: bool = False
     chess960: bool = False
     show_board: bool = True
@@ -383,6 +423,7 @@ class GameSettings:
             "engine_move_clock_delay_seconds": self.engine_move_clock_delay_seconds,
             "analysis_mode": self.analysis_mode,
             "analysis_engine": self.analysis_engine,
+            "analysis_time_preset": self.analysis_time_preset,
             "ponder": self.ponder,
             "chess960": self.chess960,
             "show_board": self.show_board,
@@ -462,6 +503,7 @@ class GameSettings:
             engine_move_clock_delay_seconds=data["engine_move_clock_delay_seconds"],
             analysis_mode=data["analysis_mode"],
             analysis_engine=data["analysis_engine"],
+            analysis_time_preset=data["analysis_time_preset"],
             ponder=data["ponder"],
             chess960=data["chess960"],
             show_board=data["show_board"],

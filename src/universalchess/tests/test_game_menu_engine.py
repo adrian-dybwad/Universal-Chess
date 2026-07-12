@@ -25,10 +25,15 @@ def _game_ctx(
     mode=False,
     engine="stockfish",
     time_control=0,
+    time_control_preset="",
+    tc_custom_asymmetric=False,
+    ponder=False,
+    coach_multipv=1,
     notation="figurine",
     chess960=False,
     coach_provider="none",
     coach_id="auto",
+    analysis_time_preset="quick",
     agent_edit_id="",
     agent_model_kind="model",
     agent_requires_base_url=False,
@@ -50,10 +55,36 @@ def _game_ctx(
         "mode": mode,
         "engine": engine,
         "time_control": time_control,
+        # The unified Game menu now renders the time-control fields inline (no
+        # submenu): the master Preset select plus the base-minutes/custom rows it
+        # gates. The fake store must supply the preset key and the asymmetric flag
+        # those gates read, or the inline rows' visibility/label resolution
+        # KeyErrors.
+        "time_control_preset": time_control_preset,
+        "tc_custom_asymmetric": tc_custom_asymmetric,
+        # Engine Move Delay is now an inline clock row; back its bind so its
+        # {value} label resolves.
+        "engine_move_clock_delay_seconds": 0,
+        # The inline custom-clock rows render (with labels) whenever the Custom
+        # preset is active, so their binds must exist in the fake store.
+        "tc_custom_base_seconds": 0,
+        "tc_custom_increment_seconds": 0,
+        "tc_custom_delay_seconds": 0,
+        "tc_custom_delay_mode": "none",
+        "tc_custom_black_base_seconds": 0,
+        "tc_custom_black_increment_seconds": 0,
+        # Pondering and coach candidate-lines are now catalog rows on both
+        # platforms; back their binds so their rows render.
+        "ponder": ponder,
+        "coach_multipv": coach_multipv,
         "notation": notation,
         "chess960": chess960,
         "coach_provider": coach_provider,
         "coach_id": coach_id,
+        # Backs the Analysis Time select (game store); its boardLabel renders the
+        # current value, so the fake store must supply it or label resolution
+        # KeyErrors.
+        "analysis_time_preset": analysis_time_preset,
     }
     edit_state = {
         "id": agent_edit_id,
@@ -75,6 +106,20 @@ def _game_ctx(
     ctx.register_value(
         "time_control",
         lambda node: "Disabled" if state["time_control"] == 0 else f"{state['time_control']} min",
+    )
+    # The inline Preset row's board label renders {fn:time_control_preset_label};
+    # the fake distinguishes Basic ("") from any named/custom preset key.
+    ctx.register_value(
+        "time_control_preset_label",
+        lambda node: "Basic" if state["time_control_preset"] == "" else state["time_control_preset"],
+    )
+    ctx.register_provider(
+        "time_control_presets",
+        lambda: [
+            MenuRow(key="", label="Basic", icon="timer_checked"),
+            MenuRow(key="blitz_5_3", label="Blitz 5+3", icon="timer_checked"),
+            MenuRow(key="custom", label="Custom", icon="timer"),
+        ],
     )
     # Concise label for the active coach; Auto shows the resolved coach in the real
     # app, but the fake just distinguishes Auto from an explicit pick.
@@ -165,27 +210,60 @@ def _detail_rows(**kwargs):
 
 
 def test_game_menu_rows_and_engine_visibility():
-    """Game lists Time Control + Chess960 + Notation + Live Analysis + Coach + Agent selector.
+    """Game flattens its groups into one ordered row list, gating analysis rows.
 
-    Why this test exists: the unified Game menu must show Time Control, the
-    Chess960 variant toggle, Notation,
-    and the analysis toggle always, reveal the Analysis Engine row only when Live
-    Analysis is on (via ``visibleWhen``), and always show the Coach persona and
-    Agent selector (their key/model config lives under Agents). The coach's
-    language now follows the device UI language (System > Language), so there is no
-    Coach Language row here. How a regression manifests: an item is
-    dropped/reordered, the Engine row shows while analysis is off (dead row) or
-    never shows while on, or coach_id/coach_provider go missing.
+    Why this test exists: the unified Game menu is now built from ``group`` nodes
+    (Chess Clock, Variant, Analysis, Pondering, Coach, Move History) that the
+    board inlines transparently, in declared order. With no preset the clock group
+    shows the master Preset row, the base-minutes row, and Engine Move Delay; the
+    Analysis Engine and Analysis Time rows appear only when Live Analysis is on
+    (via ``visibleWhen``); Pondering, Coach persona, Agent, Candidate lines, and
+    Notation always render. How a regression manifests: a group stops flattening
+    (its rows vanish), the order drifts, or the analysis rows show while off (dead
+    rows) / never show while on.
     """
     _, off_rows = _rows(mode=False)
     assert [r.key for r in off_rows] == [
-        "TimeControl", "Chess960", "Notation", "enabled", "coach_id", "coach_provider",
+        "Preset", "TimeControl", "EngineMoveDelay", "Chess960", "enabled",
+        "ponder", "coach_id", "coach_provider", "coach_multipv", "Notation",
     ]
 
+    # With Live Analysis on, both the Engine and the Analysis Time rows appear (both
+    # gated by the same visibleWhen), between the analysis toggle and Pondering.
     _, on_rows = _rows(mode=True)
     assert [r.key for r in on_rows] == [
-        "TimeControl", "Chess960", "Notation", "enabled", "engine", "coach_id", "coach_provider",
+        "Preset", "TimeControl", "EngineMoveDelay", "Chess960", "enabled",
+        "engine", "time", "ponder", "coach_id", "coach_provider", "coach_multipv", "Notation",
     ]
+
+
+def test_game_menu_clock_group_reveals_custom_fields_for_custom_preset():
+    """The Custom preset reveals the inline custom-clock rows; Basic hides them.
+
+    Why this test exists: board_inline replaced the Custom Clock submenu with rows
+    gated by ``time_control_preset == custom``; the per-side black rows add the
+    asymmetric flag (an ``allOf``). This pins that the flattened clock group swaps
+    the base-minutes row for the custom rows when Custom is selected. How a
+    regression manifests: dropping a custom field's ``visibleWhen`` shows inert
+    custom rows under Basic, or the ``allOf`` gate misfires so black rows show
+    without asymmetric.
+    """
+    _, basic = _rows(time_control_preset="")
+    basic_keys = [r.key for r in basic]
+    assert "TimeControl" in basic_keys  # base minutes shown for Basic
+    assert "CustomBase" not in basic_keys  # custom rows hidden
+
+    _, custom = _rows(time_control_preset="custom", tc_custom_asymmetric=False)
+    custom_keys = [r.key for r in custom]
+    assert "TimeControl" not in custom_keys  # base minutes hidden under Custom
+    assert custom_keys[:6] == [
+        "Preset", "CustomBase", "CustomIncrement", "CustomDelay", "CustomDelayMode", "CustomAsymmetric",
+    ]
+    assert "CustomBlackBase" not in custom_keys  # per-side hidden while symmetric
+
+    _, asym = _rows(time_control_preset="custom", tc_custom_asymmetric=True)
+    asym_keys = [r.key for r in asym]
+    assert "CustomBlackBase" in asym_keys and "CustomBlackIncrement" in asym_keys
 
 
 def test_agents_menu_lists_every_agent():
@@ -378,20 +456,21 @@ def test_agent_detail_model_label_reads_default_when_blank():
 
 
 def test_time_control_row_label_and_icon_track_value():
-    """The Time Control row shows a concise label and a value-dependent icon.
+    """The inline Base Minutes row shows a concise label and value-dependent icon.
 
-    Why this test exists: untimed must read "Time\\nDisabled" with the empty timer
-    icon, and a set value "Time\\nN min" with the checked timer icon, from the
+    Why this test exists: with the clock inlined, the base-minutes row (shown for
+    Basic) reads "Base Minutes\\nDisabled" with the empty timer icon when untimed
+    and "Base Minutes\\nN min" with the checked timer icon when set, from the
     catalog's computed label and state-mapped icon. How a regression manifests: the
     icon stops tracking whether a clock is set, or the label shows the verbose
     option text.
     """
     untimed = {r.key: r for r in _rows(time_control=0)[1]}["TimeControl"]
-    assert untimed.label == "Time\nDisabled"
+    assert untimed.label == "Base Minutes\nDisabled"
     assert untimed.icon == "timer"
 
     timed = {r.key: r for r in _rows(time_control=5)[1]}["TimeControl"]
-    assert timed.label == "Time\n5 min"
+    assert timed.label == "Base Minutes\n5 min"
     assert timed.icon == "timer_checked"
 
 
