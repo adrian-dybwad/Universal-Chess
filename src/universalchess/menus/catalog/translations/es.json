@@ -564,8 +564,7 @@
     },
     "field.player.name": {
       "label": "Nombre del jugador",
-      "boardLabel": "Nombre\n{value}",
-      "valueDefault": "Humano",
+      "boardLabel": "Nombre\n{fn:player_name}",
       "help": "Nombre opcional para las cabeceras PGN"
     },
     "field.player.hand_brain_mode": {

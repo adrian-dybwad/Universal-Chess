@@ -113,6 +113,14 @@ def _detail_ctx(state, *, has_color=True, calls=None):
         "player_account",
         lambda node: "MagnusC" if state.get("account") == "magnusc" else "Default",
     )
+    # Mirror main._build_player_detail_context: the Name row shows the stored
+    # name, or the per-slot default ("Player N") when unset. has_color marks
+    # Player 1 (the only slot that picks a color), so it derives the slot number.
+    player_num = 1 if has_color else 2
+    ctx.register_value(
+        "player_name",
+        lambda node: state.get("name") or f"Player {player_num}",
+    )
     ctx.register_action("edit_name", lambda: calls.append("edit_name") or None)
     ctx.register_action("lichess", lambda: calls.append("lichess") or None)
     ctx._recorded_calls = calls
@@ -293,10 +301,10 @@ def test_detail_rows_use_board_abbreviations_and_bound_values():
     """Detail rows render e-paper labels with the bound value substituted.
 
     Why: the board uses the optional boardLabel templates ("Type\\n{value}",
-    "Color\\n{value}", "Engine\\n{value}", "ELO\\n{value}", "Name\\n{value}"),
-    where {value} resolves through the option set (Type/Color) or the raw value
-    (Engine/ELO/Name). How a regression manifests: a row shows the long web label
-    or loses its current value.
+    "Color\\n{value}", "Engine\\n{value}", "ELO\\n{value}"), where {value}
+    resolves through the option set (Type/Color) or the raw value (Engine/ELO).
+    How a regression manifests: a row shows the long web label or loses its
+    current value.
     """
     by_id = {
         r.node["id"]: r
@@ -335,31 +343,47 @@ def test_elo_row_shows_provider_label_not_raw_stored_value():
     assert by_id["field.player.elo"].label == "ELO\nUnlimited"
 
 
-def test_name_row_shows_entered_name_via_value_token():
-    """The Name row renders the stored name through the {value} template.
+def test_name_row_shows_entered_name_via_compute_token():
+    """The Name row renders the stored name through the {fn:player_name} token.
 
-    How a regression manifests: the boardLabel stops substituting the bound name,
-    so the row shows a literal '{value}' or a blank name.
+    How a regression manifests: the boardLabel stops substituting the computed
+    name, so the row shows a literal '{fn:player_name}' or a blank name.
     """
     by_id = {r.node["id"]: r for r in _detail_rows(_player_state(type="human", name="Bobby"))}
     assert by_id["field.player.name"].label == "Name\nBobby"
 
 
-def test_unset_name_shows_human_default_without_fabricating_in_store():
-    """An empty name renders "Name\\nHuman" via the node's valueDefault.
+def test_unset_name_shows_per_slot_default_without_fabricating_in_store():
+    """An empty name renders the per-slot default ("Name\\nPlayer 1") via compute.
 
-    Why this test exists: the "Human" placeholder is supplied declaratively by
-    the catalog (``valueDefault``), not by faking it in the value store -- so the
-    store (and thus the keyboard prefill and the game's PGN name) keep seeing the
-    real empty value. The test ctx store returns the raw "" here; the rendered
-    label must still read "Name\\nHuman". How a regression manifests: the store
-    is back to returning "Human" (the prefill/PGN would then wrongly show
-    "Human"), or the default is dropped and the row shows a blank "Name\\n".
+    Why this test exists: the default is per-slot ("Player 1"/"Player 2"), so it
+    cannot be a single shared catalog ``valueDefault``; it is computed by the
+    per-slot context ({fn:player_name}) rather than faked in the value store -- so
+    the store (and thus the keyboard prefill and the game's PGN name) keep seeing
+    the real empty value. The test ctx store returns the raw "" here; the rendered
+    label must still read "Name\\nPlayer 1". How a regression manifests: the store
+    is back to returning a fabricated name (the prefill/PGN would then wrongly
+    show it), or the default is dropped and the row shows a blank "Name\\n".
     """
     state = _player_state(type="human", name="")
-    by_id = {r.node["id"]: r for r in _detail_rows(state)}
-    assert by_id["field.player.name"].label == "Name\nHuman"
+    # has_color=True marks Player 1, so the computed default is "Player 1".
+    by_id = {r.node["id"]: r for r in _detail_rows(state, has_color=True)}
+    assert by_id["field.player.name"].label == "Name\nPlayer 1"
     # The store itself stays truthful: the underlying value is still empty.
+    assert state["name"] == ""
+
+
+def test_unset_name_default_is_player_two_for_second_slot():
+    """Player 2's empty Name row renders "Name\\nPlayer 2" (per-slot default).
+
+    Why this test exists: the default is derived from the slot, so the two slots
+    must differ. has_color=False marks Player 2. How a regression manifests: both
+    slots fall back to the same literal (e.g. a shared "Player 1"), proving the
+    default is not slot-aware.
+    """
+    state = _player_state(type="human", name="")
+    by_id = {r.node["id"]: r for r in _detail_rows(state, has_color=False)}
+    assert by_id["field.player.name"].label == "Name\nPlayer 2"
     assert state["name"] == ""
 
 

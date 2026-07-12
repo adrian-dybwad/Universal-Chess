@@ -5064,14 +5064,13 @@
       "id": "field.player.name",
       "type": "text",
       "label": "Player Name",
-      "boardLabel": "Name\n{value}",
+      "boardLabel": "Name\n{fn:player_name}",
       "help": "Optional name for PGN headers",
       "action": "edit_name",
       "bind": {
         "store": "player",
         "key": "name"
       },
-      "valueDefault": "Human",
       "icon": "universal_logo",
       "visibleWhen": {
         "store": "player",

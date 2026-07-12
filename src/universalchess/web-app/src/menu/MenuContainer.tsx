@@ -48,6 +48,7 @@ export function renderCatalogRow(node: MenuNode, ctx: WebMenuContext) {
       node={node}
       value={ctx.get(bind.store, bind.key) ?? ''}
       options={ctx.optionsFor(node)}
+      placeholder={ctx.placeholderFor(node)}
       disabled={!isEnabled(node, ctx.get)}
       onChange={(value) => ctx.set(bind.store, bind.key, value)}
     />

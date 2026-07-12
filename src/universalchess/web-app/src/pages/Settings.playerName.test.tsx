@@ -148,15 +148,24 @@ describe('Player Name field is collected for human players only', () => {
     await waitFor(() => expect(screen.getAllByLabelText('Player Name')).toHaveLength(2));
   });
 
-  it('hints the default name ("Human") in the empty Name field', async () => {
+  it('hints the per-slot default name ("Player 1") in the empty Name field', async () => {
     // The empty optional Name field must hint the value used if left blank -- the
-    // catalog default "Human", matching what the board shows for an unset name.
-    // Guards the placeholder restored after the catalog migration dropped the old
-    // (misleading) "Player N" placeholder; a regression shows as a blank field
-    // with no hint, or a hint other than the field's valueDefault.
+    // per-slot default ("Player 1" for slot 1), matching what the board shows for
+    // an unset name via {fn:player_name}. The default is per-slot, so it cannot be
+    // a single shared catalog valueDefault; it comes from the slot's context. A
+    // regression shows as a blank field, or the old shared "Human" hint.
     mockFetch({ type: 'human' }, { type: 'engine' });
     renderSettings();
     const nameField = await screen.findByLabelText('Player Name');
-    expect(nameField).toHaveAttribute('placeholder', 'Human');
+    expect(nameField).toHaveAttribute('placeholder', 'Player 1');
+  });
+
+  it('hints "Player 2" for the second human slot', async () => {
+    // Guards that the placeholder is slot-aware: slot 2 must hint "Player 2", not
+    // a shared literal. A regression shows both slots hinting the same text.
+    mockFetch({ type: 'engine' }, { type: 'human' });
+    renderSettings();
+    const nameField = await screen.findByLabelText('Player Name');
+    expect(nameField).toHaveAttribute('placeholder', 'Player 2');
   });
 });

@@ -1023,6 +1023,20 @@ _args = None
 SETTINGS_SECTION = 'game'
 PLAYER1_SECTION = 'PlayerOne'
 PLAYER2_SECTION = 'PlayerTwo'
+
+
+def default_player_name(player_num: int) -> str:
+    """Slot-specific default display name for an unnamed human player.
+
+    The default is per-slot ("Player 1"/"Player 2"), so it cannot live in the
+    shared catalog as a single ``valueDefault`` literal (one node serves both
+    slots). It is derived here from the player's slot number and supplied to the
+    game (the PGN name) and to the board's Name row via the per-slot detail
+    context's ``{fn:player_name}`` compute -- mirroring how the Account row's
+    value is the per-slot ``{fn:player_account}``. The web supplies the same
+    text as the Name field's placeholder from its per-slot context.
+    """
+    return f"Player {player_num}"
 # Menu navigation (path/indices) and the session view-state snapshot share one
 # section: menu position is part of "the state the app was in", so it is stored
 # alongside the rest of the session rather than in a separate [MenuState] block.
@@ -2101,7 +2115,8 @@ def _start_game_mode(
             color: chess.WHITE or chess.BLACK
         """
         if ps.type == 'human':
-            name = ps.name if ps.name else "Human"
+            slot = 1 if ps.section == PLAYER1_SECTION else 2
+            name = ps.name if ps.name else default_player_name(slot)
             config = HumanPlayerConfig(
                 name=name, color=color,
                 engine=ps.engine, elo=ps.elo
@@ -2148,7 +2163,8 @@ def _start_game_mode(
             return HandBrainPlayer(config)
         else:
             log.warning(f"[App] Unknown player type: {ps.type}, defaulting to human")
-            return HumanPlayer()
+            slot = 1 if ps.section == PLAYER1_SECTION else 2
+            return HumanPlayer(HumanPlayerConfig(name=default_player_name(slot), color=color))
     
     # Create White and Black players
     if player1_is_white:
@@ -3257,7 +3273,7 @@ def _prompt_player_name(player_num: int) -> None:
     Board-specific interaction backing the ``edit_name`` action of the
     data-driven player menu (the web edits the same ``field.player.name`` node
     via a text input). Saving an empty string clears the name; the menu then
-    shows the default ("Human") via the player store's display fallback.
+    shows the per-slot default ("Player N") via the player_name compute.
     """
     label = f"Player {player_num}"
     save_setting = _save_player1_setting if player_num == 1 else _save_player2_setting
@@ -3781,8 +3797,8 @@ def _build_player_detail_context(player_num: int):
     levels) backing those provider-backed selects, and the board interactions the
     detail rows invoke (name keyboard, Lichess). The virtual ``has_color`` key
     drives the Color row's visibility (Player 1 only). The store returns the real
-    stored values (an unset name reads as ""); the "Human" placeholder for the
-    Name row is supplied declaratively by the node's ``valueDefault`` so the
+    stored values (an unset name reads as ""); the per-slot "Player N" default for
+    the Name row is supplied by the ``player_name`` compute ({fn:player_name}) so the
     store, the keyboard prefill, and the game's PGN name all see the same truthful
     value. Changing the engine resets ELO to Default, since ELO levels are
     engine-specific.
@@ -3905,6 +3921,14 @@ def _build_player_detail_context(player_num: int):
     ctx.register_provider("engine_levels", engine_levels)
     ctx.register_provider("player_accounts", player_accounts)
     ctx.register_value("player_account", player_account_label)
+    # Name row display: the stored name, or the per-slot default ("Player N")
+    # when unset. Computed (not a static valueDefault) because the default is
+    # per-slot; the value store stays truthful (an unset name reads as "") so
+    # the keyboard prefill and the game's PGN name see the real empty value.
+    ctx.register_value(
+        "player_name",
+        lambda node: settings_dict().get("name") or default_player_name(player_num),
+    )
     ctx.register_action("edit_name", lambda: _prompt_player_name(player_num))
     ctx.register_action("lichess", lambda: _signal_from(_handle_lichess_menu()))
     return ctx

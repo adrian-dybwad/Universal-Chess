@@ -29,6 +29,7 @@ interface ValueStore {
 export class WebMenuContext {
   private readonly stores = new Map<string, ValueStore>();
   private readonly providers = new Map<string, () => MenuOption[]>();
+  private readonly placeholders = new Map<string, string>();
   private readonly resolveOptionSet: (name: string) => MenuOption[];
 
   /**
@@ -52,6 +53,26 @@ export class WebMenuContext {
   /** Register a runtime option-list provider (e.g. `installed_engines`). */
   registerProvider(name: string, fn: () => MenuOption[]): void {
     this.providers.set(name, fn);
+  }
+
+  /**
+   * Register a per-slot placeholder for a text node's empty state, keyed by node
+   * id. Used where the hint is context-specific and cannot be a single shared
+   * catalog value -- e.g. the player Name field defaults to "Player 1"/"Player 2"
+   * per slot, which the board supplies via its {fn:player_name} compute.
+   */
+  registerPlaceholder(nodeId: string, text: string): void {
+    this.placeholders.set(nodeId, text);
+  }
+
+  /**
+   * The placeholder to hint for an empty text field: a per-slot override if one
+   * was registered, otherwise the node's own `valueDefault` (undefined when the
+   * node declares no default, e.g. field.player.name after the shared "Human"
+   * default was removed in favor of per-slot context defaults).
+   */
+  placeholderFor(node: MenuNode): string | undefined {
+    return this.placeholders.get(node.id) ?? node.valueDefault;
   }
 
   /** Read a bound value. Unknown stores return undefined (a gate then fails). */

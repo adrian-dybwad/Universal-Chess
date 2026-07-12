@@ -43,6 +43,12 @@ interface CatalogFieldProps {
   disabled?: boolean;
   /** Override the help content (e.g. a live "Level: N" readout for a range). */
   help?: ReactNode;
+  /**
+   * Placeholder hint for an empty `text` field. Supplied by the caller (from the
+   * context) so a per-slot default (e.g. player Name -> "Player 1"/"Player 2")
+   * can be shown; falls back to the node's `valueDefault` when omitted.
+   */
+  placeholder?: string;
 }
 
 /**
@@ -67,6 +73,7 @@ export function CatalogField({
   options = [],
   disabled = false,
   help,
+  placeholder,
 }: CatalogFieldProps) {
   const label = node.label ?? node.id;
   const helpContent = help ?? node.help;
@@ -197,12 +204,12 @@ export function CatalogField({
         <FormRow label={label} help={helpContent}>
           <Input
             aria-label={label}
-            // Placeholder is the node's default value, so an empty optional field
-            // hints the value that will be used if left blank (e.g. Player Name ->
-            // "Human"). This mirrors what the board shows for an unset field
-            // (boardLabel "{value}" resolves to valueDefault), keeping the hint
-            // truthful and consistent across platforms.
-            placeholder={node.valueDefault}
+            // Placeholder hints the value used if the optional field is left blank.
+            // It is the caller-supplied `placeholder` (a per-slot default from the
+            // context, e.g. player Name -> "Player 1"/"Player 2"), falling back to
+            // the node's `valueDefault`. This mirrors what the board shows for an
+            // unset field, keeping the hint truthful and consistent across platforms.
+            placeholder={placeholder ?? node.valueDefault}
             value={String(value)}
             disabled={disabled}
             onChange={(e) => onChange(e.target.value)}

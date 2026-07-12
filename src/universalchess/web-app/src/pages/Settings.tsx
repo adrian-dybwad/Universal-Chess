@@ -1822,6 +1822,10 @@ export function Settings() {
   // the slot. Rebuilt each render so gating (visibleWhen/enabledWhen) tracks edits.
   const buildPlayerCtx = (playerKey: 'player1' | 'player2'): WebMenuContext => {
     const ctx = new WebMenuContext(optionSet);
+    // The Name field defaults per slot ("Player 1"/"Player 2"), so its empty-state
+    // hint comes from the context rather than a single shared catalog valueDefault
+    // -- the web twin of the board's per-slot {fn:player_name} compute.
+    ctx.registerPlaceholder('field.player.name', playerKey === 'player1' ? 'Player 1' : 'Player 2');
     ctx.registerStore(
       'player',
       (key) => (formSettings[playerKey] as unknown as Record<string, FieldValue>)[key],
