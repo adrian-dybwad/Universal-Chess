@@ -40,9 +40,14 @@ class IconMenuEntry:
         key: Unique identifier returned on selection
         label: Display text
         icon_name: Icon identifier for rendering
-        enabled: Whether entry is enabled/visible (disabled entries are hidden)
-        selectable: Whether entry can be selected (non-selectable entries are
-                   displayed but skipped during navigation and cannot be activated)
+        enabled: Whether the entry is interactable. A disabled entry (False)
+                   still renders -- greyed/faded -- and is skipped during
+                   navigation and cannot be activated; it is NOT hidden. Hide a
+                   row by omitting it (e.g. via the catalog's ``visibleWhen``),
+                   never by setting enabled=False.
+        selectable: Whether the entry can be focused. Non-selectable entries
+                   (headers/readouts) render normally but are skipped during
+                   navigation and cannot be activated.
         height_ratio: Relative height weight (default 1.0, use 2.0 for double height)
         max_height: Maximum height in pixels (None for no limit)
         icon_size: Custom icon size in pixels (None uses default based on button height)
@@ -136,18 +141,19 @@ class IconMenuWidget(Widget):
         """
         super().__init__(x, y, width, height, update_callback, background_shade=background_shade)
         
-        # Filter disabled entries (disabled entries are not shown at all)
-        self.entries = [e for e in entries if e.enabled]
+        # Disabled entries are NOT hidden: they render greyed and are skipped in
+        # navigation (see _is_selectable). Hiding a row is done by omitting it
+        # (e.g. the catalog's visibleWhen), never by enabled=False, so the user
+        # always sees that a currently-unavailable option exists.
+        self.entries = list(entries)
         
         # Clamp selected_index to valid range
         self.selected_index = min(selected_index, max(0, len(self.entries) - 1))
         
-        # If initial selection is non-selectable, find first selectable entry
-        if self.entries and not self.entries[self.selected_index].selectable:
-            for i, entry in enumerate(self.entries):
-                if entry.selectable:
-                    self.selected_index = i
-                    break
+        # If the initial selection is not focusable (non-selectable header or a
+        # disabled control), move to the first focusable entry.
+        if self.entries and not self._is_selectable(self.selected_index):
+            self.selected_index = self._find_first_selectable()
         
         # Callbacks for external use
         self.on_select = on_select
@@ -274,6 +280,7 @@ class IconMenuWidget(Widget):
                 label=entry.label,
                 icon_name=entry.icon_name,
                 selected=is_selected,
+                enabled=entry.enabled,
                 margin=self.button_margin,
                 icon_size=icon_size,
                 layout=entry.layout,
@@ -313,16 +320,23 @@ class IconMenuWidget(Widget):
         return False
     
     def _is_selectable(self, index: int) -> bool:
-        """Check if the entry at the given index is selectable.
-        
+        """Check if the entry at the given index can be focused/activated.
+
+        An entry is focusable only when it is both ``selectable`` (not a
+        header/readout) and ``enabled`` (not a disabled/greyed control). Folding
+        ``enabled`` in here is what makes a disabled row visible-but-inert: it
+        renders, but navigation skips it and TICK (which gates on this) ignores
+        it.
+
         Args:
             index: Entry index to check
             
         Returns:
-            True if entry exists and is selectable, False otherwise
+            True if entry exists and is focusable, False otherwise
         """
         if 0 <= index < len(self.entries):
-            return self.entries[index].selectable
+            entry = self.entries[index]
+            return entry.selectable and entry.enabled
         return False
     
     def _find_next_selectable(self, start: int, direction: int) -> int:
@@ -358,8 +372,8 @@ class IconMenuWidget(Widget):
         Returns:
             Index of first selectable entry, or 0 if none found
         """
-        for i, entry in enumerate(self.entries):
-            if entry.selectable:
+        for i in range(len(self.entries)):
+            if self._is_selectable(i):
                 return i
         return 0
     

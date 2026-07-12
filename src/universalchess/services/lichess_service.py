@@ -72,15 +72,24 @@ def resolve_lichess_identity(token, log=None):
 
 
 def build_lichess_menu_entries(username: Optional[str], ongoing_games: bool, has_challenges: bool):
-    """Build top-level Lichess menu entries."""
+    """Build top-level Lichess menu entries.
+
+    The username is a header row: shown, but non-selectable (``selectable=False``)
+    rather than ``enabled=False`` -- the latter would render it faded/disabled,
+    and previously hid it outright. Sections with nothing to open (no ongoing
+    games, no challenges) are *omitted* rather than shown disabled, since hiding
+    a row is done by leaving it out, never by ``enabled=False``.
+    """
     user_label = f"User\n{username}" if username else "User\nUnknown"
     entries = [
-        IconMenuEntry(key="User", label=user_label, icon_name="lichess", enabled=False, selectable=False),
-        IconMenuEntry(key="NewGame", label="New Game", icon_name="play", enabled=True),
-        IconMenuEntry(key="Ongoing", label="Ongoing\nGames", icon_name="lichess", enabled=ongoing_games),
-        IconMenuEntry(key="Challenges", label="Challenges", icon_name="lichess", enabled=has_challenges),
-        IconMenuEntry(key="Token", label="API Token", icon_name="lichess", enabled=True),
+        IconMenuEntry(key="User", label=user_label, icon_name="lichess", selectable=False),
+        IconMenuEntry(key="NewGame", label="New Game", icon_name="play"),
     ]
+    if ongoing_games:
+        entries.append(IconMenuEntry(key="Ongoing", label="Ongoing\nGames", icon_name="lichess"))
+    if has_challenges:
+        entries.append(IconMenuEntry(key="Challenges", label="Challenges", icon_name="lichess"))
+    entries.append(IconMenuEntry(key="Token", label="API Token", icon_name="lichess"))
     return entries
 
 

@@ -56,6 +56,7 @@ class IconButtonWidget(Widget):
     def __init__(self, x: int, y: int, width: int, height: int, update_callback,
                  key: str, label: str, icon_name: str,
                  selected: bool = False,
+                 enabled: bool = True,
                  icon_size: int = 36,
                  label_height: int = 18,
                  margin: int = 4,
@@ -84,6 +85,10 @@ class IconButtonWidget(Widget):
             label: Display text
             icon_name: Icon identifier for rendering
             selected: Initial selection state
+            enabled: Whether the button is interactable. A disabled button
+                    (False) renders its content faded (dithered) to signal it is
+                    currently unavailable; it is never hidden. Navigation/
+                    activation gating lives in the owning IconMenuWidget.
             icon_size: Icon size in pixels (default 36)
             label_height: Height reserved for label text (default 18)
             margin: Space outside the button border (default 4)
@@ -113,6 +118,7 @@ class IconButtonWidget(Widget):
         self.icon_mask = icon_mask
         self.trailing_icon_name = trailing_icon_name
         self.selected = selected
+        self.enabled = enabled
         self.icon_size = icon_size
         self.label_height = label_height
         self.margin = margin
@@ -378,6 +384,32 @@ class IconButtonWidget(Widget):
                     content_width - desc_left_margin, text_color, centered=False,
                     font_size=self.description_font_size, bold=False
                 )
+
+        # Disabled controls render faded so the user sees the option exists but
+        # is currently unavailable (the widget also skips them in navigation).
+        # The fade thins the interior ink via a 50% dither, leaving the border
+        # crisp. Selected+disabled cannot co-occur (navigation skips disabled),
+        # but guard anyway so a selected row is never faded.
+        if not self.enabled and not self.selected:
+            self._fade_interior(sprite, inside_left, inside_top, inside_right, inside_bottom)
+
+    def _fade_interior(self, sprite: Image.Image, left: int, top: int,
+                       right: int, bottom: int) -> None:
+        """Thin the black ink inside a region to a ~50% dither (disabled look).
+
+        On the 1-bit panel there is no grey, so "greyed out" is simulated by
+        dropping every other black pixel (Bayer 50%) inside the border. Only
+        black pixels are cleared, so white background is untouched and the effect
+        reads as a faded version of whatever was drawn. The border is outside
+        this region, so it stays solid.
+        """
+        pattern = DITHER_PATTERNS.get(8, DITHER_PATTERNS[0])
+        pattern_size = len(pattern)
+        for y in range(max(0, top), min(self.height, bottom + 1)):
+            row = pattern[y % pattern_size]
+            for x in range(max(0, left), min(self.width, right + 1)):
+                if row[x % pattern_size] == 0 and sprite.getpixel((x, y)) == 0:
+                    sprite.putpixel((x, y), 255)
     
     def _render_vertical_layout(self, sprite: Image.Image, draw: ImageDraw.Draw, 
                                  content_left: int, content_top: int,
