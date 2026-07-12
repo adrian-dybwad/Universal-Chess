@@ -31,7 +31,19 @@ interface MenuContainerProps {
  * Players tab's per-slot cards) renders rows identically to MenuContainer instead
  * of hand-composing CatalogFields.
  */
-export function renderCatalogRow(node: MenuNode, ctx: WebMenuContext) {
+export function renderCatalogRow(
+  node: MenuNode,
+  ctx: WebMenuContext,
+  opts?: {
+    /**
+     * Force the control disabled regardless of the node's `enabledWhen`. Used
+     * when a page renders a row inline under a transient condition the catalog
+     * does not model (e.g. the update settings disabled while a check/install is
+     * in flight). ORed with the node's own gating, so it can only add disabling.
+     */
+    disabled?: boolean;
+  },
+) {
   // A `dynamic` value control (e.g. the sprite picker) binds through `itemBind`
   // -- the value written when one of its provider rows is chosen -- whereas
   // ordinary fields bind through `bind`. Fall back accordingly so both render
@@ -49,7 +61,7 @@ export function renderCatalogRow(node: MenuNode, ctx: WebMenuContext) {
       value={ctx.get(bind.store, bind.key) ?? ''}
       options={ctx.optionsFor(node)}
       placeholder={ctx.placeholderFor(node)}
-      disabled={!isEnabled(node, ctx.get)}
+      disabled={Boolean(opts?.disabled) || !isEnabled(node, ctx.get)}
       onChange={(value) => ctx.set(bind.store, bind.key, value)}
     />
   );

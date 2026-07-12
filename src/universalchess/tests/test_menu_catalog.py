@@ -277,10 +277,12 @@ def test_web_settings_field_ids_resolve_with_labels():
         "field.sound.key_press",
         # Sleep Timer/Timezone/Language moved off per-field fieldLabel lookups onto
         # <MenuContainer> (group.system.device -> the shared system.* nodes), so
-        # they are no longer looked up here; the remaining System fields still are
-        # (rendered by the bespoke Update/Database cards).
-        "field.system.update_channel",
-        "field.system.auto_update",
+        # they are no longer looked up here. The update Channel + Auto Download
+        # settings are now the SHARED board nodes (updates.channel/updates.auto),
+        # rendered by UpdateManager via renderCatalogRow (no web-only duplicate);
+        # the Database URI stays a bespoke card lookup.
+        "updates.channel",
+        "updates.auto",
         "field.system.database_uri",
     ]
     missing = [fid for fid in required_field_ids if fid not in nodes_by_id]

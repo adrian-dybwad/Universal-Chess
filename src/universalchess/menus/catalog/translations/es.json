@@ -512,12 +512,12 @@
       "help": "Actualización automática, canal de versiones e instalación de actualizaciones."
     },
     "updates.auto": {
-      "label": "Descarga automática",
+      "label": "Descargar actualizaciones automáticamente",
       "boardLabel": "Descarga auto.\n{fn:auto_update_state}",
-      "help": "Descarga las actualizaciones en segundo plano; instálalas tú cuando quieras."
+      "help": "Descarga automáticamente las versiones nuevas en segundo plano para tenerlas listas. Las actualizaciones nunca se instalan solas; tú eliges cuándo instalarlas."
     },
     "updates.channel": {
-      "label": "Canal",
+      "label": "Canal de actualización",
       "boardLabel": "Canal\n{value}",
       "help": "Se recomiendan las versiones estables. Las compilaciones nightly pueden contener errores."
     },
@@ -660,14 +660,6 @@
     "field.lichess.range": {
       "label": "Rango de rating",
       "help": "Rango de rating preferido de los rivales para el emparejamiento"
-    },
-    "field.system.update_channel": {
-      "label": "Canal de actualización",
-      "help": "Se recomiendan las versiones estables. Las compilaciones nightly pueden contener errores."
-    },
-    "field.system.auto_update": {
-      "label": "Descargar actualizaciones automáticamente",
-      "help": "Descarga automáticamente las versiones nuevas en segundo plano para tenerlas listas. Las actualizaciones nunca se instalan solas; tú eliges cuándo instalarlas."
     },
     "field.system.database_uri": {
       "label": "URI de base de datos",

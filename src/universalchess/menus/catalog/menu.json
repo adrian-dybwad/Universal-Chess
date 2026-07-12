@@ -1297,18 +1297,18 @@
       "id": "updates.auto",
       "key": "AutoUpdate",
       "type": "toggle",
-      "label": "Auto Download",
+      "label": "Auto Download Updates",
       "boardLabel": "Auto Download\n{fn:auto_update_state}",
-      "help": "Automatically download updates in the background; install them yourself when ready.",
+      "help": "Automatically download new versions in the background so they are ready to install. Updates are never installed on their own; you choose when to install.",
       "bind": { "store": "update", "key": "auto_update" },
       "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
-      "platforms": ["board"]
+      "platforms": ["board", "web"]
     },
     {
       "id": "updates.channel",
       "key": "Channel",
       "type": "select",
-      "label": "Channel",
+      "label": "Update Channel",
       "boardLabel": "Channel\n{value}",
       "help": "Stable releases are recommended. Nightly builds may contain bugs.",
       "optionSet": "update_channel",
@@ -1316,7 +1316,7 @@
       "icon": "settings",
       "selectedIcon": "checkbox_checked",
       "unselectedIcon": "checkbox_empty",
-      "platforms": ["board"]
+      "platforms": ["board", "web"]
     },
     {
       "id": "updates.check",
@@ -1690,23 +1690,6 @@
       "label": "Device",
       "help": "Sleep, timezone, and language preferences for this board.",
       "children": ["system.inactivity", "system.timezone", "system.language"]
-    },
-    {
-      "id": "field.system.update_channel",
-      "type": "select",
-      "label": "Update Channel",
-      "help": "Stable releases are recommended. Nightly builds may contain bugs.",
-      "optionSet": "update_channel",
-      "section": "system",
-      "platforms": ["web"]
-    },
-    {
-      "id": "field.system.auto_update",
-      "type": "toggle",
-      "label": "Auto Download Updates",
-      "help": "Automatically download new versions in the background so they are ready to install. Updates are never installed on their own; you choose when to install.",
-      "section": "system",
-      "platforms": ["web"]
     },
     {
       "id": "field.system.database_uri",

@@ -2976,6 +2976,30 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
 
   const isLoading = checking || downloading || installing || status.is_checking || status.is_downloading || status.is_installing;
 
+  // Channel + auto-download are shared catalog settings (updates.channel /
+  // updates.auto), the same nodes the board renders in its Updates menu. Render
+  // them through the engine over an `update` store adapter so their label, help,
+  // options, and control type come from the one catalog definition; the adapter
+  // maps reads to the live status and writes to the dedicated /api/updates
+  // endpoints. Only these two are catalog-driven; the version readout, install
+  // progress, and the check/download/install actions stay bespoke here because
+  // they are web-only affordances (the board runs those as its own action rows).
+  const updateCtx = new WebMenuContext((name) => catalog.optionSets[name] ?? []);
+  updateCtx.registerStore(
+    'update',
+    (key) => {
+      if (key === 'channel') return status.channel;
+      if (key === 'auto_update') return status.auto_update;
+      return undefined;
+    },
+    (key, value) => {
+      if (key === 'channel') void setChannel(String(value));
+      else if (key === 'auto_update') void setAutoUpdate(Boolean(value));
+    },
+  );
+  const channelNode = fieldById(catalog, 'updates.channel');
+  const autoNode = fieldById(catalog, 'updates.auto');
+
   return (
     <>
       <LoginDialog
@@ -3057,27 +3081,11 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
           </Card>
         )}
 
-        {/* Channel Selection */}
-        <FormRow
-          label={fieldById(catalog, 'field.system.update_channel')?.label ?? 'field.system.update_channel'}
-          help={fieldById(catalog, 'field.system.update_channel')?.help ?? ''}
-        >
-          <Select
-            value={status.channel}
-            onChange={(e) => setChannel(e.target.value)}
-            disabled={isLoading}
-            options={catalog.optionSets.update_channel ?? []}
-          />
-        </FormRow>
-
-        {/* Auto Update Toggle */}
-        <Toggle
-          label={fieldById(catalog, 'field.system.auto_update')?.label ?? 'field.system.auto_update'}
-          help={fieldById(catalog, 'field.system.auto_update')?.help ?? ''}
-          checked={status.auto_update}
-          onChange={(v) => setAutoUpdate(v)}
-          disabled={isLoading}
-        />
+        {/* Channel Selection + Auto Download: rendered from the shared catalog
+            nodes (updates.channel / updates.auto), disabled while an update
+            operation is in flight. */}
+        {channelNode && renderCatalogRow(channelNode, updateCtx, { disabled: isLoading })}
+        {autoNode && renderCatalogRow(autoNode, updateCtx, { disabled: isLoading })}
 
         {/* Check Button */}
         <div className="mt-4">
