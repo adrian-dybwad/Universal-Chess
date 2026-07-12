@@ -8,8 +8,10 @@ and again as a parallel web-only trio (``field.system.*``) the web hand-built.
 That duplication is exactly the drift the shared catalog is meant to remove, so
 the two were converged onto the single board node set:
 
-- a web-only container (``group.system.device``) lists the *shared* nodes, giving
-  ``<MenuContainer>`` a web layout without a second copy of the leaves;
+- a single shared container (``group.system.device``) lists the *shared* nodes and
+  sits inside the board's ``system`` menu: the board flattens it into that screen
+  while the web renders it as a card, so both platforms reach the selects through
+  the one container (no parallel web tree);
 - ``system.timezone``/``system.language`` became ``["board", "web"]`` so the web
   renders the same nodes the board does;
 - Timezone keeps a per-platform option source -- the board's curated
@@ -110,17 +112,24 @@ def test_timezone_option_source_is_per_platform():
     assert node.get("webProvider") == "timezones"
 
 
-def test_web_only_container_does_not_reach_the_board():
-    """The container is web-only so the board never double-renders these rows.
+def test_device_container_is_shared_and_lives_in_the_board_system_menu():
+    """The device group is shared and BOTH platforms reach the selects through it.
 
-    Why: the board already shows the shared nodes through its own ``system`` menu;
-    this container exists only to give the web a layout. How a regression
-    manifests: dropping the web-only ``platforms`` would let the board flatten this
-    container's rows in addition to its native ones.
+    Why this test exists: convergence means one container feeds both renderers --
+    the board flattens ``group.system.device`` inside its ``system`` menu while the
+    web renders it as a card, so there is no parallel web-only tree. This is the
+    exact shape the ``test_menu_parity`` guard enforces catalog-wide. How a
+    regression manifests: the group reverts to ``platforms: ["web"]`` (the board
+    would then reach the same three selects through a separate path -- a parallel
+    tree), or ``system`` stops listing the group (the board loses the device
+    selects entirely).
     """
-    node = _catalog().get_node(_DEVICE_CONTAINER)
+    catalog = _catalog()
+    node = catalog.get_node(_DEVICE_CONTAINER)
+    assert applies_to_platform(node, "board") is True
     assert applies_to_platform(node, "web") is True
-    assert applies_to_platform(node, "board") is False
+    # The board reaches the shared selects by flattening this very container.
+    assert _DEVICE_CONTAINER in catalog.child_ids("system")
 
 
 def test_duplicate_web_only_fields_are_removed():

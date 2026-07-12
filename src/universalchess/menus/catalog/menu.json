@@ -903,7 +903,7 @@
       "type": "menu",
       "label": "System",
       "platforms": ["board"],
-      "children": ["system.engines", "system.inactivity", "system.timezone", "system.language", "system.reset", "system.about", "system.power"]
+      "children": ["system.engines", "group.system.device", "system.reset", "system.about", "system.power"]
     },
     {
       "id": "system.engines",
@@ -1690,7 +1690,6 @@
       "type": "group",
       "label": "Device",
       "help": "Sleep, timezone, and language preferences for this board.",
-      "platforms": ["web"],
       "children": ["system.inactivity", "system.timezone", "system.language"]
     },
     {

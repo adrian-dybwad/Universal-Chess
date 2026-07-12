@@ -4244,9 +4244,7 @@
       ],
       "children": [
         "system.engines",
-        "system.inactivity",
-        "system.timezone",
-        "system.language",
+        "group.system.device",
         "system.reset",
         "system.about",
         "system.power"
@@ -5545,9 +5543,6 @@
       "type": "group",
       "label": "Device",
       "help": "Sleep, timezone, and language preferences for this board.",
-      "platforms": [
-        "web"
-      ],
       "children": [
         "system.inactivity",
         "system.timezone",
