@@ -51,26 +51,37 @@ class SplashScreen(Widget):
     # SplashScreen is modal - when present, only it is rendered
     is_modal = True
     
-    # Layout configuration
-    LOGO_SIZE = 100  # Size of the knight logo
-    LOGO_Y = 10  # Y position for logo (from top of widget)
-    UNIVERSAL_Y = 120  # Y position for "UNIVERSAL" text
+    # Layout configuration.
+    #
+    # The logo is the full knight piece, which is portrait (taller than wide), so
+    # it gets a tall band: LOGO_HEIGHT drives the vertical space while the width
+    # follows the source aspect and stays within LOGO_MAX_WIDTH (it is narrower
+    # than the band is tall). UNIVERSAL/message positions sit just below the band.
+    # The whole stack (8 + 140 + text) must fit the 280px status-bar variant.
+    LOGO_HEIGHT = 140  # Height of the knight logo band
+    LOGO_MAX_WIDTH = 100  # Horizontal footprint the logo is centered within
+    LOGO_Y = 8  # Y position for logo (from top of widget)
+    UNIVERSAL_Y = 154  # Y position for "UNIVERSAL" text (below the logo band)
     TEXT_MARGIN = 4  # Margin on each side
-    TEXT_Y = 170  # Y position for message text (below logo)
+    TEXT_Y = 186  # Y position for message text (below "UNIVERSAL")
     TEXT_HEIGHT = 88  # Height for 4 lines of text at font size 18
+    # Optional byline shown under "UNIVERSAL" (only when a tagline is supplied,
+    # i.e. the boot/idle and shutdown screens). When present the message is
+    # pushed below it. Sized for the wrapped byline at font 16.
+    TAGLINE_Y = 182
+    TAGLINE_HEIGHT = 56
 
     # Optional battery indicator, shown below a single-line message (e.g. the
-    # shutdown "Press [>]" prompt). Sits just under the first text line, which
-    # is top-aligned at TEXT_Y for the font size used here.
-    BATTERY_W = 56
-    BATTERY_H = 26
-    BATTERY_Y = TEXT_Y + 38
-    BATTERY_PERCENT_Y = BATTERY_Y + BATTERY_H + 4
+    # shutdown "Press [>]" prompt). Kept small so it fits beneath the byline +
+    # message within the 296px screen; its Y is computed per-instance from the
+    # message position (see __init__) rather than pinned to TEXT_Y.
+    BATTERY_W = 30
+    BATTERY_H = 15
 
     def __init__(self, update_callback, message: str = "Press [OK]", background_shade: int = 4,
                  leave_room_for_status_bar: bool = True,
                  logo: Image.Image = None, logo_mask: Image.Image = None,
-                 show_battery: bool = False):
+                 show_battery: bool = False, tagline: Optional[str] = None):
         """Initialize splash screen widget.
         
         Args:
@@ -83,6 +94,9 @@ class SplashScreen(Widget):
             show_battery: If True, draw the current battery level (icon + percentage)
                 below the message. Used by the shutdown prompt so the user sees the
                 charge state before the board sleeps.
+            tagline: Optional byline drawn under "UNIVERSAL" (e.g. the boot screen).
+                Injected as text so the widget stays free of the i18n catalog. When
+                set, the message is pushed down to leave room for it.
         """
         if leave_room_for_status_bar:
             y_pos = STATUS_BAR_HEIGHT
@@ -102,7 +116,7 @@ class SplashScreen(Widget):
             self._logo, self._logo_mask = _knight_logo
         else:
             log.error("No knight logo provided and none set at module level")
-            self._logo = Image.new("1", (self.LOGO_SIZE, self.LOGO_SIZE), 255)
+            self._logo = Image.new("1", (self.LOGO_MAX_WIDTH, self.LOGO_HEIGHT), 255)
             self._logo_mask = None
         
         # Calculate text widget dimensions with margins for centering
@@ -121,13 +135,34 @@ class SplashScreen(Widget):
             text=message, font_size=18, justify=Justify.CENTER, wrapText=True
         )
 
+        # Optional byline under "UNIVERSAL". Present on the boot/idle and shutdown
+        # screens; when shown, the message starts below it, otherwise it keeps
+        # TEXT_Y.
+        self._tagline_text = None
+        if tagline:
+            self._tagline_text = TextWidget(
+                x=0, y=0, width=text_width, height=self.TAGLINE_HEIGHT,
+                update_callback=self._handle_child_update,
+                text=tagline, font_size=16, justify=Justify.CENTER,
+                transparent=True, wrapText=True
+            )
+            self._message_y = self.TAGLINE_Y + self.TAGLINE_HEIGHT
+        else:
+            self._message_y = self.TEXT_Y
+
+        # Battery sits just under the (single-line) message; derive its Y from the
+        # message position so it follows the byline when one is shown, and the
+        # percentage sits just under the icon.
+        self._battery_y = self._message_y + 24
+        self._battery_percent_y = self._battery_y + self.BATTERY_H + 2
+
         # Percentage label beneath the battery icon, only built when needed.
         self._battery_percent_text = None
         if self._show_battery:
             self._battery_percent_text = TextWidget(
-                x=0, y=0, width=self.width, height=20,
+                x=0, y=0, width=self.width, height=16,
                 update_callback=self._handle_child_update,
-                text="", font_size=16, justify=Justify.CENTER, transparent=True
+                text="", font_size=13, justify=Justify.CENTER, transparent=True
             )
     
     def _handle_child_update(self, full: bool = False, immediate: bool = False):
@@ -165,8 +200,9 @@ class SplashScreen(Widget):
         # Draw dithered background
         self.draw_background_on_sprite(sprite)
         
-        # Draw knight logo centered horizontally with transparency
-        logo_x = (self.width - self.LOGO_SIZE) // 2
+        # Draw knight logo centered horizontally with transparency. The logo is
+        # portrait, so center on its actual width rather than a fixed square.
+        logo_x = (self.width - self._logo.width) // 2
         if self._logo_mask:
             sprite.paste(self._logo, (logo_x, self.LOGO_Y), self._logo_mask)
         else:
@@ -174,9 +210,13 @@ class SplashScreen(Widget):
         
         # Draw "UNIVERSAL" text directly onto the sprite
         self._universal_text.draw_on(sprite, 0, self.UNIVERSAL_Y)
-        
-        # Draw message text directly onto the sprite
-        self._text_widget.draw_on(sprite, self.TEXT_MARGIN, self.TEXT_Y)
+
+        # Draw the optional byline between "UNIVERSAL" and the message.
+        if self._tagline_text is not None:
+            self._tagline_text.draw_on(sprite, self.TEXT_MARGIN, self.TAGLINE_Y)
+
+        # Draw message text directly onto the sprite (below the byline when shown)
+        self._text_widget.draw_on(sprite, self.TEXT_MARGIN, self._message_y)
 
         if self._show_battery:
             self._render_battery(sprite)
@@ -200,16 +240,17 @@ class SplashScreen(Widget):
         # reads as a battery, and show "--%" so the unknown state is explicit.
         icon_level = level if level is not None else 10
         battery_x = (self.width - self.BATTERY_W) // 2
-        render_battery(sprite, battery_x, self.BATTERY_Y,
+        render_battery(sprite, battery_x, self._battery_y,
                        self.BATTERY_W, self.BATTERY_H, icon_level, charger_connected)
 
         if self._battery_percent_text is not None:
             self._battery_percent_text.text = "--%" if percent is None else f"{percent}%"
-            self._battery_percent_text.draw_on(sprite, 0, self.BATTERY_PERCENT_Y)
+            self._battery_percent_text.draw_on(sprite, 0, self._battery_percent_y)
 
 
 def show_fullscreen_splash(manager, message: str, timeout: float = 5.0,
-                           show_battery: bool = False) -> bool:
+                           show_battery: bool = False,
+                           tagline: Optional[str] = None) -> bool:
     """Render a full-screen modal splash on the given panel manager.
 
     Replaces whatever widgets are currently on the panel with a single
@@ -231,6 +272,8 @@ def show_fullscreen_splash(manager, message: str, timeout: float = 5.0,
         timeout: Seconds to wait for the render promise to resolve.
         show_battery: When True, draw the current battery level below the message
             (used by the shutdown prompt).
+        tagline: Optional byline drawn under "UNIVERSAL" (used by the shutdown
+            prompt so the slogan appears there too).
 
     Returns:
         True if the splash was rendered, False if no manager was available or
@@ -243,7 +286,7 @@ def show_fullscreen_splash(manager, message: str, timeout: float = 5.0,
         promise = manager.add_widget(
             SplashScreen(manager.update, message=message,
                          leave_room_for_status_bar=False,
-                         show_battery=show_battery)
+                         show_battery=show_battery, tagline=tagline)
         )
         if promise:
             promise.result(timeout=timeout)

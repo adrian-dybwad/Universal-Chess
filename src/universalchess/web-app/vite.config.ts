@@ -1,6 +1,32 @@
 /// <reference types="vitest/config" />
-import { defineConfig, loadEnv } from 'vite'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
+
+// Bundle the repository README (which leads with the Acknowledgments section)
+// into the web app as `virtual:readme`, so the About page can render it from a
+// single source of truth. Reading the file directly in the plugin (rather than a
+// cross-root `?raw` import) avoids Vite's `server.fs.allow` sandbox, which would
+// otherwise reject the README that lives above the web-app root -- and it works
+// identically for dev, production build, and vitest since all share this config.
+function bundleReadme(): Plugin {
+  const virtualId = 'virtual:readme'
+  const resolvedId = `\0${virtualId}`
+  // README.md sits three levels above web-app: web-app -> universalchess -> src -> repo root.
+  const readmeUrl = new URL('../../../README.md', import.meta.url)
+  return {
+    name: 'bundle-readme',
+    resolveId(id) {
+      return id === virtualId ? resolvedId : null
+    },
+    load(id) {
+      if (id !== resolvedId) return null
+      const content = readFileSync(fileURLToPath(readmeUrl), 'utf-8')
+      return `export default ${JSON.stringify(content)}`
+    },
+  }
+}
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -21,7 +47,7 @@ export default defineConfig(({ mode }) => {
   }
   
   return {
-    plugins: [react()],
+    plugins: [react(), bundleReadme()],
     define: {
       // Make the API target available to the client at runtime
       '__API_TARGET__': JSON.stringify(apiTarget),

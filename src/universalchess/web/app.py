@@ -1481,6 +1481,32 @@ def getGames(page):
     finally:
         session.close()
 
+
+@app.route("/api/games", methods=["GET"])
+def api_games_list():
+    """Return every stored game's summary, newest first.
+
+    The web Games page groups games by month in a side-nav, which needs the full
+    set of dates rather than one paginated slice. This returns the same per-game
+    summary as /getgames (via build_gameitem_from_gamedata) for all games in one
+    array so the client can bucket them. Read-only and unauthenticated like the
+    existing /getgames; a game summary contains no secrets. Shape:
+        {"games": [{"id", "created_at", "source", "event", "site", "round",
+                     "white", "black", "result"}, ...]}
+    """
+    session = get_db_session()
+    try:
+        gamedata = session.execute(
+            select(models.Game.created_at, models.Game.source, models.Game.event,
+                   models.Game.site, models.Game.round, models.Game.white,
+                   models.Game.black, models.Game.result, models.Game.id).
+            order_by(models.Game.id.desc())
+        ).all()
+        games = [build_gameitem_from_gamedata(row) for row in gamedata]
+        return jsonify({"games": games})
+    finally:
+        session.close()
+
 @app.route("/engines")
 def engines():
     # Return a list of engines and uci files. Essentially the contents our our engines folder
@@ -1595,11 +1621,18 @@ def api_game_positions(gameid):
 
 @app.route("/logo")
 def logo_image():
-    """Serve the knight logo from resources."""
-    logo_path = get_resource_path("knight_logo.bmp")
-    if os.path.exists(logo_path):
-        return send_file(logo_path, mimetype='image/bmp')
-    # Fallback to icon
+    """Serve the knight logo for the web UI (navbar, About card).
+
+    Prefers the transparent PNG head crop so the white-bodied knight reads on the
+    purple navbar and light cards; falls back to the 1-bit board bitmap, then the
+    bundled icon, if the PNG is not present (e.g. an older install).
+    """
+    png_path = get_resource_path("knight_logo.png")
+    if os.path.exists(png_path):
+        return send_file(png_path, mimetype='image/png')
+    bmp_path = get_resource_path("knight_logo.bmp")
+    if os.path.exists(bmp_path):
+        return send_file(bmp_path, mimetype='image/bmp')
     return redirect(url_for('static', filename='icons/icon.svg'))
 
 
@@ -3075,6 +3108,43 @@ def api_get_positions():
         return jsonify({"categories": categories})
     except Exception as e:
         app.logger.warning(f"Failed to load positions: {e}")
+        return _internal_error(e)
+
+
+@app.route("/api/positions", methods=["POST"])
+@requires_auth
+def api_add_position():
+    """Persist a user-entered position to the [custom] category. Requires auth.
+
+    Writes to the custom overlay file (positions.custom.ini), which
+    load_positions_config merges over the packaged defaults, so the saved
+    position appears in the same catalog the board reads and can be set up like
+    any other. Validation failures (bad FEN, empty name, illegal hint) return
+    400 with a user-safe message; nothing is written on failure.
+
+    Body: {"name": str, "fen": str, "hint"?: str}
+    """
+    try:
+        from universalchess.utils.positions import (
+            CUSTOM_POSITION_ERRORS,
+            add_custom_position,
+            validate_custom_position,
+        )
+
+        body = request.get_json(silent=True) or {}
+        name = (body.get("name") or "").strip()
+        fen = (body.get("fen") or "").strip()
+        hint = (body.get("hint") or "").strip() or None
+
+        # Validate up front and answer from a constant message keyed by the
+        # returned code, so no exception text flows into the response (CWE-209).
+        error_code = validate_custom_position(name, fen, hint)
+        if error_code is not None:
+            return jsonify({"success": False, "error": CUSTOM_POSITION_ERRORS[error_code]}), 400
+
+        key = add_custom_position(name, fen, hint, log=app.logger)
+        return jsonify({"success": True, "name": key})
+    except Exception as e:
         return _internal_error(e)
 
 

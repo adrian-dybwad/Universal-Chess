@@ -46,7 +46,67 @@
   font-weight: 600;
 }
 
-.category-count {
-  font-size: var(--text-sm, 0.875rem);
-  color: var(--color-text-muted);
+/* Add-position form (Custom category only). */
+.position-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.position-add-title {
+  margin: 0;
+}
+
+.position-add-desc {
+  margin: 0;
+}
+
+.position-add-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-weight: 600;
+}
+
+.position-add-field input {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-weight: 400;
+}
+
+.position-add-field input:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.position-add-error {
+  margin: 0;
+}
+
+.position-add-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Category sidebar uses the shared .subnav-* layout. Its items are text (the
+   categories have no per-item icon), so opt out of the shared icon-only mobile
+   rail and keep a compact labelled sidebar on small screens instead. */
+@media (max-width: 768px) {
+  .positions-subnav {
+    grid-template-columns: 132px 1fr;
+  }
+
+  .positions-subnav .subnav-item {
+    justify-content: flex-start;
+    padding: var(--space-2) var(--space-3);
+    gap: var(--space-2);
+  }
+
+  .positions-subnav .subnav-label {
+    display: inline;
+  }
 }

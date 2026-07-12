@@ -48,3 +48,28 @@ export function formatDate(value: string | null | undefined, locale?: string): s
   const date = parse(value);
   return date ? date.toLocaleDateString(locale) : '';
 }
+
+/** A calendar-month grouping of a timestamp. */
+export interface MonthBucket {
+  /** Sortable key `YYYY-MM` built from the viewer's LOCAL year/month. */
+  key: string;
+  /** Localized label (e.g. "July 2026"). See `formatDateTime` for `locale`. */
+  label: string;
+}
+
+/**
+ * Bucket a server timestamp into the local calendar month it falls in.
+ *
+ * The key is derived from the viewer's LOCAL year/month (not UTC) so a game
+ * groups under the same month it is displayed in -- e.g. an instant near a month
+ * boundary in UTC lands in the month the viewer actually sees via
+ * `formatDateTime`. Returns null for absent/invalid input so callers can bucket
+ * such rows separately rather than rendering "Invalid Date".
+ */
+export function monthBucket(value: string | null | undefined, locale?: string): MonthBucket | null {
+  const date = parse(value);
+  if (!date) return null;
+  const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  const label = date.toLocaleDateString(locale, { year: 'numeric', month: 'long' });
+  return { key, label };
+}

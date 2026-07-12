@@ -50,10 +50,16 @@
   min-height: 3.25rem;
 }
 
-.navbar-logo-item {
+/* Two classes so this wins over the generic `.navbar-item` padding (defined
+   later, equal single-class specificity would otherwise clobber the reserved
+   space and let the brand text slide under the logo). */
+.navbar-item.navbar-logo-item {
+  position: relative;
   display: flex;
   align-items: center;
-  padding: 0.5rem 1rem;
+  /* Reserve horizontal room for the oversized, absolutely-positioned logo so the
+     brand text sits clear of it. Left = gutter + logo width + gap. */
+  padding: 0.5rem 1rem 0.5rem calc(1rem + 40px + 0.75rem);
   text-decoration: none;
 }
 
@@ -62,10 +68,19 @@
   background: rgba(255, 255, 255, 0.1);
 }
 
+/* The full knight piece is portrait, so at 40px wide it stands ~80px tall. It
+   is absolutely positioned and lifted above the sticky navbar (z-index) so it
+   overflows past the bar into the page below rather than stretching the row.
+   pointer-events pass through to the link. */
 .navbar-logo-img {
-  max-height: 40px;
-  margin-right: 0.75rem;
-  border-radius: 4px;
+  position: absolute;
+  left: 1rem;
+  top: 6px;
+  width: 40px;
+  height: auto;
+  z-index: 101;
+  pointer-events: none;
+  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.25));
 }
 
 .brand-text {

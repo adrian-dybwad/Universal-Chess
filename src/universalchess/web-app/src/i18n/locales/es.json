@@ -1,6 +1,6 @@
 {
   "nav": {
-    "liveBoard": "Tablero en vivo",
+    "liveBoard": "Tablero",
     "games": "Partidas",
     "positions": "Posiciones",
     "settings": "Ajustes",
@@ -10,7 +10,7 @@
     "menu": "menú"
   },
   "brand": {
-    "tagline": "Tu compañero de ajedrez inteligente"
+    "tagline": "Mírale el diente a este caballo regalado"
   },
   "common": {
     "cancel": "Cancelar",
@@ -33,61 +33,48 @@
     "localServer": "Usando el servidor local"
   },
   "docTitle": {
+    "home": "Inicio",
     "liveBoard": "Tablero en vivo",
     "games": "Partidas",
     "analysis": "Análisis",
     "positions": "Posiciones",
     "settings": "Ajustes",
     "licenses": "Licencias",
-    "support": "Soporte",
     "app": "Universal Chess"
   },
   "notFound": {
     "title": "404 — Página no encontrada",
     "body": "La página que buscas no existe. Puede que se haya movido o que la dirección esté mal escrita.",
-    "back": "Volver al tablero"
+    "back": "Volver al inicio"
   },
   "footer": {
     "tagline": "Software de código abierto para tableros de ajedrez inteligentes",
+    "home": "Inicio",
     "github": "GitHub",
-    "licenses": "Licencias",
-    "support": "Soporte"
-  },
-  "settingsTabs": {
-    "support": "Soporte",
     "licenses": "Licencias"
   },
-  "support": {
-    "title": "Soporte",
+  "about": {
+    "resourcesTitle": "Recursos y soporte",
+    "discord": {
+      "title": "Comunidad de Discord",
+      "description": "Únete a Discord para chatear, hacer preguntas y debatir sobre el proyecto."
+    },
+    "github": {
+      "title": "GitHub",
+      "description": "Consulta el código fuente, el README y las versiones en GitHub."
+    },
     "reportBug": {
       "title": "Informar de un error",
       "description": "¿Encontraste un problema? Abre una incidencia en GitHub con los detalles de lo ocurrido."
     },
-    "discussions": {
-      "title": "Debates",
-      "description": "Únete al debate de la comunidad, haz preguntas y comparte ideas."
-    },
-    "documentation": {
-      "title": "Documentación",
-      "description": "Lee el README y la documentación del proyecto en GitHub."
-    },
-    "contribute": {
-      "title": "Contribuir",
-      "description": "¿Quieres ayudar? Consulta la guía de contribución para empezar."
-    },
-    "acknowledgments": {
-      "title": "Agradecimientos",
-      "basedOnPre": "Universal Chess se basa en ",
-      "basedOnLink": "DGTCentaur Mods",
-      "basedOnPost": ", creado originalmente por Ed Nekebno y colaboradores de la comunidad.",
-      "thanks": "Un agradecimiento especial a todos los autores de motores de ajedrez de código abierto cuyo trabajo hace posible este proyecto."
+    "licenses": {
+      "title": "Licencias de código abierto",
+      "description": "Consulta las licencias del software y las ilustraciones utilizadas en este proyecto."
     }
   },
   "games": {
     "title": "Historial de partidas",
-    "previous": "◀ Anterior",
-    "next": "Siguiente ▶",
-    "page": "Página {{page}}",
+    "undated": "Sin fecha",
     "loading": "Cargando partidas...",
     "empty": "No se encontraron partidas",
     "player": "Jugador",
@@ -155,7 +142,19 @@
     "setupAria": "Configurar {{name}}",
     "openAria": "Abrir {{name}} ({{count}} posiciones)",
     "positionCount_one": "{{count}} posición",
-    "positionCount_other": "{{count}} posiciones"
+    "positionCount_other": "{{count}} posiciones",
+    "addTitle": "Añadir una posición personalizada",
+    "addDesc": "Guarda una posición con su FEN. Se almacena en el tablero y aparece aquí y en el menú Posiciones del tablero.",
+    "addNameLabel": "Nombre",
+    "addNamePlaceholder": "p. ej. Mi trampa de apertura",
+    "addFenLabel": "FEN",
+    "addFenPlaceholder": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    "addHintLabel": "Jugada de pista (opcional)",
+    "addHintPlaceholder": "p. ej. e2e4",
+    "addSubmit": "Guardar posición",
+    "addSaving": "Guardando...",
+    "addSuccess": "Se guardó \"{{name}}\".",
+    "addFailed": "No se pudo guardar la posición."
   },
   "analyze": {
     "notFound": "Partida no encontrada",

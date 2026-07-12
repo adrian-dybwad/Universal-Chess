@@ -70,7 +70,7 @@ def test_renders_splash_replacing_existing_widgets(fake_splash):
     manager.clear_widgets.assert_called_once_with(addStatusBar=False)
     fake_splash.assert_called_once_with(
         manager.update, message="Shutting down", leave_room_for_status_bar=False,
-        show_battery=False
+        show_battery=False, tagline=None
     )
     manager.add_widget.assert_called_once_with(fake_splash.return_value)
     promise.result.assert_called_once_with(timeout=10.0)
@@ -93,7 +93,28 @@ def test_forwards_show_battery_flag_to_splash(fake_splash):
 
     fake_splash.assert_called_once_with(
         manager.update, message="Press [>]", leave_room_for_status_bar=False,
-        show_battery=True
+        show_battery=True, tagline=None
+    )
+
+
+def test_forwards_tagline_to_splash(fake_splash):
+    """A supplied tagline must reach the SplashScreen constructor.
+
+    Why: the shutdown prompt shows the slogan under "UNIVERSAL"; it only gets
+    there through this kwarg, so a dropped/renamed param would silently drop the
+    byline from the shutdown screen.
+
+    How a regression manifests: if show_fullscreen_splash stops forwarding
+    tagline, the constructed kwargs lack tagline="..." and this assert fails.
+    """
+    manager, _ = _make_manager()
+
+    show_fullscreen_splash(manager, "Press [>]", timeout=5.0, show_battery=True,
+                           tagline="Look this gift horse in the mouth")
+
+    fake_splash.assert_called_once_with(
+        manager.update, message="Press [>]", leave_room_for_status_bar=False,
+        show_battery=True, tagline="Look this gift horse in the mouth"
     )
 
 

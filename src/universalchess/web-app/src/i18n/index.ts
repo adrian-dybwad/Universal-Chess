@@ -8,7 +8,7 @@
  * rather than the raw key.
  *
  * Only *web-only* copy lives here (navbar, page titles, dialogs, banners, the
- * Support page). Settings *field* labels/help and option labels come from the
+ * About page). Settings *field* labels/help and option labels come from the
  * localized menu catalog (GET /api/menu-schema), not these bundles, so there is
  * a single source of truth shared with the board.
  *

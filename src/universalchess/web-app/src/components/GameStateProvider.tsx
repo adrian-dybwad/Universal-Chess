@@ -29,12 +29,13 @@ export function GameStateProvider({ children }: { children: React.ReactNode }) {
     void useSettingsStore.getState().load();
   }, []);
 
-  // Update ref when location changes
-  isOnLiveBoardRef.current = location.pathname === '/';
+  // Update ref when location changes. The live board now lives at /board (the
+  // root path is the welcome/home page).
+  isOnLiveBoardRef.current = location.pathname === '/board';
 
   // Hide banner when navigating to live board
   useEffect(() => {
-    if (location.pathname === '/' && toast) {
+    if (location.pathname === '/board' && toast) {
       hideToast();
     }
   }, [location.pathname, toast, hideToast]);

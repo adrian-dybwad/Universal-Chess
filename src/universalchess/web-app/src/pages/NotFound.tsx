@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 /**
  * Catch-all page shown for any route that matches no defined path. Gives an
  * unknown URL (a mistyped address, a stale bookmark, or a removed route) a clear
- * dead-end with a way back to the live board, instead of rendering a blank page.
+ * dead-end with a way back to the home page, instead of rendering a blank page.
  */
 export function NotFound() {
   const { t } = useTranslation();

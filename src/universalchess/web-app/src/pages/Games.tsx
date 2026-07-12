@@ -1,20 +1,37 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button, Card, Badge } from '../components/ui';
 import { LoginDialog } from '../components/LoginDialog';
 import type { GameRecord } from '../types/game';
 import { apiFetch, getStoredCredentials } from '../utils/api';
-import { formatDateTime } from '../utils/datetime';
+import { formatDateTime, monthBucket } from '../utils/datetime';
 import './Games.css';
+
+/** A month grouping of games for the side-nav. */
+interface MonthGroup {
+  key: string;
+  label: string;
+  games: GameRecord[];
+}
 
 /**
  * Games history page.
+ *
+ * A sub-nav (like Settings/Positions): the left sidebar lists the calendar
+ * months games were played in (newest first, with a per-month count) and the
+ * content pane shows that month's games. The full list is loaded once from
+ * GET /api/games and grouped client-side by local month, so navigation is by
+ * date rather than opaque page numbers. Games with no/invalid date fall into a
+ * trailing "Undated" group so they are never lost.
+ *
+ * Each game card supports viewing its PGN, opening analysis, and (auth-gated)
+ * deletion. Deletion reuses the shared LoginDialog and retries after login.
  */
 export function Games() {
   const { t, i18n } = useTranslation();
   const [games, setGames] = useState<GameRecord[]>([]);
-  const [page, setPage] = useState(1);
+  const [activeMonthKey, setActiveMonthKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [expandedPgn, setExpandedPgn] = useState<Record<number, string>>({});
   const [loginDialogOpen, setLoginDialogOpen] = useState(false);
@@ -24,21 +41,57 @@ export function Games() {
   const fetchGames = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await apiFetch(`/getgames/${page}`);
+      const response = await apiFetch('/api/games');
       const data = await response.json();
-      const gameList = Object.values(data) as GameRecord[];
-      setGames(gameList);
+      setGames(Array.isArray(data?.games) ? data.games : []);
     } catch (e) {
       console.error('Failed to fetch games:', e);
       setGames([]);
     } finally {
       setLoading(false);
     }
-  }, [page]);
+  }, []);
 
   useEffect(() => {
     fetchGames();
   }, [fetchGames]);
+
+  // Group games (already newest-first from the API) into month buckets,
+  // preserving encounter order so the sidebar lists the newest month first. An
+  // undated group is appended last so such rows remain reachable.
+  const monthGroups = useMemo<MonthGroup[]>(() => {
+    const undatedKey = '__undated__';
+    const order: string[] = [];
+    const byKey = new Map<string, MonthGroup>();
+    for (const game of games) {
+      const bucket = monthBucket(game.created_at, i18n.language);
+      const key = bucket?.key ?? undatedKey;
+      const label = bucket?.label ?? t('games.undated');
+      let group = byKey.get(key);
+      if (!group) {
+        group = { key, label, games: [] };
+        byKey.set(key, group);
+        order.push(key);
+      }
+      group.games.push(game);
+    }
+    return order.map((key) => byKey.get(key)!);
+  }, [games, i18n.language, t]);
+
+  // Keep a valid active month: default to the newest, and re-anchor if the
+  // current selection disappears (e.g. its last game was deleted).
+  useEffect(() => {
+    if (monthGroups.length === 0) {
+      setActiveMonthKey(null);
+      return;
+    }
+    setActiveMonthKey((current) =>
+      current && monthGroups.some((g) => g.key === current) ? current : monthGroups[0].key
+    );
+  }, [monthGroups]);
+
+  const activeGroup =
+    monthGroups.find((g) => g.key === activeMonthKey) ?? monthGroups[0] ?? null;
 
   const togglePgn = async (gameId: number) => {
     if (expandedPgn[gameId]) {
@@ -98,66 +151,89 @@ export function Games() {
     }
   };
 
-  return (
-    <div className="page container--lg">
-      <div className="page-header">
-        <h1 className="page-title">{t('games.title')}</h1>
-        <div className="flex gap-4 items-center">
-          <Button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-            {t('games.previous')}
-          </Button>
-          <span className="text-muted">{t('games.page', { page })}</span>
-          <Button onClick={() => setPage((p) => p + 1)} disabled={games.length === 0}>
-            {t('games.next')}
-          </Button>
+  const renderGameCard = (game: GameRecord) => (
+    <Card key={game.id}>
+      <div className="game-header">
+        <div className="game-players">
+          <strong>{game.white || t('games.player')}</strong>
+          <span className="text-muted">(W)</span>
+          <span className="game-vs">{t('games.vs')}</span>
+          <strong>{game.black || t('games.player')}</strong>
+          <span className="text-muted">(B)</span>
         </div>
+        {game.result && <Badge>{game.result}</Badge>}
       </div>
 
-      {loading ? (
+      <div className="game-meta">
+        {formatDateTime(game.created_at, i18n.language) && (
+          <span>{formatDateTime(game.created_at, i18n.language)}</span>
+        )}
+        {game.source && <span>{game.source}</span>}
+      </div>
+
+      {expandedPgn[game.id] && <pre className="game-pgn">{expandedPgn[game.id]}</pre>}
+
+      <div className="flex gap-2 mt-4">
+        <Button size="sm" onClick={() => togglePgn(game.id)}>
+          {expandedPgn[game.id] ? t('games.hidePgn') : t('games.showPgn')}
+        </Button>
+        <Link to={`/analyze/${game.id}`}>
+          <Button size="sm" variant="primary">{t('games.analyze')}</Button>
+        </Link>
+        <Button size="sm" variant="danger" onClick={() => deleteGame(game.id)}>
+          {t('games.delete')}
+        </Button>
+      </div>
+    </Card>
+  );
+
+  if (loading) {
+    return (
+      <div className="page container--lg">
         <div className="loading">{t('games.loading')}</div>
-      ) : games.length === 0 ? (
-        <div className="empty">{t('games.empty')}</div>
-      ) : (
-        <div className="flex flex-col gap-4">
-          {games.map((game) => (
-            <Card key={game.id}>
-              <div className="game-header">
-                <div className="game-players">
-                  <strong>{game.white || t('games.player')}</strong>
-                  <span className="text-muted">(W)</span>
-                  <span className="game-vs">{t('games.vs')}</span>
-                  <strong>{game.black || t('games.player')}</strong>
-                  <span className="text-muted">(B)</span>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="page">
+        {games.length === 0 ? (
+          <div className="container--lg">
+            <h1 className="page-title">{t('games.title')}</h1>
+            <div className="empty">{t('games.empty')}</div>
+          </div>
+        ) : (
+          <div className="subnav-layout games-subnav">
+            <aside className="subnav-sidebar">
+              {monthGroups.map((group) => (
+                <button
+                  key={group.key}
+                  type="button"
+                  className={`subnav-item ${activeGroup?.key === group.key ? 'active' : ''}`}
+                  onClick={() => setActiveMonthKey(group.key)}
+                  title={group.label}
+                >
+                  <span className="subnav-label">{group.label}</span>
+                  <span className="games-month-count">{group.games.length}</span>
+                </button>
+              ))}
+            </aside>
+
+            <main className="subnav-content">
+              <h1 className="page-title">
+                {activeGroup ? activeGroup.label : t('games.title')}
+              </h1>
+
+              {activeGroup && (
+                <div className="flex flex-col gap-4">
+                  {activeGroup.games.map(renderGameCard)}
                 </div>
-                {game.result && <Badge>{game.result}</Badge>}
-              </div>
-
-              <div className="game-meta">
-                {formatDateTime(game.created_at, i18n.language) && (
-                  <span>{formatDateTime(game.created_at, i18n.language)}</span>
-                )}
-                {game.source && <span>{game.source}</span>}
-              </div>
-
-              {expandedPgn[game.id] && (
-                <pre className="game-pgn">{expandedPgn[game.id]}</pre>
               )}
-
-              <div className="flex gap-2 mt-4">
-                <Button size="sm" onClick={() => togglePgn(game.id)}>
-                  {expandedPgn[game.id] ? t('games.hidePgn') : t('games.showPgn')}
-                </Button>
-                <Link to={`/analyze/${game.id}`}>
-                  <Button size="sm" variant="primary">{t('games.analyze')}</Button>
-                </Link>
-                <Button size="sm" variant="danger" onClick={() => deleteGame(game.id)}>
-                  {t('games.delete')}
-                </Button>
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
+            </main>
+          </div>
+        )}
+      </div>
 
       <LoginDialog
         isOpen={loginDialogOpen}
@@ -168,6 +244,6 @@ export function Games() {
         onSuccess={handleLoginSuccess}
         errorMessage={loginError}
       />
-    </div>
+    </>
   );
 }

@@ -1,15 +1,42 @@
-# Universal-Chess
+<table>
+<tr>
+<td width="200" valign="top" align="center">
+<img src="src/universalchess/web-app/public/icons/logo-full.png" alt="Universal-Chess" width="170" />
+</td>
+<td valign="top">
+<h2>Universal-Chess</h2>
+<p><em>Look this gift horse in the mouth</em></p>
+<p>Universal-Chess is an extensible software platform for electronic chess boards. It currently targets the <strong>DGT Centaur</strong> hardware (as the first supported board), and includes:</p>
+<ul>
+<li>Local play against engines</li>
+<li>AI coaching</li>
+<li>Game recording/export (PGN)</li>
+<li>Online play (Lichess integration)</li>
+<li>Board emulation modes (Millennium / Pegasus / Chessnut) for compatible apps</li>
+<li>The ability to run the original Centaur software after uploading your original SD image to the new board</li>
+</ul>
+</td>
+</tr>
+</table>
 
-Universal-Chess is an extensible software platform for electronic chess boards.
-It currently targets the **DGT Centaur** hardware (as the first supported board), and includes:
-- Local play against engines
-- Game recording/export (PGN)
-- Online play (Lichess integration)
-- Board emulation modes (Millennium / Pegasus / Chessnut) for compatible apps
+## Acknowledgments
 
-On DGT Centaur hardware, the stock Raspberry Pi can be replaced with a Raspberry Pi Zero 2 W (or Raspberry Pi Zero W) to enable Wi‑Fi/Bluetooth features and run this software stack.
+<img src="src/universalchess/web-app/public/images/board-and-web.jpg" alt="Universal-Chess running on a DGT Centaur board alongside the web interface" align="right" width="360" />
 
-**Warranty notice:** Hardware modification may void device warranty. Proceed at own risk.
+Universal Chess exists thanks to the people and projects below.
+
+- **[Adrian Dybwad](https://github.com/adrian-dybwad)** — Creator and lead developer.
+- **[Cursor](https://cursor.com)** — AI pair programming used throughout development.
+- **Bartolomé Acosta Urrea** — A special thank you for motivation, extensive testing and hands-on help refining the application (**bartok1981** on discord).
+- **[DGTCentaur Mods](https://github.com/EdNekebno/DGTCentaur)** — The project Universal Chess is built on, originally created by Ed Nekebno and community contributors.
+
+Special thanks to all the open source chess engine authors whose work makes this project possible.
+
+## Hardware
+
+On DGT Centaur hardware, the stock Raspberry Pi can be replaced with a Raspberry Pi Zero 2 W (or Raspberry Pi Zero W) to enable Wi‑Fi/Bluetooth features and run this software stack. Performance is hugely improved on the Zero 2 W and we highly recommend using it as the Zero W is quite slow although it does work. This software supports the latest version of PI OS (Trixie) and also 32 or 64 bit. 64 bit supports more engines that the 32 bit does, so we recommend you use that.
+
+**Warranty notice:** Hardware modification may void device warranty. Proceed at your own risk.
 
 ## Architecture
 
@@ -47,16 +74,17 @@ Universal-Chess can advertise as multiple e-board types and auto-detect which pr
 - **DGT Revelation II / Millennium** - Use the Centaur as a Bluetooth DGT e-board with apps, Rabbit plugin, Livechess, etc. Works with Chess for Android and Chess.com app (experimental).
 - **DGT Pegasus** - Emulate a DGT Pegasus. Works with the DGT Chess app.
 - **Chessnut** - Emulate a Chessnut board for compatible apps.
+- **Engine Install** - Install your choice of UCI engines via the web interface.
+- **AI Coach** - Use your choice of AI engine to coach you - on your level - or to analyse games after the fact.
 
 ### Online Play
-- **Lichess** - Set your Lichess API token from the web interface, then play online games directly from the board.
+- **Lichess** - Set your Lichess API token, then play online games directly from the board.
 
 ### Web Interface
 - **Live Board View** - See the current board position at http://IP_ADDRESS or your board's hostname.
 - **PGN Download** - Download all played games as PGN files.
 - **Game Analysis** - Playback and analyze played games with takeback support.
 - **Video Streaming** - Live MJPEG stream at /video for OBS or other streaming setups.
-- **Engine Upload** - Upload your own UCI engines via the web interface.
 
 ### Connectivity
 - **WiFi** - Join WiFi networks from the board (WPS/WPA2).
@@ -124,8 +152,6 @@ original card from the Centaur -- keep it safe, you may want it later.
 
 ## Support
 
-Join on Discord: `https://discord.gg/zqgUGK2x49`
+Join on Discord: `https://discord.gg/f3DrD6KPM`
 
 ## Contributors welcome!
-
-Contributions are welcome.

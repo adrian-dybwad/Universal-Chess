@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatDateTime, formatDate } from './datetime';
+import { formatDateTime, formatDate, monthBucket } from './datetime';
 
 /**
  * Guards the server-timestamp formatting contract: UTC ISO input is parsed as a
@@ -74,4 +74,55 @@ describe('datetime formatting', () => {
       expect(formatDate(value as string | null | undefined)).toBe('');
     },
   );
+});
+
+/**
+ * Guards the month grouping the Games side-nav relies on: buckets are derived
+ * from the viewer's local calendar month (so grouping matches displayed times),
+ * the key is sortable `YYYY-MM`, same-month instants collapse to one bucket, and
+ * invalid input yields null (not a bogus group).
+ */
+describe('monthBucket', () => {
+  it('derives key and label from the local calendar month', () => {
+    // Why: the sidebar sorts by key and shows label; both must come from the
+    // same local date the row displays under. Comparing to the platform's own
+    // formatter for the same instant keeps the label assertion locale/zone
+    // independent. Regression: a UTC-based key would mis-file boundary instants.
+    const iso = '2026-07-10T12:00:00+00:00';
+    const date = new Date(iso);
+    const bucket = monthBucket(iso, 'en');
+    expect(bucket).not.toBeNull();
+    expect(bucket!.key).toBe(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
+    expect(bucket!.label).toBe(date.toLocaleDateString('en', { year: 'numeric', month: 'long' }));
+  });
+
+  it('collapses two instants in the same local month to one key', () => {
+    // Why: every game in a month must land in exactly one sidebar entry. Two
+    // different days of the same month sharing a key proves grouping is by month,
+    // not by day. Regression: a day-granular key would split the month.
+    const a = monthBucket('2026-07-01T12:00:00+00:00');
+    const b = monthBucket('2026-07-28T12:00:00+00:00');
+    expect(a!.key).toBe(b!.key);
+  });
+
+  it('separates different months', () => {
+    // Why: distinct months must produce distinct sidebar entries. Regression: a
+    // year-only key would merge June and July.
+    const june = monthBucket('2026-06-15T12:00:00+00:00');
+    const july = monthBucket('2026-07-15T12:00:00+00:00');
+    expect(june!.key).not.toBe(july!.key);
+  });
+
+  it('localizes the label', () => {
+    // Why: the sidebar follows the UI language. es and en month names differ, so
+    // ignoring the locale would render them identically. How it manifests: the
+    // two labels are equal under a regression that drops the locale argument.
+    const iso = '2026-07-10T12:00:00+00:00';
+    expect(monthBucket(iso, 'es')!.label).not.toBe(monthBucket(iso, 'en')!.label);
+  });
+
+  it.each([undefined, null, '', 'not-a-date'])('returns null for invalid input: %s', (value) => {
+    // Why: invalid rows must be bucketable separately, never as "Invalid Date".
+    expect(monthBucket(value as string | null | undefined)).toBeNull();
+  });
 });

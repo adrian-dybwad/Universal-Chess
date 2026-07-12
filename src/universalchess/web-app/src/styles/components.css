@@ -19,7 +19,107 @@
 .container--lg { max-width: var(--container-lg); }
 
 .page {
-  padding: var(--space-6);
+  /* Top spacing for every route is owned by the outer .section wrapper
+     (styles/base.css). Only horizontal + bottom padding is added here so the
+     section's top padding is not doubled, which otherwise leaves a larger gap
+     between the navbar and the first heading on every .page route. */
+  padding: 0 var(--space-6) var(--space-6);
+}
+
+/* ============================================
+   Sub-navigation layout
+   ============================================ */
+
+/* A sticky left sidebar of nav items beside a content pane. Shared by pages
+   with an in-page sub-nav (Settings tabs, Positions categories) so they look
+   and behave identically. Page-specific extras (e.g. the Settings save bar's
+   bottom clearance) live in that page's own stylesheet. */
+.subnav-layout {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: var(--space-8);
+  max-width: var(--container-xl);
+  margin: 0 auto;
+  min-height: calc(100vh - 120px);
+}
+
+.subnav-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  position: sticky;
+  top: 100px;
+  height: fit-content;
+}
+
+.subnav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: none;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: var(--font-medium);
+  color: var(--color-text-light);
+  text-align: left;
+  transition: all var(--transition-fast);
+}
+
+.subnav-item:hover {
+  background: var(--color-gray-100);
+  color: var(--color-text);
+}
+
+.subnav-item.active {
+  background: #e5e5e5; /* Light chess square color */
+  color: var(--color-text);
+  font-weight: var(--font-semibold);
+}
+
+.subnav-icon {
+  font-size: var(--text-lg);
+}
+
+.subnav-content {
+  min-width: 0;
+}
+
+/* Tablet/mobile: collapse the sidebar to a compact icon-only rail. Pages whose
+   items have no distinct per-item icon (e.g. Positions categories) opt out via
+   their own stylesheet to keep text labels visible. */
+@media (max-width: 768px) {
+  .subnav-layout {
+    grid-template-columns: 48px 1fr;
+    gap: var(--space-4);
+  }
+
+  .subnav-sidebar {
+    gap: var(--space-1);
+    top: 80px;
+  }
+
+  .subnav-item {
+    justify-content: center;
+    padding: var(--space-2);
+    gap: 0;
+  }
+
+  .subnav-item .subnav-label {
+    display: none;
+  }
+
+  .subnav-icon {
+    font-size: var(--text-xl);
+  }
+}
+
+@media (max-width: 480px) {
+  .subnav-layout {
+    gap: var(--space-3);
+  }
 }
 
 .page-header {
@@ -588,7 +688,7 @@
   }
   
   .page {
-    padding: var(--space-4);
+    padding: 0 var(--space-4) var(--space-4);
   }
   
   .grid--2,

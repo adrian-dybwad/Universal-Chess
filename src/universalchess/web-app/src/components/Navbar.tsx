@@ -47,7 +47,7 @@ export function Navbar() {
       <div className="navbar-top">
         <div className="navbar-brand">
           <Link to="/" className="navbar-item navbar-logo-item">
-            <img src="/logo" alt="" className="navbar-logo-img" />
+            <img src="/icons/logo-full.png" alt="" className="navbar-logo-img" />
             <div className="brand-text">
               <span className="brand-title">{t('nav.appName')}</span>
               <span className="brand-tagline">{t('brand.tagline')}</span>
@@ -70,8 +70,8 @@ export function Navbar() {
         <div className={`navbar-menu ${menuOpen ? 'is-active' : ''}`}>
           <div className="navbar-start">
             <Link
-              to="/"
-              className={`navbar-item ${isActive('/') ? 'is-active' : ''}`}
+              to="/board"
+              className={`navbar-item ${isActive('/board') ? 'is-active' : ''}`}
               onClick={() => setMenuOpen(false)}
             >
               {t('nav.liveBoard')}
@@ -104,8 +104,9 @@ export function Navbar() {
       {/* Shared status bar below the main nav. A single instance serves both
           mobile and desktop, so the live device controls (update, connectivity,
           battery, board control, cast, connection) stay reachable without the
-          previous mobile/desktop duplication. Support and Licenses live under
-          Settings (beneath System); the global footer still links to them. */}
+          previous mobile/desktop duplication. The logo links to Home (the
+          welcome/About content); Licenses lives under Settings; the footer links
+          to Home and Licenses. */}
       <div className="navbar-status-bar">
         <UpdateIndicator />
         <ConnectivityIndicators />

@@ -36,19 +36,19 @@ describe('Navbar localization', () => {
     // as the raw key text or missing labels.
     const { container } = renderNavbar();
     const menu = within(container);
-    expect(menu.getAllByText('Live Board').length).toBeGreaterThan(0);
+    expect(menu.getAllByText('Board').length).toBeGreaterThan(0);
     expect(menu.getAllByText('Games').length).toBeGreaterThan(0);
     expect(menu.getAllByText('Settings').length).toBeGreaterThan(0);
   });
 
   it('renders Spanish nav labels when the language is Spanish', async () => {
     // Why: the whole navbar must localize with the device. How a regression
-    // manifests: labels stay English ("Live Board"/"Games") regardless of locale,
+    // manifests: labels stay English ("Board"/"Games") regardless of locale,
     // so these Spanish queries find nothing.
     await i18n.changeLanguage('es');
     const { container } = renderNavbar();
     const menu = within(container);
-    expect(menu.getAllByText('Tablero en vivo').length).toBeGreaterThan(0);
+    expect(menu.getAllByText('Tablero').length).toBeGreaterThan(0);
     expect(menu.getAllByText('Partidas').length).toBeGreaterThan(0);
     expect(menu.getAllByText('Ajustes').length).toBeGreaterThan(0);
   });

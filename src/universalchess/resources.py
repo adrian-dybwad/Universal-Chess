@@ -346,52 +346,96 @@ class ResourceLoader:
         # Full square tile: shown opaquely, so no transparency mask.
         return piece_img, None
 
+    @staticmethod
+    def _resample_lanczos():
+        """LANCZOS filter constant, tolerant of the Pillow version in use."""
+        try:
+            return Image.Resampling.LANCZOS
+        except AttributeError:
+            return Image.LANCZOS
+
+    @staticmethod
+    def _bilevel_and_mask(img: Image.Image) -> Tuple[Image.Image, Image.Image]:
+        """Threshold a (grayscale or 1-bit) logo to 1-bit + build its ink mask.
+
+        A hard threshold is used rather than ``convert("1")`` because the latter
+        applies Floyd-Steinberg dithering by default, which would speckle the
+        line-art knight. The mask marks the black ink (the drawn knight) opaque
+        so the surrounding page shows through on the e-paper.
+        """
+        bilevel = img.point(lambda p: 255 if p >= 128 else 0).convert("1")
+        mask = Image.eval(bilevel, lambda p: 255 if p == 0 else 0).convert("1")
+        return bilevel, mask
+
     def get_knight_logo(self, size: int = 100) -> Tuple[Optional[Image.Image], Optional[Image.Image]]:
-        """Get knight logo image and its transparency mask.
-        
+        """Get the square knight-head logo image and its transparency mask.
+
+        This is the head crop used for square placements (menu/icon buttons).
+        For the full piece shown on the splash screen, see ``get_knight_logo_full``.
+
         Args:
             size: Target size (width and height) for the logo
-            
+
         Returns:
             Tuple of (logo_image, mask_image), or (None, None) if not found.
             The mask has 255 where the knight is (black pixels) and 0 elsewhere.
         """
         cache_key = ("knight_logo.bmp", size, size)
         mask_cache_key = ("knight_logo_mask.bmp", size, size)
-        
+
         if cache_key in self._resized_cache and mask_cache_key in self._resized_cache:
             return self._resized_cache[cache_key], self._resized_cache[mask_cache_key]
-        
+
         img = self.get_image("knight_logo.bmp")
         if img is None:
             return None, None
-        
-        # Resize if needed
+
+        # Resize the grayscale source with LANCZOS before thresholding so small
+        # icon sizes keep clean edges (see _bilevel_and_mask).
         if img.size[0] != size or img.size[1] != size:
-            try:
-                resample = Image.Resampling.LANCZOS
-            except AttributeError:
-                resample = Image.LANCZOS
-            img = img.resize((size, size), resample)
-        
-        # Ensure 1-bit mode
-        if img.mode != '1':
-            img = img.convert('1')
-        
-        # Create mask where black pixels (knight) are opaque
-        mask = Image.new("1", img.size, 0)
-        img_pixels = img.load()
-        mask_pixels = mask.load()
-        for y in range(img.height):
-            for x in range(img.width):
-                if img_pixels[x, y] == 0:  # Black pixel
-                    mask_pixels[x, y] = 255  # Opaque
-        
-        # Cache both
-        self._resized_cache[cache_key] = img
+            img = img.resize((size, size), self._resample_lanczos())
+
+        bilevel, mask = self._bilevel_and_mask(img)
+
+        self._resized_cache[cache_key] = bilevel
         self._resized_cache[mask_cache_key] = mask
-        
-        return img, mask
+
+        return bilevel, mask
+
+    def get_knight_logo_full(self, height: int) -> Tuple[Optional[Image.Image], Optional[Image.Image]]:
+        """Get the full knight-piece logo scaled to ``height``, plus its mask.
+
+        The full piece is portrait (taller than wide); the width is derived from
+        the source aspect ratio so it is never squashed. Used by the splash
+        screen, which reserves a tall logo band for it.
+
+        Args:
+            height: Target height in pixels. Width follows the source aspect.
+
+        Returns:
+            Tuple of (logo_image, mask_image), or (None, None) if not found.
+        """
+        img = self.get_image("knight_full.bmp")
+        if img is None:
+            return None, None
+
+        src_w, src_h = img.size
+        width = max(1, round(height * src_w / src_h))
+
+        cache_key = ("knight_full.bmp", width, height)
+        mask_cache_key = ("knight_full_mask.bmp", width, height)
+        if cache_key in self._resized_cache and mask_cache_key in self._resized_cache:
+            return self._resized_cache[cache_key], self._resized_cache[mask_cache_key]
+
+        if (src_w, src_h) != (width, height):
+            img = img.resize((width, height), self._resample_lanczos())
+
+        bilevel, mask = self._bilevel_and_mask(img)
+
+        self._resized_cache[cache_key] = bilevel
+        self._resized_cache[mask_cache_key] = mask
+
+        return bilevel, mask
 
 
 # ---------------------------------------------------------------------------

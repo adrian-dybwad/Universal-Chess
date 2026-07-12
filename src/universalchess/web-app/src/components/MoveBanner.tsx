@@ -37,7 +37,7 @@ export function MoveBanner({ toast, onDismiss }: MoveBannerProps) {
         <span className="move-banner-text">
           <strong>{playerWhoMoved}</strong> {t('moveBanner.played')} <strong className="move-notation">{moveNotation}</strong>
         </span>
-        <Link to="/" className="move-banner-link">
+        <Link to="/board" className="move-banner-link">
           {t('moveBanner.viewLiveBoard')}
         </Link>
         <button className="move-banner-close" onClick={onDismiss} aria-label={t('moveBanner.dismiss')}>

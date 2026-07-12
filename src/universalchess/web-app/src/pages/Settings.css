@@ -5,62 +5,9 @@
  * Uses shared components and tokens from the design system.
  */
 
-/* No page padding here: the outer .section wrapper (styles/base.css) already
-   supplies the responsive page padding for every route. Repeating it here
-   doubled the space above the first heading. The sticky save bar's bottom
-   clearance is still added per-breakpoint below. */
-.settings-layout {
-  display: grid;
-  grid-template-columns: 220px 1fr;
-  gap: var(--space-8);
-  max-width: var(--container-xl);
-  margin: 0 auto;
-  min-height: calc(100vh - 120px);
-}
-
-.settings-sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  position: sticky;
-  top: 100px;
-  height: fit-content;
-}
-
-.sidebar-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border: none;
-  border-radius: var(--radius-lg);
-  background: transparent;
-  cursor: pointer;
-  font-size: var(--text-sm);
-  font-weight: var(--font-medium);
-  color: var(--color-text-light);
-  text-align: left;
-  transition: all var(--transition-fast);
-}
-
-.sidebar-item:hover {
-  background: var(--color-gray-100);
-  color: var(--color-text);
-}
-
-.sidebar-item.active {
-  background: #e5e5e5; /* Light chess square color */
-  color: var(--color-text);
-  font-weight: var(--font-semibold);
-}
-
-.sidebar-icon {
-  font-size: var(--text-lg);
-}
-
-.settings-content {
-  min-width: 0;
-}
+/* The sub-nav layout itself is shared (.subnav-* in styles/components.css). Only
+   the Settings-specific sticky save bar clearance remains here, added per
+   breakpoint below. */
 
 /* Settings Groups */
 .settings-group {
@@ -524,36 +471,10 @@
 
 /* Responsive - tablet */
 @media (max-width: 768px) {
+  /* The shared .subnav-layout handles the compact sidebar; Settings only adds
+     bottom clearance so the sticky save bar never covers the last field. */
   .settings-layout {
-    grid-template-columns: 48px 1fr;
-    /* Outer .section owns the page padding; only the sticky save bar's bottom
-       clearance is layout-specific. */
     padding-bottom: 100px;
-    gap: var(--space-4);
-  }
-
-  .settings-sidebar {
-    /* Keep vertical layout, just make it compact */
-    flex-direction: column;
-    gap: var(--space-1);
-    position: sticky;
-    top: 80px;
-  }
-
-  .sidebar-item {
-    /* Icon-only buttons on mobile */
-    justify-content: center;
-    padding: var(--space-2);
-    gap: 0;
-  }
-
-  /* Hide text labels on mobile, show only icons */
-  .sidebar-item .sidebar-label {
-    display: none;
-  }
-
-  .sidebar-icon {
-    font-size: var(--text-xl);
   }
 
   .form-row {
@@ -574,13 +495,6 @@
     left: var(--space-4);
     right: var(--space-4);
     text-align: center;
-  }
-}
-
-/* Responsive - mobile */
-@media (max-width: 480px) {
-  .settings-layout {
-    gap: var(--space-3);
   }
 }
 

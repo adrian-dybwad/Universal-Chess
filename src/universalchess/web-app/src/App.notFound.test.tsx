@@ -16,7 +16,7 @@ import { AppRoutes } from './App';
  *   getByRole('heading') throws.
  * - Put the catch-all ahead of the real routes (a common ordering mistake) and
  *   it would swallow a valid path; the second test (a known static route) would
- *   then render the 404 heading instead of the Support page and fail.
+ *   then render the 404 heading instead of the Licenses page and fail.
  */
 
 afterEach(() => {
@@ -36,14 +36,14 @@ describe('AppRoutes catch-all', () => {
     // A mistyped/removed URL must land on the 404 page with a link home.
     renderAt('/this-route-does-not-exist');
     expect(screen.getByRole('heading', { name: /404.*page not found/i })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /back to board/i })).toHaveAttribute('href', '/');
+    expect(screen.getByRole('link', { name: /back to home/i })).toHaveAttribute('href', '/');
   });
 
   it('still renders a known static route (control)', () => {
     // Guards against the catch-all being ordered so it shadows real routes: the
-    // Support page (a static, fetch-free route) must still render normally.
-    renderAt('/support');
-    expect(screen.getByRole('heading', { name: /^support$/i })).toBeInTheDocument();
+    // Licenses page (a static, fetch-free route) must still render normally.
+    renderAt('/licenses');
+    expect(screen.getByRole('heading', { name: /open source licenses/i })).toBeInTheDocument();
     expect(screen.queryByText(/page not found/i)).not.toBeInTheDocument();
   });
 });

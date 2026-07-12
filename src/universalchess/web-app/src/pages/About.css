@@ -1,0 +1,213 @@
+/**
+ * About Page Styles
+ */
+
+.support-card {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-6);
+  background: var(--color-bg-card);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+  text-decoration: none;
+  color: inherit;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.support-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+  text-decoration: none;
+}
+
+.support-icon {
+  font-size: 2rem;
+  margin-bottom: var(--space-3);
+}
+
+/* Image variant of the card icon (e.g. the served knight logo), sized to sit on
+   the same 2rem line as the emoji icons. */
+.support-icon-img {
+  height: 2rem;
+  width: auto;
+  margin-bottom: var(--space-3);
+  align-self: flex-start;
+}
+
+.support-card h3 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-lg);
+}
+
+.support-card p {
+  margin: 0;
+  color: var(--color-text-light);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+}
+
+/* Rendered README markdown (the full project front page). Uses the site's
+   normal line-height (1.5); the former relaxed 1.75 over-spaced list items once
+   combined with the list gap below. */
+.markdown-body {
+  line-height: var(--leading-normal);
+}
+
+.markdown-body img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* README header hero: a borderless two-cell layout table. The left cell holds
+   the logo; the right cell leads with the title heading and byline, then the
+   intro. Rendered identically on GitHub, which also renders this table (a CSS
+   float would not survive GitHub's HTML sanitizer). */
+.markdown-body table {
+  border-collapse: collapse;
+  margin: 0 0 var(--space-4);
+  width: 100%;
+}
+
+.markdown-body td {
+  vertical-align: top;
+  padding: 0;
+}
+
+.markdown-body td:first-child {
+  width: 200px;
+  padding-right: var(--space-6);
+  text-align: center;
+}
+
+/* The title heading leads the content cell. Drop the default section border and
+   top gap so it aligns with the logo top and reads as a hero title rather than a
+   document section divider. */
+.markdown-body td h2 {
+  margin: 0;
+  padding: 0;
+  border-bottom: none;
+  font-size: var(--text-2xl);
+}
+
+/* Byline: the paragraph immediately after the title. A small top gap ties it to
+   the heading; the bottom gap separates it from the intro that follows. */
+.markdown-body td h2 + p {
+  margin: var(--space-1) 0 var(--space-4);
+  color: var(--color-text-light);
+}
+
+/* Narrow viewports: drop the two-column hero to a single stacked column. With
+   the logo centered above, the title and byline center too; the intro and list
+   stay left-aligned for readability. */
+@media (max-width: 640px) {
+  .markdown-body td {
+    display: block;
+    width: 100% !important;
+    padding-right: 0;
+  }
+
+  .markdown-body td h2,
+  .markdown-body td h2 + p {
+    text-align: center;
+  }
+}
+
+/* Floated figures such as the board photo in the Acknowledgments section: the
+   README sets `align="right"` (honored by the UA float mapping and on GitHub);
+   here it gets rounding, a shadow, and spacing so body text wraps cleanly. */
+.markdown-body img[align='right'] {
+  margin: 0 0 var(--space-4) var(--space-6);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+
+/* On narrow viewports a floated 360px photo crowds the text, so it drops inline
+   and centers instead. */
+@media (max-width: 640px) {
+  .markdown-body img[align='right'] {
+    float: none;
+    display: block;
+    margin: var(--space-4) auto;
+  }
+}
+
+.markdown-body h1 {
+  margin: var(--space-6) 0 var(--space-4);
+  font-size: var(--text-2xl);
+}
+
+.markdown-body h1:first-child {
+  margin-top: 0;
+}
+
+.markdown-body h2 {
+  margin: var(--space-6) 0 var(--space-3);
+  font-size: var(--text-xl);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.markdown-body h3 {
+  margin: var(--space-5) 0 var(--space-2);
+  font-size: var(--text-lg);
+}
+
+.markdown-body p {
+  margin: 0 0 var(--space-4);
+  color: var(--color-text-light);
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0 0 var(--space-4);
+  padding-left: var(--space-6);
+}
+
+/* Modest per-item spacing instead of a flex gap: with the gap plus the relaxed
+   line-height, items were double-spaced. A single small top margin (skipped on
+   the first item) keeps bullets tight and readable. */
+.markdown-body li {
+  color: var(--color-text-light);
+  margin-top: var(--space-1);
+}
+
+.markdown-body li:first-child {
+  margin-top: 0;
+}
+
+.markdown-body a {
+  font-weight: 600;
+}
+
+.markdown-body strong {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.markdown-body code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--color-bg-muted);
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-sm);
+}
+
+.markdown-body pre {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-4);
+  background: var(--color-bg-muted);
+  border-radius: var(--radius-lg);
+  overflow-x: auto;
+}
+
+.markdown-body pre code {
+  padding: 0;
+  background: none;
+}
+
+.markdown-body blockquote {
+  margin: 0 0 var(--space-4);
+  padding-left: var(--space-4);
+  border-left: 3px solid var(--color-border);
+  color: var(--color-text-light);
+}

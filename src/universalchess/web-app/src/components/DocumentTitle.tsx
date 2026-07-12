@@ -18,13 +18,13 @@ const TITLE_SEPARATOR = ' \u00b7 ';
  * so the browser-tab title follows the device UI language.
  */
 function pageNameForPath(pathname: string, t: TFunction): string {
-  if (pathname === '/') return t('docTitle.liveBoard');
+  if (pathname === '/') return t('docTitle.home');
+  if (pathname.startsWith('/board')) return t('docTitle.liveBoard');
   if (pathname.startsWith('/games')) return t('docTitle.games');
   if (pathname.startsWith('/analyze')) return t('docTitle.analysis');
   if (pathname.startsWith('/positions')) return t('docTitle.positions');
   if (pathname.startsWith('/settings')) return t('docTitle.settings');
   if (pathname.startsWith('/licenses')) return t('docTitle.licenses');
-  if (pathname.startsWith('/support')) return t('docTitle.support');
   return t('docTitle.app');
 }
 

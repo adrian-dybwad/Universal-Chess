@@ -12,7 +12,7 @@ import { Analyze } from './pages/Analyze';
 import { Positions } from './pages/Positions';
 import { Settings } from './pages/Settings';
 import { Licenses } from './pages/Licenses';
-import { Support } from './pages/Support';
+import { About } from './pages/About';
 import { NotFound } from './pages/NotFound';
 import './App.css';
 
@@ -24,7 +24,9 @@ import './App.css';
 export function AppRoutes() {
   return (
     <Routes>
-      <Route path="/" element={<LiveBoard />} />
+      {/* Home is the welcome/About content; the live board moved to /board. */}
+      <Route path="/" element={<About />} />
+      <Route path="/board" element={<LiveBoard />} />
       <Route path="/games" element={<Games />} />
       <Route path="/analyze/:gameId" element={<Analyze />} />
       <Route path="/positions" element={<Positions />} />
@@ -36,7 +38,8 @@ export function AppRoutes() {
       <Route path="/settings" element={<Settings />} />
       <Route path="/settings/:tab" element={<Settings />} />
       <Route path="/licenses" element={<Licenses />} />
-      <Route path="/support" element={<Support />} />
+      {/* About is now the home page; keep the old path working for bookmarks. */}
+      <Route path="/about" element={<Navigate to="/" replace />} />
       {/* Catch-all: any URL matching no route above renders the 404 page. */}
       <Route path="*" element={<NotFound />} />
     </Routes>
@@ -75,13 +78,13 @@ function AppShell() {
             <p>
               <strong>Universal Chess</strong> &mdash; {t('footer.tagline')}
               <br />
+              <Link to="/">{t('footer.home')}</Link>
+              {' • '}
               <a href="https://github.com/adrian-dybwad/Universal-Chess" target="_blank" rel="noopener noreferrer">
                 {t('footer.github')}
               </a>
               {' • '}
               <Link to="/licenses">{t('footer.licenses')}</Link>
-              {' • '}
-              <Link to="/support">{t('footer.support')}</Link>
             </p>
           </div>
         </footer>

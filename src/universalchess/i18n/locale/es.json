@@ -10,6 +10,7 @@
   "splash.managers": "Gestores...",
   "splash.chess": "Ajedrez...",
   "splash.initializing": "Inicializando...",
+  "splash.tagline": "Mírale el diente a este caballo regalado",
 
   "game_over.result.white_wins": "Ganan las blancas",
   "game_over.result.black_wins": "Ganan las negras",

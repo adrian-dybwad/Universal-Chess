@@ -236,13 +236,17 @@ def _initialize_resources():
         if sprites:
             chess_board_module.set_chess_sprites(sprites)
         
-        # Load and set knight logos at common sizes
-        for size in [100, 80, 36, 24, 20]:  # Splash screen (100), menu buttons (80), icon buttons
+        # Square head logo for buttons (menu buttons at 80, icon buttons at 36/24/20).
+        for size in [80, 36, 24, 20]:
             logo, mask = loader.get_knight_logo(size)
             if logo and mask:
                 icon_button_module.set_knight_logo(size, logo, mask)
-                if size == 100:
-                    splash_screen_module.set_knight_logo(logo, mask)
+
+        # Full piece (portrait) for the splash screen, sized to its logo band.
+        splash_logo, splash_mask = loader.get_knight_logo_full(
+            splash_screen_module.SplashScreen.LOGO_HEIGHT)
+        if splash_logo and splash_mask:
+            splash_screen_module.set_knight_logo(splash_logo, splash_mask)
         
         log.info("[Startup] Resources loaded and injected into widget modules")
     except Exception as e:
@@ -414,7 +418,7 @@ def _init_display_early():
         _early_display_manager = manager
         # Show splash screen immediately (full screen, no status bar)
         _early_display_manager.clear_widgets(addStatusBar=False)
-        _startup_splash = SplashScreen(_early_display_manager.update, message=t("splash.starting"), leave_room_for_status_bar=False)
+        _startup_splash = SplashScreen(_early_display_manager.update, message=t("splash.starting"), leave_room_for_status_bar=False, tagline=t("splash.tagline"))
         promise = _early_display_manager.add_widget(_startup_splash)
         # Don't block - monitor in background thread
         _wait_for_display_promise(promise, "add_splash", timeout=10.0)
@@ -5979,7 +5983,8 @@ _cleanup_done = False  # Guard against running cleanup twice
 _shutdown_requested = False  # Flag to request shutdown from main thread (set by events thread)
 
 
-def _show_shutdown_splash(message: str, timeout: float = 5.0, show_battery: bool = False) -> None:
+def _show_shutdown_splash(message: str, timeout: float = 5.0, show_battery: bool = False,
+                          tagline: Optional[str] = None) -> None:
     """Render a full-screen shutdown splash on the panel.
 
     Always targets ``board.display_manager`` - the low-level epaper Manager that
@@ -5994,9 +5999,10 @@ def _show_shutdown_splash(message: str, timeout: float = 5.0, show_battery: bool
         message: Text to show on the splash.
         timeout: Seconds to wait for the render to complete.
         show_battery: When True, draw the current battery level below the message.
+        tagline: Optional byline drawn under "UNIVERSAL".
     """
     show_fullscreen_splash(board.display_manager, message, timeout=timeout,
-                           show_battery=show_battery)
+                           show_battery=show_battery, tagline=tagline)
 
 
 def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False, reboot: bool = False):
@@ -6157,7 +6163,7 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
         if system_shutdown and not reboot:
             # Display shutdown splash screen
             log.info("[Cleanup] Displaying shutdown splash screen...")
-            _show_shutdown_splash("Press [\u25b6]", timeout=5.0, show_battery=True)
+            _show_shutdown_splash("Press [\u25b6]", timeout=5.0, show_battery=True, tagline=t("splash.tagline"))
             
             # Play power off beep
             log.info("[Cleanup] Playing power off beep...")
@@ -6811,7 +6817,7 @@ def main():
         # Create splash screen if early init didn't work (full screen, no status bar)
         if startup_splash is None:
             board.display_manager.clear_widgets(addStatusBar=False)
-            startup_splash = SplashScreen(board.display_manager.update, message="Starting...", leave_room_for_status_bar=False)
+            startup_splash = SplashScreen(board.display_manager.update, message="Starting...", leave_room_for_status_bar=False, tagline=t("splash.tagline"))
             promise = board.display_manager.add_widget(startup_splash)
             if promise:
                 try:
