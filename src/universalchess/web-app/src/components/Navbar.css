@@ -278,10 +278,12 @@
     margin-right: 0;
   }
 
-  /* Center the expanded menu items so their text clears the oversized logo,
-     which is absolutely positioned in the top-left and overflows down over the
-     first menu rows. */
-  .navbar-item {
+  /* Scope these overrides to the menu links only. The brand link is also a
+     `.navbar-item`, so an unscoped rule would zero its left margin (shifting the
+     absolutely-positioned logo) and center its title/tagline. Centering the
+     labels here also clears the oversized logo, which is absolutely positioned
+     in the top-left and overflows down over the first menu rows. */
+  .navbar-menu .navbar-item {
     padding: 0.75rem 1rem;
     margin: 0;
     border-radius: 0;
