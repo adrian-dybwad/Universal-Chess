@@ -3943,12 +3943,12 @@ def api_system_return_to_universal():
     """
     try:
         import subprocess  # nosec B404 - fixed, trusted commands below, no user input
+        from universalchess.services.power import RESTART_UNIVERSAL_CHESS_CMD
         subprocess.run(["pkill", "-x", "centaur"], check=False, timeout=5)  # noqa: S607  # nosec B603 B607
         time.sleep(1)
-        subprocess.run(  # nosec B603 B607
-            ["sudo", "systemctl", "restart", "universal-chess.service"],  # noqa: S607
-            check=False, timeout=30,
-        )
+        # Shared restart command so this web path and the two on-board handoffs
+        # cannot drift (the drift that left the board dead: board used `stop`).
+        subprocess.run(RESTART_UNIVERSAL_CHESS_CMD, check=False, timeout=30)  # noqa: S603 S607  # nosec B603 B607
         return jsonify({"success": True})
     except Exception as e:
         return _internal_error(e)

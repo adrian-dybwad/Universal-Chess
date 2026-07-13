@@ -5786,6 +5786,56 @@ def _shutdown(message: str, reboot: bool = False):
     cleanup_and_exit(reason=reason, system_shutdown=True, reboot=reboot)
 
 
+def _run_centaur_binary(cmd, *, cwd, env=None):
+    """Run the original Centaur executable, capturing its output for diagnosis.
+
+    Centaur is a long-running foreground process, so ``subprocess`` PIPE capture
+    would deadlock once it writes past the pipe buffer. Its stdout+stderr are
+    therefore redirected (merged) to a dedicated append-only ``centaur.log``
+    beside the event log, which captures the full output in order without that
+    risk. Previously the launch used ``subprocess.run(..., check=False)`` with
+    inherited stdio and discarded the result, so a crash of the handed-over
+    software left no trace and no exit status.
+
+    The exit is always classified (see ``classify_centaur_exit``): an expected
+    termination (the return/exit chord) is logged at info, while a crash or other
+    non-zero exit is logged at error and emitted to the Event Log so it is
+    visible in Settings. Returns the process exit code, or ``-1`` if the launch
+    itself failed.
+    """
+    import datetime
+    import subprocess  # nosec B404 - fixed centaur command, no shell, no user input
+    from universalchess.services.event_log import event_log_path, log_event
+    from universalchess.services.power import classify_centaur_exit
+
+    centaur_log = event_log_path().parent / "centaur.log"
+    log.info("[centaur] launching %s (cwd=%s); output -> %s", cmd, cwd, centaur_log)
+    try:
+        centaur_log.parent.mkdir(parents=True, exist_ok=True)
+        started = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        with open(centaur_log, "ab") as out:
+            out.write(f"\n===== centaur launch {started} cmd={cmd} =====\n".encode())
+            out.flush()
+            # stderr merged into stdout so one stream holds the full log in order;
+            # a file (not PIPE) avoids the buffer-fill deadlock on this
+            # long-running process. check=False: the exit is classified below.
+            result = subprocess.run(  # noqa: S603  # nosec B603 - fixed centaur argv, no shell, no user input
+                cmd, cwd=cwd, env=env, stdout=out, stderr=subprocess.STDOUT, check=False
+            )
+    except Exception as exc:  # noqa: BLE001 - a launch failure must be logged, not crash the handoff
+        log.error("[centaur] failed to launch %s: %s", cmd, exc)
+        log_event("centaur", f"Original Centaur failed to launch: {exc}", level="error")
+        return -1
+
+    level, message = classify_centaur_exit(result.returncode)
+    if level == "error":
+        log.error("[centaur] %s (code %d); see %s", message, result.returncode, centaur_log)
+        log_event("centaur", f"{message}. See centaur.log for details.", level="error")
+    else:
+        log.info("[centaur] %s (code %d)", message, result.returncode)
+    return result.returncode
+
+
 def _run_centaur():
     """Launch the original DGT Centaur software.
     
@@ -5808,7 +5858,10 @@ def _run_centaur():
     # subprocess launches Centaur and stops this service below without a shell;
     # the commands are fixed constants run via sudo (NOPASSWD on the Pi).
     import subprocess  # nosec B404
-    from universalchess.services.power import perform_centaur_handoff
+    from universalchess.services.power import (
+        perform_centaur_handoff,
+        return_to_universal_chess,
+    )
 
     centaur_dir = os.path.dirname(CENTAUR_SOFTWARE)
 
@@ -5820,16 +5873,19 @@ def _run_centaur():
         except Exception as e:
             log.warning(f"Could not set execute permissions on centaur: {e}")
         # Run Centaur from its own directory, without a shell. The command is a
-        # fixed constant, so this runs the identical program with the same
-        # inherited stdio/cwd as the previous os.system call, minus /bin/sh.
+        # fixed constant. Output is captured to centaur.log and the exit is
+        # classified/logged by _run_centaur_binary (a crash is no longer silent).
         # sudo/./centaur are trusted, controlled-PATH paths (S607/B607 accepted).
         os.chdir(centaur_dir)
-        subprocess.run(["sudo", "./centaur"], cwd=centaur_dir, check=False)  # noqa: S607  # nosec B603 B607
+        _run_centaur_binary(["sudo", "./centaur"], cwd=centaur_dir)  # noqa: S607
 
-    def _stop_service() -> None:
-        # Centaur has exited; stop this service. Brief settle first.
-        time.sleep(3)
-        subprocess.run(["sudo", "systemctl", "stop", "universal-chess.service"], check=False)  # noqa: S607  # nosec B603 B607
+    def _return_to_universal() -> None:
+        # Centaur has exited; restart this service so Universal Chess comes back
+        # (a plain `stop` would leave the board dead -- see return_to_universal_chess).
+        return_to_universal_chess(
+            run_fn=lambda cmd: subprocess.run(cmd, check=False),  # noqa: S603  # nosec B603 - fixed restart argv, no shell, no user input
+            exit_fn=sys.exit,
+        )
 
     # The handoff releases the e-paper (SPI fd + GPIO lines) BEFORE launching
     # centaur so the two processes do not contend for the panel. board.cleanup()
@@ -5838,12 +5894,14 @@ def _run_centaur():
         display_manager=board.display_manager,
         software_path=CENTAUR_SOFTWARE,
         launch_fn=_launch_centaur,
-        stop_service_fn=_stop_service,
+        on_centaur_exit_fn=_return_to_universal,
     )
     if not launched:
         log.error(f"Centaur executable not found at {CENTAUR_SOFTWARE}")
         return False
 
+    # Unreachable in practice: _return_to_universal restarts the service (killing
+    # this process) or exits non-zero. Kept as a defensive terminal exit.
     sys.exit()
 
 
@@ -5911,7 +5969,10 @@ def _run_centaur_translate():
 
     import subprocess  # nosec B404
     from universalchess.paths import CENTAUR_DISPLAY_SHIM
-    from universalchess.services.power import perform_centaur_translate_handoff
+    from universalchess.services.power import (
+        perform_centaur_translate_handoff,
+        return_to_universal_chess,
+    )
     from universalchess.services.centaur_display import (
         CentaurDisplayGateway,
         ThreadedGatewayServer,
@@ -5940,8 +6001,8 @@ def _run_centaur_translate():
 
     def _stop_centaur() -> None:
         # Exit gesture: terminating centaur unblocks the blocking launch_fn, which
-        # runs the normal teardown (restore port, stop gateway) and then stops the
-        # UC service so systemd restarts UC.
+        # runs the normal teardown (restore port, stop gateway) and then restarts
+        # the UC service (return_to_universal_chess) so Universal Chess comes back.
         log.info("[centaur-serial] exit chord detected; terminating centaur")
         subprocess.run(["sudo", "pkill", "centaur"], check=False)  # noqa: S607  # nosec B603 B607
 
@@ -6016,7 +6077,9 @@ def _run_centaur_translate():
         env["LD_PRELOAD"] = CENTAUR_DISPLAY_SHIM
         env["UC_CENTAUR_DISPLAY_SOCK"] = DEFAULT_SOCKET_PATH
         env["UC_CENTAUR_BUSY_IDLE_HIGH"] = "1"
-        subprocess.run(["./centaur"], cwd=centaur_dir, env=env, check=False)  # noqa: S607  # nosec B603 B607
+        # Output captured to centaur.log; exit classified/logged (see
+        # _run_centaur_binary) so a shimmed-centaur crash is recorded, not lost.
+        _run_centaur_binary(["./centaur"], cwd=centaur_dir, env=env)  # noqa: S607
 
     launched = perform_centaur_translate_handoff(
         software_path=CENTAUR_SOFTWARE,
@@ -6030,10 +6093,12 @@ def _run_centaur_translate():
         log.error(f"Centaur executable not found at {CENTAUR_SOFTWARE}")
         return False
 
-    # centaur has exited; stop this service. Brief settle first.
-    time.sleep(3)
-    subprocess.run(["sudo", "systemctl", "stop", "universal-chess.service"], check=False)  # noqa: S607  # nosec B603 B607
-    sys.exit()
+    # centaur has exited; restart this service so Universal Chess comes back (a
+    # plain `stop` would leave the board dead -- see return_to_universal_chess).
+    return_to_universal_chess(
+        run_fn=lambda cmd: subprocess.run(cmd, check=False),  # noqa: S603  # nosec B603 - fixed restart argv, no shell, no user input
+        exit_fn=sys.exit,
+    )
 
 
 def _launch_original_centaur():

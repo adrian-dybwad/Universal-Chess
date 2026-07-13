@@ -25,10 +25,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from universalchess.epaper.framework.manager import Manager
+import signal
+
 from universalchess.services.power import (
+    RESTART_UNIVERSAL_CHESS_CMD,
     centaur_direct_mode_enabled,
+    classify_centaur_exit,
     perform_centaur_handoff,
     perform_centaur_translate_handoff,
+    return_to_universal_chess,
 )
 
 
@@ -122,25 +127,27 @@ def test_handoff_releases_display_before_launching_centaur():
 
     Why: this is the core regression. If centaur starts while UC still owns the
     panel, the two processes contend for SPI/GPIO and the display freezes after
-    the first frame. Asserts the exact order release -> launch -> stop-service.
-    Failure manifests as 'launch' preceding 'release' in the recorded order.
+    the first frame. Asserts the exact order release -> launch -> on-exit. The
+    on-exit hook must run only AFTER launch returns (centaur has exited), so it
+    restores Universal Chess at the right moment. Failure manifests as 'launch'
+    preceding 'release', or the exit hook running before 'launch', in the order.
     """
     order = []
     display_manager = MagicMock()
     display_manager.release_hardware.side_effect = lambda: order.append("release")
     launch_fn = MagicMock(side_effect=lambda path: order.append("launch"))
-    stop_service_fn = MagicMock(side_effect=lambda: order.append("stop"))
+    on_centaur_exit_fn = MagicMock(side_effect=lambda: order.append("on_exit"))
 
     result = perform_centaur_handoff(
         display_manager=display_manager,
         software_path="/home/pi/centaur/centaur",
         launch_fn=launch_fn,
-        stop_service_fn=stop_service_fn,
+        on_centaur_exit_fn=on_centaur_exit_fn,
         path_exists_fn=lambda p: True,
     )
 
     assert result is True
-    assert order == ["release", "launch", "stop"]
+    assert order == ["release", "launch", "on_exit"]
     display_manager.release_hardware.assert_called_once()
     launch_fn.assert_called_once_with("/home/pi/centaur/centaur")
 
@@ -155,20 +162,20 @@ def test_handoff_does_not_release_or_launch_when_binary_absent():
     """
     display_manager = MagicMock()
     launch_fn = MagicMock()
-    stop_service_fn = MagicMock()
+    on_centaur_exit_fn = MagicMock()
 
     result = perform_centaur_handoff(
         display_manager=display_manager,
         software_path="/home/pi/centaur/centaur",
         launch_fn=launch_fn,
-        stop_service_fn=stop_service_fn,
+        on_centaur_exit_fn=on_centaur_exit_fn,
         path_exists_fn=lambda p: False,
     )
 
     assert result is False
     display_manager.release_hardware.assert_not_called()
     launch_fn.assert_not_called()
-    stop_service_fn.assert_not_called()
+    on_centaur_exit_fn.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +346,106 @@ def test_direct_mode_parses_stored_value_leniently(stored, expected):
     nothing) or a non-truthy string reading True (unexpected direct mode).
     """
     assert centaur_direct_mode_enabled(lambda s, k, d: stored) is expected
+
+
+# ---------------------------------------------------------------------------
+# classify_centaur_exit()
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "returncode,expected_level",
+    [
+        # Clean exit and expected terminations (return/exit chord, shutdown) are
+        # info -- they are how a user normally leaves centaur, not failures.
+        (0, "info"),
+        (-signal.SIGTERM, "info"),                 # translate: killed directly
+        (128 + int(signal.SIGTERM), "info"),        # direct: killed via sudo child
+        (-signal.SIGINT, "info"),
+        (-signal.SIGHUP, "info"),
+        (-signal.SIGKILL, "info"),
+        # Crash signals and any other non-zero exit are errors worth surfacing.
+        (-signal.SIGSEGV, "error"),
+        (128 + int(signal.SIGSEGV), "error"),       # sudo-wrapped crash
+        (1, "error"),
+        (2, "error"),                               # exit code 2 != killed by SIGINT
+    ],
+)
+def test_classify_centaur_exit_levels(returncode, expected_level):
+    """Exit codes must classify as info (expected) vs error (crash/failure).
+
+    Why this test exists: the launch now logs/emits an Event Log entry based on
+    this classification. The return/exit chord pkills centaur, which surfaces as
+    a negative signal (translate) or 128+signal (direct via sudo); both must read
+    as an expected 'info' termination, not a scary error. Conversely a crash
+    (SIGSEGV, either encoding) or a non-zero exit must read as 'error' so a
+    handed-over centaur that dies is visible instead of silently swallowed.
+
+    A regression manifests as an expected termination logged as an error (noise
+    every time the user returns from centaur) or a real crash logged as info
+    (the failure the user reported staying invisible).
+    """
+    level, message = classify_centaur_exit(returncode)
+    assert level == expected_level
+    # The message must mention Centaur so the Event Log line is self-describing
+    # without the numeric code.
+    assert "Centaur" in message
+
+
+# ---------------------------------------------------------------------------
+# return_to_universal_chess()
+# ---------------------------------------------------------------------------
+
+def test_return_to_universal_chess_restarts_not_stops():
+    """Returning from centaur must RESTART the service, never `stop` it.
+
+    Why this test exists: this is the board-goes-dark regression. The board used
+    `systemctl stop`, but an explicit stop is terminal -- systemd leaves the unit
+    inactive regardless of Restart=on-failure -- so Universal Chess never came
+    back. This pins the command to `restart` (via the shared constant) and pins
+    the order settle -> restart -> exit.
+
+    How a regression manifests: the command reverts to `stop` (board stays dead),
+    the restart is skipped, or the settle/exit ordering changes so the restart
+    fires before centaur has released the board.
+    """
+    order = []
+    return_to_universal_chess(
+        run_fn=lambda cmd: order.append(("run", cmd)),
+        exit_fn=lambda code: order.append(("exit", code)),
+        sleep_fn=lambda secs: order.append(("sleep", secs)),
+        settle_seconds=3.0,
+    )
+
+    assert order == [
+        ("sleep", 3.0),
+        ("run", RESTART_UNIVERSAL_CHESS_CMD),
+        ("exit", 1),
+    ]
+    # The command must be a restart, not a stop -- the exact bug being guarded.
+    assert RESTART_UNIVERSAL_CHESS_CMD == [
+        "sudo", "systemctl", "restart", "universal-chess.service",
+    ]
+
+
+def test_return_to_universal_chess_exits_nonzero_as_restart_fallback():
+    """If the restart returns (did not replace us), exit non-zero as a fallback.
+
+    Why this test exists: the restart normally kills this process during its stop
+    phase, so the code after it never runs. But a failed/denied restart returns
+    instead -- and then a plain exit(0) would leave the board dead. The fallback
+    exit MUST be non-zero so Restart=on-failure still recovers the board.
+
+    How a regression manifests: exit_fn is called with 0 (or not at all), so a
+    failed restart leaves Universal Chess down with no recovery.
+    """
+    exit_codes = []
+    return_to_universal_chess(
+        run_fn=lambda cmd: None,  # simulates a restart that returned (did not kill us)
+        exit_fn=exit_codes.append,
+        sleep_fn=lambda secs: None,
+    )
+
+    assert exit_codes == [1]
 
 
 if __name__ == "__main__":
