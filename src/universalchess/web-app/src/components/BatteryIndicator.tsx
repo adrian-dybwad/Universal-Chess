@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useGameStore } from '../stores/gameStore';
 import type { BatteryStatus } from '../types/game';
 import { buildApiUrl } from '../utils/api';
@@ -37,6 +38,7 @@ function fillColor(percent: number, charging: boolean): string {
  * renders empty with an em dash rather than a fabricated value.
  */
 export function BatteryIndicator({ compact = false }: BatteryIndicatorProps) {
+  const { t } = useTranslation();
   const battery = useGameStore((state) => state.battery);
   const setBattery = useGameStore((state) => state.setBattery);
 
@@ -68,8 +70,10 @@ export function BatteryIndicator({ compact = false }: BatteryIndicatorProps) {
 
   const label = known ? `${clamped}%` : '\u2014';
   const title = known
-    ? `Battery ${clamped}%${charging ? ' (charging)' : ''}`
-    : 'Battery level unknown';
+    ? (charging
+        ? t('battery.levelCharging', { percent: clamped })
+        : t('battery.level', { percent: clamped }))
+    : t('battery.unknown');
 
   return (
     <div

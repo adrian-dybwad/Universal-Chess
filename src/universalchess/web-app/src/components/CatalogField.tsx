@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import { FormRow, Input, Select, Toggle } from './ui';
 import type { MenuNode, MenuOption } from '../types/menuCatalog';
 
@@ -75,6 +76,7 @@ export function CatalogField({
   help,
   placeholder,
 }: CatalogFieldProps) {
+  const { t } = useTranslation();
   const label = node.label ?? node.id;
   const helpContent = help ?? node.help;
 
@@ -133,7 +135,7 @@ export function CatalogField({
                         <img
                           className="sprite-option-image"
                           src={opt.image}
-                          alt={`${opt.label} preview`}
+                          alt={t('common.imagePreviewAlt', { label: opt.label })}
                           loading="lazy"
                         />
                         <span className="sprite-option-label">{opt.label}</span>

@@ -17,11 +17,56 @@
     "delete": "Eliminar",
     "retry": "Reintentar",
     "invalidCredentials": "Credenciales no válidas. Inténtalo de nuevo.",
-    "networkError": "Error de red al contactar con el tablero."
+    "networkError": "Error de red al contactar con el tablero.",
+    "imagePreviewAlt": "Vista previa de {{label}}"
   },
   "color": {
     "white": "Blancas",
     "black": "Negras"
+  },
+  "analysis": {
+    "start": "Inicio",
+    "best": "Mejor:",
+    "hideBestMove": "Ocultar mejor jugada",
+    "showBest": "Mostrar mejor",
+    "analyzing": "Analizando...",
+    "waiting": "Esperando...",
+    "loadingStockfish": "Cargando Stockfish...",
+    "firstMove": "Primera jugada",
+    "previousMove": "Jugada anterior",
+    "nextMove": "Jugada siguiente",
+    "lastMove": "Última jugada",
+    "tooltipMove": "Jugada {{n}}",
+    "notAnalyzed": "Sin analizar",
+    "pawns": "{{value}} peones",
+    "newMoves_one": "{{count}} jugada nueva - Haz clic para ver",
+    "newMoves_other": "{{count}} jugadas nuevas - Haz clic para ver"
+  },
+  "battery": {
+    "level": "Batería {{percent}}%",
+    "levelCharging": "Batería {{percent}}% (cargando)",
+    "unknown": "Nivel de batería desconocido"
+  },
+  "cast": {
+    "title": "Transmitir",
+    "castToDevice": "Transmitir a un dispositivo Chromecast",
+    "streamingTo": "Transmitiendo a {{names}}",
+    "searchForDevices": "Buscar dispositivos",
+    "refresh": "Actualizar",
+    "pressRefresh": "Pulsa Actualizar para buscar.",
+    "noDevices": "No se encontraron dispositivos."
+  },
+  "boardMove": {
+    "moveFailed": "La jugada falló.",
+    "promoteTo": "Promocionar a",
+    "queen": "Dama",
+    "rook": "Torre",
+    "bishop": "Alfil",
+    "knight": "Caballo"
+  },
+  "engineOptions": {
+    "customPathPlaceholder": "O introduce una ruta personalizada",
+    "range": "Rango de {{min}} a {{max}}, predeterminado {{default}}"
   },
   "connection": {
     "connected": "Conectado",
@@ -685,6 +730,18 @@
       "strong": "Fuerte",
       "good": "Buena",
       "weak": "Débil"
+    },
+    "indicators": {
+      "wifiUnknown": "Estado del Wi-Fi desconocido",
+      "wifiOff": "Wi-Fi apagado",
+      "wifiConnected": "Wi-Fi: {{detail}}",
+      "wifiConnectedFallback": "conectado",
+      "wifiOnNotConnected": "Wi-Fi encendido — sin conexión",
+      "btUnknown": "Estado del Bluetooth desconocido",
+      "btOff": "Bluetooth apagado",
+      "btConnectedPeer": "Bluetooth: {{peer}}",
+      "btConnected": "Bluetooth conectado",
+      "btOn": "Bluetooth encendido"
     },
     "wifi": {
       "header": "WiFi",

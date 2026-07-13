@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { FormRow, InfoTip, Input, Select, Slider, Toggle } from './ui';
 import { MenuIcon } from './MenuIcon';
 import type { SchemaField } from './engineOptions';
@@ -57,6 +58,7 @@ export function SchemaFieldRow({
   disabled: boolean;
   onChange: (value: string) => void;
 }) {
+  const { t } = useTranslation();
   if (field.type === 'bool') {
     const { inline, info } = splitHelp(field.help);
     // Toggle renders its own labelled form row.
@@ -95,7 +97,7 @@ export function SchemaFieldRow({
             value={value}
             maxLength={200}
             disabled={disabled}
-            placeholder="Or enter a custom path"
+            placeholder={t('engineOptions.customPathPlaceholder')}
             onChange={(e) => onChange(e.target.value)}
             block
           />
@@ -109,7 +111,7 @@ export function SchemaFieldRow({
     if (hasRange) {
       const parsed = Number(value);
       const current = Number.isFinite(parsed) ? parsed : Number(field.default);
-      const range = `Range ${field.min} to ${field.max}, default ${field.default}`;
+      const range = t('engineOptions.range', { min: field.min, max: field.max, default: field.default });
       const { inline, info } = splitHelp(field.help, range);
       return (
         <FormRow label={field.label} help={inline} info={info ? <InfoTip text={info} /> : undefined}>

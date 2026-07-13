@@ -1,25 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { MenuIcon } from './MenuIcon';
 import { useAuthedAction } from './useAuthedAction';
 import { apiFetch } from '../utils/api';
 import { useSseEvent, type SseEventPayload } from '../utils/sseBus';
+import { CAST_STATE_KEYS, type CastDevice, type CastStateName } from '../utils/chromecast';
 import './CastButton.css';
-
-type CastStateName = 'idle' | 'connecting' | 'streaming' | 'reconnecting' | 'error';
-
-interface CastDevice {
-  name: string;
-  state: CastStateName;
-  error?: string | null;
-}
-
-const CAST_STATE_LABELS = {
-  idle: 'Not streaming',
-  connecting: 'Connecting…',
-  streaming: 'Streaming',
-  reconnecting: 'Reconnecting…',
-  error: 'Error',
-} satisfies Record<CastStateName, string>;
 
 // States that mean the board is actively pushing a stream to at least one
 // device. 'idle' and 'error' are not active; 'error' is surfaced as a warning
@@ -38,6 +24,7 @@ const ACTIVE_STATES: ReadonlySet<CastStateName> = new Set(['connecting', 'stream
  * login-and-retry flow) the moment they press Cast.
  */
 export function CastButton() {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [streaming, setStreaming] = useState<CastDevice[]>([]);
   const [discovered, setDiscovered] = useState<string[] | null>(null);
@@ -81,11 +68,11 @@ export function CastButton() {
       const data = await r.json().catch(() => ({}));
       setDiscovered(data.devices ?? []);
     } catch {
-      setMessage({ kind: 'error', text: 'Discovery failed.' });
+      setMessage({ kind: 'error', text: t('connectivity.chromecast.discoveryFailed') });
     } finally {
       setDiscovering(false);
     }
-  }, [onUnauthorized]);
+  }, [onUnauthorized, t]);
 
   // Start adds a device to the active set without stopping the others.
   const startCast = useCallback(
@@ -104,14 +91,14 @@ export function CastButton() {
           return;
         }
         const data = await r.json().catch(() => ({}));
-        if (!data.success) setMessage({ kind: 'error', text: data.error || 'Could not start streaming.' });
+        if (!data.success) setMessage({ kind: 'error', text: data.error || t('connectivity.chromecast.startFailed') });
       } catch {
-        setMessage({ kind: 'error', text: 'Network error contacting the board.' });
+        setMessage({ kind: 'error', text: t('common.networkError') });
       } finally {
         setBusy(false);
       }
     },
-    [onUnauthorized]
+    [onUnauthorized, t]
   );
 
   // Stop one device, or every device when called with no argument ("Stop all").
@@ -131,12 +118,12 @@ export function CastButton() {
           return;
         }
       } catch {
-        setMessage({ kind: 'error', text: 'Network error contacting the board.' });
+        setMessage({ kind: 'error', text: t('common.networkError') });
       } finally {
         setBusy(false);
       }
     },
-    [onUnauthorized]
+    [onUnauthorized, t]
   );
 
   // Pressing the button toggles the popover; opening it runs a discover, which
@@ -155,8 +142,8 @@ export function CastButton() {
   const activeNames = new Set(streaming.map((d) => d.name));
 
   const title = isStreaming
-    ? `Streaming to ${activeDevices.map((d) => d.name).join(', ')}`
-    : 'Cast to a Chromecast device';
+    ? t('cast.streamingTo', { names: activeDevices.map((d) => d.name).join(', ') })
+    : t('cast.castToDevice');
 
   const availableDevices = (discovered ?? []).filter((name) => !activeNames.has(name));
 
@@ -178,14 +165,14 @@ export function CastButton() {
       {open && (
         <div className="cast-popover" role="menu">
           <div className="cast-popover-header">
-            <span className="cast-popover-title">Cast</span>
+            <span className="cast-popover-title">{t('cast.title')}</span>
             <button
               className="cast-popover-refresh"
               onClick={() => void discover()}
               disabled={discovering}
-              title="Search for devices"
+              title={t('cast.searchForDevices')}
             >
-              {discovering ? 'Searching…' : 'Refresh'}
+              {discovering ? t('connectivity.chromecast.searching') : t('cast.refresh')}
             </button>
           </div>
 
@@ -193,34 +180,34 @@ export function CastButton() {
 
           {streaming.length > 0 && (
             <div className="cast-section">
-              <div className="cast-section-title">Streaming to</div>
+              <div className="cast-section-title">{t('connectivity.chromecast.streamingTo')}</div>
               {streaming.map((dev) => (
                 <div key={dev.name} className="cast-row">
                   <span className="cast-row-name">
                     <MenuIcon name="cast" size={14} />
                     <span>{dev.name}</span>
-                    <span className="cast-row-state">{CAST_STATE_LABELS[dev.state]}</span>
+                    <span className="cast-row-state">{t(CAST_STATE_KEYS[dev.state])}</span>
                   </span>
                   <button className="cast-row-btn cast-row-btn--stop" onClick={() => void stopCast(dev.name)} disabled={busy}>
-                    Stop
+                    {t('connectivity.chromecast.stop')}
                   </button>
                 </div>
               ))}
               {activeDevices.length > 1 && (
                 <button className="cast-stop-all" onClick={() => void stopCast()} disabled={busy}>
-                  Stop all
+                  {t('connectivity.chromecast.stopAll')}
                 </button>
               )}
             </div>
           )}
 
           <div className="cast-section">
-            <div className="cast-section-title">Available devices</div>
+            <div className="cast-section-title">{t('connectivity.chromecast.available')}</div>
             {discovering && availableDevices.length === 0 ? (
-              <div className="cast-empty">Searching…</div>
+              <div className="cast-empty">{t('connectivity.chromecast.searching')}</div>
             ) : availableDevices.length === 0 ? (
               <div className="cast-empty">
-                {discovered === null ? 'Press Refresh to search.' : 'No devices found.'}
+                {discovered === null ? t('cast.pressRefresh') : t('cast.noDevices')}
               </div>
             ) : (
               availableDevices.map((name) => (
@@ -230,7 +217,7 @@ export function CastButton() {
                     <span>{name}</span>
                   </span>
                   <button className="cast-row-btn cast-row-btn--start" onClick={() => void startCast(name)} disabled={busy}>
-                    Stream
+                    {t('connectivity.chromecast.stream')}
                   </button>
                 </div>
               ))

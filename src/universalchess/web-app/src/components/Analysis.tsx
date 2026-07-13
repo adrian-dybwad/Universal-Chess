@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -71,6 +72,7 @@ function parseUciMove(uci: string | null): { from: string; to: string } | null {
 }
 
 export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, onPlayedMoveChange, onMoveDataChange, goToMoveRef, showBestMoveForLatest, onToggleShowBestMove }: AnalysisProps) {
+  const { t } = useTranslation();
   const [moves, setMoves] = useState<MoveData[]>([]);
   const [movePos, setMovePos] = useState(0);  // 0 = start, 1 = after first move, etc.
   const [currentEval, setCurrentEval] = useState<{ cp: number; mate: number | null }>({ cp: 0, mate: null });
@@ -139,7 +141,7 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
           : preserveEvalAt(i, p.fen);
       return {
         fen: p.fen,
-        san: i === 0 ? 'Start' : (p.san ?? p.uci ?? ''),
+        san: i === 0 ? t('analysis.start') : (p.san ?? p.uci ?? ''),
         eval: preserved.eval,
         mate: preserved.mate,
         uci: p.uci,
@@ -176,7 +178,7 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
     } else if (mode === 'static' && movePos === 0) {
       setMovePos(newMoves.length - 1);
     }
-  }, [positions, mode]);
+  }, [positions, mode, t]);
 
   // Store moves in a ref so processNext always has current data
   const movesRef = useRef<MoveData[]>([]);
@@ -499,11 +501,11 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
       title: { display: false },
       tooltip: {
         callbacks: {
-          title: (items: any[]) => `Move ${items[0]?.dataIndex + 1 || ''}`,
+          title: (items: any[]) => t('analysis.tooltipMove', { n: items[0]?.dataIndex + 1 || '' }),
           label: (item: any) => {
             const cp = item.raw;
-            if (cp === null) return 'Not analyzed';
-            return `${(cp / 100).toFixed(2)} pawns`;
+            if (cp === null) return t('analysis.notAnalyzed');
+            return t('analysis.pawns', { value: (cp / 100).toFixed(2) });
           },
         },
       },
@@ -552,16 +554,16 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
             // In live mode at latest position: show toggle for best move visibility
             mode === 'live' && movePos === totalMoves && onToggleShowBestMove ? (
               showBestMoveForLatest ? (
-                <>Best: <strong>{bestMove}</strong> <button className="best-move-toggle" onClick={onToggleShowBestMove} title="Hide best move">&times;</button></>
+                <>{t('analysis.best')} <strong>{bestMove}</strong> <button className="best-move-toggle" onClick={onToggleShowBestMove} title={t('analysis.hideBestMove')}>&times;</button></>
               ) : (
-                <button className="best-move-toggle-link" onClick={onToggleShowBestMove}>Show Best</button>
-              )
-            ) : (
-              // Static mode or not at latest: always show best move
-              <>Best: <strong>{bestMove}</strong></>
+              <button className="best-move-toggle-link" onClick={onToggleShowBestMove}>{t('analysis.showBest')}</button>
             )
           ) : (
-            analyzing ? 'Analyzing...' : (sfReady ? 'Waiting...' : 'Loading Stockfish...')
+              // Static mode or not at latest: always show best move
+              <>{t('analysis.best')} <strong>{bestMove}</strong></>
+            )
+          ) : (
+            analyzing ? t('analysis.analyzing') : (sfReady ? t('analysis.waiting') : t('analysis.loadingStockfish'))
           )}
         </span>
       </div>
@@ -584,17 +586,17 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
 
       {/* Navigation buttons */}
       <div className="analysis-nav">
-        <button className="button is-small" onClick={goFirst} title="First move">&lt;&lt;</button>
-        <button className="button is-small" onClick={goPrev} title="Previous move">&lt;</button>
+        <button className="button is-small" onClick={goFirst} title={t('analysis.firstMove')}>&lt;&lt;</button>
+        <button className="button is-small" onClick={goPrev} title={t('analysis.previousMove')}>&lt;</button>
         <span className="move-indicator">{movePos}/{totalMoves}</span>
-        <button className="button is-small" onClick={goNext} title="Next move">&gt;</button>
-        <button className="button is-small" onClick={goLast} title="Last move">&gt;&gt;</button>
+        <button className="button is-small" onClick={goNext} title={t('analysis.nextMove')}>&gt;</button>
+        <button className="button is-small" onClick={goLast} title={t('analysis.lastMove')}>&gt;&gt;</button>
       </div>
 
       {/* New moves toast (live mode only) */}
       {mode === 'live' && newMovesToast > 0 && (
         <div className="notification is-info is-light new-moves-toast" onClick={jumpToLatest}>
-          {newMovesToast} new move(s) - Click to view
+          {t('analysis.newMoves', { count: newMovesToast })}
         </div>
       )}
     </div>

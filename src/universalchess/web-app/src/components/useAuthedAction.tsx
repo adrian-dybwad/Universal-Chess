@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { LoginDialog } from './LoginDialog';
 import { getStoredCredentials } from '../utils/api';
 
@@ -13,15 +14,16 @@ import { getStoredCredentials } from '../utils/api';
  * the navbar cast button so both get the same login-and-retry behavior.
  */
 export function useAuthedAction() {
+  const { t } = useTranslation();
   const [loginOpen, setLoginOpen] = useState(false);
   const [loginError, setLoginError] = useState<string | undefined>();
   const pending = useRef<(() => void | Promise<void>) | null>(null);
 
   const onUnauthorized = useCallback((retry: () => void | Promise<void>) => {
     pending.current = retry;
-    setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
+    setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
     setLoginOpen(true);
-  }, []);
+  }, [t]);
 
   const dialog = (
     <LoginDialog

@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { Link } from 'react-router-dom';
 import { MenuIcon } from './MenuIcon';
 import { apiFetch } from '../utils/api';
@@ -138,28 +140,31 @@ function WifiGlyph({ size, connected, known, signal }: { size: number; connected
 }
 
 function WifiIndicatorLink({ status }: { status: WifiStatus | null }) {
+  const { t } = useTranslation();
   const known = status !== null;
   const connected = Boolean(status?.enabled && status.connected);
+  const title = wifiTitle(status, t);
   return (
     <Link
       to="/settings/connectivity#wifi"
       className="navbar-control-icon conn-ind"
-      title={wifiTitle(status)}
-      aria-label={wifiTitle(status)}
+      title={title}
+      aria-label={title}
     >
       <WifiGlyph size={18} connected={connected} known={known} signal={status?.signal ?? 0} />
     </Link>
   );
 }
 
-function wifiTitle(status: WifiStatus | null): string {
-  if (!status) return 'Wi-Fi status unknown';
-  if (!status.enabled) return 'Wi-Fi off';
+function wifiTitle(status: WifiStatus | null, t: TFunction): string {
+  if (!status) return t('connectivity.indicators.wifiUnknown');
+  if (!status.enabled) return t('connectivity.indicators.wifiOff');
   if (status.connected) {
     const signal = status.signal > 0 ? ` (${status.signal}%)` : '';
-    return `Wi-Fi: ${status.ssid || 'connected'}${signal}`;
+    const detail = `${status.ssid || t('connectivity.indicators.wifiConnectedFallback')}${signal}`;
+    return t('connectivity.indicators.wifiConnected', { detail });
   }
-  return 'Wi-Fi on \u2014 not connected';
+  return t('connectivity.indicators.wifiOnNotConnected');
 }
 
 function bluetoothLinked(status: BtStatus): boolean {
@@ -172,14 +177,14 @@ function bluetoothState(status: BtStatus | null): IndicatorState {
   return bluetoothLinked(status) ? 'connected' : 'on';
 }
 
-function bluetoothTitle(status: BtStatus | null): string {
-  if (!status) return 'Bluetooth status unknown';
-  if (!status.enabled) return 'Bluetooth off';
+function bluetoothTitle(status: BtStatus | null, t: TFunction): string {
+  if (!status) return t('connectivity.indicators.btUnknown');
+  if (!status.enabled) return t('connectivity.indicators.btOff');
   if (bluetoothLinked(status)) {
     const peer = status.link?.peer?.name;
-    return peer ? `Bluetooth: ${peer}` : 'Bluetooth connected';
+    return peer ? t('connectivity.indicators.btConnectedPeer', { peer }) : t('connectivity.indicators.btConnected');
   }
-  return 'Bluetooth on';
+  return t('connectivity.indicators.btOn');
 }
 
 /**
@@ -192,6 +197,7 @@ function bluetoothTitle(status: BtStatus | null): string {
  * collapses behind the burger.
  */
 export function ConnectivityIndicators() {
+  const { t } = useTranslation();
   const wifi = useConnectivityStatus<WifiStatus>('/api/connectivity/wifi/status');
   const bluetooth = useConnectivityStatus<BtStatus>('/api/connectivity/bluetooth/status');
 
@@ -202,7 +208,7 @@ export function ConnectivityIndicators() {
         to="/settings/connectivity#bluetooth"
         icon="bluetooth"
         state={bluetoothState(bluetooth)}
-        title={bluetoothTitle(bluetooth)}
+        title={bluetoothTitle(bluetooth, t)}
       />
     </>
   );

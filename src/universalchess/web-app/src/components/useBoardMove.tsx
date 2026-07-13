@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { ChessboardOptions } from 'react-chessboard';
 import { LoginDialog } from './LoginDialog';
 import { apiFetch, getStoredCredentials } from '../utils/api';
@@ -44,12 +45,13 @@ interface PendingPromotion {
 }
 
 // Promotion choices, in the order shown in the picker. The letter is the UCI
-// promotion suffix; the label names the piece for accessibility.
-const PROMOTION_CHOICES: { piece: string; label: string; glyph: string }[] = [
-  { piece: 'q', label: 'Queen', glyph: '\u265B' },
-  { piece: 'r', label: 'Rook', glyph: '\u265C' },
-  { piece: 'b', label: 'Bishop', glyph: '\u265D' },
-  { piece: 'n', label: 'Knight', glyph: '\u265E' },
+// promotion suffix; `labelKey` names the piece for accessibility and is resolved
+// with `t()` at render time (module-level constants cannot use the hook).
+const PROMOTION_CHOICES: { piece: string; labelKey: string; glyph: string }[] = [
+  { piece: 'q', labelKey: 'boardMove.queen', glyph: '\u265B' },
+  { piece: 'r', labelKey: 'boardMove.rook', glyph: '\u265C' },
+  { piece: 'b', labelKey: 'boardMove.bishop', glyph: '\u265D' },
+  { piece: 'n', labelKey: 'boardMove.knight', glyph: '\u265E' },
 ];
 
 interface UseBoardMoveArgs {
@@ -81,6 +83,7 @@ interface UseBoardMove {
 }
 
 export function useBoardMove({ fen, turn, gameOver, enabled }: UseBoardMoveArgs): UseBoardMove {
+  const { t } = useTranslation();
   const [loginOpen, setLoginOpen] = useState(false);
   const [loginError, setLoginError] = useState<string | undefined>();
   const [promotion, setPromotion] = useState<PendingPromotion | null>(null);
@@ -118,7 +121,7 @@ export function useBoardMove({ fen, turn, gameOver, enabled }: UseBoardMoveArgs)
 
       if (response.status === 401) {
         pendingMoveRef.current = uci;
-        setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
+        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
         setLoginOpen(true);
         return;
       }
@@ -127,14 +130,14 @@ export function useBoardMove({ fen, turn, gameOver, enabled }: UseBoardMoveArgs)
       if (!(response.ok && data.success)) {
         // Rejected: no authoritative update will arrive, so revert the piece.
         setOptimisticFen(null);
-        setError(data.error || 'Move failed.');
+        setError(data.error || t('boardMove.moveFailed'));
       }
     } catch (e) {
       console.error('Failed to send move:', e);
       setOptimisticFen(null);
-      setError('Network error contacting the board.');
+      setError(t('common.networkError'));
     }
-  }, []);
+  }, [t]);
 
   const onPieceDrop = useCallback<OnPieceDrop>(
     ({ piece, sourceSquare, targetSquare }) => {
@@ -202,7 +205,7 @@ export function useBoardMove({ fen, turn, gameOver, enabled }: UseBoardMoveArgs)
         <div className="dialog-overlay" onClick={() => setPromotion(null)}>
           <div className="dialog" onClick={(e) => e.stopPropagation()}>
             <div className="dialog-header">
-              <h3>Promote to</h3>
+              <h3>{t('boardMove.promoteTo')}</h3>
               <button className="dialog-close" onClick={() => setPromotion(null)}>×</button>
             </div>
             <div className="dialog-body">
@@ -212,8 +215,8 @@ export function useBoardMove({ fen, turn, gameOver, enabled }: UseBoardMoveArgs)
                     key={choice.piece}
                     type="button"
                     className="promotion-choice"
-                    aria-label={choice.label}
-                    title={choice.label}
+                    aria-label={t(choice.labelKey)}
+                    title={t(choice.labelKey)}
                     onClick={() => choosePromotion(choice.piece)}
                   >
                     <span aria-hidden="true">{choice.glyph}</span>

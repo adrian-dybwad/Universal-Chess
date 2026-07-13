@@ -17,11 +17,56 @@
     "delete": "Delete",
     "retry": "Retry",
     "invalidCredentials": "Invalid credentials. Please try again.",
-    "networkError": "Network error contacting the board."
+    "networkError": "Network error contacting the board.",
+    "imagePreviewAlt": "{{label}} preview"
   },
   "color": {
     "white": "White",
     "black": "Black"
+  },
+  "analysis": {
+    "start": "Start",
+    "best": "Best:",
+    "hideBestMove": "Hide best move",
+    "showBest": "Show Best",
+    "analyzing": "Analyzing...",
+    "waiting": "Waiting...",
+    "loadingStockfish": "Loading Stockfish...",
+    "firstMove": "First move",
+    "previousMove": "Previous move",
+    "nextMove": "Next move",
+    "lastMove": "Last move",
+    "tooltipMove": "Move {{n}}",
+    "notAnalyzed": "Not analyzed",
+    "pawns": "{{value}} pawns",
+    "newMoves_one": "{{count}} new move - Click to view",
+    "newMoves_other": "{{count}} new moves - Click to view"
+  },
+  "battery": {
+    "level": "Battery {{percent}}%",
+    "levelCharging": "Battery {{percent}}% (charging)",
+    "unknown": "Battery level unknown"
+  },
+  "cast": {
+    "title": "Cast",
+    "castToDevice": "Cast to a Chromecast device",
+    "streamingTo": "Streaming to {{names}}",
+    "searchForDevices": "Search for devices",
+    "refresh": "Refresh",
+    "pressRefresh": "Press Refresh to search.",
+    "noDevices": "No devices found."
+  },
+  "boardMove": {
+    "moveFailed": "Move failed.",
+    "promoteTo": "Promote to",
+    "queen": "Queen",
+    "rook": "Rook",
+    "bishop": "Bishop",
+    "knight": "Knight"
+  },
+  "engineOptions": {
+    "customPathPlaceholder": "Or enter a custom path",
+    "range": "Range {{min}} to {{max}}, default {{default}}"
   },
   "connection": {
     "connected": "Connected",
@@ -685,6 +730,18 @@
       "strong": "Strong",
       "good": "Good",
       "weak": "Weak"
+    },
+    "indicators": {
+      "wifiUnknown": "Wi-Fi status unknown",
+      "wifiOff": "Wi-Fi off",
+      "wifiConnected": "Wi-Fi: {{detail}}",
+      "wifiConnectedFallback": "connected",
+      "wifiOnNotConnected": "Wi-Fi on — not connected",
+      "btUnknown": "Bluetooth status unknown",
+      "btOff": "Bluetooth off",
+      "btConnectedPeer": "Bluetooth: {{peer}}",
+      "btConnected": "Bluetooth connected",
+      "btOn": "Bluetooth on"
     },
     "wifi": {
       "header": "WiFi",

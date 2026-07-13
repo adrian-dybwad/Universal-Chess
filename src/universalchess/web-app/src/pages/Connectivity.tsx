@@ -7,6 +7,7 @@ import { MenuIcon } from '../components/MenuIcon';
 import { useAuthedAction } from '../components/useAuthedAction';
 import { apiFetch } from '../utils/api';
 import { useSseEvent, type SseEventPayload } from '../utils/sseBus';
+import { CAST_STATE_KEYS, type CastDevice, type CastStateName } from '../utils/chromecast';
 import type { AccountType } from '../types/menuCatalog';
 import '../components/ApiSettingsDialog.css';
 import './Connectivity.css';
@@ -100,14 +101,6 @@ const EMULATOR_LABELS: Record<string, string> = {
 interface BtScanDevice {
   address: string;
   name: string;
-}
-
-type CastStateName = 'idle' | 'connecting' | 'streaming' | 'reconnecting' | 'error';
-
-interface CastDevice {
-  name: string;
-  state: CastStateName;
-  error: string | null;
 }
 
 interface CastStatus {
@@ -981,16 +974,6 @@ function BluetoothCard() {
     </>
   );
 }
-
-// i18n keys for each cast state (connectivity.chromecast.state.*), resolved with
-// `t` at render. Exhaustive over the closed CastStateName union.
-const CAST_STATE_KEYS = {
-  idle: 'connectivity.chromecast.state.idle',
-  connecting: 'connectivity.chromecast.state.connecting',
-  streaming: 'connectivity.chromecast.state.streaming',
-  reconnecting: 'connectivity.chromecast.state.reconnecting',
-  error: 'connectivity.chromecast.state.error',
-} satisfies Record<CastStateName, string>;
 
 function ChromecastCard() {
   const { t } = useTranslation();
