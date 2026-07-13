@@ -7,9 +7,17 @@ DisplayManager) turns the widget into a paged move-history view: page 0 is the
 eval/graph analysis, pages 1..N list the played moves in the notation chosen by
 the ``game.notation`` setting. Paging wraps around at both ends.
 
-Horizontal split layout (page 0):
-- Left column (44px): Score text, annotation symbol
-- Right column (82px): Full-height history graph
+Analysis layout (page 0):
+- Top quality bar (full width): the last move's quality word ("Blunder",
+  "Brilliant", ...) on the left and that move's accuracy % on the right. The bar
+  is filled in the last mover's colour -- white background/black text for a white
+  move, black background/white text for a black move -- so the colour tells you
+  who just moved at a glance.
+- Left column (44px, below the bar): the opponent's running accuracy % on top,
+  the evaluation score in the middle (vertically centred on the graph's centre
+  line), and the bottom player's running accuracy % below.
+- Right column (82px, below the bar): the history graph (shortened to make room
+  for the quality bar).
 
 The e-paper's bundled font has no figurine glyphs, so figurine notation is drawn
 by compositing the board's piece sprites inline with the square text.
@@ -19,7 +27,6 @@ import math
 
 from PIL import Image, ImageDraw
 from .framework.widget import Widget
-from .text import TextWidget, Justify
 from .text_scale import DEFAULT_TEXT_SIZE, scale_font
 from universalchess.utils.chess_notation import (
     format_move_history,
@@ -39,13 +46,15 @@ except ImportError:
 
 
 class GameAnalysisWidget(Widget):
-    """Widget displaying chess game analysis with horizontal split layout.
+    """Widget displaying chess game analysis with a quality bar and split layout.
     
     Observes AnalysisState and updates display when score or history changes.
     
-    Layout:
-    - Left column (44px wide): Score text (large), annotation symbol
-    - Right column (82px wide): Full-height history graph
+    Layout (see the module docstring for details):
+    - Top quality bar (full width): last move's quality word + accuracy %,
+      filled in the last mover's colour.
+    - Left column (44px): opponent accuracy %, score, bottom-player accuracy %.
+    - Right column (82px): history graph, shortened to sit below the bar.
     """
     
     # Default position: below the chess clock widget
@@ -53,8 +62,23 @@ class GameAnalysisWidget(Widget):
     DEFAULT_HEIGHT = 80
     
     # Layout constants
-    SCORE_COLUMN_WIDTH = 44  # Score text and annotation
+    SCORE_COLUMN_WIDTH = 44  # Score text and running accuracies
     GRAPH_WIDTH = 82  # History graph
+
+    # Quality bar (full-width header) height, and the fixed font sizes for the
+    # analysis view. The score keeps its original size (20); the bar word/percent
+    # and the running accuracy figures are smaller so they fit the reclaimed
+    # space without shrinking the score.
+    QUALITY_BAR_HEIGHT = 18
+    SCORE_FONT_SIZE = 20
+    QUALITY_WORD_FONT_SIZE = 13
+    ACCURACY_FONT_SIZE = 14
+    # Ink gap (px) between the top accuracy % and the divider above it, and between
+    # the bottom accuracy % and the widget's bottom border below it. The bottom gap
+    # is larger so the lower figure sits tucked up toward the score rather than
+    # hugging the border.
+    ACCURACY_TOP_GAP = 6
+    ACCURACY_BOTTOM_GAP = 8
 
     # Move-history page layout constants at the base (medium) text size.
     # MOVE_LINE_HEIGHT is 15 (not the font's natural ~16) so five rows fit the
@@ -137,18 +161,6 @@ class GameAnalysisWidget(Widget):
         self._analysis_state.on_score_change(self._on_score_change)
         self._analysis_state.on_history_change(self._on_history_change)
         self._game_state.on_position_change(self._on_position_change)
-        
-        # Create TextWidgets for score and annotation
-        self._score_text_widget = TextWidget(
-            0, 4, self.SCORE_COLUMN_WIDTH, 26, self._handle_child_update,
-            text="+0.0", font_size=20, 
-            justify=Justify.CENTER, transparent=True
-        )
-        self._annotation_text_widget = TextWidget(
-            0, 30, self.SCORE_COLUMN_WIDTH, 24, self._handle_child_update,
-            text="", font_size=22,
-            justify=Justify.CENTER, transparent=True
-        )
     
     def cleanup(self) -> None:
         """Unsubscribe from observed state when widget is destroyed."""
@@ -384,33 +396,17 @@ class GameAnalysisWidget(Widget):
             self._show_graph = show
             self.invalidate_and_update()
     
-    def _handle_child_update(self, full: bool = False, immediate: bool = False):
-        """No-op update callback for the render-only score/annotation text widgets.
-
-        The score and annotation TextWidgets are not autonomous: their set_text()
-        is called only from within this widget's own render(), which already draws
-        the new text. TextWidget.set_text() calls request_update() on a change;
-        forwarding that to the Manager fired a re-entrant second display refresh
-        (Manager defers the re-entrant update and replays it). Because the eval
-        score changes many times a second while the engine analyses, that doubled
-        the analysis refresh rate and saturated the shared e-paper panel --
-        starving other widgets (notably the clock) of timely refreshes. Returning
-        None keeps set_text()'s cache invalidation (so the child re-renders with
-        the new text on the next draw_on) while suppressing the redundant refresh;
-        this widget drives its own single refresh from its state observers.
-        """
-        return None
-
     def _graph_geometry(self) -> dict:
         """Pixel geometry of the history graph, shared by render and render_red.
 
         Single source of truth for the graph rectangle and center line so the
         B/W bars and their red overlay are computed identically (any drift would
-        offset the red highlight from the bar it marks).
+        offset the red highlight from the bar it marks). The graph top sits below
+        the quality bar so the two never overlap.
         """
         graph_x = self.SCORE_COLUMN_WIDTH + 2
         graph_right = graph_x + self.GRAPH_WIDTH
-        graph_top = 4
+        graph_top = self.QUALITY_BAR_HEIGHT + 4
         graph_bottom = self.height - 4
         chart_y = graph_top + (graph_bottom - graph_top) // 2
         return {
@@ -474,73 +470,65 @@ class GameAnalysisWidget(Widget):
         self._render_analysis(sprite)
 
     def _render_analysis(self, sprite: Image.Image) -> None:
-        """Render analysis widget with horizontal split layout.
-        
-        Layout:
-        - Left column (44px): Score text, annotation
-        - Right column (82px): Full-height history graph
+        """Render the analysis view: quality bar, score column and history graph.
+
+        See the module docstring for the layout. The score is vertically centred
+        on the graph's centre line; the two running accuracies sit above and
+        below it (opponent on top, bottom player below), matching the board's
+        orientation.
         """
-        # Get current values from state
         score_value = self._analysis_state.score
-        score_text = self._analysis_state.score_text
-        annotation = self._analysis_state.annotation
         history = self._analysis_state.history
-        
+        summary = self._analysis_state.accuracy_summary()
+
         log.debug(f"[GameAnalysisWidget] Rendering: y={self.y}, height={self.height}, "
                   f"history_len={len(history)}, graph={self._show_graph}")
-        
-        draw = ImageDraw.Draw(sprite)
-        
-        # Draw background
-        self.draw_background_on_sprite(sprite)
-        
-        # Draw 1px border around widget extent
-        draw.rectangle([(0, 0), (self.width - 1, self.height - 1)], fill=None, outline=0)
-        
-        # Adjust score for display based on bottom color
-        # Score is always from white's perspective (positive = white advantage)
-        display_score_value = -score_value if self.bottom_color == "black" else score_value
-        
-        # Calculate layout: Score text/annotation on left, graph on right
-        left_col_width = self.SCORE_COLUMN_WIDTH
-        graph_x = left_col_width + 2
-        graph_width = self.GRAPH_WIDTH
-        graph_right = graph_x + graph_width
-        
-        # === LEFT COLUMN: Score text, annotation (center-justified) ===
-        # Draw vertical separator between score column and graph
-        draw.line([(left_col_width, 2), (left_col_width, self.height - 2)], fill=0, width=1)
-        
-        # Format score text for display
-        if self._analysis_state.is_mate:
-            mate_in = self._analysis_state.mate_in
-            if mate_in is not None:
-                display_score_text = f"M{abs(mate_in)}"
-            else:
-                display_score_text = "M"
-        elif abs(display_score_value) > 999:
-            display_score_text = "M"
-        else:
-            if display_score_value >= 0:
-                display_score_text = f"+{display_score_value:.1f}"
-            else:
-                display_score_text = f"{display_score_value:.1f}"
-        
-        # Draw score text directly onto sprite (center-justified)
-        self._score_text_widget.set_text(display_score_text)
-        self._score_text_widget.draw_on(sprite, 0, 4)
-        
-        # Draw annotation directly onto sprite (center-justified, below score)
-        if annotation:
-            self._annotation_text_widget.set_text(annotation)
-            self._annotation_text_widget.draw_on(sprite, 0, 30)
-        
-        # === RIGHT SECTION: History graph ===
-        if self._show_graph and len(history) > 0:
-            # Center line
-            chart_y = self._graph_geometry()["chart_y"]
-            draw.line([(graph_x, chart_y), (graph_right, chart_y)], fill=0, width=1)
 
+        draw = ImageDraw.Draw(sprite)
+        self.draw_background_on_sprite(sprite)
+        draw.rectangle([(0, 0), (self.width - 1, self.height - 1)], fill=None, outline=0)
+
+        geo = self._graph_geometry()
+        graph_x = geo["graph_x"]
+        graph_right = geo["graph_right"]
+        chart_y = geo["chart_y"]
+
+        # === TOP: quality bar (last move) ===
+        self._render_quality_bar(draw, summary)
+
+        # Permanent horizontal divider between the quality bar and the content
+        # below it. Drawn regardless of the bar's fill so the boundary is always
+        # visible -- a white (white-move) or blank (no-move) bar would otherwise
+        # merge into the graph area with no separating edge.
+        draw.line([(1, self.QUALITY_BAR_HEIGHT + 1),
+                   (self.width - 2, self.QUALITY_BAR_HEIGHT + 1)], fill=0, width=1)
+
+        # Vertical separator between the score column and the graph, below the bar
+        draw.line([(self.SCORE_COLUMN_WIDTH, self.QUALITY_BAR_HEIGHT + 2),
+                   (self.SCORE_COLUMN_WIDTH, self.height - 2)], fill=0, width=1)
+
+        # === LEFT COLUMN: opponent accuracy, score, bottom-player accuracy ===
+        from universalchess.resources import get_font
+
+        # Top % ink starts ACCURACY_TOP_GAP below the divider; bottom % ink ends
+        # ACCURACY_BOTTOM_GAP above the bottom border.
+        top_accuracy, bottom_accuracy = self._column_accuracies(summary)
+        accuracy_font = get_font(self.ACCURACY_FONT_SIZE)
+        divider_y = self.QUALITY_BAR_HEIGHT + 1
+        if top_accuracy is not None:
+            self._draw_column_text(draw, accuracy_font, f"{top_accuracy:.0f}%",
+                                   divider_y + self.ACCURACY_TOP_GAP, anchor="top")
+        if bottom_accuracy is not None:
+            self._draw_column_text(draw, accuracy_font, f"{bottom_accuracy:.0f}%",
+                                   self.height - 1 - self.ACCURACY_BOTTOM_GAP, anchor="bottom")
+
+        self._draw_column_text_vcentered(
+            draw, get_font(self.SCORE_FONT_SIZE),
+            self._format_score_text(score_value), chart_y)
+
+        # === RIGHT SECTION: history graph ===
+        if self._show_graph and len(history) > 0:
+            draw.line([(graph_x, chart_y), (graph_right, chart_y)], fill=0, width=1)
             for x0, y0, x1, y1, adjusted_score in self._iter_graph_bars(history):
                 # Positive scores (bottom-player advantage) go up, use white fill;
                 # negative scores (bottom-player worse) go down, use black fill.
@@ -548,8 +536,119 @@ class GameAnalysisWidget(Widget):
                 draw.rectangle([(x0, y0), (x1, y1)], fill=color, outline=0)
         elif self._show_graph:
             # Still draw the center line even if no history yet
-            chart_y = self._graph_geometry()["chart_y"]
             draw.line([(graph_x, chart_y), (graph_right, chart_y)], fill=0, width=1)
+
+    def _format_score_text(self, score_value: float) -> str:
+        """Format the evaluation for the score column from the bottom player's view.
+
+        The stored score is from White's perspective; it is negated when Black is
+        at the bottom so a positive number always means the bottom player is
+        better. Mate and out-of-range values collapse to an "M" marker.
+        """
+        display_value = -score_value if self.bottom_color == "black" else score_value
+        if self._analysis_state.is_mate:
+            mate_in = self._analysis_state.mate_in
+            return f"M{abs(mate_in)}" if mate_in is not None else "M"
+        if abs(display_value) > 999:
+            return "M"
+        return f"+{display_value:.1f}" if display_value >= 0 else f"{display_value:.1f}"
+
+    def _column_accuracies(self, summary) -> Tuple[Optional[float], Optional[float]]:
+        """Return ``(top, bottom)`` accuracy % for the score column.
+
+        The bottom player's colour is fixed by ``bottom_color``; its accuracy is
+        shown below the score and the opponent's above, so the two figures track
+        the board's orientation.
+        """
+        if self.bottom_color == "black":
+            return summary.white, summary.black
+        return summary.black, summary.white
+
+    def _render_quality_bar(self, draw: ImageDraw.ImageDraw, summary) -> None:
+        """Draw the full-width quality bar for the last move.
+
+        The bar is filled in the last mover's colour (white background/black text
+        for a white move, black background/white text for a black move). The
+        move-quality word and that move's accuracy % are drawn next to each other
+        as a single group, centred in the bar. Before any move has been played
+        there is no last mover, so the bar is left blank on a white background.
+        """
+        from universalchess.resources import get_font
+
+        mover_white = summary.last_mover_white
+        background = 0 if mover_white is False else 255
+        foreground = 255 if mover_white is False else 0
+        draw.rectangle([(1, 1), (self.width - 2, self.QUALITY_BAR_HEIGHT)], fill=background)
+
+        if mover_white is None:
+            return
+
+        parts = []
+        if summary.last_word:
+            parts.append(summary.last_word)
+        if summary.last_accuracy is not None:
+            parts.append(f"{summary.last_accuracy:.0f}%")
+        if not parts:
+            return
+
+        # Word and percent sit side by side as one group, centred horizontally and
+        # vertically within the bar.
+        text = "  ".join(parts)
+        font = get_font(self.QUALITY_WORD_FONT_SIZE)
+        x = max(3, (self.width - self._text_width(draw, text, font)) // 2)
+        self._draw_text_vcentered(
+            draw, font, text, x, (1 + self.QUALITY_BAR_HEIGHT) / 2, foreground)
+
+    @staticmethod
+    def _text_width(draw: ImageDraw.ImageDraw, text: str, font) -> int:
+        """Pixel width of ``text`` in ``font``."""
+        bbox = draw.textbbox((0, 0), text, font=font)
+        return bbox[2] - bbox[0]
+
+    @staticmethod
+    def _draw_text_vcentered(draw: ImageDraw.ImageDraw, font, text: str,
+                             x: int, y_center: float, fill: int) -> None:
+        """Draw ``text`` left-anchored at ``x`` and vertically centred on ``y_center``."""
+        bbox = draw.textbbox((0, 0), text, font=font)
+        height = bbox[3] - bbox[1]
+        y = int(round(y_center - bbox[1] - height / 2))
+        draw.text((x, y), text, font=font, fill=fill)
+
+    def _column_pen_x(self, font, text: str) -> int:
+        """Pen x that optically centres ``text``'s ink in the score column.
+
+        The e-paper bitmap font reports a zero left side-bearing from
+        ``textbbox`` even when the rendered ink is inset, so different strings
+        (e.g. "100%" vs "71%") would otherwise land at slightly different optical
+        centres. ``font.getmask(text).getbbox()`` exposes the true ink extent;
+        centring on it keeps every value visually centred in the column.
+        """
+        ink = font.getmask(text).getbbox()
+        if ink is None:  # whitespace / empty: nothing to centre, fall back to origin
+            return 0
+        ink_left, ink_width = ink[0], ink[2] - ink[0]
+        return (self.SCORE_COLUMN_WIDTH - ink_width) // 2 - ink_left
+
+    def _draw_column_text(self, draw: ImageDraw.ImageDraw, font, text: str, y: int,
+                          anchor: str = "top") -> None:
+        """Draw ``text`` ink-centred in the score column, vertically anchored at ``y``.
+
+        ``anchor`` selects whether ``y`` is the first ink row ("top") or the last
+        ink row ("bottom"). ``textbbox`` gives the true vertical ink extent for
+        this font, so the two accuracy figures can be positioned by what is
+        actually seen rather than by the glyph cell.
+        """
+        bbox = draw.textbbox((0, 0), text, font=font)
+        ink_reference = bbox[3] - 1 if anchor == "bottom" else bbox[1]
+        draw.text((self._column_pen_x(font, text), y - ink_reference),
+                  text, font=font, fill=0)
+
+    def _draw_column_text_vcentered(self, draw: ImageDraw.ImageDraw, font, text: str,
+                                    y_center: int) -> None:
+        """Draw ``text`` ink-centred in the score column, vertically about ``y_center``."""
+        bbox = draw.textbbox((0, 0), text, font=font)
+        y = y_center - bbox[1] - (bbox[3] - bbox[1]) // 2
+        draw.text((self._column_pen_x(font, text), y), text, font=font, fill=0)
 
     # --- Move-history page rendering --------------------------------------
 

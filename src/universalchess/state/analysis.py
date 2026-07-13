@@ -10,6 +10,8 @@ Widgets observe this state to display evaluation bar and history graph.
 import logging
 from typing import Optional, Callable, List, Tuple
 
+from universalchess.utils.accuracy import AccuracySummary, summarize
+
 log = logging.getLogger(__name__)
 
 
@@ -40,6 +42,13 @@ class AnalysisState:
         
         # Score history for graphing
         self._history: List[float] = []
+
+        # Per-ply record for accuracy: one (eval_white_pov_pawns, mover_white)
+        # tuple per played half-move, in order. Distinct from ``_history``, which
+        # is display-only and omits the first move (its opening eval is the graph
+        # baseline). This list stays complete -- including the first move -- so
+        # per-colour accuracy is not missing a ply.
+        self._move_evals: List[Tuple[float, bool]] = []
         
         # Previous score for annotation calculation
         self._previous_score: float = 0.0
@@ -86,6 +95,15 @@ class AnalysisState:
     def history_length(self) -> int:
         """Number of positions in history."""
         return len(self._history)
+
+    def accuracy_summary(self) -> AccuracySummary:
+        """Per-colour accuracy and last-move quality for the game so far.
+
+        Derived on demand from the complete per-ply eval record, so it always
+        reflects the current move list (including the first move, which the
+        graph history omits).
+        """
+        return summarize(self._move_evals)
     
     # -------------------------------------------------------------------------
     # Observer management
@@ -140,12 +158,19 @@ class AnalysisState:
     # State mutations
     # -------------------------------------------------------------------------
     
-    def set_score(self, score: float, add_to_history: bool = True) -> None:
+    def set_score(self, score: float, add_to_history: bool = True,
+                  mover_white: Optional[bool] = None) -> None:
         """Set the current evaluation score.
         
         Args:
             score: Evaluation in pawns (positive = white advantage).
-            add_to_history: If True, append to history.
+            add_to_history: If True, append to the display history graph.
+            mover_white: Colour of the side that just moved when this score is
+                the result of a newly played half-move (True=white, False=black),
+                or None when it is a re-evaluation of the current position rather
+                than a new move. Only a non-None value appends to the accuracy
+                record, so re-analysing the same position never double-counts a
+                move.
         """
         self._previous_score = self._score
         self._score = score
@@ -162,16 +187,22 @@ class AnalysisState:
         self._calculate_annotation()
         
         self._notify_score()
+
+        if mover_white is not None:
+            self._move_evals.append((score, mover_white))
         
         if add_to_history:
             self._add_to_history(score)
     
-    def set_mate_score(self, mate_in: int, add_to_history: bool = True) -> None:
+    def set_mate_score(self, mate_in: int, add_to_history: bool = True,
+                       mover_white: Optional[bool] = None) -> None:
         """Set a forced mate score.
         
         Args:
             mate_in: Moves to mate (positive = white mates, negative = black mates).
-            add_to_history: If True, append to history.
+            add_to_history: If True, append to the display history graph.
+            mover_white: Colour of the side that just moved for a newly played
+                half-move, or None for a re-evaluation (see :meth:`set_score`).
         """
         self._previous_score = self._score
         self._is_mate = True
@@ -189,6 +220,9 @@ class AnalysisState:
         self._annotation = "!!" if abs(mate_in) <= 5 else "!"
         
         self._notify_score()
+
+        if mover_white is not None:
+            self._move_evals.append((self._score, mover_white))
         
         if add_to_history:
             self._add_to_history(self._score)
@@ -278,11 +312,29 @@ class AnalysisState:
         self._notify_score()
         self._notify_history()
     
+    def set_move_evals(self, move_evals: List[Tuple[float, bool]]) -> None:
+        """Replace the per-ply accuracy record.
+
+        Used on resume to rebuild the complete per-ply ``(eval_white_pov,
+        mover_white)`` list from persisted data, so per-colour accuracy is
+        available immediately for a restored game.
+
+        Args:
+            move_evals: One ``(eval_white_pov_pawns, mover_white)`` tuple per
+                played half-move, in order.
+        """
+        self._move_evals = list(move_evals)
+        self._notify_score()
+
     def remove_last(self) -> None:
         """Remove the last score from history.
         
-        Used for takeback to keep analysis in sync with game state.
+        Used for takeback to keep analysis in sync with game state. Pops both
+        the display history and the accuracy record so a taken-back move no
+        longer counts towards either the graph or the accuracy figures.
         """
+        if self._move_evals:
+            self._move_evals.pop()
         if self._history:
             self._history.pop()
             if self._history:
@@ -308,6 +360,7 @@ class AnalysisState:
         self._mate_in = None
         self._annotation = ""
         self._history.clear()
+        self._move_evals.clear()
         self._previous_score = 0.0
         self._notify_score()
         self._notify_history()

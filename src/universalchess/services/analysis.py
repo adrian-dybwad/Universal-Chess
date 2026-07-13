@@ -160,6 +160,22 @@ class AnalysisService:
         if pawn_scores:
             self._analysis_state.set_history(pawn_scores)
             log.info(f"[AnalysisService] Restored {len(pawn_scores)} scores from history")
+
+        # Rebuild the per-ply accuracy record. Each restored score is the eval
+        # after that ply (index 0 = ply 1), so the mover's colour alternates from
+        # the root position's side to move. Unanalysed (None) plies are skipped
+        # but their index still sets the colour of later plies, keeping the
+        # colour assignment aligned to the real move sequence.
+        first_ply_white = self._game_state.board.root().turn == chess.WHITE
+        move_evals = []
+        for ply_index, cp in enumerate(centipawn_scores):
+            if cp is None:
+                continue
+            pawn_score = max(-12.0, min(12.0, cp / 100.0))
+            mover_white = first_ply_white if ply_index % 2 == 0 else not first_ply_white
+            move_evals.append((pawn_score, mover_white))
+        if move_evals:
+            self._analysis_state.set_move_evals(move_evals)
     
     def remove_last_score(self) -> None:
         """Remove the last score from history.
@@ -198,7 +214,7 @@ class AnalysisService:
             return
         
         is_first_move = len(self._game_state.move_stack) == 1
-        self._queue_position(add_to_history=not is_first_move)
+        self._queue_position(add_to_history=not is_first_move, is_new_ply=True)
     
     def analyze_current_position(self, add_to_history: bool = True) -> None:
         """Queue the current position for a fresh evaluation on demand.
@@ -219,14 +235,17 @@ class AnalysisService:
         if not self._game_state.is_game_in_progress:
             return
         
-        self._queue_position(add_to_history=add_to_history)
+        self._queue_position(add_to_history=add_to_history, is_new_ply=False)
     
-    def _queue_position(self, add_to_history: bool) -> None:
+    def _queue_position(self, add_to_history: bool, is_new_ply: bool) -> None:
         """Enqueue the current game position for the worker to analyze.
         
         Args:
             add_to_history: Whether the resulting score should be appended to
                 the history graph (see analyze_current_position).
+            is_new_ply: True when this evaluation is for a freshly played
+                half-move (so its result should be recorded for accuracy),
+                False for a re-evaluation of the current position.
         """
         try:
             fen = self._game_state.fen
@@ -235,7 +254,8 @@ class AnalysisService:
             # 960 castling when the analysed board has chess960 set.
             board_copy = self._game_state.board_copy()
             
-            request = (board_copy, fen, add_to_history, self._time_limit, self._reset_generation)
+            request = (board_copy, fen, add_to_history, self._time_limit,
+                       self._reset_generation, is_new_ply)
             self._analysis_queue.put_nowait(request)
             
         except queue.Full:
@@ -288,7 +308,7 @@ class AnalysisService:
                     continue
                 
                 # Unpack request
-                board_copy, fen, add_to_history, time_limit, request_generation = request
+                board_copy, fen, add_to_history, time_limit, request_generation, is_new_ply = request
                 
                 # Check if stale
                 if request_generation != self._reset_generation:
@@ -306,8 +326,11 @@ class AnalysisService:
                         self._analysis_queue.task_done()
                         continue
                     
-                    # Update state
-                    self._update_state_from_analysis(info, add_to_history)
+                    # The side that just moved is the opposite of the side to move
+                    # in the analysed position. Only newly played plies feed the
+                    # accuracy record; re-evaluations pass None.
+                    mover_white = (not board_copy.turn) if is_new_ply else None
+                    self._update_state_from_analysis(info, add_to_history, mover_white)
                     
                 except Exception as e:
                     log.warning(f"[AnalysisService] Analysis error: {e}")
@@ -317,12 +340,15 @@ class AnalysisService:
             except Exception as e:
                 log.error(f"[AnalysisService] Worker error: {e}")
     
-    def _update_state_from_analysis(self, analysis_info: dict, add_to_history: bool) -> None:
+    def _update_state_from_analysis(self, analysis_info: dict, add_to_history: bool,
+                                    mover_white: Optional[bool] = None) -> None:
         """Update AnalysisState from engine analysis result.
         
         Args:
             analysis_info: Raw analysis dict from chess engine.
             add_to_history: Whether to append the score to the history graph.
+            mover_white: Colour of the side that just moved for a newly played
+                half-move (recorded for accuracy), or None for a re-evaluation.
         """
         if "score" not in analysis_info:
             return
@@ -340,7 +366,8 @@ class AnalysisService:
             if "BLACK" in score_str:
                 mate_value = -mate_value
             
-            self._analysis_state.set_mate_score(mate_value, add_to_history=add_to_history)
+            self._analysis_state.set_mate_score(
+                mate_value, add_to_history=add_to_history, mover_white=mover_white)
         else:
             # Extract centipawn value
             cp_str = score_str[11:24]
@@ -354,7 +381,8 @@ class AnalysisService:
             # Clamp for display
             display_score = max(-12.0, min(12.0, score_value))
             
-            self._analysis_state.set_score(display_score, add_to_history=add_to_history)
+            self._analysis_state.set_score(
+                display_score, add_to_history=add_to_history, mover_white=mover_white)
 
 
 # -----------------------------------------------------------------------------

@@ -266,10 +266,12 @@ def test_selection_change_callback_fires_when_new_game_clamps():
 
 def test_render_score_change_does_not_request_a_refresh():
     # Rendering a changed eval score must not trigger an extra display refresh:
-    # the score/annotation TextWidgets are render-only helpers whose set_text() is
-    # called only inside render(). Forwarding their request_update() to the Manager
-    # would double the analysis refresh rate and starve the clock. Regression: the
+    # the analysis view draws its text directly onto the sprite, so a render must
+    # never invoke the update_callback. Forwarding a refresh from render would
+    # double the analysis refresh rate and starve the clock. Regression: the
     # update_callback would be invoked purely as a side effect of rendering.
+    from universalchess.utils.accuracy import AccuracySummary
+
     analysis_state = MagicMock()
     analysis_state.is_mate = False
     analysis_state.mate_in = None
@@ -277,6 +279,8 @@ def test_render_score_change_does_not_request_a_refresh():
     analysis_state.history = []
     analysis_state.score = 1.0
     analysis_state.score_text = "+1.0"
+    analysis_state.accuracy_summary.return_value = AccuracySummary(
+        None, None, None, None, "")
 
     update_callback = MagicMock()
     widget = GameAnalysisWidget(

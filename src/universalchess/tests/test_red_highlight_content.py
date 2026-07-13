@@ -134,6 +134,12 @@ class _FakeAnalysis:
         self.is_mate = False
         self.mate_in = None
 
+    def accuracy_summary(self):
+        # Red rendering does not depend on accuracy; an empty summary keeps the
+        # quality bar blank so these tests exercise only the graph's red bars.
+        from universalchess.utils.accuracy import summarize
+        return summarize([])
+
     def on_score_change(self, cb):
         pass
 
