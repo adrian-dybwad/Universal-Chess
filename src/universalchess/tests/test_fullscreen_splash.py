@@ -110,11 +110,11 @@ def test_forwards_tagline_to_splash(fake_splash):
     manager, _ = _make_manager()
 
     show_fullscreen_splash(manager, "Press [>]", timeout=5.0, show_battery=True,
-                           tagline="Look this gift horse in the mouth")
+                           tagline="Look a gift horse in the mouth")
 
     fake_splash.assert_called_once_with(
         manager.update, message="Press [>]", leave_room_for_status_bar=False,
-        show_battery=True, tagline="Look this gift horse in the mouth"
+        show_battery=True, tagline="Look a gift horse in the mouth"
     )
 
 

@@ -5,11 +5,11 @@
 </td>
 <td valign="top">
 <h2>Universal-Chess</h2>
-<p><em>Look this gift horse in the mouth</em></p>
+<p><em>Look a gift horse in the mouth</em></p>
 <p>Universal-Chess is an extensible software platform for electronic chess boards. It currently targets the <strong>DGT Centaur</strong> hardware (as the first supported board), and includes:</p>
 <ul>
 <li>Local play against engines</li>
-<li>AI coaching</li>
+<li>AI coaching (experimental &mdash; still rough, can hallucinate, use with a grain of salt)</li>
 <li>Game recording/export (PGN)</li>
 <li>Online play (Lichess integration)</li>
 <li>Board emulation modes (Millennium / Pegasus / Chessnut) for compatible apps</li>
