@@ -217,7 +217,12 @@
     "playGameName": "Play from position",
     "playGameFailed": "Could not set up the position.",
     "confirmPlayTitle": "Play from this position?",
-    "confirmPlayBody": "A game is in progress on the board. Playing from here ends it (it is recorded in your history) and sets the board to the position you are viewing, so you can play on from there."
+    "confirmPlayBody": "A game is in progress on the board. Playing from here ends it (it is recorded in your history) and sets the board to the position you are viewing, so you can play on from there.",
+    "resume": "Resume",
+    "resumeSaving": "Resuming...",
+    "resumeFailed": "Could not resume the game.",
+    "confirmResumeTitle": "Resume this game?",
+    "confirmResumeBody": "A game is in progress on the board. Resuming this game abandons the current one (you can resume it again later) and continues this game from where it left off, with clocks preserved."
   },
   "coach": {
     "title": "Coach",

@@ -73,6 +73,14 @@ export function Analyze() {
   const [playBusy, setPlayBusy] = useState(false);
   const [playError, setPlayError] = useState<string | null>(null);
 
+  // Resume: continues the stored game itself (not a new game from the viewed
+  // position, unlike Play), reactivating an abandoned/in-progress game on the
+  // board with clocks preserved. Shown only for a resumable game (PGN Result
+  // "*"). Mirrors Play's auth-gate/confirm flow.
+  const [confirmResume, setConfirmResume] = useState(false);
+  const [resumeBusy, setResumeBusy] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
+
   // A live game "in progress" (unfinished, at least one move) would be ended by
   // playing from here, so it is confirmed first. Reading the store here is
   // read-only and does not affect the live game.
@@ -187,6 +195,44 @@ export function Analyze() {
     void playFromHere();
   }, [viewedFen, gameInProgress, playFromHere]);
 
+  // Resume the stored game by id. On 401 the login dialog opens and this same
+  // action is retried after login. On success the browser goes to the live board.
+  const resumeGame = useCallback(async () => {
+    setConfirmResume(false);
+    if (!gameId) return;
+    setResumeBusy(true);
+    setResumeError(null);
+    try {
+      const response = await apiFetch(`/api/games/${gameId}/resume`, {
+        method: 'POST',
+        requiresAuth: true,
+      });
+      if (response.status === 401) {
+        onUnauthorized(resumeGame);
+        return;
+      }
+      const data = await response.json().catch(() => ({}));
+      if (response.ok && data.success) {
+        navigate('/board');
+      } else {
+        setResumeError(data.error || t('analyze.resumeFailed'));
+      }
+    } catch (e) {
+      console.error('Failed to resume game:', e);
+      setResumeError(t('analyze.resumeFailed'));
+    } finally {
+      setResumeBusy(false);
+    }
+  }, [gameId, onUnauthorized, navigate, t]);
+
+  const onResumeClick = useCallback(() => {
+    if (gameInProgress) {
+      setConfirmResume(true);
+      return;
+    }
+    void resumeGame();
+  }, [gameInProgress, resumeGame]);
+
   if (loading) {
     return <div className="loading">{t('analyze.loading')}</div>;
   }
@@ -205,19 +251,35 @@ export function Analyze() {
     ? t(`liveBoard.gameOver.termination.${terminationKey(rawTermination)}`, { defaultValue: rawTermination })
     : '';
   const coachGameId = gameId && /^\d+$/.test(gameId) ? Number(gameId) : null;
+  // A "*" PGN result marks an unfinished game (in progress or abandoned) -- the
+  // only games the board can resume. Finished games (decisive/draw) are review
+  // only, so Resume is hidden for them.
+  const resumable = result === '*';
 
   const header = (
     <div className="box">
       <div className="current-game-header">
         <h3 className="title is-5 box-title">{t('analyze.gameInfoTitle')}</h3>
-        <button
-          type="button"
-          className="button is-small is-primary"
-          onClick={onPlayClick}
-          disabled={playBusy || !viewedFen}
-        >
-          {playBusy ? t('analyze.playGameSaving') : t('analyze.playGame')}
-        </button>
+        <div className="current-game-actions">
+          {resumable && (
+            <button
+              type="button"
+              className="button is-small is-primary"
+              onClick={onResumeClick}
+              disabled={resumeBusy}
+            >
+              {resumeBusy ? t('analyze.resumeSaving') : t('analyze.resume')}
+            </button>
+          )}
+          <button
+            type="button"
+            className="button is-small is-primary"
+            onClick={onPlayClick}
+            disabled={playBusy || !viewedFen}
+          >
+            {playBusy ? t('analyze.playGameSaving') : t('analyze.playGame')}
+          </button>
+        </div>
       </div>
       <div className="current-game-info">
         <div className="players-line">
@@ -236,6 +298,11 @@ export function Analyze() {
         {playError && (
           <p className="text-muted" style={{ marginTop: '0.5rem' }}>
             {playError}
+          </p>
+        )}
+        {resumeError && (
+          <p className="text-muted" style={{ marginTop: '0.5rem' }}>
+            {resumeError}
           </p>
         )}
       </div>
@@ -263,6 +330,30 @@ export function Analyze() {
                 </button>
                 <button type="button" className="btn btn-primary" onClick={() => void playFromHere()}>
                   {t('analyze.playGame')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmResume && (
+        <div className="dialog-overlay" onClick={() => setConfirmResume(false)}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="dialog-header">
+              <h3>{t('analyze.confirmResumeTitle')}</h3>
+              <button className="dialog-close" onClick={() => setConfirmResume(false)}>&times;</button>
+            </div>
+            <div className="dialog-body">
+              <p className="dialog-description">{t('analyze.confirmResumeBody')}</p>
+            </div>
+            <div className="dialog-footer">
+              <div className="dialog-footer-right">
+                <button type="button" className="btn btn-secondary" onClick={() => setConfirmResume(false)}>
+                  {t('common.cancel')}
+                </button>
+                <button type="button" className="btn btn-primary" onClick={() => void resumeGame()}>
+                  {t('analyze.resume')}
                 </button>
               </div>
             </div>

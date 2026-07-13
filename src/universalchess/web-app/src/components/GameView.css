@@ -68,6 +68,11 @@
   margin-bottom: 0;
 }
 
+.current-game-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
 .current-game-info {
   padding: 0.5rem 0;
 }

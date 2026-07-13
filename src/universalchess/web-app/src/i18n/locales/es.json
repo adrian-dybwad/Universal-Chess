@@ -217,7 +217,12 @@
     "playGameName": "Jugar desde la posición",
     "playGameFailed": "No se pudo preparar la posición.",
     "confirmPlayTitle": "¿Jugar desde esta posición?",
-    "confirmPlayBody": "Hay una partida en curso en el tablero. Jugar desde aquí la finaliza (queda registrada en tu historial) y coloca el tablero en la posición que estás viendo, para que puedas continuar desde ahí."
+    "confirmPlayBody": "Hay una partida en curso en el tablero. Jugar desde aquí la finaliza (queda registrada en tu historial) y coloca el tablero en la posición que estás viendo, para que puedas continuar desde ahí.",
+    "resume": "Reanudar",
+    "resumeSaving": "Reanudando...",
+    "resumeFailed": "No se pudo reanudar la partida.",
+    "confirmResumeTitle": "¿Reanudar esta partida?",
+    "confirmResumeBody": "Hay una partida en curso en el tablero. Reanudar esta partida abandona la actual (puedes reanudarla de nuevo más tarde) y continúa esta partida desde donde se quedó, conservando los relojes."
   },
   "coach": {
     "title": "Entrenador",
