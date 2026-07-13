@@ -98,6 +98,9 @@
       "standard": "Estándar (0.8s)",
       "deep": "Profundo (2s)"
     },
+    "coach_multipv": {
+      "1": "1 (desactivado)"
+    },
     "notation": {
       "figurine": "Figuras (♘f3)",
       "san": "Estándar (Nf3)",
@@ -111,10 +114,16 @@
     },
     "timezones_common": {
       "Europe/London": "Londres",
+      "Europe/Paris": "París",
+      "Europe/Berlin": "Berlín",
       "Europe/Moscow": "Moscú",
       "America/New_York": "Nueva York",
       "America/Los_Angeles": "Los Ángeles",
-      "Asia/Tokyo": "Tokio"
+      "Asia/Dubai": "Dubái",
+      "Asia/Kolkata": "Calcuta",
+      "Asia/Shanghai": "Shanghái",
+      "Asia/Tokyo": "Tokio",
+      "Australia/Sydney": "Sídney"
     }
   },
 
@@ -359,6 +368,10 @@
     },
 
     "system": { "label": "Sistema" },
+    "group.system.device": {
+      "label": "Dispositivo",
+      "help": "Preferencias de suspensión, zona horaria e idioma de este tablero."
+    },
     "system.engines": {
       "label": "Gestor de\nmotores",
       "help": "Instala y gestiona motores de ajedrez para jugar y analizar."

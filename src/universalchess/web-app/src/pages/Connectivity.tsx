@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { useLocation } from 'react-router-dom';
 import { Button, Card, CardHeader, Input, Select, Toggle } from '../components/ui';
 import { MenuIcon } from '../components/MenuIcon';
@@ -129,6 +131,7 @@ interface CastStatus {
  * the panel does not participate in the Settings page's bulk Save & Apply bar.
  */
 export function ConnectivityPanel() {
+  const { t } = useTranslation();
   // The navbar Wi-Fi/Bluetooth glyphs deep-link here with a #wifi / #bluetooth
   // hash. React Router does not scroll to hash targets on its own, so bring the
   // referenced card into view once it has rendered. Re-runs on hash change so
@@ -144,9 +147,9 @@ export function ConnectivityPanel() {
     <section>
       <h2 className="page-title">
         <MenuIcon name="wifi" size={24} style={{ verticalAlign: 'text-bottom', marginRight: 8 }} />
-        Connectivity
+        {t('connectivity.title')}
       </h2>
-      <p className="text-muted mb-6">Manage the board's network and device connections.</p>
+      <p className="text-muted mb-6">{t('connectivity.subtitle')}</p>
       <div id="wifi" className="conn-anchor">
         <WifiCard />
       </div>
@@ -159,14 +162,15 @@ export function ConnectivityPanel() {
   );
 }
 
-function signalLabel(signal: number): string {
-  if (signal >= 70) return 'Strong';
-  if (signal >= 40) return 'Good';
-  if (signal > 0) return 'Weak';
+function signalLabel(signal: number, t: TFunction): string {
+  if (signal >= 70) return t('connectivity.signal.strong');
+  if (signal >= 40) return t('connectivity.signal.good');
+  if (signal > 0) return t('connectivity.signal.weak');
   return '';
 }
 
 function WifiCard() {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<WifiStatus | null>(null);
   const [scanResults, setScanResults] = useState<ScanNetwork[] | null>(null);
   const [saved, setSaved] = useState<SavedNetwork[]>([]);
@@ -215,11 +219,11 @@ function WifiCard() {
       const data = await r.json().catch(() => ({}));
       setScanResults(data.networks ?? []);
     } catch {
-      setMessage({ kind: 'error', text: 'Scan failed.' });
+      setMessage({ kind: 'error', text: t('connectivity.wifi.scanFailed') });
     } finally {
       setScanning(false);
     }
-  }, [onUnauthorized]);
+  }, [onUnauthorized, t]);
 
   const connect = useCallback(
     async (ssid: string, pw?: string) => {
@@ -238,24 +242,24 @@ function WifiCard() {
         }
         const data = await r.json().catch(() => ({}));
         if (data.success) {
-          setMessage({ kind: 'success', text: `Connected to ${ssid}.` });
+          setMessage({ kind: 'success', text: t('connectivity.wifi.connectedTo', { ssid }) });
           setScanResults(null);
           setTimeout(() => {
             fetchStatus();
             fetchSaved();
           }, 1500);
         } else {
-          setMessage({ kind: 'error', text: data.message || data.error || 'Connection failed.' });
+          setMessage({ kind: 'error', text: data.message || data.error || t('connectivity.wifi.connectFailed') });
         }
       } catch {
-        setMessage({ kind: 'error', text: 'Network error contacting the board.' });
+        setMessage({ kind: 'error', text: t('common.networkError') });
       } finally {
         setBusy(false);
         setPasswordFor(null);
         setPassword('');
       }
     },
-    [onUnauthorized, fetchStatus, fetchSaved]
+    [onUnauthorized, fetchStatus, fetchSaved, t]
   );
 
   const onSelectNetwork = (net: ScanNetwork) => {
@@ -269,7 +273,7 @@ function WifiCard() {
 
   const forget = useCallback(
     async (ssid: string, active: boolean) => {
-      if (active && !confirm(`"${ssid}" is the network this board is using. Forgetting it will disconnect the board. Continue?`)) {
+      if (active && !confirm(t('connectivity.wifi.confirmForgetActive', { ssid }))) {
         return;
       }
       setBusy(true);
@@ -287,18 +291,18 @@ function WifiCard() {
         }
         const data = await r.json().catch(() => ({}));
         if (data.success) {
-          setMessage({ kind: 'success', text: `Forgot ${ssid}.` });
+          setMessage({ kind: 'success', text: t('connectivity.wifi.forgot', { ssid }) });
           fetchSaved();
         } else {
-          setMessage({ kind: 'error', text: data.error || 'Could not forget network.' });
+          setMessage({ kind: 'error', text: data.error || t('connectivity.wifi.forgetFailed') });
         }
       } catch {
-        setMessage({ kind: 'error', text: 'Network error contacting the board.' });
+        setMessage({ kind: 'error', text: t('common.networkError') });
       } finally {
         setBusy(false);
       }
     },
-    [onUnauthorized, fetchSaved]
+    [onUnauthorized, fetchSaved, t]
   );
 
   const toggleEnabled = useCallback(
@@ -310,9 +314,7 @@ function WifiCard() {
       if (
         !enabled &&
         status?.connected &&
-        !confirm(
-          'Turning off WiFi disconnects the board from this network. If you are using this web interface over WiFi, you will lose access to the board until WiFi is re-enabled from the board itself. Continue?'
-        )
+        !confirm(t('connectivity.wifi.confirmDisable'))
       ) {
         return;
       }
@@ -333,7 +335,7 @@ function WifiCard() {
         setBusy(false);
       }
     },
-    [onUnauthorized, fetchStatus, status?.connected]
+    [onUnauthorized, fetchStatus, status?.connected, t]
   );
 
   return (
@@ -344,7 +346,7 @@ function WifiCard() {
         <div className="dialog-overlay" onClick={() => setPasswordFor(null)}>
           <div className="dialog" onClick={(e) => e.stopPropagation()}>
             <div className="dialog-header">
-              <h3>Connect to {passwordFor.ssid}</h3>
+              <h3>{t('connectivity.wifi.connectTo', { ssid: passwordFor.ssid })}</h3>
               <button className="dialog-close" onClick={() => setPasswordFor(null)}>×</button>
             </div>
             <form
@@ -355,7 +357,7 @@ function WifiCard() {
             >
               <div className="dialog-body">
                 <div className="form-group">
-                  <label htmlFor="wifi-password">Password</label>
+                  <label htmlFor="wifi-password">{t('connectivity.wifi.password')}</label>
                   <input
                     id="wifi-password"
                     type="password"
@@ -369,10 +371,10 @@ function WifiCard() {
               <div className="dialog-footer">
                 <div className="dialog-footer-right">
                   <button type="button" className="btn btn-secondary" onClick={() => setPasswordFor(null)}>
-                    Cancel
+                    {t('connectivity.wifi.cancel')}
                   </button>
                   <button type="submit" className="btn btn-primary" disabled={busy || !password}>
-                    Connect
+                    {t('connectivity.wifi.connect')}
                   </button>
                 </div>
               </div>
@@ -382,14 +384,14 @@ function WifiCard() {
       )}
 
       <Card className="mb-6">
-        <CardHeader title="WiFi" />
+        <CardHeader title={t('connectivity.wifi.header')} />
 
         {status && (
           <Toggle
             checked={status.enabled}
             onChange={(v) => toggleEnabled(v)}
             disabled={busy}
-            label="WiFi enabled"
+            label={t('connectivity.wifi.enabled')}
           />
         )}
 
@@ -398,12 +400,12 @@ function WifiCard() {
             <div className="conn-status-row">
               <MenuIcon name="wifi" size={18} />
               <span className="conn-status-ssid">{status.ssid}</span>
-              {status.signal > 0 && <span className="text-muted">{signalLabel(status.signal)} ({status.signal}%)</span>}
+              {status.signal > 0 && <span className="text-muted">{signalLabel(status.signal, t)} ({status.signal}%)</span>}
             </div>
             {status.ip_address && <div className="text-muted conn-status-detail">IP {status.ip_address}{status.frequency ? ` • ${status.frequency}` : ''}</div>}
           </div>
         ) : (
-          <p className="text-muted">{status?.enabled ? 'Not connected' : 'WiFi is disabled'}</p>
+          <p className="text-muted">{status?.enabled ? t('connectivity.wifi.notConnected') : t('connectivity.wifi.disabled')}</p>
         )}
 
         {message && (
@@ -412,15 +414,15 @@ function WifiCard() {
 
         <div className="conn-actions">
           <Button variant="primary" onClick={scan} disabled={scanning || !status?.enabled}>
-            {scanning ? 'Scanning…' : 'Scan for networks'}
+            {scanning ? t('connectivity.wifi.scanning') : t('connectivity.wifi.scan')}
           </Button>
         </div>
 
         {scanResults && (
           <div className="conn-list">
-            <h4 className="conn-list-title">Available networks</h4>
+            <h4 className="conn-list-title">{t('connectivity.wifi.available')}</h4>
             {scanResults.length === 0 ? (
-              <p className="text-muted">No networks found.</p>
+              <p className="text-muted">{t('connectivity.wifi.none')}</p>
             ) : (
               scanResults.map((net) => (
                 <button
@@ -431,7 +433,7 @@ function WifiCard() {
                 >
                   <span className="conn-list-name">
                     {net.ssid}
-                    {net.security && <span className="conn-lock" title="Secured"> 🔒</span>}
+                    {net.security && <span className="conn-lock" title={t('connectivity.wifi.secured')}> 🔒</span>}
                   </span>
                   <span className="text-muted">{net.signal}%</span>
                 </button>
@@ -442,15 +444,15 @@ function WifiCard() {
 
         {saved.length > 0 && (
           <div className="conn-list">
-            <h4 className="conn-list-title">Saved networks</h4>
+            <h4 className="conn-list-title">{t('connectivity.wifi.saved')}</h4>
             {saved.map((net) => (
               <div key={net.ssid} className="conn-list-item conn-list-item--static">
                 <span className="conn-list-name">
                   {net.ssid}
-                  {net.active && <span className="conn-active-badge">connected</span>}
+                  {net.active && <span className="conn-active-badge">{t('connectivity.wifi.connectedBadge')}</span>}
                 </span>
                 <Button variant="danger" size="sm" onClick={() => forget(net.ssid, net.active)} disabled={busy}>
-                  Forget
+                  {t('connectivity.wifi.forget')}
                 </Button>
               </div>
             ))}
@@ -464,21 +466,26 @@ function WifiCard() {
 // One-line, always-current summary of the BLE advertising state, driven by the
 // board engine's adv_state. Exhaustive over the closed BtAdvState union so a new
 // state cannot silently fall through to a stale/blank line.
-const ADV_STATE_LINE: Record<BtAdvState, { text: string; kind: 'ok' | 'warn' | 'error' | 'muted' }> = {
-  advertising: { text: 'Discoverable by phone apps', kind: 'ok' },
-  paused_connected: { text: 'Connected — advertising paused', kind: 'ok' },
-  healing: { text: 'Repairing Bluetooth advertising…', kind: 'warn' },
-  failed: { text: 'Not discoverable — advertising failed', kind: 'error' },
-  radio_off: { text: 'Bluetooth radio off', kind: 'muted' },
-  unknown: { text: 'Checking Bluetooth status…', kind: 'muted' },
+// The one-line advertising summary, keyed by the board engine's adv_state. The
+// prose lives in the i18n bundle (connectivity.bluetooth.adv.*); `kind` picks
+// the status colour. Exhaustive over the closed BtAdvState union so a new state
+// cannot silently fall through to a stale/blank line.
+const ADV_STATE_LINE: Record<BtAdvState, { key: string; kind: 'ok' | 'warn' | 'error' | 'muted' }> = {
+  advertising: { key: 'connectivity.bluetooth.adv.advertising', kind: 'ok' },
+  paused_connected: { key: 'connectivity.bluetooth.adv.pausedConnected', kind: 'ok' },
+  healing: { key: 'connectivity.bluetooth.adv.healing', kind: 'warn' },
+  failed: { key: 'connectivity.bluetooth.adv.failed', kind: 'error' },
+  radio_off: { key: 'connectivity.bluetooth.adv.radioOff', kind: 'muted' },
+  unknown: { key: 'connectivity.bluetooth.adv.unknown', kind: 'muted' },
 };
 
 function BluetoothStatusLine({ status }: { status: BtStatus }) {
+  const { t } = useTranslation();
   const state: BtAdvState = status.adv_state ?? 'unknown';
   // While healing, prefer the live phase label from the board over the generic
   // one-liner so the user can see which step (building/applying/…) is underway.
   const line = ADV_STATE_LINE[state];
-  const text = state === 'healing' ? status.heal?.label ?? line.text : line.text;
+  const text = state === 'healing' ? status.heal?.label ?? t(line.key) : t(line.key);
   return (
     <div className={`conn-status-line conn-status-line--${line.kind}`}>
       <MenuIcon name={state === 'failed' ? 'cancel' : 'bluetooth'} size={16} />
@@ -488,6 +495,7 @@ function BluetoothStatusLine({ status }: { status: BtStatus }) {
 }
 
 function BluetoothCard() {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<BtStatus | null>(null);
   const [scanResults, setScanResults] = useState<BtScanDevice[] | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -582,18 +590,18 @@ function BluetoothCard() {
   // re-surface when the card remounts, so this subscription omits replayLast.
   const onBtPairResult = useCallback((data: SseEventPayload) => {
     if (data.status === 'started') {
-      setMessage({ kind: 'success', text: 'Pairing started…' });
+      setMessage({ kind: 'success', text: t('connectivity.bluetooth.pairingStarted') });
     } else {
       setPasskey(null);
       setMessage(
         data.success
-          ? { kind: 'success', text: 'Keyboard paired.' }
-          : { kind: 'error', text: 'Pairing failed. Try again.' }
+          ? { kind: 'success', text: t('connectivity.bluetooth.paired') }
+          : { kind: 'error', text: t('connectivity.bluetooth.pairingFailed') }
       );
       setScanResults(null);
       setTimeout(fetchStatus, 1000);
     }
-  }, [fetchStatus]);
+  }, [fetchStatus, t]);
   useSseEvent('bt_pair_result', onBtPairResult);
 
   const confirmIncoming = useCallback(async (accept: boolean) => {
@@ -622,11 +630,11 @@ function BluetoothCard() {
       const data = await r.json().catch(() => ({}));
       setScanResults(data.devices ?? []);
     } catch {
-      setMessage({ kind: 'error', text: 'Scan failed.' });
+      setMessage({ kind: 'error', text: t('connectivity.bluetooth.scanFailed') });
     } finally {
       setScanning(false);
     }
-  }, [onUnauthorized]);
+  }, [onUnauthorized, t]);
 
   /** POST a device action (connect/disconnect/forget/pair) and refresh status. */
   const deviceAction = useCallback(
@@ -650,17 +658,17 @@ function BluetoothCard() {
           setTimeout(fetchStatus, 1500);
         } else if (path === 'connect' && data.stalePairing) {
           setStalePairing({ address, name: deviceName || address });
-          setMessage({ kind: 'error', text: data.error || 'Saved pairing was rejected.' });
+          setMessage({ kind: 'error', text: data.error || t('connectivity.bluetooth.staleRejected') });
         } else {
-          setMessage({ kind: 'error', text: data.error || 'Action failed.' });
+          setMessage({ kind: 'error', text: data.error || t('connectivity.bluetooth.actionFailed') });
         }
       } catch {
-        setMessage({ kind: 'error', text: 'Network error contacting the board.' });
+        setMessage({ kind: 'error', text: t('common.networkError') });
       } finally {
         setBusy(false);
       }
     },
-    [onUnauthorized, fetchStatus]
+    [onUnauthorized, fetchStatus, t]
   );
 
   const removeStalePairing = useCallback(
@@ -680,12 +688,12 @@ function BluetoothCard() {
         }
         const forgetData = await forgetResponse.json().catch(() => ({}));
         if (!forgetData.success) {
-          setMessage({ kind: 'error', text: forgetData.error || 'Could not remove saved pairing.' });
+          setMessage({ kind: 'error', text: forgetData.error || t('connectivity.bluetooth.removeStaleFailed') });
           return;
         }
         setStalePairing(null);
         if (!pairAgain) {
-          setMessage({ kind: 'success', text: `Forgot ${device.name}` });
+          setMessage({ kind: 'success', text: t('connectivity.bluetooth.forgotMsg', { name: device.name }) });
           setTimeout(fetchStatus, 1500);
           return;
         }
@@ -702,20 +710,20 @@ function BluetoothCard() {
         }
         const pairData = await pairResponse.json().catch(() => ({}));
         if (pairData.success) {
-          setMessage({ kind: 'success', text: `Pairing ${device.name}…` });
+          setMessage({ kind: 'success', text: t('connectivity.bluetooth.pairingMsg', { name: device.name }) });
           setScanResults(null);
           setTimeout(fetchStatus, 1500);
         } else {
-          setMessage({ kind: 'error', text: pairData.error || 'Pairing could not be started.' });
+          setMessage({ kind: 'error', text: pairData.error || t('connectivity.bluetooth.pairStartFailed') });
           setTimeout(fetchStatus, 1500);
         }
       } catch {
-        setMessage({ kind: 'error', text: 'Network error contacting the board.' });
+        setMessage({ kind: 'error', text: t('common.networkError') });
       } finally {
         setBusy(false);
       }
     },
-    [onUnauthorized, fetchStatus]
+    [onUnauthorized, fetchStatus, t]
   );
 
   const toggleEnabled = useCallback(
@@ -750,18 +758,17 @@ function BluetoothCard() {
         <div className="dialog-overlay">
           <div className="dialog" onClick={(e) => e.stopPropagation()}>
             <div className="dialog-header">
-              <h3>Remove saved pairing?</h3>
+              <h3>{t('connectivity.bluetooth.removeStaleTitle')}</h3>
             </div>
             <div className="dialog-body">
               <p className="text-muted">
-                {stalePairing.name} rejected the board&apos;s saved Bluetooth pairing. Remove it from the board and
-                pair again?
+                {t('connectivity.bluetooth.removeStaleBody', { name: stalePairing.name })}
               </p>
             </div>
             <div className="dialog-footer">
               <div className="dialog-footer-right">
                 <button type="button" className="btn btn-secondary" onClick={() => setStalePairing(null)}>
-                  Cancel
+                  {t('connectivity.wifi.cancel')}
                 </button>
                 <button
                   type="button"
@@ -772,7 +779,7 @@ function BluetoothCard() {
                     void removeStalePairing(stale, false);
                   }}
                 >
-                  Remove Pairing
+                  {t('connectivity.bluetooth.removePairing')}
                 </button>
                 <button
                   type="button"
@@ -783,7 +790,7 @@ function BluetoothCard() {
                     void removeStalePairing(stale, true);
                   }}
                 >
-                  Remove and Pair
+                  {t('connectivity.bluetooth.removeAndPair')}
                 </button>
               </div>
             </div>
@@ -795,10 +802,10 @@ function BluetoothCard() {
         <div className="dialog-overlay">
           <div className="dialog" onClick={(e) => e.stopPropagation()}>
             <div className="dialog-header">
-              <h3>Pairing keyboard</h3>
+              <h3>{t('connectivity.bluetooth.pairingKeyboardTitle')}</h3>
             </div>
             <div className="dialog-body">
-              <p className="text-muted">On your Bluetooth keyboard, type this code and press Enter:</p>
+              <p className="text-muted">{t('connectivity.bluetooth.pairingKeyboardBody')}</p>
               <div className="conn-passkey">{passkey}</div>
             </div>
           </div>
@@ -809,13 +816,13 @@ function BluetoothCard() {
         <div className="dialog-overlay">
           <div className="dialog" onClick={(e) => e.stopPropagation()}>
             <div className="dialog-header">
-              <h3>Pairing request</h3>
+              <h3>{t('connectivity.bluetooth.pairRequestTitle')}</h3>
             </div>
             <div className="dialog-body">
-              <p className="text-muted">A device wants to pair with the board.</p>
+              <p className="text-muted">{t('connectivity.bluetooth.pairRequestBody')}</p>
               {incoming.passkey && (
                 <>
-                  <p className="text-muted">Confirm this code matches the one on the device:</p>
+                  <p className="text-muted">{t('connectivity.bluetooth.confirmCode')}</p>
                   <div className="conn-passkey">{incoming.passkey}</div>
                 </>
               )}
@@ -823,10 +830,10 @@ function BluetoothCard() {
             <div className="dialog-footer">
               <div className="dialog-footer-right">
                 <button type="button" className="btn btn-secondary" onClick={() => confirmIncoming(false)}>
-                  Reject
+                  {t('connectivity.bluetooth.reject')}
                 </button>
                 <button type="button" className="btn btn-primary" onClick={() => confirmIncoming(true)}>
-                  Pair
+                  {t('connectivity.bluetooth.pair')}
                 </button>
               </div>
             </div>
@@ -835,17 +842,17 @@ function BluetoothCard() {
       )}
 
       <Card className="mb-6">
-        <CardHeader title="Bluetooth" />
+        <CardHeader title={t('connectivity.bluetooth.header')} />
 
         {status && (
-          <Toggle checked={status.enabled} onChange={(v) => toggleEnabled(v)} disabled={busy} label="Bluetooth enabled" />
+          <Toggle checked={status.enabled} onChange={(v) => toggleEnabled(v)} disabled={busy} label={t('connectivity.bluetooth.enabled')} />
         )}
 
         {status && status.enabled && (status.host_name || status.address) && (
           <div className="conn-status">
             <div className="conn-status-row">
               <MenuIcon name="bluetooth" size={18} />
-              <span className="conn-status-ssid">{status.host_name || 'Bluetooth'}</span>
+              <span className="conn-status-ssid">{status.host_name || t('connectivity.bluetooth.defaultName')}</span>
             </div>
             {status.address && <div className="text-muted conn-status-detail">{status.address}</div>}
           </div>
@@ -857,18 +864,19 @@ function BluetoothCard() {
 
         {status?.adv_state === 'healing' && (
           <div className="conn-message conn-message--warn">
-            {status.heal?.label ?? 'Repairing Bluetooth advertising…'}
+            {status.heal?.label ?? t('connectivity.bluetooth.adv.healing')}
             <div className="conn-status-detail text-muted">
-              Restoring a working Bluetooth stack for phone apps. This runs once after an update
-              and can take a few minutes; the board becomes discoverable when it finishes.
+              {t('connectivity.bluetooth.healingDetail')}
             </div>
           </div>
         )}
 
         {status?.adv_state === 'failed' && status.advertising && (
           <div className="conn-message conn-message--error">
-            Phone apps can&apos;t discover the board over Bluetooth LE:{' '}
-            {status.advertising.failed} of {status.advertising.expected} BLE advertisements failed to register.
+            {t('connectivity.bluetooth.leFailed', {
+              failed: status.advertising.failed,
+              expected: status.advertising.expected,
+            })}
             {status.advertising.error && (
               <div className="conn-status-detail text-muted">{status.advertising.error}</div>
             )}
@@ -877,15 +885,15 @@ function BluetoothCard() {
 
         {status?.link?.connected && (
           <div className="conn-list">
-            <h4 className="conn-list-title">Connected app</h4>
+            <h4 className="conn-list-title">{t('connectivity.bluetooth.connectedApp')}</h4>
             <div className="conn-list-item conn-list-item--static">
               <span className="conn-list-name">
                 <MenuIcon name="bluetooth" size={16} />
                 {status.link.emulator
-                  ? `${EMULATOR_LABELS[status.link.emulator] ?? status.link.emulator} emulator`
+                  ? t('connectivity.bluetooth.emulatorSuffix', { name: EMULATOR_LABELS[status.link.emulator] ?? status.link.emulator })
                   : status.link.transport === 'rfcomm'
-                    ? 'Classic Bluetooth (RFCOMM)'
-                    : 'Connected'}
+                    ? t('connectivity.bluetooth.rfcomm')
+                    : t('connectivity.bluetooth.connectedGeneric')}
                 {status.link.peer?.name && <span className="conn-active-badge">{status.link.peer.name}</span>}
               </span>
             </div>
@@ -896,10 +904,10 @@ function BluetoothCard() {
           <div className="conn-list">
             <h4 className="conn-list-title">
               {status.adv_state === 'advertising'
-                ? 'Discoverable as'
+                ? t('connectivity.bluetooth.discoverableAs')
                 : status.adv_state === 'paused_connected'
-                  ? 'Advertises as (paused while connected)'
-                  : 'Advertises as (not active)'}
+                  ? t('connectivity.bluetooth.advertisesPaused')
+                  : t('connectivity.bluetooth.advertisesInactive')}
             </h4>
             {status.advertised_names!.map((name) => (
               <div key={name} className="conn-list-item conn-list-item--static">
@@ -914,26 +922,26 @@ function BluetoothCard() {
 
         {status && status.paired.length > 0 && (
           <div className="conn-list">
-            <h4 className="conn-list-title">Paired devices</h4>
+            <h4 className="conn-list-title">{t('connectivity.bluetooth.pairedDevices')}</h4>
             {status.paired.map((dev) => (
               <div key={dev.address} className="conn-list-item conn-list-item--static">
                 <span className="conn-list-name">
                   <MenuIcon name="bluetooth" size={16} />
                   {dev.name}
-                  {dev.connected && <span className="conn-active-badge">connected</span>}
+                  {dev.connected && <span className="conn-active-badge">{t('connectivity.bluetooth.connectedBadge')}</span>}
                 </span>
                 <span className="conn-btn-group">
                   {dev.connected ? (
-                    <Button variant="secondary" size="sm" onClick={() => deviceAction('disconnect', dev.address, `Disconnected ${dev.name}`, dev.name)} disabled={busy}>
-                      Disconnect
+                    <Button variant="secondary" size="sm" onClick={() => deviceAction('disconnect', dev.address, t('connectivity.bluetooth.disconnectedMsg', { name: dev.name }), dev.name)} disabled={busy}>
+                      {t('connectivity.bluetooth.disconnect')}
                     </Button>
                   ) : (
-                    <Button variant="primary" size="sm" onClick={() => deviceAction('connect', dev.address, `Connected ${dev.name}`, dev.name)} disabled={busy}>
-                      Connect
+                    <Button variant="primary" size="sm" onClick={() => deviceAction('connect', dev.address, t('connectivity.bluetooth.connectedMsg', { name: dev.name }), dev.name)} disabled={busy}>
+                      {t('connectivity.bluetooth.connect')}
                     </Button>
                   )}
-                  <Button variant="danger" size="sm" onClick={() => deviceAction('forget', dev.address, `Forgot ${dev.name}`, dev.name)} disabled={busy}>
-                    Forget
+                  <Button variant="danger" size="sm" onClick={() => deviceAction('forget', dev.address, t('connectivity.bluetooth.forgotMsg', { name: dev.name }), dev.name)} disabled={busy}>
+                    {t('connectivity.bluetooth.forget')}
                   </Button>
                 </span>
               </div>
@@ -943,15 +951,15 @@ function BluetoothCard() {
 
         <div className="conn-actions">
           <Button variant="primary" onClick={scan} disabled={scanning || !status?.enabled}>
-            {scanning ? 'Scanning…' : 'Scan for keyboards'}
+            {scanning ? t('connectivity.bluetooth.scanning') : t('connectivity.bluetooth.scanKeyboards')}
           </Button>
         </div>
 
         {scanResults && (
           <div className="conn-list">
-            <h4 className="conn-list-title">Discovered keyboards</h4>
+            <h4 className="conn-list-title">{t('connectivity.bluetooth.discovered')}</h4>
             {scanResults.length === 0 ? (
-              <p className="text-muted">No keyboards found. Put your keyboard in pairing mode and scan again.</p>
+              <p className="text-muted">{t('connectivity.bluetooth.noKeyboards')}</p>
             ) : (
               scanResults
                 .filter((d) => !pairedAddresses.has(d.address))
@@ -961,8 +969,8 @@ function BluetoothCard() {
                       <MenuIcon name="bluetooth" size={16} />
                       {dev.name}
                     </span>
-                    <Button variant="primary" size="sm" onClick={() => deviceAction('pair', dev.address, `Pairing ${dev.name}…`)} disabled={busy}>
-                      Pair
+                    <Button variant="primary" size="sm" onClick={() => deviceAction('pair', dev.address, t('connectivity.bluetooth.pairingMsg', { name: dev.name }))} disabled={busy}>
+                      {t('connectivity.bluetooth.pair')}
                     </Button>
                   </div>
                 ))
@@ -974,15 +982,18 @@ function BluetoothCard() {
   );
 }
 
-const CAST_STATE_LABELS = {
-  idle: 'Not streaming',
-  connecting: 'Connecting…',
-  streaming: 'Streaming',
-  reconnecting: 'Reconnecting…',
-  error: 'Error',
+// i18n keys for each cast state (connectivity.chromecast.state.*), resolved with
+// `t` at render. Exhaustive over the closed CastStateName union.
+const CAST_STATE_KEYS = {
+  idle: 'connectivity.chromecast.state.idle',
+  connecting: 'connectivity.chromecast.state.connecting',
+  streaming: 'connectivity.chromecast.state.streaming',
+  reconnecting: 'connectivity.chromecast.state.reconnecting',
+  error: 'connectivity.chromecast.state.error',
 } satisfies Record<CastStateName, string>;
 
 function ChromecastCard() {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<CastStatus>({ state: 'idle', device: null, error: null, devices: [] });
   const [devices, setDevices] = useState<string[] | null>(null);
   const [discovering, setDiscovering] = useState(false);
@@ -1040,14 +1051,14 @@ function ChromecastCard() {
         const data = await r.json().catch(() => ({}));
         if (!data.success) {
           setUseLiveBoard(previous);
-          setMessage({ kind: 'error', text: data.error || 'Could not save Chromecast source.' });
+          setMessage({ kind: 'error', text: data.error || t('connectivity.chromecast.sourceFailed') });
         }
       } catch {
         setUseLiveBoard(previous);
-        setMessage({ kind: 'error', text: 'Network error saving Chromecast source.' });
+        setMessage({ kind: 'error', text: t('connectivity.chromecast.sourceError') });
       }
     },
-    [onUnauthorized, useLiveBoard]
+    [onUnauthorized, useLiveBoard, t]
   );
 
   const discover = useCallback(async () => {
@@ -1062,11 +1073,11 @@ function ChromecastCard() {
       const data = await r.json().catch(() => ({}));
       setDevices(data.devices ?? []);
     } catch {
-      setMessage({ kind: 'error', text: 'Discovery failed.' });
+      setMessage({ kind: 'error', text: t('connectivity.chromecast.discoveryFailed') });
     } finally {
       setDiscovering(false);
     }
-  }, [onUnauthorized]);
+  }, [onUnauthorized, t]);
 
   // Start adds a device to the active set without stopping the others.
   const startCast = useCallback(
@@ -1085,12 +1096,12 @@ function ChromecastCard() {
           return;
         }
         const data = await r.json().catch(() => ({}));
-        if (!data.success) setMessage({ kind: 'error', text: data.error || 'Could not start streaming.' });
+        if (!data.success) setMessage({ kind: 'error', text: data.error || t('connectivity.chromecast.startFailed') });
       } finally {
         setBusy(false);
       }
     },
-    [onUnauthorized]
+    [onUnauthorized, t]
   );
 
   // Stop one device, or every device when called with no argument ("Stop all").
@@ -1121,36 +1132,36 @@ function ChromecastCard() {
     <>
       {dialog}
       <Card className="mb-6">
-        <CardHeader title="Chromecast" />
+        <CardHeader title={t('connectivity.chromecast.header')} />
 
         <Toggle
           checked={useLiveBoard}
           onChange={updateSource}
           disabled={busy}
-          label="Stream Board Only"
-          help="Stream only the board. Uncheck for Classic mode with the e-paper image beside the board."
+          label={t('connectivity.chromecast.streamBoardOnly')}
+          help={t('connectivity.chromecast.streamBoardOnlyHelp')}
         />
 
         {status.devices.length === 0 ? (
           <div className="conn-status">
             <div className="conn-status-row">
               <MenuIcon name="cast" size={18} />
-              <span className="conn-status-ssid">Not streaming</span>
+              <span className="conn-status-ssid">{t('connectivity.chromecast.notStreaming')}</span>
             </div>
           </div>
         ) : (
           <div className="conn-list">
-            <h4 className="conn-list-title">Streaming to</h4>
+            <h4 className="conn-list-title">{t('connectivity.chromecast.streamingTo')}</h4>
             {status.devices.map((dev) => (
               <div key={dev.name} className="conn-list-item conn-list-item--static">
                 <span className="conn-list-name">
                   <MenuIcon name="cast" size={16} />
                   {dev.name}
-                  <span className="conn-active-badge">{CAST_STATE_LABELS[dev.state]}</span>
+                  <span className="conn-active-badge">{t(CAST_STATE_KEYS[dev.state])}</span>
                   {dev.error && <span className="conn-status-detail text-muted">{dev.error}</span>}
                 </span>
                 <Button variant="danger" size="sm" onClick={() => stopCast(dev.name)} disabled={busy}>
-                  Stop
+                  {t('connectivity.chromecast.stop')}
                 </Button>
               </div>
             ))}
@@ -1161,21 +1172,21 @@ function ChromecastCard() {
 
         <div className="conn-actions conn-btn-group">
           <Button variant="primary" onClick={discover} disabled={discovering || busy}>
-            {discovering ? 'Searching…' : 'Find devices'}
+            {discovering ? t('connectivity.chromecast.searching') : t('connectivity.chromecast.find')}
           </Button>
           {status.devices.length > 1 && (
             <Button variant="danger" onClick={() => stopCast()} disabled={busy}>
-              Stop all
+              {t('connectivity.chromecast.stopAll')}
             </Button>
           )}
         </div>
 
         {devices && (
           <div className="conn-list">
-            <h4 className="conn-list-title">Available devices</h4>
+            <h4 className="conn-list-title">{t('connectivity.chromecast.available')}</h4>
             {devices.filter((name) => !activeNames.has(name)).length === 0 ? (
               <p className="text-muted">
-                {devices.length === 0 ? 'No Chromecast devices found.' : 'All discovered devices are already streaming.'}
+                {devices.length === 0 ? t('connectivity.chromecast.noDevices') : t('connectivity.chromecast.allStreaming')}
               </p>
             ) : (
               devices
@@ -1187,7 +1198,7 @@ function ChromecastCard() {
                       {name}
                     </span>
                     <Button variant="primary" size="sm" onClick={() => startCast(name)} disabled={busy}>
-                      Stream
+                      {t('connectivity.chromecast.stream')}
                     </Button>
                   </div>
                 ))
@@ -1210,16 +1221,17 @@ interface AccountRecord {
   secretsSet: Record<string, boolean>;
 }
 
-// Human-readable message for each add-account error code the API returns.
-// Exhaustive over the codes; unmapped codes fall back to the server message.
-const ADD_ERROR_TEXT: Record<string, string> = {
-  duplicate: 'An account with that player name already exists.',
-  missing_field: 'Please fill in all required fields.',
-  missing_identity: 'Account identifier is required.',
-  auth_failed: 'Could not verify the account. Check the token and try again.',
-  no_token: 'A token is required.',
-  no_berserk: 'The Lichess client is unavailable on the board.',
-  unknown_type: 'Unknown account type.',
+// i18n key for each add-account error code the API returns
+// (connectivity.accounts.errors.*), resolved with `t` at usage. Unmapped codes
+// fall back to the server message.
+const ADD_ERROR_KEYS: Record<string, string> = {
+  duplicate: 'connectivity.accounts.errors.duplicate',
+  missing_field: 'connectivity.accounts.errors.missing_field',
+  missing_identity: 'connectivity.accounts.errors.missing_identity',
+  auth_failed: 'connectivity.accounts.errors.auth_failed',
+  no_token: 'connectivity.accounts.errors.no_token',
+  no_berserk: 'connectivity.accounts.errors.no_berserk',
+  unknown_type: 'connectivity.accounts.errors.unknown_type',
 };
 
 /**
@@ -1235,6 +1247,7 @@ const ADD_ERROR_TEXT: Record<string, string> = {
  * browser. Exported for focused testing.
  */
 export function AccountsCard() {
+  const { t } = useTranslation();
   const [accountTypes, setAccountTypes] = useState<AccountType[]>([]);
   const [accounts, setAccounts] = useState<AccountRecord[]>([]);
   const [selectedType, setSelectedType] = useState('');
@@ -1296,22 +1309,23 @@ export function AccountsCard() {
       }
       if (r.ok) {
         setFieldValues({});
-        setMessage({ kind: 'success', text: 'Account added.' });
+        setMessage({ kind: 'success', text: t('connectivity.accounts.added') });
         await fetchAccounts();
         return;
       }
       const data = await r.json().catch(() => ({}));
-      setMessage({ kind: 'error', text: ADD_ERROR_TEXT[data.error] || data.message || 'Could not add account.' });
+      const errorKey = ADD_ERROR_KEYS[data.error];
+      setMessage({ kind: 'error', text: errorKey ? t(errorKey) : data.message || t('connectivity.accounts.addFailed') });
     } catch {
-      setMessage({ kind: 'error', text: 'Network error contacting the board.' });
+      setMessage({ kind: 'error', text: t('common.networkError') });
     } finally {
       setSubmitting(false);
     }
-  }, [currentType, fieldValues, onUnauthorized, fetchAccounts]);
+  }, [currentType, fieldValues, onUnauthorized, fetchAccounts, t]);
 
   const remove = useCallback(
     async (account: AccountRecord) => {
-      if (!confirm(`Remove the account "${account.identity}"?`)) return;
+      if (!confirm(t('connectivity.accounts.removeConfirm', { identity: account.identity }))) return;
       setBusy(true);
       setMessage(null);
       try {
@@ -1326,35 +1340,35 @@ export function AccountsCard() {
         if (r.ok) {
           await fetchAccounts();
         } else {
-          setMessage({ kind: 'error', text: 'Could not remove account.' });
+          setMessage({ kind: 'error', text: t('connectivity.accounts.removeFailed') });
         }
       } catch {
-        setMessage({ kind: 'error', text: 'Network error contacting the board.' });
+        setMessage({ kind: 'error', text: t('common.networkError') });
       } finally {
         setBusy(false);
       }
     },
-    [onUnauthorized, fetchAccounts]
+    [onUnauthorized, fetchAccounts, t]
   );
 
   return (
     <>
       {dialog}
       <Card className="mb-6">
-        <CardHeader title="Accounts" />
+        <CardHeader title={t('connectivity.accounts.header')} />
         <p className="text-muted mb-4" style={{ fontSize: '0.875rem' }}>
-          Connect online accounts for internet play. Add more than one account to switch between them per player.
+          {t('connectivity.accounts.intro')}
         </p>
 
         {message && <div className={`conn-message conn-message--${message.kind}`}>{message.text}</div>}
 
         {loaded && accounts.length === 0 && (
-          <p className="text-muted">No accounts yet. Add one below.</p>
+          <p className="text-muted">{t('connectivity.accounts.none')}</p>
         )}
 
         {accounts.length > 0 && (
           <div className="conn-list">
-            <h4 className="conn-list-title">Saved accounts</h4>
+            <h4 className="conn-list-title">{t('connectivity.accounts.saved')}</h4>
             {accounts.map((account) => {
               const typeLabel = accountTypes.find((t) => t.id === account.type)?.label ?? account.type;
               return (
@@ -1362,7 +1376,7 @@ export function AccountsCard() {
                   <span className="conn-list-name">
                     <MenuIcon name="account" size={16} />
                     <span>
-                      Connected as <strong>{account.identity}</strong>
+                      {t('connectivity.accounts.connectedAs')} <strong>{account.identity}</strong>
                       <span className="text-muted"> · {typeLabel}</span>
                       {account.values.range && (
                         <span className="text-muted"> · {account.values.range}</span>
@@ -1370,7 +1384,7 @@ export function AccountsCard() {
                     </span>
                   </span>
                   <Button variant="danger" size="sm" onClick={() => remove(account)} disabled={busy}>
-                    Delete
+                    {t('connectivity.accounts.delete')}
                   </Button>
                 </div>
               );
@@ -1386,11 +1400,11 @@ export function AccountsCard() {
               void add();
             }}
           >
-            <h4 className="conn-list-title">Add Account</h4>
+            <h4 className="conn-list-title">{t('connectivity.accounts.add')}</h4>
 
             {accountTypes.length > 1 && (
               <div className="form-group">
-                <label htmlFor="account-type">Account Type</label>
+                <label htmlFor="account-type">{t('connectivity.accounts.type')}</label>
                 <Select
                   id="account-type"
                   value={selectedType}
@@ -1423,7 +1437,7 @@ export function AccountsCard() {
 
             <div className="conn-actions">
               <Button type="submit" variant="primary" disabled={submitting || !loaded}>
-                {submitting ? 'Adding…' : 'Add Account'}
+                {submitting ? t('connectivity.accounts.adding') : t('connectivity.accounts.add')}
               </Button>
             </div>
           </form>

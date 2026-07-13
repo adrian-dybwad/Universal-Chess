@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useTranslation } from 'react-i18next';
+import { useTranslation, Trans } from 'react-i18next';
 import { Button, Card, CardHeader, FormRow, Input, Select, Toggle, Badge, ProgressBar } from '../components/ui';
 import { WebMenuContext } from '../menu/context';
 import { MenuContainer, renderCatalogRow } from '../menu/MenuContainer';
@@ -458,23 +458,26 @@ function parseRawSettings(data: SettingsData): FormSettings {
  * 'custom' because the endpoint is user-supplied and has no single canonical key
  * page.
  */
+// Provider-specific API-key guidance. The prose (textKey/linkKey) lives in the
+// i18n bundle (settingsPage.agentsUi.guidance.*) and is resolved with `t` at
+// render; the URLs are stable provider endpoints.
 const COACH_API_KEY_GUIDANCE = {
   openai: {
-    text: 'Create a secret key in your OpenAI account, then paste it here. It looks like "sk-...".',
+    textKey: 'settingsPage.agentsUi.guidance.openaiText',
     url: 'https://platform.openai.com/api-keys',
-    linkLabel: 'Get an OpenAI API key',
+    linkKey: 'settingsPage.agentsUi.guidance.openaiLink',
   },
   anthropic: {
-    text: 'Create a key in the Anthropic Console, then paste it here. It looks like "sk-ant-...".',
+    textKey: 'settingsPage.agentsUi.guidance.anthropicText',
     url: 'https://console.anthropic.com/settings/keys',
-    linkLabel: 'Get an Anthropic API key',
+    linkKey: 'settingsPage.agentsUi.guidance.anthropicLink',
   },
   custom: {
-    text: 'Use the API key issued by your OpenAI-compatible provider. Find it in that provider\u2019s dashboard, usually under an "API keys" section.',
+    textKey: 'settingsPage.agentsUi.guidance.customText',
     url: undefined,
-    linkLabel: undefined,
+    linkKey: undefined,
   },
-} satisfies Record<string, { text: string; url?: string; linkLabel?: string }>;
+} satisfies Record<string, { textKey: string; url?: string; linkKey?: string }>;
 
 /**
  * Display metadata for a selectable coach, as returned by GET /api/coaches.
@@ -832,9 +835,9 @@ export function Settings() {
       setEngineLevels((prev) => ({ ...prev, [engineName]: levels }));
       return levels;
     } catch {
-      return [{ value: 'Default', label: 'Default' }];
+      return [{ value: 'Default', label: t('settingsPage.players.defaultLevel') }];
     }
-  }, []);
+  }, [t]);
 
   // Load levels for the selected engines. Wrapped in an inline async function so
   // the state update inside loadEngineLevels happens after the awaited fetch, not
@@ -1012,7 +1015,7 @@ export function Settings() {
   // re-point or disable the coach via the normalization effect). The local input is
   // reset so a since-cleared field cannot be re-saved as if unchanged.
   const clearAgentKey = async (agentId: string) => {
-    if (!window.confirm('Remove the saved API key for this agent? It will stop working until a new key is entered.')) {
+    if (!window.confirm(t('settingsPage.agentsUi.clearKeyConfirm'))) {
       return;
     }
     setAgentKeyErrors((prev) => {
@@ -1034,7 +1037,7 @@ export function Settings() {
       }));
       await fetchAgents();
     } catch {
-      setAgentKeyErrors((prev) => ({ ...prev, [agentId]: 'Could not remove the key. Try again.' }));
+      setAgentKeyErrors((prev) => ({ ...prev, [agentId]: t('settingsPage.agentsUi.clearKeyFailed') }));
     }
   };
 
@@ -1122,7 +1125,7 @@ export function Settings() {
       
       if (response.status === 401) {
         // Authentication required - show login dialog
-        setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
+        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
         setPendingAction('save');
         setLoginDialogOpen(true);
         return false;
@@ -1164,7 +1167,7 @@ export function Settings() {
         requiresAuth: true,
       });
       if (response.status === 401) {
-        setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
+        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
         pendingTimezoneRef.current = tz;
         setLoginDialogOpen(true);
       }
@@ -1190,7 +1193,7 @@ export function Settings() {
         requiresAuth: true,
       });
       if (response.status === 401) {
-        setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
+        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
         pendingLanguageRef.current = code;
         setLoginDialogOpen(true);
       }
@@ -1303,7 +1306,7 @@ export function Settings() {
             const result = status.result;
             if (result && result.success === false) {
               const label = enginesData.find((e) => e.name === finishedEngine)?.display_name ?? finishedEngine;
-              setEngineError({ engine: finishedEngine, message: `Failed to install ${label}.${result.error ? ` ${result.error}` : ''}` });
+              setEngineError({ engine: finishedEngine, message: `${t('settingsPage.enginesUi.failInstall', { name: label })}${result.error ? ` ${result.error}` : ''}` });
             }
           } else if (status.interrupted && status.engine) {
             // An install was running before the last restart; offer Resume/Cancel.
@@ -1324,7 +1327,7 @@ export function Settings() {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [refreshEngines]);
+  }, [refreshEngines, t]);
 
   // Resume an install that was interrupted by a process/board restart. The
   // backend relaunches the install (reusing the cached git clone); the UI
@@ -1337,7 +1340,7 @@ export function Settings() {
       const response = await apiFetch('/api/engines/resume', { method: 'POST' });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.success === false) {
-        setEngineError({ engine: engineName, message: data.error || `Failed to resume installing ${engineName}.` });
+        setEngineError({ engine: engineName, message: data.error || t('settingsPage.enginesUi.failResume', { name: engineName }) });
         return;
       }
       // Track this engine so the status watcher owns the in-progress UI and the
@@ -1350,14 +1353,14 @@ export function Settings() {
         installing: true,
         interrupted: false,
         stage: 'starting',
-        message: 'Resuming install...',
+        message: t('settingsPage.enginesUi.statusResuming'),
         percent: 0,
       });
     } catch (e) {
       console.error('Failed to resume engine install:', e);
-      setEngineError({ engine: engineName, message: `Failed to resume installing ${engineName}. Check the connection and try again.` });
+      setEngineError({ engine: engineName, message: t('settingsPage.enginesUi.failResumeRetry', { name: engineName }) });
     }
-  }, [installStatus]);
+  }, [installStatus, t]);
 
   // Dismiss an interrupted install: clears the persisted state so the banner
   // does not reappear on the next poll or reload.
@@ -1369,7 +1372,7 @@ export function Settings() {
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.success === false) {
         if (engineName) {
-          setEngineError({ engine: engineName, message: data.error || 'Failed to cancel the interrupted install.' });
+          setEngineError({ engine: engineName, message: data.error || t('settingsPage.enginesUi.failCancel') });
         }
         return;
       }
@@ -1377,10 +1380,10 @@ export function Settings() {
     } catch (e) {
       console.error('Failed to cancel engine install:', e);
       if (engineName) {
-        setEngineError({ engine: engineName, message: 'Failed to cancel the interrupted install. Check the connection and try again.' });
+        setEngineError({ engine: engineName, message: t('settingsPage.enginesUi.failCancelRetry') });
       }
     }
-  }, [installStatus]);
+  }, [installStatus, t]);
 
   // The backend contract is POST /api/engines/{install,uninstall} with the
   // engine name in the JSON body (matching the legacy configure page). Install
@@ -1407,7 +1410,7 @@ export function Settings() {
       // message with no way to authenticate.
       if (response.status === 401) {
         setInstallingEngine(null);
-        setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
+        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
         pendingEngineActionRef.current = { engineName, install, ref };
         setLoginDialogOpen(true);
         return;
@@ -1415,7 +1418,12 @@ export function Settings() {
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.success === false) {
         setInstallingEngine(null);
-        setEngineError({ engine: engineName, message: data.error || `Failed to ${endpoint} ${engineName}.` });
+        setEngineError({
+          engine: engineName,
+          message: data.error || (install
+            ? t('settingsPage.enginesUi.failInstall', { name: engineName })
+            : t('settingsPage.enginesUi.failUninstall', { name: engineName })),
+        });
         return;
       }
       if (install) {
@@ -1429,7 +1437,7 @@ export function Settings() {
           engine: engineName,
           display_name: null,
           stage: 'starting',
-          message: 'Starting...',
+          message: t('settingsPage.enginesUi.statusStarting'),
           percent: 0,
           interrupted: false,
           result: null,
@@ -1441,9 +1449,14 @@ export function Settings() {
     } catch (e) {
       console.error(`Failed to ${endpoint} engine:`, e);
       setInstallingEngine(null);
-      setEngineError({ engine: engineName, message: `Failed to ${endpoint} ${engineName}. Check the connection and try again.` });
+      setEngineError({
+        engine: engineName,
+        message: install
+          ? t('settingsPage.enginesUi.failInstallRetry', { name: engineName })
+          : t('settingsPage.enginesUi.failUninstallRetry', { name: engineName }),
+      });
     }
-  }, [refreshEngines]);
+  }, [refreshEngines, t]);
 
   // Repair an installed-but-incomplete engine in place (a net-backed engine like
   // Maia whose weight download failed). The endpoint is @requires_auth and runs
@@ -1463,7 +1476,7 @@ export function Settings() {
       });
       if (response.status === 401) {
         setInstallingEngine(null);
-        setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
+        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
         // Repair carries no ref and always installs=false semantics; the queued
         // action re-runs the repair itself rather than toggleEngine.
         pendingEngineActionRef.current = { engineName, install: false, ref: undefined, repair: true };
@@ -1473,7 +1486,7 @@ export function Settings() {
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.success === false) {
         setInstallingEngine(null);
-        setEngineError({ engine: engineName, message: data.error || `Failed to repair ${engineName}.` });
+        setEngineError({ engine: engineName, message: data.error || t('settingsPage.enginesUi.failRepair', { name: engineName }) });
         return;
       }
       // Hand off to the status watcher exactly like an install.
@@ -1484,7 +1497,7 @@ export function Settings() {
         engine: engineName,
         display_name: null,
         stage: 'starting',
-        message: 'Starting...',
+        message: t('settingsPage.enginesUi.statusStarting'),
         percent: 0,
         interrupted: false,
         result: null,
@@ -1492,9 +1505,9 @@ export function Settings() {
     } catch (e) {
       console.error('Failed to repair engine:', e);
       setInstallingEngine(null);
-      setEngineError({ engine: engineName, message: `Failed to repair ${engineName}. Check the connection and try again.` });
+      setEngineError({ engine: engineName, message: t('settingsPage.enginesUi.failRepairRetry', { name: engineName }) });
     }
-  }, []);
+  }, [t]);
 
   // Upload a custom engine binary or .tar.gz. The endpoint is @requires_auth and
   // completes in-request (no install thread), so on success the engine list is
@@ -1511,26 +1524,26 @@ export function Settings() {
       form.append('file', file);
       const response = await apiFetch('/api/engines/upload', { method: 'POST', body: form, requiresAuth: true });
       if (response.status === 401) {
-        setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
+        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
         pendingCustomActionRef.current = () => uploadCustomEngine(id, displayName, file);
         setLoginDialogOpen(true);
         return false;
       }
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.success === false) {
-        setCustomEngineError(data.error || 'Upload failed.');
+        setCustomEngineError(data.error || t('settingsPage.customEngines.uploadFailed'));
         return false;
       }
       await refreshEngines();
       return true;
     } catch (e) {
       console.error('Failed to upload custom engine:', e);
-      setCustomEngineError('Upload failed. Check the connection and try again.');
+      setCustomEngineError(t('settingsPage.customEngines.uploadFailedRetry'));
       return false;
     } finally {
       setCustomEngineBusy(false);
     }
-  }, [refreshEngines]);
+  }, [refreshEngines, t]);
 
   // Install a custom engine from an HTTPS URL. The endpoint is @requires_auth and
   // dispatches an async download/install tracked by the shared install-status
@@ -1547,14 +1560,14 @@ export function Settings() {
         requiresAuth: true,
       });
       if (response.status === 401) {
-        setLoginError(getStoredCredentials() ? 'Invalid credentials. Please try again.' : undefined);
+        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
         pendingCustomActionRef.current = () => installCustomEngineFromUrl(id, displayName, url);
         setLoginDialogOpen(true);
         return false;
       }
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.success === false) {
-        setCustomEngineError(data.error || 'Install failed.');
+        setCustomEngineError(data.error || t('settingsPage.customEngines.installFailed'));
         return false;
       }
       // Hand off to the status watcher with an immediate optimistic state.
@@ -1566,7 +1579,7 @@ export function Settings() {
         engine: id,
         display_name: displayName,
         stage: 'starting',
-        message: 'Starting...',
+        message: t('settingsPage.customEngines.starting'),
         percent: 0,
         interrupted: false,
         result: null,
@@ -1574,12 +1587,12 @@ export function Settings() {
       return true;
     } catch (e) {
       console.error('Failed to install custom engine from URL:', e);
-      setCustomEngineError('Install failed. Check the connection and try again.');
+      setCustomEngineError(t('settingsPage.customEngines.installFailedRetry'));
       return false;
     } finally {
       setCustomEngineBusy(false);
     }
-  }, []);
+  }, [t]);
 
 
   if (loading) {
@@ -1674,7 +1687,7 @@ export function Settings() {
     const known = agents.find((agent) => agent.id === currentProvider);
     agentChoiceOptions.unshift({
       value: currentProvider,
-      label: known ? `${known.name} (no key)` : 'Select an agent',
+      label: known ? t('settingsPage.agentsUi.agentNoKey', { name: known.name }) : t('settingsPage.agentsUi.selectAgent'),
     });
   }
   // The Coach selector always shows the real stored persona -- it is never masked
@@ -1690,11 +1703,11 @@ export function Settings() {
   const modelOptionsForAgent = (agentId: string, currentModel: string): MenuOption[] => {
     const models = agentModels[agentId] ?? [];
     const options: MenuOption[] = [
-      { value: '', label: 'Default (recommended)' },
+      { value: '', label: t('settingsPage.agentsUi.modelDefaultRecommended') },
       ...models.map((modelId) => ({ value: modelId, label: modelId })),
     ];
     if (currentModel && !models.includes(currentModel)) {
-      options.push({ value: currentModel, label: `${currentModel} (current)` });
+      options.push({ value: currentModel, label: t('settingsPage.agentsUi.modelCurrent', { model: currentModel }) });
     }
     return options;
   };
@@ -1710,8 +1723,8 @@ export function Settings() {
   // Auto + every registered coach (name/elo/style). Same roster the board renders
   // from its `coaches` provider, so the two platforms cannot drift.
   const coachOptions: MenuOption[] = [
-    { value: 'off', label: 'Disabled' },
-    { value: 'auto', label: 'Auto (match opponent)' },
+    { value: 'off', label: t('settingsPage.agentsUi.coachDisabled') },
+    { value: 'auto', label: t('settingsPage.agentsUi.coachAuto') },
     ...coaches.map((c) => ({
       value: c.id,
       label: `${c.name} \u2014 ${c.elo} \u2014 ${c.character_type}`,
@@ -1825,7 +1838,7 @@ export function Settings() {
     // The Name field defaults per slot ("Player 1"/"Player 2"), so its empty-state
     // hint comes from the context rather than a single shared catalog valueDefault
     // -- the web twin of the board's per-slot {fn:player_name} compute.
-    ctx.registerPlaceholder('field.player.name', playerKey === 'player1' ? 'Player 1' : 'Player 2');
+    ctx.registerPlaceholder('field.player.name', playerKey === 'player1' ? t('settingsPage.players.namePlaceholder1') : t('settingsPage.players.namePlaceholder2'));
     ctx.registerStore(
       'player',
       (key) => (formSettings[playerKey] as unknown as Record<string, FieldValue>)[key],
@@ -1845,7 +1858,7 @@ export function Settings() {
     ctx.registerProvider(
       'engine_levels',
       () =>
-        engineLevels[formSettings[playerKey].engine] ?? [{ value: 'Default', label: 'Default' }],
+        engineLevels[formSettings[playerKey].engine] ?? [{ value: 'Default', label: t('settingsPage.players.defaultLevel') }],
     );
     // Account options for this slot: "Default account" plus each saved account of
     // the slot's online type, with the one-account-per-side exclusion applied (the
@@ -1860,7 +1873,7 @@ export function Settings() {
       const other = formSettings[playerKey === 'player1' ? 'player2' : 'player1'];
       const choices = selectableAccountsForSlot(list, other.type === ps.type, other.account);
       return [
-        ...(choices.defaultAllowed ? [{ value: '', label: 'Default account' }] : []),
+        ...(choices.defaultAllowed ? [{ value: '', label: t('settingsPage.players.defaultAccount') }] : []),
         ...choices.accounts.map((a) => ({ value: a.id, label: a.identity })),
       ];
     });
@@ -1881,9 +1894,11 @@ export function Settings() {
         {rows}
         {formSettings[playerKey].type === 'human' && (
           <p className="text-muted" style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
-            Hints will use{' '}
-            <strong>{getEngineDisplayName(formSettings.game.analysis_engine || 'stockfish')}</strong>{' '}
-            (configured in Game Settings → Analysis Engine)
+            <Trans
+              i18nKey="settingsPage.players.hintsWillUse"
+              values={{ engine: getEngineDisplayName(formSettings.game.analysis_engine || 'stockfish') }}
+              components={{ 1: <strong /> }}
+            />
           </p>
         )}
       </Card>
@@ -1930,32 +1945,31 @@ export function Settings() {
             {/* Both cards are rendered from the shared catalog container
                 settings.player_detail via renderPlayerCard, so the web and board
                 show the same fields, order, and gating. */}
-            {renderPlayerCard('player1', 'Player 1 (White by default)')}
-            {renderPlayerCard('player2', 'Player 2 (Black by default)')}
+            {renderPlayerCard('player1', t('settingsPage.player1Title'))}
+            {renderPlayerCard('player2', t('settingsPage.player2Title'))}
 
             {/* Hand+Brain Explanation */}
             {showHandBrainExplanation && (
               <Card variant="muted" className="mt-6">
-                <h3 className="settings-group-title">What is Hand+Brain?</h3>
+                <h3 className="settings-group-title">{t('settingsPage.handBrain.title')}</h3>
                 <p className="text-muted mb-4">
-                  Hand+Brain is a collaborative chess variant where a human and engine work together as a team.
-                  One partner is the "Brain" (chooses WHICH piece type to move) and the other is the "Hand" (chooses WHERE to move it).
+                  {t('settingsPage.handBrain.intro')}
                 </p>
                 <div className="grid grid--2 gap-4">
                   <div className="hb-mode-card hb-normal">
-                    <strong>Normal Mode</strong>
+                    <strong>{t('settingsPage.handBrain.normalTitle')}</strong>
                     <p>
-                      <strong>Engine = Brain:</strong> The engine suggests a piece type (e.g., "Knight").<br />
-                      <strong>Human = Hand:</strong> You choose any legal move using that piece type.<br />
-                      <em>Great for learning strategy from the engine's piece selection.</em>
+                      <strong>{t('settingsPage.handBrain.normalBrainLabel')}</strong> {t('settingsPage.handBrain.normalBrain')}<br />
+                      <strong>{t('settingsPage.handBrain.normalHandLabel')}</strong> {t('settingsPage.handBrain.normalHand')}<br />
+                      <em>{t('settingsPage.handBrain.normalNote')}</em>
                     </p>
                   </div>
                   <div className="hb-mode-card hb-reverse">
-                    <strong>Reverse Mode</strong>
+                    <strong>{t('settingsPage.handBrain.reverseTitle')}</strong>
                     <p>
-                      <strong>Human = Brain:</strong> You lift and replace a piece to select its type.<br />
-                      <strong>Engine = Hand:</strong> The engine finds the best move with that piece, shown via LEDs.<br />
-                      <em>Great for practicing piece coordination while engine handles tactics.</em>
+                      <strong>{t('settingsPage.handBrain.reverseBrainLabel')}</strong> {t('settingsPage.handBrain.reverseBrain')}<br />
+                      <strong>{t('settingsPage.handBrain.reverseHandLabel')}</strong> {t('settingsPage.handBrain.reverseHand')}<br />
+                      <em>{t('settingsPage.handBrain.reverseNote')}</em>
                     </p>
                   </div>
                 </div>
@@ -1993,7 +2007,7 @@ export function Settings() {
 
             {agents.length === 0 ? (
               <Card className="mb-6">
-                <p className="text-muted">No agents are available.</p>
+                <p className="text-muted">{t('settingsPage.agentsUi.none')}</p>
               </Card>
             ) : (
               // One card per registered agent. Every agent stores its own key/model
@@ -2020,7 +2034,7 @@ export function Settings() {
                   <Card key={agent.id} className="mb-6">
                     <CardHeader
                       title={agent.name}
-                      action={isActive ? <Badge variant="success">Active</Badge> : undefined}
+                      action={isActive ? <Badge variant="success">{t('settingsPage.agentsUi.active')}</Badge> : undefined}
                     />
                     {agent.description && (
                       <p className="text-muted mb-4" style={{ fontSize: '0.85em' }}>
@@ -2029,7 +2043,7 @@ export function Settings() {
                     )}
 
                     <FormRow
-                      label="API Key"
+                      label={t('settingsPage.agentsUi.apiKeyLabel')}
                       help={
                         // Keep all explanatory text in the left help column (which
                         // grows to fill the row) rather than in the fixed-width
@@ -2037,16 +2051,16 @@ export function Settings() {
                         // tall, awkward block beside the input. Matches every other
                         // settings row's layout.
                         <>
-                          Stored securely on the board and never shown here.
+                          {t('settingsPage.agentsUi.apiKeyHelp')}
                           {guidance && (
                             <>
                               {' '}
-                              {guidance.text}
-                              {guidance.url && (
+                              {t(guidance.textKey)}
+                              {guidance.url && guidance.linkKey && (
                                 <>
                                   {' '}
                                   <a href={guidance.url} target="_blank" rel="noreferrer">
-                                    {guidance.linkLabel}
+                                    {t(guidance.linkKey)}
                                   </a>
                                 </>
                               )}
@@ -2064,7 +2078,9 @@ export function Settings() {
                           // than clipped.
                           size={32}
                           placeholder={
-                            agent.api_key_set ? 'Key saved \u2014 leave blank to keep' : 'Enter API key'
+                            agent.api_key_set
+                              ? t('settingsPage.agentsUi.keyPlaceholderSaved')
+                              : t('settingsPage.agentsUi.keyPlaceholderEnter')
                           }
                           value={edit.api_key}
                           onChange={(e) =>
@@ -2082,7 +2098,7 @@ export function Settings() {
                               void clearAgentKey(agent.id);
                             }}
                           >
-                            Clear saved key
+                            {t('settingsPage.agentsUi.clearKey')}
                           </Button>
                         )}
                         {agentKeyErrors[agent.id] && (
@@ -2097,11 +2113,11 @@ export function Settings() {
                       // Free-text model: this agent has no canonical model list
                       // (e.g. a custom OpenAI-compatible endpoint with
                       // deployment-specific ids).
-                      <FormRow label="Model" help="The model id to use. Leave blank for the agent default.">
+                      <FormRow label={t('settingsPage.agentsUi.modelLabel')} help={t('settingsPage.agentsUi.modelHelpFree')}>
                         <Input
                           type="text"
                           autoComplete="off"
-                          placeholder="Default"
+                          placeholder={t('settingsPage.agentsUi.modelDefault')}
                           value={edit.model}
                           onChange={(e) => updateAgentEdit(agent.id, { model: e.target.value })}
                         />
@@ -2110,7 +2126,7 @@ export function Settings() {
                       // Live model dropdown fetched from the agent's endpoint (using
                       // its stored key) so only valid, available models are shown. A
                       // saved model no longer listed is kept as an explicit option.
-                      <FormRow label="Model" help="Fetched from the agent. Leave on Default for the recommended model.">
+                      <FormRow label={t('settingsPage.agentsUi.modelLabel')} help={t('settingsPage.agentsUi.modelHelpFetched')}>
                         <Select
                           value={edit.model}
                           options={modelOptionsForAgent(agent.id, edit.model)}
@@ -2120,11 +2136,11 @@ export function Settings() {
                     )}
 
                     {agent.requires_base_url && (
-                      <FormRow label="Base URL" help="The OpenAI-compatible endpoint base URL for this agent.">
+                      <FormRow label={t('settingsPage.agentsUi.baseUrlLabel')} help={t('settingsPage.agentsUi.baseUrlHelp')}>
                         <Input
                           type="text"
                           autoComplete="off"
-                          placeholder="https://your-endpoint/v1"
+                          placeholder={t('settingsPage.agentsUi.baseUrlPlaceholder')}
                           value={edit.base_url}
                           onChange={(e) => updateAgentEdit(agent.id, { base_url: e.target.value })}
                         />
@@ -2143,7 +2159,7 @@ export function Settings() {
                             void saveAgent();
                           }}
                         >
-                          {saving ? 'Saving\u2026' : 'Save'}
+                          {saving ? t('settingsPage.agentsUi.saving') : t('settingsPage.agentsUi.save')}
                         </Button>
                       </div>
                     )}
@@ -2254,29 +2270,28 @@ export function Settings() {
             <MenuContainer catalog={catalog} containerId="group.system.device" ctx={systemMenuCtx} />
 
             <Card className="mb-6">
-              <CardHeader title="Software Updates" />
+              <CardHeader title={t('settingsPage.updates.cardTitle')} />
               <UpdateManager catalog={catalog} />
             </Card>
 
             <Card className="mb-6">
-              <CardHeader title="Game Database" />
+              <CardHeader title={t('settingsPage.gameDatabase.title')} />
               <p className="text-muted mb-4">
-                Universal Chess stores all your games in a database. By default, it uses SQLite at{' '}
-                <code>/opt/universalchess/db/centaur.db</code>.
+                <Trans i18nKey="settingsPage.gameDatabase.intro" components={{ 0: <code /> }} />
               </p>
               <FormRow label={fieldLabel('field.system.database_uri')} help={fieldHelp('field.system.database_uri')}>
                 <Input
                   value={formSettings.system.database_uri}
-                  placeholder="(default SQLite)"
+                  placeholder={t('settingsPage.gameDatabase.placeholder')}
                   onChange={(e) => updateFormSettings('system', { database_uri: e.target.value })}
                 />
               </FormRow>
               <Card variant="muted" className="mt-4">
-                <strong>Supported Database URIs:</strong>
+                <strong>{t('settingsPage.gameDatabase.supportedTitle')}</strong>
                 <ul className="mt-2 ml-4 list-disc text-muted">
-                  <li><code>sqlite:///path/to/games.db</code> - Local SQLite file</li>
-                  <li><code>postgresql://user:pass@host:5432/dbname</code> - PostgreSQL</li>
-                  <li><code>mysql://user:pass@host:3306/dbname</code> - MySQL/MariaDB</li>
+                  <li><code>sqlite:///path/to/games.db</code> - {t('settingsPage.gameDatabase.sqlite')}</li>
+                  <li><code>postgresql://user:pass@host:5432/dbname</code> - {t('settingsPage.gameDatabase.postgresql')}</li>
+                  <li><code>mysql://user:pass@host:3306/dbname</code> - {t('settingsPage.gameDatabase.mysql')}</li>
                 </ul>
               </Card>
             </Card>
@@ -2329,6 +2344,7 @@ function CustomEnginesPanel({
   onInstallUrl: (id: string, displayName: string, url: string) => Promise<boolean>;
   onUninstall: (name: string) => void;
 }) {
+  const { t } = useTranslation();
   const [mode, setMode] = useState<CustomEngineMode>('upload');
   const [id, setId] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -2363,10 +2379,9 @@ function CustomEnginesPanel({
 
   return (
     <Card className="mb-6">
-      <CardHeader title="Custom Engines" />
+      <CardHeader title={t('settingsPage.customEngines.title')} />
       <p className="text-muted mb-4">
-        Add your own UCI engine by uploading a binary (or a <code>.tar.gz</code> containing one) or by
-        installing it from an HTTPS URL. The binary must match this device's CPU architecture.
+        <Trans i18nKey="settingsPage.customEngines.intro" components={{ 0: <code /> }} />
       </p>
 
       {customEngines.length > 0 && (
@@ -2384,7 +2399,7 @@ function CustomEnginesPanel({
                 onClick={() => onUninstall(engine.name)}
                 disabled={installingEngine !== null}
               >
-                Uninstall
+                {t('settingsPage.customEngines.uninstall')}
               </Button>
             </div>
           ))}
@@ -2393,22 +2408,22 @@ function CustomEnginesPanel({
 
       <div className="custom-engine-mode-toggle mb-4">
         <Button variant={mode === 'upload' ? 'primary' : 'secondary'} onClick={() => setMode('upload')}>
-          Upload binary
+          {t('settingsPage.customEngines.uploadBinary')}
         </Button>
         <Button variant={mode === 'url' ? 'primary' : 'secondary'} onClick={() => setMode('url')}>
-          From URL
+          {t('settingsPage.customEngines.fromUrl')}
         </Button>
       </div>
 
-      <FormRow label="Engine ID" help="Lowercase letters, digits, '-' or '_'. Used as the filename.">
-        <Input value={id} placeholder="my-engine" onChange={(e) => setId(e.target.value)} />
+      <FormRow label={t('settingsPage.customEngines.engineIdLabel')} help={t('settingsPage.customEngines.engineIdHelp')}>
+        <Input value={id} placeholder={t('settingsPage.customEngines.engineIdPlaceholder')} onChange={(e) => setId(e.target.value)} />
       </FormRow>
-      <FormRow label="Display name" help="Shown in the engine and player menus.">
-        <Input value={displayName} placeholder="My Engine" onChange={(e) => setDisplayName(e.target.value)} />
+      <FormRow label={t('settingsPage.customEngines.displayNameLabel')} help={t('settingsPage.customEngines.displayNameHelp')}>
+        <Input value={displayName} placeholder={t('settingsPage.customEngines.displayNamePlaceholder')} onChange={(e) => setDisplayName(e.target.value)} />
       </FormRow>
 
       {mode === 'upload' ? (
-        <FormRow label="Engine file" help="A UCI binary, or a .tar.gz containing exactly one binary.">
+        <FormRow label={t('settingsPage.customEngines.engineFileLabel')} help={t('settingsPage.customEngines.engineFileHelp')}>
           <input
             key={fileInputKey}
             type="file"
@@ -2416,10 +2431,10 @@ function CustomEnginesPanel({
           />
         </FormRow>
       ) : (
-        <FormRow label="Download URL" help="An https:// link to a binary or .tar.gz.">
+        <FormRow label={t('settingsPage.customEngines.downloadUrlLabel')} help={t('settingsPage.customEngines.downloadUrlHelp')}>
           <Input
             value={url}
-            placeholder="https://example.com/engine.tar.gz"
+            placeholder={t('settingsPage.customEngines.downloadUrlPlaceholder')}
             onChange={(e) => setUrl(e.target.value)}
           />
         </FormRow>
@@ -2429,7 +2444,7 @@ function CustomEnginesPanel({
 
       <div className="mt-4">
         <Button variant="success" onClick={handleSubmit} disabled={!canSubmit}>
-          {busy ? 'Working...' : mode === 'upload' ? 'Upload engine' : 'Install from URL'}
+          {busy ? t('settingsPage.customEngines.working') : mode === 'upload' ? t('settingsPage.customEngines.uploadEngine') : t('settingsPage.customEngines.installFromUrl')}
         </Button>
       </div>
     </Card>
@@ -2457,11 +2472,12 @@ function EnginesList({
   onCancel: () => void;
   onConfigureProfiles: (engine: EngineDefinition) => void;
 }) {
+  const { t } = useTranslation();
   // Group engines by tier
   const tiers = {
-    top: { title: 'Top Tier Engines (3300+ ELO)', engines: [] as EngineDefinition[] },
-    strong: { title: 'Strong Engines (2900-3200 ELO)', engines: [] as EngineDefinition[] },
-    specialty: { title: 'Specialty & Personality Engines', engines: [] as EngineDefinition[] },
+    top: { title: t('settingsPage.enginesUi.tierTop'), engines: [] as EngineDefinition[] },
+    strong: { title: t('settingsPage.enginesUi.tierStrong'), engines: [] as EngineDefinition[] },
+    specialty: { title: t('settingsPage.enginesUi.tierSpecialty'), engines: [] as EngineDefinition[] },
   };
 
   engines.forEach((engine) => {
@@ -2540,6 +2556,7 @@ function EngineCard({
   onCancel: () => void;
   onConfigureProfiles: (engine: EngineDefinition) => void;
 }) {
+  const { t } = useTranslation();
   const isSystem = engine.name === 'stockfish'; // Stockfish is a system package
   const isActiveInstall = status?.active === true;
   const isInterrupted = status?.interrupted === true;
@@ -2574,16 +2591,16 @@ function EngineCard({
   // still is. This distinguishes the two in-flight labels for this card.
   const isUninstalling = isInstalling && engine.installed;
   const buttonLabel = isUninstalling
-    ? `Uninstalling ${engine.display_name}...`
+    ? t('settingsPage.enginesUi.uninstalling', { name: engine.display_name })
     : isInstalling
-      ? `Installing ${engine.display_name}...`
+      ? t('settingsPage.enginesUi.installing', { name: engine.display_name })
       : engine.installed
-        ? 'Uninstall'
-        : 'Install';
+        ? t('settingsPage.enginesUi.uninstall')
+        : t('settingsPage.enginesUi.install');
 
   // The default-branch sentinel is shown by a human label, not the raw "default".
   const refDisplayLabel = (value: string | null): string =>
-    !value ? '' : value === 'default' ? 'default branch' : value;
+    !value ? '' : value === 'default' ? t('settingsPage.enginesUi.defaultBranch') : value;
 
   // Picker options. Before the lazy fetch resolves, show just the recommended ref
   // so the control is populated and a plain Install still works; once loaded, list
@@ -2593,11 +2610,11 @@ function EngineCard({
         value: r.ref,
         label:
           r.label +
-          (r.is_pin ? ' — known good (pinned)' : r.known_working ? ' — known good' : '') +
-          (r.installed ? ' — installed' : ''),
+          (r.is_pin ? t('settingsPage.enginesUi.refKnownGoodPinned') : r.known_working ? t('settingsPage.enginesUi.refKnownGood') : '') +
+          (r.installed ? t('settingsPage.enginesUi.refInstalled') : ''),
       }))
     : engine.recommended_ref
-      ? [{ value: engine.recommended_ref, label: `${refDisplayLabel(engine.recommended_ref)} — recommended` }]
+      ? [{ value: engine.recommended_ref, label: t('settingsPage.enginesUi.refRecommended', { label: refDisplayLabel(engine.recommended_ref) }) }]
       : [];
 
   return (
@@ -2606,20 +2623,20 @@ function EngineCard({
         <div className="engine-card-title">
           <strong>{engine.display_name}</strong>
           {isSystem ? (
-            <Badge variant="success">System Package</Badge>
+            <Badge variant="success">{t('settingsPage.enginesUi.badgeSystemPackage')}</Badge>
           ) : engine.needs_repair ? (
             // Installed but missing required files (e.g. Maia's nets): the binary
             // is present but it cannot play until repaired, so it is neither a
             // plain "Installed" nor "Not Installed" state.
-            <Badge variant="warning">Needs Repair</Badge>
+            <Badge variant="warning">{t('settingsPage.enginesUi.badgeNeedsRepair')}</Badge>
           ) : engine.installed ? (
-            <Badge variant="success">Installed</Badge>
+            <Badge variant="success">{t('settingsPage.enginesUi.badgeInstalled')}</Badge>
           ) : !engine.supported ? (
             // An engine the device cannot build/run shows its own terminal state
             // instead of "Not Installed", since it cannot be installed here.
-            <Badge variant="danger">Not Supported</Badge>
+            <Badge variant="danger">{t('settingsPage.enginesUi.badgeNotSupported')}</Badge>
           ) : (
-            <Badge variant="default">Not Installed</Badge>
+            <Badge variant="default">{t('settingsPage.enginesUi.badgeNotInstalled')}</Badge>
           )}
         </div>
       </div>
@@ -2627,15 +2644,15 @@ function EngineCard({
       <p className="engine-description">{engine.description}</p>
       {!isSystem && !engine.installed && engine.install_time && (
         <p className="engine-install-time">
-          Estimated install time: {engine.install_time}
-          {engine.has_prebuilt && ' (pre-built available)'}
+          {t('settingsPage.enginesUi.estimatedInstall', { time: engine.install_time })}
+          {engine.has_prebuilt && t('settingsPage.enginesUi.prebuiltAvailable')}
         </p>
       )}
       {/* Show which release is installed so the device's actual version is known
           (and which release the picker should default to re-selecting). */}
       {!isSystem && engine.installed && engine.source_installable && engine.installed_ref && (
         <p className="engine-installed-ref">
-          Installed release: <strong>{refDisplayLabel(engine.installed_ref)}</strong>
+          {t('settingsPage.enginesUi.installedRelease')} <strong>{refDisplayLabel(engine.installed_ref)}</strong>
         </p>
       )}
       {/* Render the actions row for any engine that has install/uninstall
@@ -2649,10 +2666,10 @@ function EngineCard({
           {!isSystem && (isInterrupted ? (
             <>
               <Button variant="primary" size="sm" onClick={onResume}>
-                Resume install
+                {t('settingsPage.enginesUi.resumeInstall')}
               </Button>
               <Button variant="secondary" size="sm" onClick={onCancel}>
-                Cancel
+                {t('settingsPage.enginesUi.cancel')}
               </Button>
             </>
           ) : (
@@ -2663,7 +2680,7 @@ function EngineCard({
               {showRefPicker && (
                 <Select
                   className="engine-ref-select"
-                  aria-label={`Release for ${engine.display_name}`}
+                  aria-label={t('settingsPage.enginesUi.releaseAria', { name: engine.display_name })}
                   disabled={installInProgress || !engine.supported || refsLoading}
                   options={refOptions}
                   value={selectedRef}
@@ -2710,10 +2727,8 @@ function EngineCard({
               onClick={() => onRepair(engine.name)}
             >
               {engine.needs_repair
-                ? 'Repair'
-                : `Download ${engine.missing_net_count} missing ${
-                    engine.missing_net_count === 1 ? 'weight' : 'weights'
-                  }`}
+                ? t('settingsPage.enginesUi.repair')
+                : t('settingsPage.enginesUi.downloadMissing', { count: engine.missing_net_count })}
             </Button>
           )}
           {/* Profile editor entry point: shown for any installed engine that
@@ -2726,13 +2741,13 @@ function EngineCard({
               disabled={installInProgress}
               onClick={() => onConfigureProfiles(engine)}
             >
-              Configure profiles
+              {t('settingsPage.enginesUi.configureProfiles')}
             </Button>
           )}
           {!isSystem && isInstalling && !isUninstalling && !isActiveInstall && (
             <span className="engine-install-note">
               <span className="spinner spinner--sm" />
-              This may take several minutes.
+              {t('settingsPage.enginesUi.mayTakeMinutes')}
             </span>
           )}
         </div>
@@ -2741,7 +2756,7 @@ function EngineCard({
         <div className="engine-install-progress">
           <ProgressBar
             percent={status.percent}
-            label={status.message || `Installing ${engine.display_name}...`}
+            label={status.message || t('settingsPage.enginesUi.installingProgress', { name: engine.display_name })}
           />
         </div>
       )}
@@ -2752,22 +2767,17 @@ function EngineCard({
       )}
       {engine.needs_repair && !isActiveInstall && (
         <p className="engine-install-note" role="note">
-          Installed, but its required files are missing so it cannot play yet.
-          Repair downloads them in place -- no full reinstall.
+          {t('settingsPage.enginesUi.needsRepairNote')}
         </p>
       )}
       {!engine.needs_repair && engine.can_repair && engine.missing_net_count > 0 && !isActiveInstall && (
         <p className="engine-install-note" role="note">
-          Playable now, but {engine.missing_net_count} optional weight
-          {engine.missing_net_count === 1 ? '' : 's'} did not download. Top up to
-          add the missing strength level
-          {engine.missing_net_count === 1 ? '' : 's'}.
+          {t('settingsPage.enginesUi.missingWeightsNote', { count: engine.missing_net_count })}
         </p>
       )}
       {!isSystem && isInterrupted && (
         <p className="engine-install-note engine-install-note--interrupted">
-          This install was interrupted (the board likely restarted). Resume to
-          continue or Cancel to dismiss.
+          {t('settingsPage.enginesUi.interruptedNote')}
         </p>
       )}
       {error && (
@@ -2795,6 +2805,7 @@ interface UpdateStatus {
 }
 
 function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Informational (non-error) message, e.g. an async install that was started.
@@ -2844,9 +2855,9 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
     if (!status) return;
     if (awaitingInstallRef.current && !status.is_installing && !status.has_pending_update) {
       awaitingInstallRef.current = false;
-      setNotice(`Update complete. Now running ${status.current_version || 'the latest version'}.`);
+      setNotice(t('settingsPage.updates.complete', { version: status.current_version || t('settingsPage.updates.latestVersion') }));
     }
-  }, [status]);
+  }, [status, t]);
 
   const handleAuthRequired = (action: () => Promise<void>) => {
     pendingActionRef.current = action;
@@ -2872,11 +2883,11 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
       }
       if (!response.ok) {
         const data = await response.json();
-        setError(data.error || 'Check failed');
+        setError(data.error || t('settingsPage.updates.checkFailed'));
       }
       await fetchStatus();
     } catch {
-      setError('Network error');
+      setError(t('settingsPage.updates.networkError'));
     } finally {
       setChecking(false);
     }
@@ -2893,18 +2904,18 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
       }
       if (!response.ok) {
         const data = await response.json();
-        setError(data.error || 'Download failed');
+        setError(data.error || t('settingsPage.updates.downloadFailed'));
       }
       await fetchStatus();
     } catch {
-      setError('Network error');
+      setError(t('settingsPage.updates.networkError'));
     } finally {
       setDownloading(false);
     }
   };
 
   const installUpdate = async () => {
-    if (!confirm('Install update? The service will restart.')) return;
+    if (!confirm(t('settingsPage.updates.confirmInstall'))) return;
     
     setInstalling(true);
     setError(null);
@@ -2917,7 +2928,7 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
       }
       if (!response.ok) {
         const data = await response.json();
-        setError(data.error || 'Install failed');
+        setError(data.error || t('settingsPage.updates.installFailed'));
       } else {
         // The install runs asynchronously; the board and web interface
         // restart when it finishes, so this page may briefly disconnect. The
@@ -2928,7 +2939,7 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
         awaitingInstallRef.current = true;
       }
     } catch {
-      setError('Network error');
+      setError(t('settingsPage.updates.networkError'));
     } finally {
       setInstalling(false);
     }
@@ -2948,7 +2959,7 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
       }
       await fetchStatus();
     } catch {
-      setError('Failed to set channel');
+      setError(t('settingsPage.updates.channelFailed'));
     }
   };
 
@@ -2966,12 +2977,12 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
       }
       await fetchStatus();
     } catch {
-      setError('Failed to set auto-update');
+      setError(t('settingsPage.updates.autoFailed'));
     }
   };
 
   if (!status) {
-    return <p className="text-muted">Loading update status...</p>;
+    return <p className="text-muted">{t('settingsPage.updates.loadingStatus')}</p>;
   }
 
   const isLoading = checking || downloading || installing || status.is_checking || status.is_downloading || status.is_installing;
@@ -3012,12 +3023,12 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
         {/* Current Version */}
         <div className="update-version-info mb-4">
           <div className="update-version">
-            <strong>Current Version:</strong>{' '}
-            <code>{status.current_version || 'Unknown'}</code>
+            <strong>{t('settingsPage.updates.currentVersion')}</strong>{' '}
+            <code>{status.current_version || t('settingsPage.updates.unknown')}</code>
           </div>
           {formatDateTime(status.last_check) && (
             <div className="update-last-check text-muted">
-              Last checked: {formatDateTime(status.last_check)}
+              {t('settingsPage.updates.lastChecked', { time: formatDateTime(status.last_check) })}
             </div>
           )}
         </div>
@@ -3029,10 +3040,9 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
             unit, so it is correct after a refresh and across processes. */}
         {status.is_installing && (
           <Card variant="primary" className="mb-4">
-            <strong>Update in progress…</strong>
+            <strong>{t('settingsPage.updates.inProgressTitle')}</strong>
             <p className="text-muted mt-2">
-              An update is installing. The board will restart when it completes;
-              this page may briefly disconnect.
+              {t('settingsPage.updates.inProgressBody')}
             </p>
           </Card>
         )}
@@ -3040,9 +3050,9 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
         {/* Update Status */}
         {status.has_pending_update && !status.is_installing && (
           <Card variant="primary" className="mb-4">
-            <strong>Update Ready to Install!</strong>
+            <strong>{t('settingsPage.updates.readyTitle')}</strong>
             <p className="text-muted mt-2">
-              A new version has been downloaded and is ready to install.
+              {t('settingsPage.updates.readyBody')}
             </p>
             <Button
               variant="success"
@@ -3050,21 +3060,21 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
               disabled={isLoading}
               className="mt-2"
             >
-              {installing ? 'Installing...' : 'Install Now'}
+              {installing ? t('settingsPage.updates.installing') : t('settingsPage.updates.installNow')}
             </Button>
           </Card>
         )}
 
         {status.available_version && !status.has_pending_update && !status.is_installing && (
           <Card variant="muted" className="mb-4">
-            <strong>Update Available: v{status.available_version}</strong>
+            <strong>{t('settingsPage.updates.availableTitle', { version: status.available_version })}</strong>
             <Button
               variant="primary"
               onClick={downloadUpdate}
               disabled={isLoading}
               className="mt-2 ml-4"
             >
-              {downloading ? 'Downloading...' : 'Download Update'}
+              {downloading ? t('settingsPage.updates.downloading') : t('settingsPage.updates.downloadUpdate')}
             </Button>
           </Card>
         )}
@@ -3077,7 +3087,7 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
 
         {error && (
           <Card variant="danger" className="mb-4">
-            <strong>Error:</strong> {error}
+            <strong>{t('settingsPage.updates.errorLabel')}</strong> {error}
           </Card>
         )}
 
@@ -3094,7 +3104,7 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
             onClick={checkForUpdates}
             disabled={isLoading}
           >
-            {checking ? 'Checking...' : 'Check for Updates'}
+            {checking ? t('settingsPage.updates.checking') : t('settingsPage.updates.check')}
           </Button>
         </div>
       </div>
@@ -3113,6 +3123,7 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
 // unavailable, so each is gated behind an explicit confirmation.
 
 function PasswordChange() {
+  const { t } = useTranslation();
   const isHttps = window.location.protocol === 'https:';
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -3137,19 +3148,19 @@ function PasswordChange() {
     setSuccess(null);
 
     if (!currentPassword) {
-      setError('Current password is required');
+      setError(t('settingsPage.password.currentRequired'));
       return;
     }
     if (!newPassword) {
-      setError('New password is required');
+      setError(t('settingsPage.password.newRequired'));
       return;
     }
     if (newPassword.length < 4) {
-      setError('New password must be at least 4 characters');
+      setError(t('settingsPage.password.tooShort'));
       return;
     }
     if (newPassword !== confirmPassword) {
-      setError('Passwords do not match');
+      setError(t('settingsPage.password.mismatch'));
       return;
     }
 
@@ -3185,17 +3196,17 @@ function PasswordChange() {
             // If we can't update stored creds, the user will be prompted next time
           }
         }
-        setSuccess('Password changed successfully');
+        setSuccess(t('settingsPage.password.success'));
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
       } else if (response.status === 403) {
-        setError('Password change requires a secure (HTTPS) connection');
+        setError(t('settingsPage.password.httpsRequired'));
       } else {
-        setError(data.error || 'Failed to change password');
+        setError(data.error || t('settingsPage.password.changeFailed'));
       }
     } catch {
-      setError('Network error');
+      setError(t('settingsPage.password.networkError'));
     } finally {
       setBusy(false);
     }
@@ -3212,50 +3223,54 @@ function PasswordChange() {
         onSuccess={handleLoginSuccess}
       />
       <Card className="mb-6">
-        <CardHeader title="Change Password" />
+        <CardHeader title={t('settingsPage.password.title')} />
         {!isHttps ? (
           <Card variant="muted">
             <p className="text-muted">
-              Password change is only available over a secure (HTTPS) connection.
-              Visit <a href={`https://${window.location.hostname}`}>https://{window.location.hostname}</a> to use this feature.
-              If you haven't installed the certificate yet, visit{' '}
-              <a href={`http://${window.location.hostname}/ca-install`}>the certificate install page</a> first.
+              <Trans
+                i18nKey="settingsPage.password.insecureBody"
+                values={{ host: window.location.hostname }}
+                components={{
+                  0: <a href={`https://${window.location.hostname}`} />,
+                  1: <a href={`http://${window.location.hostname}/ca-install`} />,
+                }}
+              />
             </p>
           </Card>
         ) : (
           <>
             <p className="text-muted mb-4">
-              Change the system password used for SSH, WebDAV, and this web interface.
+              {t('settingsPage.password.secureIntro')}
             </p>
             {success && <Card variant="primary" className="mb-4">{success}</Card>}
             {error && <Card variant="danger" className="mb-4">{error}</Card>}
             <div className="form-group" style={{ marginBottom: '0.75rem' }}>
-              <label>Current Password</label>
+              <label>{t('settingsPage.password.current')}</label>
               <input
                 type="password"
                 value={currentPassword}
                 onChange={(e) => { setCurrentPassword(e.target.value); setError(null); }}
-                placeholder="Enter current password"
+                placeholder={t('settingsPage.password.currentPlaceholder')}
                 autoComplete="current-password"
               />
             </div>
             <div className="form-group" style={{ marginBottom: '0.75rem' }}>
-              <label>New Password</label>
+              <label>{t('settingsPage.password.new')}</label>
               <input
                 type="password"
                 value={newPassword}
                 onChange={(e) => { setNewPassword(e.target.value); setError(null); }}
-                placeholder="Enter new password"
+                placeholder={t('settingsPage.password.newPlaceholder')}
                 autoComplete="new-password"
               />
             </div>
             <div className="form-group" style={{ marginBottom: '1rem' }}>
-              <label>Confirm New Password</label>
+              <label>{t('settingsPage.password.confirm')}</label>
               <input
                 type="password"
                 value={confirmPassword}
                 onChange={(e) => { setConfirmPassword(e.target.value); setError(null); }}
-                placeholder="Confirm new password"
+                placeholder={t('settingsPage.password.confirmPlaceholder')}
                 autoComplete="new-password"
               />
             </div>
@@ -3264,7 +3279,7 @@ function PasswordChange() {
               disabled={busy || !currentPassword || !newPassword || !confirmPassword}
               onClick={handleSubmit}
             >
-              {busy ? 'Changing...' : 'Change Password'}
+              {busy ? t('settingsPage.password.changing') : t('settingsPage.password.change')}
             </Button>
           </>
         )}
@@ -3289,14 +3304,15 @@ interface EventLogEntry {
   duration_ms?: number;
 }
 
-// Human labels for the event categories the backend emits. Falls back to the
-// raw token for any future category not yet listed here.
-const EVENT_CATEGORY_LABELS: Record<string, string> = {
-  engine_install: 'Engine install',
-  engine_uninstall: 'Engine',
-  bluez_selfheal: 'Bluetooth',
-  update: 'Update',
-  system: 'System',
+// i18n keys for the event categories the backend emits. Resolved with `t` at
+// render time; falls back to the raw token for any future category not yet
+// listed here.
+const EVENT_CATEGORY_LABEL_KEYS: Record<string, string> = {
+  engine_install: 'settingsPage.eventLog.categoryEngineInstall',
+  engine_uninstall: 'settingsPage.eventLog.categoryEngineUninstall',
+  bluez_selfheal: 'settingsPage.eventLog.categoryBluetooth',
+  update: 'settingsPage.eventLog.categoryUpdate',
+  system: 'settingsPage.eventLog.categorySystem',
 };
 
 // Map a severity to a Badge variant. Unknown levels render as a neutral badge.
@@ -3328,6 +3344,7 @@ function formatEventTimestamp(ts: string): string {
 // from /api/system/event-log. Auth-gated like the debug-log download; a 401
 // opens the shared login dialog and retries, matching DebugCard.
 function LogViewer() {
+  const { t } = useTranslation();
   const [events, setEvents] = useState<EventLogEntry[]>([]);
   // Starts true because the mount effect loads immediately. loadEvents does NOT
   // set loading synchronously (every state update happens after the awaited
@@ -3351,7 +3368,7 @@ function LogViewer() {
         return;
       }
       if (!response.ok) {
-        setError('Failed to load the event log.');
+        setError(t('settingsPage.eventLog.loadFailed'));
         return;
       }
       const data = await response.json().catch(() => ({ events: [] }));
@@ -3359,11 +3376,11 @@ function LogViewer() {
       setEvents(Array.isArray(data.events) ? data.events : []);
       setLoaded(true);
     } catch {
-      setError('Network error');
+      setError(t('settingsPage.eventLog.networkError'));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const handleRefresh = () => {
     setLoading(true);
@@ -3392,24 +3409,22 @@ function LogViewer() {
         onSuccess={handleLoginSuccess}
       />
       <Card className="mb-6">
-        <CardHeader title="Event Log" />
+        <CardHeader title={t('settingsPage.eventLog.title')} />
         <p className="text-muted mb-4">
-          A history of important events &mdash; engine installs (and how long they took),
-          Bluetooth self-heal, software updates, and reboots. Persists across restarts. For the
-          full low-level diagnostic log, use the Debug card below.
+          {t('settingsPage.eventLog.intro')}
         </p>
         {error && (
           <Card variant="danger" className="mb-4">
-            <strong>Error:</strong> {error}
+            <strong>{t('settingsPage.eventLog.errorLabel')}</strong> {error}
           </Card>
         )}
         <div className="mb-4">
           <Button variant="secondary" onClick={handleRefresh} disabled={loading}>
-            {loading ? 'Refreshing...' : 'Refresh'}
+            {loading ? t('settingsPage.eventLog.refreshing') : t('settingsPage.eventLog.refresh')}
           </Button>
         </div>
         {loaded && events.length === 0 && !error && (
-          <p className="text-muted">No events recorded yet.</p>
+          <p className="text-muted">{t('settingsPage.eventLog.none')}</p>
         )}
         {events.length > 0 && (
           <div className="event-log-list">
@@ -3424,7 +3439,7 @@ function LogViewer() {
                 <div key={key} className="event-log-row">
                   <span className="event-log-time">{formatEventTimestamp(event.ts)}</span>
                   <Badge variant={eventLevelVariant(event.level)}>
-                    {EVENT_CATEGORY_LABELS[event.category] || event.category}
+                    {EVENT_CATEGORY_LABEL_KEYS[event.category] ? t(EVENT_CATEGORY_LABEL_KEYS[event.category]) : event.category}
                   </Badge>
                   <span className="event-log-message">{event.message}</span>
                   {duration && <span className="event-log-duration">{duration}</span>}
@@ -3440,6 +3455,7 @@ function LogViewer() {
 
 
 function DebugCard() {
+  const { t } = useTranslation();
   const [enabled, setEnabled] = useState(false);
   const [busy, setBusy] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -3480,9 +3496,9 @@ function DebugCard() {
     }
     const data = await response.json().catch(() => ({}));
     if (response.ok && data.success) {
-      setNotice('Rebooting. The web interface will return shortly.');
+      setNotice(t('settingsPage.debug.rebooting'));
     } else {
-      setError(data.error || 'Failed to reboot the board.');
+      setError(data.error || t('settingsPage.debug.rebootFailed'));
     }
   };
 
@@ -3503,25 +3519,25 @@ function DebugCard() {
         return;
       }
       if (!response.ok) {
-        setError('Failed to update the serial debug setting.');
+        setError(t('settingsPage.debug.updateFailed'));
         return;
       }
       setEnabled(next);
       // The change only takes effect on the next boot, so offer to reboot now.
       const rebootPrompt = next
-        ? 'Serial debug logging enabled. Reboot now to capture the startup handshake? You can download the log after the board restarts.'
-        : 'Serial debug logging disabled. Reboot now for the change to take effect?';
+        ? t('settingsPage.debug.rebootPromptEnable')
+        : t('settingsPage.debug.rebootPromptDisable');
       if (confirm(rebootPrompt)) {
         await reboot();
       } else {
         setNotice(
           next
-            ? 'Serial debug logging enabled. Reboot the board to capture the startup handshake, then download the log.'
-            : 'Serial debug logging disabled. Reboot the board for the change to take effect.'
+            ? t('settingsPage.debug.noticeEnable')
+            : t('settingsPage.debug.noticeDisable')
         );
       }
     } catch {
-      setError('Network error');
+      setError(t('settingsPage.debug.networkError'));
     } finally {
       setBusy(false);
     }
@@ -3539,11 +3555,11 @@ function DebugCard() {
         return;
       }
       if (response.status === 404) {
-        setError('No debug log found yet. Reboot the board to generate one.');
+        setError(t('settingsPage.debug.noLog'));
         return;
       }
       if (!response.ok) {
-        setError('Failed to download the debug log.');
+        setError(t('settingsPage.debug.downloadFailed'));
         return;
       }
       const blob = await response.blob();
@@ -3556,7 +3572,7 @@ function DebugCard() {
       a.remove();
       URL.revokeObjectURL(url);
     } catch {
-      setError('Network error');
+      setError(t('settingsPage.debug.networkError'));
     } finally {
       setDownloading(false);
     }
@@ -3573,30 +3589,26 @@ function DebugCard() {
         onSuccess={handleLoginSuccess}
       />
       <Card className="mb-6">
-        <CardHeader title="Debug" />
+        <CardHeader title={t('settingsPage.debug.title')} />
         <p className="text-muted mb-4">
-          Serial debug logging records the raw communication between the Raspberry Pi and the
-          board controller during startup. Enable it, reboot the board to capture the startup
-          handshake, then download the log and send it to support. This helps diagnose boards
-          that never finish starting up &mdash; for example, a v1 board whose LED circles keep
-          spinning. Leaving it on makes the log grow quickly.
+          {t('settingsPage.debug.intro')}
         </p>
         {notice && <Card variant="primary" className="mb-4">{notice}</Card>}
         {error && (
           <Card variant="danger" className="mb-4">
-            <strong>Error:</strong> {error}
+            <strong>{t('settingsPage.eventLog.errorLabel')}</strong> {error}
           </Card>
         )}
         <Toggle
-          label="Serial debug logging"
-          help="Takes effect after the next reboot."
+          label={t('settingsPage.debug.toggleLabel')}
+          help={t('settingsPage.debug.toggleHelp')}
           checked={enabled}
           onChange={(v) => setSerialDebug(v)}
           disabled={busy}
         />
         <div className="mt-4">
           <Button variant="secondary" onClick={downloadLog} disabled={downloading}>
-            {downloading ? 'Preparing...' : 'Download debug log'}
+            {downloading ? t('settingsPage.debug.preparing') : t('settingsPage.debug.downloadLog')}
           </Button>
         </div>
       </Card>
@@ -3621,30 +3633,22 @@ interface WaveformProfile {
 // 'uc8151d' is the primary V2 driver; 'ssd16xx' is the V1-family fallback.
 type WaveformController = 'uc8151d' | 'ssd16xx';
 
-// Per-controller card copy. Exhaustive lookup (no default) so a newly added
-// controller family forces an explicit entry rather than silently inheriting
-// the wrong wording.
-const DISPLAY_TUNING_COPY = {
+// Per-controller card copy i18n keys. Exhaustive lookup (no default) so a newly
+// added controller family forces an explicit entry rather than silently
+// inheriting the wrong wording. Resolved with `t` at render time.
+const DISPLAY_TUNING_COPY_KEYS = {
   uc8151d: {
-    title: 'Display tuning (UC8151D)',
-    description:
-      'If a replacement panel ghosts, ' +
-      'smears, or looks faint on partial updates (e.g. the clock), try a different ' +
-      'waveform profile. Full refresh always uses the panel\u2019s built-in waveform; ' +
-      'only the partial-refresh waveform changes. Each selection applies immediately ' +
-      'with a full refresh -- no reboot.',
+    titleKey: 'settingsPage.displayTuning.titleUc8151d',
+    descriptionKey: 'settingsPage.displayTuning.descriptionUc8151d',
   },
   ssd16xx: {
-    title: 'Display tuning (SSD1680)',
-    description:
-      'If the panel is blank, faint, or ghosted, try a ' +
-      'different waveform profile. Each selection is applied immediately with a full ' +
-      'refresh -- no reboot -- so you can compare them and keep the one that produces a ' +
-      'clean image.',
+    titleKey: 'settingsPage.displayTuning.titleSsd16xx',
+    descriptionKey: 'settingsPage.displayTuning.descriptionSsd16xx',
   },
-} satisfies Record<WaveformController, { title: string; description: string }>;
+} satisfies Record<WaveformController, { titleKey: string; descriptionKey: string }>;
 
 function DisplayTuningCard() {
+  const { t } = useTranslation();
   const [available, setAvailable] = useState(false);
   const [activeController, setActiveController] = useState<WaveformController | null>(null);
   const [profiles, setProfiles] = useState<WaveformProfile[]>([]);
@@ -3716,7 +3720,7 @@ function DisplayTuningCard() {
       }
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.success) {
-        setError(data.error || 'Failed to update the display profile.');
+        setError(data.error || t('settingsPage.displayTuning.updateFailed'));
         return;
       }
       setSelected(data.selected ?? profile);
@@ -3726,13 +3730,13 @@ function DisplayTuningCard() {
       const enabledRed = updates.three_color === true;
       setNotice(
         !data.applied_live
-          ? 'Saved. It will apply when the board is running.'
+          ? t('settingsPage.displayTuning.savedOffline')
           : enabledRed
-            ? 'Three-color mode on. Red highlights refresh in ~12-15s; normal moves stay fast.'
-            : 'Applied. The panel refreshed with the new setting.',
+            ? t('settingsPage.displayTuning.threeColorOn')
+            : t('settingsPage.displayTuning.applied'),
       );
     } catch {
-      setError('Network error');
+      setError(t('settingsPage.displayTuning.networkError'));
     } finally {
       setBusy(false);
     }
@@ -3743,7 +3747,7 @@ function DisplayTuningCard() {
   // for V1 and V2; the copy below adapts to whichever drove the panel.
   if (!available || activeController === null) return null;
 
-  const copy = DISPLAY_TUNING_COPY[activeController];
+  const copy = DISPLAY_TUNING_COPY_KEYS[activeController];
   const selectedProfile = profiles.find((p) => p.key === selected);
 
   return (
@@ -3757,17 +3761,17 @@ function DisplayTuningCard() {
         onSuccess={handleLoginSuccess}
       />
       <Card className="mb-6">
-        <CardHeader title={copy.title} />
-        <p className="text-muted mb-4">{copy.description}</p>
+        <CardHeader title={t(copy.titleKey)} />
+        <p className="text-muted mb-4">{t(copy.descriptionKey)}</p>
         {notice && <Card variant="primary" className="mb-4">{notice}</Card>}
         {error && (
           <Card variant="danger" className="mb-4">
-            <strong>Error:</strong> {error}
+            <strong>{t('settingsPage.eventLog.errorLabel')}</strong> {error}
           </Card>
         )}
         <FormRow
-          label="Waveform profile"
-          help="The recipe used to drive the panel. Built-In uses the panel's own factory waveform; the others load a known manufacturer table."
+          label={t('settingsPage.displayTuning.waveformLabel')}
+          help={t('settingsPage.displayTuning.waveformHelp')}
         >
           <Select
             value={selected}
@@ -3778,7 +3782,7 @@ function DisplayTuningCard() {
         </FormRow>
         {selectedProfile && (
           <p className="text-muted mb-4" style={{ fontSize: '0.85em' }}>
-            Waveform source: {selectedProfile.url ? (
+            {t('settingsPage.displayTuning.waveformSource')} {selectedProfile.url ? (
               <a href={selectedProfile.url} target="_blank" rel="noreferrer">
                 {selectedProfile.source}
               </a>
@@ -3788,23 +3792,23 @@ function DisplayTuningCard() {
           </p>
         )}
         <Toggle
-          label="Batch rapid updates"
-          help="Coalesce a rapid burst of screen updates into a single refresh of the final frame. When updates arrive faster than the e-paper can redraw, this skips the intermediate frames so the display shows the latest state instead of lagging behind. Turn off to draw every intermediate frame (slower when updates come quickly, but shows each step). Recommended on."
+          label={t('settingsPage.displayTuning.batchLabel')}
+          help={t('settingsPage.displayTuning.batchHelp')}
           checked={batchUpdates}
           onChange={(v) => apply({ batch_updates: v })}
           disabled={busy}
         />
         <Toggle
-          label="High contrast (experimental)"
-          help="Drive the VCOM/source voltages harder than the profile's defaults to darken a faint image. Try this if the image draws but only faintly. Not a datasheet-backed setting; leave off if the display already looks good."
+          label={t('settingsPage.displayTuning.highContrastLabel')}
+          help={t('settingsPage.displayTuning.highContrastHelp')}
           checked={highContrast}
           onChange={(v) => apply({ high_contrast: v })}
           disabled={busy}
         />
         {threeColorSupported && (
           <Toggle
-            label="Three-color (red) mode"
-            help="For red/white/black panels only. Highlights checks, threatened queens, the game result, and losing evaluation bars in red. Red ink can only change with a full refresh, so those red updates take ~12-15 seconds; ordinary moves stay fast."
+            label={t('settingsPage.displayTuning.threeColorLabel')}
+            help={t('settingsPage.displayTuning.threeColorHelp')}
             checked={threeColor}
             onChange={(v) => apply({ three_color: v })}
             disabled={busy}
@@ -3817,6 +3821,7 @@ function DisplayTuningCard() {
 
 
 function SystemActions() {
+  const { t } = useTranslation();
   const [centaurAvailable, setCentaurAvailable] = useState(false);
   const [centaurRunning, setCentaurRunning] = useState(false);
   const [directMode, setDirectMode] = useState(false);
@@ -3949,12 +3954,12 @@ function SystemActions() {
         return;
       }
       if (!response.ok) {
-        setActionOutcome({ scope: 'centaur', ok: false, text: 'Failed to update the Centaur mode setting.' });
+        setActionOutcome({ scope: 'centaur', ok: false, text: t('settingsPage.systemActions.directModeFailed') });
         return;
       }
       setDirectMode(next);
     } catch {
-      setActionOutcome({ scope: 'centaur', ok: false, text: 'Network error' });
+      setActionOutcome({ scope: 'centaur', ok: false, text: t('settingsPage.systemActions.networkError') });
     } finally {
       setDirectBusy(false);
     }
@@ -3986,16 +3991,16 @@ function SystemActions() {
         return;
       }
       if (!response.ok) {
-        setActionOutcome({ scope: 'engine', ok: false, text: 'Failed to save the Centaur engine settings.' });
+        setActionOutcome({ scope: 'engine', ok: false, text: t('settingsPage.systemActions.engineSaveFailed') });
         return;
       }
       setActionOutcome({
         scope: 'engine',
         ok: true,
-        text: 'Centaur engine settings saved. They apply the next time Centaur launches.',
+        text: t('settingsPage.systemActions.engineSaved'),
       });
     } catch {
-      setActionOutcome({ scope: 'engine', ok: false, text: 'Network error' });
+      setActionOutcome({ scope: 'engine', ok: false, text: t('settingsPage.systemActions.networkError') });
     } finally {
       setEngineBusy(false);
     }
@@ -4035,24 +4040,24 @@ function SystemActions() {
         const s: CentaurImportStatus = await apiFetch('/api/system/centaur-import/status').then((r) => r.json());
         if (importPollCancelRef.current) return;
         if (s.active) {
-          setImportStatus({ message: s.message || 'Working...', percent: s.percent ?? 0 });
+          setImportStatus({ message: s.message || t('settingsPage.systemActions.importWorking'), percent: s.percent ?? 0 });
         } else if (s.result) {
           // Terminal: the import finished. Stop polling and surface the outcome.
           setImportStatus(null);
           setImportBusy(false);
           if (s.result.success) {
-            setImportResult({ ok: true, text: 'Imported successfully. Original Centaur is ready to launch.' });
+            setImportResult({ ok: true, text: t('settingsPage.systemActions.importedSuccess') });
             setCentaurAvailable(true);
             setShowImport(true);
           } else {
-            setImportResult({ ok: false, text: s.result.error || 'Import failed.' });
+            setImportResult({ ok: false, text: s.result.error || t('settingsPage.systemActions.importFailed') });
           }
           return;
         } else if (s.interrupted) {
           // The process/board restarted mid-import; there is no resume.
           setImportStatus(null);
           setImportBusy(false);
-          setImportResult({ ok: false, text: 'Import was interrupted. Please try again.' });
+          setImportResult({ ok: false, text: t('settingsPage.systemActions.importInterrupted') });
           return;
         }
         // Not active yet and no result: the store was just started; keep waiting.
@@ -4064,7 +4069,7 @@ function SystemActions() {
       }
     };
     void tick();
-  }, []);
+  }, [t]);
 
   // Cancel any in-flight import poll when the page unmounts so the chained
   // timeout does not fire against a torn-down component.
@@ -4112,21 +4117,21 @@ function SystemActions() {
         // Upload finished; the server has started the import on a background
         // thread. Switch from the upload bar to polling the install progress,
         // keeping importBusy true so the controls stay disabled through install.
-        setImportStatus({ message: 'Starting import...', percent: 0 });
+        setImportStatus({ message: t('settingsPage.systemActions.startingImport'), percent: 0 });
         pollImportStatus();
       } else if (xhr.status === 413) {
         // Reverse proxy rejected the body before it reached the app.
         setImportBusy(false);
-        setImportResult({ ok: false, text: 'Image too large for the server to accept.' });
+        setImportResult({ ok: false, text: t('settingsPage.systemActions.imageTooLarge') });
       } else {
         setImportBusy(false);
-        setImportResult({ ok: false, text: data.error || `Import failed (HTTP ${xhr.status}).` });
+        setImportResult({ ok: false, text: data.error || t('settingsPage.systemActions.importHttpFailed', { status: xhr.status }) });
       }
     };
     xhr.onerror = () => {
       setImportBusy(false);
       setImportStatus(null);
-      setImportResult({ ok: false, text: 'Network error during upload.' });
+      setImportResult({ ok: false, text: t('settingsPage.systemActions.importNetworkError') });
     };
 
     const form = new FormData();
@@ -4142,21 +4147,18 @@ function SystemActions() {
     <div className="mt-2 space-y-3">
       <ol className="text-muted text-sm list-decimal ml-5 space-y-1">
         <li>
-          On the computer holding your original Centaur SD card, download and run the
-          image script for that computer's OS (macOS/Linux or Windows). It reads the card
-          (read-only) and writes <code>centaur-sd.img.gz</code>.
+          <Trans i18nKey="settingsPage.systemActions.importStep1" components={{ 0: <code /> }} />
         </li>
         <li>
-          Upload that <code>centaur-sd.img.gz</code> here. It is loop-mounted and the app is
-          extracted automatically.
+          <Trans i18nKey="settingsPage.systemActions.importStep2" components={{ 0: <code /> }} />
         </li>
       </ol>
       <div className="flex flex-wrap gap-3 items-center">
         <Button variant="secondary" disabled={importBusy} onClick={() => downloadImportScript('unix')}>
-          Download script (macOS/Linux)
+          {t('settingsPage.systemActions.downloadUnix')}
         </Button>
         <Button variant="secondary" disabled={importBusy} onClick={() => downloadImportScript('windows')}>
-          Download script (Windows)
+          {t('settingsPage.systemActions.downloadWindows')}
         </Button>
         <input
           ref={importInputRef}
@@ -4174,20 +4176,20 @@ function SystemActions() {
           disabled={importBusy || centaurRunning}
           onClick={() => importInputRef.current?.click()}
         >
-          {importBusy ? (importStatus ? 'Installing...' : 'Uploading...') : 'Upload SD image'}
+          {importBusy ? (importStatus ? t('settingsPage.systemActions.installing') : t('settingsPage.systemActions.uploading')) : t('settingsPage.systemActions.uploadSdImage')}
         </Button>
       </div>
       {importBusy && (
         importStatus
           ? <ProgressBar percent={importStatus.percent} label={importStatus.message} />
-          : <ProgressBar percent={importProgress} label="Uploading image" />
+          : <ProgressBar percent={importProgress} label={t('settingsPage.systemActions.uploadingImage')} />
       )}
       {importResult && (
         <p
           className={`text-sm ${importResult.ok ? 'text-success' : 'text-danger'}`}
           role={importResult.ok ? undefined : 'alert'}
         >
-          {importResult.ok ? null : <strong>Error: </strong>}
+          {importResult.ok ? null : <strong>{t('settingsPage.systemActions.importError')}</strong>}
           {importResult.text}
         </p>
       )}
@@ -4224,15 +4226,15 @@ function SystemActions() {
         if (response.ok && data.success) {
           setActionOutcome({ scope, ok: true, text: successText });
         } else {
-          setActionOutcome({ scope, ok: false, text: data.error || 'Action failed' });
+          setActionOutcome({ scope, ok: false, text: data.error || t('settingsPage.systemActions.actionFailed') });
         }
       } catch {
-        setActionOutcome({ scope, ok: false, text: 'Network error' });
+        setActionOutcome({ scope, ok: false, text: t('settingsPage.systemActions.networkError') });
       } finally {
         setBusy(null);
       }
     },
-    []
+    [t]
   );
 
   useEffect(() => {
@@ -4245,7 +4247,7 @@ function SystemActions() {
   const renderOutcome = (scope: string) =>
     actionOutcome && actionOutcome.scope === scope ? (
       <Card variant={actionOutcome.ok ? 'primary' : 'danger'} className="mt-4">
-        {actionOutcome.ok ? actionOutcome.text : <><strong>Error:</strong> {actionOutcome.text}</>}
+        {actionOutcome.ok ? actionOutcome.text : <><strong>{t('settingsPage.eventLog.errorLabel')}</strong> {actionOutcome.text}</>}
       </Card>
     ) : null;
 
@@ -4261,9 +4263,9 @@ function SystemActions() {
       />
 
       <Card className="mb-6">
-        <CardHeader title="Reset" />
+        <CardHeader title={t('settingsPage.systemActions.resetTitle')} />
         <p className="text-muted mb-4">
-          Restore all player and game settings to their defaults. This cannot be undone.
+          {t('settingsPage.systemActions.resetIntro')}
         </p>
         <Button
           variant="danger"
@@ -4273,21 +4275,20 @@ function SystemActions() {
               'reset',
               'reset',
               'reset',
-              'Reset all settings to their defaults? This cannot be undone.',
-              'Settings reset to defaults.'
+              t('settingsPage.systemActions.resetConfirm'),
+              t('settingsPage.systemActions.resetSuccess')
             )
           }
         >
-          {busy === 'reset' ? 'Resetting...' : 'Reset Settings'}
+          {busy === 'reset' ? t('settingsPage.systemActions.resetting') : t('settingsPage.systemActions.resetButton')}
         </Button>
         {renderOutcome('reset')}
       </Card>
 
       <Card className="mb-6">
-        <CardHeader title="Power" />
+        <CardHeader title={t('settingsPage.systemActions.powerTitle')} />
         <p className="text-muted mb-4">
-          Shut down or reboot the board. The web interface will be unavailable
-          {' '}until the board is powered on again.
+          {t('settingsPage.systemActions.powerIntro')}
         </p>
         <div className="flex gap-4">
           <Button
@@ -4298,12 +4299,12 @@ function SystemActions() {
                 'power',
                 'shutdown',
                 'shutdown',
-                'Shut down the board? The web interface will become unavailable.',
-                'Shutting down. The web interface is now unavailable.'
+                t('settingsPage.systemActions.shutdownConfirm'),
+                t('settingsPage.systemActions.shutdownSuccess')
               )
             }
           >
-            {busy === 'shutdown' ? 'Shutting down...' : 'Shutdown'}
+            {busy === 'shutdown' ? t('settingsPage.systemActions.shuttingDown') : t('settingsPage.systemActions.shutdown')}
           </Button>
           <Button
             variant="secondary"
@@ -4313,29 +4314,27 @@ function SystemActions() {
                 'power',
                 'reboot',
                 'reboot',
-                'Reboot the board? The web interface will be unavailable until it restarts.',
-                'Rebooting. The web interface will return shortly.'
+                t('settingsPage.systemActions.rebootConfirm'),
+                t('settingsPage.systemActions.rebootSuccess')
               )
             }
           >
-            {busy === 'reboot' ? 'Rebooting...' : 'Reboot'}
+            {busy === 'reboot' ? t('settingsPage.systemActions.rebooting') : t('settingsPage.systemActions.reboot')}
           </Button>
         </div>
         {renderOutcome('power')}
       </Card>
 
       <Card className="mb-6">
-        <CardHeader title="Original Centaur Software" />
+        <CardHeader title={t('settingsPage.systemActions.centaurTitle')} />
         {centaurAvailable ? (
           <>
             <p className="text-muted mb-4">
-              Hand the board over to the original DGT Centaur software. Universal
-              Chess stops and Centaur takes over the board, but this web interface
-              stays available{centaurRunning ? ' — use the button below to return to Universal Chess.' : ', so you can return to Universal Chess here at any time.'}
+              {t('settingsPage.systemActions.centaurIntro')}{centaurRunning ? t('settingsPage.systemActions.centaurIntroRunning') : t('settingsPage.systemActions.centaurIntroStopped')}
             </p>
             <Toggle
-              label="Direct Mode"
-              help="Off (default): Universal Chess translates Centaur's display so it works on whatever panel is fitted. On: Centaur drives the panel directly, which is only correct when the fitted panel matches the one Centaur expects."
+              label={t('settingsPage.systemActions.directModeLabel')}
+              help={t('settingsPage.systemActions.directModeHelp')}
               checked={directMode}
               onChange={(v) => updateDirectMode(v)}
               disabled={directBusy || busy !== null || centaurRunning}
@@ -4350,12 +4349,12 @@ function SystemActions() {
                       'centaur',
                       'return',
                       'return-to-universal',
-                      'Return to Universal Chess? This stops the original Centaur software and restarts Universal Chess on the board.',
-                      'Returning to Universal Chess. The board will restart momentarily.'
+                      t('settingsPage.systemActions.returnConfirm'),
+                      t('settingsPage.systemActions.returnSuccess')
                     )
                   }
                 >
-                  {busy === 'return' ? 'Returning...' : 'Return to Universal Chess'}
+                  {busy === 'return' ? t('settingsPage.systemActions.returning') : t('settingsPage.systemActions.returnButton')}
                 </Button>
               ) : (
                 <Button
@@ -4366,25 +4365,22 @@ function SystemActions() {
                       'centaur',
                       'centaur',
                       'run-centaur',
-                      'Switch to the original DGT Centaur software? This stops Universal Chess on the board; this web interface stays available so you can return to Universal Chess from here.',
-                      'Launching the original Centaur software. Use Return to Universal Chess to come back.'
+                      t('settingsPage.systemActions.switchConfirm'),
+                      t('settingsPage.systemActions.switchSuccess')
                     )
                   }
                 >
-                  {busy === 'centaur' ? 'Switching...' : 'Switch to Original Centaur'}
+                  {busy === 'centaur' ? t('settingsPage.systemActions.switching') : t('settingsPage.systemActions.switchButton')}
                 </Button>
               )}
             </div>
             {renderOutcome('centaur')}
             <div className="mt-6">
-              <CardHeader title="Engine" />
+              <CardHeader title={t('settingsPage.systemActions.engineTitle')} />
               <p className="text-muted mb-4">
-                In translate mode, Centaur plays through Universal Chess's engine
-                proxy, so you can use any installed engine and its games are
-                recorded in your database. Hash is capped to a memory-safe value
-                on the board regardless of what you set here.
+                {t('settingsPage.systemActions.engineIntro')}
               </p>
-              <FormRow label="Engine">
+              <FormRow label={t('settingsPage.systemActions.engineLabel')}>
                 <Select
                   value={centaurEngine}
                   options={engineList.length ? engineList : [{ value: centaurEngine, label: centaurEngine }]}
@@ -4392,29 +4388,29 @@ function SystemActions() {
                   disabled={engineBusy || centaurRunning}
                 />
               </FormRow>
-              <FormRow label="Elo" help="Optional. Limits engine strength (enables UCI_LimitStrength). Leave blank for full strength.">
+              <FormRow label={t('settingsPage.systemActions.eloLabel')} help={t('settingsPage.systemActions.eloHelp')}>
                 <Input
                   type="number"
                   value={centaurElo}
-                  placeholder="engine default"
+                  placeholder={t('settingsPage.systemActions.engineDefault')}
                   onChange={(e) => setCentaurElo(e.target.value)}
                   disabled={engineBusy || centaurRunning}
                 />
               </FormRow>
-              <FormRow label="Threads" help="Optional. Number of CPU threads the engine may use.">
+              <FormRow label={t('settingsPage.systemActions.threadsLabel')} help={t('settingsPage.systemActions.threadsHelp')}>
                 <Input
                   type="number"
                   value={centaurThreads}
-                  placeholder="engine default"
+                  placeholder={t('settingsPage.systemActions.engineDefault')}
                   onChange={(e) => setCentaurThreads(e.target.value)}
                   disabled={engineBusy || centaurRunning}
                 />
               </FormRow>
-              <FormRow label="Hash (MB)" help="Optional. Transposition table size; capped to a memory-safe value on the board.">
+              <FormRow label={t('settingsPage.systemActions.hashLabel')} help={t('settingsPage.systemActions.hashHelp')}>
                 <Input
                   type="number"
                   value={centaurHash}
-                  placeholder="engine default"
+                  placeholder={t('settingsPage.systemActions.engineDefault')}
                   onChange={(e) => setCentaurHash(e.target.value)}
                   disabled={engineBusy || centaurRunning}
                 />
@@ -4424,7 +4420,7 @@ function SystemActions() {
                 disabled={engineBusy || centaurRunning}
                 onClick={saveCentaurEngine}
               >
-                {engineBusy ? 'Saving...' : 'Save engine settings'}
+                {engineBusy ? t('settingsPage.systemActions.savingEngine') : t('settingsPage.systemActions.saveEngine')}
               </Button>
               {renderOutcome('engine')}
             </div>
@@ -4435,7 +4431,7 @@ function SystemActions() {
                 disabled={importBusy || centaurRunning}
                 onClick={() => setShowImport((s) => !s)}
               >
-                {showImport ? 'Hide re-import' : 'Re-import from SD'}
+                {showImport ? t('settingsPage.systemActions.hideReimport') : t('settingsPage.systemActions.reimport')}
               </button>
               {showImport && importPanel}
             </div>
@@ -4443,8 +4439,7 @@ function SystemActions() {
         ) : (
           <>
             <p className="text-muted mb-4">
-              The original DGT Centaur software is not installed yet. Import it from
-              your original Centaur SD card to enable handing the board over to it.
+              {t('settingsPage.systemActions.notInstalledIntro')}
             </p>
             {importPanel}
           </>
@@ -4502,28 +4497,28 @@ interface HardwareInfo {
 // Exhaustive mapping over the closed HotspotHealth union (no default branch, so
 // a new health state would fail to type-check here rather than render wrongly).
 const HOTSPOT_HEALTH_BADGE = {
-  ok: { variant: 'success', label: 'OK' },
-  affected: { variant: 'danger', label: 'Known issue' },
-  unknown: { variant: 'default', label: 'Unknown' },
-} satisfies Record<HotspotHealth, { variant: 'success' | 'danger' | 'default'; label: string }>;
+  ok: { variant: 'success', labelKey: 'settingsPage.systemInfo.hotspotOk' },
+  affected: { variant: 'danger', labelKey: 'settingsPage.systemInfo.hotspotAffected' },
+  unknown: { variant: 'default', labelKey: 'settingsPage.systemInfo.hotspotUnknown' },
+} satisfies Record<HotspotHealth, { variant: 'success' | 'danger' | 'default'; labelKey: string }>;
 
 // Exhaustive mapping over the closed DisplayStatus union. The panel identity is
 // fixed, but whether it initialized is reported live by the board: a V1 /
 // unresponsive panel latches 'failed' so the card never falsely claims "OK".
 const DISPLAY_STATUS_BADGE = {
-  ok: { variant: 'success', label: 'Working' },
-  failed: { variant: 'danger', label: 'Not responding' },
-  unknown: { variant: 'default', label: 'Unknown' },
-} satisfies Record<DisplayStatus, { variant: 'success' | 'danger' | 'default'; label: string }>;
+  ok: { variant: 'success', labelKey: 'settingsPage.systemInfo.displayOk' },
+  failed: { variant: 'danger', labelKey: 'settingsPage.systemInfo.displayFailed' },
+  unknown: { variant: 'default', labelKey: 'settingsPage.systemInfo.displayUnknown' },
+} satisfies Record<DisplayStatus, { variant: 'success' | 'danger' | 'default'; labelKey: string }>;
 
 // Exhaustive mapping over the closed BluezStack union. 'patched' is the only
 // warning state (substituted binary, no distro security updates); 'stock' is
 // healthy and 'unknown' is non-alarming (no marker read).
 const BLUEZ_STACK_BADGE = {
-  stock: { variant: 'success', label: 'Stock' },
-  patched: { variant: 'danger', label: 'Patched' },
-  unknown: { variant: 'default', label: 'Unknown' },
-} satisfies Record<BluezStack, { variant: 'success' | 'danger' | 'default'; label: string }>;
+  stock: { variant: 'success', labelKey: 'settingsPage.systemInfo.bluezStock' },
+  patched: { variant: 'danger', labelKey: 'settingsPage.systemInfo.bluezPatched' },
+  unknown: { variant: 'default', labelKey: 'settingsPage.systemInfo.bluezUnknown' },
+} satisfies Record<BluezStack, { variant: 'success' | 'danger' | 'default'; labelKey: string }>;
 
 const SYSTEM_STATS_POLL_MS = 5000;
 const EM_DASH = '\u2014';
@@ -4559,6 +4554,7 @@ function formatStatUptime(seconds: number): string {
 }
 
 function SystemInfoCard() {
+  const { t } = useTranslation();
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [error, setError] = useState(false);
   // Hardware identity is boot-stable, so it is fetched once on mount rather
@@ -4605,42 +4601,47 @@ function SystemInfoCard() {
     };
   }, []);
 
-  const telemetryRows: { label: string; value: ReactNode }[] = stats
+  const telemetryRows: { id: string; label: string; value: ReactNode }[] = stats
     ? [
-        { label: 'Hostname', value: stats.hostname },
+        { id: 'hostname', label: t('settingsPage.systemInfo.hostname'), value: stats.hostname },
         {
-          label: 'CPU',
+          id: 'cpu',
+          label: t('settingsPage.systemInfo.cpu'),
           value: `${formatStatPercent(stats.cpu_percent)} / ${formatStatTemperature(stats.cpu_temperature_celsius)}`,
         },
         {
-          label: 'Memory',
+          id: 'memory',
+          label: t('settingsPage.systemInfo.memory'),
           value: `${formatStatPercent(stats.memory_percent)} (${formatStatGiB(stats.memory_used_bytes)} / ${formatStatGiB(stats.memory_total_bytes)})`,
         },
         {
-          label: 'Storage',
+          id: 'storage',
+          label: t('settingsPage.systemInfo.storage'),
           value: `${formatStatPercent(stats.disk_percent)} (${formatStatGiB(stats.disk_used_bytes)} / ${formatStatGiB(stats.disk_total_bytes)})`,
         },
-        { label: 'Uptime', value: formatStatUptime(stats.uptime_seconds) },
+        { id: 'uptime', label: t('settingsPage.systemInfo.uptime'), value: formatStatUptime(stats.uptime_seconds) },
         {
-          label: 'Load (1m)',
+          id: 'load',
+          label: t('settingsPage.systemInfo.load'),
           value: stats.load_average_1m == null ? EM_DASH : stats.load_average_1m.toFixed(2),
         },
       ]
     : [];
 
-  const hardwareRows: { label: string; value: ReactNode }[] = hardware
+  const hardwareRows: { id: string; label: string; value: ReactNode }[] = hardware
     ? [
-        { label: 'Device', value: orDash(hardware.pi_model) },
-        { label: 'Kernel', value: orDash(hardware.kernel_release) },
-        { label: 'Wi-Fi / BT chip', value: orDash(hardware.wireless_chip) },
-        { label: 'Wi-Fi firmware', value: orDash(hardware.wifi_firmware_version) },
-        { label: 'BlueZ', value: orDash(hardware.bluez_version) },
+        { id: 'device', label: t('settingsPage.systemInfo.device'), value: orDash(hardware.pi_model) },
+        { id: 'kernel', label: t('settingsPage.systemInfo.kernel'), value: orDash(hardware.kernel_release) },
+        { id: 'wifiBtChip', label: t('settingsPage.systemInfo.wifiBtChip'), value: orDash(hardware.wireless_chip) },
+        { id: 'wifiFirmware', label: t('settingsPage.systemInfo.wifiFirmware'), value: orDash(hardware.wifi_firmware_version) },
+        { id: 'bluez', label: t('settingsPage.systemInfo.bluez'), value: orDash(hardware.bluez_version) },
         {
-          label: 'BlueZ stack',
+          id: 'bluezStack',
+          label: t('settingsPage.systemInfo.bluezStack'),
           value: (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
               <Badge variant={BLUEZ_STACK_BADGE[hardware.bluez_stack].variant}>
-                {BLUEZ_STACK_BADGE[hardware.bluez_stack].label}
+                {t(BLUEZ_STACK_BADGE[hardware.bluez_stack].labelKey)}
               </Badge>
               <span className="text-muted" style={{ fontSize: 'var(--text-sm)' }}>
                 {hardware.bluez_stack_summary}
@@ -4649,11 +4650,12 @@ function SystemInfoCard() {
           ),
         },
         {
-          label: 'Bluetooth advertising',
+          id: 'btAdvertising',
+          label: t('settingsPage.systemInfo.btAdvertising'),
           value: (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
               <Badge variant={HOTSPOT_HEALTH_BADGE[hardware.hotspot_health].variant}>
-                {HOTSPOT_HEALTH_BADGE[hardware.hotspot_health].label}
+                {t(HOTSPOT_HEALTH_BADGE[hardware.hotspot_health].labelKey)}
               </Badge>
               <span className="text-muted" style={{ fontSize: 'var(--text-sm)' }}>
                 {hardware.hotspot_summary}
@@ -4661,15 +4663,16 @@ function SystemInfoCard() {
             </div>
           ),
         },
-        { label: 'Display', value: hardware.display_model },
-        { label: 'Display driver', value: `${hardware.display_driver} (${hardware.display_controller})` },
-        { label: 'Resolution', value: `${hardware.display_resolution} px` },
+        { id: 'display', label: t('settingsPage.systemInfo.display'), value: hardware.display_model },
+        { id: 'displayDriver', label: t('settingsPage.systemInfo.displayDriver'), value: `${hardware.display_driver} (${hardware.display_controller})` },
+        { id: 'resolution', label: t('settingsPage.systemInfo.resolution'), value: `${hardware.display_resolution} px` },
         {
-          label: 'Display status',
+          id: 'displayStatus',
+          label: t('settingsPage.systemInfo.displayStatus'),
           value: (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
               <Badge variant={DISPLAY_STATUS_BADGE[hardware.display_status].variant}>
-                {DISPLAY_STATUS_BADGE[hardware.display_status].label}
+                {t(DISPLAY_STATUS_BADGE[hardware.display_status].labelKey)}
               </Badge>
               <span className="text-muted" style={{ fontSize: 'var(--text-sm)' }}>
                 {hardware.display_detail}
@@ -4684,15 +4687,15 @@ function SystemInfoCard() {
 
   return (
     <Card className="mb-6">
-      <CardHeader title="System Information" />
+      <CardHeader title={t('settingsPage.systemInfo.title')} />
       {error && !stats && (
-        <p className="text-muted">System information is currently unavailable.</p>
+        <p className="text-muted">{t('settingsPage.systemInfo.unavailable')}</p>
       )}
-      {!error && !stats && <p className="text-muted">Loading system information...</p>}
+      {!error && !stats && <p className="text-muted">{t('settingsPage.systemInfo.loading')}</p>}
       {stats && (
         <dl className="system-info-grid">
           {rows.map((row) => (
-            <div key={row.label} style={{ display: 'contents' }}>
+            <div key={row.id} style={{ display: 'contents' }}>
               <dt className="text-muted">{row.label}</dt>
               <dd>{row.value}</dd>
             </div>

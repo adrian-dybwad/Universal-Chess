@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Button, Card, FormRow, Input, Select } from './ui';
 import { apiFetch } from '../utils/api';
 import {
@@ -37,6 +38,7 @@ export function EngineProfileEditor({
   displayName: string;
   onBack: () => void;
 }) {
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editable, setEditable] = useState(true);
@@ -81,12 +83,12 @@ export function EngineProfileEditor({
         setNameInput('');
         loadField(data.schema, data.profiles, next);
       } catch (e) {
-        setLoadError(`Could not load engine options: ${e instanceof Error ? e.message : 'unknown error'}`);
+        setLoadError(t('engineProfile.loadError', { error: e instanceof Error ? e.message : t('engineProfile.unknownError') }));
       } finally {
         setLoading(false);
       }
     },
-    [engineName, loadField],
+    [engineName, loadField, t],
   );
 
   useEffect(() => {
@@ -122,7 +124,7 @@ export function EngineProfileEditor({
   const save = useCallback(async () => {
     const name = (isNew ? nameInput : selectedName ?? '').trim();
     if (!name) {
-      setActionError('Enter a profile name.');
+      setActionError(t('engineProfile.enterName'));
       return;
     }
     setSaving(true);
@@ -137,21 +139,21 @@ export function EngineProfileEditor({
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || data.success === false) {
-        setActionError(data.error || `Save failed (HTTP ${resp.status}).`);
+        setActionError(data.error || t('engineProfile.saveFailedStatus', { status: resp.status }));
         return;
       }
-      setNotice(`Saved "${name}". Changes apply on the next game.`);
+      setNotice(t('engineProfile.saved', { name }));
       await fetchProfiles(name);
     } catch (e) {
-      setActionError(`Save failed: ${e instanceof Error ? e.message : 'unknown error'}`);
+      setActionError(t('engineProfile.saveFailed', { error: e instanceof Error ? e.message : t('engineProfile.unknownError') }));
     } finally {
       setSaving(false);
     }
-  }, [isNew, nameInput, selectedName, schema, formValues, engineName, fetchProfiles]);
+  }, [isNew, nameInput, selectedName, schema, formValues, engineName, fetchProfiles, t]);
 
   const remove = useCallback(async () => {
     if (!selectedName) return;
-    if (!window.confirm(`Delete profile "${selectedName}"?`)) return;
+    if (!window.confirm(t('engineProfile.confirmDelete', { name: selectedName }))) return;
     setSaving(true);
     setActionError(null);
     setNotice(null);
@@ -162,16 +164,16 @@ export function EngineProfileEditor({
       );
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || data.success === false) {
-        setActionError(data.error || `Delete failed (HTTP ${resp.status}).`);
+        setActionError(data.error || t('engineProfile.deleteFailedStatus', { status: resp.status }));
         return;
       }
       await fetchProfiles();
     } catch (e) {
-      setActionError(`Delete failed: ${e instanceof Error ? e.message : 'unknown error'}`);
+      setActionError(t('engineProfile.deleteFailed', { error: e instanceof Error ? e.message : t('engineProfile.unknownError') }));
     } finally {
       setSaving(false);
     }
-  }, [selectedName, engineName, fetchProfiles]);
+  }, [selectedName, engineName, fetchProfiles, t]);
 
   const profileOptions = useMemo(
     () => profiles.map((p) => ({ value: p.name, label: p.name })),
@@ -182,25 +184,24 @@ export function EngineProfileEditor({
     <div className="profile-editor">
       <div className="profile-editor-toolbar">
         <Button variant="secondary" size="sm" onClick={onBack}>
-          &larr; Back to engines
+          {t('engineProfile.back')}
         </Button>
-        <h2 className="profile-editor-title">{displayName} settings</h2>
+        <h2 className="profile-editor-title">{t('engineProfile.title', { name: displayName })}</h2>
       </div>
 
       {loading ? (
-        <p className="text-muted">Loading engine options...</p>
+        <p className="text-muted">{t('engineProfile.loading')}</p>
       ) : loadError ? (
         <Card>
           <p className="engine-card-error" role="alert">{loadError}</p>
           <Button variant="primary" size="sm" onClick={() => void fetchProfiles()}>
-            Retry
+            {t('engineProfile.retry')}
           </Button>
         </Card>
       ) : !editable ? (
         <Card>
           <p className="text-muted">
-            This engine cannot be configured because it is not installed. Install it first,
-            then its options are read directly from the engine.
+            {t('engineProfile.notInstalled')}
           </p>
         </Card>
       ) : (
@@ -208,15 +209,15 @@ export function EngineProfileEditor({
           <Card className="mb-6">
             <div className="profile-editor-select">
               <FormRow
-                label="Profile"
-                help="The level/personality applied when this profile is selected for a player."
+                label={t('engineProfile.profileLabel')}
+                help={t('engineProfile.profileHelp')}
               >
                 <Select
                   value={isNew ? '' : selectedName ?? ''}
                   onChange={(e) => selectProfile(e.target.value)}
                   options={
                     isNew
-                      ? [{ value: '', label: 'New profile (unsaved)' }, ...profileOptions]
+                      ? [{ value: '', label: t('engineProfile.newProfileOption') }, ...profileOptions]
                       : profileOptions
                   }
                   disabled={saving}
@@ -224,7 +225,7 @@ export function EngineProfileEditor({
               </FormRow>
               <div className="profile-editor-select-actions">
                 <Button variant="secondary" size="sm" onClick={startNewProfile} disabled={saving}>
-                  New profile
+                  {t('engineProfile.newProfile')}
                 </Button>
                 <Button
                   variant="danger"
@@ -232,17 +233,17 @@ export function EngineProfileEditor({
                   onClick={remove}
                   disabled={saving || isNew || !selectedName}
                 >
-                  Delete
+                  {t('engineProfile.delete')}
                 </Button>
               </div>
             </div>
 
             {isNew && (
-              <FormRow label="New profile name" help="Shown in the player profile list.">
+              <FormRow label={t('engineProfile.newProfileNameLabel')} help={t('engineProfile.newProfileNameHelp')}>
                 <Input
                   value={nameInput}
                   onChange={(e) => setNameInput(e.target.value)}
-                  placeholder="e.g. My Aggressive"
+                  placeholder={t('engineProfile.newProfilePlaceholder')}
                   maxLength={64}
                   disabled={saving}
                   block
@@ -270,7 +271,7 @@ export function EngineProfileEditor({
             {actionError && <p className="engine-card-error" role="alert">{actionError}</p>}
             {notice && <p className="profile-editor-notice">{notice}</p>}
             <Button variant="primary" onClick={save} disabled={saving}>
-              {saving ? 'Saving...' : isNew ? 'Create profile' : 'Save changes'}
+              {saving ? t('engineProfile.saving') : isNew ? t('engineProfile.createProfile') : t('engineProfile.saveChanges')}
             </Button>
           </div>
         </>
