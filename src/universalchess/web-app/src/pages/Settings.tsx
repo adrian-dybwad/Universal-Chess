@@ -2294,8 +2294,13 @@ export function Settings() {
               <UpdateManager catalog={catalog} />
             </Card>
 
-            <Card className="mb-6">
-              <CardHeader title={t('settingsPage.gameDatabase.title')} />
+            <PasswordChange />
+            <SystemActions />
+
+            {/* Game Database and Diagnostics live at the end as secondary,
+                collapsed-by-default sections: rarely-changed setup and
+                troubleshooting tools kept out of the way until opened. */}
+            <CollapsibleCard title={t('settingsPage.gameDatabase.title')}>
               <p className="text-muted mb-4">
                 <Trans i18nKey="settingsPage.gameDatabase.intro" components={{ 0: <code /> }} />
               </p>
@@ -2314,11 +2319,9 @@ export function Settings() {
                   <li><code>mysql://user:pass@host:3306/dbname</code> - {t('settingsPage.gameDatabase.mysql')}</li>
                 </ul>
               </Card>
-            </Card>
+            </CollapsibleCard>
 
             <DiagnosticsCard />
-            <PasswordChange />
-            <SystemActions />
           </section>
         )}
 
@@ -3638,21 +3641,56 @@ function DebugCard() {
   );
 }
 
+interface CollapsibleCardProps {
+  title: string;
+  defaultExpanded?: boolean;
+  children: ReactNode;
+}
+
+/**
+ * Card whose body collapses behind a header toggle, collapsed by default. Keeps
+ * long or secondary sections (Game Database, Diagnostics) out of the way until
+ * opened. Mirrors the SystemInfoCard toggle: a small secondary button carrying
+ * aria-expanded, with the shared Show/Hide details labels.
+ */
+function CollapsibleCard({ title, defaultExpanded = false, children }: CollapsibleCardProps) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  return (
+    <Card className="mb-6">
+      <CardHeader
+        title={title}
+        action={
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setExpanded((prev) => !prev)}
+            aria-expanded={expanded}
+          >
+            {t(expanded ? 'settingsPage.hideDetails' : 'settingsPage.showDetails')}
+          </Button>
+        }
+      />
+      {expanded && children}
+    </Card>
+  );
+}
+
 /**
  * Diagnostics card: groups the Event Log and Debug sections under one titled
  * card. Both are troubleshooting tools (a high-level event history and the
  * low-level serial capture), so they read as one "Diagnostics" group rather
  * than two sibling cards. Each child renders its own LoginDialog (a fixed
  * overlay) and a `settings-group-title` subheading in place of a card header.
+ * Collapsed by default (a secondary section opened only when troubleshooting).
  */
 function DiagnosticsCard() {
   const { t } = useTranslation();
   return (
-    <Card className="mb-6">
-      <CardHeader title={t('settingsPage.diagnostics.title')} />
+    <CollapsibleCard title={t('settingsPage.diagnostics.title')}>
       <LogViewer />
       <DebugCard />
-    </Card>
+    </CollapsibleCard>
   );
 }
 
@@ -4598,6 +4636,12 @@ const BLUEZ_STACK_BADGE = {
 const SYSTEM_STATS_POLL_MS = 5000;
 const EM_DASH = '\u2014';
 
+// Telemetry rows kept visible while the card is collapsed. CPU and memory are the
+// live health signals worth an at-a-glance check, so they always show; the rest
+// (hostname, storage, hardware identity, display, bluetooth) is detail revealed
+// only on expand. Ids match the row ids built below.
+const ALWAYS_VISIBLE_STAT_IDS = ['cpu', 'memory'];
+
 // Render a nullable string field as itself or an em dash, never an empty cell.
 function orDash(value: string | null): string {
   return value && value.trim() ? value : EM_DASH;
@@ -4632,6 +4676,9 @@ function SystemInfoCard() {
   const { t } = useTranslation();
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [error, setError] = useState(false);
+  // Collapsed by default: CPU and memory stay visible, the rest is hidden until
+  // the user expands the card.
+  const [expanded, setExpanded] = useState(false);
   // Hardware identity is boot-stable, so it is fetched once on mount rather
   // than polled. A failure here leaves the (polled) telemetry rows unaffected.
   const [hardware, setHardware] = useState<HardwareInfo | null>(null);
@@ -4759,17 +4806,34 @@ function SystemInfoCard() {
     : [];
 
   const rows = [...telemetryRows, ...hardwareRows];
+  const visibleRows = expanded
+    ? rows
+    : rows.filter((row) => ALWAYS_VISIBLE_STAT_IDS.includes(row.id));
 
   return (
     <Card className="mb-6">
-      <CardHeader title={t('settingsPage.systemInfo.title')} />
+      <CardHeader
+        title={t('settingsPage.systemInfo.title')}
+        action={
+          stats ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setExpanded((prev) => !prev)}
+              aria-expanded={expanded}
+            >
+              {t(expanded ? 'settingsPage.hideDetails' : 'settingsPage.showDetails')}
+            </Button>
+          ) : undefined
+        }
+      />
       {error && !stats && (
         <p className="text-muted">{t('settingsPage.systemInfo.unavailable')}</p>
       )}
       {!error && !stats && <p className="text-muted">{t('settingsPage.systemInfo.loading')}</p>}
       {stats && (
         <dl className="system-info-grid">
-          {rows.map((row) => (
+          {visibleRows.map((row) => (
             <div key={row.id} style={{ display: 'contents' }}>
               <dt className="text-muted">{row.label}</dt>
               <dd>{row.value}</dd>

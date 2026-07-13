@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
@@ -121,17 +122,50 @@ describe('System tab card layout', () => {
     expect(combos.some((c) => c.value === 'UTC')).toBe(true);
   });
 
-  it('groups Event Log and Debug inside one Diagnostics card', async () => {
+  it('groups Event Log and Debug inside one Diagnostics card once expanded', async () => {
     // Why: the cleanup merged the two diagnostics tools into a single card so
-    // they read as one group. A regression splits them back into sibling cards,
-    // which shows up here as Event Log / Debug living outside the Diagnostics card.
+    // they read as one group, and the card is now collapsed by default. A
+    // regression either splits them back into sibling cards or fails to reveal
+    // them on expand, which shows up here as Event Log / Debug missing from (or
+    // living outside) the Diagnostics card after its toggle is clicked.
+    const user = userEvent.setup();
     renderSystemTab();
     const diagnosticsHeading = await screen.findByRole('heading', { name: 'Diagnostics' });
     const diagnosticsCard = diagnosticsHeading.closest('.card');
     expect(diagnosticsCard).not.toBeNull();
 
     const scoped = within(diagnosticsCard as HTMLElement);
+    // Collapsed by default: the tools are hidden until the card is expanded.
+    expect(scoped.queryByRole('heading', { name: 'Event Log' })).not.toBeInTheDocument();
+    await user.click(scoped.getByRole('button', { name: 'Show details' }));
+
     expect(scoped.getByRole('heading', { name: 'Event Log' })).toBeInTheDocument();
     expect(scoped.getByRole('heading', { name: 'Debug' })).toBeInTheDocument();
+  });
+
+  it('places Game Database and Diagnostics (collapsed) at the end, after Power', async () => {
+    // Why: the two sections were moved to the end and made collapsed-by-default.
+    // A regression restores them above the Power (System Actions) card, or renders
+    // Game Database expanded -- caught here by the document-order check and by the
+    // URI examples being present before the toggle is clicked.
+    const user = userEvent.setup();
+    renderSystemTab();
+    const powerHeading = await screen.findByRole('heading', { name: 'Power' });
+    const gameDbHeading = screen.getByRole('heading', { name: 'Game Database' });
+    const diagnosticsHeading = screen.getByRole('heading', { name: 'Diagnostics' });
+
+    // Both sections follow the Power card in document order (i.e. sit at the end).
+    const follows = (before: HTMLElement, after: HTMLElement) =>
+      Boolean(before.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(follows(powerHeading, gameDbHeading)).toBe(true);
+    expect(follows(powerHeading, diagnosticsHeading)).toBe(true);
+
+    // Game Database is collapsed by default: the URI examples are hidden until
+    // the card is expanded via its toggle.
+    const gameDbCard = gameDbHeading.closest('.card') as HTMLElement;
+    const gdScoped = within(gameDbCard);
+    expect(gdScoped.queryByText('sqlite:///path/to/games.db')).not.toBeInTheDocument();
+    await user.click(gdScoped.getByRole('button', { name: 'Show details' }));
+    expect(gdScoped.getByText('sqlite:///path/to/games.db')).toBeInTheDocument();
   });
 });

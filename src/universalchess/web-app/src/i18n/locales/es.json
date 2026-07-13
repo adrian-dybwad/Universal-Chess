@@ -646,6 +646,8 @@
       "importHttpFailed": "Falló la importación (HTTP {{status}}).",
       "importNetworkError": "Error de red durante la subida."
     },
+    "showDetails": "Mostrar detalles",
+    "hideDetails": "Ocultar detalles",
     "systemInfo": {
       "title": "Información del sistema",
       "unavailable": "La información del sistema no está disponible en este momento.",

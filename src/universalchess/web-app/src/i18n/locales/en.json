@@ -646,6 +646,8 @@
       "importHttpFailed": "Import failed (HTTP {{status}}).",
       "importNetworkError": "Network error during upload."
     },
+    "showDetails": "Show details",
+    "hideDetails": "Hide details",
     "systemInfo": {
       "title": "System Information",
       "unavailable": "System information is currently unavailable.",
