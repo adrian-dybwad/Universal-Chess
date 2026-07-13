@@ -272,10 +272,15 @@
     align-items: stretch;
   }
 
+  /* Center the expanded menu items so their text clears the oversized logo,
+     which is absolutely positioned in the top-left and overflows down over the
+     first menu rows. */
   .navbar-item {
     padding: 0.75rem 1rem;
     margin: 0;
     border-radius: 0;
+    justify-content: center;
+    text-align: center;
   }
 
   /* Center the status icons and let them wrap on narrow screens. */
