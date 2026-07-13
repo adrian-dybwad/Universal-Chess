@@ -3838,21 +3838,58 @@ def api_set_centaur_mode():
         return _internal_error(e)
 
 
+def _resolve_centaur_engine_options(engine_name, level):
+    """Resolve a strength ``level`` to the UCI options the proxy should inject.
+
+    The level is a section name in the engine's ``.uci`` (e.g. ``"1500 ELO"``,
+    ``"Default"``) -- the same value a player's ``elo`` stores. Its section-local
+    values are the setoptions that select that strength. Resolving server-side
+    (rather than trusting a client-sent options map) keeps the injected options
+    constrained to the engine's own profiles.
+
+    Returns ``{}`` -- meaning "run at the engine's own default strength" -- when
+    the level is empty or the engine cannot be probed/seeded, so a not-yet-probed
+    engine still saves cleanly instead of failing.
+    """
+    if not level:
+        return {}
+    config_path = _config_uci_path(engine_name)
+    if config_path is None:
+        return {}
+    try:
+        uci_schema.seed_config(engine_name, config_path=config_path)
+    except uci_schema.EngineProbeError:  # noqa: S110 - not-yet-probeable engine falls back to defaults, not fatal
+        # Not installed/probeable yet: fall back to the engine default (no
+        # options) rather than failing the save.
+        pass
+    profiles = engine_profiles.read_profiles(config_path)
+    return next((p["values"] for p in profiles if p["name"] == level), {})
+
+
 @app.route("/api/system/centaur-engine", methods=["GET"])
 def api_get_centaur_engine():
-    """Report the engine and UCI options the Centaur proxy will use.
+    """Report the engine and strength level the Centaur proxy will use.
 
     Read-only and unauthenticated like the other GET probes. The Original Centaur
-    card uses this to populate the engine selector and option fields. direct_mode
-    aside, this only affects translate-mode play, where Centaur's engine path is
-    the UC proxy. Options are returned as an object (parsed from the stored JSON).
+    tab uses this to populate the engine selector and pre-select the strength
+    level. direct_mode aside, this only affects translate-mode play, where
+    Centaur's engine path is the UC proxy. ``options`` is the resolved UCI map
+    (parsed from the stored JSON) the proxy injects, returned for reference.
     """
     try:
         from universalchess.board.settings import Settings
-        from universalchess.services.centaur_engine_proxy.config import load_proxy_config
+        from universalchess.services.centaur_engine_proxy.config import (
+            CONFIG_SECTION,
+            DEFAULT_LEVEL,
+            LEVEL_KEY,
+            load_proxy_config,
+        )
 
         config = load_proxy_config(Settings.read)
-        return jsonify({"engine": config.engine_name, "options": config.options})
+        level = str(Settings.read(CONFIG_SECTION, LEVEL_KEY, DEFAULT_LEVEL)) or DEFAULT_LEVEL
+        return jsonify(
+            {"engine": config.engine_name, "level": level, "options": config.options}
+        )
     except Exception as e:
         return _internal_error(e)
 
@@ -3860,30 +3897,39 @@ def api_get_centaur_engine():
 @app.route("/api/system/centaur-engine", methods=["POST"])
 @requires_auth
 def api_set_centaur_engine():
-    """Set the engine and UCI options the Centaur proxy uses. Requires auth.
+    """Set the engine and strength level the Centaur proxy uses. Requires auth.
 
-    Body: {"engine": str, "options": {name: value}}. Persists [centaur_engine]
-    via save_all_settings (options as a JSON string), so the proxy reads the new
-    values at the next launch. The proxy still clamps Hash/MultiPV to the memory
-    floor, so options here cannot push the board into an OOM.
+    Body: {"engine": str, "level": str}. The level is resolved server-side to the
+    engine's profile options (see :func:`_resolve_centaur_engine_options`) and
+    persisted -- the level for re-selection and the resolved options as a JSON
+    string the proxy reads at its next launch. The proxy still clamps Hash/MultiPV
+    to the memory floor, so nothing here can push the board into an OOM.
     """
     try:
         from universalchess.services.centaur_engine_proxy.config import (
             DEFAULT_ENGINE,
+            DEFAULT_LEVEL,
             ENGINE_KEY,
+            LEVEL_KEY,
             OPTIONS_KEY,
             CONFIG_SECTION,
         )
 
         body = request.get_json(silent=True) or {}
         engine = str(body.get("engine") or DEFAULT_ENGINE).strip() or DEFAULT_ENGINE
-        options = body.get("options") or {}
-        if not isinstance(options, dict):
-            return jsonify({"success": False, "error": "options must be an object"}), 400
+        level = body.get("level", DEFAULT_LEVEL)
+        if not isinstance(level, str):
+            return jsonify({"success": False, "error": "level must be a string"}), 400
+        level = level.strip() or DEFAULT_LEVEL
+        options = _resolve_centaur_engine_options(engine, level)
         save_all_settings({
-            CONFIG_SECTION: {ENGINE_KEY: engine, OPTIONS_KEY: json.dumps(options)},
+            CONFIG_SECTION: {
+                ENGINE_KEY: engine,
+                LEVEL_KEY: level,
+                OPTIONS_KEY: json.dumps(options),
+            },
         })
-        return jsonify({"success": True, "engine": engine, "options": options})
+        return jsonify({"success": True, "engine": engine, "level": level, "options": options})
     except Exception as e:
         return _internal_error(e)
 

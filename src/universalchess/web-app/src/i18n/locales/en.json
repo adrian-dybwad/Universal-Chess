@@ -334,7 +334,9 @@
     },
     "system": {
       "title": "System Settings",
-      "description": "Device status, software updates, and system configuration"
+      "description": "Device status, software updates, and system configuration",
+      "deviceTitle": "Device",
+      "deviceDescription": "Sleep, timezone, and language preferences for this board."
     },
     "player1Title": "Player 1 (White by default)",
     "player2Title": "Player 2 (Black by default)",
@@ -520,9 +522,12 @@
       "changeFailed": "Failed to change password",
       "networkError": "Network error"
     },
+    "diagnostics": {
+      "title": "Diagnostics"
+    },
     "eventLog": {
       "title": "Event Log",
-      "intro": "A history of important events — engine installs (and how long they took), Bluetooth self-heal, software updates, and reboots. Persists across restarts. For the full low-level diagnostic log, use the Debug card below.",
+      "intro": "A history of important events — engine installs (and how long they took), Bluetooth self-heal, software updates, and reboots. Persists across restarts. For the full low-level diagnostic log, use the Debug section below.",
       "errorLabel": "Error:",
       "refresh": "Refresh",
       "refreshing": "Refreshing...",
@@ -573,6 +578,11 @@
       "updateFailed": "Failed to update the display profile.",
       "networkError": "Network error"
     },
+    "centaur": {
+      "tabLabel": "Original Centaur",
+      "title": "Original Centaur Software",
+      "description": "Hand the board over to the original DGT Centaur software. Universal Chess stops on the board and Centaur takes over, while this web interface stays available so you can return at any time."
+    },
     "systemActions": {
       "resetTitle": "Reset",
       "resetIntro": "Restore all player and game settings to their defaults. This cannot be undone.",
@@ -592,7 +602,6 @@
       "rebootSuccess": "Rebooting. The web interface will return shortly.",
       "actionFailed": "Action failed",
       "networkError": "Network error",
-      "centaurTitle": "Original Centaur Software",
       "centaurIntro": "Hand the board over to the original DGT Centaur software. Universal Chess stops and Centaur takes over the board, but this web interface stays available",
       "centaurIntroRunning": " — use the button below to return to Universal Chess.",
       "centaurIntroStopped": ", so you can return to Universal Chess here at any time.",
@@ -608,15 +617,10 @@
       "switchConfirm": "Switch to the original DGT Centaur software? This stops Universal Chess on the board; this web interface stays available so you can return to Universal Chess from here.",
       "switchSuccess": "Launching the original Centaur software. Use Return to Universal Chess to come back.",
       "engineTitle": "Engine",
-      "engineIntro": "In translate mode, Centaur plays through Universal Chess's engine proxy, so you can use any installed engine and its games are recorded in your database. Hash is capped to a memory-safe value on the board regardless of what you set here.",
+      "engineIntro": "In translate mode, Centaur plays through Universal Chess's engine proxy, so you can use any installed engine and its games are recorded in your database.",
       "engineLabel": "Engine",
-      "eloLabel": "Elo",
-      "eloHelp": "Optional. Limits engine strength (enables UCI_LimitStrength). Leave blank for full strength.",
-      "threadsLabel": "Threads",
-      "threadsHelp": "Optional. Number of CPU threads the engine may use.",
-      "hashLabel": "Hash (MB)",
-      "hashHelp": "Optional. Transposition table size; capped to a memory-safe value on the board.",
-      "engineDefault": "engine default",
+      "strengthLabel": "Strength",
+      "strengthHelp": "Playing strength for the engine Centaur drives. Levels come from the engine's own profiles.",
       "saveEngine": "Save engine settings",
       "savingEngine": "Saving...",
       "engineSaveFailed": "Failed to save the Centaur engine settings.",

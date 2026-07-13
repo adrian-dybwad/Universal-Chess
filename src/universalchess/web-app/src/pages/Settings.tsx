@@ -100,7 +100,8 @@ type SettingsTab =
   | 'sound'
   | 'connectivity'
   | 'engines'
-  | 'system';
+  | 'system'
+  | 'centaur';
 
 // Structured engine-install status from GET /api/engines/status. The backend
 // owns this state on disk so it survives a page reload and a board restart;
@@ -145,9 +146,10 @@ interface CentaurImportStatus {
 const SETTINGS_TAB_IDS: SettingsTab[] = ['players', 'game', 'display', 'sound', 'connectivity', 'engines', 'agents', 'system'];
 
 // Every id the sub-nav accepts. About and Licenses are reached from the main nav
-// and footer respectively (not as Settings tabs), so this is just the
-// catalog-backed sections.
-const VALID_SETTINGS_TABS: SettingsTab[] = SETTINGS_TAB_IDS;
+// and footer respectively (not as Settings tabs). 'centaur' is a web-only tab
+// (not a catalog section) whose chrome comes from the web i18n, so it is listed
+// here explicitly rather than sourced from the catalog.
+const VALID_SETTINGS_TABS: SettingsTab[] = [...SETTINGS_TAB_IDS, 'centaur'];
 
 // The sub-nav tab lives in the URL path (e.g. /settings/game) so a page refresh
 // or a shared/bookmarked link restores the same section instead of falling back
@@ -1650,10 +1652,16 @@ export function Settings() {
   // Tabs are the catalog sections this page owns, rendered in the page's declared
   // order. Labels and icons come from the catalog; SETTINGS_TAB_IDS only selects
   // which sections belong here and their order.
-  const tabs = SETTINGS_TAB_IDS.flatMap((id) => {
-    const section = catalog.sections.find((s) => s.id === id);
-    return section ? [{ id, label: section.label, icon: section.icon }] : [];
-  });
+  const tabs: { id: SettingsTab; label: string; icon?: string }[] = [
+    ...SETTINGS_TAB_IDS.flatMap((id) => {
+      const section = catalog.sections.find((s) => s.id === id);
+      return section ? [{ id, label: section.label, icon: section.icon }] : [];
+    }),
+    // Original Centaur is a web-only feature tab, so its label/icon come from the
+    // web i18n rather than the shared board catalog. Always shown (discoverable)
+    // even before Centaur is installed, so the import flow is reachable.
+    { id: 'centaur', label: t('settingsPage.centaur.tabLabel'), icon: 'centaur' },
+  ];
 
   const optionSet = (name: string): MenuOption[] => catalog.optionSets[name] ?? [];
   // The enhanced-clock preset list is generated server-side from the Python
@@ -2260,14 +2268,26 @@ export function Settings() {
 
             <SystemInfoCard />
 
-            {/* Sleep Timer, Timezone, and Language are rendered from the shared
-                catalog's web-only `group.system.device`, which lists the same
+            {/* Device card: Sleep Timer, Timezone, and Language. These are the
+                shared catalog's web-only `group.system.device` nodes -- the same
                 system.* nodes the board's System menu renders. systemMenuCtx maps
                 each bind: Sleep Timer -> [system] inactivity_timeout (applied live
                 on Save & Apply); Timezone/Language -> their dedicated device
                 endpoints. The timezone list is the full runtime set (the node's
-                webProvider override); the board uses its curated list. */}
-            <MenuContainer catalog={catalog} containerId="group.system.device" ctx={systemMenuCtx} />
+                webProvider override); the board uses its curated list.
+
+                The rows are rendered directly (buildSections + renderCatalogRow,
+                the same pattern the Players tab uses) so the page supplies the
+                titled Card shell. Passing `group.system.device` to MenuContainer
+                would emit an untitled card, since a group used as the container
+                yields its children as ungrouped (title-less) rows. */}
+            <Card className="mb-6">
+              <CardHeader title={t('settingsPage.system.deviceTitle')} />
+              <p className="text-muted mb-4">{t('settingsPage.system.deviceDescription')}</p>
+              {buildSections(catalog, 'group.system.device', systemMenuCtx.get).flatMap((section) =>
+                section.rows.map((node) => renderCatalogRow(node, systemMenuCtx)),
+              )}
+            </Card>
 
             <Card className="mb-6">
               <CardHeader title={t('settingsPage.updates.cardTitle')} />
@@ -2296,12 +2316,14 @@ export function Settings() {
               </Card>
             </Card>
 
-            <LogViewer />
-            <DebugCard />
+            <DiagnosticsCard />
             <PasswordChange />
             <SystemActions />
           </section>
         )}
+
+        {/* ORIGINAL CENTAUR TAB */}
+        {activeTab === 'centaur' && <CentaurSettings />}
       </main>
 
       {/* Auto-save indicator. Value settings save automatically on change (no
@@ -3408,8 +3430,8 @@ function LogViewer() {
         onClose={() => setShowLoginDialog(false)}
         onSuccess={handleLoginSuccess}
       />
-      <Card className="mb-6">
-        <CardHeader title={t('settingsPage.eventLog.title')} />
+      <section>
+        <h4 className="settings-group-title">{t('settingsPage.eventLog.title')}</h4>
         <p className="text-muted mb-4">
           {t('settingsPage.eventLog.intro')}
         </p>
@@ -3448,7 +3470,7 @@ function LogViewer() {
             })}
           </div>
         )}
-      </Card>
+      </section>
     </>
   );
 }
@@ -3588,8 +3610,8 @@ function DebugCard() {
         }}
         onSuccess={handleLoginSuccess}
       />
-      <Card className="mb-6">
-        <CardHeader title={t('settingsPage.debug.title')} />
+      <section className="mt-6">
+        <h4 className="settings-group-title">{t('settingsPage.debug.title')}</h4>
         <p className="text-muted mb-4">
           {t('settingsPage.debug.intro')}
         </p>
@@ -3611,8 +3633,26 @@ function DebugCard() {
             {downloading ? t('settingsPage.debug.preparing') : t('settingsPage.debug.downloadLog')}
           </Button>
         </div>
-      </Card>
+      </section>
     </>
+  );
+}
+
+/**
+ * Diagnostics card: groups the Event Log and Debug sections under one titled
+ * card. Both are troubleshooting tools (a high-level event history and the
+ * low-level serial capture), so they read as one "Diagnostics" group rather
+ * than two sibling cards. Each child renders its own LoginDialog (a fixed
+ * overlay) and a `settings-group-title` subheading in place of a card header.
+ */
+function DiagnosticsCard() {
+  const { t } = useTranslation();
+  return (
+    <Card className="mb-6">
+      <CardHeader title={t('settingsPage.diagnostics.title')} />
+      <LogViewer />
+      <DebugCard />
+    </Card>
   );
 }
 
@@ -3820,28 +3860,202 @@ function DisplayTuningCard() {
 }
 
 
+/**
+ * Shared plumbing for the authenticated system actions used by both the System
+ * tab (Reset/Power) and the Original Centaur tab. Owns the login-retry flow: an
+ * action that returns 401 stashes a retry via ``requireAuth`` and resumes it
+ * after a successful login. ``runAction`` covers the confirm -> POST -> outcome
+ * pattern; ``requireAuth`` is exposed for the bespoke flows (direct mode, engine
+ * save, image upload) that POST differently but share the same retry.
+ */
+function useAuthedSystemAction() {
+  const { t } = useTranslation();
+  const [busy, setBusy] = useState<string | null>(null);
+  // Outcome of a card action, tagged with the scope that produced it so it
+  // renders inline beside that control rather than in a detached page-top banner.
+  const [actionOutcome, setActionOutcome] = useState<{ scope: string; ok: boolean; text: string } | null>(null);
+  const [showLoginDialog, setShowLoginDialog] = useState(false);
+  const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
+
+  // Open the login dialog and stash a retry to run once login succeeds.
+  const requireAuth = useCallback((retry: () => Promise<void>) => {
+    pendingActionRef.current = retry;
+    setShowLoginDialog(true);
+  }, []);
+
+  // Holds the latest runAction so the post-login retry can re-invoke it without
+  // the callback referencing its own binding before it is declared.
+  const runActionRef = useRef<
+    ((scope: string, key: string, endpoint: string, confirmText: string, successText: string) => Promise<void>) | null
+  >(null);
+
+  // Run a system action: confirm, POST, and surface the outcome. ``scope`` tags
+  // where the outcome renders. On 401 the login dialog opens and the action is
+  // retried (via the ref) after a successful login.
+  const runAction = useCallback(
+    async (scope: string, key: string, endpoint: string, confirmText: string, successText: string) => {
+      if (!confirm(confirmText)) return;
+      setBusy(key);
+      setActionOutcome(null);
+      try {
+        const response = await apiFetch(`/api/system/${endpoint}`, { method: 'POST', requiresAuth: true });
+        if (response.status === 401) {
+          requireAuth(async () => {
+            await runActionRef.current?.(scope, key, endpoint, confirmText, successText);
+          });
+          return;
+        }
+        const data = await response.json().catch(() => ({}));
+        if (response.ok && data.success) {
+          setActionOutcome({ scope, ok: true, text: successText });
+        } else {
+          setActionOutcome({ scope, ok: false, text: data.error || t('settingsPage.systemActions.actionFailed') });
+        }
+      } catch {
+        setActionOutcome({ scope, ok: false, text: t('settingsPage.systemActions.networkError') });
+      } finally {
+        setBusy(null);
+      }
+    },
+    [t, requireAuth]
+  );
+
+  useEffect(() => {
+    runActionRef.current = runAction;
+  }, [runAction]);
+
+  const handleLoginSuccess = useCallback(async () => {
+    setShowLoginDialog(false);
+    if (pendingActionRef.current) {
+      const action = pendingActionRef.current;
+      pendingActionRef.current = null;
+      await action();
+    }
+  }, []);
+
+  // Inline outcome banner for a single action; renders only for its scope, so
+  // each control reports its own result in place.
+  const renderOutcome = useCallback(
+    (scope: string) =>
+      actionOutcome && actionOutcome.scope === scope ? (
+        <Card variant={actionOutcome.ok ? 'primary' : 'danger'} className="mt-4">
+          {actionOutcome.ok ? actionOutcome.text : <><strong>{t('settingsPage.eventLog.errorLabel')}</strong> {actionOutcome.text}</>}
+        </Card>
+      ) : null,
+    [actionOutcome, t]
+  );
+
+  const loginDialog = (
+    <LoginDialog
+      isOpen={showLoginDialog}
+      onClose={() => {
+        setShowLoginDialog(false);
+        pendingActionRef.current = null;
+      }}
+      onSuccess={handleLoginSuccess}
+    />
+  );
+
+  return { busy, setActionOutcome, runAction, requireAuth, renderOutcome, loginDialog };
+}
+
+
+// Reset and power maintenance actions on the System tab. The Original Centaur
+// handover lives in its own tab (CentaurSettings); both share the authenticated
+// action plumbing via useAuthedSystemAction.
 function SystemActions() {
   const { t } = useTranslation();
+  const { busy, runAction, renderOutcome, loginDialog } = useAuthedSystemAction();
+
+  return (
+    <>
+      {loginDialog}
+
+      <Card className="mb-6">
+        <CardHeader title={t('settingsPage.systemActions.resetTitle')} />
+        <p className="text-muted mb-4">
+          {t('settingsPage.systemActions.resetIntro')}
+        </p>
+        <Button
+          variant="danger"
+          disabled={busy !== null}
+          onClick={() =>
+            runAction(
+              'reset',
+              'reset',
+              'reset',
+              t('settingsPage.systemActions.resetConfirm'),
+              t('settingsPage.systemActions.resetSuccess')
+            )
+          }
+        >
+          {busy === 'reset' ? t('settingsPage.systemActions.resetting') : t('settingsPage.systemActions.resetButton')}
+        </Button>
+        {renderOutcome('reset')}
+      </Card>
+
+      <Card className="mb-6">
+        <CardHeader title={t('settingsPage.systemActions.powerTitle')} />
+        <p className="text-muted mb-4">
+          {t('settingsPage.systemActions.powerIntro')}
+        </p>
+        <div className="flex gap-4">
+          <Button
+            variant="secondary"
+            disabled={busy !== null}
+            onClick={() =>
+              runAction(
+                'power',
+                'shutdown',
+                'shutdown',
+                t('settingsPage.systemActions.shutdownConfirm'),
+                t('settingsPage.systemActions.shutdownSuccess')
+              )
+            }
+          >
+            {busy === 'shutdown' ? t('settingsPage.systemActions.shuttingDown') : t('settingsPage.systemActions.shutdown')}
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={busy !== null}
+            onClick={() =>
+              runAction(
+                'power',
+                'reboot',
+                'reboot',
+                t('settingsPage.systemActions.rebootConfirm'),
+                t('settingsPage.systemActions.rebootSuccess')
+              )
+            }
+          >
+            {busy === 'reboot' ? t('settingsPage.systemActions.rebooting') : t('settingsPage.systemActions.reboot')}
+          </Button>
+        </div>
+        {renderOutcome('power')}
+      </Card>
+    </>
+  );
+}
+
+
+// Original Centaur tab: hand the board over to the DGT Centaur software. Always
+// shown (discoverable) so the import flow is reachable even before Centaur is
+// installed; the body switches between the installed controls and the importer.
+function CentaurSettings() {
+  const { t } = useTranslation();
+  const { busy, runAction, requireAuth, setActionOutcome, renderOutcome, loginDialog } = useAuthedSystemAction();
   const [centaurAvailable, setCentaurAvailable] = useState(false);
   const [centaurRunning, setCentaurRunning] = useState(false);
   const [directMode, setDirectMode] = useState(false);
   const [directBusy, setDirectBusy] = useState(false);
-  const [busy, setBusy] = useState<string | null>(null);
-  // Outcome of a card action (reset / power / centaur / engine), tagged with the
-  // scope that produced it so it renders inline beside that control instead of in
-  // a single page-top banner detached from its source. Mirrors importResult,
-  // which already scopes the import outcome to the upload button.
-  const [actionOutcome, setActionOutcome] = useState<{ scope: string; ok: boolean; text: string } | null>(null);
-  const [showLoginDialog, setShowLoginDialog] = useState(false);
-  const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
 
   // Import-from-SD state. The image is large (~200 MB), so the upload uses XHR
   // (for upload progress) rather than fetch. showImport reveals the importer for
   // a re-import when Centaur is already installed.
   const [importBusy, setImportBusy] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
-  // Import outcome shown inline next to the upload button (not the page-top
-  // banner) so the success/error is visible right where the action happened.
+  // Import outcome shown inline next to the upload button so the success/error
+  // is visible right where the action happened.
   const [importResult, setImportResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [showImport, setShowImport] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -3853,13 +4067,14 @@ function SystemActions() {
   const importPollTimerRef = useRef<number | null>(null);
   const importPollCancelRef = useRef(false);
 
-  // Centaur engine-proxy config: which UC engine Centaur drives (translate mode)
-  // and a few common options. Hash is clamped to the memory floor server-side.
+  // Centaur engine-proxy config (translate mode): which UC engine Centaur drives
+  // and its strength level -- an engine profile section name (e.g. "1500 ELO",
+  // "Default"), chosen exactly like a player's strength. The level resolves to
+  // UCI options server-side; Hash is clamped to the memory floor there too.
   const [engineList, setEngineList] = useState<{ value: string; label: string }[]>([]);
   const [centaurEngine, setCentaurEngine] = useState('stockfish');
-  const [centaurElo, setCentaurElo] = useState('');
-  const [centaurThreads, setCentaurThreads] = useState('');
-  const [centaurHash, setCentaurHash] = useState('');
+  const [centaurLevel, setCentaurLevel] = useState('Default');
+  const [engineLevels, setEngineLevels] = useState<{ value: string; label: string }[]>([]);
   const [engineBusy, setEngineBusy] = useState(false);
 
   useEffect(() => {
@@ -3900,15 +4115,31 @@ function SystemActions() {
       .then((data) => {
         if (!data) return;
         if (data.engine) setCentaurEngine(data.engine);
-        const o = data.options || {};
-        if (o.UCI_Elo != null) setCentaurElo(String(o.UCI_Elo));
-        if (o.Threads != null) setCentaurThreads(String(o.Threads));
-        if (o.Hash != null) setCentaurHash(String(o.Hash));
+        if (data.level) setCentaurLevel(String(data.level));
       })
       .catch(() => {
         // Best-effort; fields default to engine defaults if unavailable.
       });
   }, []);
+
+  // Load the selectable strength levels for the chosen engine, mirroring the
+  // player strength picker. Reruns when the engine changes so the dropdown always
+  // reflects that engine's profiles; falls back to the currently-selected level
+  // as a single option if the list cannot be fetched.
+  useEffect(() => {
+    let active = true;
+    fetch(buildApiUrl(`/api/engines/${encodeURIComponent(centaurEngine)}/levels`))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (active && Array.isArray(data)) setEngineLevels(data);
+      })
+      .catch(() => {
+        // Best-effort; the Select falls back to the stored level below.
+      });
+    return () => {
+      active = false;
+    };
+  }, [centaurEngine]);
 
   // Poll whether centaur is currently running so the Original Centaur card shows
   // a single state-aware control: "Switch to Original Centaur" when stopped and
@@ -3949,8 +4180,7 @@ function SystemActions() {
         requiresAuth: true,
       });
       if (response.status === 401) {
-        pendingActionRef.current = () => updateDirectMode(next);
-        setShowLoginDialog(true);
+        requireAuth(() => updateDirectMode(next));
         return;
       }
       if (!response.ok) {
@@ -3965,29 +4195,21 @@ function SystemActions() {
     }
   };
 
-  // Persist the Centaur engine + options. Empty fields mean "engine default" and
-  // are omitted. Elo additionally enables UCI_LimitStrength so it takes effect.
-  // On 401, reuse the login-retry plumbing like the other card actions.
+  // Persist the Centaur engine and strength level. The level is a profile
+  // section name resolved to UCI options server-side (like a player's strength),
+  // so the client sends only the name. On 401, reuse the shared login-retry.
   const saveCentaurEngine = async () => {
     setEngineBusy(true);
     setActionOutcome(null);
     try {
-      const options: Record<string, unknown> = {};
-      if (centaurElo.trim()) {
-        options.UCI_LimitStrength = true;
-        options.UCI_Elo = Number(centaurElo);
-      }
-      if (centaurThreads.trim()) options.Threads = Number(centaurThreads);
-      if (centaurHash.trim()) options.Hash = Number(centaurHash);
       const response = await apiFetch('/api/system/centaur-engine', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ engine: centaurEngine, options }),
+        body: JSON.stringify({ engine: centaurEngine, level: centaurLevel }),
         requiresAuth: true,
       });
       if (response.status === 401) {
-        pendingActionRef.current = () => saveCentaurEngine();
-        setShowLoginDialog(true);
+        requireAuth(() => saveCentaurEngine());
         return;
       }
       if (!response.ok) {
@@ -4003,15 +4225,6 @@ function SystemActions() {
       setActionOutcome({ scope: 'engine', ok: false, text: t('settingsPage.systemActions.networkError') });
     } finally {
       setEngineBusy(false);
-    }
-  };
-
-  const handleLoginSuccess = async () => {
-    setShowLoginDialog(false);
-    if (pendingActionRef.current) {
-      const action = pendingActionRef.current;
-      pendingActionRef.current = null;
-      await action();
     }
   };
 
@@ -4084,8 +4297,7 @@ function SystemActions() {
   const uploadCentaurImage = (file: File) => {
     const credentials = getStoredCredentials();
     if (!credentials) {
-      pendingActionRef.current = async () => uploadCentaurImage(file);
-      setShowLoginDialog(true);
+      requireAuth(async () => uploadCentaurImage(file));
       return;
     }
     setImportBusy(true);
@@ -4103,8 +4315,7 @@ function SystemActions() {
     xhr.onload = () => {
       if (xhr.status === 401) {
         setImportBusy(false);
-        pendingActionRef.current = async () => uploadCentaurImage(file);
-        setShowLoginDialog(true);
+        requireAuth(async () => uploadCentaurImage(file));
         return;
       }
       let data: { success?: boolean; error?: string; status?: string } = {};
@@ -4196,137 +4407,14 @@ function SystemActions() {
     </div>
   );
 
-  // Holds the latest runAction so the post-login retry can re-invoke it without
-  // the callback referencing its own binding before it is declared (which the
-  // recursive `() => runAction(...)` form does). The ref is kept current by the
-  // effect below.
-  const runActionRef = useRef<
-    ((scope: string, key: string, endpoint: string, confirmText: string, successText: string) => Promise<void>) | null
-  >(null);
-
-  // Run a system action: confirm, POST, and surface the outcome. ``scope`` tags
-  // where the outcome renders (see actionOutcome) so it appears next to the
-  // control that triggered it. On 401 the login dialog opens and the action is
-  // retried (via the ref) after a successful login.
-  const runAction = useCallback(
-    async (scope: string, key: string, endpoint: string, confirmText: string, successText: string) => {
-      if (!confirm(confirmText)) return;
-      setBusy(key);
-      setActionOutcome(null);
-      try {
-        const response = await apiFetch(`/api/system/${endpoint}`, { method: 'POST', requiresAuth: true });
-        if (response.status === 401) {
-          pendingActionRef.current = async () => {
-            await runActionRef.current?.(scope, key, endpoint, confirmText, successText);
-          };
-          setShowLoginDialog(true);
-          return;
-        }
-        const data = await response.json().catch(() => ({}));
-        if (response.ok && data.success) {
-          setActionOutcome({ scope, ok: true, text: successText });
-        } else {
-          setActionOutcome({ scope, ok: false, text: data.error || t('settingsPage.systemActions.actionFailed') });
-        }
-      } catch {
-        setActionOutcome({ scope, ok: false, text: t('settingsPage.systemActions.networkError') });
-      } finally {
-        setBusy(null);
-      }
-    },
-    [t]
-  );
-
-  useEffect(() => {
-    runActionRef.current = runAction;
-  }, [runAction]);
-
-  // Inline outcome banner for a single card action. Renders only for the scope
-  // that produced the current outcome, so each control reports its own result in
-  // place rather than in one detached page-top banner.
-  const renderOutcome = (scope: string) =>
-    actionOutcome && actionOutcome.scope === scope ? (
-      <Card variant={actionOutcome.ok ? 'primary' : 'danger'} className="mt-4">
-        {actionOutcome.ok ? actionOutcome.text : <><strong>{t('settingsPage.eventLog.errorLabel')}</strong> {actionOutcome.text}</>}
-      </Card>
-    ) : null;
-
   return (
-    <>
-      <LoginDialog
-        isOpen={showLoginDialog}
-        onClose={() => {
-          setShowLoginDialog(false);
-          pendingActionRef.current = null;
-        }}
-        onSuccess={handleLoginSuccess}
-      />
+    <section>
+      <h2 className="page-title">{t('settingsPage.centaur.title')}</h2>
+      <p className="text-muted mb-6">{t('settingsPage.centaur.description')}</p>
+
+      {loginDialog}
 
       <Card className="mb-6">
-        <CardHeader title={t('settingsPage.systemActions.resetTitle')} />
-        <p className="text-muted mb-4">
-          {t('settingsPage.systemActions.resetIntro')}
-        </p>
-        <Button
-          variant="danger"
-          disabled={busy !== null}
-          onClick={() =>
-            runAction(
-              'reset',
-              'reset',
-              'reset',
-              t('settingsPage.systemActions.resetConfirm'),
-              t('settingsPage.systemActions.resetSuccess')
-            )
-          }
-        >
-          {busy === 'reset' ? t('settingsPage.systemActions.resetting') : t('settingsPage.systemActions.resetButton')}
-        </Button>
-        {renderOutcome('reset')}
-      </Card>
-
-      <Card className="mb-6">
-        <CardHeader title={t('settingsPage.systemActions.powerTitle')} />
-        <p className="text-muted mb-4">
-          {t('settingsPage.systemActions.powerIntro')}
-        </p>
-        <div className="flex gap-4">
-          <Button
-            variant="secondary"
-            disabled={busy !== null}
-            onClick={() =>
-              runAction(
-                'power',
-                'shutdown',
-                'shutdown',
-                t('settingsPage.systemActions.shutdownConfirm'),
-                t('settingsPage.systemActions.shutdownSuccess')
-              )
-            }
-          >
-            {busy === 'shutdown' ? t('settingsPage.systemActions.shuttingDown') : t('settingsPage.systemActions.shutdown')}
-          </Button>
-          <Button
-            variant="secondary"
-            disabled={busy !== null}
-            onClick={() =>
-              runAction(
-                'power',
-                'reboot',
-                'reboot',
-                t('settingsPage.systemActions.rebootConfirm'),
-                t('settingsPage.systemActions.rebootSuccess')
-              )
-            }
-          >
-            {busy === 'reboot' ? t('settingsPage.systemActions.rebooting') : t('settingsPage.systemActions.reboot')}
-          </Button>
-        </div>
-        {renderOutcome('power')}
-      </Card>
-
-      <Card className="mb-6">
-        <CardHeader title={t('settingsPage.systemActions.centaurTitle')} />
         {centaurAvailable ? (
           <>
             <p className="text-muted mb-4">
@@ -4339,7 +4427,43 @@ function SystemActions() {
               onChange={(v) => updateDirectMode(v)}
               disabled={directBusy || busy !== null || centaurRunning}
             />
-            <div className="mt-4">
+            {/* Engine + strength apply only in translate mode, where Centaur
+                plays through the UC engine proxy; in direct mode Centaur uses its
+                own engine, so these controls are hidden to avoid implying they
+                take effect. */}
+            {!directMode && (
+              <div className="mt-6">
+                <h4 className="settings-group-title">{t('settingsPage.systemActions.engineTitle')}</h4>
+                <p className="text-muted mb-4">
+                  {t('settingsPage.systemActions.engineIntro')}
+                </p>
+                <FormRow label={t('settingsPage.systemActions.engineLabel')}>
+                  <Select
+                    value={centaurEngine}
+                    options={engineList.length ? engineList : [{ value: centaurEngine, label: centaurEngine }]}
+                    onChange={(e) => setCentaurEngine(e.target.value)}
+                    disabled={engineBusy || centaurRunning}
+                  />
+                </FormRow>
+                <FormRow label={t('settingsPage.systemActions.strengthLabel')} help={t('settingsPage.systemActions.strengthHelp')}>
+                  <Select
+                    value={centaurLevel}
+                    options={engineLevels.length ? engineLevels : [{ value: centaurLevel, label: centaurLevel }]}
+                    onChange={(e) => setCentaurLevel(e.target.value)}
+                    disabled={engineBusy || centaurRunning}
+                  />
+                </FormRow>
+                <Button
+                  variant="secondary"
+                  disabled={engineBusy || centaurRunning}
+                  onClick={saveCentaurEngine}
+                >
+                  {engineBusy ? t('settingsPage.systemActions.savingEngine') : t('settingsPage.systemActions.saveEngine')}
+                </Button>
+                {renderOutcome('engine')}
+              </div>
+            )}
+            <div className="mt-6">
               {centaurRunning ? (
                 <Button
                   variant="primary"
@@ -4375,55 +4499,6 @@ function SystemActions() {
               )}
             </div>
             {renderOutcome('centaur')}
-            <div className="mt-6">
-              <CardHeader title={t('settingsPage.systemActions.engineTitle')} />
-              <p className="text-muted mb-4">
-                {t('settingsPage.systemActions.engineIntro')}
-              </p>
-              <FormRow label={t('settingsPage.systemActions.engineLabel')}>
-                <Select
-                  value={centaurEngine}
-                  options={engineList.length ? engineList : [{ value: centaurEngine, label: centaurEngine }]}
-                  onChange={(e) => setCentaurEngine(e.target.value)}
-                  disabled={engineBusy || centaurRunning}
-                />
-              </FormRow>
-              <FormRow label={t('settingsPage.systemActions.eloLabel')} help={t('settingsPage.systemActions.eloHelp')}>
-                <Input
-                  type="number"
-                  value={centaurElo}
-                  placeholder={t('settingsPage.systemActions.engineDefault')}
-                  onChange={(e) => setCentaurElo(e.target.value)}
-                  disabled={engineBusy || centaurRunning}
-                />
-              </FormRow>
-              <FormRow label={t('settingsPage.systemActions.threadsLabel')} help={t('settingsPage.systemActions.threadsHelp')}>
-                <Input
-                  type="number"
-                  value={centaurThreads}
-                  placeholder={t('settingsPage.systemActions.engineDefault')}
-                  onChange={(e) => setCentaurThreads(e.target.value)}
-                  disabled={engineBusy || centaurRunning}
-                />
-              </FormRow>
-              <FormRow label={t('settingsPage.systemActions.hashLabel')} help={t('settingsPage.systemActions.hashHelp')}>
-                <Input
-                  type="number"
-                  value={centaurHash}
-                  placeholder={t('settingsPage.systemActions.engineDefault')}
-                  onChange={(e) => setCentaurHash(e.target.value)}
-                  disabled={engineBusy || centaurRunning}
-                />
-              </FormRow>
-              <Button
-                variant="secondary"
-                disabled={engineBusy || centaurRunning}
-                onClick={saveCentaurEngine}
-              >
-                {engineBusy ? t('settingsPage.systemActions.savingEngine') : t('settingsPage.systemActions.saveEngine')}
-              </Button>
-              {renderOutcome('engine')}
-            </div>
             <div className="mt-4">
               <button
                 type="button"
@@ -4445,7 +4520,7 @@ function SystemActions() {
           </>
         )}
       </Card>
-    </>
+    </section>
   );
 }
 

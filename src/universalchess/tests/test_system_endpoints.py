@@ -465,15 +465,18 @@ def test_centaur_import_status_endpoint_reports_store_state(client, fresh_import
 # --- Centaur engine proxy config ---------------------------------------------
 
 
-def test_centaur_engine_get_reports_configured_engine_and_options(client, monkeypatch):
-    """GET centaur-engine must reflect the stored engine and parsed options.
+def test_centaur_engine_get_reports_configured_engine_level_and_options(client, monkeypatch):
+    """GET centaur-engine must reflect the stored engine, strength level, options.
 
-    Why this test exists: the card populates its engine selector and option
-    fields from this probe. Options are stored as a JSON string but must be
-    returned as an object; if parsing regressed the UI would see a string.
+    Why this test exists: the tab populates its engine selector and pre-selects
+    the strength dropdown from this probe. The level is stored (and echoed) so the
+    picker re-selects it; options is the resolved JSON returned as an object. A
+    regression that dropped the level would leave the dropdown unable to show the
+    saved strength.
     """
     store = {
         ("centaur_engine", "engine"): "maia",
+        ("centaur_engine", "level"): "1500 ELO",
         ("centaur_engine", "options"): json.dumps({"UCI_Elo": 1500}),
     }
     monkeypatch.setattr(
@@ -486,46 +489,65 @@ def test_centaur_engine_get_reports_configured_engine_and_options(client, monkey
     assert resp.status_code == 200
     body = json.loads(resp.data)
     assert body["engine"] == "maia"
+    assert body["level"] == "1500 ELO"
     assert body["options"] == {"UCI_Elo": 1500}
 
 
-def test_centaur_engine_post_persists_engine_and_json_options(client, monkeypatch):
-    """POST centaur-engine must persist the engine and options-as-JSON.
+def test_centaur_engine_post_resolves_level_and_persists_engine_level_options(client, monkeypatch):
+    """POST centaur-engine resolves the level to profile options and persists both.
 
-    Why this test exists: the proxy reads [centaur_engine] at launch; the options
-    must be stored as a JSON string (the proxy parses it). If the endpoint stored
-    a Python dict repr instead, the proxy's json.loads would fail and silently
-    drop all options.
+    Why this test exists: the tab sends a strength *level* (a .uci section name),
+    not raw options; the endpoint must resolve it to that section's values and
+    store them as a JSON string the proxy parses at launch. If resolution
+    regressed (e.g. stored the level verbatim as options, or a dict repr), the
+    proxy's json.loads would drop the strength and Centaur would play at full
+    strength.
     """
     saved = {}
     monkeypatch.setattr(webapp, "save_all_settings", lambda d, **k: saved.update(d))
+    # Avoid probing a real binary: seeding is a no-op and the profiles are fixed,
+    # so the resolver reads a known "1500 ELO" section.
+    monkeypatch.setattr(webapp.uci_schema, "seed_config", lambda *a, **k: None)
+    monkeypatch.setattr(
+        webapp.engine_profiles,
+        "read_profiles",
+        lambda *a, **k: [
+            {"name": "Default", "values": {"UCI_LimitStrength": "false"}},
+            {"name": "1500 ELO", "values": {"UCI_LimitStrength": "true", "UCI_Elo": "1500"}},
+        ],
+    )
 
     resp = client.post(
         "/api/system/centaur-engine",
-        data=json.dumps({"engine": "stockfish", "options": {"UCI_Elo": 1200, "Threads": 1}}),
+        data=json.dumps({"engine": "stockfish", "level": "1500 ELO"}),
         content_type="application/json",
     )
 
     assert resp.status_code == 200
     body = json.loads(resp.data)
     assert body["success"] is True
+    assert body["level"] == "1500 ELO"
     assert saved["centaur_engine"]["engine"] == "stockfish"
-    # Options stored as a JSON string the proxy can parse back.
-    assert json.loads(saved["centaur_engine"]["options"]) == {"UCI_Elo": 1200, "Threads": 1}
+    assert saved["centaur_engine"]["level"] == "1500 ELO"
+    # Resolved options stored as a JSON string the proxy can parse back.
+    assert json.loads(saved["centaur_engine"]["options"]) == {
+        "UCI_LimitStrength": "true",
+        "UCI_Elo": "1500",
+    }
 
 
-def test_centaur_engine_post_rejects_non_object_options(client, monkeypatch):
-    """Non-object options are a 400, and nothing is persisted.
+def test_centaur_engine_post_rejects_non_string_level(client, monkeypatch):
+    """A non-string level is a 400, and nothing is persisted.
 
-    Guards the contract that options is a name->value map; a list/scalar would
-    break the proxy's setoption building.
+    Guards the contract that level is a section-name string; a list/scalar would
+    never match a profile and would silently persist empty options.
     """
     saved = {}
     monkeypatch.setattr(webapp, "save_all_settings", lambda d, **k: saved.update(d))
 
     resp = client.post(
         "/api/system/centaur-engine",
-        data=json.dumps({"engine": "stockfish", "options": [1, 2, 3]}),
+        data=json.dumps({"engine": "stockfish", "level": [1, 2, 3]}),
         content_type="application/json",
     )
 

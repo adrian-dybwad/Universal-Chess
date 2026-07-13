@@ -16,6 +16,13 @@ from typing import Callable, Dict
 CONFIG_SECTION = "centaur_engine"
 ENGINE_KEY = "engine"
 OPTIONS_KEY = "options"
+# The strength level (engine .uci profile section name, e.g. "1500 ELO",
+# "Default") the card selected. The card writes it so the picker can re-select it
+# on load; the proxy ignores it (it reads the already-resolved OPTIONS_KEY). It is
+# the same value a player's `elo` stores, so strength is chosen identically here
+# and on the board.
+LEVEL_KEY = "level"
+DEFAULT_LEVEL = "Default"
 DEFAULT_ENGINE = "stockfish"
 
 

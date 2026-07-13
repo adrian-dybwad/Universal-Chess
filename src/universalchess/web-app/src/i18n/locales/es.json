@@ -334,7 +334,9 @@
     },
     "system": {
       "title": "Ajustes del sistema",
-      "description": "Estado del dispositivo, actualizaciones de software y configuración del sistema"
+      "description": "Estado del dispositivo, actualizaciones de software y configuración del sistema",
+      "deviceTitle": "Dispositivo",
+      "deviceDescription": "Preferencias de suspensión, zona horaria e idioma de este tablero."
     },
     "player1Title": "Jugador 1 (Blancas por defecto)",
     "player2Title": "Jugador 2 (Negras por defecto)",
@@ -520,9 +522,12 @@
       "changeFailed": "No se pudo cambiar la contraseña",
       "networkError": "Error de red"
     },
+    "diagnostics": {
+      "title": "Diagnóstico"
+    },
     "eventLog": {
       "title": "Registro de eventos",
-      "intro": "Un historial de eventos importantes: instalaciones de motores (y cuánto tardaron), autorreparación de Bluetooth, actualizaciones de software y reinicios. Persiste entre reinicios. Para el registro de diagnóstico de bajo nivel completo, usa la tarjeta de Depuración de abajo.",
+      "intro": "Un historial de eventos importantes: instalaciones de motores (y cuánto tardaron), autorreparación de Bluetooth, actualizaciones de software y reinicios. Persiste entre reinicios. Para el registro de diagnóstico de bajo nivel completo, usa la sección de Depuración de abajo.",
       "errorLabel": "Error:",
       "refresh": "Actualizar",
       "refreshing": "Actualizando...",
@@ -573,6 +578,11 @@
       "updateFailed": "No se pudo actualizar el perfil de pantalla.",
       "networkError": "Error de red"
     },
+    "centaur": {
+      "tabLabel": "Centaur original",
+      "title": "Software Centaur original",
+      "description": "Entrega el tablero al software Centaur original de DGT. Universal Chess se detiene en el tablero y Centaur toma el control, mientras esta interfaz web sigue disponible para que puedas regresar en cualquier momento."
+    },
     "systemActions": {
       "resetTitle": "Restablecer",
       "resetIntro": "Restaura todos los ajustes de jugadores y de partida a sus valores predeterminados. Esto no se puede deshacer.",
@@ -592,7 +602,6 @@
       "rebootSuccess": "Reiniciando. La interfaz web volverá en breve.",
       "actionFailed": "La acción falló",
       "networkError": "Error de red",
-      "centaurTitle": "Software original de Centaur",
       "centaurIntro": "Entrega el tablero al software original de DGT Centaur. Universal Chess se detiene y Centaur toma el control del tablero, pero esta interfaz web sigue disponible",
       "centaurIntroRunning": " — usa el botón de abajo para volver a Universal Chess.",
       "centaurIntroStopped": ", para que puedas volver a Universal Chess desde aquí en cualquier momento.",
@@ -608,15 +617,10 @@
       "switchConfirm": "¿Cambiar al software original de DGT Centaur? Esto detiene Universal Chess en el tablero; esta interfaz web sigue disponible para que puedas volver a Universal Chess desde aquí.",
       "switchSuccess": "Iniciando el software original de Centaur. Usa Volver a Universal Chess para regresar.",
       "engineTitle": "Motor",
-      "engineIntro": "En modo de traducción, Centaur juega a través del proxy de motor de Universal Chess, así que puedes usar cualquier motor instalado y sus partidas se registran en tu base de datos. El hash se limita a un valor seguro para la memoria en el tablero, independientemente de lo que pongas aquí.",
+      "engineIntro": "En modo de traducción, Centaur juega a través del proxy de motor de Universal Chess, así que puedes usar cualquier motor instalado y sus partidas se registran en tu base de datos.",
       "engineLabel": "Motor",
-      "eloLabel": "Elo",
-      "eloHelp": "Opcional. Limita la fuerza del motor (activa UCI_LimitStrength). Déjalo en blanco para la fuerza máxima.",
-      "threadsLabel": "Hilos",
-      "threadsHelp": "Opcional. Número de hilos de CPU que puede usar el motor.",
-      "hashLabel": "Hash (MB)",
-      "hashHelp": "Opcional. Tamaño de la tabla de transposición; se limita a un valor seguro para la memoria en el tablero.",
-      "engineDefault": "predeterminado del motor",
+      "strengthLabel": "Fuerza",
+      "strengthHelp": "Fuerza de juego del motor que controla Centaur. Los niveles provienen de los perfiles del propio motor.",
       "saveEngine": "Guardar ajustes del motor",
       "savingEngine": "Guardando...",
       "engineSaveFailed": "No se pudieron guardar los ajustes del motor de Centaur.",
