@@ -744,6 +744,21 @@ def get_game_data_from_session(session, game_id):
     ).first()
     return gamedata
 
+def _game_status_from_result(result):
+    """Classify a game's lifecycle status from its stored PGN result.
+
+    NULL means the game is still in progress; "*" is the PGN code the app writes
+    when a game is abandoned/interrupted; any other value ("1-0", "0-1",
+    "1/2-1/2") is a finished game. Drives the web Games screen, which offers
+    Resume only for in-progress and abandoned games.
+    """
+    if result is None:
+        return "in_progress"
+    if result == "*":
+        return "abandoned"
+    return "finished"
+
+
 def build_gameitem_from_gamedata(gamedata):
     """
     Builds a gameitem dictionary from database gamedata tuple.
@@ -769,7 +784,13 @@ def build_gameitem_from_gamedata(gamedata):
     gameitem["round"] = str(gamedata[4])
     gameitem["white"] = str(gamedata[5])
     gameitem["black"] = str(gamedata[6])
-    gameitem["result"] = str(gamedata[7])
+    # result may be NULL (in progress), "*" (abandoned), or a PGN result code for
+    # a finished game. Serialize NULL as JSON null rather than the string "None"
+    # so the UI can distinguish states, and expose a derived lifecycle status the
+    # Games screen gates the Resume action on.
+    raw_result = gamedata[7]
+    gameitem["result"] = None if raw_result is None else str(raw_result)
+    gameitem["status"] = _game_status_from_result(raw_result)
     return gameitem
 
 def join_path(base_path, *parts):
@@ -3270,6 +3291,29 @@ def api_board_new_game():
         sent = send_board_command("new_game")
         if sent:
             return jsonify({"success": True, "message": "New game started"})
+        return jsonify({"success": False, "error": "Board not running"}), 503
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/games/<int:game_id>/resume", methods=["POST"])
+@requires_auth
+def api_game_resume(game_id):
+    """Resume a stored game on the board by its id. Requires authentication.
+
+    Asks the main process to load the given game (an abandoned "*" game or an
+    in-progress NULL-result game) back onto the live board so play can continue.
+    Any game currently running is first recorded as abandoned (result = "*") --
+    it stays resumable itself, so nothing is lost. Finished games are rejected by
+    the main process (they are review-only). The web UI confirms with the user
+    before calling this when a game may be in progress.
+    """
+    try:
+        from universalchess.services.game_broadcast import send_board_command
+
+        sent = send_board_command("resume_game", {"game_id": game_id})
+        if sent:
+            return jsonify({"success": True, "message": "Game resume requested"})
         return jsonify({"success": False, "error": "Board not running"}), 503
     except Exception as e:
         return _internal_error(e)

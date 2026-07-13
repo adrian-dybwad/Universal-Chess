@@ -128,7 +128,11 @@
     "hidePgn": "Hide PGN",
     "analyze": "Analyze",
     "delete": "Delete",
-    "confirmDelete": "Delete this game? This cannot be undone."
+    "resume": "Resume",
+    "confirmDelete": "Delete this game? This cannot be undone.",
+    "resumeConfirm": "Resume this game on the board? Any game currently in progress will be abandoned (you can resume it again later).",
+    "statusInProgress": "In progress",
+    "statusAbandoned": "Abandoned"
   },
   "liveBoard": {
     "confirmNewGameTitle": "Start a new game?",

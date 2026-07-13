@@ -66,6 +66,12 @@ export interface GameRecord {
   white: string | null;
   black: string | null;
   result: string | null;
+  /**
+   * Lifecycle status derived server-side from `result`: 'in_progress' (NULL
+   * result), 'abandoned' ('*' result), or 'finished'. The Games screen offers
+   * Resume only for in-progress and abandoned games.
+   */
+  status?: 'in_progress' | 'abandoned' | 'finished';
   created_at: string;
   source: string | null;
 }

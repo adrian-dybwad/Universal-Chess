@@ -1633,6 +1633,76 @@ def _resume_game(game_data: dict) -> bool:
         return False
 
 
+def _resume_game_by_id(game_id: int) -> bool:
+    """Resume a stored game onto the live board by its database id.
+
+    This backs the web "Resume" action. Unlike the boot/session resume paths --
+    which deliberately skip abandoned games (see :func:`_get_game_by_id`) -- this
+    resumes both in-progress (NULL result) and abandoned ("*") games, because the
+    user explicitly asked to continue that specific game. Any game currently
+    running is first recorded as abandoned via :func:`_abort_current_game` so it
+    stays resumable later; the requested game is then reactivated (its "*" result
+    cleared to NULL by :func:`reactivate_game_for_resume`) and replayed through
+    :func:`_resume_game`, which starts game mode (setting ``app_state`` to GAME)
+    and records the session view. Finished games are rejected as review-only.
+
+    Args:
+        game_id: The Game row id to resume.
+
+    Returns:
+        True when the game was resumed, False when it is missing, finished,
+        has no resumable moves, or could not be resumed.
+    """
+    if game_id <= 0:
+        return False
+
+    # Already the live game: nothing to abandon or reload.
+    if (protocol_manager is not None
+            and getattr(protocol_manager, "game_manager", None) is not None
+            and protocol_manager.game_manager.game_db_id == game_id):
+        log.info(f"[Resume] Game id={game_id} is already the live game")
+        return True
+
+    try:
+        from sqlalchemy.orm import sessionmaker
+        from universalchess.db import models
+        from universalchess.managers.game.database import reactivate_game_for_resume
+
+        Session = sessionmaker(bind=models.engine)
+        session = Session()
+        try:
+            game = session.query(models.Game).filter(
+                models.Game.id == game_id
+            ).first()
+            if game is None:
+                log.warning(f"[Resume] Game id={game_id} not found")
+                return False
+            # Reactivate (abandoned "*" -> NULL) and confirm resumability; a
+            # finished game is review-only and rejected here.
+            if not reactivate_game_for_resume(session, game_id):
+                log.warning(f"[Resume] Game id={game_id} is finished; not resumable")
+                return False
+            game_data = _build_resume_data(models, session, game)
+        finally:
+            session.close()
+    except Exception as e:
+        log.error(f"[Resume] Error loading game id={game_id}: {e}")
+        return False
+
+    if game_data is None:
+        log.warning(f"[Resume] Game id={game_id} has no resumable moves; nothing to resume")
+        return False
+
+    # The game is now live (NULL result after reactivation); force resume to treat
+    # it as continued play rather than reproducing a finished-game review state.
+    game_data['result'] = None
+
+    # Abandon any running game only now that the target is confirmed resumable.
+    # It is recorded as "*", so it remains resumable later ("come back to it").
+    _abort_current_game()
+    return _resume_game(game_data)
+
+
 # ============================================================================
 # Position Loading Functions
 # ============================================================================
@@ -3035,6 +3105,19 @@ def _process_pending_board_command() -> None:
                 log.warning(f"[App] Web make_move rejected: {uci}")
         else:
             log.warning("[App] Web make_move ignored: no active game")
+    elif command == "resume_game":
+        # Resume a stored game (abandoned "*" or in-progress NULL) back onto the
+        # live board. Any running game is first recorded as abandoned so it stays
+        # resumable, then the requested game is reactivated and replayed.
+        # _resume_game_by_id -> _resume_game -> _start_game_mode sets app_state to
+        # GAME, so the main loop transitions into gameplay on the next iteration.
+        game_id = cmd.get("game_id")
+        if not isinstance(game_id, int) or game_id <= 0:
+            log.warning(f"[App] resume_game command missing/invalid game_id: {game_id}")
+        else:
+            log.info(f"[App] Web resume_game: id={game_id}")
+            if not _resume_game_by_id(game_id):
+                log.warning(f"[App] Web resume_game failed for id={game_id}")
     elif command == "reset_settings":
         # Same reset path as the on-board Reset Settings menu (after its confirm);
         # the web confirms in the browser. Clears the sections and reloads

@@ -110,3 +110,33 @@ def test_empty_database_returns_empty_list(client):
     test_client, _add_game = client
     body = test_client.get("/api/games").get_json()
     assert body == {"games": []}
+
+
+def test_status_derived_from_result(client):
+    # The Games screen gates its Resume action on `status`, so each game's result
+    # must map to the right lifecycle: NULL -> in_progress, "*" -> abandoned, and
+    # a PGN code -> finished. Regression: a mis-mapped status would either hide
+    # Resume on a resumable game or offer it on a finished one. Seeded newest-last
+    # so the newest-first response orders them finished, abandoned, in_progress.
+    test_client, add_game = client
+    add_game(white="W", black="B", result=None)   # in progress
+    add_game(white="W", black="B", result="*")     # abandoned
+    add_game(white="W", black="B", result="1-0")   # finished
+
+    games = test_client.get("/api/games").get_json()["games"]
+    statuses = [g["status"] for g in games]
+    assert statuses == ["finished", "abandoned", "in_progress"]
+
+
+def test_null_result_serialized_as_json_null(client):
+    # An in-progress game has a NULL result. It must serialize as JSON null, not
+    # the string "None": the client treats result as `string | null` and only
+    # renders a result badge for finished games. Regression: stringifying NULL to
+    # "None" (the prior bug) made every in-progress game show a bogus "None"
+    # badge and be indistinguishable from a real result client-side.
+    test_client, add_game = client
+    add_game(white="W", black="B", result=None)
+
+    game = test_client.get("/api/games").get_json()["games"][0]
+    assert game["result"] is None
+    assert game["status"] == "in_progress"

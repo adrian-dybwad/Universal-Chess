@@ -157,6 +157,48 @@ def clear_game_result(session, game_db_id: int) -> bool:
     return True
 
 
+def reactivate_game_for_resume(session, game_db_id: int) -> bool:
+    """Reactivate a stored game so it can be resumed for continued play.
+
+    Backs the web "Resume" action, which continues one specific game. An
+    abandoned game ("*") is turned back into a genuine in-progress game by
+    clearing its result to NULL (committed) so later moves persist to the same
+    record and the Games screen no longer lists it as abandoned. An in-progress
+    game (NULL result) is already live and left untouched. A finished game
+    ("1-0"/"0-1"/"1/2-1/2") is review-only and must not be reactivated: its
+    result is preserved and this reports it as not resumable, so a resumed game's
+    outcome is never silently discarded.
+
+    Args:
+        session: Active SQLAlchemy session, or None (no-op -> False).
+        game_db_id: Game row id; negative ids are treated as uninitialized.
+
+    Returns:
+        True when the game is resumable for continued play (any "*" result has
+        been cleared to NULL), False when the game is missing or finished.
+    """
+    if session is None or game_db_id < 0:
+        return False
+
+    models = _get_models()
+    if models is None:
+        return False
+
+    game_record = session.query(models.Game).filter(models.Game.id == game_db_id).first()
+    if game_record is None:
+        return False
+
+    if game_record.result in ("1-0", "0-1", "1/2-1/2"):
+        return False
+
+    if game_record.result == "*":
+        game_record.result = None
+        session.flush()
+        session.commit()
+
+    return True
+
+
 def delete_last_move(session) -> bool:
     """Delete the last move (globally) from GameMove table."""
     if session is None:
@@ -181,6 +223,7 @@ __all__ = [
     "close_game_db_context",
     "update_game_result",
     "clear_game_result",
+    "reactivate_game_for_resume",
     "delete_last_move",
 ]
 

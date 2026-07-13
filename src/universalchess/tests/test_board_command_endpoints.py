@@ -209,6 +209,60 @@ def test_new_game_reports_board_not_running(client, monkeypatch):
     assert json.loads(resp.data)["success"] is False
 
 
+def test_resume_game_forwards_command_with_game_id(client, monkeypatch):
+    """POST /api/games/<id>/resume must forward a resume_game command with the id.
+
+    The Games screen Resume button calls this to load a stored game back onto the
+    board; a wrong command name or dropped id would resume nothing (or the wrong
+    game). Asserts the exact command and params (the integer game_id) handed to
+    the board -- the id is what _resume_game_by_id uses to pick the record.
+    """
+    sent = []
+    monkeypatch.setattr(
+        "universalchess.services.game_broadcast.send_board_command",
+        lambda command, params=None: (
+            sent.append((command, params)) if command != "reset_inactivity" else None
+        )
+        or True,
+    )
+
+    resp = client.post("/api/games/42/resume")
+    assert resp.status_code == 200
+    assert json.loads(resp.data)["success"] is True
+    assert sent == [("resume_game", {"game_id": 42})]
+
+
+def test_resume_game_requires_auth(monkeypatch):
+    """Unauthenticated resume must be rejected with 401.
+
+    Resuming abandons any running game and mutates board state, so it is
+    auth-gated like the other board-control endpoints. A fresh client without the
+    auth bypass must get 401.
+    """
+    webapp.app.config.update(TESTING=True)
+    monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
+    unauth = webapp.app.test_client()
+    resp = unauth.post("/api/games/42/resume")
+    assert resp.status_code == 401
+
+
+def test_resume_game_reports_board_not_running(client, monkeypatch):
+    """When the board is not listening, resume must report 503.
+
+    send_board_command returns False if the main process isn't running; the UI
+    needs a distinct failure (not a false success) so it can tell the user the
+    board is offline rather than assume the game resumed.
+    """
+    monkeypatch.setattr(
+        "universalchess.services.game_broadcast.send_board_command",
+        lambda command, params=None: False,
+    )
+
+    resp = client.post("/api/games/42/resume")
+    assert resp.status_code == 503
+    assert json.loads(resp.data)["success"] is False
+
+
 def test_board_key_forwards_press_for_valid_button(client, monkeypatch):
     """POST /api/board/key must forward a key_press command for a valid button.
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button, Card, Badge } from '../components/ui';
 import { LoginDialog } from '../components/LoginDialog';
@@ -30,6 +30,7 @@ interface MonthGroup {
  */
 export function Games() {
   const { t, i18n } = useTranslation();
+  const navigate = useNavigate();
   const [games, setGames] = useState<GameRecord[]>([]);
   const [activeMonthKey, setActiveMonthKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -37,6 +38,7 @@ export function Games() {
   const [loginDialogOpen, setLoginDialogOpen] = useState(false);
   const [loginError, setLoginError] = useState<string | undefined>(undefined);
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
+  const [pendingResumeId, setPendingResumeId] = useState<number | null>(null);
 
   const fetchGames = useCallback(async () => {
     setLoading(true);
@@ -141,13 +143,48 @@ export function Games() {
     }
   };
 
+  // Resuming loads a stored game back onto the live board. It mutates board
+  // state (and abandons any game currently in progress -- recoverable later, so
+  // the confirm warns rather than blocks), so it is auth-gated with the same
+  // 401 -> LoginDialog -> retry flow as deletion. On success the browser goes to
+  // the live board so the user can immediately watch/play the resumed game.
+  const resumeGame = async (gameId: number, skipConfirm = false) => {
+    if (!skipConfirm && !confirm(t('games.resumeConfirm'))) return;
+    try {
+      const response = await apiFetch(`/api/games/${gameId}/resume`, {
+        method: 'POST',
+        requiresAuth: true,
+      });
+
+      if (response.status === 401) {
+        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
+        setPendingResumeId(gameId);
+        setLoginDialogOpen(true);
+        return;
+      }
+
+      if (!response.ok) {
+        console.error('Failed to resume game:', response.status);
+        return;
+      }
+
+      navigate('/board');
+    } catch (e) {
+      console.error('Failed to resume game:', e);
+    }
+  };
+
   const handleLoginSuccess = () => {
     setLoginDialogOpen(false);
     setLoginError(undefined);
-    const retryId = pendingDeleteId;
+    const retryDeleteId = pendingDeleteId;
+    const retryResumeId = pendingResumeId;
     setPendingDeleteId(null);
-    if (retryId !== null) {
-      deleteGame(retryId, true);
+    setPendingResumeId(null);
+    if (retryDeleteId !== null) {
+      deleteGame(retryDeleteId, true);
+    } else if (retryResumeId !== null) {
+      resumeGame(retryResumeId, true);
     }
   };
 
@@ -161,7 +198,9 @@ export function Games() {
           <strong>{game.black || t('games.player')}</strong>
           <span className="text-muted">(B)</span>
         </div>
-        {game.result && <Badge>{game.result}</Badge>}
+        {game.status === 'finished' && game.result && <Badge>{game.result}</Badge>}
+        {game.status === 'abandoned' && <Badge>{t('games.statusAbandoned')}</Badge>}
+        {game.status === 'in_progress' && <Badge>{t('games.statusInProgress')}</Badge>}
       </div>
 
       <div className="game-meta">
@@ -177,6 +216,11 @@ export function Games() {
         <Button size="sm" onClick={() => togglePgn(game.id)}>
           {expandedPgn[game.id] ? t('games.hidePgn') : t('games.showPgn')}
         </Button>
+        {(game.status === 'abandoned' || game.status === 'in_progress') && (
+          <Button size="sm" variant="primary" onClick={() => resumeGame(game.id)}>
+            {t('games.resume')}
+          </Button>
+        )}
         <Link to={`/analyze/${game.id}`}>
           <Button size="sm" variant="primary">{t('games.analyze')}</Button>
         </Link>
@@ -240,6 +284,7 @@ export function Games() {
         onClose={() => {
           setLoginDialogOpen(false);
           setPendingDeleteId(null);
+          setPendingResumeId(null);
         }}
         onSuccess={handleLoginSuccess}
         errorMessage={loginError}
