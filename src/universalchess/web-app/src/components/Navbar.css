@@ -270,6 +270,12 @@
   .navbar-start {
     flex-direction: column;
     align-items: stretch;
+    /* Reset the desktop `margin-right: auto`. In this column layout it is a
+       cross-axis auto margin, which left-aligns the block and suppresses
+       `align-items: stretch`, collapsing it to its content width. Clearing it
+       lets the list fill the row so the centered items reach the true center
+       and clear the overhanging logo. */
+    margin-right: 0;
   }
 
   /* Center the expanded menu items so their text clears the oversized logo,
