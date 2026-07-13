@@ -201,6 +201,29 @@ class TextWidget(Widget):
             # ValueError: textbbox called with non-TrueType font (e.g., default bitmap font)
             return int(draw.textlength(text, font=self._font))
     
+    def _get_left_bearing(self, text: str, draw: ImageDraw.Draw) -> int:
+        """Left side bearing of the text in pixels (may be negative).
+
+        A negative value means the first glyph's leftmost ink column sits left of
+        the pen origin (x=0). The clock's wide labels/names (W, S, ...) have a -1
+        bearing in the bundled Font.ttc.
+
+        Args:
+            text: Text to measure.
+            draw: ImageDraw object for measuring.
+
+        Returns:
+            The x offset of the leftmost ink column relative to the origin, or 0
+            when the font (e.g. PIL's default bitmap font) doesn't support
+            ``textbbox``.
+        """
+        try:
+            return draw.textbbox((0, 0), text, font=self._font)[0]
+        except (AttributeError, ValueError):
+            # AttributeError: older PIL without textbbox.
+            # ValueError: textbbox on a non-TrueType (bitmap) font.
+            return 0
+
     def _get_x_position(self, text: str, draw: ImageDraw.Draw) -> int:
         """Calculate x position based on justification.
         
@@ -212,7 +235,13 @@ class TextWidget(Widget):
             X position in pixels
         """
         if self.justify == Justify.LEFT:
-            return 0
+            # Shift right by any negative left side bearing so the first glyph's
+            # leftmost ink column is not clipped by the sprite's x=0 edge. Glyphs
+            # with a non-negative bearing keep their flush-left x=0 origin, so
+            # existing layouts are unchanged. Without this, wide left-justified
+            # glyphs (e.g. the clock's "White"/"Stockfish" labels) lost their
+            # first column, showing as "/Vhite" / a shaved "S".
+            return max(0, -self._get_left_bearing(text, draw))
         
         text_width = self._get_text_width(text, draw)
         
