@@ -46,6 +46,13 @@ class AnalysisService:
     """
     
     DEFAULT_TIME_LIMIT = 0.3  # seconds per position
+
+    # Evaluations are stored (and shown on the e-paper score) clamped to this pawn
+    # magnitude. Past it the exact figure conveys nothing beyond "clearly winning",
+    # but the cap is kept high enough that lopsided-but-not-mating positions still
+    # read as a real number rather than pegging early. Mirrors the web-app's
+    # EVAL_DISPLAY_CAP_PAWNS so both surfaces agree.
+    SCORE_CLAMP_PAWNS = 35.0
     
     def __init__(self):
         """Initialize the analysis service."""
@@ -149,12 +156,12 @@ class AnalysisService:
         self._reset_generation += 1
         self._clear_queue()
         
-        # Convert centipawns to pawns (-12 to +12 clamped)
+        # Convert centipawns to pawns, clamped to +/-SCORE_CLAMP_PAWNS
         pawn_scores = []
         for cp in centipawn_scores:
             if cp is not None:
                 pawn_score = cp / 100.0
-                pawn_score = max(-12.0, min(12.0, pawn_score))
+                pawn_score = max(-self.SCORE_CLAMP_PAWNS, min(self.SCORE_CLAMP_PAWNS, pawn_score))
                 pawn_scores.append(pawn_score)
         
         if pawn_scores:
@@ -171,7 +178,7 @@ class AnalysisService:
         for ply_index, cp in enumerate(centipawn_scores):
             if cp is None:
                 continue
-            pawn_score = max(-12.0, min(12.0, cp / 100.0))
+            pawn_score = max(-self.SCORE_CLAMP_PAWNS, min(self.SCORE_CLAMP_PAWNS, cp / 100.0))
             mover_white = first_ply_white if ply_index % 2 == 0 else not first_ply_white
             move_evals.append((pawn_score, mover_white))
         if move_evals:
@@ -379,7 +386,7 @@ class AnalysisService:
                 score_value = -score_value
             
             # Clamp for display
-            display_score = max(-12.0, min(12.0, score_value))
+            display_score = max(-self.SCORE_CLAMP_PAWNS, min(self.SCORE_CLAMP_PAWNS, score_value))
             
             self._analysis_state.set_score(
                 display_score, add_to_history=add_to_history, mover_white=mover_white)

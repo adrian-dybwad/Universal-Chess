@@ -436,6 +436,9 @@ class GameAnalysisWidget(Widget):
         bar_width = self.GRAPH_WIDTH / len(history)
         if bar_width > 6:
             bar_width = 6
+        # Graph fills its half-height at +/-12 pawns and saturates beyond that.
+        # This is a fixed visualization range (kept small so ordinary evals are
+        # legible) and is deliberately independent of the larger score-text clamp.
         scale = (graph_height // 2) / 12.0
         bar_offset = geo["graph_right"] - bar_width * len(history)
 

@@ -310,7 +310,8 @@ class GameManager:
         try:
             from universalchess.state.analysis import get_analysis
             analysis_state = get_analysis()
-            # score is in pawns (-12 to +12), convert to centipawns
+            # score is in pawns (clamped to +/-AnalysisService.SCORE_CLAMP_PAWNS),
+            # convert to centipawns for storage
             return int(analysis_state.score * 100)
         except Exception as e:
             log.debug(f"[GameManager._get_eval_score_for_db] Error getting eval score: {e}")
