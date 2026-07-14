@@ -539,14 +539,14 @@
     ],
     "time_control_presets": [
       {
-        "value": "",
-        "label": "Basic",
-        "description": "No preset. Use the Base Minutes control to set a simple sudden-death clock (the same time for both sides, no increment or delay)."
-      },
-      {
         "value": "untimed",
         "label": "Untimed",
         "description": "No clock; the display shows only whose turn it is."
+      },
+      {
+        "value": "",
+        "label": "Basic",
+        "description": "No preset. Use the Base Minutes control to set a simple sudden-death clock (the same time for both sides, no increment or delay)."
       },
       {
         "value": "bullet_1_0",

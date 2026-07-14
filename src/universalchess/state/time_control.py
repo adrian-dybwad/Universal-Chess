@@ -357,6 +357,10 @@ PRESETS = {preset.key: preset for preset in _PRESET_LIST}
 # registered preset.
 CUSTOM_PRESET_KEY = "custom"
 
+# Registry key of the untimed preset. The preset selector surfaces this as the
+# first option (ahead of "Basic") so "no clock" is the most immediate choice.
+UNTIMED_PRESET_KEY = "untimed"
+
 
 def list_presets() -> List[TimeControlPreset]:
     """All presets in menu order (single source of truth for the board menu)."""

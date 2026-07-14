@@ -25,7 +25,11 @@ from universalchess.menus.board_context import BoardMenuContext, render_containe
 from universalchess.menus.catalog.loader import load_catalog
 from universalchess.menus.engine import MenuRow
 from universalchess.menus.time_control_presets import preset_options
-from universalchess.state.time_control import CUSTOM_PRESET_KEY, PRESETS
+from universalchess.state.time_control import (
+    CUSTOM_PRESET_KEY,
+    PRESETS,
+    UNTIMED_PRESET_KEY,
+)
 
 _EXIT_RESULTS = {MenuResult.BACK, MenuResult.SHUTDOWN, MenuResult.HELP}
 
@@ -172,24 +176,31 @@ def test_preset_options_have_short_labels_and_full_descriptions():
     assert PRESETS["blitz_5_3"].time_control.describe() not in option["label"]
 
 
-def test_preset_options_lead_with_basic_and_end_with_custom():
-    """Both platforms render one list: Basic, every preset, then Custom.
+def test_preset_options_lead_with_untimed_then_basic_and_end_with_custom():
+    """Both platforms render one list: Untimed, Basic, other presets, then Custom.
 
     Why: the preset selector is the single master control on the board and the
     web, so the identical list must expose the two out-of-registry choices --
     ``""`` (Basic; reveal the base-minutes control) and ``custom`` (reveal the
-    custom builder) -- around every registered preset. How a regression
-    manifests: a missing Basic entry means an empty/legacy preset cannot be
-    represented (and the board loses its only way back to base minutes); a
-    missing custom entry hides the custom builder; a dropped preset is
-    unselectable.
+    custom builder) -- around the registered presets, with the Untimed preset
+    promoted to the very front so "no clock" is the first option. How a
+    regression manifests: Untimed slips back into its registry position (no
+    longer first), a missing Basic entry means an empty/legacy preset cannot be
+    represented (and the board loses its only way back to base minutes), a
+    missing custom entry hides the custom builder, or a preset is duplicated or
+    dropped.
     """
     options = preset_options()
     values = [o["value"] for o in options]
-    assert values[0] == ""  # Basic (no preset -> base minutes)
+    assert values[0] == UNTIMED_PRESET_KEY  # untimed promoted to the front
+    assert values[1] == ""  # Basic (no preset -> base minutes)
     assert values[-1] == CUSTOM_PRESET_KEY
-    assert values[1:-1] == list(PRESETS.keys())  # every preset, registry order
-    assert len(options) == len(PRESETS) + 2  # Basic + presets + Custom
+    # The middle keeps every other preset in registry order, with no untimed
+    # duplicate and nothing dropped.
+    other_presets = [k for k in PRESETS.keys() if k != UNTIMED_PRESET_KEY]
+    assert values[2:-1] == other_presets
+    assert len(options) == len(PRESETS) + 2  # untimed + Basic + rest + Custom
+    assert values.count(UNTIMED_PRESET_KEY) == 1  # emitted once, not repeated
 
 
 def test_catalog_inlines_time_control_under_clock_group():

@@ -16,18 +16,23 @@ hand-formatted label:
 - the web shows ``label`` in the dropdown and ``description`` beneath the
   selection.
 
-The list is bracketed by two out-of-registry choices: a leading "Basic" entry
-(``value == ""``, i.e. no preset -> resolve the legacy base minutes) and a
-trailing "Custom" entry (show the custom clock builder). The preset selector is
-the single master control on each platform: Basic reveals the base-minutes
-control, Custom reveals the custom builder, and a named preset defines the whole
-clock. Because Basic's value is "", the board relies on empty-string selections
-being valid (see ``icon_menu``/``MenuManager.show_menu``).
+The list leads with the Untimed preset (promoted ahead of "Basic" so "no clock"
+is the most immediate choice) and is otherwise bracketed by two out-of-registry
+choices: a "Basic" entry (``value == ""``, i.e. no preset -> resolve the legacy
+base minutes) and a trailing "Custom" entry (show the custom clock builder). The
+preset selector is the single master control on each platform: Basic reveals the
+base-minutes control, Custom reveals the custom builder, and a named preset
+defines the whole clock. Because Basic's value is "", the board relies on
+empty-string selections being valid (see ``icon_menu``/``MenuManager.show_menu``).
 """
 
 from typing import Dict, List
 
-from universalchess.state.time_control import CUSTOM_PRESET_KEY, list_presets
+from universalchess.state.time_control import (
+    CUSTOM_PRESET_KEY,
+    UNTIMED_PRESET_KEY,
+    list_presets,
+)
 
 # Description shown for the two out-of-registry choices. Kept here (not in the
 # web layer) so the single source of truth for preset text stays in Python.
@@ -41,14 +46,21 @@ _CUSTOM_DESCRIPTION = (
 )
 
 
+def _preset_row(preset) -> Dict[str, str]:
+    """Map a registered preset to a selector ``{value, label, description}`` row."""
+    return {"value": preset.key, "label": preset.label, "description": preset.description}
+
+
 def preset_options() -> List[Dict[str, str]]:
     """Return ``{value, label, description}`` options for the preset selector.
 
-    A leading Basic entry (``value == ""``), then one entry per registered preset
-    (in registry order), then a trailing Custom entry. ``value`` is what persists
-    to ``game.time_control_preset``; ``label`` is the short name; ``description``
-    is the full rules sentence for the platform to surface (board help dialog /
-    web description block).
+    The Untimed preset leads the list, then the Basic entry (``value == ""``),
+    then every other registered preset in registry order, then a trailing Custom
+    entry. Untimed is promoted ahead of Basic so "no clock" is the most immediate
+    choice; it is emitted once (not repeated in its registry position). ``value``
+    is what persists to ``game.time_control_preset``; ``label`` is the short name;
+    ``description`` is the full rules sentence for the platform to surface (board
+    help dialog / web description block).
 
     Both platforms render this identical list -- the preset selector is the
     single master control on each -- so the board and web cannot drift.
@@ -56,13 +68,13 @@ def preset_options() -> List[Dict[str, str]]:
     Returns:
         Ordered list of ``{"value", "label", "description"}`` dicts.
     """
-    options: List[Dict[str, str]] = [
-        {"value": "", "label": "Basic", "description": _BASIC_DESCRIPTION}
-    ]
-    for preset in list_presets():
-        options.append(
-            {"value": preset.key, "label": preset.label, "description": preset.description}
-        )
+    presets = list_presets()
+    options: List[Dict[str, str]] = []
+    untimed = next((p for p in presets if p.key == UNTIMED_PRESET_KEY), None)
+    if untimed is not None:
+        options.append(_preset_row(untimed))
+    options.append({"value": "", "label": "Basic", "description": _BASIC_DESCRIPTION})
+    options.extend(_preset_row(p) for p in presets if p.key != UNTIMED_PRESET_KEY)
     options.append(
         {"value": CUSTOM_PRESET_KEY, "label": "Custom", "description": _CUSTOM_DESCRIPTION}
     )
