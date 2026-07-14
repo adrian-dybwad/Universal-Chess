@@ -20,6 +20,7 @@
 from .base import Player, PlayerConfig, PlayerState, PlayerType
 from .human import HumanPlayer, HumanPlayerConfig
 from .engine import EnginePlayer, EnginePlayerConfig, create_engine_player
+from .policy_engine import PolicyEnginePlayer
 from .hand_brain import (
     HandBrainPlayer, HandBrainConfig, HandBrainMode, HandBrainPhase,
     create_hand_brain_player
@@ -40,6 +41,7 @@ __all__ = [
     'EnginePlayer',
     'EnginePlayerConfig',
     'create_engine_player',
+    'PolicyEnginePlayer',
     # Hand+Brain player
     'HandBrainPlayer',
     'HandBrainConfig',

@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Optional, Sequence, Tuple
+from typing import Callable, Dict, Mapping, Optional, Sequence, Tuple
 
 import chess
 
@@ -107,6 +107,24 @@ class DerivedEngineSpec:
     def default_option_values(self) -> Dict[str, int]:
         """The initial option map (name -> default), mutated by ``setoption``."""
         return {option.name: option.default for option in self.options}
+
+    def resolve_options(self, raw: Mapping[str, str]) -> Dict[str, int]:
+        """Coerce a name->string option map into the int map policies expect.
+
+        Starts from the defaults and overlays each advertised option whose raw
+        value parses; unknown names and invalid values are ignored (the default
+        stands). This is the same resolution the UCI ``setoption`` path performs,
+        exposed so an in-process caller (the policy player, which reads option
+        values from a saved ``.uci`` section rather than over UCI) resolves them
+        identically to the subprocess wrapper.
+        """
+        values = self.default_option_values()
+        for option in self.options:
+            if option.name in raw:
+                coerced = option.coerce(raw[option.name])
+                if coerced is not None:
+                    values[option.name] = coerced
+        return values
 
 
 # Registry keyed by engine id. The id is also the installed engine name and the

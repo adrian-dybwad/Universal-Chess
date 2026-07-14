@@ -166,10 +166,8 @@ class EnginePlayer(Player):
         
         # Acquire engine from registry (async)
         def _on_engine_ready(handle: EngineHandle):
-            # Apply UCI options
-            if self._uci_options:
-                log.info(f"[EnginePlayer] Configuring with options: {self._uci_options}")
-                handle.configure(self._uci_options)
+            # Apply UCI options (subclasses may route options elsewhere)
+            self._configure_handle(handle)
             
             with self._lock:
                 self._engine_handle = handle
@@ -312,23 +310,7 @@ class EnginePlayer(Player):
             move = None
             try:
                 log.info(f"[EnginePlayer] {self.engine_name} thinking...")
-                
-                # Get engine move (registry handles serialization and options)
-                time_limit = self._engine_config.time_limit_seconds
-                ponder = self._engine_config.ponder
-                # When pondering, do NOT re-send options every move: the options
-                # were applied once at startup (see _on_engine_ready), and issuing
-                # setoption while the dedicated engine is running its background
-                # ponder search would disrupt it. Options don't change mid-game.
-                play_options = None if ponder else (self._uci_options if self._uci_options else None)
-                result = handle.play(
-                    board_copy,
-                    chess.engine.Limit(time=time_limit),
-                    options=play_options,
-                    ponder=ponder,
-                    game=self._game_token if ponder else None,
-                )
-                move = result.move
+                move = self._compute_move(handle, board_copy)
             except Exception as e:
                 log.error(f"[EnginePlayer] Error getting move: {e}")
                 import traceback
@@ -370,6 +352,52 @@ class EnginePlayer(Player):
         )
         self._think_thread.start()
     
+    def _configure_handle(self, handle: EngineHandle) -> None:
+        """Apply this player's UCI options to its engine handle.
+
+        Sends the loaded ``.uci`` options to the engine once, at startup. A
+        subclass whose options are not real UCI options of the acquired engine
+        (e.g. a policy engine sharing Stockfish, whose Randomness/AvoidCaptures
+        are applied in Python) overrides this so it never mutates a shared
+        engine with options that engine does not understand.
+        """
+        if self._uci_options:
+            log.info(f"[EnginePlayer] Configuring with options: {self._uci_options}")
+            handle.configure(self._uci_options)
+
+    def _compute_move(
+        self, handle: EngineHandle, board: chess.Board
+    ) -> Optional[chess.Move]:
+        """Compute the move to play for ``board`` using ``handle``.
+
+        The single seam a subclass overrides to change HOW a move is chosen
+        (e.g. a multi-PV analyse plus a selection policy) while inheriting all of
+        the threading, pending-move, and physical-board handling in
+        :meth:`_do_request_move`. The default asks the engine to play directly.
+
+        Args:
+            handle: The acquired engine handle (registry-serialized).
+            board: A private copy of the current position (safe to use off-thread).
+
+        Returns:
+            The chosen move, or None when no move could be produced.
+        """
+        time_limit = self._engine_config.time_limit_seconds
+        ponder = self._engine_config.ponder
+        # When pondering, do NOT re-send options every move: the options were
+        # applied once at startup (see _configure_handle), and issuing setoption
+        # while the dedicated engine is running its background ponder search
+        # would disrupt it. Options don't change mid-game.
+        play_options = None if ponder else (self._uci_options if self._uci_options else None)
+        result = handle.play(
+            board,
+            chess.engine.Limit(time=time_limit),
+            options=play_options,
+            ponder=ponder,
+            game=self._game_token if ponder else None,
+        )
+        return result.move
+
     def _on_move_formed(self, move: chess.Move) -> None:
         """Validate formed move matches engine's computed move.
         

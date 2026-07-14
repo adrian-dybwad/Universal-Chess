@@ -2219,6 +2219,13 @@ def _start_game_mode(
                 time_limit_seconds=float(ps.think_time),
                 ponder=settings.game.ponder,
             )
+            # Derived novelty engines (Worstfish/Drawfish) run their selection
+            # policy in-process on the shared pooled Stockfish instead of a
+            # separate UCI subprocess that would spawn a second Stockfish.
+            from universalchess.services.derived_engines.spec import SPECS
+            if ps.engine in SPECS:
+                from universalchess.players.policy_engine import PolicyEnginePlayer
+                return PolicyEnginePlayer(config, SPECS[ps.engine])
             return EnginePlayer(config)
         elif ps.type == 'lichess':
             config = LichessPlayerConfig(
