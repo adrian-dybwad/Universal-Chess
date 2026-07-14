@@ -1,0 +1,270 @@
+#!/bin/bash
+# uc-runtime-swap -- provision a PERSISTENT disk-backed swapfile so a RAM-
+# constrained board has real headroom during normal play, and stop the OOM killer
+# from reaping engine subprocesses when several are loaded at once.
+#
+# WHY THIS EXISTS (and how it differs from uc-build-memory)
+#   uc-build-memory expands swap only AROUND a heavy build and tears it down after,
+#   so it does nothing for runtime pressure. A two-engine game with analysis on
+#   loads up to three engine subprocesses concurrently (player 1 + player 2, each
+#   a dedicated process, plus the shared analysis engine), and a transient fourth
+#   during an engine switch. On a ~415MB Pi Zero 2 W whose only swap is the stock
+#   ~415MB zram (compressed RAM -- it competes for the same RAM, so it adds no real
+#   capacity under genuine starvation), that working set exhausts memory and the
+#   kernel OOM-kills an engine, which is why moves silently stop. This helper adds
+#   a real, disk-backed swapfile as a low-priority backstop so those spikes spill
+#   to the SD card instead of killing a process.
+#
+#   The swappiness tunable is deliberately NOT managed here: it is shipped as a
+#   persistent sysctl.d drop-in (vm.swappiness=10) so the card is barely touched
+#   at idle and the swapfile is only a safety valve under real pressure. This
+#   helper owns exactly one concern -- the swapfile.
+#
+# IDEMPOTENT BY DESIGN (run at every boot by universal-chess-swap.service)
+#   The persistent file survives reboots but its swap activation does not, so on a
+#   normal boot the file already exists and ensure just swaps it back on -- it does
+#   NOT re-allocate or re-mkswap it. It only writes the card when the file is
+#   missing or its size is out of tolerance vs the target. Its own already-active
+#   size is excluded from the "existing swap" budget input, so it never mistakes
+#   its own contribution for headroom and deletes the file it just activated.
+#
+# SIZING
+#   The disk swapfile fills the gap from RAM + other swap up to a target total
+#   budget (default 4096MB), matching uc-build-memory's target. It is capped so the
+#   card keeps a free-space floor, and is 0 (no file) on boards that already meet
+#   the target -- so capable boards get no needless SD swap.
+#
+# INVOCATION
+#   Run as root by the systemd oneshot (no sudo grant needed):
+#     uc-runtime-swap ensure
+#   Also: `status` (prints sizing, no side effects) and `remove` (teardown).
+#
+# TEST SEAMS (let sizing + the create/reactivate/resize decision run without root)
+#   UC_RUNTIME_SWAP_FILE          swapfile path
+#   UC_RUNTIME_SWAP_MEMTOTAL_MB   override detected RAM (MB)
+#   UC_RUNTIME_SWAP_SWAPTOTAL_MB  override detected total swap (MB, incl. our file)
+#   UC_RUNTIME_SWAP_EXISTING_MB   override detected on-disk swapfile size (MB)
+#   UC_RUNTIME_SWAP_ACTIVE        override whether our swapfile is swapped on (0/1)
+#   UC_RUNTIME_SWAP_FS_FREE_MB    override free space on the swapfile's filesystem
+#   UC_RUNTIME_SWAP_TARGET_MB     target total RAM+swap budget (default 4096)
+#   UC_RUNTIME_SWAP_PRIORITY      swapon priority (default 10, below zram's 100)
+#   UC_RUNTIME_SWAP_KEEP_FREE_MB  free-space floor to leave on the card (default 512)
+#   UC_RUNTIME_SWAP_TOLERANCE_MB  resize tolerance to avoid needless rewrites (128)
+#   UC_RUNTIME_SWAP_DRY_RUN=1     record intended privileged actions instead of
+#                                 running them (to $UC_RUNTIME_SWAP_ACTION_LOG)
+set -u
+
+SWAPFILE="${UC_RUNTIME_SWAP_FILE:-/var/cache/universalchess/runtime-swap}"
+TARGET_MB="${UC_RUNTIME_SWAP_TARGET_MB:-4096}"
+PRIORITY="${UC_RUNTIME_SWAP_PRIORITY:-10}"
+KEEP_FREE_MB="${UC_RUNTIME_SWAP_KEEP_FREE_MB:-512}"
+TOLERANCE_MB="${UC_RUNTIME_SWAP_TOLERANCE_MB:-128}"
+DRY_RUN="${UC_RUNTIME_SWAP_DRY_RUN:-0}"
+ACTION_LOG="${UC_RUNTIME_SWAP_ACTION_LOG:-}"
+LOG_TAG="uc-runtime-swap"
+
+log() { logger -t "$LOG_TAG" -- "$*" 2>/dev/null || true; echo "[$LOG_TAG] $*" >&2; }
+
+# Every privileged primitive goes through this wrapper so the decision logic is
+# testable without root: dry-run records the action instead of running it.
+run_priv() {
+    if [ "$DRY_RUN" = "1" ]; then
+        if [ -n "$ACTION_LOG" ]; then echo "$*" >> "$ACTION_LOG"; fi
+        return 0
+    fi
+    "$@"
+}
+
+usage() {
+    echo "usage: uc-runtime-swap {ensure|status|remove}" >&2
+    exit 2
+}
+
+# ---------------------------------------------------------------------------
+# Environment discovery (each overridable via a test seam)
+# ---------------------------------------------------------------------------
+
+mem_total_mb() {
+    if [ -n "${UC_RUNTIME_SWAP_MEMTOTAL_MB:-}" ]; then echo "$UC_RUNTIME_SWAP_MEMTOTAL_MB"; return; fi
+    awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo
+}
+
+swap_total_mb() {
+    if [ -n "${UC_RUNTIME_SWAP_SWAPTOTAL_MB:-}" ]; then echo "$UC_RUNTIME_SWAP_SWAPTOTAL_MB"; return; fi
+    awk '/^SwapTotal:/ {print int($2/1024)}' /proc/meminfo
+}
+
+# On-disk size of our swapfile in MB (0 if it does not exist).
+existing_file_mb() {
+    if [ -n "${UC_RUNTIME_SWAP_EXISTING_MB:-}" ]; then echo "$UC_RUNTIME_SWAP_EXISTING_MB"; return; fi
+    if [ -f "$SWAPFILE" ]; then
+        local bytes
+        bytes="$(stat -c %s "$SWAPFILE" 2>/dev/null || echo 0)"
+        echo $(( bytes / 1024 / 1024 ))
+    else
+        echo 0
+    fi
+}
+
+# Whether our swapfile is currently swapped on (1) or not (0).
+file_active() {
+    if [ -n "${UC_RUNTIME_SWAP_ACTIVE:-}" ]; then echo "$UC_RUNTIME_SWAP_ACTIVE"; return; fi
+    if [ -r /proc/swaps ] && grep -qF -- "$SWAPFILE" /proc/swaps 2>/dev/null; then
+        echo 1
+    else
+        echo 0
+    fi
+}
+
+# Free space (MB) on the filesystem that will hold the swapfile.
+fs_free_mb() {
+    if [ -n "${UC_RUNTIME_SWAP_FS_FREE_MB:-}" ]; then echo "$UC_RUNTIME_SWAP_FS_FREE_MB"; return; fi
+    local dir
+    dir="$(dirname "$SWAPFILE")"
+    mkdir -p "$dir" 2>/dev/null || true
+    df -Pm "$dir" 2>/dev/null | awk 'NR==2 {print $4}'
+}
+
+# Desired swapfile size (MB) to reach TARGET_MB. Excludes our own already-active
+# file from "existing swap" so a second boot does not compute 0 and delete it.
+# Capped so the card keeps KEEP_FREE_MB free (existing file space is reclaimable,
+# so it counts toward what is available for a resize). 0 => no file needed.
+desired_file_mb() {
+    local mem swap existing active other want free avail cap
+    mem="$1"; swap="$2"; existing="$3"; active="$4"
+    if [ "$active" = "1" ]; then
+        other=$(( swap - existing ))
+    else
+        other="$swap"
+    fi
+    [ "$other" -lt 0 ] && other=0
+    want=$(( TARGET_MB - mem - other ))
+    [ "$want" -lt 0 ] && want=0
+    if [ "$want" -gt 0 ]; then
+        free="$(fs_free_mb)"
+        if [ -n "$free" ]; then
+            avail=$(( free + existing ))
+            cap=$(( avail - KEEP_FREE_MB ))
+            [ "$cap" -lt 0 ] && cap=0
+            [ "$want" -gt "$cap" ] && want="$cap"
+        fi
+    fi
+    echo "$want"
+}
+
+abs_diff() {
+    local a="$1" b="$2"
+    if [ "$a" -ge "$b" ]; then echo $(( a - b )); else echo $(( b - a )); fi
+}
+
+# ---------------------------------------------------------------------------
+# Privileged building blocks
+# ---------------------------------------------------------------------------
+
+swap_off_file() {
+    run_priv swapoff "$SWAPFILE" 2>/dev/null
+}
+
+remove_file() {
+    run_priv rm -f "$SWAPFILE"
+}
+
+# Allocate + format + activate a fresh swapfile at the given size (MB).
+create_and_activate() {
+    local size="$1" made=0
+    run_priv mkdir -p "$(dirname "$SWAPFILE")"
+    # fallocate is fast and writes little; fall back to dd where swapon rejects a
+    # fallocate-style (holey) file.
+    if run_priv fallocate -l "${size}M" "$SWAPFILE" 2>/dev/null; then made=1; fi
+    if [ "$made" = "0" ]; then
+        run_priv dd if=/dev/zero of="$SWAPFILE" bs=1M count="$size" status=none 2>/dev/null && made=1
+    fi
+    if [ "$made" != "1" ]; then
+        log "WARNING: could not create swapfile $SWAPFILE (${size}M)"
+        return 1
+    fi
+    run_priv chmod 600 "$SWAPFILE"
+    run_priv mkswap "$SWAPFILE" >/dev/null 2>&1
+    if run_priv swapon -p "$PRIORITY" "$SWAPFILE"; then
+        log "runtime swap up: $SWAPFILE (${size}M, priority $PRIORITY)"
+    else
+        log "WARNING: swapon failed for $SWAPFILE; removing"
+        remove_file
+        return 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+cmd_ensure() {
+    local mem swap existing active desired
+    mem="$(mem_total_mb)"; swap="$(swap_total_mb)"
+    existing="$(existing_file_mb)"; active="$(file_active)"
+    desired="$(desired_file_mb "$mem" "$swap" "$existing" "$active")"
+
+    # Capable board (or card too full to help): make sure no stale file lingers.
+    if [ "$desired" -eq 0 ]; then
+        if [ "$existing" -gt 0 ] || [ "$active" = "1" ]; then
+            [ "$active" = "1" ] && swap_off_file
+            remove_file
+            log "no runtime swap needed (target met); removed existing swapfile"
+        else
+            log "no runtime swap needed (target met)"
+        fi
+        return 0
+    fi
+
+    # A correctly-sized file already exists.
+    if [ "$existing" -gt 0 ] && [ "$(abs_diff "$existing" "$desired")" -le "$TOLERANCE_MB" ]; then
+        if [ "$active" = "1" ]; then
+            log "runtime swap already active and correctly sized (${existing}M)"
+        else
+            # Persisted across a reboot: just re-activate, do not rewrite the card.
+            if run_priv swapon -p "$PRIORITY" "$SWAPFILE"; then
+                log "re-activated persisted runtime swap: $SWAPFILE (${existing}M)"
+            else
+                log "WARNING: could not re-activate $SWAPFILE; rebuilding"
+                remove_file
+                create_and_activate "$desired"
+            fi
+        fi
+        return 0
+    fi
+
+    # Missing or out of tolerance: (re)build at the target size.
+    [ "$active" = "1" ] && swap_off_file
+    [ "$existing" -gt 0 ] && remove_file
+    create_and_activate "$desired"
+}
+
+cmd_remove() {
+    local active existing
+    active="$(file_active)"; existing="$(existing_file_mb)"
+    [ "$active" = "1" ] && swap_off_file
+    if [ "$existing" -gt 0 ] || [ -f "$SWAPFILE" ]; then
+        remove_file
+    fi
+    log "runtime swap removed: $SWAPFILE"
+}
+
+cmd_status() {
+    local mem swap existing active desired
+    mem="$(mem_total_mb)"; swap="$(swap_total_mb)"
+    existing="$(existing_file_mb)"; active="$(file_active)"
+    desired="$(desired_file_mb "$mem" "$swap" "$existing" "$active")"
+    echo "ram_mb=$mem swap_total_mb=$swap existing_file_mb=$existing file_active=$active desired_file_mb=$desired target_mb=$TARGET_MB priority=$PRIORITY"
+}
+
+main() {
+    local action="${1:-}"
+    case "$action" in
+        ensure) cmd_ensure ;;
+        remove) cmd_remove ;;
+        status) cmd_status ;;
+        *)      usage ;;
+    esac
+}
+
+main "$@"

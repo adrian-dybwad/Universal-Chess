@@ -351,6 +351,36 @@ else
     echo -e "::: Warning: build-memory helper not found at $BUILD_MEM_HELPER"
 fi
 
+# Persistent runtime swap. Distinct from the build-scoped uc-build-memory helper:
+# a two-engine game with analysis loads up to three engine subprocesses at once
+# (player 1 + player 2, each dedicated, plus the shared analysis engine), and a
+# transient fourth during an engine switch. On a ~415MB board whose only swap is
+# the stock ~415MB zram (compressed RAM, which competes for the same RAM and so
+# adds no real capacity under starvation) that working set OOM-kills an engine and
+# moves silently stop. universal-chess-swap.service runs uc-runtime-swap at boot to
+# provision a real disk-backed swapfile (sized to a 4GB total RAM+swap budget, 0 on
+# boards that already meet it), and 99-universalchess-swap.conf sets vm.swappiness
+# low so the card is only touched under genuine pressure. The helper runs as root
+# via the unit, so it needs no sudoers grant.
+echo -e "::: Configuring persistent runtime swap"
+RUNTIME_SWAP_HELPER="${DGTCM_PATH}/scripts/uc-runtime-swap"
+if [ -f "$RUNTIME_SWAP_HELPER" ]; then
+    chmod +x "$RUNTIME_SWAP_HELPER"
+    systemctl daemon-reload
+    systemctl enable universal-chess-swap.service 2>/dev/null || true
+    # Apply the low-swappiness policy now (an upgrade does not reboot; a fresh
+    # install reboots below, where systemd-sysctl re-applies it from the drop-in).
+    if [ -f /etc/sysctl.d/99-universalchess-swap.conf ]; then
+        sysctl -p /etc/sysctl.d/99-universalchess-swap.conf >/dev/null 2>&1 || true
+    fi
+    # Provision the swapfile now so this install gets headroom without waiting for
+    # a reboot. Idempotent: a re-run re-activates the existing file rather than
+    # rewriting the card. Best-effort -- a failure here must not break the install.
+    systemctl start universal-chess-swap.service 2>/dev/null || true
+else
+    echo -e "::: Warning: runtime-swap helper not found at $RUNTIME_SWAP_HELPER"
+fi
+
 # Allow the service user to set the device OS timezone from the web/board
 # Settings. `timedatectl set-timezone` is root-only, so -- as with bt-admin and
 # the updater -- grant passwordless sudo to exactly one pinned helper. The

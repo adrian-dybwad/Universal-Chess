@@ -1,0 +1,33 @@
+[Unit]
+# Provision a persistent, disk-backed swapfile at boot so a RAM-constrained board
+# (e.g. a ~415MB Pi Zero 2 W whose only swap is the stock ~415MB zram) has real
+# headroom during normal play. A two-engine game with analysis loads up to three
+# engine subprocesses concurrently (player 1 + player 2, each dedicated, plus the
+# shared analysis engine), and a transient fourth during an engine switch; without
+# this backstop the kernel OOM-kills an engine and moves silently stop. The helper
+# is idempotent -- it re-activates the already-present file on a normal boot and
+# only writes the card when the file is missing or mis-sized -- so this is cheap on
+# every boot. See scripts/uc-runtime-swap.
+Description=Universal Chess persistent runtime swap
+# Order swap provisioning before the app services so engines never start without
+# the headroom. local-fs.target guarantees /var/cache is mounted for the swapfile.
+After=local-fs.target
+Before=universal-chess.service universal-chess-web.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Creating a multi-GB swapfile on a slow SD card can take a couple of minutes the
+# first time (fallocate is fast, but the dd fallback and mkswap are not); bound it
+# generously so a first-boot provision is never SIGTERMed mid-write.
+TimeoutStartSec=600
+ExecStart=/opt/universalchess/scripts/uc-runtime-swap ensure
+# No ExecStop teardown: the swapfile is meant to persist across service/package
+# operations (the file stays on disk and is re-activated next boot). Tearing it
+# down on a routine `systemctl stop` would remove the safety valve mid-play.
+# Best-effort: a swap-provisioning failure must never fail the boot transaction.
+# The board still runs (with less headroom) and the failure is logged.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=multi-user.target
