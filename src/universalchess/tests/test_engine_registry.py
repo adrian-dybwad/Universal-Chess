@@ -708,6 +708,152 @@ class TestEngineRegistry:
         assert evicted == 0
         mock_engine.quit.assert_not_called()
 
+    def test_configure_forwards_only_engine_advertised_options(self):
+        """EngineHandle.configure drops options the engine does not advertise.
+
+        Why this test exists: the app applies a shared profile (the Default
+        section carries Threads=1) to every engine, but the derived policy
+        engines (Worstfish/Drawfish) advertise only Randomness/AvoidCaptures.
+        python-chess's configure() raises EngineError for any option the engine
+        never advertised, which aborted the derived player's initialization
+        before it could move (the "not suggesting moves" symptom on dgt-64).
+        Filtering to advertised options at this boundary keeps one generic
+        profile compatible with every engine.
+
+        How the regression manifests: without the filter, the unsupported
+        Threads is forwarded to the engine and configure() raises, so the mock's
+        configure would be called with Threads present (or the real engine would
+        reject it).
+        """
+        from unittest.mock import MagicMock
+
+        import chess.engine
+
+        from universalchess.services.engine_registry import EngineHandle
+
+        engine = MagicMock()
+        # Case-insensitive map, exactly as python-chess exposes advertised options.
+        engine.options = chess.engine.UciOptionMap(
+            [("Randomness", object()), ("AvoidCaptures", object())]
+        )
+        handle = EngineHandle(path="/opt/universalchess/engines/worstfish", engine=engine)
+
+        handle.configure({"Threads": "1", "Randomness": "50"})
+
+        engine.configure.assert_called_once_with({"Randomness": "50"})
+
+    def test_configure_forwards_all_when_every_option_is_advertised(self):
+        """EngineHandle.configure passes options through unchanged when supported.
+
+        Why this test exists: the filter must not strip legitimate options a
+        capable engine (Stockfish advertises Threads, Hash, ...) does accept;
+        over-filtering would silently drop a user's engine settings.
+
+        How the regression manifests: if membership were tested case-sensitively
+        (or the filter were too aggressive), a differently-cased but advertised
+        option like "threads" would be dropped and the forwarded dict would be
+        missing it.
+        """
+        from unittest.mock import MagicMock
+
+        import chess.engine
+
+        from universalchess.services.engine_registry import EngineHandle
+
+        engine = MagicMock()
+        engine.options = chess.engine.UciOptionMap(
+            [("Threads", object()), ("Hash", object())]
+        )
+        handle = EngineHandle(path="/usr/games/stockfish", engine=engine)
+
+        # "threads" differs in case from the advertised "Threads"; UCI option
+        # names are case-insensitive, so it must survive the filter.
+        handle.configure({"threads": "2", "Hash": "16"})
+
+        engine.configure.assert_called_once_with({"threads": "2", "Hash": "16"})
+
+    def test_play_filters_unsupported_options_before_search(self):
+        """EngineHandle.play strips unsupported options before applying them.
+
+        Why this test exists: the per-move path also applies the profile options
+        (EnginePlayer passes its UCI options to play()), so play() must filter
+        just like configure() -- otherwise a derived engine that initialized
+        would still crash on the first move when Threads is re-applied.
+
+        How the regression manifests: without filtering, play() forwards Threads
+        to engine.configure and python-chess raises mid-move, so no bestmove is
+        produced.
+        """
+        from unittest.mock import MagicMock
+
+        import chess
+        import chess.engine
+
+        from universalchess.services.engine_registry import EngineHandle
+
+        engine = MagicMock()
+        engine.options = chess.engine.UciOptionMap([("Randomness", object())])
+        engine.play.return_value = MagicMock()
+        handle = EngineHandle(path="/opt/universalchess/engines/drawfish", engine=engine)
+
+        handle.play(
+            chess.Board(),
+            chess.engine.Limit(time=0.1),
+            options={"Threads": "1", "Randomness": "50"},
+        )
+
+        engine.configure.assert_called_once_with({"Randomness": "50"})
+
+    @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
+    def test_async_acquire_releases_handle_when_on_ready_raises(self, mock_popen):
+        """A failed on_ready must not leak the just-loaded pooled engine.
+
+        Why this test exists: acquire_async loads the engine (caching it at
+        ref 1) and then calls the consumer's on_ready. When on_ready raised --
+        the derived players' configure() rejecting Threads was the production
+        trigger -- the old code went straight to on_error, leaving the process
+        pooled at ref 1 forever. Nothing referenced it (the player errored out
+        without storing the handle) yet evict_unused could never reap it, so
+        derived-engine processes accumulated (observed as lingering worstfish/
+        drawfish processes parented to the app). The registry must release the
+        reference it took when on_ready fails.
+
+        How the regression manifests: if the reference is not released, the
+        handle stays at ref 1, so evict_unused() reaps nothing (returns 0) and
+        the engine process is never quit.
+        """
+        from universalchess.services.engine_registry import get_engine_registry
+
+        engine = MagicMock()
+        engine._shutdown = False
+        mock_popen.return_value = engine
+
+        registry = get_engine_registry()
+
+        done = threading.Event()
+        errors = []
+
+        def on_ready(_handle):
+            raise RuntimeError("engine does not support option Threads")
+
+        def on_error(exc):
+            errors.append(exc)
+            done.set()
+
+        registry.acquire_async(
+            "/opt/universalchess/engines/worstfish",
+            on_ready=on_ready,
+            on_error=on_error,
+        )
+        assert done.wait(timeout=5.0), "async load did not finish"
+        assert len(errors) == 1
+
+        # The reference taken by acquire must have been released back to zero, so
+        # the boundary sweep can now reap the otherwise-orphaned process.
+        reaped = registry.evict_unused()
+        assert reaped == 1, "failed-init engine leaked (still referenced)"
+        engine.quit.assert_called_once()
+
 
 class TestCanonicalizePath:
     """Tests for EngineRegistry._canonicalize_path.

@@ -5,14 +5,18 @@
 #
 # Implements the UCI protocol loop for a derived engine. It advertises the
 # engine's options, tracks the board from ``position`` commands, applies
-# ``setoption`` changes, and on ``go`` asks the injected Stockfish for a
-# multi-PV evaluation of every legal move, converts each to a mover-POV
-# ``Candidate`` (recording whether it is a capture), applies the engine's
-# selection policy, and prints ``bestmove``.
+# ``setoption`` changes, and on ``go`` asks Stockfish for a multi-PV evaluation
+# of every legal move, converts each to a mover-POV ``Candidate`` (recording
+# whether it is a capture), applies the engine's selection policy, and prints
+# ``bestmove``.
 #
-# Stockfish is injected (any object exposing ``analyse(board, limit, multipv)``)
-# and the RNG is injected too, so the loop is testable without a real engine
-# process and randomised policies stay deterministic under test.
+# Stockfish is supplied as a zero-arg provider (rather than an already-open
+# engine) and opened lazily on the first move that needs analysis. This keeps
+# the UCI handshake -- and the app's option probe, which only sends
+# ``uci``/``isready`` and never ``go`` -- independent of Stockfish's startup
+# time, so probing an option schema is instant and never times out. The RNG is
+# injected too, so the loop is testable without a real engine process and
+# randomised policies stay deterministic under test.
 #
 # Licensed under the GNU General Public License v3.0 or later.
 # See LICENSE.md for details.
@@ -20,13 +24,17 @@
 from __future__ import annotations
 
 import random
-from typing import Dict, List, Optional, TextIO, Tuple
+from typing import Callable, Dict, List, Optional, TextIO, Tuple
 
 import chess
 import chess.engine
 
 from .policies import Candidate, SelectionContext
 from .spec import DerivedEngineSpec
+
+# A zero-arg factory that opens the backing analysis engine. Called at most once
+# per process, on the first move that needs analysis.
+EngineProvider = Callable[[], chess.engine.SimpleEngine]
 
 # Time budget (seconds) for the whole per-move analysis when no clock/movetime
 # is given. Small so the engine responds promptly; it still evaluates every
@@ -48,7 +56,7 @@ _GO_INT_PARAMS = frozenset(
 
 
 def run(
-    engine: chess.engine.SimpleEngine,
+    engine_provider: EngineProvider,
     spec: DerivedEngineSpec,
     in_stream: TextIO,
     out_stream: TextIO,
@@ -57,7 +65,10 @@ def run(
     """Run the UCI command loop until EOF or ``quit``.
 
     Args:
-        engine: Backing analysis engine (real Stockfish, or a fake in tests).
+        engine_provider: Zero-arg factory that opens the backing analysis engine
+            (real Stockfish, or a fake in tests). Invoked lazily -- at most once,
+            on the first move that needs analysis -- so the handshake does not
+            depend on the engine starting. ``run`` closes the engine it opened.
         spec: The derived engine: its display name, options, and select policy.
         in_stream: Line-oriented UCI command input.
         out_stream: UCI response output (flushed per line).
@@ -72,37 +83,51 @@ def run(
     board = chess.Board()
     option_values: Dict[str, int] = spec.default_option_values()
 
+    # Lazily opened backing engine, cached after the first analysis so the same
+    # process reuses one Stockfish for the whole game.
+    engine: Optional[chess.engine.SimpleEngine] = None
+
+    def get_engine() -> chess.engine.SimpleEngine:
+        nonlocal engine
+        if engine is None:
+            engine = engine_provider()
+        return engine
+
     def send(line: str) -> None:
         out_stream.write(line + "\n")
         out_stream.flush()
 
-    for raw in in_stream:
-        line = raw.strip()
-        if not line:
-            continue
-        tokens = line.split()
-        command = tokens[0]
+    try:
+        for raw in in_stream:
+            line = raw.strip()
+            if not line:
+                continue
+            tokens = line.split()
+            command = tokens[0]
 
-        if command == "uci":
-            send(f"id name {spec.display_name}")
-            send("id author Universal-Chess")
-            for option in spec.options:
-                send(option.handshake_line())
-            send("uciok")
-        elif command == "isready":
-            send("readyok")
-        elif command == "ucinewgame":
-            board = chess.Board()
-        elif command == "setoption":
-            _apply_setoption(spec, option_values, tokens[1:])
-        elif command == "position":
-            board = _parse_position(tokens[1:])
-        elif command == "go":
-            move = _choose_move(engine, spec, board, tokens[1:], option_values, rng)
-            send(f"bestmove {move.uci()}" if move is not None else "bestmove (none)")
-        elif command == "quit":
-            break
-        # Other commands (debug, ...) are accepted and ignored.
+            if command == "uci":
+                send(f"id name {spec.display_name}")
+                send("id author Universal-Chess")
+                for option in spec.options:
+                    send(option.handshake_line())
+                send("uciok")
+            elif command == "isready":
+                send("readyok")
+            elif command == "ucinewgame":
+                board = chess.Board()
+            elif command == "setoption":
+                _apply_setoption(spec, option_values, tokens[1:])
+            elif command == "position":
+                board = _parse_position(tokens[1:])
+            elif command == "go":
+                move = _choose_move(get_engine, spec, board, tokens[1:], option_values, rng)
+                send(f"bestmove {move.uci()}" if move is not None else "bestmove (none)")
+            elif command == "quit":
+                break
+            # Other commands (debug, ...) are accepted and ignored.
+    finally:
+        if engine is not None:
+            engine.quit()
 
 
 def _apply_setoption(
@@ -173,7 +198,7 @@ def _parse_position(args: List[str]) -> chess.Board:
 
 
 def _choose_move(
-    engine: chess.engine.SimpleEngine,
+    get_engine: EngineProvider,
     spec: DerivedEngineSpec,
     board: chess.Board,
     go_args: List[str],
@@ -184,11 +209,12 @@ def _choose_move(
 
     Returns None only when there are no legal moves (the game is already over,
     so no ``bestmove`` is meaningful). A single legal move is played directly
-    without spending the analysis budget. Otherwise every legal move is scored
-    by the engine (one multi-PV search), each is tagged as capture-or-not from
-    the current board, and the policy chooses among them; if the engine returns
-    no usable lines, the first legal move is played as a safe fallback rather
-    than failing to move.
+    without spending the analysis budget. Both of these short-circuits return
+    before ``get_engine`` is called, so a forced/finished position never opens
+    Stockfish. Otherwise every legal move is scored by the engine (one multi-PV
+    search), each is tagged as capture-or-not from the current board, and the
+    policy chooses among them; if the engine returns no usable lines, the first
+    legal move is played as a safe fallback rather than failing to move.
     """
     legal = list(board.legal_moves)
     if not legal:
@@ -197,6 +223,7 @@ def _choose_move(
         return legal[0]
 
     budget = _parse_time_budget(go_args, board.turn)
+    engine = get_engine()
     infos = engine.analyse(board, chess.engine.Limit(time=budget), multipv=len(legal))
 
     candidates: List[Candidate] = []

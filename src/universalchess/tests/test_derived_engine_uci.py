@@ -36,16 +36,39 @@ class FakeStockfish:
 
     ``analyse`` returns a caller-supplied list of InfoDicts (mirroring
     python-chess's multipv shape: each entry has ``pv`` and ``score``) and
-    records its calls so a test can assert whether/what was analysed.
+    records its calls so a test can assert whether/what was analysed. ``quit``
+    is a no-op that records it was called, so tests can assert the wrapper
+    closes the engine it opened.
     """
 
     def __init__(self, infos):
         self._infos = infos
         self.analyse_calls = []
+        self.quit_calls = 0
 
     def analyse(self, board, limit, multipv=None):
         self.analyse_calls.append((board.fen(), limit, multipv))
         return self._infos
+
+    def quit(self):
+        self.quit_calls += 1
+
+
+class CountingProvider:
+    """Zero-arg engine provider that returns a fixed engine and counts opens.
+
+    Mirrors the lazy-open contract of the wrapper: the provider must be invoked
+    at most once, and only when a move actually needs analysis. Tests assert on
+    ``opens`` to prove the handshake/probe path never opens Stockfish.
+    """
+
+    def __init__(self, engine):
+        self._engine = engine
+        self.opens = 0
+
+    def __call__(self):
+        self.opens += 1
+        return self._engine
 
 
 def _info(uci: str, score: chess.engine.Score, turn: chess.Color):
@@ -54,10 +77,14 @@ def _info(uci: str, score: chess.engine.Score, turn: chess.Color):
 
 
 def _drive(engine, spec, commands, rng=None):
-    """Run the UCI loop over newline-joined ``commands`` and return its output."""
+    """Run the UCI loop over newline-joined ``commands`` and return its output.
+
+    Wraps ``engine`` in a :class:`CountingProvider` so the loop opens it lazily,
+    matching how the real entry point supplies Stockfish.
+    """
     in_stream = io.StringIO("\n".join(commands) + "\n")
     out_stream = io.StringIO()
-    run(engine, spec, in_stream, out_stream, rng=rng)
+    run(CountingProvider(engine), spec, in_stream, out_stream, rng=rng)
     return out_stream.getvalue()
 
 
@@ -92,6 +119,59 @@ def test_uci_handshake_advertises_drawfish_options():
     assert "id name Drawfish" in output
     assert "option name Randomness type spin default 3 min 0 max 10" in output
     assert "option name AvoidCaptures type check default true" in output
+
+
+def test_handshake_does_not_open_stockfish():
+    """The `uci`/`isready` handshake must not open the backing Stockfish.
+
+    Why this test exists: the app probes an engine's option schema by launching
+    it and reading `option`/`uciok` from the handshake -- it never sends `go`.
+    Opening Stockfish eagerly made that handshake block on Stockfish's (slow)
+    startup, so the probe timed out and the Settings editor showed no options
+    (`editable:false`). How the regression manifests: if the wrapper opened the
+    engine before/independently of analysis, `provider.opens` would be >= 1 for
+    a `go`-free session. It must stay 0 here, and no engine is opened so none is
+    quit.
+    """
+    engine = FakeStockfish(infos=[])
+    provider = CountingProvider(engine)
+    in_stream = io.StringIO("uci\nisready\nquit\n")
+    out_stream = io.StringIO()
+
+    run(provider, DRAWFISH, in_stream, out_stream)
+    output = out_stream.getvalue()
+
+    assert "option name Randomness type spin default 3 min 0 max 10" in output
+    assert "uciok" in output
+    assert "readyok" in output
+    assert provider.opens == 0  # never opened: probing must not need Stockfish
+    assert engine.quit_calls == 0  # nothing opened, so nothing to close
+
+
+def test_go_opens_stockfish_once_and_closes_it_on_exit():
+    """A `go` opens Stockfish exactly once and the loop closes it on exit.
+
+    Why this test exists: lazy opening must still yield a working game -- the
+    first analysed move opens Stockfish, and the wrapper (which now owns the
+    lazily-opened engine) must `quit` it when the loop ends so no Stockfish
+    process leaks per game. How the regression manifests: a missing lazy-open
+    would raise/emit no bestmove (opens == 0); a leaked engine would show
+    quit_calls == 0; opening per-move instead of once would show opens > 1.
+    """
+    infos = [
+        _info("e2e4", Cp(100), chess.WHITE),
+        _info("d2d4", Cp(-50), chess.WHITE),
+    ]
+    engine = FakeStockfish(infos)
+    provider = CountingProvider(engine)
+    in_stream = io.StringIO("position startpos\ngo movetime 100\nquit\n")
+    out_stream = io.StringIO()
+
+    run(provider, WORSTFISH, in_stream, out_stream)
+
+    assert "bestmove d2d4" in out_stream.getvalue()
+    assert provider.opens == 1  # opened lazily on the first analysed move
+    assert engine.quit_calls == 1  # closed once when the loop exits
 
 
 def test_isready_reports_readyok():

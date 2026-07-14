@@ -46,8 +46,39 @@ class EngineHandle:
     ref_count: int = 0
     shared: bool = True
     
+    def _supported_options(self, options: Dict[str, str]) -> Dict[str, str]:
+        """Keep only options this engine advertised in its UCI handshake.
+
+        python-chess raises ``EngineError`` for any option a UCI engine did not
+        advertise (``self.engine.options`` is the case-insensitive map of the
+        engine's own ``option`` lines). The app applies one shared profile to
+        every engine -- the Default section carries ``Threads=1`` -- but limited
+        engines advertise far fewer options: the derived policy engines
+        (Worstfish/Drawfish) expose only ``Randomness``/``AvoidCaptures``.
+        Forwarding ``Threads`` to them aborted initialization before they could
+        move. Filtering here, at the single boundary to python-chess, keeps a
+        generic profile compatible with every engine and covers every caller
+        (players, hand/brain, analysis) without each re-implementing the check.
+
+        Unknown options are dropped (with a log line) rather than raising: an
+        option a given engine does not understand is not an error for the app,
+        it simply does not apply to that engine.
+        """
+        advertised = self.engine.options
+        supported = {name: value for name, value in options.items() if name in advertised}
+        dropped = [name for name in options if name not in advertised]
+        if dropped:
+            log.info(
+                f"[EngineHandle] {self.path}: ignoring options not advertised "
+                f"by engine: {dropped}"
+            )
+        return supported
+
     def configure(self, options: Dict[str, str]) -> None:
         """Configure UCI options (serialized).
+        
+        Options the engine did not advertise are ignored (see
+        ``_supported_options``) so a shared profile never fails a limited engine.
         
         Args:
             options: Dict of UCI option name -> value
@@ -55,7 +86,9 @@ class EngineHandle:
         if not options:
             return
         with self.lock:
-            self.engine.configure(options)
+            supported = self._supported_options(options)
+            if supported:
+                self.engine.configure(supported)
     
     def play(
         self,
@@ -88,7 +121,9 @@ class EngineHandle:
         """
         with self.lock:
             if options:
-                self.engine.configure(options)
+                supported = self._supported_options(options)
+                if supported:
+                    self.engine.configure(supported)
             return self.engine.play(
                 board, limit, root_moves=root_moves, ponder=ponder, game=game
             )
@@ -341,6 +376,7 @@ class EngineRegistry:
             on_error: Optional callback on failure
         """
         def _load():
+            handle: Optional[EngineHandle] = None
             try:
                 handle = self.acquire(engine_path)
                 if handle:
@@ -349,6 +385,15 @@ class EngineRegistry:
                     on_error(Exception(f"Failed to load engine: {engine_path}"))
             except Exception as e:
                 log.error(f"[EngineRegistry] Async load error: {e}")
+                # acquire() already took a reference and pooled the engine; if
+                # on_ready raised (e.g. the consumer's configure rejected an
+                # option) that reference is otherwise orphaned -- the consumer
+                # errored without storing the handle, so it never releases it and
+                # the process lingers pooled at ref>=1, immune to evict_unused.
+                # Release it here so the load failure leaves no leaked engine
+                # process (the derived-engine startup leak on dgt-64).
+                if handle is not None:
+                    self.release(handle)
                 if on_error:
                     on_error(e)
         

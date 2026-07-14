@@ -95,7 +95,7 @@ def _default_log_path():
     return str(home / "debug.log")
 
 
-def setup_logging(log_file_path=None, log_level=logging.DEBUG):
+def setup_logging(log_file_path=None, log_level=logging.DEBUG, console_stream=None):
     """Configure logging with colored console output and file output.
     
     Args:
@@ -104,10 +104,18 @@ def setup_logging(log_file_path=None, log_level=logging.DEBUG):
                        main process). If explicitly set to empty string, file
                        logging is skipped.
         log_level: Logging level to set (default: logging.DEBUG).
+        console_stream: Stream the console handler writes to. Defaults to
+                        ``sys.stdout``. A process whose ``stdout`` carries a
+                        machine protocol (e.g. a UCI engine subprocess) must
+                        pass ``sys.stderr`` here: any log line on ``stdout``
+                        would corrupt that protocol stream for its reader.
     
     Returns:
         The configured logger instance.
     """
+    if console_stream is None:
+        console_stream = sys.stdout
+
     log = logging.getLogger()
     log.setLevel(log_level)
     log.handlers = []
@@ -138,7 +146,7 @@ def setup_logging(log_file_path=None, log_level=logging.DEBUG):
     # Plain '\n' can cause staircase output when D-Bus/GLib callbacks log from
     # their mainloop thread, as some terminals only interpret '\n' as line feed
     # without carriage return.
-    _ch = logging.StreamHandler(sys.stdout)
+    _ch = logging.StreamHandler(console_stream)
     _ch.terminator = '\r\n'
     _ch.setLevel(log_level)
     _ch.setFormatter(ColoredFormatter("%(asctime)s.%(msecs)03d %(levelname)s [%(filename)s:%(lineno)d] %(message)s", "%Y-%m-%d %H:%M:%S"))
