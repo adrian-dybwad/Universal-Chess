@@ -78,7 +78,9 @@ def test_current_time_marked_with_timer_checked_icon():
     How a regression manifests: a broken current-value comparison (int 5 vs
     str "5" after the catalog migration) leaves no row checked, so the active
     selection is invisible. Custom select icons (selectedIcon/unselectedIcon)
-    must also be honored rather than defaulting to radio glyphs.
+    must also be honored rather than defaulting to radio glyphs. The unchecked
+    row is asserted on a still-present value ("10") since untimed is no longer a
+    base-minutes option -- it now lives only in the Untimed preset.
     """
     ctx, _ = _ctx(5)
     mm = _FakeMenuManager(["BACK"])
@@ -87,7 +89,7 @@ def test_current_time_marked_with_timer_checked_icon():
 
     by_key = {e.key: e for e in mm.shown[0]}
     assert by_key["5"].icon_name == "timer_checked"
-    assert by_key["0"].icon_name == "timer"
+    assert by_key["10"].icon_name == "timer"
 
 
 def test_selecting_a_time_persists_minutes():

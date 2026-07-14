@@ -403,7 +403,7 @@ def test_option_label_resolves_value_to_catalog_label():
     assert catalog.option_label("player_type", "hand_brain") == "Hand + Brain"
     # Time control values are held as ints by the board but authored as strings.
     assert catalog.option_label("time_control", 5) == "5 min (Blitz)"
-    assert catalog.option_label("time_control", "0") == "Untimed"
+    assert catalog.option_label("time_control", "10") == "10 min (Rapid)"
     # Absent value uses the explicit default; without one the value is echoed.
     assert catalog.option_label("player_type", "android", default="Android") == "Android"
     assert catalog.option_label("player_type", "android") == "android"

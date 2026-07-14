@@ -31,7 +31,6 @@
       { "value": "reverse", "label": "Reverse (Human = Brain)" }
     ],
     "time_control": [
-      { "value": "0", "label": "Untimed" },
       { "value": "1", "label": "1 min (Bullet)" },
       { "value": "3", "label": "3 min (Blitz)" },
       { "value": "5", "label": "5 min (Blitz)" },

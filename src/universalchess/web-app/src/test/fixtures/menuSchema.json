@@ -102,10 +102,6 @@
     ],
     "time_control": [
       {
-        "value": "0",
-        "label": "Untimed"
-      },
-      {
         "value": "1",
         "label": "1 min (Bullet)"
       },

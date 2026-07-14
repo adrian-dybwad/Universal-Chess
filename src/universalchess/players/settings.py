@@ -225,9 +225,12 @@ class GameSettings:
 
     Attributes:
         section: Section name in config file
-        time_control: Legacy time per player in minutes (0 = disabled/untimed).
-            Used as the fallback base time when no time_control_preset is set,
-            preserving pre-existing configurations.
+        time_control: Base time per player in minutes for a simple sudden-death
+            clock. Used as the fallback base time when no time_control_preset is
+            set. Defaults to 5 so a fresh install is a real timed clock; untimed
+            is selected via the "untimed" preset rather than a 0 here. A stored 0
+            (from a pre-preset config) is still honored and resolves to an untimed
+            control, preserving pre-existing configurations.
         time_control_preset: Selected named time control (see
             state/time_control.py PRESETS), the sentinel "custom" to build from
             the tc_custom_* fields, or "" to fall back to the legacy time_control
@@ -310,7 +313,7 @@ class GameSettings:
     """
 
     section: str
-    time_control: int = 0
+    time_control: int = 5
     time_control_preset: str = ""
     tc_custom_base_seconds: int = 300
     tc_custom_increment_seconds: int = 0

@@ -23,9 +23,12 @@ from universalchess.players.settings import GameSettings
 from universalchess.state.time_control import DelayMode, build_time_control
 
 
-# Each row: (attribute, default) -- the fresh-install defaults that keep the
-# clock behaving like the legacy minutes-only control until reconfigured.
+# Each row: (attribute, default) -- the fresh-install defaults. The empty preset
+# means build_time_control falls back to the legacy minutes, and time_control
+# now defaults to 5 (a real timed clock) rather than 0/untimed: untimed is
+# expressed only via the "untimed" preset, not a base-minutes value.
 _DEFAULTS = [
+    ("time_control", 5),
     ("time_control_preset", ""),
     ("tc_custom_base_seconds", 300),
     ("tc_custom_increment_seconds", 0),
@@ -171,3 +174,48 @@ def test_build_time_control_legacy_minutes_fallback():
     tc = build_time_control(settings)
     assert tc.initial_seconds("white") == 900
     assert tc.is_symmetric is True
+
+
+def test_fresh_install_defaults_to_a_timed_clock():
+    """A fresh install (all defaults) resolves to a 5-minute timed clock.
+
+    Why: "Untimed" was removed as a base-minutes value so untimed lives only in
+    the Untimed preset; the default base minutes is therefore 5, and Basic must
+    mean a real clock. How a regression manifests: reverting the default to 0
+    would make every fresh board untimed while the Base Minutes list has no 0
+    option to reflect it (a silent, unrepresentable state).
+    """
+    settings = GameSettings(section="game")
+    tc = build_time_control(settings)
+    assert tc.is_timed is True
+    assert tc.initial_seconds("white") == 300
+    assert tc.initial_seconds("black") == 300
+
+
+def test_untimed_is_reachable_only_via_the_untimed_preset():
+    """The untimed preset resolves to an untimed control regardless of minutes.
+
+    Why: after removing the base-minutes 0 option, the Untimed preset is the
+    single way to configure untimed play. How a regression manifests: the preset
+    stops resolving to an untimed control (is_timed True), leaving no way to play
+    without a clock.
+    """
+    settings = GameSettings(section="game", time_control_preset="untimed",
+                            time_control=5)
+    tc = build_time_control(settings)
+    assert tc.is_timed is False
+    assert tc.describe() == "Untimed"
+
+
+def test_stored_zero_minutes_still_resolves_untimed_for_legacy_configs():
+    """A pre-preset config with time_control=0 still resolves to untimed.
+
+    Why: boards configured before the preset system stored 0 for untimed with an
+    empty preset; that value is no longer selectable but must keep working. How a
+    regression manifests: the fallback stops honoring 0 (or errors), changing an
+    upgraded untimed board into a timed one.
+    """
+    settings = GameSettings(section="game", time_control=0, time_control_preset="")
+    tc = build_time_control(settings)
+    assert tc.is_timed is False
+    assert tc.describe() == "Untimed"
