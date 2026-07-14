@@ -519,6 +519,195 @@ class TestEngineRegistry:
         assert captured.get("ponder") is False
         assert captured.get("game") is None
 
+    @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
+    def test_acquire_reloads_dead_cached_engine(self, mock_popen):
+        """A cached engine whose event loop has died is evicted and reloaded.
+
+        Why this test exists: when a shared engine's subprocess is killed (the
+        OOM-killer reaping Stockfish under memory pressure was the production
+        trigger), python-chess sets SimpleEngine._shutdown and every later call
+        raises EngineTerminatedError("engine event loop dead"). The registry
+        previously kept handing out that dead cached handle forever, so both
+        engine players stayed in ERROR and never moved (no engine-vs-engine
+        auto-play). acquire must detect the dead handle, evict it, and load a
+        fresh live one.
+
+        How the regression manifests: without the liveness check the second
+        acquire reuses the dead handle (popen called once) and returns an engine
+        still flagged _shutdown, so the caller gets a corpse again.
+        """
+        from universalchess.services.engine_registry import get_engine_registry
+
+        created = []
+
+        def make(*a, **k):
+            e = MagicMock()
+            e._shutdown = False
+            created.append(e)
+            return e
+        mock_popen.side_effect = make
+
+        registry = get_engine_registry()
+        first = registry.acquire("/usr/games/stockfish")
+        assert first is not None and first.ref_count == 1
+
+        # Simulate the subprocess dying (e.g. OOM kill): python-chess sets this.
+        first.engine._shutdown = True
+        registry.release(first)  # consumer drops the now-dead handle -> ref 0
+
+        second = registry.acquire("/usr/games/stockfish")
+
+        assert second is not None
+        assert second is not first, "must not reuse the dead handle"
+        assert second.engine is not first.engine
+        assert second.engine._shutdown is False, "reloaded engine must be live"
+        assert mock_popen.call_count == 2, "dead engine must trigger a reload"
+
+    @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
+    def test_acquire_dead_cached_engine_does_not_leak_refs(self, mock_popen):
+        """Reacquiring after a death yields a fresh handle at ref 1, not a leak.
+
+        Why this test exists: the dead-handle bug also leaked references -- the
+        old acquire incremented ref_count before discovering the engine was dead,
+        so each failed reuse pushed the count up (observed climbing 3->11 in
+        production) and it never returned to zero. Both players hitting the dead
+        handle without releasing must still leave the reloaded engine at exactly
+        one reference per live acquire.
+
+        How the regression manifests: if the ref increment stays on the dead
+        path, the reloaded handle's ref_count is greater than 1.
+        """
+        from universalchess.services.engine_registry import get_engine_registry
+
+        def make(*a, **k):
+            e = MagicMock()
+            e._shutdown = False
+            return e
+        mock_popen.side_effect = make
+
+        registry = get_engine_registry()
+        first = registry.acquire("/usr/games/stockfish")
+        # Mark dead WITHOUT releasing: mimics a consumer still holding the corpse
+        # when the next consumer acquires (the two-engine game: White holds the
+        # dead handle while Black acquires).
+        first.engine._shutdown = True
+
+        second = registry.acquire("/usr/games/stockfish")
+
+        assert second is not first
+        assert second.ref_count == 1, "fresh handle must start at one reference"
+
+    @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
+    def test_acquire_quits_evicted_dead_engine(self, mock_popen):
+        """Evicting a dead cached engine quits its (defunct) process handle.
+
+        Why this test exists: reaping the dead handle keeps python-chess's
+        transport/threads from lingering; the registry must call quit() on the
+        corpse it drops, not just forget the reference.
+
+        How the regression manifests: if eviction only deletes the dict entry,
+        quit() is never called on the dead engine.
+        """
+        from universalchess.services.engine_registry import get_engine_registry
+
+        def make(*a, **k):
+            e = MagicMock()
+            e._shutdown = False
+            return e
+        mock_popen.side_effect = make
+
+        registry = get_engine_registry()
+        first = registry.acquire("/usr/games/stockfish")
+        dead = first.engine
+        dead._shutdown = True
+
+        registry.acquire("/usr/games/stockfish")
+
+        dead.quit.assert_called_once()
+
+    @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
+    def test_evict_unused_quits_and_removes_ref_zero_engine(self, mock_popen):
+        """evict_unused() unloads a pooled engine no consumer references.
+
+        Why this test exists: switching engines (e.g. Ethereal -> Stockfish) must
+        free the previous engine instead of leaving it as an idle process eating
+        memory. After the ended game releases it (ref 0), evict_unused must quit
+        the process and drop it from the pool, while leaving a still-referenced
+        engine untouched.
+
+        How the regression manifests: if evict_unused skipped ref-0 engines the
+        Ethereal process lingers (quit never called, still in the pool); if it
+        reaped referenced engines it would kill Stockfish out from under the
+        active player.
+        """
+        from universalchess.services.engine_registry import get_engine_registry
+
+        e_ethereal = MagicMock(); e_ethereal._shutdown = False
+        e_stock = MagicMock(); e_stock._shutdown = False
+        mock_popen.side_effect = [e_ethereal, e_stock]
+
+        registry = get_engine_registry()
+        h_ethereal = registry.acquire("/opt/universalchess/engines/ethereal")
+        registry.acquire("/usr/games/stockfish")  # stays referenced (ref 1)
+        registry.release(h_ethereal)  # ethereal now unused (ref 0)
+
+        evicted = registry.evict_unused()
+
+        assert evicted == 1
+        e_ethereal.quit.assert_called_once()
+        e_stock.quit.assert_not_called()
+        loaded = registry.get_loaded_engines()
+        assert not any("ethereal" in path for path in loaded), "ethereal must be dropped"
+        assert any("stockfish" in path for path in loaded), "stockfish must remain pooled"
+
+    @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
+    def test_evict_unused_keeps_referenced_engine(self, mock_popen):
+        """evict_unused() must not touch an engine a consumer still holds.
+
+        Why this test exists: an engine in active use (a player mid-game, the
+        analysis service) has ref_count > 0; reaping it would break the game.
+
+        How the regression manifests: if evict_unused used the wrong ref
+        comparison it would quit the held engine and remove it from the pool.
+        """
+        from universalchess.services.engine_registry import get_engine_registry
+
+        mock_engine = MagicMock(); mock_engine._shutdown = False
+        mock_popen.return_value = mock_engine
+
+        registry = get_engine_registry()
+        registry.acquire("/usr/games/stockfish")  # ref 1, not released
+
+        evicted = registry.evict_unused()
+
+        assert evicted == 0
+        mock_engine.quit.assert_not_called()
+        assert any("stockfish" in path for path in registry.get_loaded_engines())
+
+    @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
+    def test_evict_unused_ignores_dedicated_engines(self, mock_popen):
+        """evict_unused() must ignore dedicated (ponder) engines.
+
+        Why this test exists: dedicated engines are owned by a single consumer
+        and released explicitly (releasing quits them); they are never pooled, so
+        the pool-eviction sweep must not reach them.
+
+        How the regression manifests: if dedicated handles were tracked in the
+        pool, evict_unused would quit a live pondering engine mid-game.
+        """
+        from universalchess.services.engine_registry import get_engine_registry
+
+        mock_engine = MagicMock(); mock_engine._shutdown = False
+        mock_popen.return_value = mock_engine
+
+        registry = get_engine_registry()
+        registry.acquire_dedicated("/usr/games/stockfish")
+
+        evicted = registry.evict_unused()
+
+        assert evicted == 0
+        mock_engine.quit.assert_not_called()
+
 
 class TestCanonicalizePath:
     """Tests for EngineRegistry._canonicalize_path.

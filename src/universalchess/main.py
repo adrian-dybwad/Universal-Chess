@@ -2765,6 +2765,21 @@ def _cleanup_game():
             log.debug(f"Error cleaning up display manager: {e}")
         display_manager = None
 
+    # Unload engines the ended game was using but nothing references anymore.
+    # The players (via ProtocolManager) and the analysis engine (via
+    # DisplayManager) have released their handles above, so any engine now at
+    # ref zero belongs only to the game just torn down. Reaping it here -- before
+    # the next game acquires its engines -- means switching engines (e.g.
+    # Ethereal back to Stockfish) frees the previous engine's process instead of
+    # leaving it resident and adding to memory pressure.
+    try:
+        from universalchess.services.engine_registry import get_engine_registry
+        evicted = get_engine_registry().evict_unused()
+        if evicted:
+            log.info(f"[App] Unloaded {evicted} unused engine(s) after game teardown")
+    except Exception as e:
+        log.debug(f"Error evicting unused engines: {e}")
+
 
 def _return_to_menu(reason: str):
     """Return from game mode to menu mode.

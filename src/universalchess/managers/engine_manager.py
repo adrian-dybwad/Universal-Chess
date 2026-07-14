@@ -305,6 +305,13 @@ class EngineDefinition:
     extra_files: List[str]       # Additional files/dirs to copy (relative to repo)
     dependencies: List[str]      # apt packages needed to build
     can_uninstall: bool = True   # Whether engine can be uninstalled
+    # Bundled engine: not compiled and not an apt package. It ships with the
+    # application as a Python UCI wrapper (see services.derived_engines) that
+    # drives an already-installed engine; "installing" it just writes its
+    # executable launcher shim into the engines dir (instant, offline, all
+    # architectures). Mutually exclusive with is_system_package and with having
+    # a repo_url (there is nothing to fetch or build).
+    is_bundled: bool = False
     clone_with_submodules: bool = False  # Use --recurse-submodules when cloning
     # Git tag/branch/commit to build. None tracks the repo's default branch (master).
     # Pin a specific release tag when the default branch is a moving target whose
@@ -1024,6 +1031,48 @@ ENGINES = {
         estimated_install_minutes=3,  # Small C engine, sub-minute compile
         has_prebuilt=True,
     ),
+
+    # === BUNDLED (Stockfish-derived novelty engines) ===
+    # These are not compiled: each is a Python UCI wrapper (services.
+    # derived_engines) that drives the installed Stockfish and applies a
+    # move-selection policy. "Install" just writes the launcher shim, so they
+    # need no repo, no dependencies, and work on every architecture. The engine
+    # name equals the policy argument the shim passes to the wrapper.
+    "worstfish": EngineDefinition(
+        name="worstfish",
+        display_name="Worstfish",
+        summary="Plays the worst move",
+        description="A novelty engine that uses Stockfish to evaluate every legal move and then plays the one rated worst for itself. It tries its hardest to lose - the challenge is to checkmate it before it blunders into a draw. Requires Stockfish (always installed).",
+        repo_url=None,
+        build_commands=[],
+        # Empty: the executable IS the top-level engines/worstfish launcher shim,
+        # not a file inside an engines/worstfish/ subdirectory (that subdir
+        # layout, keyed by a non-empty binary_path with repo_url=None, is Maia's).
+        binary_path="",
+        is_system_package=False,
+        package_name=None,
+        extra_files=[],
+        dependencies=[],
+        is_bundled=True,
+        estimated_install_minutes=0,  # Writing a shim is instant
+        has_prebuilt=False,
+    ),
+    "zak": EngineDefinition(
+        name="zak",
+        display_name="Zak",
+        summary="Refuses to win",
+        description="A novelty engine modelled on the chess.com 'Zach' beginner bot. Using Stockfish's evaluation, it never willingly delivers checkmate and steers the game toward equality rather than pressing an advantage, so it aimlessly shuffles and is oddly hard to lose to. Requires Stockfish (always installed).",
+        repo_url=None,
+        build_commands=[],
+        binary_path="",
+        is_system_package=False,
+        package_name=None,
+        extra_files=[],
+        dependencies=[],
+        is_bundled=True,
+        estimated_install_minutes=0,
+        has_prebuilt=False,
+    ),
 }
 
 
@@ -1501,6 +1550,9 @@ class EngineManager:
             if engine.is_system_package:
                 log.info(f"[EngineManager] install_engine: Using system package installation for '{engine_name}'")
                 success = self._install_system_package(engine, update_progress)
+            elif engine.is_bundled:
+                log.info(f"[EngineManager] install_engine: Writing bundled launcher for '{engine_name}'")
+                success = self._install_bundled(engine, update_progress)
             elif engine.has_prebuilt and use_prebuilt and self._try_install_prebuilt(engine, update_progress):
                 # Pre-built binary downloaded and installed successfully
                 log.info(f"[EngineManager] install_engine: Installed pre-built binary for '{engine_name}'")
@@ -1569,6 +1621,11 @@ class EngineManager:
             return False
         finally:
             self._installing_engine = None
+            # Always reclaim the source clone/build tree, whether the build
+            # succeeded (binary already copied out) or failed (a partial tree is
+            # useless and only wastes space). Bundled/system-package installs
+            # never create one, so this is a no-op for them.
+            self._cleanup_build_dir(engine_name)
             # One persistent, timed record per install attempt (success or
             # failure), so the Settings event-log viewer can show what was
             # installed and how long it took. Ref is meaningful only for
@@ -1657,7 +1714,42 @@ class EngineManager:
         update_progress(f"{engine.display_name} installed successfully", InstallStage.INSTALLING_FILES)
         log.info(f"[EngineManager] _install_system_package: Successfully installed '{engine.name}'")
         return True
-    
+
+    def _install_bundled(
+        self,
+        engine: EngineDefinition,
+        update_progress: Callable[..., None]
+    ) -> bool:
+        """Install a bundled engine by writing its launcher shim.
+
+        A bundled engine ships with the application (a Python UCI wrapper in
+        ``services.derived_engines`` that drives the installed Stockfish); there
+        is nothing to download or compile. Installation just writes the
+        executable launcher at ``engines/<name>`` that the board execs. The
+        engine name doubles as the wrapper's policy argument, so one shared
+        wrapper serves every bundled engine.
+
+        Args:
+            engine: Engine definition (``is_bundled`` is True).
+            update_progress: Callback for progress messages (msg, stage, fraction).
+
+        Returns:
+            True once the launcher is written.
+        """
+        # Imported here (not at module top) to keep engine_manager's import graph
+        # unchanged; the shim only needs paths, which is already a dependency.
+        from universalchess.services.derived_engines.shim import install_shim
+
+        log.info(f"[EngineManager] _install_bundled: Installing bundled engine '{engine.name}'")
+        update_progress(f"Installing {engine.display_name}...", InstallStage.INSTALLING_FILES)
+
+        self.engines_dir.mkdir(parents=True, exist_ok=True)
+        launcher = install_shim(self.engines_dir, engine.name, engine.name)
+        log.info(f"[EngineManager] _install_bundled: Wrote launcher {launcher}")
+
+        update_progress(f"{engine.display_name} installed successfully", InstallStage.INSTALLING_FILES)
+        return True
+
     def _get_arch(self) -> str:
         """Get the current architecture for pre-built binary selection.
 
@@ -1807,6 +1899,12 @@ class EngineManager:
         log.info(f"[EngineManager] _try_install_prebuilt: Attempting to download pre-built '{engine.name}' for {arch}")
         update_progress(f"Checking for pre-built {engine.display_name}...", InstallStage.CHECKING_PREBUILT)
         
+        # Declared up front so the finally can reclaim them on every exit path
+        # (including the early "binary not found" / network-error returns, which
+        # previously leaked the downloaded archive and extract tree under
+        # build_tmp).
+        tmp_archive: Optional[Path] = None
+        extract_dir: Optional[Path] = None
         try:
             # Scan the releases list (newest-first), not /releases/latest: the
             # latter 404s when only prereleases exist. Find the newest release
@@ -1904,10 +2002,6 @@ class EngineManager:
                 log.warning(f"[EngineManager] _try_install_prebuilt: Binary not found at {source_path}")
                 return False
             
-            # Cleanup
-            shutil.rmtree(extract_dir, ignore_errors=True)
-            tmp_archive.unlink(missing_ok=True)
-            
             log.info(f"[EngineManager] _try_install_prebuilt: Successfully installed pre-built '{engine.name}'")
             update_progress(f"{engine.display_name} installed successfully (pre-built)", InstallStage.INSTALLING_FILES)
             return True
@@ -1921,6 +2015,15 @@ class EngineManager:
         except Exception as e:
             log.warning(f"[EngineManager] _try_install_prebuilt: Unexpected error: {e}")
             return False
+        finally:
+            # Reclaim the downloaded archive and extract tree on every path. The
+            # binary/extra files have already been copied into the engines dir by
+            # the success path, so these are pure scratch. ignore_errors/
+            # missing_ok keep this from masking the real install outcome.
+            if extract_dir is not None:
+                shutil.rmtree(extract_dir, ignore_errors=True)
+            if tmp_archive is not None:
+                tmp_archive.unlink(missing_ok=True)
 
     @staticmethod
     def _kill_process_group(proc: subprocess.Popen) -> None:
@@ -2432,6 +2535,31 @@ class EngineManager:
         log.info(f"[EngineManager] _install_from_source: Successfully installed '{engine.name}'")
         return True
     
+    def _cleanup_build_dir(self, engine_name: str) -> None:
+        """Remove an engine's source clone/build tree from the build temp dir.
+
+        Invoked after every install attempt (success or failure). By this point
+        the compiled binary and any extra files have been copied into the engines
+        directory, so the clone/build tree under ``build_tmp/<name>`` -- often
+        hundreds of MB (e.g. Arasan, Ethereal) -- serves no further purpose.
+        Leaving it accumulates disk and, on constrained boards, memory pressure
+        (stale Ethereal/Arasan trees were found lingering in production). This
+        trades a cached clone (faster reinstall) for reclaimed space, which is the
+        right call on space-limited devices.
+
+        Best-effort: a cleanup failure must never fail an otherwise successful
+        install, and a missing directory (system-package or bundled engines never
+        create one) is a no-op.
+        """
+        build_dir = self.build_tmp / engine_name
+        if not build_dir.exists():
+            return
+        try:
+            shutil.rmtree(build_dir)
+            log.info(f"[EngineManager] Cleaned build directory {build_dir}")
+        except OSError as e:
+            log.warning(f"[EngineManager] Failed to clean build directory {build_dir}: {e}")
+
     def uninstall_engine(self, engine_name: str) -> bool:
         """Uninstall an engine.
         

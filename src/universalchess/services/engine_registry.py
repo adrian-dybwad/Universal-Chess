@@ -152,6 +152,40 @@ class EngineRegistry:
                     cls._instance = EngineRegistry()
         return cls._instance
     
+    @staticmethod
+    def _is_engine_alive(engine: chess.engine.SimpleEngine) -> bool:
+        """Return whether a pooled engine's UCI event loop is still running.
+
+        python-chess flips ``SimpleEngine._shutdown`` to True the moment its
+        background event loop (and thus the engine subprocess) terminates -- for
+        example when the OOM-killer reaps Stockfish under memory pressure. From
+        that point every call raises ``EngineTerminatedError("engine event loop
+        dead")``, so a cached handle in that state is a corpse that must never be
+        handed out again.
+
+        The check is an identity test against ``True`` (not truthiness) and
+        defaults to alive when the attribute is absent: a real engine sets a
+        plain bool, so this correctly detects death, while a partially built or
+        test-double engine without the flag is treated as alive rather than
+        being falsely evicted.
+        """
+        return getattr(engine, "_shutdown", False) is not True
+
+    @staticmethod
+    def _quit_engine_quietly(engine: chess.engine.SimpleEngine) -> None:
+        """Quit an engine subprocess, swallowing errors.
+
+        Used when reaping a handle the registry is discarding (a dead cached
+        engine on reload, or an unused pooled engine on eviction). Quitting an
+        already-dead engine raises, and a live quit can still fail on a wedged
+        process; either way the registry has already dropped its reference, so a
+        failure here must not propagate.
+        """
+        try:
+            engine.quit()
+        except Exception as e:
+            log.debug(f"[EngineRegistry] Error quitting engine: {e}")
+
     def _canonicalize_path(self, engine_path: str) -> str:
         """Canonicalize an engine path to ensure identical binaries share instances.
         
@@ -214,16 +248,32 @@ class EngineRegistry:
         resolved = self._canonicalize_path(engine_path)
         wait_event: Optional[threading.Event] = None
         should_load = False
+        dead_engine: Optional[chess.engine.SimpleEngine] = None
         
         with self._lock:
-            # Check if already loaded
-            if resolved in self._engines:
-                handle = self._engines[resolved]
-                handle.ref_count += 1
-                log.debug(f"[EngineRegistry] Reusing engine {resolved} (refs={handle.ref_count})")
-                if on_ready:
-                    on_ready(handle)
-                return handle
+            # Check if already loaded. A cached handle is only reused when its
+            # engine is still alive; a dead one (subprocess killed, e.g. OOM) is
+            # evicted here and reloaded below. The ref_count is incremented only
+            # after the liveness check so a dead handle never leaks references
+            # (the pre-fix code bumped the count before discovering the engine was
+            # dead, so repeated failed reuse climbed the count without bound).
+            handle = self._engines.get(resolved)
+            if handle is not None:
+                if self._is_engine_alive(handle.engine):
+                    handle.ref_count += 1
+                    log.debug(f"[EngineRegistry] Reusing engine {resolved} (refs={handle.ref_count})")
+                    if on_ready:
+                        on_ready(handle)
+                    return handle
+                # Dead cached engine: drop it from the pool and reap it outside
+                # the lock, then fall through to load a fresh instance.
+                log.warning(
+                    f"[EngineRegistry] Cached engine {resolved} is dead "
+                    f"(event loop terminated) - evicting and reloading"
+                )
+                del self._engines[resolved]
+                dead_engine = handle.engine
+                handle.ref_count = 0
             
             # Check if another thread is loading this engine
             if resolved in self._loading:
@@ -234,13 +284,17 @@ class EngineRegistry:
                 self._loading[resolved] = threading.Event()
                 should_load = True
         
+        # Reap the evicted dead engine's process outside the lock (best-effort).
+        if dead_engine is not None:
+            self._quit_engine_quietly(dead_engine)
+        
         # If another thread is loading, wait for it
         if wait_event is not None:
             wait_event.wait(timeout=60.0)  # Wait up to 60 seconds
             # Now check if it succeeded
             with self._lock:
-                if resolved in self._engines:
-                    handle = self._engines[resolved]
+                handle = self._engines.get(resolved)
+                if handle is not None and self._is_engine_alive(handle.engine):
                     handle.ref_count += 1
                     log.debug(f"[EngineRegistry] Got engine from other thread {resolved} (refs={handle.ref_count})")
                     if on_ready:
@@ -364,6 +418,38 @@ class EngineRegistry:
             if handle.path in self._engines:
                 handle.ref_count = max(0, handle.ref_count - 1)
                 log.debug(f"[EngineRegistry] Released {handle.path} (refs={handle.ref_count})")
+    
+    def evict_unused(self) -> int:
+        """Quit and remove pooled engines that no consumer still references.
+
+        Called at a game-teardown / engine-switch boundary so an engine used only
+        by the game that just ended -- e.g. Ethereal after the players switch
+        back to Stockfish -- is unloaded instead of lingering as an idle process
+        consuming memory. Only shared, pooled engines with ``ref_count <= 0`` are
+        reaped; an engine still held by a player or the analysis service is left
+        running. Dedicated (ponder) handles are owned by their consumer and
+        released explicitly, so they are never in the pool and are untouched here.
+
+        Release intentionally does not quit at ref zero -- transient consumers
+        (per-move coach MultiPV, UCI option probing) acquire and release a shared
+        engine many times during a single game, and quitting on each release
+        would thrash the process. Reaping is deferred to this explicit boundary
+        instead.
+
+        Returns:
+            The number of engines evicted (for logging and tests).
+        """
+        with self._lock:
+            unused_paths = [
+                path for path, handle in self._engines.items()
+                if handle.ref_count <= 0
+            ]
+            reaped = [(path, self._engines.pop(path).engine) for path in unused_paths]
+        
+        for path, engine in reaped:
+            self._quit_engine_quietly(engine)
+            log.info(f"[EngineRegistry] Evicted unused engine: {path}")
+        return len(reaped)
     
     def shutdown(self) -> None:
         """Shutdown all engines and clear the registry.
