@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { GameView } from '../components/GameView';
 import { useAuthedAction } from '../components/useAuthedAction';
 import { useGameStore } from '../stores/gameStore';
+import { isGameInProgress } from '../utils/gameProgress';
 import { apiFetch } from '../utils/api';
 import type { PositionEntry } from '../types/game';
 
@@ -85,9 +86,7 @@ export function Analyze() {
   // playing from here, so it is confirmed first. Reading the store here is
   // read-only and does not affect the live game.
   const liveGame = useGameStore((s) => s.gameState);
-  const gameInProgress = Boolean(
-    liveGame && !liveGame.game_over && ((liveGame.pgn?.length ?? 0) > 0 || liveGame.move_number > 0),
-  );
+  const gameInProgress = isGameInProgress(liveGame);
 
   useEffect(() => {
     if (!gameId) return;

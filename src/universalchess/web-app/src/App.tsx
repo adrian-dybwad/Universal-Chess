@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useDeviceLanguage } from './i18n/useDeviceLanguage';
 import { BackgroundActivityBanner } from './components/BackgroundActivityBanner';
 import { UpdateBanner } from './components/UpdateBanner';
+import { AppUpdateBanner } from './components/AppUpdateBanner';
 import { Navbar } from './components/Navbar';
 import { DocumentTitle } from './components/DocumentTitle';
 import { GameStateProvider } from './components/GameStateProvider';
@@ -63,6 +64,7 @@ function AppShell() {
     <>
       <DocumentTitle />
       <div className="app">
+        <AppUpdateBanner />
         <UpdateBanner />
         <BackgroundActivityBanner />
         <Navbar />

@@ -17,6 +17,15 @@ const STATIC_ASSETS = [
 ];
 
 // Install event - cache static assets
+//
+// Deliberately does NOT call skipWaiting() here. A new build must WAIT instead
+// of hijacking pages that are already running the previous bundle: activating
+// immediately would let the service worker serve new, content-hashed assets to
+// a page still executing old code (a version-skew hazard) with no reload. The
+// page decides when to activate by posting SKIP_WAITING (see the message
+// handler below), driven by the app-update policy in the React app. On a
+// first-ever install there is no active worker to replace, so the browser
+// activates this one right away regardless.
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
@@ -24,8 +33,6 @@ self.addEventListener('install', (event) => {
       return cache.addAll(STATIC_ASSETS);
     })
   );
-  // Activate immediately
-  self.skipWaiting();
 });
 
 // Activate event - clean up old caches

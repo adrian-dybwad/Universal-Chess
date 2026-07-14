@@ -6,6 +6,7 @@ import { ChessBoard } from '../components/ChessBoard';
 import { LoginDialog } from '../components/LoginDialog';
 import { MenuIcon } from '../components/MenuIcon';
 import { useGameStore } from '../stores/gameStore';
+import { isGameInProgress } from '../utils/gameProgress';
 import { apiFetch, getStoredCredentials } from '../utils/api';
 import '../components/ApiSettingsDialog.css';
 import './Positions.css';
@@ -144,11 +145,9 @@ export function Positions() {
   const activeCategory = categoryParam ? selectedCategory : orderedCategories[0] ?? null;
 
   const gameState = useGameStore((s) => s.gameState);
-  // A game is "in progress" when the board has a live, unfinished game with at
-  // least one move. Setting up a position would end it, so we confirm first.
-  const gameInProgress = Boolean(
-    gameState && !gameState.game_over && ((gameState.pgn?.length ?? 0) > 0 || gameState.move_number > 0)
-  );
+  // Setting up a position would end a live game, so we confirm first when one
+  // is in progress (see isGameInProgress for the exact definition).
+  const gameInProgress = isGameInProgress(gameState);
 
   const loadPositions = useCallback(async (): Promise<void> => {
     try {

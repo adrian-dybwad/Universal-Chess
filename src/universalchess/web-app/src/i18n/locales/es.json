@@ -280,6 +280,10 @@
     "networkError": "Error de red",
     "indicatorReady": "Actualización lista para instalar"
   },
+  "appUpdate": {
+    "available": "Hay una nueva versión de la app disponible.",
+    "reload": "Recargar"
+  },
   "boardControl": {
     "keyUp": "Arriba",
     "keyBack": "Atrás",
