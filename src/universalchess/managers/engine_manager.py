@@ -1042,7 +1042,7 @@ ENGINES = {
         name="worstfish",
         display_name="Worstfish",
         summary="Plays the worst move",
-        description="A novelty engine that uses Stockfish to evaluate every legal move and then plays the one rated worst for itself. It tries its hardest to lose - the challenge is to checkmate it before it blunders into a draw. Requires Stockfish (always installed).",
+        description="A novelty engine that uses Stockfish to evaluate every legal move and then plays the one rated worst for itself. It tries its hardest to lose - the challenge is to checkmate it before it blunders into a draw. Configurable: Randomness varies how often it strays from the single worst move (0 = always the worst). Requires Stockfish (always installed).",
         repo_url=None,
         build_commands=[],
         # Empty: the executable IS the top-level engines/worstfish launcher shim,
@@ -1057,11 +1057,11 @@ ENGINES = {
         estimated_install_minutes=0,  # Writing a shim is instant
         has_prebuilt=False,
     ),
-    "zak": EngineDefinition(
-        name="zak",
-        display_name="Zak",
+    "drawfish": EngineDefinition(
+        name="drawfish",
+        display_name="Drawfish",
         summary="Refuses to win",
-        description="A novelty engine modelled on the chess.com 'Zach' beginner bot. Using Stockfish's evaluation, it never willingly delivers checkmate and steers the game toward equality rather than pressing an advantage, so it aimlessly shuffles and is oddly hard to lose to. Requires Stockfish (always installed).",
+        description="A novelty engine inspired by the chess.com 'Zach' beginner bot. Using Stockfish's evaluation, it never willingly delivers checkmate, avoids captures, and shuffles toward equality rather than pressing an advantage, so it is oddly hard to lose to. Configurable: Randomness controls how unpredictably it shuffles, AvoidCaptures toggles capture-avoidance. Requires Stockfish (always installed).",
         repo_url=None,
         build_commands=[],
         binary_path="",
