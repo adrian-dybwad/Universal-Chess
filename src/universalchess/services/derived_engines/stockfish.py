@@ -41,10 +41,18 @@ def open_stockfish() -> chess.engine.SimpleEngine:
     cannot function without it, so failing loudly here is preferable to a
     later, more confusing UCI error. The caller owns the returned engine and
     must ``quit()`` it.
+
+    ``timeout=None`` disables python-chess's 10s default handshake timeout,
+    matching how :class:`EngineRegistry` opens every engine. Stockfish's ``uci``
+    initialization can exceed 10s on constrained boards (observed on dgt-64),
+    and hitting the default raised ``TimeoutError`` here so the engine never
+    opened and no ``bestmove`` was produced. There is no benefit to a short cap:
+    the engine is opened lazily on the first move, so a slow start only delays
+    that first reply rather than blocking the UCI handshake or the option probe.
     """
     path = resolve_stockfish_path()
     if not path:
         log.error("[derived_engines] Stockfish not found; cannot start derived engine")
         raise RuntimeError("Stockfish is required by the derived engines but was not found")
     log.info("[derived_engines] Backing derived engine with Stockfish at %s", path)
-    return chess.engine.SimpleEngine.popen_uci(path)
+    return chess.engine.SimpleEngine.popen_uci(path, timeout=None)
