@@ -23,11 +23,13 @@
 #   - Weiss is 64-bit-only: TTIndex (transposition.h) uses the Lemire reduction
 #     `((unsigned __int128)key * count) >> 64`, and __int128 is absent on 32-bit
 #     ARM, so it builds only for arm64.
-#   - Koivisto is NOT built here: its NNUE layer is x86-SIMD only with a broken
-#     upstream ARM NEON path (store op is `exit(-1)`, load type-mismatches), so it
-#     fails to compile on both armv7l and aarch64. It is marked unsupported in the
-#     engine catalog (supported_archs=frozenset()) and the install button is
-#     disabled, so there is nothing for the archive to ship.
+#   - Koivisto is arm64-only. Its upstream aarch64 NEON accumulator load/store
+#     macros are broken (avx_load_reg `vldrq_p128` type-mismatches the register;
+#     avx_store_reg `exit(-1)` does not compile), so the build patches just those
+#     two macros to vld1q_s16/vst1q_s16 (keyed on the unique NEON tokens; the x86
+#     macros are untouched). The rest of its NEON path still uses AArch64-only
+#     intrinsics (vmull_high_s16, vpaddq_s32, vaddvq_s32), so there is no 32-bit
+#     ARM build. Patched builds produce a bit-identical bench (3661572) to x86.
 #   - Arasan is 64-bit-only and pinned to a release tag. It requires clang (g++
 #     rejects its NEON vector-type conversions) and BUILD_TYPE=neon (its non-SIMD
 #     NNUE path is disabled by a static_assert), drops the Makefile's gold linker
@@ -99,6 +101,26 @@ weiss_build() {
 	git clone --depth 1 https://github.com/TerjeKir/weiss.git /tmp/weiss
 	cd /tmp/weiss/src && make -j"$(nproc)" EXE=weiss
 	cp weiss "${OUT}/"
+}
+
+koivisto_build() {
+	# arm64-only (see gating below). Upstream's aarch64 NEON accumulator load/store
+	# macros are broken -- avx_load_reg `vldrq_p128` returns poly128_t (mismatches
+	# the int16x8_t register and its int16* arg) and avx_store_reg `exit(-1)` calls
+	# a void expression when used as avx_store_reg(ptr, reg) -- so patch just those
+	# two to the correct NEON intrinsics before building. The sed keys on the unique
+	# NEON RHS tokens, leaving the x86 load/store macros untouched. The NNUE net is
+	# embedded via INCBIN (the makefile fetches the networks submodule during the
+	# build), so the binary is self-contained. Mirrors engine_manager's koivisto
+	# build_commands; the makefile's default goal (openbench) targets the host.
+	git clone --depth 1 https://github.com/Luecx/Koivisto.git /tmp/koivisto
+	cd /tmp/koivisto/src_files
+	sed -i \
+		-e 's|#define avx_load_reg  *vldrq_p128|#define avx_load_reg(a) vld1q_s16((const int16_t*)(a))|' \
+		-e 's|#define avx_store_reg  *exit(-1)|#define avx_store_reg(a, b) vst1q_s16((int16_t*)(a), (b))|' \
+		nn/defs.h
+	make EXE=koivisto
+	cp koivisto "${OUT}/"
 }
 
 rodentIV_build() {
@@ -193,16 +215,18 @@ maia_build() {
 	wget -q -O t1-256x10.pb.gz "https://training.lczero.org/get_network?sha=00af53b081e80147172e6f281c01571016924e9aac89cdf6666a1cc3a4ecf5bf"
 }
 
-# Berserk, Weiss and Arasan are 64-bit-only. Berserk and Weiss use `__int128`
-# (absent on 32-bit ARM: Berserk in its NNUE/eval, Weiss in TTIndex's Lemire
-# reduction). Arasan requires SIMD (its non-SIMD NNUE path is disabled by a
+# Berserk, Weiss, Arasan and Koivisto are 64-bit-only. Berserk and Weiss use
+# `__int128` (absent on 32-bit ARM: Berserk in its NNUE/eval, Weiss in TTIndex's
+# Lemire reduction). Arasan requires SIMD (its non-SIMD NNUE path is disabled by a
 # static_assert) and defines NEON flags only for arm64/aarch64, so there is no
-# 32-bit ARM build. Koivisto is excluded entirely (no working ARM build). All
+# 32-bit ARM build. Koivisto's patched NEON path uses AArch64-only intrinsics
+# (vmull_high_s16, vpaddq_s32, vaddvq_s32), so it too has no 32-bit ARM build. All
 # other engines build on both.
 if [ "${ARCH}" = "arm64" ]; then
 	build_engine berserk
 	build_engine weiss
 	build_engine arasan
+	build_engine koivisto
 fi
 build_engine ethereal
 build_engine demolito

@@ -650,9 +650,31 @@ ENGINES = {
         description="Top-10 ranked engine with NNUE support. Known for fast search speed and aggressive playing style. Good for blitz and bullet games where speed matters.",
         repo_url="https://github.com/Luecx/Koivisto.git",
         build_commands=[
+            # Koivisto's aarch64 NEON path in src_files/nn/defs.h ships broken: the
+            # accumulator load is `avx_load_reg vldrq_p128` (returns poly128_t, which
+            # mismatches the int16x8_t register and its int16* argument) and the
+            # store is `avx_store_reg exit(-1)` (a placeholder that, used as
+            # `avx_store_reg(ptr, reg)`, calls a void expression and does not
+            # compile). Rewrite just those two macros to the correct NEON intrinsics
+            # (vld1q_s16 / vst1q_s16) before building. The sed keys on the unique
+            # NEON right-hand-side tokens (vldrq_p128 / exit(-1)), so the x86
+            # load/store macros above them are left untouched and a re-run is a
+            # no-op. With this fix the aarch64 build compiles and produces a
+            # bit-identical bench (3661572 nodes) to the x86 build -- the NNUE math
+            # is integer, so results are platform-independent. 32-bit ARM is NOT
+            # covered: it additionally selects AArch64-only intrinsics
+            # (vmull_high_s16, vpaddq_s32, vaddvq_s32), so Koivisto is gated to
+            # arm64 (see supported_archs). The net is embedded via INCBIN at build
+            # time (the makefile fetches the networks submodule), so the binary is
+            # self-contained and needs no extra_files.
             # Parallelism comes from MAKEFLAGS (see _build_env); the temporary
             # build-memory swap covers the NNUE compile's memory use.
-            "cd src_files && make EXE=koivisto",
+            "cd src_files && sed -i "
+            "-e 's|#define avx_load_reg  *vldrq_p128|"
+            "#define avx_load_reg(a) vld1q_s16((const int16_t*)(a))|' "
+            "-e 's|#define avx_store_reg  *exit(-1)|"
+            "#define avx_store_reg(a, b) vst1q_s16((int16_t*)(a), (b))|' "
+            "nn/defs.h && make EXE=koivisto",
         ],
         binary_path="src_files/koivisto",
         is_system_package=False,
@@ -661,17 +683,13 @@ ENGINES = {
         dependencies=["build-essential", "git"],
         build_timeout=1200,
         estimated_install_minutes=15,  # NNUE engine with limited parallelism
-        # No prebuilt: Koivisto cannot be built for ARM at all (see below), so
-        # the CI archive never contains a working binary for it.
-        has_prebuilt=False,
-        # x86-only: Koivisto's NNUE layer (src_files/nn/defs.h) implements SIMD
-        # for AVX512/AVX2/AVX/SSE2 plus an incomplete ARM NEON branch. That NEON
-        # branch is broken upstream -- the store op is a stub (`#define
-        # avx_store_reg exit(-1)`) and the load (`vldrq_p128`) type-mismatches the
-        # register type -- and there is no scalar fallback. Both armv7l and
-        # aarch64 select that same branch, so it fails to compile on every ARM
-        # target. An empty set means "no supported architecture in this project".
-        supported_archs=frozenset(),
+        has_prebuilt=True,
+        # 64-bit ARM only. Upstream's NEON accumulator load/store macros are broken
+        # (patched in build_commands above), and the rest of its NEON path uses
+        # AArch64-only intrinsics (vmull_high_s16, vpaddq_s32, vaddvq_s32) with no
+        # armv7/scalar fallback, so 32-bit ARM (armhf) has no buildable
+        # configuration yet -- gate it to arm64 like the other NEON NNUE engines.
+        supported_archs=frozenset({"arm64"}),
     ),
     "ethereal": EngineDefinition(
         name="ethereal",

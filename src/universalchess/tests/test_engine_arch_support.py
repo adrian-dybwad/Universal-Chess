@@ -168,20 +168,51 @@ def test_empty_supported_archs_reason_is_x86_only_not_blank_list():
     assert "Supported: ." not in reason
 
 
-def test_koivisto_catalog_entry_unsupported_on_all_arm():
-    """The real Koivisto catalog entry builds on no ARM arch and ships no prebuilt.
+def test_koivisto_catalog_entry_is_arm64_only():
+    """The real Koivisto catalog entry builds on arm64 (NEON fix) but not 32-bit ARM.
 
-    Why: Koivisto's NNUE is x86-SIMD only with a broken upstream ARM NEON path, so
-    it fails to compile on both armv7l and aarch64. Pinning supported_archs=empty
-    and has_prebuilt=False catches a revert that would re-enable a doomed install
-    or advertise a prebuilt that the CI archive never contains.
+    Why: Koivisto's upstream NEON path is broken only in its accumulator load/store
+    macros -- ``avx_load_reg vldrq_p128`` (wrong type) and ``avx_store_reg exit(-1)``
+    (a stub that does not compile). The build patches those to ``vld1q_s16`` /
+    ``vst1q_s16`` (see the build-command test below), after which the aarch64 build
+    compiles and produces a bit-identical bench (3661572 nodes), validated on an
+    arm64 host. 32-bit ARM (armhf) additionally selects AArch64-only intrinsics
+    (``vmull_high_s16``, ``vpaddq_s32``, ``vaddvq_s32``) that the load/store patch
+    does not address, so it remains gated to arm64 until the full 32-bit port lands.
+
+    Regression: dropping arm64 re-hides a working engine; adding armhf re-offers a
+    doomed 32-bit build that fails on the AArch64-only intrinsics.
     """
     from universalchess.managers.engine_manager import ENGINES
 
-    assert ENGINES["koivisto"].supported_archs == frozenset()
-    assert ENGINES["koivisto"].has_prebuilt is False
-    assert arch_unsupported_reason(ENGINES["koivisto"], "arm64") is not None
+    assert ENGINES["koivisto"].supported_archs == frozenset({"arm64"})
+    assert arch_unsupported_reason(ENGINES["koivisto"], "arm64") is None
     assert arch_unsupported_reason(ENGINES["koivisto"], "armhf") is not None
+
+
+def test_koivisto_build_patches_broken_neon_macros_before_compiling():
+    """The Koivisto build rewrites its broken NEON load/store macros before ``make``.
+
+    Why: upstream ``src_files/nn/defs.h`` defines the aarch64 NEON accumulator
+    load/store as ``avx_load_reg vldrq_p128`` (returns poly128_t, mismatches the
+    int16x8_t register and its int16 pointer arg) and ``avx_store_reg exit(-1)`` (a
+    placeholder that, used as ``avx_store_reg(ptr, reg)``, calls a void expression
+    and fails to compile). The on-device source build must patch these to
+    ``vld1q_s16`` / ``vst1q_s16`` or the compile fails on every ARM target.
+
+    How a regression manifests: if the patch step is dropped, ``make`` compiles the
+    unmodified upstream macros and the aarch64 build fails in accumulator.h -- with
+    no early signal until an actual device/CI build. Asserting the patch is present
+    and ordered before the compile catches that revert at unit-test time.
+    """
+    from universalchess.managers.engine_manager import ENGINES
+
+    build = "\n".join(ENGINES["koivisto"].build_commands)
+    assert "nn/defs.h" in build
+    assert "vld1q_s16" in build   # replacement for avx_load_reg vldrq_p128
+    assert "vst1q_s16" in build   # replacement for avx_store_reg exit(-1)
+    # The patch must run before the compile; otherwise make hits the broken macros.
+    assert build.index("vld1q_s16") < build.index("make")
 
 
 # ---------------------------------------------------------------------------
