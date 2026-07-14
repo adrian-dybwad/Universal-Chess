@@ -14,7 +14,7 @@ them through registered actions.
 import os
 import signal
 import time
-from typing import Callable
+from typing import Callable, Optional
 
 from universalchess.utils.led import LED_SPEED_NORMAL, LED_INTENSITY_DEFAULT
 
@@ -101,6 +101,39 @@ def return_to_universal_chess(
     sleep_fn(settle_seconds)
     run_fn(RESTART_UNIVERSAL_CHESS_CMD)
     exit_fn(1)
+
+
+def restart_exit_code(pending_exception: Optional[BaseException]) -> int:
+    """Process exit code the final teardown should use, given the exception in flight.
+
+    Universal Chess runs as a systemd unit with ``Restart=on-failure``. When the
+    user returns from the original Centaur software, :func:`return_to_universal_chess`
+    first tries ``systemctl restart`` and then -- as a privilege-free fallback for
+    a stock board that has no passwordless-sudo grant for that command -- raises
+    ``SystemExit(1)`` so ``Restart=on-failure`` brings the board back. That
+    ``SystemExit`` unwinds into the main loop's ``finally``, which runs the shared
+    ``cleanup_and_exit`` teardown, and that teardown ends the process itself.
+
+    This function exists because that teardown historically forced ``exit(0)``,
+    which swallowed the fallback's non-zero code: systemd then saw a clean stop
+    and never restarted the unit, leaving the board dead after Original Centaur.
+    Passing the propagating exception through here lets cleanup adopt the
+    fallback's code instead.
+
+    Returns the integer code of a propagating ``SystemExit`` (so ``SystemExit(1)``
+    -> 1 and the board restarts). Returns 0 for a clean exit (``SystemExit(0)`` or
+    bare ``sys.exit()`` whose code is ``None``), no in-flight exception, or any
+    already-handled / non-``SystemExit`` exception, so an ordinary shutdown still
+    exits cleanly and systemd does not restart-loop a deliberate stop. Only an
+    explicit integer code is honored -- the restart contract uses integer codes --
+    so a string-coded ``SystemExit`` (which shells treat as exit 1 + message) is
+    treated as clean here rather than guessed at.
+    """
+    if isinstance(pending_exception, SystemExit) and isinstance(
+        pending_exception.code, int
+    ):
+        return pending_exception.code
+    return 0
 
 
 # Values that mean "on" for a stored boolean flag, parsed leniently so a config

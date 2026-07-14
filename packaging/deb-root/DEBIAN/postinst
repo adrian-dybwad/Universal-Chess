@@ -452,6 +452,30 @@ else
     echo -e "::: Warning: centaur-armhf helper not found at $ARMHF_SETUP_HELPER"
 fi
 
+# Allow the service user to restart Universal Chess without a password. Returning
+# from the original Centaur software brings the board back by restarting its own
+# unit: the on-board path (services/power.py RESTART_UNIVERSAL_CHESS_CMD) and the
+# web /api/system/return-to-universal endpoint both run
+# `sudo systemctl restart universal-chess.service`. A stock board has no
+# passwordless sudo, so that command is denied and the board stays dead after
+# Original Centaur (the regression this grant fixes). Grant passwordless sudo to
+# exactly that one restart command -- pinned with its arguments so it is not a
+# blanket `systemctl` (start/stop/mask any unit) grant. `systemctl` is addressed
+# by absolute path because sudo authorizes by the resolved command path. Both
+# universal-chess.service and universal-chess-web.service run as $PRIMARY_USER, so
+# this single grant covers both return paths. (The app also has a privilege-free
+# fallback -- exiting non-zero so Restart=on-failure recovers it -- but this grant
+# makes the intended in-place restart work directly.)
+echo -e "::: Configuring sudoers for service restart"
+RESTART_SUDOERS_FILE="/etc/sudoers.d/universal-chess-restart"
+echo "$PRIMARY_USER ALL=(root) NOPASSWD: /usr/bin/systemctl restart universal-chess.service" > "$RESTART_SUDOERS_FILE"
+chmod 440 "$RESTART_SUDOERS_FILE"
+# Validate before it can take effect; a malformed drop-in can lock out sudo.
+if ! visudo -cf "$RESTART_SUDOERS_FILE" >/dev/null 2>&1; then
+    echo -e "::: Warning: service-restart sudoers entry invalid; removing"
+    rm -f "$RESTART_SUDOERS_FILE"
+fi
+
 # Persistent application event log (services.event_log). Pre-create the log dir
 # and file owned by the service user so: (a) the app (running as that user)
 # can append AND rotate it (rotation renames within the dir, needing dir

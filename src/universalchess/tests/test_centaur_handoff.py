@@ -33,6 +33,7 @@ from universalchess.services.power import (
     classify_centaur_exit,
     perform_centaur_handoff,
     perform_centaur_translate_handoff,
+    restart_exit_code,
     return_to_universal_chess,
 )
 
@@ -446,6 +447,45 @@ def test_return_to_universal_chess_exits_nonzero_as_restart_fallback():
     )
 
     assert exit_codes == [1]
+
+
+# ---------------------------------------------------------------------------
+# restart_exit_code()
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "pending,expected",
+    [
+        (SystemExit(1), 1),      # the return-from-Centaur fallback code
+        (SystemExit(2), 2),      # any non-zero code is preserved verbatim
+        (SystemExit(0), 0),      # explicit clean exit stays clean
+        (SystemExit(None), 0),   # bare sys.exit() -> code None -> clean
+        (SystemExit("boom"), 0), # string code (exit 1 + msg) is not our contract
+        (None, 0),               # no exception in flight (normal loop end)
+        (RuntimeError("x"), 0),  # a non-SystemExit that was already handled
+        (KeyboardInterrupt(), 0),
+    ],
+)
+def test_restart_exit_code_maps_pending_exception(pending, expected):
+    """cleanup must exit non-zero iff a non-zero SystemExit is propagating.
+
+    Why this test exists: this is the stock-board return-from-Centaur regression.
+    return_to_universal_chess raises SystemExit(1) as a privilege-free fallback so
+    systemd's Restart=on-failure brings Universal Chess back when `sudo systemctl
+    restart` is denied (no passwordless-sudo grant on a stock board). That
+    SystemExit unwinds into the main loop's `finally`, which runs cleanup_and_exit
+    -- and cleanup ends the process itself. cleanup therefore must ADOPT the
+    propagating SystemExit's code (via this function) instead of forcing 0, or the
+    fallback is swallowed and the board stays dead. A clean/absent/handled exit
+    must map to 0 so an ordinary shutdown still exits cleanly (systemd must not
+    restart-loop a deliberate stop). Only an explicit integer code is honored,
+    because the restart contract uses integer codes.
+
+    How a regression manifests: SystemExit(1) mapping back to 0 reintroduces the
+    board-goes-dark bug; a normal shutdown (None) mapping to non-zero would make
+    systemd treat every clean exit as a failure.
+    """
+    assert restart_exit_code(pending) == expected
 
 
 if __name__ == "__main__":

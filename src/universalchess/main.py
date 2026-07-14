@@ -6369,7 +6369,7 @@ def _show_shutdown_splash(message: str, timeout: float = 5.0, show_battery: bool
                            show_battery=show_battery, tagline=tagline)
 
 
-def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False, reboot: bool = False):
+def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False, reboot: bool = False, exit_code: int = 0):
     """Clean up connections and resources, then exit the process.
     
     Properly stops all threads and closes all resources before exiting.
@@ -6385,6 +6385,13 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
         reason: Description of why the exit is happening (logged for debugging)
         system_shutdown: If True, trigger system shutdown/reboot after cleanup
         reboot: If True and system_shutdown is True, reboot instead of poweroff
+        exit_code: Process exit status. Defaults to 0 (clean). The main loop's
+            ``finally`` passes a non-zero code when the return-from-Centaur
+            fallback (services.power.return_to_universal_chess) raised
+            ``SystemExit(1)`` so this teardown does NOT swallow it into a clean
+            exit -- systemd's ``Restart=on-failure`` needs the non-zero status to
+            bring the board back after Original Centaur on a stock (no
+            passwordless-sudo) board. See services.power.restart_exit_code.
     """
     global kill, running, mainloop
     global protocol_manager, display_manager, controller_manager, rfcomm_server, ble_manager, relay_manager
@@ -6609,7 +6616,7 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
         log.error(f"[Cleanup] Unexpected error in cleanup: {e}", exc_info=True)
     
     log.info("Cleanup completed, exiting")
-    sys.exit(0)
+    sys.exit(exit_code)
 
 
 def signal_handler(signum, frame):
@@ -7844,11 +7851,21 @@ def main():
         import traceback
         traceback.print_exc()
     finally:
+        # A non-zero SystemExit propagating into this finally means the
+        # return-from-Centaur fallback asked systemd to restart us
+        # (Restart=on-failure) because `sudo systemctl restart` was unavailable
+        # on a stock board. Adopt its code so cleanup_and_exit does not force
+        # exit(0) and swallow it -- otherwise systemd sees a clean stop and the
+        # board stays dead. Captured before the import below, which does not
+        # touch the in-flight exception. See services.power.restart_exit_code.
+        _pending_exc = sys.exc_info()[1]
+        from universalchess.services.power import restart_exit_code
+        _restart_code = restart_exit_code(_pending_exc)
         # Check if shutdown was requested from events thread (e.g., LONG_PLAY key)
         if _shutdown_requested:
             cleanup_and_exit("LONG_PLAY shutdown requested", system_shutdown=True)
         else:
-            cleanup_and_exit("Main loop ended")
+            cleanup_and_exit("Main loop ended", exit_code=_restart_code)
 
 
 if __name__ == "__main__":
