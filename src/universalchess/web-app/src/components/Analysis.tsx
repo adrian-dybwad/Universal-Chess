@@ -167,7 +167,6 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
         queueRef.current.push(idx);
       }
     }
-    console.log('[Analysis] Queue:', queueRef.current.length, 'positions to analyze');
 
     // Handle position based on mode
     if (mode === 'live') {
@@ -196,7 +195,6 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
       if (queueRef.current.length === 0) {
         processingRef.current = false;
         setAnalyzing(false);
-        console.log('[Analysis] Queue complete');
         return;
       }
 
@@ -222,8 +220,6 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
       // Capture the FEN before async operation
       const fenToAnalyze = move.fen;
       const isBlackToMove = fenToAnalyze.includes(' b ');
-
-      console.log(`[Analysis] Analyzing move ${index}: ${move.san}`);
 
       // Analyze this position
       const sf = getStockfishService();
@@ -267,7 +263,6 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
         });
     };
 
-    console.log('[Analysis] Starting queue processing, moves available:', movesRef.current.length);
     processNext();
   }, [sfReady, moves.length]);
 
@@ -459,14 +454,6 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
     if (m.eval === null) return 0;  // Show 0 for unanalyzed instead of null (avoids gaps)
     return Math.max(-500, Math.min(500, m.eval));
   });
-  
-  // Debug: log chart data when moves change
-  useEffect(() => {
-    if (analyzedMoves.length > 0) {
-      const evalSummary = analyzedMoves.map((m, i) => `${i+1}:${m.eval}`).join(', ');
-      console.log('[Analysis] Chart evals:', evalSummary);
-    }
-  }, [moves]);
 
   const chartData = {
     labels: chartLabels,
