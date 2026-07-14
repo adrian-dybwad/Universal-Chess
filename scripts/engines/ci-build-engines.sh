@@ -23,13 +23,14 @@
 #   - Weiss is 64-bit-only: TTIndex (transposition.h) uses the Lemire reduction
 #     `((unsigned __int128)key * count) >> 64`, and __int128 is absent on 32-bit
 #     ARM, so it builds only for arm64.
-#   - Koivisto is arm64-only. Its upstream aarch64 NEON accumulator load/store
-#     macros are broken (avx_load_reg `vldrq_p128` type-mismatches the register;
-#     avx_store_reg `exit(-1)` does not compile), so the build patches just those
-#     two macros to vld1q_s16/vst1q_s16 (keyed on the unique NEON tokens; the x86
-#     macros are untouched). The rest of its NEON path still uses AArch64-only
-#     intrinsics (vmull_high_s16, vpaddq_s32, vaddvq_s32), so there is no 32-bit
-#     ARM build. Patched builds produce a bit-identical bench (3661572) to x86.
+#   - Koivisto builds on both arm64 and armhf. Its upstream ARM NEON path is
+#     AArch64-only as shipped (broken load/store placeholders vldrq_p128/exit(-1),
+#     plus AArch64-only vmull_high_s16, vpaddq_s32, vaddvq_s32), so the build
+#     rewrites all of them to a portable NEON path that also compiles on ARMv7
+#     (keyed on the unique NEON tokens; the x86 macros are untouched). A PGO link
+#     fix (-fprofile-update=single) is needed because armv7 libgcov lacks the
+#     atomic value-profiler symbols. Patched builds produce a bit-identical bench
+#     (3661572) to x86 on both arches.
 #   - Arasan is 64-bit-only and pinned to a release tag. It requires clang (g++
 #     rejects its NEON vector-type conversions) and BUILD_TYPE=neon (its non-SIMD
 #     NNUE path is disabled by a static_assert), drops the Makefile's gold linker
@@ -104,22 +105,34 @@ weiss_build() {
 }
 
 koivisto_build() {
-	# arm64-only (see gating below). Upstream's aarch64 NEON accumulator load/store
-	# macros are broken -- avx_load_reg `vldrq_p128` returns poly128_t (mismatches
-	# the int16x8_t register and its int16* arg) and avx_store_reg `exit(-1)` calls
-	# a void expression when used as avx_store_reg(ptr, reg) -- so patch just those
-	# two to the correct NEON intrinsics before building. The sed keys on the unique
-	# NEON RHS tokens, leaving the x86 load/store macros untouched. The NNUE net is
-	# embedded via INCBIN (the makefile fetches the networks submodule during the
-	# build), so the binary is self-contained. Mirrors engine_manager's koivisto
-	# build_commands; the makefile's default goal (openbench) targets the host.
+	# Builds for both arm64 and armhf. Upstream's ARM NEON path is AArch64-only as
+	# shipped, so patch every AArch64-only construct to a portable NEON path that
+	# also compiles on ARMv7 (all bit-identical: bench 3661572 on x86, arm64 and a
+	# real armv7l board). Mirrors engine_manager's koivisto build_commands.
+	#   - nn/defs.h load/store: vldrq_p128 (wrong type) / exit(-1) (a stub) ->
+	#     vld1q_s16 / vst1q_s16.
+	#   - nn/defs.h avx_madd_epi16: AArch64-only vmull_high_s16 + vpaddq_s32 ->
+	#     vmull_s16(vget_high_s16(...)) + vpadd_s32 / vcombine_s32.
+	#   - nn/eval.cpp horizontal sum: AArch64-only vaddvq_s32 -> vadd_s32 /
+	#     vpadd_s32 / vget_lane_s32.
+	# The seds key on the unique NEON RHS tokens, leaving the x86 macros untouched.
+	# PGO fix: the default `openbench` goal builds with -fprofile-generate, which
+	# under -pthread needs atomic value-profiler gcov symbols that armv7 libgcov
+	# lacks (link fails with __gcov_*_profiler_atomic); -fprofile-update=single uses
+	# the non-atomic counters and links on both arches (PGO is kept for speed). The
+	# NNUE net is embedded via INCBIN (the makefile fetches the networks submodule),
+	# so the binary is self-contained.
 	git clone --depth 1 https://github.com/Luecx/Koivisto.git /tmp/koivisto
 	cd /tmp/koivisto/src_files
 	sed -i \
 		-e 's|#define avx_load_reg  *vldrq_p128|#define avx_load_reg(a) vld1q_s16((const int16_t*)(a))|' \
 		-e 's|#define avx_store_reg  *exit(-1)|#define avx_store_reg(a, b) vst1q_s16((int16_t*)(a), (b))|' \
+		-e 's|(vpaddq_s32(vmull_s16(vget_low_s16(a), vget_low_s16(b)), vmull_high_s16(a, b)))|(vcombine_s32(vpadd_s32(vget_low_s32(vmull_s16(vget_low_s16(a), vget_low_s16(b))), vget_high_s32(vmull_s16(vget_low_s16(a), vget_low_s16(b)))), vpadd_s32(vget_low_s32(vmull_s16(vget_high_s16(a), vget_high_s16(b))), vget_high_s32(vmull_s16(vget_high_s16(a), vget_high_s16(b))))))|' \
 		nn/defs.h
-	make EXE=koivisto
+	sed -i \
+		-e 's|return vaddvq_s32(reg);|{ const int32x2_t r2 = vadd_s32(vget_low_s32(reg), vget_high_s32(reg)); return vget_lane_s32(vpadd_s32(r2, r2), 0); }|' \
+		nn/eval.cpp
+	make EXE=koivisto PGO_PRE_FLAGS='-fprofile-generate -fprofile-update=single -lgcov'
 	cp koivisto "${OUT}/"
 }
 
@@ -215,19 +228,19 @@ maia_build() {
 	wget -q -O t1-256x10.pb.gz "https://training.lczero.org/get_network?sha=00af53b081e80147172e6f281c01571016924e9aac89cdf6666a1cc3a4ecf5bf"
 }
 
-# Berserk, Weiss, Arasan and Koivisto are 64-bit-only. Berserk and Weiss use
-# `__int128` (absent on 32-bit ARM: Berserk in its NNUE/eval, Weiss in TTIndex's
-# Lemire reduction). Arasan requires SIMD (its non-SIMD NNUE path is disabled by a
+# Berserk, Weiss and Arasan are 64-bit-only. Berserk and Weiss use `__int128`
+# (absent on 32-bit ARM: Berserk in its NNUE/eval, Weiss in TTIndex's Lemire
+# reduction). Arasan requires SIMD (its non-SIMD NNUE path is disabled by a
 # static_assert) and defines NEON flags only for arm64/aarch64, so there is no
-# 32-bit ARM build. Koivisto's patched NEON path uses AArch64-only intrinsics
-# (vmull_high_s16, vpaddq_s32, vaddvq_s32), so it too has no 32-bit ARM build. All
-# other engines build on both.
+# 32-bit ARM build. Koivisto builds on both: its patched NEON path replaces the
+# AArch64-only intrinsics with ARMv7-compatible equivalents (see koivisto_build).
+# All other engines build on both.
 if [ "${ARCH}" = "arm64" ]; then
 	build_engine berserk
 	build_engine weiss
 	build_engine arasan
-	build_engine koivisto
 fi
+build_engine koivisto
 build_engine ethereal
 build_engine demolito
 build_engine rodentIV

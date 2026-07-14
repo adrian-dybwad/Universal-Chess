@@ -168,51 +168,76 @@ def test_empty_supported_archs_reason_is_x86_only_not_blank_list():
     assert "Supported: ." not in reason
 
 
-def test_koivisto_catalog_entry_is_arm64_only():
-    """The real Koivisto catalog entry builds on arm64 (NEON fix) but not 32-bit ARM.
+def test_koivisto_catalog_entry_supports_both_arm_archs():
+    """The real Koivisto catalog entry builds on both arm64 and 32-bit ARM (armhf).
 
-    Why: Koivisto's upstream NEON path is broken only in its accumulator load/store
-    macros -- ``avx_load_reg vldrq_p128`` (wrong type) and ``avx_store_reg exit(-1)``
-    (a stub that does not compile). The build patches those to ``vld1q_s16`` /
-    ``vst1q_s16`` (see the build-command test below), after which the aarch64 build
-    compiles and produces a bit-identical bench (3661572 nodes), validated on an
-    arm64 host. 32-bit ARM (armhf) additionally selects AArch64-only intrinsics
-    (``vmull_high_s16``, ``vpaddq_s32``, ``vaddvq_s32``) that the load/store patch
-    does not address, so it remains gated to arm64 until the full 32-bit port lands.
+    Why: Koivisto's upstream NEON path used three AArch64-only intrinsics
+    (``vmull_high_s16`` + ``vpaddq_s32`` in the ``avx_madd_epi16`` macro and
+    ``vaddvq_s32`` for the horizontal sum) plus broken load/store placeholders
+    (``vldrq_p128`` / ``exit(-1)``). The build rewrites all of them to intrinsics
+    available on ARMv7 NEON as well (see the build-command test below), after which
+    both the aarch64 and armv7 builds compile and produce a bit-identical bench
+    (3661572 nodes) -- validated on an arm64 host and on a real armv7l board
+    (dgt-32). The NNUE math is integer, so results are platform-independent.
 
-    Regression: dropping arm64 re-hides a working engine; adding armhf re-offers a
-    doomed 32-bit build that fails on the AArch64-only intrinsics.
+    Regression: dropping either arch re-hides a working engine; if the armv7 build
+    regressed (e.g. an AArch64-only intrinsic crept back), armhf would fail to
+    compile again, which this pairs with the build-command test to catch early.
     """
     from universalchess.managers.engine_manager import ENGINES
 
-    assert ENGINES["koivisto"].supported_archs == frozenset({"arm64"})
+    assert ENGINES["koivisto"].supported_archs == frozenset({"arm64", "armhf"})
     assert arch_unsupported_reason(ENGINES["koivisto"], "arm64") is None
-    assert arch_unsupported_reason(ENGINES["koivisto"], "armhf") is not None
+    assert arch_unsupported_reason(ENGINES["koivisto"], "armhf") is None
 
 
-def test_koivisto_build_patches_broken_neon_macros_before_compiling():
-    """The Koivisto build rewrites its broken NEON load/store macros before ``make``.
+def test_koivisto_build_patches_all_aarch64_only_neon_before_compiling():
+    """The Koivisto build rewrites every AArch64-only NEON construct before ``make``.
 
-    Why: upstream ``src_files/nn/defs.h`` defines the aarch64 NEON accumulator
-    load/store as ``avx_load_reg vldrq_p128`` (returns poly128_t, mismatches the
-    int16x8_t register and its int16 pointer arg) and ``avx_store_reg exit(-1)`` (a
-    placeholder that, used as ``avx_store_reg(ptr, reg)``, calls a void expression
-    and fails to compile). The on-device source build must patch these to
-    ``vld1q_s16`` / ``vst1q_s16`` or the compile fails on every ARM target.
+    Why: upstream's NEON path does not build on 32-bit ARM (armhf) for three
+    reasons, all patched here so a single portable NEON path serves both arm64 and
+    armv7:
+      - ``avx_load_reg vldrq_p128`` (wrong type) / ``avx_store_reg exit(-1)`` (a
+        stub) -> ``vld1q_s16`` / ``vst1q_s16``.
+      - ``avx_madd_epi16`` uses ``vmull_high_s16`` + ``vpaddq_s32`` (AArch64-only)
+        -> ``vmull_s16(vget_high_s16(...))`` + ``vpadd_s32`` / ``vcombine_s32``.
+      - the horizontal sum uses ``vaddvq_s32`` (AArch64-only) -> ``vadd_s32`` /
+        ``vpadd_s32`` / ``vget_lane_s32`` in nn/eval.cpp.
+    All replacements are bit-identical (validated: bench 3661572 on x86, arm64 and
+    armv7l).
 
-    How a regression manifests: if the patch step is dropped, ``make`` compiles the
-    unmodified upstream macros and the aarch64 build fails in accumulator.h -- with
-    no early signal until an actual device/CI build. Asserting the patch is present
-    and ordered before the compile catches that revert at unit-test time.
+    A second, independent failure on armv7 is the makefile's PGO step: the default
+    ``openbench`` goal builds with ``-fprofile-generate``, which under ``-pthread``
+    selects atomic value-profiler gcov symbols that Raspbian's armv7 libgcov does
+    not provide, so the link fails with ``undefined reference to
+    __gcov_*_profiler_atomic``. ``-fprofile-update=single`` selects the non-atomic
+    counters and links on both arches, so the build overrides ``PGO_PRE_FLAGS``.
+
+    How a regression manifests: dropping any patch makes ``make`` compile the
+    unmodified upstream construct and the armv7 (and, for the AArch64-only
+    intrinsics that also mis-store, the arm64) build fails -- with no early signal
+    until a real device/CI build. Asserting each replacement is present and ordered
+    before the compile catches that revert at unit-test time.
     """
     from universalchess.managers.engine_manager import ENGINES
 
     build = "\n".join(ENGINES["koivisto"].build_commands)
+    # Load/store macros.
     assert "nn/defs.h" in build
     assert "vld1q_s16" in build   # replacement for avx_load_reg vldrq_p128
     assert "vst1q_s16" in build   # replacement for avx_store_reg exit(-1)
-    # The patch must run before the compile; otherwise make hits the broken macros.
+    # avx_madd_epi16: portable replacement for vmull_high_s16 + vpaddq_s32.
+    assert "vpadd_s32" in build
+    assert "vcombine_s32" in build
+    # Horizontal sum in eval.cpp: portable replacement for vaddvq_s32.
+    assert "nn/eval.cpp" in build
+    assert "vget_lane_s32" in build
+    # PGO fix so the armv7 profile-generate link finds non-atomic gcov counters.
+    assert "-fprofile-update=single" in build
+    # Every patch must run before the compile; otherwise make hits the broken source.
     assert build.index("vld1q_s16") < build.index("make")
+    assert build.index("vpadd_s32") < build.index("make")
+    assert build.index("vget_lane_s32") < build.index("make")
 
 
 # ---------------------------------------------------------------------------
