@@ -34,7 +34,7 @@ Special thanks to all the open source chess engine authors whose work makes this
 
 ## Hardware
 
-On DGT Centaur hardware, the stock Raspberry Pi can be replaced with a Raspberry Pi Zero 2 W (or Raspberry Pi Zero W) to enable Wi‑Fi/Bluetooth features and run this software stack. Performance is hugely improved on the Zero 2 W and we highly recommend using it as the Zero W is quite slow although it does work. This software supports the latest version of PI OS (Trixie) and also 32 or 64 bit. 64 bit supports more engines that the 32 bit does, so we recommend you use that.
+On DGT Centaur hardware, the stock Raspberry Pi can be replaced with a Raspberry Pi Zero 2 W (or Raspberry Pi Zero W) to enable Wi‑Fi/Bluetooth features and run this software stack. Performance is hugely improved on the Zero 2 W and we highly recommend using it as the Zero W is quite slow although it does work. This software supports the latest version of PI OS (Trixie) and also 32 or 64 bit. 64 bit supports more engines than 32, so we recommend you use that.
 
 **Warranty notice:** Hardware modification may void device warranty. Proceed at your own risk.
 
