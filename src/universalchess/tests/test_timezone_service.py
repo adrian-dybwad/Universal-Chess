@@ -155,6 +155,50 @@ def test_set_invalid_timezone_raises_and_does_not_persist_or_apply(captured_writ
     assert run.calls == []
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "Europe/Oslo; rm -rf /",
+        "Europe/Oslo && reboot",
+        "$(reboot)",
+        "`reboot`",
+        "../../etc/passwd",
+        "UTC\n",
+    ],
+)
+def test_set_timezone_rejects_command_injection_payloads(captured_writes, payload):
+    """A zone carrying shell metacharacters is rejected before any subprocess.
+
+    Guards CodeQL alert #195 (uncontrolled command line): request-derived text
+    must never reach the ``sudo uc-set-timezone`` argv. Because the argv value is
+    sourced from the trusted zoneinfo set (not the request string), any payload
+    that is not a verbatim IANA name fails is_valid_timezone and raises before
+    the runner is touched. A regression manifests as a recorded runner call
+    (the payload reaching the command line) or a persisted write.
+    """
+    run = _runner(returncode=0)
+    with pytest.raises(ValueError):
+        tzs.set_timezone(payload, helper_path="/x/uc-set-timezone", run=run)
+    assert captured_writes == []
+    assert run.calls == []
+
+
+def test_set_timezone_argv_value_is_sourced_from_zoneinfo_db(captured_writes):
+    """The zone in the privileged argv is the canonical name from zoneinfo.
+
+    Guards the barrier used to fix alert #195: set_timezone forwards the name
+    resolved from available_timezones() rather than the caller's string, so the
+    value handed to subprocess does not originate from request input. The string
+    is identical for a valid zone; this asserts the applied argv still carries
+    the exact IANA name so the fix did not corrupt the value.
+    """
+    run = _runner(returncode=0)
+    applied = tzs.set_timezone("Europe/Oslo", helper_path="/x/uc-set-timezone", run=run)
+
+    assert applied is True
+    assert run.calls[0][0][-1] == "Europe/Oslo"
+
+
 def test_apply_failure_still_persists_and_returns_false(captured_writes):
     """A helper failure persists the choice but reports not-applied (False).
 

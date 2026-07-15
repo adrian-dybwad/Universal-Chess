@@ -71,6 +71,7 @@ from universalchess.services import apt_recovery
 from universalchess.services.apt_recovery import RecoveryOutcome
 from universalchess.services.build_memory import build_memory
 from universalchess.services.event_log import log_event
+from universalchess.utils.safe_path import safe_under_base
 
 # Engine installation directory
 ENGINES_DIR = "/opt/universalchess/engines"
@@ -1255,12 +1256,21 @@ class EngineManager:
             # executable lives at engines_dir/engine_name/<binary_path>. The one
             # layout rule is defined once in engine_binary_subpath so this check
             # and paths.get_engine_path stay in agreement.
+            # engine_name reaches here from request data (the management API),
+            # so the binary path is resolved through safe_under_base -- the
+            # shared CWE-22 containment guard -- before any filesystem probe. A
+            # name that would escape engines_dir yields None and reads as not
+            # installed. The membership check above already limits names to known
+            # engines; this keeps the path access itself provably contained.
+            parts = [engine_name]
             subpath = engine_binary_subpath(engine_name)
             if subpath:
-                engine_path = self.engines_dir / engine_name / subpath
-            else:
-                engine_path = self.engines_dir / engine_name
-            exists = engine_path.exists()
+                parts.append(subpath)
+            engine_path = safe_under_base(self.engines_dir, *parts)
+            if engine_path is None:
+                log.warning(f"[EngineManager] is_installed: rejected out-of-base path for '{engine_name}'")
+                return False
+            exists = os.path.exists(engine_path)
             executable = os.access(engine_path, os.X_OK) if exists else False
             is_installed = exists and executable
             log.debug(f"[EngineManager] is_installed: {engine_name} = {is_installed} (exists={exists}, executable={executable}, path={engine_path})")

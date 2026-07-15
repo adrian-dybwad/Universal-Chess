@@ -114,6 +114,24 @@ const licenses: License[] = [
 ];
 
 /**
+ * Whether `url`'s host is github.com (or a github.com subdomain).
+ *
+ * Parses the host rather than testing `url.includes('github.com')`: a substring
+ * match also accepts hostile lookalikes like `https://github.com.evil.com/` or
+ * `https://evil.com/?github.com` (CWE-20, incomplete URL sanitization). A
+ * malformed URL is treated as non-GitHub.
+ */
+function isGithubUrl(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return false;
+  }
+  return host === 'github.com' || host.endsWith('.github.com');
+}
+
+/**
  * Licenses page showing all open source licenses.
  */
 export function Licenses() {
@@ -159,7 +177,7 @@ function LicenseItem({ license }: { license: License }) {
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
           >
-            {license.url.includes('github.com') ? t('licenses.viewGithub') : t('licenses.viewSource')}
+            {isGithubUrl(license.url) ? t('licenses.viewGithub') : t('licenses.viewSource')}
           </a>
         )}
       </div>

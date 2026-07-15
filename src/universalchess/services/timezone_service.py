@@ -64,6 +64,23 @@ def is_valid_timezone(tz: str) -> bool:
     return tz in available_timezones()
 
 
+def _canonical_zone(tz: str) -> Optional[str]:
+    """Return the IANA name as sourced from the trusted zoneinfo database.
+
+    Returns the matching entry from :func:`zoneinfo.available_timezones` (an
+    exact string equal to ``tz``) or ``None`` when ``tz`` is not a known zone.
+
+    Why this exists rather than returning ``tz`` after an ``is_valid_timezone``
+    check: ``set_timezone`` forwards the result into a privileged ``subprocess``
+    argv. Returning the value taken from the trusted set -- instead of the
+    caller's (request-derived) string -- means the name reaching the command
+    line no longer originates from untrusted input, closing the command-injection
+    path (CWE-78). A membership check alone leaves the same tainted string in
+    play; sourcing the value from the zoneinfo set is the actual barrier.
+    """
+    return next((zone for zone in available_timezones() if zone == tz), None)
+
+
 def _read_os_timezone() -> Optional[str]:
     """Return the OS's configured IANA zone, or None if it can't be determined.
 
@@ -126,11 +143,16 @@ def set_timezone(
     not yet active"). Raises ValueError for an unknown zone so it is never
     written or applied.
     """
-    if not is_valid_timezone(tz):
+    # Resolve the name from the trusted zoneinfo set so the value that flows on
+    # to Settings and the privileged argv originates there, not from the caller's
+    # (request-derived) string -- the barrier that closes the command-injection
+    # path. An unknown zone yields None and is rejected before any write/apply.
+    canonical = _canonical_zone(tz)
+    if canonical is None:
         raise ValueError(f"unknown timezone: {tz!r}")
     # Persist first so the choice survives even if the privileged apply fails.
-    Settings.write(_SECTION, _KEY, tz, DEFAULT_TIMEZONE)
-    return _apply(run, helper_path, tz)
+    Settings.write(_SECTION, _KEY, canonical, DEFAULT_TIMEZONE)
+    return _apply(run, helper_path, canonical)
 
 
 def _apply(run: CommandRunner, helper_path: str, tz: str) -> bool:
