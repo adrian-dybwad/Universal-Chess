@@ -87,6 +87,32 @@ _BUILD_PROGRESS_THROTTLE_SECONDS = 2.0
 # Environment variable that overrides compile parallelism (see _build_parallelism).
 _BUILD_PARALLELISM_ENV = "UC_BUILD_PARALLELISM"
 
+# Heuristic RAM budget (MB) per parallel compile job. A memory-heavy C/C++ source
+# build (embedded NNUE nets, whole-program LTO) commonly wants ~0.5-1GB resident
+# per job; sizing the divisor at 1GB keeps the peak working set within RAM on
+# small boards so the compile stays CPU/IO-bound instead of thrashing swap. Kept
+# in step with scripts/bluez-selfheal's BUILD_JOB_MB so both source-build paths
+# bound parallelism the same way.
+_BUILD_JOB_MB = 1024
+
+
+def _mem_total_mb() -> Optional[int]:
+    """Total system RAM in MB, or None where it cannot be read.
+
+    Reads ``/proc/meminfo`` (Linux-only). Returns None on platforms without it
+    (e.g. the macOS dev box), where callers skip the RAM bound and fall back to
+    the CPU count -- so local runs and CI behave exactly as before while real
+    boards get the memory-aware bound.
+    """
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
 
 def _build_parallelism() -> int:
     """Number of parallel compile jobs for source builds.
@@ -96,14 +122,16 @@ def _build_parallelism() -> int:
     each catalog entry no longer carries its own ``-jN``. This is the single knob
     for trading build speed against memory pressure. It is overridable via the
     :data:`_BUILD_PARALLELISM_ENV` environment variable so the optimum can be
-    measured on a board without a code change; the default is the CPU count.
+    measured on a board without a code change.
 
-    On a RAM-constrained board a high job count is only safe because the
-    temporary build-memory swap (see :mod:`services.build_memory`) is acquired
-    around the build -- without it, parallel compiles of a memory-heavy engine
-    (e.g. an embedded NNUE net) are OOM-killed. Swap lets the build *complete*;
-    the fastest job count is still bounded by what fits in RAM, which is why the
-    value is tunable rather than fixed at "unlimited".
+    The default is bounded by BOTH the CPU count and available RAM
+    (``min(cpu_count, RAM_MB / _BUILD_JOB_MB)``). Defaulting to the raw CPU count
+    on a ~415MB, 4-core Pi Zero 2 W meant ``-j4`` compiles that overshoot RAM and
+    thrash swap for tens of minutes; the temporary build-memory swap lets such a
+    build *complete* but does not make it efficient. Flooring the job count to
+    what RAM can hold keeps the build CPU/IO-bound. Where RAM is unreadable
+    (non-Linux dev/CI) the bound is skipped and the default is the CPU count,
+    preserving prior behaviour there.
     """
     override = os.environ.get(_BUILD_PARALLELISM_ENV)
     if override:
@@ -115,7 +143,12 @@ def _build_parallelism() -> int:
             if n >= 1:
                 return n
             log.warning("Ignoring %s=%r (must be >= 1)", _BUILD_PARALLELISM_ENV, override)
-    return os.cpu_count() or 1
+    cores = os.cpu_count() or 1
+    mem_mb = _mem_total_mb()
+    if mem_mb is None:
+        return cores
+    by_mem = max(1, mem_mb // _BUILD_JOB_MB)
+    return min(cores, by_mem)
 
 
 def _build_env(parallelism: Optional[int] = None) -> dict:

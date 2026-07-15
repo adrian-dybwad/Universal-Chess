@@ -16,6 +16,7 @@ from universalchess.managers.engine_manager import (
     SCRIPTS_DIR,
     _build_env,
     _build_parallelism,
+    _mem_total_mb,
 )
 
 
@@ -437,7 +438,7 @@ class TestMaiaBuildCommand:
         # No absolute /tmp build dir (the disk path is <install>/../../tmp, derived
         # via dirname, which is fine -- only a leading "/tmp is the tmpfs).
         assert 'BUILD_DIR="/tmp' not in content
-        assert "/tmp/maia-build-swap" not in content
+        assert "/tmp/maia-build-swap" not in content  # noqa: S108 - asserting a string is absent
         # Swap is provisioned by the caller (uc-build-memory), not here.
         assert "mkswap" not in content
         assert "swapon" not in content
@@ -592,15 +593,63 @@ class TestCentralizedParallelism:
         monkeypatch.setenv(_BUILD_PARALLELISM_ENV, "2")
         assert _build_parallelism() == 2
 
-    def test_invalid_parallelism_override_falls_back_to_cpu_count(self, monkeypatch):
+    def test_invalid_parallelism_override_falls_back_to_default(self, monkeypatch):
         """A non-positive/garbage override must be ignored, not crash the build.
 
         Why this test exists: an operator could set a bad value; the build must
-        degrade to the CPU-count default rather than passing -j0/-jfoo to make.
+        degrade to the computed default rather than passing -j0/-jfoo to make.
+        With RAM unreadable (seam returns None) that default is the CPU count, so
+        this pins the fallback deterministically on any host.
         How the regression manifests: if parsing did not validate, ``-j0`` (run
         unlimited jobs) or a ValueError would reach the build.
         """
+        monkeypatch.setattr(engine_manager_module.os, "cpu_count", lambda: 4)
+        monkeypatch.setattr(engine_manager_module, "_mem_total_mb", lambda: None)
         monkeypatch.setenv(_BUILD_PARALLELISM_ENV, "0")
-        assert _build_parallelism() == (__import__("os").cpu_count() or 1)
+        assert _build_parallelism() == 4
         monkeypatch.setenv(_BUILD_PARALLELISM_ENV, "notanint")
-        assert _build_parallelism() == (__import__("os").cpu_count() or 1)
+        assert _build_parallelism() == 4
+
+    def test_default_parallelism_floored_by_ram_on_small_board(self, monkeypatch):
+        """The default job count must be bounded by RAM, not just cores.
+
+        Why this test exists: defaulting to the raw CPU count meant a ~415MB /
+        4-core Pi Zero 2 W ran ``-j4`` compiles that overshoot RAM and thrash swap
+        for tens of minutes (build-memory swap lets them *complete* but not run
+        efficiently). Flooring by RAM/_BUILD_JOB_MB keeps the build CPU/IO-bound.
+
+        How the regression manifests: dropping the RAM bound returns 4 here (the
+        core count) instead of 1, reintroducing the swap thrash on small boards.
+        """
+        monkeypatch.delenv(_BUILD_PARALLELISM_ENV, raising=False)
+        monkeypatch.setattr(engine_manager_module.os, "cpu_count", lambda: 4)
+        monkeypatch.setattr(engine_manager_module, "_mem_total_mb", lambda: 415)
+        assert _build_parallelism() == 1
+
+    def test_default_parallelism_keeps_cores_when_ram_ample(self, monkeypatch):
+        """Ample-RAM boards keep full core parallelism.
+
+        Why this test exists: the RAM bound must not throttle capable hardware --
+        an 8GB / 4-core board should still build at -j4.
+
+        How the regression manifests: a too-aggressive clamp (e.g. dividing by a
+        much larger per-job budget) would return <4, needlessly slowing big boards.
+        """
+        monkeypatch.delenv(_BUILD_PARALLELISM_ENV, raising=False)
+        monkeypatch.setattr(engine_manager_module.os, "cpu_count", lambda: 4)
+        monkeypatch.setattr(engine_manager_module, "_mem_total_mb", lambda: 8192)
+        assert _build_parallelism() == 4
+
+    def test_mem_total_mb_returns_none_off_linux(self, monkeypatch):
+        """_mem_total_mb must return None when /proc/meminfo is absent.
+
+        Why this test exists: the None sentinel is what makes the RAM bound skip
+        on non-Linux dev/CI (falling back to the CPU count). If it instead raised
+        or returned 0, the default parallelism path would crash or clamp to 1 on
+        the dev box. Simulated by pointing the open at a missing file.
+        """
+        def _boom(*_a, **_k):
+            raise FileNotFoundError("/proc/meminfo")
+
+        monkeypatch.setattr("builtins.open", _boom)
+        assert _mem_total_mb() is None

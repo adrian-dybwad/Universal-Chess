@@ -143,6 +143,33 @@ zram_size_mb() {
     echo $(( mem / ZRAM_FRACTION_DENOMINATOR ))
 }
 
+# Plan the two build tiers (zram, SD backstop) in MB for the given RAM + existing
+# swap. Echoes "<zram_mb> <sd_mb>".
+#
+# When RAM + already-present swap already meets the target budget, BOTH tiers are
+# 0. This is the fresh 64-bit board case: universal-chess-swap.service has already
+# provisioned a multi-GB DISK swapfile, so the budget is met by real capacity.
+# Adding our high-priority zram tier on top would be actively harmful under a
+# sustained build that overflows RAM: zram stores compressed pages IN RAM, so it
+# steals RAM from the compiler for no real added capacity and pins kswapd
+# compressing/decompressing -- the documented "competes for the same RAM" failure
+# mode, and the direct cause of the multi-tens-of-minutes bluetoothd rebuild
+# thrash observed on a ~415MB board. In that case we rely on the existing disk
+# swap plus the swappiness bump. zram is only set up when the board genuinely
+# lacks enough swap to reach the budget (gap > 0), where a fast compressed-RAM
+# first tier plus a fresh SD backstop is the intended tiering.
+plan_build_tiers() {
+    local mem="$1" swap="$2" gap zram sd
+    gap=$(( TARGET_MB - mem - swap ))
+    if [ "$gap" -le 0 ]; then
+        echo "0 0"
+        return
+    fi
+    zram="$(zram_size_mb "$mem")"
+    sd="$(sd_swap_size_mb "$mem" "$swap" "$zram")"
+    echo "$zram $sd"
+}
+
 # ---------------------------------------------------------------------------
 # Token / reference counting
 # ---------------------------------------------------------------------------
@@ -202,14 +229,17 @@ live_token_count() {
 setup_memory() {
     local mem swap zram sd swappiness_now
     mem="$(mem_total_mb)"; swap="$(swap_total_mb)"
-    zram="$(zram_size_mb "$mem")"
-    sd="$(sd_swap_size_mb "$mem" "$swap" "$zram")"
+    read -r zram sd < <(plan_build_tiers "$mem" "$swap")
 
     : > "$CREATED_ENV"
 
-    # zram tier (compressed RAM, high priority). modprobe then allocate a device.
+    # zram tier (compressed RAM, high priority). Skipped entirely when the tier
+    # planner returns 0 -- i.e. RAM + existing (disk) swap already meets the
+    # budget, where high-priority zram would only steal RAM under a sustained
+    # build (see plan_build_tiers). modprobe then allocate a device.
     local zdev=""
-    if run_priv modprobe zram 2>/dev/null; then
+    if [ "$zram" -gt 0 ]; then
+      if run_priv modprobe zram 2>/dev/null; then
         if [ "$DRY_RUN" = "1" ]; then
             zdev="/dev/zram-dryrun"
             run_priv zramctl --find --size "${zram}M" --algorithm zstd
@@ -229,8 +259,11 @@ setup_memory() {
         else
             log "WARNING: could not allocate zram device"
         fi
-    else
+      else
         log "WARNING: zram module unavailable; relying on SD swap"
+      fi
+    else
+        log "existing swap meets target; skipping zram tier (relying on disk swap)"
     fi
 
     # SD swapfile backstop (low priority). Skipped when not needed (sd == 0).
@@ -331,7 +364,9 @@ cmd_release() {
 cmd_status() {
     local mem swap zram sd
     mem="$(mem_total_mb)"; swap="$(swap_total_mb)"
-    zram="$(zram_size_mb "$mem")"; sd="$(sd_swap_size_mb "$mem" "$swap" "$zram")"
+    # Report the tiers that would actually be brought up (gated), so status and
+    # setup_memory never disagree about whether zram is planned.
+    read -r zram sd < <(plan_build_tiers "$mem" "$swap")
     echo "ram_mb=$mem stock_swap_mb=$swap planned_zram_mb=$zram planned_sd_swap_mb=$sd target_mb=$TARGET_MB"
     echo "live_holders=$(live_token_count)"
     if [ -f "$CREATED_ENV" ]; then echo "created:"; cat "$CREATED_ENV"; fi

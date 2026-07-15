@@ -42,7 +42,7 @@ def live_pid():
     fork-free `kill` builtin path, so the test is deterministic (using another
     user's PID would hit the permission-denied branch, and a fabricated PID would
     be pruned)."""
-    proc = subprocess.Popen(["sleep", "120"])
+    proc = subprocess.Popen(["sleep", "120"])  # noqa: S607 - fixed argv, test-only
     try:
         yield str(proc.pid)
     finally:
@@ -61,8 +61,8 @@ def _run(action, *extra, state_dir, action_log, mem_mb="415", swap_mb="414",
     env["UC_BUILD_MEM_MEMTOTAL_MB"] = mem_mb
     env["UC_BUILD_MEM_SWAPTOTAL_MB"] = swap_mb
     env["UC_BUILD_MEM_TARGET_MB"] = target_mb
-    proc = subprocess.run(
-        ["bash", str(_HELPER), action, *extra],
+    proc = subprocess.run(  # noqa: S603 - test invokes the pinned helper with fixed args
+        ["bash", str(_HELPER), action, *extra],  # noqa: S607 - bash on PATH is fine in tests
         env=env, capture_output=True, text=True,
     )
     lines = action_log.read_text().splitlines() if action_log.exists() else []
@@ -76,8 +76,8 @@ def _status(state_dir, **kw):
     env["UC_BUILD_MEM_MEMTOTAL_MB"] = kw.get("mem_mb", "415")
     env["UC_BUILD_MEM_SWAPTOTAL_MB"] = kw.get("swap_mb", "414")
     env["UC_BUILD_MEM_TARGET_MB"] = kw.get("target_mb", "4096")
-    return subprocess.run(
-        ["bash", str(_HELPER), "status"],
+    return subprocess.run(  # noqa: S603 - test invokes the pinned helper with fixed args
+        ["bash", str(_HELPER), "status"],  # noqa: S607 - bash on PATH is fine in tests
         env=env, capture_output=True, text=True,
     )
 
@@ -108,8 +108,8 @@ def test_sd_backstop_fills_gap_to_target_on_low_ram_board(tmp_path):
     # On a 415MB board with 414MB stock swap, reaching a 1200MB budget needs an SD
     # backstop of 1200-415-414-(415/2)=164MB. A regression in the budget maths
     # (double-counting RAM, ignoring stock swap) changes planned_sd_swap_mb.
-    proc = subprocess.run(
-        ["bash", str(_HELPER), "status"],
+    proc = subprocess.run(  # noqa: S603 - test invokes the pinned helper with fixed args
+        ["bash", str(_HELPER), "status"],  # noqa: S607 - bash on PATH is fine in tests
         env={**os.environ,
              "UC_BUILD_MEM_STATE_DIR": str(tmp_path),
              "UC_BUILD_MEM_SWAPFILE": str(tmp_path / "build-swap"),
@@ -128,8 +128,8 @@ def test_no_sd_backstop_when_ram_meets_target(tmp_path):
     # A high-RAM board (4GB) already meets a 4GB target, so no SD swapfile should
     # be planned (0). A regression that always creates a swapfile would wear the
     # card on capable boards; this pins sd=0 there.
-    proc = subprocess.run(
-        ["bash", str(_HELPER), "status"],
+    proc = subprocess.run(  # noqa: S603 - test invokes the pinned helper with fixed args
+        ["bash", str(_HELPER), "status"],  # noqa: S607 - bash on PATH is fine in tests
         env={**os.environ,
              "UC_BUILD_MEM_STATE_DIR": str(tmp_path),
              "UC_BUILD_MEM_SWAPFILE": str(tmp_path / "build-swap"),
@@ -144,6 +144,29 @@ def test_no_sd_backstop_when_ram_meets_target(tmp_path):
 
 def _status_tmp(**kw):
     return _status(tempfile.mkdtemp(), **kw)
+
+
+def test_no_tiers_planned_when_existing_swap_meets_target(tmp_path):
+    # On a board whose persistent disk swap already meets the budget (the fresh
+    # 64-bit board: universal-chess-swap.service provisioned a multi-GB swapfile),
+    # neither tier should be planned. Adding high-priority zram there only steals
+    # RAM under a sustained build (compressed pages are RAM-resident) for no real
+    # added capacity -- the >30min bluetoothd-rebuild thrash. A regression that
+    # planned zram regardless would surface as a non-zero planned_zram_mb here.
+    proc = subprocess.run(  # noqa: S603 - test invokes the pinned helper with fixed args
+        ["bash", str(_HELPER), "status"],  # noqa: S607 - bash on PATH is fine in tests
+        env={**os.environ,
+             "UC_BUILD_MEM_STATE_DIR": str(tmp_path),
+             "UC_BUILD_MEM_SWAPFILE": str(tmp_path / "build-swap"),
+             "UC_BUILD_MEM_MEMTOTAL_MB": "415",
+             "UC_BUILD_MEM_SWAPTOTAL_MB": "4096",   # ample disk swap already up
+             "UC_BUILD_MEM_TARGET_MB": "4096"},
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    f = _parse_status(proc.stdout)
+    assert f["planned_zram_mb"] == "0"
+    assert f["planned_sd_swap_mb"] == "0"
 
 
 # --------------------------------------------------------------------------- #
@@ -168,6 +191,26 @@ def test_acquire_brings_up_zram_then_sd_then_swappiness(tmp_path):
     # zram (high priority) must be swapped on before the SD backstop (low prio).
     assert lines.index("swapon -p 100 /dev/zram-dryrun") < \
         next(i for i, ln in enumerate(lines) if ln.startswith("swapon -p 10 "))
+
+
+def test_acquire_skips_zram_when_existing_swap_meets_target(tmp_path):
+    # The gate must hold on the privileged path too, not just in `status`: when
+    # RAM + existing disk swap already meets the budget, acquire must bring up
+    # NO zram and NO SD backstop (they would only steal RAM / wear the card), but
+    # it must STILL raise swappiness -- that bump is the useful part on such a
+    # board, letting anonymous build pages spill to the existing disk swap. A
+    # regression that dropped the gate would re-emit `modprobe zram` / a
+    # `swapon -p 100` here (the RAM-stealing tier this change removes).
+    log = tmp_path / "actions.log"
+    proc, lines = _run("acquire", "--owner-pid", _ALIVE_PID,
+                       state_dir=tmp_path / "state", action_log=log,
+                       mem_mb="415", swap_mb="4096", target_mb="4096")
+    assert proc.returncode == 0, proc.stderr
+    assert "modprobe zram" not in lines
+    assert not any(ln.startswith("swapon -p 100") for ln in lines)
+    assert not any(ln.startswith("swapon -p 10 ") for ln in lines)
+    # The swappiness bump is unconditional and must remain.
+    assert "sysctl -q -w vm.swappiness=60" in lines
 
 
 def test_acquire_records_a_live_token(tmp_path):

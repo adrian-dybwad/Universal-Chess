@@ -111,6 +111,41 @@ on_exit() {
 # Environment discovery
 # ---------------------------------------------------------------------------
 
+# Heuristic RAM budget (MB) per parallel compile job. An LTO-free C compile of
+# bluetoothd still wants well over 100MB resident per job; sizing the divisor at
+# 1GB keeps the peak working set within RAM on small boards so the compile stays
+# CPU/IO-bound instead of thrashing swap. Overridable for tuning/tests.
+BUILD_JOB_MB="${UC_BUILD_JOB_MB:-1024}"
+
+# Compile parallelism bounded by BOTH core count and RAM. `make -j$(nproc)` (=4
+# on a quad-core Pi Zero 2 W) with only ~415MB RAM oversubscribes memory and,
+# together with the distro's default -flto=auto, makes the board thrash swap for
+# tens of minutes on the bluetoothd rebuild (observed: load ~13, kswapd pegged).
+# Bounding by RAM/BUILD_JOB_MB floors that to a job count RAM can actually hold.
+#
+# The override name (UC_BUILD_PARALLELISM) is shared with the Python engine
+# builder (managers/engine_manager._build_parallelism) so both source-build paths
+# read one knob. Test seams: UC_BLUEZ_MEMTOTAL_MB overrides detected RAM,
+# UC_BUILD_NPROC overrides the detected core count, so the maths is pinnable
+# without a specific host.
+build_jobs() {
+    local override cores mem_mb by_mem
+    override="${UC_BUILD_PARALLELISM:-}"
+    case "$override" in
+        ''|*[!0-9]*) : ;;                       # unset/non-numeric -> ignore
+        *) if [ "$override" -ge 1 ]; then echo "$override"; return; fi ;;
+    esac
+    cores="${UC_BUILD_NPROC:-$(nproc 2>/dev/null || echo 1)}"
+    case "$cores" in ''|*[!0-9]*) cores=1 ;; esac
+    [ "$cores" -ge 1 ] || cores=1
+    mem_mb="${UC_BLUEZ_MEMTOTAL_MB:-$(awk '/^MemTotal:/{print int($2/1024)}' /proc/meminfo 2>/dev/null)}"
+    # RAM unreadable (e.g. non-Linux): fall back to the core count, prior behaviour.
+    case "$mem_mb" in ''|*[!0-9]*) echo "$cores"; return ;; esac
+    by_mem=$(( mem_mb / BUILD_JOB_MB ))
+    [ "$by_mem" -lt 1 ] && by_mem=1
+    if [ "$by_mem" -lt "$cores" ]; then echo "$by_mem"; else echo "$cores"; fi
+}
+
 # Resolve the bluetoothd path from the running unit, falling back to the two
 # common locations so this works regardless of how the distro lays it out.
 detect_bluetoothd() {
@@ -360,15 +395,27 @@ build_patched() {
     # build (prior behavior).
     local build_mem="${SCRIPT_DIR}/uc-build-memory"
     [ -x "$build_mem" ] && "$build_mem" acquire --owner-pid "$$" 2>/dev/null
+    local jobs; jobs="$(build_jobs)"
+    log "compiling bluetoothd with make -j${jobs} (RAM-aware) and LTO disabled"
     (
         cd "$src" || exit 1
+        # Drop link-time optimization for this on-device rebuild. The patched
+        # bluetoothd is a one-line functional fix (BLE advertising is unaffected by
+        # optimization level), so LTO buys nothing here -- but the distro's default
+        # -flto=auto makes the FINAL LINK the build's memory + time peak: it spawns
+        # parallel lto1-ltrans processes that, on a ~415MB board, thrash swap for
+        # tens of minutes (observed: load ~13, kswapd pegged, a >30min heal that
+        # completed but crippled the board meanwhile). Removing it via
+        # dpkg-buildflags (optimize=-lto, read by debian/rules -> dpkg-buildflags)
+        # makes -j the only concurrency knob so build_jobs actually bounds the peak.
+        export DEB_BUILD_MAINT_OPTIONS="optimize=-lto ${DEB_BUILD_MAINT_OPTIONS:-}"
         # BUILT_SOURCES (the lib/bluetooth header symlink + src/builtin.h) are only
         # generated for the default target, so create/generate them before building
         # the daemon target directly.
         [ -e lib/bluetooth ] || ln -sf . lib/bluetooth
         debian/rules override_dh_auto_configure >/dev/null 2>&1 || ./configure >/dev/null 2>&1 || exit 1
         make src/builtin.h obexd/src/builtin.h >/dev/null 2>&1 || true
-        make -j"$(nproc)" src/bluetoothd >/dev/null 2>&1 || exit 1
+        make -j"${jobs}" src/bluetoothd >/dev/null 2>&1 || exit 1
     )
     local compile_rc=$?
     [ -x "$build_mem" ] && "$build_mem" release --owner-pid "$$" 2>/dev/null
@@ -504,7 +551,8 @@ case "${1:-run}" in
     run)         main ;;
     boot)        boot ;;                                    # boot-time safety net (gated)
     probe-only)  probe ;;                                  # diagnostics
+    build-jobs)  build_jobs ;;                             # diagnostics: computed compile parallelism
     retire)      retire_patch "$(detect_bluetoothd)"; restart_bluetooth; restart_board; write_marker stock false ;;
     status)      cat "$MARKER" 2>/dev/null || echo "{}" ;;
-    *)           echo "usage: bluez-selfheal {run|boot|probe-only|retire|status}" >&2; exit 2 ;;
+    *)           echo "usage: bluez-selfheal {run|boot|probe-only|build-jobs|retire|status}" >&2; exit 2 ;;
 esac

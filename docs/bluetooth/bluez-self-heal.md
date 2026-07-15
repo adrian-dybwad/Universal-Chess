@@ -89,6 +89,27 @@ the whole package), and the result is cached under
 `/var/lib/universalchess/bluez/bluetoothd-<version>-<arch>` so reinstalling our
 app does not rebuild.
 
+**Memory-bounded compile (RAM-constrained boards).** Two adjustments keep the
+rebuild from thrashing a ~415 MB board (a Pi Zero 2 W), where the stock
+`make -j$(nproc)` (=4) plus the distro default `-flto=auto` drove the box to load
+~13 with `kswapd` pegged for 30+ minutes:
+
+- **LTO is disabled** for this build via `DEB_BUILD_MAINT_OPTIONS=optimize=-lto`.
+  The patch is a one-line functional fix — advertising is unaffected by
+  optimization level — but LTO makes the final link the memory + time peak
+  (parallel `lto1-ltrans`). Dropping it makes `-j` the only concurrency knob.
+- **Compile parallelism is bounded by RAM, not just cores** (`build_jobs`):
+  `min(nproc, RAM_MB / 1024)`, so the 415 MB board compiles at `-j1` while
+  capable boards keep full parallelism. Overridable via `UC_BUILD_PARALLELISM`
+  (the same knob the engine builder reads). Inspect the computed value with
+  `bluez-selfheal build-jobs`.
+
+The `uc-build-memory` helper acquired around this build also **skips the
+high-priority zram tier** when the board's persistent disk swap already meets the
+budget: under a sustained overflow, RAM-backed zram only steals RAM from the
+compiler for no real capacity, so overflow is routed to the real disk swap
+instead (see `scripts/uc-build-memory`).
+
 ## When it runs — install/upgrade, **not** every boot
 
 The heavy, state-changing work (probe → build → `dpkg-divert`) runs **only when
@@ -156,7 +177,7 @@ The schema and warning wording live in one module
 | File | Role |
 | --- | --- |
 | `scripts/bluez-advertising-probe` | Functional probe: can BlueZ register an LE advert on this kernel? |
-| `scripts/bluez-selfheal` | Orchestrator: probe → build-from-source → `dpkg-divert` apply/retire → write marker. Subcommands: `run`, `boot` (gated: only when marker absent/degraded), `probe-only`, `retire`, `status`. |
+| `scripts/bluez-selfheal` | Orchestrator: probe → build-from-source → `dpkg-divert` apply/retire → write marker. Subcommands: `run`, `boot` (gated: only when marker absent/degraded), `probe-only`, `build-jobs` (diagnostic: computed compile parallelism), `retire`, `status`. |
 | `packaging/.../universal-chess-bluez-selfheal.service` | Install/apt-triggered `oneshot` that runs `bluez-selfheal run` (long `TimeoutStartSec` for a first build). |
 | `packaging/.../universal-chess-bluez-selfheal-boot.service` | Boot `oneshot` (`WantedBy=multi-user.target`, `After=network-online.target`) that runs `bluez-selfheal boot` — the gated safety net for an interrupted first heal. |
 | `packaging/.../apt.conf.d/80-universal-chess-bluez` | `DPkg::Post-Invoke` hook that kicks the install/apt oneshot (`--no-block`) after apt. |
@@ -248,4 +269,7 @@ else (divert, marker, UI warning, triggers, no-op guard) is reusable.
   it is not signed by the distribution and does not receive its security updates
   while active — hence the prominent warnings and the auto-retire.
 - **First build cost.** Compiling `bluetoothd` on a Pi Zero 2 W takes several
-  minutes (the oneshot allows up to 40). Subsequent runs use the cache.
+  minutes (the oneshot allows up to 40). It is a one-time cost per bluez/kernel
+  version: the result is cached and subsequent runs reuse it. LTO-off plus the
+  RAM-bounded `-j` (see "Memory-bounded compile" above) keep this build from
+  monopolizing the board while it runs.
