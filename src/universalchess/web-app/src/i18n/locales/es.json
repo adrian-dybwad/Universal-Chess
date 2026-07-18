@@ -142,6 +142,10 @@
     "newGameButton": "Nueva partida",
     "moveToPlay": "Jugada {{num}} - juegan {{turn}}",
     "waiting": "Esperando la partida...",
+    "alert": {
+      "check": "¡Jaque!",
+      "queen": "Dama amenazada"
+    },
     "analysis": "Análisis",
     "moves": "Jugadas",
     "currentPgn": "PGN actual",

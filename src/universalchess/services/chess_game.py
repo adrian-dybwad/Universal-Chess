@@ -331,6 +331,14 @@ class ChessGameService:
             chess960 = bool(self._state.chess960)
             positions = self._state.history_positions()
 
+            # In-play warning for the web, mirroring the e-paper AlertWidget:
+            # check takes priority over a queen threat (see
+            # ChessGameState._notify_check_and_threats). Suppressed once the game
+            # is over so a checkmate (which leaves the board in check) is shown as
+            # game over, not as a transient "Check!" warning that would conflict
+            # with the game-over panel.
+            alert, alert_square = self._compute_alert()
+
             broadcast_game_state(
                 fen=self._state.fen,
                 pgn=self.get_pgn(),
@@ -346,9 +354,39 @@ class ChessGameService:
                 chess960=chess960,
                 start_fen=self._state.start_fen,
                 positions=positions,
+                alert=alert,
+                alert_square=alert_square,
             )
         except Exception as e:
             log.debug(f"[ChessGameService] Error broadcasting game state: {e}")
+
+    def _compute_alert(self) -> tuple[Optional[str], Optional[str]]:
+        """Derive the current in-play warning for the web broadcast.
+
+        Returns a (alert, alert_square) pair where alert is "check", "queen", or
+        None, and alert_square is the algebraic square (e.g. "e8") the warning
+        refers to (the checked king or the threatened queen), or None.
+
+        Mirrors the e-paper AlertWidget path (ChessGameState.on_check /
+        on_queen_threat) so the web shows the same warnings: check is reported in
+        preference to a queen threat. Nothing is reported once the game is over,
+        because a checkmate leaves the board in check yet must read as game over
+        rather than a transient check warning.
+        """
+        if self._state.is_game_over:
+            return None, None
+
+        check_info = self._state.get_check_info()
+        if check_info is not None:
+            _is_black_in_check, _attacker_square, king_square = check_info
+            return "check", chess.square_name(king_square)
+
+        queen_info = self._state.get_queen_threat_info()
+        if queen_info is not None:
+            _is_black_threatened, _attacker_square, queen_square = queen_info
+            return "queen", chess.square_name(queen_square)
+
+        return None, None
 
 
 # -----------------------------------------------------------------------------

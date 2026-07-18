@@ -1,11 +1,19 @@
-import { useMemo, useRef, useState, useEffect } from 'react';
+import { useMemo, useRef, useState, useEffect, type CSSProperties } from 'react';
 import { Chessboard } from 'react-chessboard';
 import type { ChessboardOptions, Arrow } from 'react-chessboard';
+import type { GameAlert } from '../types/game';
 
 interface ChessBoardProps {
   fen: string;
   /** Maximum board width - board will fill container up to this size */
   maxBoardWidth?: number;
+  /**
+   * Square (e.g. 'e8') to highlight for an in-play warning, with its type. The
+   * checked king ('check') is tinted red and a threatened queen ('queen') amber,
+   * mirroring the e-paper alert. Null when there is no warning to show.
+   */
+  alertSquare?: string | null;
+  alertType?: GameAlert | null;
   showBestMove?: { from: string; to: string } | null;
   /** The actual move played (shown in red if different from best move) */
   showPlayedMove?: { from: string; to: string } | null;
@@ -34,6 +42,8 @@ interface ChessBoardProps {
 export function ChessBoard({
   fen,
   maxBoardWidth = 600,
+  alertSquare = null,
+  alertType = null,
   showBestMove = null,
   showPlayedMove = null,
   showPendingMove = null,
@@ -124,12 +134,25 @@ export function ChessBoard({
   const darkSquareStyle = { backgroundColor: '#b2b2b2' };
   const lightSquareStyle = { backgroundColor: '#e5e5e5' };
 
+  // Warning highlight: tint the checked king red or a threatened queen amber
+  // (mirrors the e-paper alert). A radial gradient keeps the piece legible on
+  // top of the tint. Applied only for a known alert type on a valid square.
+  const squareStyles = useMemo<Record<string, CSSProperties>>(() => {
+    if (!alertSquare || !alertType) return {};
+    const ALERT_BACKGROUNDS = {
+      check: 'radial-gradient(circle, rgba(217,83,79,0.9) 0%, rgba(217,83,79,0.55) 75%)',
+      queen: 'radial-gradient(circle, rgba(255,193,7,0.9) 0%, rgba(255,193,7,0.55) 75%)',
+    } satisfies Record<GameAlert, string>;
+    return { [alertSquare]: { background: ALERT_BACKGROUNDS[alertType] } };
+  }, [alertSquare, alertType]);
+
   const options: ChessboardOptions = {
     position: positionFen,
     boardOrientation,
     arrows: customArrows,
     darkSquareStyle,
     lightSquareStyle,
+    squareStyles,
     allowDragging,
     canDragPiece,
     onPieceDrop,

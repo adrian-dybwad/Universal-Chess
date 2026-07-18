@@ -1,0 +1,23 @@
+/* In-play warning banner (check / queen threat) shown on the LiveBoard header,
+   mirroring the e-paper AlertWidget. A compact, high-visibility tag so the
+   warning is noticed without displacing the move/clock layout. */
+.game-alert-banner {
+  display: inline-block;
+  align-self: flex-start;
+  font-weight: 700;
+  font-size: 0.85rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  border-radius: 4px;
+  padding: 0.1rem 0.5rem;
+}
+
+.game-alert-banner--check {
+  color: #fff;
+  background: #d9534f;
+}
+
+.game-alert-banner--queen {
+  color: #663c00;
+  background: #ffd66b;
+}

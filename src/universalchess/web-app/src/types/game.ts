@@ -32,7 +32,23 @@ export interface GameState {
    * of replaying the PGN in the browser (chess.js is no longer used).
    */
   positions?: PositionEntry[] | null;
+  /**
+   * Active in-play warning for the latest position, mirroring the e-paper alert:
+   * 'check' (the side to move is in check) or 'queen' (the mover's queen is under
+   * attack). Absent/null when neither applies; suppressed once the game is over
+   * (a checkmate reads as game over, not as a check warning).
+   */
+  alert?: GameAlert | null;
+  /**
+   * Algebraic square the alert refers to (e.g. 'e8'): the checked king for a
+   * 'check' alert, or the threatened queen for a 'queen' alert. Null when there
+   * is no alert. Lets the board highlight the piece at risk.
+   */
+  alert_square?: string | null;
 }
+
+/** The closed set of in-play warnings the board broadcasts; see GameState.alert. */
+export type GameAlert = 'check' | 'queen';
 
 /**
  * One authoritative position in a game's history, computed server-side by

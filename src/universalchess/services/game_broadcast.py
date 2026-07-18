@@ -110,6 +110,18 @@ class GameState:
     # replaying the PGN in the browser (the web no longer uses chess.js). None
     # only before any game state has been broadcast.
     positions: Optional[List[dict]] = None
+    # Active board warning for the current (latest) position, mirroring the
+    # e-paper AlertWidget so the web shows the same in-play warnings. One of
+    # "check" (the side to move is in check) or "queen" (the mover's queen is
+    # under attack); None when neither applies. Check takes priority over a queen
+    # threat, matching ChessGameState._notify_check_and_threats. Suppressed once
+    # the game is over so it never conflicts with the game-over panel (checkmate
+    # leaves the board in check but is reported as game over, not as a warning).
+    alert: Optional[str] = None
+    # Algebraic square (e.g. "e8") the alert refers to: the checked king for a
+    # "check" alert, or the threatened queen for a "queen" alert. Lets the web
+    # highlight the piece at risk. None when there is no alert.
+    alert_square: Optional[str] = None
     
     def __post_init__(self):
         if self.timestamp == 0.0:
@@ -557,6 +569,8 @@ def broadcast_game_state(
     chess960: bool = False,
     start_fen: Optional[str] = None,
     positions: Optional[List[dict]] = None,
+    alert: Optional[str] = None,
+    alert_square: Optional[str] = None,
 ) -> bool:
     """Convenience function to broadcast game state.
     
@@ -575,6 +589,8 @@ def broadcast_game_state(
         chess960: True for a Chess960 game (reports which castling rules apply).
         start_fen: The game's starting FEN (generated 960 start, or standard).
         positions: Authoritative per-ply positions for both variants; see GameState.
+        alert: Active in-play warning ('check' or 'queen'), or None; see GameState.
+        alert_square: Algebraic square the alert refers to, or None; see GameState.
         
     Returns:
         True if broadcast succeeded, False otherwise.
@@ -601,6 +617,8 @@ def broadcast_game_state(
         chess960=chess960,
         start_fen=start_fen,
         positions=positions,
+        alert=alert,
+        alert_square=alert_square,
     )
     return get_broadcaster().broadcast(state)
 

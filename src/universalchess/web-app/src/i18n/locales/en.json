@@ -142,6 +142,10 @@
     "newGameButton": "New Game",
     "moveToPlay": "Move {{num}} - {{turn}} to play",
     "waiting": "Waiting for game...",
+    "alert": {
+      "check": "Check!",
+      "queen": "Queen under attack"
+    },
     "analysis": "Analysis",
     "moves": "Moves",
     "currentPgn": "Current PGN",

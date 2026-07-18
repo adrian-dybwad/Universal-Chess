@@ -112,3 +112,79 @@ def test_checkmate_move_broadcasts_game_over(service_env):
     assert state.is_game_over is True
     assert calls[-1]["game_over"] is True
     assert calls[-1]["result"] == "0-1"
+
+
+def test_check_move_broadcasts_check_alert(service_env):
+    """A checking move broadcasts alert='check' with the checked king's square.
+
+    Why this test exists: in-check warnings were delivered only to the e-paper
+    AlertWidget (via ChessGameState.on_check) and were never included in the web
+    game_state broadcast, so the web interface could not show that a side was in
+    check. This guards that the broadcast now carries the alert. Line 1.e4 d5
+    2.Bb5+ gives check to the black king on e8 without being mate.
+
+    A regression (alert not populated) manifests as alert being None here even
+    though the position is a live, non-mate check -- exactly the original bug.
+    """
+    _service, state, calls = service_env
+    for uci in ("e2e4", "d7d5", "f1b5"):
+        state.push_uci(uci)
+    assert state.is_check is True
+    assert state.is_game_over is False
+    last = calls[-1]
+    assert last["alert"] == "check"
+    assert last["alert_square"] == chess.square_name(chess.E8)
+
+
+def test_queen_threat_move_broadcasts_queen_alert(service_env):
+    """A move exposing the mover's queen broadcasts alert='queen' + its square.
+
+    Why this test exists: the queen-threat warning ('YOUR QUEEN' on the e-paper)
+    is the other alert that was e-paper-only. This guards that it now reaches the
+    web too. After 1.e4 g6 2.Qh5 the white queen on h5 is attacked by the g6 pawn
+    (gxh5), which is a queen threat but not a check or game over.
+
+    Distinct from the check test: a queen threat must not be mislabeled 'check',
+    and the reported square is the threatened queen's (h5), not a king's.
+    """
+    _service, state, calls = service_env
+    for uci in ("e2e4", "g7g6", "d1h5"):
+        state.push_uci(uci)
+    assert state.is_check is False
+    assert state.is_game_over is False
+    last = calls[-1]
+    assert last["alert"] == "queen"
+    assert last["alert_square"] == chess.square_name(chess.H5)
+
+
+def test_normal_move_has_no_alert(service_env):
+    """A quiet move broadcasts no alert (alert and alert_square are None).
+
+    Why this test exists: the alert fields must be absent for ordinary positions
+    so the web shows a warning only when one genuinely applies. 1.e4 is neither a
+    check nor a queen threat. A regression that always sets an alert would surface
+    here as a non-None alert after a quiet opening move.
+    """
+    _service, state, calls = service_env
+    state.push_uci("e2e4")
+    last = calls[-1]
+    assert last["alert"] is None
+    assert last["alert_square"] is None
+
+
+def test_checkmate_suppresses_check_alert(service_env):
+    """Checkmate reports game over, not a live check alert.
+
+    Why this test exists: at checkmate board.is_check() is still True, but the web
+    shows the game-over panel (checkmate), not a transient 'Check!' warning. The
+    alert is suppressed once the game is over so the two do not conflict. Fool's
+    mate 1.f3 e5 2.g4 Qh4#: a regression that emitted the alert regardless of
+    game-over would show alert='check' here alongside the game-over state.
+    """
+    _service, state, calls = service_env
+    for uci in ("f2f3", "e7e5", "g2g4", "d8h4"):
+        state.push_uci(uci)
+    last = calls[-1]
+    assert last["game_over"] is True
+    assert last["alert"] is None
+    assert last["alert_square"] is None
