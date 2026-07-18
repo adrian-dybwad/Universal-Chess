@@ -5,9 +5,10 @@ Background / why these tests exist
 Worstfish and Drawfish are not chess engines in their own right; they are pure
 move-selection policies layered on top of Stockfish's per-move evaluations.
 ``select_worst_move`` plays the move Stockfish rates worst for the mover;
-``select_drawfish_move`` is inspired by the chess.com "Zach" beginner bot, which
-refuses to win: it never willingly delivers checkmate, avoids captures, and
-steers the evaluation toward equality rather than pressing an advantage.
+``select_drawfish_move`` is inspired by the behaviour of the chess.com "Zach"
+bot -- refuse to win: never willingly deliver checkmate, avoid captures, and
+steer the evaluation toward equality rather than pressing an advantage -- but
+backed by Stockfish so it actively holds a draw rather than playing weakly.
 
 These are the highest-level pure entry points for the two behaviours, so they
 are tested directly with hand-built ``Candidate`` lists (mover-POV scores, plus
@@ -354,6 +355,37 @@ def test_drawfish_randomness_actually_varies_the_choice():
         for seed in range(25)
     }
     assert len(chosen) > 1
+
+
+def test_drawfish_randomness_never_shuffles_into_a_material_blunder():
+    """Randomness bounds the shuffle by evaluation quality, not just rank.
+
+    Why: regression for a real dgt-64 loss (game 54). Black, in check from Bb5+,
+    had exactly four legal replies scored (mover POV) roughly {Nbc6 -0.72,
+    c6 +1.24, Nbd7 -2.00, Qd7 -5.52}. With Randomness=3 the old pool was
+    ``ranked[:4]`` -- every legal move -- so the queen-hanging Qd7 was a 1-in-4
+    random pick; Drawfish took it, dropped the queen, and was mated. The shuffle
+    pool must therefore be limited to moves within EQUALITY_SHUFFLE_TOLERANCE_CP
+    of the most-equal move, never to the R+1 closest by rank alone.
+
+    How a regression manifests: if the pool reverts to rank-only, one of the
+    materially losing moves (-2.00 or -5.52 dist) is selected on some seed and
+    ``chosen`` contains a move outside the near-equal pair.
+    """
+    candidates = [
+        _cand("b8c6", Cp(-72)),
+        _cand("c7c6", Cp(124)),
+        _cand("b8d7", Cp(-200)),
+        _cand("d8d7", Cp(-552)),  # hangs the queen: must never be shuffled in
+    ]
+    safe = {chess.Move.from_uci("b8c6"), chess.Move.from_uci("c7c6")}
+    losing = {chess.Move.from_uci("b8d7"), chess.Move.from_uci("d8d7")}
+    chosen = {
+        select_drawfish_move(candidates, _ctx(randomness=3, seed=seed))
+        for seed in range(50)
+    }
+    assert chosen <= safe
+    assert not (chosen & losing)
 
 
 def test_drawfish_without_rng_is_deterministic_even_with_randomness_set():

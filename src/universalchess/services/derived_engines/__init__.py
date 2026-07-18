@@ -9,9 +9,10 @@
 # two of them:
 #
 #   * Worstfish -- plays the move Stockfish rates worst for the side to move.
-#   * Drawfish  -- inspired by the chess.com "Zach" beginner bot: refuses to win,
-#                  never willingly checkmates, avoids captures, and shuffles
-#                  toward equality.
+#   * Drawfish  -- inspired by the behaviour of the chess.com "Zach" bot, but
+#                  backed by Stockfish so it actively holds a draw rather than
+#                  playing weakly: it refuses to win, never willingly checkmates,
+#                  avoids captures, and steers toward equality.
 #
 # The move-selection logic lives in ``policies`` (pure, no I/O), each engine's
 # options + policy in ``spec``, the UCI protocol loop in ``uci_wrapper``

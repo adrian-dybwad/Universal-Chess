@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import Mapping, Optional, Sequence
+from typing import Callable, Mapping, Optional, Sequence
 
 import chess
 import chess.engine
@@ -27,6 +27,18 @@ import chess.engine
 # mate score is always treated as more extreme than any finite advantage; a
 # won/lost position must never masquerade as "near equal" for Drawfish.
 MATE_FLATTEN_SCORE = 1_000_000
+
+# Centipawn window that bounds the ``Randomness`` shuffle by move *quality*, not
+# just rank. Only moves whose objective value is within this many centipawns of
+# the best candidate's objective are eligible to be shuffled among. Rank alone
+# is unsafe: in a forced/check position with few legal moves (or any position
+# where only a couple of moves are near the objective), an ``R+1`` slice by rank
+# sweeps in outright blunders. That regressed on dgt-64 (game 54): in check with
+# four legal replies and R=3, the pool was all four moves, so a queen-hanging
+# reply (~5 pawns from equality) was a 1-in-4 random pick and Drawfish threw the
+# queen. ~0.75 pawns keeps genuine variety among near-equal moves while a
+# material-losing move can never enter the pool.
+RANDOMNESS_TOLERANCE_CP = 75
 
 # UCI option names shared between the engine spec (which advertises them) and the
 # policy (which reads their resolved values from the SelectionContext). Kept as
@@ -87,6 +99,45 @@ def _distance_from_equality(candidate: Candidate) -> int:
     return abs(candidate.score.score(mate_score=MATE_FLATTEN_SCORE))
 
 
+def _flatten_score(candidate: Candidate) -> int:
+    """Candidate score as a comparable centipawn int (mates flattened).
+
+    The Worstfish objective: lower is "better" (worse for the mover), so a mate
+    against the mover collapses to a large negative value and orders below any
+    finite loss.
+    """
+    return candidate.score.score(mate_score=MATE_FLATTEN_SCORE)
+
+
+def _select_from_ranked(
+    ranked: Sequence[Candidate],
+    objective: Callable[[Candidate], int],
+    randomness: int,
+    rng: Optional[random.Random],
+) -> chess.Move:
+    """Pick from ``ranked`` (best-first), shuffling only among near-best moves.
+
+    ``ranked`` is already sorted best-first for the policy's objective, and
+    ``objective`` maps a candidate to that objective's centipawn value (lower is
+    better; ``ranked[0]`` therefore has the minimum). With ``randomness`` R > 0
+    and an RNG present, the shuffle pool is the moves whose objective stays
+    within :data:`RANDOMNESS_TOLERANCE_CP` of the best, then the R+1 closest of
+    those. Bounding by centipawn distance -- not by rank alone -- is what stops a
+    small or lopsided candidate set from shuffling a material blunder into play
+    (see :data:`RANDOMNESS_TOLERANCE_CP`). R=0, no RNG, or a single candidate
+    plays the single best move, preserving each engine's deterministic identity.
+
+    Precondition: ``ranked`` is non-empty.
+    """
+    if randomness <= 0 or rng is None or len(ranked) <= 1:
+        return ranked[0].move
+    best_objective = objective(ranked[0])
+    within_window = [
+        c for c in ranked if objective(c) - best_objective <= RANDOMNESS_TOLERANCE_CP
+    ]
+    return rng.choice(within_window[: randomness + 1]).move
+
+
 def select_worst_move(
     candidates: Sequence[Candidate], ctx: Optional[SelectionContext] = None
 ) -> chess.Move:
@@ -96,10 +147,12 @@ def select_worst_move(
     below any centipawn loss, so Worstfish walks into forced mate), ties broken
     by the lexicographically smallest UCI string for reproducibility.
     ``Randomness`` R>0 picks uniformly among the R+1 worst moves (via the
-    injected RNG) so it is less predictable; R=0 (the default, or no RNG) always
-    plays the single worst move, preserving Worstfish's identity. ``AvoidCaptures``
-    does not apply -- an engine trying to lose has no reason to avoid captures --
-    so it is not consulted.
+    injected RNG, and only those within :data:`RANDOMNESS_TOLERANCE_CP` of the
+    single worst) so it is less predictable without letting a clearly non-terrible
+    move slip in; R=0 (the default, or no RNG) always plays the single worst
+    move, preserving Worstfish's identity. ``AvoidCaptures`` does not apply -- an
+    engine trying to lose has no reason to avoid captures -- so it is not
+    consulted.
 
     Precondition: ``candidates`` is non-empty (the caller only invokes a policy
     when there is at least one legal move).
@@ -111,9 +164,7 @@ def select_worst_move(
         rng = ctx.rng
 
     ranked = sorted(candidates, key=lambda c: (c.score, c.move.uci()))
-    if randomness > 0 and rng is not None and len(ranked) > 1:
-        return rng.choice(ranked[: randomness + 1]).move
-    return ranked[0].move
+    return _select_from_ranked(ranked, _flatten_score, randomness, rng)
 
 
 def select_drawfish_move(
@@ -121,8 +172,10 @@ def select_drawfish_move(
 ) -> chess.Move:
     """Drawfish: refuse to win -- never willingly checkmate, steer toward equality.
 
-    Inspired by the chess.com "Zach" beginner bot. Selection proceeds in layers,
-    each a "prefer, but fall back if forced":
+    Inspired by the behaviour of the chess.com "Zach" bot (refuse to win, never
+    checkmate, avoid captures, shuffle toward equality), but backed by Stockfish
+    so it actively holds a draw rather than playing weakly like Zach does.
+    Selection proceeds in layers, each a "prefer, but fall back if forced":
 
     1. Exclude mate-delivering moves (Drawfish never willingly checkmates). If
        *every* legal move delivers mate -- the only way to force a win against
@@ -132,9 +185,11 @@ def select_drawfish_move(
        capture, captures are allowed back in rather than returning nothing.
     3. Rank the survivors by closeness to equality (0.00). ``Randomness`` R>0
        picks uniformly among the R+1 most-equal moves (via the injected RNG) so
-       it shuffles less predictably; R=0 (or no RNG) plays the single most-equal
-       move. Getting mated flattens to an extreme value, so it is never treated
-       as "equal" and the game is not thrown.
+       it shuffles less predictably, but only among moves within
+       :data:`RANDOMNESS_TOLERANCE_CP` of the most-equal move so a materially
+       worse reply is never shuffled in; R=0 (or no RNG) plays the single
+       most-equal move. Getting mated flattens to an extreme value, so it is
+       never treated as "equal" and the game is not thrown.
 
     Ties in the equality ranking resolve to the lexicographically smallest UCI
     string, so the candidate pool is deterministic even before randomisation.
@@ -154,7 +209,4 @@ def select_drawfish_move(
         pool = [c for c in pool if not c.is_capture] or pool
 
     ranked = sorted(pool, key=lambda c: (_distance_from_equality(c), c.move.uci()))
-
-    if randomness > 0 and rng is not None and len(ranked) > 1:
-        return rng.choice(ranked[: randomness + 1]).move
-    return ranked[0].move
+    return _select_from_ranked(ranked, _distance_from_equality, randomness, rng)
