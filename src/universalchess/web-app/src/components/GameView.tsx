@@ -28,6 +28,13 @@ interface GameViewProps {
    */
   gameState?: GameState | null;
   /**
+   * Monotonic authoritative-broadcast counter (live mode only). Bumped on every
+   * game-state broadcast, including a same-FEN re-sync after the board rejects
+   * an illegal web move, so the interactive board can roll back an optimistically
+   * placed piece even when the FEN string is unchanged. Ignored in static mode.
+   */
+  liveStateVersion?: number;
+  /**
    * Stored-game positions (static mode). In live mode the move list comes from
    * `gameState.positions`; this prop is ignored.
    */
@@ -64,6 +71,7 @@ interface GameViewProps {
 export function GameView({
   live,
   gameState,
+  liveStateVersion,
   positions,
   pgn,
   coachGameId,
@@ -176,7 +184,15 @@ export function GameView({
     turn: gameState?.turn ?? null,
     gameOver: gameState?.game_over ?? false,
     enabled: live && isAtLatestMove,
+    authoritativeVersion: liveStateVersion,
   });
+
+  // In-play warning highlight (check / queen threat). The alert reflects only the
+  // latest live position, so it is shown only at the live latest ply and never
+  // while reviewing an earlier move, in static mode, or once the game is over.
+  const showAlert = live && isAtLatestMove && !gameState?.game_over;
+  const alertType = showAlert ? gameState?.alert ?? null : null;
+  const alertSquare = showAlert ? gameState?.alert_square ?? null : null;
 
   // The board shows the best move per the live toggle at the latest ply; when
   // reviewing (or in static mode) it always shows it so navigation stays useful.
@@ -197,6 +213,8 @@ export function GameView({
         <ChessBoard
           fen={boardFen}
           maxBoardWidth={boardMaxWidth}
+          alertSquare={alertSquare}
+          alertType={alertType}
           showBestMove={boardBestMove}
           showPlayedMove={playedMove}
           showPendingMove={live && isAtLatestMove ? pendingArrowMove : null}

@@ -24,9 +24,16 @@ import './BoardMove.css';
  * A valid drop keeps the piece at its destination immediately: the hook renders
  * an optimistic placement (`boardFen`) so the piece stays put instead of snapping
  * back and then animating to the square when the authoritative FEN arrives. The
- * optimistic frame is transient -- the next authoritative `fen` supersedes it, and
- * a server rejection reverts it. A promotion still waits for the piece choice
- * before it is applied.
+ * optimistic frame is transient and is cleared by any fresh authoritative
+ * snapshot -- either the next `fen` (a legal move advances the position) or a
+ * bump of `authoritativeVersion` (the board re-syncs after rejecting an illegal
+ * move, re-sending the same FEN). Keying only on the FEN string would strand the
+ * piece for an illegal move: POST /api/board/move returns success for a
+ * well-formed UCI (it only means the command was dispatched), the board then
+ * drops the illegal move and re-broadcasts the unchanged position, so the FEN
+ * never changes and the piece would sit on the illegal square until the user
+ * scrubbed history. A promotion still waits for the piece choice before it is
+ * applied.
  *
  * Extracted from the Board Control page so the live board reuses the exact same
  * behavior instead of duplicating it.
@@ -67,6 +74,14 @@ interface UseBoardMoveArgs {
    * live position being in view (a past move under review is not playable).
    */
   enabled: boolean;
+  /**
+   * Monotonic counter bumped on every authoritative game-state broadcast,
+   * including a same-FEN re-sync after an illegal move is rejected. Its change
+   * (not only a `fen` change) clears the optimistic frame, so a rejected move's
+   * piece rolls back. Undefined when no live broadcast source is wired (e.g.
+   * static review), in which case only `fen` changes clear the frame.
+   */
+  authoritativeVersion?: number;
 }
 
 interface UseBoardMove {
@@ -82,7 +97,7 @@ interface UseBoardMove {
   overlays: ReactNode;
 }
 
-export function useBoardMove({ fen, turn, gameOver, enabled }: UseBoardMoveArgs): UseBoardMove {
+export function useBoardMove({ fen, turn, gameOver, enabled, authoritativeVersion }: UseBoardMoveArgs): UseBoardMove {
   const { t } = useTranslation();
   const [loginOpen, setLoginOpen] = useState(false);
   const [loginError, setLoginError] = useState<string | undefined>();
@@ -94,12 +109,14 @@ export function useBoardMove({ fen, turn, gameOver, enabled }: UseBoardMoveArgs)
   // A move that hit 401 and must be replayed after a successful login.
   const pendingMoveRef = useRef<string | null>(null);
 
-  // A new authoritative position supersedes any optimistic frame. For a valid
-  // move the incoming FEN matches the frame (no visible change); for a rejected
-  // move the FEN is unchanged and the effect simply confirms the revert.
+  // A fresh authoritative snapshot supersedes any optimistic frame. For a legal
+  // move the incoming FEN matches the frame (no visible change). For a rejected
+  // (illegal) move the FEN is unchanged, so `fen` alone would never fire; the
+  // board re-broadcasts the same position and bumps `authoritativeVersion`,
+  // which rolls the piece back to its source square.
   useEffect(() => {
     setOptimisticFen(null);
-  }, [fen]);
+  }, [fen, authoritativeVersion]);
 
   // Whether a move can be started right now: the position is live, a game is in
   // progress, and it is not over.

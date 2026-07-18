@@ -22,6 +22,15 @@ export interface MoveToastData {
 
 interface GameStoreState {
   gameState: GameState | null;
+  /**
+   * Monotonic counter bumped on every authoritative game-state broadcast, even
+   * when the FEN is unchanged (e.g. the board re-syncs after rejecting an
+   * illegal web move). Consumers that must react to "a fresh snapshot arrived"
+   * -- rather than only to "the FEN string changed" -- key off this. Without it,
+   * the interactive board could not tell an illegal move (same FEN re-sent) from
+   * no update at all, leaving the optimistically-placed piece stranded.
+   */
+  stateVersion: number;
   connectionStatus: ConnectionStatus;
   battery: BatteryStatus | null;
   clock: ClockStatus | null;
@@ -49,6 +58,7 @@ interface GameStoreState {
 
 export const useGameStore = create<GameStoreState>((set) => ({
   gameState: null,
+  stateVersion: 0,
   connectionStatus: 'disconnected',
   battery: null,
   clock: null,
@@ -58,7 +68,7 @@ export const useGameStore = create<GameStoreState>((set) => ({
   currentMoveIndex: -1,
   toast: null,
 
-  setGameState: (gameState) => set({ gameState }),
+  setGameState: (gameState) => set((state) => ({ gameState, stateVersion: state.stateVersion + 1 })),
   setConnectionStatus: (connectionStatus) => set({ connectionStatus }),
   setBattery: (battery) => set({ battery }),
   setClock: (clock) => set({ clock }),

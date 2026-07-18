@@ -4,6 +4,7 @@ import { GameView } from '../components/GameView';
 import { useAuthedAction } from '../components/useAuthedAction';
 import { ClockDisplay } from '../components/ClockDisplay';
 import { GameOverPanel } from '../components/GameOverPanel';
+import { GameAlertBanner } from '../components/GameAlertBanner';
 import { useGameStore } from '../stores/gameStore';
 import { apiFetch } from '../utils/api';
 
@@ -17,6 +18,10 @@ export function LiveBoard() {
   const { t } = useTranslation();
   // SSE connection is managed by GameStateProvider; read the snapshot directly.
   const gameState = useGameStore((state) => state.gameState);
+  // Bumped on every authoritative broadcast (even a same-FEN re-sync after an
+  // illegal web move); GameView feeds it to the interactive board so an
+  // optimistically placed piece rolls back when the board re-syncs.
+  const stateVersion = useGameStore((state) => state.stateVersion);
 
   // Game info - snake_case fields from the backend.
   const white = gameState?.white || t('color.white');
@@ -89,6 +94,8 @@ export function LiveBoard() {
           ) : (
             <>
               <span className="tag is-light">{t('liveBoard.moveToPlay', { num: moveNum, turn })}</span>
+              {/* In-play warning (check / queen threat), mirroring the e-paper alert. */}
+              <GameAlertBanner />
               {/* Live countdown clock; renders only for a timed game. */}
               <ClockDisplay />
             </>
@@ -131,6 +138,7 @@ export function LiveBoard() {
       <GameView
         live
         gameState={gameState}
+        liveStateVersion={stateVersion}
         coachGameId={gameState?.game_id ?? null}
         header={header}
         boardMaxWidth={700}

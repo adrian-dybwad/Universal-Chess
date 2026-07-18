@@ -1004,6 +1004,13 @@ class GameManager:
         Returns:
             True if the move was legal and executed; False if there is no game in
             progress, the game is over, or the move is malformed/illegal.
+
+        Every rejection re-broadcasts the authoritative game state. The web board
+        shows the dropped piece optimistically at its destination and rolls it
+        back only when a fresh authoritative snapshot arrives; a rejected move
+        changes nothing (so, unlike a legal move, it emits no broadcast of its
+        own), and without this re-sync the piece would be stranded on the illegal
+        square until the user scrubbed the move history.
         """
         # Authoritative game-over check: a time forfeit / resignation / draw
         # agreement ends the game via an external result while the board stays
@@ -1011,16 +1018,19 @@ class GameManager:
         # through after the flag fell.
         if self._game_state.is_game_over:
             log.warning(f"[GameManager.submit_web_move] Rejected {uci!r}: game is over")
+            self._broadcast_game_state()
             return False
 
         try:
             move = chess.Move.from_uci(uci)
         except (ValueError, TypeError):
             log.warning(f"[GameManager.submit_web_move] Rejected malformed uci {uci!r}")
+            self._broadcast_game_state()
             return False
 
         if move not in self.chess_board.legal_moves:
             log.warning(f"[GameManager.submit_web_move] Rejected illegal move {uci!r}")
+            self._broadcast_game_state()
             return False
 
         log.info(f"[GameManager.submit_web_move] Applying web move {move.uci()}")

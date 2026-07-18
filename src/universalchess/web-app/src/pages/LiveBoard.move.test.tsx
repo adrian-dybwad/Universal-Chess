@@ -103,10 +103,15 @@ interface FakeGameState {
 }
 
 let mockGameState: FakeGameState | null = null;
+// Monotonic authoritative-broadcast counter mirrored from the real store. Bumped
+// (with mockGameState re-rendered) to simulate the board re-syncing after it
+// rejects an illegal web move -- the same-FEN snapshot that must roll back the
+// optimistic frame.
+let mockStateVersion = 0;
 
 vi.mock('../stores/gameStore', () => ({
   useGameStore: (selector: (s: Record<string, unknown>) => unknown) =>
-    selector({ gameState: mockGameState }),
+    selector({ gameState: mockGameState, stateVersion: mockStateVersion }),
 }));
 
 import { LiveBoard } from './LiveBoard';
@@ -120,6 +125,7 @@ function unauthorizedResponse() {
 
 beforeEach(() => {
   mockPosition = null;
+  mockStateVersion = 0;
   mockGameState = {
     fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
     pgn: '',
@@ -200,6 +206,39 @@ describe('LiveBoard interactive move', () => {
     });
     // First it shows the optimistic pawn on e5, then reverts to the live FEN
     // (the full authoritative game-state FEN, unchanged by the rejected move).
+    await waitFor(() =>
+      expect(capturedBoard!.fen).toBe('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
+    );
+  });
+
+  it('rolls back an illegal move the board accepts over HTTP but then re-syncs away', async () => {
+    // The real board endpoint returns success for any well-formed UCI (it only
+    // means the move command was dispatched); the board then silently drops an
+    // illegal move and re-broadcasts the UNCHANGED position. Because the FEN
+    // string never changes, the optimistic frame must instead be cleared by the
+    // fresh authoritative snapshot (a bumped stateVersion). Without that, the
+    // pawn stays stranded on the illegal square e5 -- the reported bug -- until
+    // history is scrubbed. apiFetch resolves success:true (default mock) to
+    // reproduce the real endpoint rather than the success:false path.
+    const { rerender } = render(<LiveBoard />);
+    act(() => {
+      capturedBoard!.onPieceDrop!({
+        piece: { pieceType: 'wP' },
+        sourceSquare: 'e2',
+        targetSquare: 'e5',
+      });
+    });
+    // The piece is shown optimistically on e5 first (placement-only frame).
+    await waitFor(() =>
+      expect(capturedBoard!.fen).toBe('rnbqkbnr/pppppppp/8/4P3/8/8/PPPP1PPP/RNBQKBNR'),
+    );
+
+    // The board re-syncs: a new authoritative broadcast with the same FEN.
+    mockStateVersion += 1;
+    rerender(<LiveBoard />);
+
+    // The frame is rolled back to the live position (pawn back on e2). If the
+    // clear keyed only on the FEN string, this would still read the e5 frame.
     await waitFor(() =>
       expect(capturedBoard!.fen).toBe('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
     );

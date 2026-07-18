@@ -90,6 +90,29 @@ def test_submit_web_move_rejects_illegal_move_without_correction(gm, monkeypatch
     assert corrections == []
 
 
+def test_submit_web_move_rebroadcasts_state_when_rejected(gm, monkeypatch):
+    """A rejected web move must re-broadcast the authoritative game state.
+
+    The browser renders the dropped piece optimistically at its destination and
+    only rolls back when a fresh authoritative snapshot arrives. An illegal move
+    changes nothing on the board and (unlike a legal move) triggers no broadcast
+    of its own, so without this re-broadcast the browser has no re-sync signal
+    and the piece is stranded on the illegal square until history is scrubbed.
+
+    Regression manifests as `broadcasts == []`: the reject path returned False
+    without notifying web clients, leaving the optimistic frame uncleared.
+    """
+    broadcasts = []
+    monkeypatch.setattr(gm, "_broadcast_game_state", lambda: broadcasts.append(True))
+    monkeypatch.setattr(gm, "_execute_complete_move", lambda m: None)
+
+    # e2e5 is illegal from the standard opening position.
+    result = gm.submit_web_move("e2e5")
+
+    assert result is False
+    assert broadcasts == [True]
+
+
 def test_submit_web_move_rejects_when_game_over(gm, monkeypatch):
     """A web move after game end must be rejected and never execute.
 
