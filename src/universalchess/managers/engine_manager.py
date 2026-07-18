@@ -6,13 +6,14 @@ Provides functionality to:
 - Uninstall engines
 - Check if engines are installed
 
-Supported engines (14 total):
+Supported engines (15 total):
 
 Top Tier (~3300+ ELO):
 - stockfish: World's strongest, installed from system package
 - berserk: Top-3 ranked, NNUE-based
 - koivisto: Top-10, fast and aggressive
 - ethereal: Top-15, clean codebase
+- reckless: Rust NNUE engine, top CCC/TCEC finisher (AGPL-3.0)
 
 Strong Tier (~2900-3200 ELO):
 - fire: Optimized for modern CPUs
@@ -165,6 +166,11 @@ def _build_env(parallelism: Optional[int] = None) -> dict:
     env = dict(os.environ)
     env["MAKEFLAGS"] = f"-j{n}"
     env["GOFLAGS"] = f"-p={n}"
+    # Cargo ignores MAKEFLAGS, so a make recipe that shells out to cargo (Reckless)
+    # would otherwise let cargo default to one codegen job per core -- on a 512MB
+    # armhf board that OOMs the fat-LTO build. CARGO_BUILD_JOBS ties cargo to the
+    # same single parallelism knob as make and go.
+    env["CARGO_BUILD_JOBS"] = str(n)
     return env
 
 # Directory of the installed universalchess package, and its bundled scripts.
@@ -1113,6 +1119,68 @@ ENGINES = {
         extra_files=[],
         dependencies=["build-essential", "git"],
         estimated_install_minutes=3,  # Small C engine, sub-minute compile
+        has_prebuilt=True,
+    ),
+    "reckless": EngineDefinition(
+        name="reckless",
+        display_name="Reckless",
+        summary="~3600 ELO, Rust",
+        description="Top-tier open-source engine written in Rust with an embedded NNUE evaluation. Consistently ranks among the strongest engines in CCC and TCEC. AGPL-3.0 licensed.",
+        repo_url="https://github.com/codedeliveryservice/Reckless.git",
+        # Pin a released tag: master is a moving target (currently 0.10.0-dev) whose
+        # build can regress between installs, and AGPL "corresponding source" is
+        # unambiguous when the shipped binary maps to a specific tag.
+        git_ref="v0.9.0",
+        build_commands=[
+            # Reckless is a Rust engine (edition 2024) requiring Rust >= 1.88, but
+            # Debian Bookworm's apt rustc is 1.63 -- far too old (the compile aborts
+            # with "feature `edition2024` is required") -- so the toolchain cannot
+            # come from `dependencies`. Bootstrap a pinned rustup toolchain instead.
+            #
+            # The bootstrap, the cargo-env source, and the build MUST share one
+            # shell: each build_commands entry runs in its own subprocess (see
+            # _run_build_command), so a PATH exported by a separate entry would not
+            # reach cargo, which would then be "command not found". Sourcing
+            # $HOME/.cargo/env in the same command puts the rustup cargo on PATH.
+            #
+            # Invoke cargo directly rather than the repo Makefile: the Makefile
+            # differs between tags (the pinned v0.9.0 has no `no-syzygy` target and
+            # would build WITH syzygy), so a `make <target>` couples us to whatever
+            # the checked-out tag happens to name. `--no-default-features` disables
+            # the `syzygy` default feature, which is what skips build.rs's Fathom
+            # binding -- the only step that shells out to clang -- keeping the build
+            # to build-essential (Rust still links its binary through cc) with no
+            # clang dep, matching the rest of the catalog. Only endgame-tablebase
+            # probing is lost, which needs multi-GB external files this project
+            # never ships. `--emit link=reckless` writes the linked binary to the
+            # repo root as `reckless` (not target/release/). On-device RUSTFLAGS is
+            # target-cpu=native (the board's own CPU, optimal and safe when building
+            # on the target); the CI cross-build overrides it (see
+            # ci-build-engines.sh) because native under QEMU can emit instructions a
+            # real Pi lacks. Cargo compile parallelism comes from CARGO_BUILD_JOBS
+            # (see _build_env), the same central knob make/go use -- no -j here.
+            "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | "
+            "sh -s -- -y --profile minimal --default-toolchain 1.88.0 && "
+            '. "$HOME/.cargo/env" && '
+            'RUSTFLAGS="-C target-cpu=native" '
+            "cargo rustc --release --no-default-features -- --emit link=reckless",
+        ],
+        # `--emit link=reckless` writes the linked binary to the repo root as
+        # `reckless`, not to target/release/.
+        binary_path="reckless",
+        is_system_package=False,
+        package_name=None,
+        extra_files=[],
+        # No rustc/cargo here: apt's 1.63 is too old (bootstrapped via rustup in
+        # build_commands). build-essential provides the cc/linker Rust needs even
+        # without clang; curl bootstraps rustup and is also used by build.rs to
+        # download the NNUE network at build time (the net is embedded, so nothing
+        # extra ships); ca-certificates lets those HTTPS fetches verify.
+        dependencies=["build-essential", "git", "curl", "ca-certificates"],
+        # A fat-LTO, single-codegen-unit Rust build plus the rustup toolchain
+        # download runs far longer than any C engine here, especially on armhf.
+        build_timeout=7200,
+        estimated_install_minutes=60,
         has_prebuilt=True,
     ),
 

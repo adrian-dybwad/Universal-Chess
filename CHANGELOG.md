@@ -15,6 +15,13 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **Reckless engine**: Added the Reckless UCI engine (Rust, embedded NNUE,
+  AGPL-3.0) to the installable engine catalog. It is the project's first Rust
+  engine; because Debian's apt Rust (1.63) is too old for its edition-2024
+  sources, both the on-device and CI builds bootstrap a pinned rustup toolchain
+  and build `no-syzygy` (no clang dependency). Prebuilt binaries are produced for
+  arm64 and armhf.
+
 - **Three-color (red/white/black) e-paper mode**: Opt-in `[display] three_color`
   switch for tri-color BWR panels, implemented in both the UC8151D (V2) and
   SSD1680 (V1) drivers (tri-color is a property of the panel, not the controller)

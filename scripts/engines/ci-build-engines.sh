@@ -39,6 +39,11 @@
 #   - Rodent IV needs -latomic on 32-bit ARM (8-byte std::atomic lowers to
 #     libatomic calls); forced in with --no-as-needed because the recipe places
 #     LDFLAGS before the objects.
+#   - Reckless is a Rust engine (edition 2024, Rust >= 1.88). The container's apt
+#     rustc is 1.63, so its build bootstraps a pinned rustup toolchain and invokes
+#     cargo directly with --no-default-features (disables the syzygy feature, the
+#     only clang caller). RUSTFLAGS is pinned to a portable baseline rather than
+#     target-cpu=native, which is unreliable under QEMU.
 #
 # Usage: ci-build-engines.sh <arch>     where <arch> is arm64 | armhf
 # Exit status: always 0 (a missing engine is non-fatal); a per-engine summary is
@@ -204,6 +209,30 @@ zahak_build() {
 	cp bin/zahak "${OUT}/"
 }
 
+reckless_build() {
+	# Reckless is a Rust engine (edition 2024, needs Rust >= 1.88). The bookworm
+	# container's apt rustc is 1.63 -- too old -- so bootstrap a pinned rustup
+	# toolchain, the same approach as the on-device build. rustup/cargo are placed
+	# under /opt so they do not depend on $HOME.
+	export RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo
+	curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+		sh -s -- -y --profile minimal --default-toolchain 1.88.0
+	. "${CARGO_HOME}/env"
+	# Pin the same release tag the catalog installs so the prebuilt matches the
+	# source-build fallback.
+	git clone --depth 1 --branch v0.9.0 https://github.com/codedeliveryservice/Reckless.git /tmp/reckless
+	cd /tmp/reckless
+	# Invoke cargo directly, not the repo Makefile: v0.9.0's Makefile has no
+	# `no-syzygy` target and hardcodes target-cpu=native. `--no-default-features`
+	# disables the syzygy feature, skipping build.rs's Fathom binding (its only
+	# clang caller); Rust still links via cc. `--emit link=reckless` writes the
+	# binary to the repo root. RUSTFLAGS is pinned to a portable baseline rather
+	# than native: under QEMU, native CPU detection can emit instructions a real
+	# Pi lacks, producing a prebuilt that SIGILLs on hardware.
+	RUSTFLAGS="-C target-cpu=generic" cargo rustc --release --no-default-features -- --emit link=reckless
+	cp reckless "${OUT}/"
+}
+
 maia_build() {
 	git clone --depth 1 --branch v0.32.1 --recurse-submodules \
 		https://github.com/LeelaChessZero/lc0.git /tmp/lc0
@@ -248,6 +277,7 @@ build_engine ct800
 build_engine smallbrain
 build_engine zahak
 build_engine claudia
+build_engine reckless
 build_engine maia
 
 echo "=== ${ARCH} build summary ==="

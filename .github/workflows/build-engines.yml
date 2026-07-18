@@ -43,7 +43,7 @@ jobs:
             bash -c '
               set -e
               apt-get update
-              apt-get install -y build-essential git clang make meson ninja-build libopenblas-dev wget bc gawk golang
+              apt-get install -y build-essential git clang make meson ninja-build libopenblas-dev wget curl ca-certificates bc gawk golang
               bash /workspace/scripts/engines/ci-build-engines.sh arm64
             '
       
@@ -83,7 +83,7 @@ jobs:
             bash -c '
               set -e
               apt-get update
-              apt-get install -y build-essential git clang make meson ninja-build libopenblas-dev wget bc gawk golang
+              apt-get install -y build-essential git clang make meson ninja-build libopenblas-dev wget curl ca-certificates bc gawk golang
               bash /workspace/scripts/engines/ci-build-engines.sh armhf
             '
       

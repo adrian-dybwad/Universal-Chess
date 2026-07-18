@@ -711,6 +711,7 @@
       "chessPiecesOnebit": "One-bit 16x16 pixel-art chess piece sprites used by the \"onebit\" e-paper board sprite style. Released into the public domain (CC0); attribution provided as a courtesy.",
       "cburnett": "The classic Cburnett/Wikimedia vector chess set, rasterised to a 16x16 sprite sheet. It is the default e-paper board sprite style (shown as \"Default\"); the previous DGTCentaur Mods set is still available as \"Original Mods\". Multi-licensed by the author under GPLv2+, GFDL and a BSD-style license; used here under the BSD option.",
       "stockfish": "The default chess engine for play and analysis. Stockfish is the strongest open source chess engine, providing move evaluation, best move suggestions, and opponent play.",
+      "reckless": "An optionally installable chess engine written in Rust with an embedded NNUE evaluation, consistently among the strongest engines in CCC and TCEC. Installed binaries are built from an unmodified upstream release; the corresponding source is available at the linked repository under the AGPL-3.0.",
       "react": "The UI framework powering the web interface. React enables the component-based architecture, reactive state management, and efficient DOM updates.",
       "vite": "The build tool and development server. Vite provides fast hot module replacement during development and optimized production builds.",
       "chartjs": "Renders the evaluation graph showing position advantage over time. Displays engine evaluation history as an interactive chart during game review.",

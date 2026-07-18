@@ -543,6 +543,183 @@ class TestMaiaBuildCommand:
         assert "engines" not in script_path.parts
 
 
+class TestRecklessBuildCommand:
+    """Guards Reckless's Rust toolchain bootstrap and clang-free build recipe.
+
+    Reckless is the project's first Rust engine, and it exposes two on-device-only
+    failure modes that no C engine has: the apt toolchain is far too old to
+    compile it, and its build steps run in separate shells so a naively-split
+    rustup bootstrap loses cargo from PATH. Both only surface on a real board, so
+    the catalog command string is the highest deterministic level to guard them.
+    """
+
+    def test_bootstraps_rustup_instead_of_using_apt_rust(self):
+        """Reckless must build with a rustup-provisioned toolchain, not apt rustc.
+
+        Why this test exists: Reckless is edition 2024 and upstream requires Rust
+        >= 1.88, but Debian Bookworm's apt ``rustc``/``cargo`` is 1.63 -- old
+        enough that the compile aborts immediately with "feature `edition2024` is
+        required". The toolchain therefore cannot come from ``dependencies`` (which
+        are apt-installed); the build must bootstrap rustup from sh.rustup.rs.
+
+        How the regression manifests: replacing the rustup bootstrap with reliance
+        on an apt rustc (or adding rustc/cargo to dependencies) reintroduces the
+        1.63 toolchain and the edition-2024 compile failure on the board.
+        """
+        script = _build_script("reckless")
+        assert "sh.rustup.rs" in script
+
+    def test_does_not_install_apt_rust_toolchain(self):
+        """rustc/cargo must not be declared as apt build dependencies.
+
+        Why this test exists: the whole point of the rustup bootstrap is that
+        apt's Rust (1.63) cannot build the engine. Declaring ``rustc``/``cargo`` as
+        dependencies would install the too-old toolchain and, worse, put an ancient
+        cargo on PATH that could shadow the rustup one depending on ordering.
+
+        How the regression manifests: re-adding ``rustc`` or ``cargo`` to
+        ``dependencies`` trips this and signals the too-old apt toolchain crept back.
+        """
+        deps = ENGINES["reckless"].dependencies
+        assert "rustc" not in deps
+        assert "cargo" not in deps
+
+    def test_pins_rust_toolchain_version(self):
+        """The rustup bootstrap must pin an explicit toolchain >= 1.88.
+
+        Why this test exists: an unpinned ``rustup`` install tracks whatever
+        ``stable`` happens to be, making the build non-reproducible and able to
+        silently regress if a future stable drops edition-2024 support the engine
+        relies on. Pinning ``--default-toolchain 1.88.0`` (the upstream minimum)
+        makes every install build the same way.
+
+        How the regression manifests: dropping ``--default-toolchain`` reverts to
+        floating ``stable``; this asserts the pin (and its minimum version) stay.
+        """
+        script = _build_script("reckless")
+        assert "--default-toolchain" in script
+        assert "1.88" in script
+
+    def test_toolchain_bootstrap_and_build_share_one_shell(self):
+        """rustup install, cargo-env sourcing, and the build must be one command.
+
+        Why this test exists: each entry in ``build_commands`` runs in its own
+        subprocess (see EngineManager._run_build_command), so a PATH exported by a
+        separate rustup step would not reach a later build step -- the build would
+        die with "cargo: command not found". The bootstrap, the
+        ``. $HOME/.cargo/env`` that puts cargo on PATH, and the ``cargo rustc``
+        build must all live in a single ``&&``-chained command so they share one
+        shell.
+
+        How the regression manifests: splitting the bootstrap and the build into
+        separate list entries (or omitting the cargo-env source) breaks PATH
+        propagation and the on-device build cannot find cargo.
+        """
+        combined = [
+            cmd for cmd in ENGINES["reckless"].build_commands
+            if "sh.rustup.rs" in cmd and "cargo rustc" in cmd
+        ]
+        assert len(combined) == 1, (
+            "rustup bootstrap and build must be in exactly one shared shell command"
+        )
+        assert ".cargo/env" in combined[0]
+
+    def test_builds_without_syzygy_to_avoid_clang(self):
+        """Reckless must build with cargo ``--no-default-features``.
+
+        Why this test exists: the default feature set enables ``syzygy``, and
+        Reckless's build.rs compiles the Fathom binding by shelling out to
+        ``clang`` for it (the binding is gated behind ``#[cfg(feature =
+        "syzygy")]``). clang is deliberately not on the device (it pulls the whole
+        LLVM toolchain onto a storage-constrained Pi -- the same reason
+        Ethereal/Demolito pin CC=gcc and Zahak disables CGO).
+        ``--no-default-features`` turns the syzygy feature off so that binding is
+        never generated. It only removes endgame-tablebase probing, which needs
+        multi-GB external files this project never ships, so nothing usable is lost.
+
+        How the regression manifests: dropping ``--no-default-features`` (or
+        building the default feature set via the repo Makefile) compiles the Fathom
+        binding, build.rs invokes the absent clang, and the install aborts.
+        """
+        script = _build_script("reckless")
+        assert "--no-default-features" in script
+
+    def test_builds_via_cargo_not_the_repo_makefile(self):
+        """Reckless must build by invoking cargo directly, not a Makefile target.
+
+        Why this test exists: the pinned release (v0.9.0) ships a Makefile with no
+        ``no-syzygy``/``all`` target -- its default target builds WITH syzygy and
+        hardcodes ``RUSTFLAGS := -Ctarget-cpu=native`` -- while master's Makefile
+        has different targets. A ``make <target>`` therefore couples the build to
+        whatever the checked-out tag happens to name and defeats the RUSTFLAGS
+        override; the first on-device install failed with "No rule to make target
+        'no-syzygy'". Calling ``cargo rustc`` directly is tag-independent and lets
+        the environment's RUSTFLAGS take effect.
+
+        How the regression manifests: reintroducing a ``make`` invocation ties the
+        build to a tag-specific target that the pinned ref may not define, and the
+        install aborts before compiling.
+        """
+        script = _build_script("reckless")
+        assert "cargo rustc" in script
+        assert "make no-syzygy" not in script
+
+    def test_emits_binary_to_repo_root(self):
+        """The build must emit the linked binary to the repo root as ``reckless``.
+
+        Why this test exists: a bare ``cargo build`` leaves the executable at
+        ``target/release/reckless``, which would not match binary_path=``reckless``
+        and would fail the post-build existence check. ``--emit link=reckless``
+        writes the final linked output to the repo root, matching binary_path.
+
+        How the regression manifests: dropping ``--emit link=reckless`` leaves the
+        binary under target/ and the install fails the "Binary not found" check.
+        """
+        assert "--emit link=reckless" in _build_script("reckless")
+
+    def test_does_not_depend_on_clang(self):
+        """Reckless must not require clang as a build dependency.
+
+        Why this test exists: the ``no-syzygy`` build exists precisely so the Pi
+        needs no clang. Declaring clang as a dependency would reintroduce the
+        heavyweight LLVM install this project removed from every other engine.
+
+        How the regression manifests: adding "clang" to ``dependencies`` trips this.
+        """
+        assert "clang" not in ENGINES["reckless"].dependencies
+
+    def test_declares_linker_and_download_dependencies(self):
+        """Dependencies must provide a C linker and curl.
+
+        Why this test exists: even without clang, Rust links its final binary
+        through the system ``cc``/linker, so ``build-essential`` is required or the
+        link fails with "linker `cc` not found". ``curl`` is required twice: to
+        bootstrap rustup, and by Reckless's build.rs, which downloads the NNUE
+        network with ``curl`` at build time (the net is embedded, so no separate
+        file ships).
+
+        How the regression manifests: dropping build-essential breaks the link
+        step; dropping curl breaks both the rustup bootstrap and the net download.
+        """
+        deps = ENGINES["reckless"].dependencies
+        assert "build-essential" in deps
+        assert "curl" in deps
+
+    def test_binary_path_is_repo_root_reckless(self):
+        """Reckless's binary_path must be ``reckless`` at the repo root.
+
+        Why this test exists: the Makefile's ``no-syzygy`` target emits the linked
+        binary to the repo root as ``reckless`` (``cargo rustc ... -- --emit
+        link=reckless``), NOT to target/release/. Pointing binary_path at a
+        target/ path would fail the post-build existence check even though the
+        compile succeeded.
+
+        How the regression manifests: setting binary_path to a ``target/`` path
+        makes the install fail the "Binary not found" check after a long build.
+        """
+        assert ENGINES["reckless"].binary_path == "reckless"
+
+
 # Matches a hard-coded parallelism flag in a build command: -j2 / -j 2 /
 # -j$(nproc) / -jN, or a go -p=N. The central knob (_build_env) is the only place
 # parallelism should be set, so none of these may appear in the catalog.
@@ -572,16 +749,24 @@ class TestCentralizedParallelism:
         }
         assert offenders == {}, f"engines still pinning parallelism: {offenders}"
 
-    def test_build_env_sets_makeflags_and_goflags(self):
-        """_build_env injects -jN for make and -p=N for go from one value.
+    def test_build_env_sets_makeflags_goflags_and_cargo_jobs(self):
+        """_build_env injects the same N as -jN (make), -p=N (go), and cargo jobs.
 
-        Why this test exists: make and go read parallelism from different
-        variables; both must carry the same N or the two build systems would
-        diverge. Guards that a single knob drives both.
+        Why this test exists: make, go, and cargo each read parallelism from a
+        different variable; all three must carry the same N or the build systems
+        would diverge. Cargo in particular ignores MAKEFLAGS -- a ``make`` recipe
+        that shells out to ``cargo`` (Reckless) would otherwise let cargo default
+        to every core, which on a 512MB armhf board OOMs the fat-LTO build. Guards
+        that the single knob drives all three build systems.
+
+        How the regression manifests: dropping CARGO_BUILD_JOBS from _build_env
+        lets cargo ignore the central knob and spawn one codegen job per core,
+        reintroducing the low-RAM OOM the knob exists to prevent.
         """
         env = _build_env(3)
         assert env["MAKEFLAGS"] == "-j3"
         assert env["GOFLAGS"] == "-p=3"
+        assert env["CARGO_BUILD_JOBS"] == "3"
 
     def test_parallelism_env_override_is_honored(self, monkeypatch):
         """UC_BUILD_PARALLELISM overrides the default so a board can be tuned.

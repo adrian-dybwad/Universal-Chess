@@ -61,6 +61,13 @@ const licenses: License[] = [
     url: 'https://github.com/official-stockfish/Stockfish',
   },
   {
+    name: 'Reckless',
+    type: 'AGPL-3.0',
+    descriptionKey: 'reckless',
+    copyright: 'Reckless Authors',
+    url: 'https://github.com/codedeliveryservice/Reckless',
+  },
+  {
     name: 'React',
     type: 'MIT',
     descriptionKey: 'react',
