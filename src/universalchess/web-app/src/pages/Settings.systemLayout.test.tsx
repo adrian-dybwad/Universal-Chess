@@ -143,22 +143,25 @@ describe('System tab card layout', () => {
     expect(scoped.getByRole('heading', { name: 'Debug' })).toBeInTheDocument();
   });
 
-  it('places Game Database and Diagnostics (collapsed) at the end, after Power', async () => {
-    // Why: the two sections were moved to the end and made collapsed-by-default.
-    // A regression restores them above the Power (System Actions) card, or renders
-    // Game Database expanded -- caught here by the document-order check and by the
-    // URI examples being present before the toggle is clicked.
+  it('places Power at the very bottom, after Game Database and Diagnostics', async () => {
+    // Why: Power (Shutdown/Reboot) was moved to the very bottom of the tab so the
+    // disruptive controls sit below the routine settings and the collapsed
+    // setup/diagnostics sections. A regression that restores Power above those
+    // sections (e.g. reverting to the combined SystemActions card) is caught by
+    // the document-order check; Game Database staying collapsed is verified via
+    // the URI examples being hidden until its toggle is clicked.
     const user = userEvent.setup();
     renderSystemTab();
     const powerHeading = await screen.findByRole('heading', { name: 'Power' });
     const gameDbHeading = screen.getByRole('heading', { name: 'Game Database' });
     const diagnosticsHeading = screen.getByRole('heading', { name: 'Diagnostics' });
 
-    // Both sections follow the Power card in document order (i.e. sit at the end).
+    // Power follows both Game Database and Diagnostics in document order (i.e. it
+    // is the last card on the tab).
     const follows = (before: HTMLElement, after: HTMLElement) =>
       Boolean(before.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(follows(powerHeading, gameDbHeading)).toBe(true);
-    expect(follows(powerHeading, diagnosticsHeading)).toBe(true);
+    expect(follows(gameDbHeading, powerHeading)).toBe(true);
+    expect(follows(diagnosticsHeading, powerHeading)).toBe(true);
 
     // Game Database is collapsed by default: the URI examples are hidden until
     // the card is expanded via its toggle.

@@ -2295,9 +2295,9 @@ export function Settings() {
             </Card>
 
             <PasswordChange />
-            <SystemActions />
+            <ResetActions />
 
-            {/* Game Database and Diagnostics live at the end as secondary,
+            {/* Game Database and Diagnostics live near the end as secondary,
                 collapsed-by-default sections: rarely-changed setup and
                 troubleshooting tools kept out of the way until opened. */}
             <CollapsibleCard title={t('settingsPage.gameDatabase.title')}>
@@ -2322,6 +2322,11 @@ export function Settings() {
             </CollapsibleCard>
 
             <DiagnosticsCard />
+
+            {/* Power (Shutdown/Reboot) sits at the very bottom of the tab: it
+                takes the board and web UI offline, so it is placed after the
+                routine settings and the collapsed setup/diagnostics sections. */}
+            <PowerActions />
           </section>
         )}
 
@@ -3012,6 +3017,18 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
 
   const isLoading = checking || downloading || installing || status.is_checking || status.is_downloading || status.is_installing;
 
+  // "Up to date" is derived from the live status rather than a transient toast so
+  // it stays accurate across the 10s poll and self-corrects if an update later
+  // appears. It is only claimed once a check has actually run (last_check set) --
+  // this is what tells the user the system *looked* and found nothing, versus
+  // never having checked. Suppressed while any update work is in flight so it
+  // does not flash between the check and its result.
+  const isUpToDate =
+    Boolean(status.last_check) &&
+    !status.available_version &&
+    !status.has_pending_update &&
+    !isLoading;
+
   // Channel + auto-download are shared catalog settings (updates.channel /
   // updates.auto), the same nodes the board renders in its Updates menu. Render
   // them through the engine over an `update` store adapter so their label, help,
@@ -3101,6 +3118,12 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
             >
               {downloading ? t('settingsPage.updates.downloading') : t('settingsPage.updates.downloadUpdate')}
             </Button>
+          </Card>
+        )}
+
+        {isUpToDate && !notice && (
+          <Card variant="success" className="mb-4">
+            {t('settingsPage.updates.upToDate')}
           </Card>
         )}
 
@@ -3998,10 +4021,12 @@ function useAuthedSystemAction() {
 }
 
 
-// Reset and power maintenance actions on the System tab. The Original Centaur
-// handover lives in its own tab (CentaurSettings); both share the authenticated
-// action plumbing via useAuthedSystemAction.
-function SystemActions() {
+// System Reset maintenance action on the System tab. The Original Centaur
+// handover lives in its own tab (CentaurSettings); all share the authenticated
+// action plumbing via useAuthedSystemAction. Power (Shutdown/Reboot) is a
+// separate component (PowerActions) so it can sit at the very bottom of the tab,
+// keeping the disruptive controls out of the way of routine settings.
+function ResetActions() {
   const { t } = useTranslation();
   const { busy, runAction, renderOutcome, loginDialog } = useAuthedSystemAction();
 
@@ -4031,6 +4056,22 @@ function SystemActions() {
         </Button>
         {renderOutcome('reset')}
       </Card>
+    </>
+  );
+}
+
+// Power (Shutdown/Reboot) controls. Rendered at the bottom of the System tab:
+// these make the board and web UI unavailable, so they are kept below the
+// routine settings and the collapsed setup/diagnostics sections. Uses its own
+// useAuthedSystemAction instance so its login-retry and inline outcome are
+// self-contained.
+function PowerActions() {
+  const { t } = useTranslation();
+  const { busy, runAction, renderOutcome, loginDialog } = useAuthedSystemAction();
+
+  return (
+    <>
+      {loginDialog}
 
       <Card className="mb-6">
         <CardHeader title={t('settingsPage.systemActions.powerTitle')} />

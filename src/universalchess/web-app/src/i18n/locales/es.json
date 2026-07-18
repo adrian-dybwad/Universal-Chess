@@ -494,6 +494,7 @@
       "downloading": "Descargando...",
       "complete": "Actualización completada. Ahora se ejecuta {{version}}.",
       "latestVersion": "la última versión",
+      "upToDate": "Estás ejecutando la última versión.",
       "errorLabel": "Error:",
       "check": "Buscar actualizaciones",
       "checking": "Buscando...",

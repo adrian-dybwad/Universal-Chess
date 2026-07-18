@@ -65,24 +65,34 @@ function settingsPayload() {
 
 // Persisted update status the UpdateManager polls: stable channel, auto-download
 // off, nothing to install (so the version readout/actions stay quiet and the
-// two settings controls are the focus).
-const updateStatus = {
-  channel: 'stable',
-  auto_update: false,
-  current_version: '2.4.0',
-  available_version: null,
-  has_pending_update: false,
-  last_check: null,
-  is_checking: false,
-  is_downloading: false,
-  is_installing: false,
-};
+// two settings controls are the focus). `last_check` is null so the baseline
+// represents a device that has never checked -- the up-to-date confirmation must
+// stay hidden in that state. Tests that exercise the confirmation set last_check.
+function baselineUpdateStatus() {
+  return {
+    channel: 'stable',
+    auto_update: false,
+    current_version: '2.4.0',
+    available_version: null as string | null,
+    has_pending_update: false,
+    last_check: null as string | null,
+    is_checking: false,
+    is_downloading: false,
+    is_installing: false,
+  };
+}
+
+// Reassigned per-test (reset in beforeEach) so the shared fetch mock can serve a
+// tailored status. The mock reads this at call time, after render, so a test may
+// mutate it before rendering to select the state under test.
+let updateStatus = baselineUpdateStatus();
 
 interface PostRecord { url: string; body: Record<string, unknown> }
 let posts: PostRecord[] = [];
 
 beforeEach(() => {
   posts = [];
+  updateStatus = baselineUpdateStatus();
   useSettingsStore.setState({ raw: null, loaded: false, revision: 0, pendingKeys: new Set<string>() });
 
   const fetchMock = vi.fn(async (url: string, init?: RequestInit): Promise<JsonResponseLike> => {
@@ -187,5 +197,45 @@ describe('System tab update settings (catalog-driven)', () => {
     const post = posts.find((p) => p.url === '/api/updates/auto');
     expect(post?.body).toEqual({ enabled: true });
     expect(posts.some((p) => p.url === '/api/settings')).toBe(false);
+  });
+});
+
+describe('UpdateManager up-to-date confirmation', () => {
+  it('shows the up-to-date message once a check has run with no update available', async () => {
+    // Why: the user could not tell "no update" from "never checked". The
+    // confirmation is derived from a completed check (last_check set) with no
+    // available/pending update. A regression that drops the message or shows it
+    // without a check leaves the ambiguous silent state that motivated it.
+    updateStatus.last_check = '2026-07-15T10:00:00Z';
+    renderSystemTab();
+    expect(
+      await screen.findByText("You're running the latest version.")
+    ).toBeInTheDocument();
+  });
+
+  it('hides the up-to-date message when the device has never checked', async () => {
+    // Why: guards the "only after a check" gate. With last_check null (baseline),
+    // claiming "latest version" would be misleading -- nothing looked. A
+    // regression dropping the last_check condition surfaces the message here.
+    renderSystemTab();
+    // Wait for the manager to render its loaded state (the check button appears
+    // once status resolves) before asserting the confirmation is absent.
+    await screen.findByRole('button', { name: 'Check for Updates' });
+    expect(
+      screen.queryByText("You're running the latest version.")
+    ).not.toBeInTheDocument();
+  });
+
+  it('hides the up-to-date message when an update is available', async () => {
+    // Why: the confirmation must be mutually exclusive with the "update
+    // available" card. A regression in the derived condition would show both the
+    // "Update Available" prompt and a contradictory "latest version" line.
+    updateStatus.last_check = '2026-07-15T10:00:00Z';
+    updateStatus.available_version = '2.5.0';
+    renderSystemTab();
+    expect(await screen.findByText('Update Available: v2.5.0')).toBeInTheDocument();
+    expect(
+      screen.queryByText("You're running the latest version.")
+    ).not.toBeInTheDocument();
   });
 });
