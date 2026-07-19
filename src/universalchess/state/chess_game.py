@@ -27,8 +27,8 @@ class ChessGameState:
     Observers are notified on:
     - Position changes (moves, takeback, new position)
     - Game over (checkmate, stalemate, resignation, flag, draw)
-    - Check (when a king is in check after a move)
-    - Queen threat (when a queen is under attack after a move)
+    - Check (when the side-to-move's king is in check after a move)
+    - Queen threat (when the side-to-move's own queen is under attack)
     - Alert clear (when no check or threat exists)
     
     Thread safety: This class is NOT thread-safe. Callers must ensure
@@ -236,26 +236,37 @@ class ChessGameState:
     
     def get_queen_threat_info(self) -> Optional[tuple]:
         """Get information about queen threat state.
-        
-        Checks if the opponent's queen is under attack by the side to move.
-        
+
+        Checks whether the SIDE-TO-MOVE's own queen is under attack by the
+        opponent -- the actionable "your queen is hanging, deal with it this
+        move" warning. This deliberately parallels get_check_info (which flags
+        the side-to-move's own king): both warn the player on move about their
+        own royalty being attacked, so the CHECK and YOUR QUEEN alerts read
+        consistently.
+
+        A prior implementation flagged the OPPONENT's queen that the side to
+        move could capture. That is an "opportunity" indicator, not a warning:
+        with two queens simultaneously en prise it highlighted the enemy queen
+        the mover could grab rather than the mover's own queen in danger, so the
+        alert pointed at the wrong queen while it was "the wrong colour's" turn.
+
         Returns:
-            Tuple of (is_black_queen_threatened, attacker_square, queen_square) 
-            if queen is threatened, None otherwise.
+            Tuple of (is_black_queen_threatened, attacker_square, queen_square)
+            if the side-to-move's queen is attacked, None otherwise.
         """
         side_to_move = self._board.turn
         opponent_color = not side_to_move
-        
-        queens = self._board.pieces(chess.QUEEN, opponent_color)
+
+        queens = self._board.pieces(chess.QUEEN, side_to_move)
         if not queens:
             return None
-        
+
         queen_square = list(queens)[0]
-        attackers = self._board.attackers(side_to_move, queen_square)
-        
+        attackers = self._board.attackers(opponent_color, queen_square)
+
         if attackers:
             attacker_square = list(attackers)[0]
-            is_black_queen_threatened = (opponent_color == chess.BLACK)
+            is_black_queen_threatened = (side_to_move == chess.BLACK)
             return (is_black_queen_threatened, attacker_square, queen_square)
         return None
     

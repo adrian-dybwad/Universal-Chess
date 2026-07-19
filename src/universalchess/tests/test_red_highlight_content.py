@@ -4,8 +4,9 @@ Why these tests exist:
     Three-color mode highlights specific chess events in red. These pin WHICH
     pixels go red and guard the square geometry (a red highlight on the wrong
     square is worse than none):
-      - chess board: the checked king + checker; else a threatened queen + its
-        attacker -- mapped to the same 16x16 cells render() draws;
+      - chess board: the checked king + checker; else the side-to-move's own
+        threatened queen + its attacker -- mapped to the same 16x16 cells
+        render() draws;
       - game over: the winner/result line;
       - analysis graph: the losing-side (negative) evaluation bars only.
 
@@ -42,8 +43,10 @@ class ChessBoardRedTests(unittest.TestCase):
 
     # Fool's mate end: white king e1 in check from the black queen on h4.
     CHECK_FEN = "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3"
-    # White to move, not in check; black queen d8 is attacked by the white rook d2.
-    QUEEN_THREAT_FEN = "3qk3/8/8/8/8/8/3R4/4K3 w - - 0 1"
+    # White to move, not in check; white's OWN queen d1 is attacked by the black
+    # rook d8 down the open d-file. The alert warns the side to move about its own
+    # queen (parallel to CHECK), not the enemy queen it could capture.
+    QUEEN_THREAT_FEN = "3rk3/8/8/8/8/8/8/3QK3 w - - 0 1"
     START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
     def _widget(self, fen, flip=False):
@@ -77,12 +80,14 @@ class ChessBoardRedTests(unittest.TestCase):
         self.assertGreater(_count_red(sprite, (48, 0, 64, 16)), 0, "king e1 flipped")
         self.assertGreater(_count_red(sprite, (0, 48, 16, 64)), 0, "checker h4 flipped")
 
-    def test_queen_threat_marks_queen_and_attacker(self):
-        # Queen d8 -> cell (48,0); attacker rook d2 -> cell (48,96). Quiet
-        # elsewhere. Regression: queen-threat branch maps the wrong squares.
+    def test_queen_threat_marks_own_queen_and_attacker(self):
+        # Side-to-move's own queen d1 -> cell (48,112); attacker rook d8 -> cell
+        # (48,0). Quiet elsewhere. Regression: if the branch flags the OPPONENT's
+        # queen (the old "opportunity" logic) or maps the wrong squares, the red
+        # would land on the wrong cell (or nothing, since there is no enemy queen).
         sprite = self._render_red(self.QUEEN_THREAT_FEN)
-        self.assertGreater(_count_red(sprite, (48, 0, 64, 16)), 0, "queen d8 cell")
-        self.assertGreater(_count_red(sprite, (48, 96, 64, 112)), 0, "attacker d2 cell")
+        self.assertGreater(_count_red(sprite, (48, 112, 64, 128)), 0, "own queen d1 cell")
+        self.assertGreater(_count_red(sprite, (48, 0, 64, 16)), 0, "attacker d8 cell")
 
     def test_quiet_position_has_no_red(self):
         # The opening position is neither check nor queen-threat -> no red at all.

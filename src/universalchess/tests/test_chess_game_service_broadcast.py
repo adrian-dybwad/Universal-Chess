@@ -137,24 +137,28 @@ def test_check_move_broadcasts_check_alert(service_env):
 
 
 def test_queen_threat_move_broadcasts_queen_alert(service_env):
-    """A move exposing the mover's queen broadcasts alert='queen' + its square.
+    """A move attacking the side-to-move's queen broadcasts alert='queen' + square.
 
     Why this test exists: the queen-threat warning ('YOUR QUEEN' on the e-paper)
     is the other alert that was e-paper-only. This guards that it now reaches the
-    web too. After 1.e4 g6 2.Qh5 the white queen on h5 is attacked by the g6 pawn
-    (gxh5), which is a queen threat but not a check or game over.
+    web too. The alert warns the SIDE TO MOVE that its own queen is attacked
+    (parallel to CHECK). After 1.e4 d5 2.exd5 Qxd5 3.Nc3 it is Black to move and
+    Black's queen on d5 is attacked by the knight on c3 -- a queen threat, but not
+    a check or game over.
 
     Distinct from the check test: a queen threat must not be mislabeled 'check',
-    and the reported square is the threatened queen's (h5), not a king's.
+    and the reported square is the side-to-move's threatened queen (d5), not a
+    king's. A regression to the old "enemy queen you can capture" logic would
+    report no alert here (White's queen is off the board), failing this test.
     """
     _service, state, calls = service_env
-    for uci in ("e2e4", "g7g6", "d1h5"):
+    for uci in ("e2e4", "d7d5", "e4d5", "d8d5", "b1c3"):
         state.push_uci(uci)
     assert state.is_check is False
     assert state.is_game_over is False
     last = calls[-1]
     assert last["alert"] == "queen"
-    assert last["alert_square"] == chess.square_name(chess.H5)
+    assert last["alert_square"] == chess.square_name(chess.D5)
 
 
 def test_normal_move_has_no_alert(service_env):

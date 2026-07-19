@@ -663,11 +663,12 @@ class ChessBoardWidget(Widget):
 
         Derived from ``self.fen`` (the exact rendered position) so the highlight
         cannot disagree with the board image due to state-mutation timing. Mirrors
-        ChessGameState's alert priority -- check outranks queen-threat, one alert
-        at a time:
-          - in check: the checked king and every checking piece;
-          - else if the side-to-move attacks the opponent's queen: that queen and
-            every attacker of it.
+        ChessGameState.get_queen_threat_info / get_check_info -- check outranks
+        queen-threat, one alert at a time, and both flag the SIDE-TO-MOVE's own
+        royalty (not the opponent's):
+          - in check: the side-to-move's king and every checking piece;
+          - else if the side-to-move's own queen is attacked by the opponent:
+            that queen and every attacker of it.
         Returns an empty set for a quiet position (no red).
         """
         try:
@@ -684,10 +685,10 @@ class ChessBoardWidget(Widget):
             return squares
 
         side_to_move = board.turn
-        queens = board.pieces(chess.QUEEN, not side_to_move)
+        queens = board.pieces(chess.QUEEN, side_to_move)
         if queens:
             queen_square = next(iter(queens))
-            attackers = board.attackers(side_to_move, queen_square)
+            attackers = board.attackers(not side_to_move, queen_square)
             if attackers:
                 squares.add(queen_square)
                 squares.update(attackers)
