@@ -87,11 +87,22 @@ function baselineUpdateStatus() {
 // mutate it before rendering to select the state under test.
 let updateStatus = baselineUpdateStatus();
 
+// HTTP status the shared mock returns for the on-open POST /api/updates/check.
+// 200 is the authenticated success path; a test sets 401 to model the
+// unauthenticated device where the check cannot run and the confirmation must
+// stay hidden. Reset in beforeEach.
+let checkHttpStatus = 200;
+// Count of on-open update checks the mock served, so a test can assert that
+// opening the page triggers exactly one fresh check.
+let checkCount = 0;
+
 interface PostRecord { url: string; body: Record<string, unknown> }
 let posts: PostRecord[] = [];
 
 beforeEach(() => {
   posts = [];
+  checkHttpStatus = 200;
+  checkCount = 0;
   updateStatus = baselineUpdateStatus();
   useSettingsStore.setState({ raw: null, loaded: false, revision: 0, pendingKeys: new Set<string>() });
 
@@ -101,6 +112,15 @@ beforeEach(() => {
     if (url === '/api/settings' && method === 'GET') return jsonResponse(settingsPayload());
     if (url === '/api/settings' && method === 'POST') { posts.push({ url, body: JSON.parse((init?.body as string) ?? '{}') }); return jsonResponse({ success: true }); }
     if (url === '/api/updates/status') return jsonResponse(updateStatus);
+    if (url === '/api/updates/check' && method === 'POST') {
+      checkCount += 1;
+      return jsonResponse(
+        checkHttpStatus === 200
+          ? { update_available: !!updateStatus.available_version, version: updateStatus.available_version }
+          : { error: 'unauthorized' },
+        checkHttpStatus,
+      );
+    }
     if (url === '/api/updates/channel' && method === 'POST') {
       posts.push({ url, body: JSON.parse((init?.body as string) ?? '{}') });
       return jsonResponse({ success: true });
@@ -201,25 +221,63 @@ describe('System tab update settings (catalog-driven)', () => {
 });
 
 describe('UpdateManager up-to-date confirmation', () => {
-  it('shows the up-to-date message once a check has run with no update available', async () => {
-    // Why: the user could not tell "no update" from "never checked". The
-    // confirmation is derived from a completed check (last_check set) with no
-    // available/pending update. A regression that drops the message or shows it
-    // without a check leaves the ambiguous silent state that motivated it.
-    updateStatus.last_check = '2026-07-15T10:00:00Z';
+  it('runs exactly one fresh update check when the page is opened', async () => {
+    // Why: the confirmation is only trustworthy if it reflects a check made now,
+    // not a stale historical one, so opening the page must trigger a fresh check.
+    // A regression that drops the on-open check (or fires it from the 10s status
+    // poll instead) makes checkCount 0 (or grow past 1), so this pins the exact
+    // "one check per open" contract.
+    renderSystemTab();
+    await waitFor(() => expect(checkCount).toBe(1));
+    // The recurring poll refreshes status only; it must not issue more checks.
+    await screen.findByText("You're running the latest version.");
+    expect(checkCount).toBe(1);
+  });
+
+  it('skips the on-open check when the persisted last check is recent', async () => {
+    // Why: the freshness window rate-limits the upstream release check so
+    // re-opening the page (or navigating back) within a few minutes reuses the
+    // prior result instead of hitting the API again. A recent last_check must
+    // yield the confirmation with zero network checks. A regression removing the
+    // window would issue a check here, pushing checkCount to 1.
+    updateStatus.last_check = new Date().toISOString();
+    renderSystemTab();
+    expect(
+      await screen.findByText("You're running the latest version.")
+    ).toBeInTheDocument();
+    expect(checkCount).toBe(0);
+  });
+
+  it('runs the on-open check when the persisted last check is stale', async () => {
+    // Why: guards the other side of the window -- a check older than the
+    // freshness window (here 10 minutes vs the 5-minute limit) must trigger a
+    // fresh check so a days-old "latest version" claim cannot persist. A
+    // regression widening or dropping the staleness path leaves checkCount 0.
+    updateStatus.last_check = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    renderSystemTab();
+    await waitFor(() => expect(checkCount).toBe(1));
+  });
+
+  it('shows the up-to-date message after the on-open check completes with no update', async () => {
+    // Why: the message must confirm the system *looked now* and found nothing.
+    // last_check is null here (the mock does not simulate the backend stamping
+    // it), proving the confirmation is gated on this session's completed check
+    // -- not on a pre-existing last_check. A regression reverting to the old
+    // last_check gate would hide the message despite a successful on-open check.
     renderSystemTab();
     expect(
       await screen.findByText("You're running the latest version.")
     ).toBeInTheDocument();
   });
 
-  it('hides the up-to-date message when the device has never checked', async () => {
-    // Why: guards the "only after a check" gate. With last_check null (baseline),
-    // claiming "latest version" would be misleading -- nothing looked. A
-    // regression dropping the last_check condition surfaces the message here.
+  it('hides the up-to-date message when the on-open check cannot run (unauthenticated)', async () => {
+    // Why: without a completed check the page cannot honestly claim "latest
+    // version". A 401 on the on-open check (unauthenticated device) must leave
+    // the confirmation hidden. A regression that claims up-to-date without a
+    // successful check surfaces the message here.
+    checkHttpStatus = 401;
     renderSystemTab();
-    // Wait for the manager to render its loaded state (the check button appears
-    // once status resolves) before asserting the confirmation is absent.
+    // The check button returns to its idle label once the on-open check settles.
     await screen.findByRole('button', { name: 'Check for Updates' });
     expect(
       screen.queryByText("You're running the latest version.")
@@ -230,7 +288,6 @@ describe('UpdateManager up-to-date confirmation', () => {
     // Why: the confirmation must be mutually exclusive with the "update
     // available" card. A regression in the derived condition would show both the
     // "Update Available" prompt and a contradictory "latest version" line.
-    updateStatus.last_check = '2026-07-15T10:00:00Z';
     updateStatus.available_version = '2.5.0';
     renderSystemTab();
     expect(await screen.findByText('Update Available: v2.5.0')).toBeInTheDocument();

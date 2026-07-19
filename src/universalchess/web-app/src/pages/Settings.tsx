@@ -2834,6 +2834,15 @@ interface UpdateStatus {
   is_installing: boolean;
 }
 
+// How recent the persisted last_check must be for the on-open check to be
+// skipped. Opening the Updates screen normally runs a fresh upstream release
+// check; this window rate-limits that so rapidly re-opening or navigating back
+// to the page within a few minutes reuses the previous result instead of hitting
+// the release API again. Chosen well below the days-scale release cadence, so a
+// reused result inside the window cannot mask a materially newer release, while
+// covering the burst of re-opens that motivated the limit.
+const UPDATE_CHECK_FRESHNESS_MS = 5 * 60 * 1000;
+
 function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
   const { t } = useTranslation();
   const [status, setStatus] = useState<UpdateStatus | null>(null);
@@ -2845,6 +2854,12 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
   const [checking, setChecking] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [installing, setInstalling] = useState(false);
+  // True once a fresh update check has completed in this page session (the
+  // on-open check, or the manual "Check for Updates" button). The up-to-date
+  // confirmation is gated on this rather than on the persisted last_check so it
+  // can only claim "latest version" based on a check made now -- never a stale
+  // historical one that predates a newer release.
+  const [sessionChecked, setSessionChecked] = useState(false);
   const [showLoginDialog, setShowLoginDialog] = useState(false);
   const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
   // Set when an install is launched from this session so the status poll can
@@ -2852,25 +2867,52 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
   // asynchronously and restarts the web service; the poll auto-reconnects.
   const awaitingInstallRef = useRef(false);
 
-  const fetchStatus = useCallback(async () => {
+  const fetchStatus = useCallback(async (): Promise<UpdateStatus | null> => {
     try {
       const response = await fetch(buildApiUrl('/api/updates/status'));
       if (response.ok) {
         const data = await response.json();
         setStatus(data);
         setError(null);
+        return data;
       }
     } catch (e) {
       console.error('Failed to fetch update status:', e);
     }
+    return null;
   }, []);
 
   useEffect(() => {
-    // Initial read wrapped in an inline async function so the state update inside
-    // fetchStatus happens after the awaited request, not synchronously within the
-    // effect body. The recurring poll is a subscription via setInterval.
+    // On open, make the up-to-date confirmation reflect a recent check without
+    // hitting the upstream release API on every visit. Read the current status
+    // first: if it carries a check newer than UPDATE_CHECK_FRESHNESS_MS, trust it
+    // (mark the session checked, no network check); otherwise run a fresh check.
+    // Gating the confirmation on sessionChecked is what prevents a stale or
+    // missing last_check from claiming "latest version" until a check has
+    // actually completed. The check requires auth; on 401 (or any failure) it is
+    // skipped silently -- matching the load-time pattern used elsewhere (e.g.
+    // Connectivity/Accounts) rather than forcing a login just to view the page --
+    // and the confirmation stays hidden. The recurring poll only refreshes
+    // status (never re-checks).
     void (async () => {
-      await fetchStatus();
+      const current = await fetchStatus();
+      const lastCheckMs = current?.last_check ? Date.parse(current.last_check) : NaN;
+      const isFresh =
+        !Number.isNaN(lastCheckMs) && Date.now() - lastCheckMs < UPDATE_CHECK_FRESHNESS_MS;
+      if (isFresh) {
+        setSessionChecked(true);
+        return;
+      }
+      setChecking(true);
+      try {
+        const response = await apiFetch('/api/updates/check', { method: 'POST', requiresAuth: true });
+        if (response.ok) setSessionChecked(true);
+      } catch {
+        /* best-effort: the status read above still renders the cached state */
+      } finally {
+        await fetchStatus();
+        setChecking(false);
+      }
     })();
     const interval = setInterval(fetchStatus, 10000); // Poll every 10 seconds
     return () => clearInterval(interval);
@@ -2914,6 +2956,8 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
       if (!response.ok) {
         const data = await response.json();
         setError(data.error || t('settingsPage.updates.checkFailed'));
+      } else {
+        setSessionChecked(true);
       }
       await fetchStatus();
     } catch {
@@ -3019,12 +3063,13 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
 
   // "Up to date" is derived from the live status rather than a transient toast so
   // it stays accurate across the 10s poll and self-corrects if an update later
-  // appears. It is only claimed once a check has actually run (last_check set) --
-  // this is what tells the user the system *looked* and found nothing, versus
-  // never having checked. Suppressed while any update work is in flight so it
-  // does not flash between the check and its result.
+  // appears. It is only claimed once a check has completed *in this session*
+  // (sessionChecked) -- the on-open check or the manual button -- so it reflects
+  // a check made now, never a stale persisted last_check that could predate a
+  // newer release. Suppressed while any update work is in flight so it does not
+  // flash between the check and its result.
   const isUpToDate =
-    Boolean(status.last_check) &&
+    sessionChecked &&
     !status.available_version &&
     !status.has_pending_update &&
     !isLoading;
