@@ -122,6 +122,42 @@
   }
 }
 
+/* Phone: a fixed sidebar beside the content leaves the content pane too narrow
+   to hold its cards/tiles, so they overflow. Stack the sub-nav above a
+   full-width content pane instead, with the sidebar becoming a horizontal row of
+   wrapping chips. Switching to flex here also neutralizes the per-page
+   grid-template-columns overrides (Games/Positions), so no page-specific rule
+   can re-introduce the cramped two-column layout. Applies to every .subnav-*
+   page so narrow-view flow is consistent. */
+@media (max-width: 560px) {
+  .subnav-layout {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+
+  .subnav-sidebar {
+    flex-direction: row;
+    flex-wrap: wrap;
+    /* On top of the content now, so it must not stick over it. */
+    position: static;
+    top: auto;
+    gap: var(--space-2);
+  }
+
+  /* Content-width chips laid out in a row. Labels must show (the row has no
+     icon-only affordance) even for pages that hide them on the desktop rail. */
+  .subnav-item {
+    justify-content: flex-start;
+    padding: var(--space-2) var(--space-3);
+    gap: var(--space-2);
+  }
+
+  .subnav-item .subnav-label {
+    display: inline;
+  }
+}
+
 .page-header {
   display: flex;
   justify-content: space-between;

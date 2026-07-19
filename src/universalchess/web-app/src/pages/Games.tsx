@@ -212,7 +212,7 @@ export function Games() {
 
       {expandedPgn[game.id] && <pre className="game-pgn">{expandedPgn[game.id]}</pre>}
 
-      <div className="flex gap-2 mt-4">
+      <div className="flex flex-wrap gap-2 mt-4">
         <Button size="sm" onClick={() => togglePgn(game.id)}>
           {expandedPgn[game.id] ? t('games.hidePgn') : t('games.showPgn')}
         </Button>
