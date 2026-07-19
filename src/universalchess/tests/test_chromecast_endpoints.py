@@ -8,6 +8,7 @@ names/params. The board side and the discovery core are tested separately.
 
 import importlib
 import json
+import os
 import sys
 
 import pytest
@@ -253,7 +254,22 @@ def test_classic_video_survives_unreadable_epaper_snapshot(client, monkeypatch):
     """
     monkeypatch.setattr(webapp, "_get_piece_images", lambda: {})
     monkeypatch.setattr(webapp, "get_current_fen", lambda: "8/8/8/8/8/8/8/8")
-    monkeypatch.setattr(webapp.os, "stat", lambda _path: [0] * 9)
+
+    # webapp.os is the process-wide os module, so this patch replaces os.stat
+    # for the whole interpreter (including pytest's own pathlib/linecache use
+    # while formatting tracebacks). The stub must therefore be a faithful
+    # os.stat: keep the real signature, return a real os.stat_result, and only
+    # fake the epaper snapshot (st_mtime=1 so it differs from moddate=0 and
+    # forces the Image.open reload path under test); everything else delegates
+    # to the real os.stat.
+    real_stat = webapp.os.stat
+
+    def fake_stat(path, *args, **kwargs):
+        if os.fspath(path) == webapp.EPAPER_STATIC_JPG:
+            return os.stat_result((0, 0, 0, 0, 0, 0, 0, 0, 1, 0))
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(webapp.os, "stat", fake_stat)
 
     def fail_open(_path):
         raise webapp.UnidentifiedImageError("partial snapshot")
