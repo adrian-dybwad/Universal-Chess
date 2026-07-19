@@ -12,8 +12,59 @@ on:
 permissions: {}
 
 jobs:
+  # Gate the build so a scheduled run does not republish an identical nightly
+  # when main has not advanced. push (the tree changed) and workflow_dispatch (an
+  # explicit human override) always build; only the cron path is guarded.
+  check:
+    name: Check for changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      should_build: ${{ steps.decide.outputs.should_build }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Need history and all nightly tags to compare HEAD against the last
+          # published nightly.
+          fetch-depth: 0
+
+      - name: Decide whether to build
+        id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" != "schedule" ]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "Event '$EVENT_NAME': building unconditionally."
+            exit 0
+          fi
+          # The most recent nightly tag encodes the commit it was built from as
+          # its trailing '-<short_sha>' segment. If that matches the current
+          # HEAD, main has not advanced since the last nightly, so there is
+          # nothing new to publish. Tags sort chronologically by name because the
+          # 'nightly-YYYY-MM-DD-HHMMSS-...' prefix is lexically ordered.
+          LAST_TAG=$(git tag -l 'nightly-*' --sort=-refname | head -n 1)
+          if [ -z "$LAST_TAG" ]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "No prior nightly tag: building."
+            exit 0
+          fi
+          LAST_SHA=${LAST_TAG##*-}
+          HEAD_SHA=${GITHUB_SHA::7}
+          if [ "$LAST_SHA" = "$HEAD_SHA" ]; then
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "No new commits since $LAST_TAG (HEAD $HEAD_SHA): skipping nightly."
+          else
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "New commits since $LAST_TAG (HEAD $HEAD_SHA): building."
+          fi
+
   build:
     name: Build Nightly
+    needs: check
+    if: needs.check.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
