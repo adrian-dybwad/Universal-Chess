@@ -92,19 +92,44 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
   // Total moves in the game
   const totalMoves = moves.length > 0 ? moves.length - 1 : 0;  // moves[0] is start position
 
-  // Initialize Stockfish once
+  // Initialize Stockfish, retrying with exponential backoff so a failed or
+  // slow worker load recovers on its own. Without a retry a single init failure
+  // (e.g. a cold-cache WASM compile exceeding the load timeout) would leave
+  // sfReady stuck false and analysis permanently disabled even though the worker
+  // becomes usable moments later. The service tears down its failed worker on
+  // rejection, so each retry starts a fresh worker.
   useEffect(() => {
     const sf = getStockfishService();
-    sf.init()
-      .then(() => {
-        console.log('[Analysis] Stockfish ready');
-        setSfReady(true);
-      })
-      .catch((e) => {
-        console.error('[Analysis] Failed to initialize Stockfish:', e);
-      });
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let attempt = 0;
+
+    const tryInit = () => {
+      sf.init()
+        .then(() => {
+          if (cancelled) return;
+          console.log('[Analysis] Stockfish ready');
+          setSfReady(true);
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          attempt += 1;
+          // 1s, 2s, 4s, ... capped at 30s so a persistent failure keeps
+          // retrying without hammering.
+          const delayMs = Math.min(1000 * 2 ** (attempt - 1), 30000);
+          console.error(
+            `[Analysis] Failed to initialize Stockfish (attempt ${attempt}), retrying in ${delayMs}ms:`,
+            e,
+          );
+          retryTimer = setTimeout(tryInit, delayMs);
+        });
+    };
+
+    tryInit();
 
     return () => {
+      cancelled = true;
+      if (retryTimer !== undefined) clearTimeout(retryTimer);
       sf.stop();
     };
   }, []);
@@ -239,9 +264,7 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
           
           // For chart: use large values for mate, otherwise centipawns
           const evalValue = mate !== null ? (mate > 0 ? 10000 : -10000) : cp;
-          
-          console.log(`[Analysis] Move ${index} result: raw=${result.score}, black=${isBlackToMove}, cp=${cp}, eval=${evalValue}`);
-          
+
           setMoves((prev) => {
             const updated = [...prev];
             if (updated[index]) {

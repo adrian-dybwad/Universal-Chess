@@ -1,5 +1,12 @@
 import type { AnalysisResult } from '../types/game';
 
+// Upper bound on how long a single worker load + UCI handshake may take before
+// it is treated as failed. Sized generously because the first load compiles the
+// Stockfish WASM, which on a cold cache / slow device can take well over ten
+// seconds. A too-tight bound here rejects a worker that would have been ready
+// moments later, so keep this comfortably above observed cold-start times.
+const INIT_TIMEOUT_MS = 30000;
+
 interface QueuedRequest {
   fen: string;
   depth: number;
@@ -43,40 +50,67 @@ export class StockfishService {
 
   private async doInit(): Promise<void> {
     return new Promise((resolve, reject) => {
+      // A single init attempt settles exactly once. `settled` guards against the
+      // timeout, onerror, and readiness paths racing each other (e.g. uciok
+      // arriving just as the timeout fires).
+      let settled = false;
+      let checkReady: ReturnType<typeof setInterval> | undefined;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+
+      const clearTimers = () => {
+        if (checkReady !== undefined) clearInterval(checkReady);
+        if (timeout !== undefined) clearTimeout(timeout);
+      };
+
+      const fail = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimers();
+        // Tear the partially-initialized worker down so the next init() starts
+        // from a clean slate. Leaving it alive leaks the worker and lets a late
+        // uciok flip isReady to true behind a rejected promise, an inconsistent
+        // state where callers think init failed but the service reports ready.
+        this.worker?.terminate();
+        this.worker = null;
+        this.isReady = false;
+        this.initPromise = null;
+        reject(error);
+      };
+
+      const succeed = () => {
+        if (settled) return;
+        settled = true;
+        clearTimers();
+        console.log('[Stockfish] Ready');
+        resolve();
+      };
+
       try {
         console.log(`[Stockfish] Loading worker from: ${this.workerPath}`);
         this.worker = new Worker(this.workerPath);
-        
+
         this.worker.onmessage = (e) => this.handleMessage(e.data);
-        
+
         this.worker.onerror = (e) => {
           console.error('[Stockfish] Worker error:', e);
-          this.initPromise = null;
-          reject(new Error(`Stockfish worker failed to load: ${e.message}`));
+          fail(new Error(`Stockfish worker failed to load: ${e.message}`));
         };
 
         this.worker.postMessage('uci');
-        
-        const timeout = setTimeout(() => {
-          if (!this.isReady) {
-            console.error('[Stockfish] Init timeout');
-            this.initPromise = null;
-            reject(new Error('Stockfish init timeout'));
-          }
-        }, 10000);
 
-        const checkReady = setInterval(() => {
+        timeout = setTimeout(() => {
+          console.error('[Stockfish] Init timeout');
+          fail(new Error('Stockfish init timeout'));
+        }, INIT_TIMEOUT_MS);
+
+        checkReady = setInterval(() => {
           if (this.isReady) {
-            clearInterval(checkReady);
-            clearTimeout(timeout);
-            console.log('[Stockfish] Ready');
-            resolve();
+            succeed();
           }
         }, 100);
       } catch (e) {
         console.error('[Stockfish] Init failed:', e);
-        this.initPromise = null;
-        reject(e);
+        fail(e instanceof Error ? e : new Error(String(e)));
       }
     });
   }
