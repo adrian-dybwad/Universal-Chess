@@ -151,7 +151,8 @@
     "currentPgn": "PGN actual",
     "pgnPlaceholder": "El PGN aparecerá aquí durante la partida...",
     "gameOver": {
-      "moveCount": "{{count}} jugadas",
+      "moveCount_one": "{{count}} jugada",
+      "moveCount_other": "{{count}} jugadas",
       "finalTimes": "B {{white}}  N {{black}}",
       "result": {
         "white_wins": "Ganan las blancas",
@@ -434,7 +435,7 @@
       "refRecommended": "{{label}} — recomendado",
       "releaseAria": "Versión de {{name}}",
       "installingProgress": "Instalando {{name}}...",
-      "needsRepairNote": "Instalado, pero faltan sus archivos necesarios, así que aún no puede jugar. Reparar los descarga en el sitio, sin reinstalar del todo.",
+      "needsRepairNote": "Instalado, pero faltan sus archivos necesarios, así que aún no puede jugar. Reparar los descarga en su lugar, sin reinstalarlo por completo.",
       "missingWeightsNote_one": "Ya se puede jugar, pero {{count}} peso opcional no se descargó. Complétalo para añadir el nivel de fuerza faltante.",
       "missingWeightsNote_other": "Ya se puede jugar, pero {{count}} pesos opcionales no se descargaron. Complétalos para añadir los niveles de fuerza faltantes.",
       "interruptedNote": "Esta instalación se interrumpió (probablemente el tablero se reinició). Reanuda para continuar o Cancela para descartar.",
@@ -585,7 +586,7 @@
       "highContrastLabel": "Alto contraste (experimental)",
       "highContrastHelp": "Fuerza los voltajes VCOM/fuente más allá de los predeterminados del perfil para oscurecer una imagen tenue. Prueba esto si la imagen se dibuja pero solo débilmente. No es un ajuste respaldado por la hoja de datos; déjalo desactivado si la pantalla ya se ve bien.",
       "threeColorLabel": "Modo de tres colores (rojo)",
-      "threeColorHelp": "Solo para paneles rojo/blanco/negro. Resalta en rojo los jaques, las damas amenazadas, el resultado de la partida y las barras de evaluación perdedoras. La tinta roja solo cambia con un refresco completo, así que esas actualizaciones en rojo tardan ~12-15 segundos; las jugadas normales siguen siendo rápidas.",
+      "threeColorHelp": "Solo para paneles rojo/blanco/negro. Resalta en rojo los jaques, las damas amenazadas, el resultado de la partida y las barras de evaluación desfavorables. La tinta roja solo cambia con un refresco completo, así que esas actualizaciones en rojo tardan ~12-15 segundos; las jugadas normales siguen siendo rápidas.",
       "savedOffline": "Guardado. Se aplicará cuando el tablero esté en marcha.",
       "threeColorOn": "Modo de tres colores activado. Los resaltados en rojo se refrescan en ~12-15 s; las jugadas normales siguen rápidas.",
       "applied": "Aplicado. El panel se refrescó con el nuevo ajuste.",
@@ -696,7 +697,7 @@
   },
   "licenses": {
     "title": "Licencias de código abierto",
-    "intro": "Universal Chess es software de código abierto construido sobre los hombros de gigantes. A continuación se muestran las licencias de este proyecto y sus dependencias.",
+    "intro": "Universal Chess es software de código abierto construido a hombros de gigantes. A continuación se muestran las licencias de este proyecto y sus dependencias.",
     "viewGithub": "Ver en GitHub →",
     "viewSource": "Ver código →",
     "copyright": "Derechos de autor: {{holder}}",

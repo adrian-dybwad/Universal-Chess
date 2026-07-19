@@ -151,7 +151,8 @@
     "currentPgn": "Current PGN",
     "pgnPlaceholder": "PGN will appear here during play...",
     "gameOver": {
-      "moveCount": "{{count}} moves",
+      "moveCount_one": "{{count}} move",
+      "moveCount_other": "{{count}} moves",
       "finalTimes": "W {{white}}  B {{black}}",
       "result": {
         "white_wins": "White wins",
