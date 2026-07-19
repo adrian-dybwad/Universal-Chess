@@ -6,9 +6,9 @@ Worstfish and Drawfish are not chess engines in their own right; they are pure
 move-selection policies layered on top of Stockfish's per-move evaluations.
 ``select_worst_move`` plays the move Stockfish rates worst for the mover;
 ``select_drawfish_move`` is inspired by the behaviour of the chess.com "Zach"
-bot -- refuse to win: never willingly deliver checkmate, avoid captures, and
-steer the evaluation toward equality rather than pressing an advantage -- but
-backed by Stockfish so it actively holds a draw rather than playing weakly.
+bot -- refuse to win: never willingly deliver checkmate, steer the evaluation
+toward equality rather than pressing an advantage, and optionally avoid captures
+-- but backed by Stockfish so it actively holds a draw rather than playing weakly.
 
 These are the highest-level pure entry points for the two behaviours, so they
 are tested directly with hand-built ``Candidate`` lists (mover-POV scores, plus
@@ -38,7 +38,7 @@ def _cand(uci: str, score: chess.engine.Score, is_capture: bool = False) -> Cand
     return Candidate(move=chess.Move.from_uci(uci), score=score, is_capture=is_capture)
 
 
-def _ctx(randomness: int = 0, avoid_captures: bool = True, seed: int = 0) -> SelectionContext:
+def _ctx(randomness: int = 0, avoid_captures: bool = False, seed: int = 0) -> SelectionContext:
     """Build a SelectionContext with a seeded RNG for deterministic randomness."""
     return SelectionContext(
         options={
@@ -236,35 +236,54 @@ def test_drawfish_forced_to_mate_when_every_move_is_mate():
 # select_drawfish_move -- capture avoidance
 # ---------------------------------------------------------------------------
 
-def test_drawfish_avoids_captures_even_when_a_capture_is_more_equal():
-    """With AvoidCaptures on (default), a non-capture is chosen over a capture.
+def test_drawfish_allows_captures_by_default():
+    """AvoidCaptures is off by default, so the most-equal capture is played.
+
+    Why: regression for the default flip. Allowing captures lets Drawfish
+    recapture toward equality instead of shunning material, which holds the draw
+    better. How it manifests: if the default reverted to on, ctx=None would
+    exclude the capture and return the farther-from-equal non-capture a2a3 (+0.30)
+    instead of the more-equal capture e5d6 (+0.05).
+    """
+    candidates = [
+        _cand("e5d6", Cp(5), is_capture=True),   # nearest equality, a capture
+        _cand("a2a3", Cp(30), is_capture=False),
+    ]
+    # ctx=None -> defaults (AvoidCaptures off, Randomness 0).
+    assert select_drawfish_move(candidates) == chess.Move.from_uci("e5d6")
+
+
+def test_drawfish_avoids_captures_when_option_enabled():
+    """With AvoidCaptures explicitly on, a non-capture is chosen over a capture.
 
     Why: capture-avoidance is a layer above the equality metric, mirroring the
-    Zach bot ignoring hanging pieces. How it manifests: without the exclusion the
-    capture (+0.05, nearest 0.00) would win over the non-capture (+0.30); the
-    exclusion must flip the choice to the non-capture.
+    Zach bot ignoring hanging pieces; it is now opt-in rather than the default.
+    How it manifests: without the exclusion the capture (+0.05, nearest 0.00)
+    would win over the non-capture (+0.30); the exclusion must flip the choice to
+    the non-capture.
     """
     candidates = [
         _cand("e5d6", Cp(5), is_capture=True),   # nearest equality, but a capture
         _cand("a2a3", Cp(30), is_capture=False),
     ]
-    # ctx=None -> defaults (AvoidCaptures on, Randomness 0).
-    assert select_drawfish_move(candidates) == chess.Move.from_uci("a2a3")
+    ctx = _ctx(randomness=0, avoid_captures=True)
+    assert select_drawfish_move(candidates, ctx) == chess.Move.from_uci("a2a3")
 
 
 def test_drawfish_allows_captures_when_every_move_is_a_capture():
     """Capture-avoidance falls back to captures rather than returning nothing.
 
-    Why: in a position where every legal move captures, the engine must still
-    move. How it manifests: without the fallback the non-capture pool is empty
-    and sorted()[0] would raise IndexError; with it, the most-equal capture
-    (+0.05) is played.
+    Why: with AvoidCaptures explicitly on, in a position where every legal move
+    captures the engine must still move. How it manifests: without the fallback
+    the non-capture pool is empty and sorted()[0] would raise IndexError; with
+    it, the most-equal capture (+0.05) is played.
     """
     candidates = [
         _cand("e5d6", Cp(5), is_capture=True),
         _cand("e5f6", Cp(200), is_capture=True),
     ]
-    assert select_drawfish_move(candidates) == chess.Move.from_uci("e5d6")
+    ctx = _ctx(randomness=0, avoid_captures=True)
+    assert select_drawfish_move(candidates, ctx) == chess.Move.from_uci("e5d6")
 
 
 def test_drawfish_takes_capture_when_avoidance_disabled():

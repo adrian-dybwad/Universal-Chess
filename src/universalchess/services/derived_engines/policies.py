@@ -180,9 +180,11 @@ def select_drawfish_move(
     1. Exclude mate-delivering moves (Drawfish never willingly checkmates). If
        *every* legal move delivers mate -- the only way to force a win against
        Drawfish -- the exclusion is skipped so a move is still returned.
-    2. If ``AvoidCaptures`` is enabled (default), exclude capturing moves so it
-       shuffles rather than grabbing material. If every remaining move is a
-       capture, captures are allowed back in rather than returning nothing.
+    2. If ``AvoidCaptures`` is enabled (off by default), exclude capturing moves
+       so it shuffles rather than grabbing material. If every remaining move is a
+       capture, captures are allowed back in rather than returning nothing. With
+       it off (the default), captures compete on equality like any other move, so
+       Drawfish will recapture to restore balance.
     3. Rank the survivors by closeness to equality (0.00). ``Randomness`` R>0
        picks uniformly among the R+1 most-equal moves (via the injected RNG) so
        it shuffles less predictably, but only among moves within
@@ -197,11 +199,11 @@ def select_drawfish_move(
     Precondition: ``candidates`` is non-empty.
     """
     randomness = 0
-    avoid_captures = True
+    avoid_captures = False
     rng: Optional[random.Random] = None
     if ctx is not None:
         randomness = ctx.options.get(OPTION_RANDOMNESS, 0)
-        avoid_captures = bool(ctx.options.get(OPTION_AVOID_CAPTURES, 1))
+        avoid_captures = bool(ctx.options.get(OPTION_AVOID_CAPTURES, 0))
         rng = ctx.rng
 
     pool = [c for c in candidates if not _delivers_mate(c.score)] or list(candidates)

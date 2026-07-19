@@ -160,7 +160,12 @@ SPECS: Dict[str, DerivedEngineSpec] = {
             UciOption(
                 name=OPTION_AVOID_CAPTURES,
                 kind=OPTION_TYPE_CHECK,
-                default=1,
+                # Off by default: allowing captures lets Drawfish recapture to
+                # restore material balance, which is exactly what steering toward
+                # equality wants, so it holds the draw more reliably. Turning it
+                # on recreates the passive, hanging-piece-ignoring Zach shuffle as
+                # an opt-in flavour rather than the default behaviour.
+                default=0,
             ),
         ),
     ),

@@ -12,7 +12,7 @@
 #   * Drawfish  -- inspired by the behaviour of the chess.com "Zach" bot, but
 #                  backed by Stockfish so it actively holds a draw rather than
 #                  playing weakly: it refuses to win, never willingly checkmates,
-#                  avoids captures, and steers toward equality.
+#                  steers toward equality, and can optionally avoid captures.
 #
 # The move-selection logic lives in ``policies`` (pure, no I/O), each engine's
 # options + policy in ``spec``, the UCI protocol loop in ``uci_wrapper``

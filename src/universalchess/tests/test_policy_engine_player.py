@@ -222,8 +222,8 @@ def test_spec_resolve_options_coerces_and_defaults():
     )
     assert resolved == {"Randomness": 10, "AvoidCaptures": 0}  # 99 clamped to max 10
 
-    # Invalid Randomness keeps the Drawfish default (3); absent AvoidCaptures too (1).
-    assert drawfish.resolve_options({"Randomness": "abc"}) == {"Randomness": 3, "AvoidCaptures": 1}
+    # Invalid Randomness keeps the Drawfish default (3); absent AvoidCaptures too (0).
+    assert drawfish.resolve_options({"Randomness": "abc"}) == {"Randomness": 3, "AvoidCaptures": 0}
 
 
 def test_no_usable_lines_falls_back_to_first_legal():

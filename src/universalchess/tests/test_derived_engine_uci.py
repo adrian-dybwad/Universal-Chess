@@ -118,7 +118,7 @@ def test_uci_handshake_advertises_drawfish_options():
 
     assert "id name Drawfish" in output
     assert "option name Randomness type spin default 3 min 0 max 10" in output
-    assert "option name AvoidCaptures type check default true" in output
+    assert "option name AvoidCaptures type check default false" in output
 
 
 def test_handshake_does_not_open_stockfish():
