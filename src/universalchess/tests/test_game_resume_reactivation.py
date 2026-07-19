@@ -30,8 +30,20 @@ from universalchess.managers.game.database import reactivate_game_for_resume  # 
 
 
 @pytest.fixture
-def db():
-    """Fresh in-memory DB with a session factory and a game-seeding helper."""
+def db(monkeypatch):
+    """Fresh in-memory DB with a session factory and a game-seeding helper.
+
+    reactivate_game_for_resume resolves its ORM classes via database._get_models,
+    which blocks on the deferred-import background thread. That thread never
+    completes under the test harness (see test_chess960_persistence), so the call
+    would see models=None and wrongly report every game as not resumable. Patch
+    the module-global binding to this fixture's models so the policy is exercised
+    deterministically, independent of test order or the background importer.
+    """
+    import universalchess.managers.game.database as database
+
+    monkeypatch.setattr(database, "_get_models", lambda: models)
+
     engine = create_engine("sqlite:///:memory:")
     models.Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
