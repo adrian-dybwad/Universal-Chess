@@ -24,7 +24,7 @@ jobs:
       should_build: ${{ steps.decide.outputs.should_build }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           # Need history and all nightly tags to compare HEAD against the last
           # published nightly.
@@ -71,14 +71,14 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           # Full history and tags are required so the release-notes step can diff
           # against the previous nightly tag with `git log`.
           fetch-depth: 0
       
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'

@@ -1,0 +1,38 @@
+# Dependabot keeps pinned dependency versions current so upgrades and
+# deprecations surface as reviewable PRs instead of silently drifting until a
+# warning or hard failure appears (e.g. the Actions Node 20 -> Node 24 runner
+# change). Each ecosystem is grouped so a run opens one PR rather than many.
+version: 2
+updates:
+  # GitHub Actions used by every workflow under .github/workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # React web-app dependencies (npm lockfile lives beside package.json).
+  - package-ecosystem: npm
+    directory: /src/universalchess/web-app
+    schedule:
+      interval: weekly
+    groups:
+      npm:
+        patterns:
+          - "*"
+
+  # Python dependencies. pyproject.toml declares no [project] deps (ruff/bandit
+  # config only), so the two requirements.txt files are the update targets.
+  - package-ecosystem: pip
+    directories:
+      - /
+      - /src/universalchess/setup
+    schedule:
+      interval: weekly
+    groups:
+      pip:
+        patterns:
+          - "*"
