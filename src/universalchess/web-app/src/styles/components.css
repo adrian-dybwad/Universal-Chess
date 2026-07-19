@@ -721,13 +721,23 @@
 .progress-bar__label {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: baseline;
   gap: var(--space-3);
   font-size: var(--text-sm);
   color: var(--color-text-light);
 }
 
+/* Fill the row so the stage text flows across the full available width; min-width:0
+   lets it shrink below content size and overflow-wrap breaks long build paths
+   (e.g. /opt/.../engine_build/reckless) instead of pushing the percent off-screen. */
+.progress-bar__message {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .progress-bar__percent {
+  flex-shrink: 0;
   font-variant-numeric: tabular-nums;
   font-weight: var(--font-semibold);
   color: var(--color-text);
