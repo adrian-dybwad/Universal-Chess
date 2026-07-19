@@ -5,10 +5,12 @@
 
 .move-banner {
   position: fixed;
-  top: 3.25rem; /* Height of navbar (min-height) */
+  top: 3.25rem; /* Below the primary nav row (its min-height) */
   left: 0;
   right: 0;
-  z-index: 99; /* Just below navbar (100) but above content */
+  /* Above the navbar (z-index 100) so the banner overlays the secondary status
+     row rather than being hidden behind it. */
+  z-index: 101;
   padding: 0.5rem 1rem;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   animation: slideDown 0.3s ease-out;

@@ -11,7 +11,8 @@ interface MoveBannerProps {
 
 /**
  * Banner notification for new moves made while not on the live board.
- * Appears below the navbar as a full-width banner.
+ * Appears below the primary nav row as a full-width banner, overlaying the
+ * navbar's secondary status row (its z-index sits above the navbar).
  * Background color matches the chess board square color of the player who moved.
  * Auto-dismisses after 8 seconds or on click.
  */
