@@ -85,6 +85,7 @@ from universalchess.utils.session_state import (
     SessionSnapshot,
     plan_startup,
 )
+from universalchess.managers.game.resume_policy import choose_resume_target
 from universalchess.players.settings import (
     PlayerSettings,
     GameSettings,
@@ -1467,10 +1468,12 @@ def _resolve_resume_target(snapshot) -> Optional[dict]:
     """Pick the game to resume for a session snapshot, or None.
 
     Prefers the exact game the snapshot recorded (which may be finished, so it
-    can be restored to its game-over state). Falls back to the legacy
-    most-recent-incomplete-game lookup when the snapshot has no usable id -- this
-    covers fresh/upgraded devices and the brief window before a new game's id is
-    recorded, where the in-progress game is still found by its NULL result.
+    can be restored to its game-over state), but a *newer* in-progress game wins:
+    see :func:`choose_resume_target`. That guards the case where a fresh game was
+    started in place on the board after one finished -- the snapshot still points
+    at the finished game, yet the live game is the one to resume. Falls back to
+    the most-recent-incomplete-game lookup when the snapshot has no usable id
+    (fresh/upgraded devices, or the window before a new game's id is recorded).
 
     Args:
         snapshot: The loaded :class:`SessionSnapshot`.
@@ -1478,11 +1481,9 @@ def _resolve_resume_target(snapshot) -> Optional[dict]:
     Returns:
         Resume dict for the game to resume, or None when nothing is resumable.
     """
-    if snapshot.game_db_id > 0:
-        data = _get_game_by_id(snapshot.game_db_id)
-        if data is not None:
-            return data
-    return _get_incomplete_game()
+    recorded = _get_game_by_id(snapshot.game_db_id) if snapshot.game_db_id > 0 else None
+    incomplete = _get_incomplete_game()
+    return choose_resume_target(recorded, incomplete)
 
 
 def _resume_game(game_data: dict) -> bool:
@@ -2654,6 +2655,15 @@ def _start_game_mode(
         if event == EVENT_NEW_GAME:
             from universalchess.services.analysis import get_analysis_service
             get_analysis_service().reset()
+            # A new game started in place on the board (reset / setup-position)
+            # does NOT go through _start_game_mode, so mirror its session reset
+            # here: clear the recorded game id (and coach selection) so a restart
+            # before this game is suspended or finished falls back to the live
+            # in-progress lookup instead of resuming the PREVIOUS (now finished)
+            # game whose id would otherwise linger in the snapshot. Position games
+            # are not persisted, so exclude them (as _start_game_mode does).
+            if not _is_position_game:
+                _record_session_view(VIEW_GAME, game_db_id=0, analysis_selection=0)
             # A board-reset / setup-position new game restarts play in place,
             # reusing this DisplayManager whose time-control spec was captured at
             # game start. Re-resolve it from the current settings so a control
