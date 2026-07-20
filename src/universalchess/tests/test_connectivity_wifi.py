@@ -193,24 +193,123 @@ class TestConnectNetwork(unittest.TestCase):
         assert delete_idx < connect_idx
 
     @patch("universalchess.connectivity.wifi.subprocess.run")
-    def test_wrong_password_reported(self, mock_run):
-        """A no-secrets failure is reported as a wrong password.
+    def test_wpa3_sae_failure_falls_back_to_wpa2_psk(self, mock_run):
+        """A WPA3-SAE secrets failure retries as WPA2-PSK and can then succeed.
 
-        Failure manifestation: mapping this to a generic error would leave the
-        user unaware they should re-enter the password. Also asserts the poisoned
-        profile is removed after the failure so the retry is clean.
+        Why this exists: on the Raspberry Pi's Broadcom (brcmfmac) WiFi, the
+        WPA3-SAE handshake to a WPA2/WPA3 transition AP times out; NetworkManager
+        surfaces that as a no-secrets error identical to a wrong PSK, so the board
+        used to report "Wrong password" for a correct password (observed against a
+        real 'STARLINK_5G' AP). connect_network must instead retry forcing
+        WPA2-PSK, which a transition AP still accepts.
+
+        How the regression manifests: without the fallback the auto-connect's
+        secrets error is returned as "Wrong password" and no `connection add`
+        (wpa-psk) is ever issued -- so this asserts both the "Connected" result
+        AND that the retry used key-mgmt=wpa-psk followed by an explicit up.
+        """
+        mock_run.side_effect = [
+            _proc(stdout=CONNECTION_LISTING_UUID),  # pre-connect remove: listing (no STARLINK_5G)
+            _proc(returncode=4, stderr="Error: Secrets were required, but not provided."),  # auto (SAE) fails
+            _proc(stdout=CONNECTION_LISTING_UUID),  # post-fail remove: listing
+            _proc(returncode=0),                    # fallback: connection add (wpa-psk)
+            _proc(returncode=0),                    # fallback: connection up -> success
+        ]
+
+        ok, message = wifi.connect_network("STARLINK_5G", password="1234567890", log=MagicMock())
+
+        assert ok is True
+        assert message == "Connected"
+        add_calls = [c.args[0] for c in mock_run.call_args_list
+                     if c.args[0][:4] == ["sudo", "nmcli", "connection", "add"]]
+        assert len(add_calls) == 1
+        add_argv = add_calls[0]
+        assert add_argv[add_argv.index("wifi-sec.key-mgmt") + 1] == "wpa-psk"
+        # PSK is a keyword value (not an option), preserving the shell=False injection invariant.
+        assert add_argv[add_argv.index("wifi-sec.psk") + 1] == "1234567890"
+        up_calls = [c.args[0] for c in mock_run.call_args_list
+                    if c.args[0][:4] == ["sudo", "nmcli", "connection", "up"]]
+        assert len(up_calls) == 1
+        assert up_calls[0] == ["sudo", "nmcli", "connection", "up", "STARLINK_5G"]
+
+    @patch("universalchess.connectivity.wifi.subprocess.run")
+    def test_wrong_password_reported_after_psk_fallback_also_fails(self, mock_run):
+        """A genuinely wrong PSK fails the WPA2-PSK fallback too and is reported.
+
+        Why this exists: the WPA2-PSK fallback (unlike an SAE timeout) actually
+        runs a 4-way handshake that verifies the passphrase, so if it also returns
+        a secrets error the password really is wrong and must be reported as such.
+
+        How the regression manifests: if the fallback's failure were mapped to a
+        generic error, the user would not know to re-enter the password; if the
+        poisoned profile were left behind, the next retry would fail on a stale
+        profile. Asserts the "Wrong password" text after the full auto->fallback
+        path.
         """
         mock_run.side_effect = [
             _proc(stdout=CONNECTION_LISTING_UUID),  # pre-connect remove: listing
-            _proc(returncode=0),                    # pre-connect remove: delete
-            _proc(returncode=4, stderr="Error: Secrets were required, but not provided."),
-            _proc(stdout=""),                       # post-failure remove: listing (nothing)
+            _proc(returncode=4, stderr="Error: Secrets were required, but not provided."),  # auto (SAE) fails
+            _proc(stdout=CONNECTION_LISTING_UUID),  # post-fail remove: listing
+            _proc(returncode=0),                    # fallback: connection add
+            _proc(returncode=4, stderr="Error: Secrets were required, but not provided."),  # fallback up fails
+            _proc(stdout=CONNECTION_LISTING_UUID),  # fallback-failure remove: listing
         ]
 
-        ok, message = wifi.connect_network("DISPLAY", password="wrongpw", log=MagicMock())
+        ok, message = wifi.connect_network("STARLINK_5G", password="wrongpw", log=MagicMock())
 
         assert ok is False
         assert message == "Wrong password"
+
+    @patch("universalchess.connectivity.wifi.subprocess.run")
+    def test_non_auth_failure_does_not_trigger_psk_fallback(self, mock_run):
+        """A non-secrets failure (e.g. AP not found) skips the WPA2-PSK fallback.
+
+        Why this exists: the fallback is only meaningful for authentication/secrets
+        failures (the SAE-timeout signature). A different failure -- here nmcli's
+        "No network with SSID found" -- must not spawn a spurious wpa-psk profile.
+
+        How the regression manifests: an over-eager fallback would issue a
+        `connection add` for an AP that is not even present. Asserts the generic
+        error text AND that no `connection add` was attempted.
+        """
+        mock_run.side_effect = [
+            _proc(stdout=CONNECTION_LISTING_UUID),  # pre-connect remove: listing
+            _proc(returncode=10, stderr="Error: No network with SSID 'STARLINK_5G' found."),  # auto fails (not auth)
+            _proc(stdout=CONNECTION_LISTING_UUID),  # post-fail remove: listing
+        ]
+
+        ok, message = wifi.connect_network("STARLINK_5G", password="secret", log=MagicMock())
+
+        assert ok is False
+        assert message == "Connection failed"
+        assert [c for c in mock_run.call_args_list
+                if c.args[0][:4] == ["sudo", "nmcli", "connection", "add"]] == []
+
+    @patch("universalchess.connectivity.wifi.subprocess.run")
+    def test_no_password_secrets_failure_does_not_fall_back(self, mock_run):
+        """A secrets failure with no password given does not attempt WPA2-PSK.
+
+        Why this exists: the WPA2-PSK fallback needs a passphrase to set
+        wifi-sec.psk; a secured network selected without a password is a plain
+        "Connection failed", not a wrong-password case, and must not add a keyless
+        profile.
+
+        How the regression manifests: a fallback attempted with password=None
+        would build an invalid/keyless wpa-psk profile. Asserts no `connection
+        add` and the generic error text.
+        """
+        mock_run.side_effect = [
+            _proc(stdout=CONNECTION_LISTING_UUID),  # pre-connect remove: listing
+            _proc(returncode=4, stderr="Error: Secrets were required, but not provided."),  # auto fails
+            _proc(stdout=CONNECTION_LISTING_UUID),  # post-fail remove: listing
+        ]
+
+        ok, message = wifi.connect_network("STARLINK_5G", log=MagicMock())
+
+        assert ok is False
+        assert message == "Connection failed"
+        assert [c for c in mock_run.call_args_list
+                if c.args[0][:4] == ["sudo", "nmcli", "connection", "add"]] == []
 
     def test_format_connect_error_categories(self):
         """key-mgmt and unknown failures map to distinct, non-misleading text.

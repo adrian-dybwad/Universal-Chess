@@ -212,6 +212,19 @@ def connect_network(
     specified profile instead of failing with a "key-mgmt: property is missing"
     profile-update error. On failure the half-created profile is removed too. The
     message is a short, human-readable reason suitable for either surface.
+
+    WPA3-SAE fallback: the primary ``nmcli device wifi connect`` lets
+    NetworkManager pick the AP's advertised security. For a WPA3 (or WPA2/WPA3
+    transition) AP that is SAE, and the Raspberry Pi's Broadcom ``brcmfmac``
+    driver frequently fails to complete the SAE handshake -- wpa_supplicant logs
+    "Authentication ... timed out" and NetworkManager reports a no-secrets error
+    that is indistinguishable from a wrong PSK (observed against a real
+    ``STARLINK_5G`` AP, where a correct password was shown as "Wrong password").
+    So when the auto attempt fails with an authentication/secrets error and a
+    password was given, retry forcing WPA2-PSK, which a transition AP still
+    accepts. The WPA2-PSK 4-way handshake actually verifies the passphrase, so a
+    failure there is a genuine wrong-password (or a WPA3-only AP that refuses
+    PSK) and is reported as such.
     """
     log = _resolve_log(log)
     if not ssid:
@@ -231,6 +244,8 @@ def connect_network(
     #     dash-leading ssid in the `connect` positional is not reparsed as an
     #     option, and `wifi connect` has no dangerous dash-option.
     #   * password is the value of the `password` keyword, never an option.
+    # The same reasoning covers _connect_wpa2_psk_fallback below, where ssid and
+    # password are keyword values (con-name/ssid/wifi-sec.psk), never options.
     # If this is ever changed to shell=True or a string-built command, the
     # injection becomes real again -- re-open the finding rather than suppress it.
     command = ["sudo", "nmcli", "device", "wifi", "connect", ssid]
@@ -255,7 +270,76 @@ def connect_network(
     stderr = (result.stderr or "").strip()
     log.error(f"[WiFi] Failed to connect: {stderr}")
     remove_profiles(ssid, log)
+
+    # A secrets/auth failure with a password may be the brcmfmac SAE timeout
+    # rather than a wrong key (see docstring); retry forcing WPA2-PSK before
+    # trusting the "wrong password" verdict.
+    if password and _is_auth_failure(stderr):
+        return _connect_wpa2_psk_fallback(ssid, password, log)
+
     return False, format_connect_error(stderr, bool(password))
+
+
+def _connect_wpa2_psk_fallback(
+    ssid: str, password: str, log: logging.Logger
+) -> Tuple[bool, str]:
+    """Retry a failed connect by forcing a WPA2-PSK profile, bypassing WPA3-SAE.
+
+    See :func:`connect_network` for why this exists (brcmfmac cannot complete the
+    SAE handshake on many WPA3/transition APs). Builds an explicit ``wpa-psk``
+    profile with PMF optional -- a WPA2/WPA3 transition AP accepts it -- and
+    brings it up. Returns ``(success, message)``; on any failure the partial
+    profile is removed so a later retry starts clean, and the message is derived
+    from the real WPA2-PSK handshake result (which, unlike the SAE timeout, does
+    validate the passphrase).
+    """
+    log.info(f"[WiFi] Auto connect failed as SAE; retrying '{ssid}' forcing WPA2-PSK")
+    # shell=False + keyword values only (see SECURITY INVARIANT in connect_network).
+    add_command = [
+        "sudo", "nmcli", "connection", "add", "type", "wifi",
+        "con-name", ssid, "ifname", WLAN_INTERFACE, "ssid", ssid,
+        "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password,
+        "wifi-sec.pmf", "2",
+    ]
+    up_command = ["sudo", "nmcli", "connection", "up", ssid]
+    try:
+        add_result = subprocess.run(add_command, capture_output=True, text=True, timeout=_NMCLI_TIMEOUT_SECONDS, shell=False)  # noqa: S603  # nosec B603
+        if add_result.returncode != 0:
+            stderr = (add_result.stderr or "").strip()
+            log.error(f"[WiFi] WPA2-PSK profile add failed: {stderr}")
+            remove_profiles(ssid, log)
+            return False, format_connect_error(stderr, True)
+        up_result = subprocess.run(up_command, capture_output=True, text=True, timeout=_CONNECT_TIMEOUT_SECONDS, shell=False)  # noqa: S603  # nosec B603
+    except subprocess.TimeoutExpired:
+        log.error("[WiFi] WPA2-PSK fallback timed out")
+        remove_profiles(ssid, log)
+        return False, "Connection timed out"
+    except Exception as e:  # noqa: BLE001
+        log.error(f"[WiFi] WPA2-PSK fallback error: {e}")
+        remove_profiles(ssid, log)
+        return False, "Connection failed"
+
+    if up_result.returncode == 0:
+        log.info(f"[WiFi] Connected to {ssid} via WPA2-PSK fallback")
+        return True, "Connected"
+
+    stderr = (up_result.stderr or "").strip()
+    log.error(f"[WiFi] WPA2-PSK fallback failed: {stderr}")
+    remove_profiles(ssid, log)
+    return False, format_connect_error(stderr, True)
+
+
+def _is_auth_failure(stderr: str) -> bool:
+    """Return True if an nmcli failure looks like an authentication/secrets error.
+
+    NetworkManager emits these messages both for a genuinely wrong PSK and for a
+    WPA3-SAE handshake that never completed (the brcmfmac SAE timeout);
+    :func:`connect_network` uses this to decide whether the WPA2-PSK fallback is
+    worth trying, and :func:`format_connect_error` uses it for the password
+    verdict. Kept as one predicate so the two stay in sync.
+    """
+    lowered = stderr.lower()
+    return "secret" in lowered or "no-secrets" in lowered or "802-1x" in lowered
 
 
 def format_connect_error(stderr: str, had_password: bool) -> str:
@@ -263,10 +347,13 @@ def format_connect_error(stderr: str, had_password: bool) -> str:
 
     A wrong PSK surfaces from nmcli as a "Secrets were required, but not
     provided" / "no-secrets" style message; treat that as a bad password so the
-    user knows to re-enter it rather than assuming a system fault.
+    user knows to re-enter it rather than assuming a system fault. Note this is
+    only a reliable "wrong password" signal after the WPA2-PSK path has run (see
+    :func:`connect_network`): the same message from a raw WPA3-SAE attempt can be
+    a brcmfmac handshake timeout, not a bad key.
     """
     lowered = stderr.lower()
-    if had_password and ("secret" in lowered or "no-secrets" in lowered or "802-1x" in lowered):
+    if had_password and _is_auth_failure(stderr):
         return "Wrong password"
     if "property is missing" in lowered:
         # Should no longer happen now that stale profiles are removed first.
