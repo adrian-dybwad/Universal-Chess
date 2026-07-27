@@ -12,6 +12,7 @@ import {
   findExistingProfileName,
   isReservedProfileName,
   orderSchemaGroups,
+  suggestedEloRungRename,
   toOverridePayload,
   type Profile,
   type SchemaGroup,
@@ -182,5 +183,30 @@ describe('orderSchemaGroups', () => {
       { id: 'engine', label: 'Engine', fields: [] },
     ])
     expect(ordered.map((g) => g.id)).toEqual(['strength', 'engine'])
+  })
+})
+
+describe('suggestedEloRungRename', () => {
+  it('suggests a matching rung name when form Elo drifts from the section name', () => {
+    // Why: saving Elo under "1000 ELO" without rename leaves a lying name.
+    // Failure: null here skips the rename confirm.
+    expect(
+      suggestedEloRungRename('1000 ELO', {
+        UCI_LimitStrength: 'true',
+        UCI_Elo: '1400',
+      }),
+    ).toBe('1400 ELO')
+    expect(
+      suggestedEloRungRename('1000 ELO', {
+        UCI_LimitStrength: 'true',
+        UCI_Elo: '1000',
+      }),
+    ).toBeNull()
+    expect(
+      suggestedEloRungRename('Club Player', {
+        UCI_LimitStrength: 'true',
+        UCI_Elo: '1400',
+      }),
+    ).toBeNull()
   })
 })

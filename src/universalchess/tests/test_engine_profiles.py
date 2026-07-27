@@ -220,6 +220,72 @@ def test_strength_level_choices_labels_uncapped_default_as_unlimited(uci_file):
     ]
 
 
+def test_profile_display_label_annotates_drifted_elo_rung():
+    """Rung labels include the live Elo when it no longer matches the name.
+
+    Why: editing UCI_Elo under "1000 ELO" used to leave a lying picker row.
+    How regression shows: label stays bare "1000 ELO" while values play 1400.
+    """
+    assert ep.profile_display_label("1000 ELO", {
+        "UCI_LimitStrength": "true", "UCI_Elo": "1000",
+    }) == "1000 ELO"
+    assert ep.profile_display_label("1000 ELO", {
+        "UCI_LimitStrength": "true", "UCI_Elo": "1400",
+    }) == "1000 ELO (plays 1400)"
+    assert ep.profile_display_label("Club Player", {
+        "UCI_LimitStrength": "true", "UCI_Elo": "1600",
+    }) == "Club Player (1600 ELO)"
+
+
+def test_suggested_elo_rung_name_when_elo_drifts():
+    """Suggest renaming a rung section to match its live UCI_Elo."""
+    assert ep.suggested_elo_rung_name("1000 ELO", {
+        "UCI_LimitStrength": "true", "UCI_Elo": "1400",
+    }) == "1400 ELO"
+    assert ep.suggested_elo_rung_name("1000 ELO", {
+        "UCI_LimitStrength": "true", "UCI_Elo": "1000",
+    }) is None
+    assert ep.suggested_elo_rung_name("Club Player", {
+        "UCI_LimitStrength": "true", "UCI_Elo": "1400",
+    }) is None
+
+
+def test_strength_level_choices_labels_drifted_rung(tmp_path):
+    """Picker rows annotate a rung whose UCI_Elo no longer matches its name."""
+    path = tmp_path / "eng.uci"
+    path.write_text(
+        "[Default]\nUCI_LimitStrength = false\n\n"
+        "[1000 ELO]\nUCI_LimitStrength = true\nUCI_Elo = 1400\n",
+        encoding="utf-8",
+    )
+    choices = ep.strength_level_choices(str(path))
+    assert choices == [
+        {"value": "Default", "label": f"Default ({ep.UNLIMITED_LABEL})"},
+        {"value": "1000 ELO", "label": "1000 ELO (plays 1400)"},
+    ]
+
+
+def test_rename_profile_moves_section_and_keeps_values(uci_file, groups):
+    """rename_profile writes under the new name and removes the old section.
+
+    Why: Elo-rename offer must not leave an orphan 1000 ELO section. How
+    regression shows: both names remain, or the new section lacks OwnAttack.
+    """
+    # SAMPLE has [1200 ELO]; rename it to 1400 ELO with updated strength.
+    ep.rename_profile(
+        str(uci_file),
+        "1200 ELO",
+        "1400 ELO",
+        {"UCI_LimitStrength": True, "UCI_Elo": 1400},
+        groups,
+    )
+    names = ep.read_profile_names(str(uci_file))
+    assert "1200 ELO" not in names
+    assert "1400 ELO" in names
+    values = next(p["values"] for p in ep.read_profiles(str(uci_file)) if p["name"] == "1400 ELO")
+    assert values["UCI_Elo"] == "1400"
+
+
 def test_strength_level_choices_never_labels_capped_default_unlimited(tmp_path):
     """A file-model Default (no cap toggle, e.g. Maia) is never "Unlimited".
 

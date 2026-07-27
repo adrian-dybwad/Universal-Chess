@@ -221,3 +221,27 @@ export function shouldConfirmProfileReplace(
   if (!saveAsNew || !name) return false;
   return findExistingProfileName(name, existingNames) !== undefined;
 }
+
+const ELO_RUNG_NAME = /^(\d+)\s+ELO$/i;
+
+/**
+ * If ``sectionName`` is an Elo rung and form Elo drifted, return ``"{elo} ELO"``.
+ * Used to offer renaming ``1000 ELO`` -> ``1400 ELO`` on save.
+ */
+export function suggestedEloRungRename(
+  sectionName: string | null,
+  formValues: Record<string, string>,
+): string | null {
+  if (!sectionName) return null;
+  const match = sectionName.trim().match(ELO_RUNG_NAME);
+  if (!match) return null;
+  const limit = (formValues.UCI_LimitStrength ?? '').trim().toLowerCase();
+  if (limit === 'false') return null;
+  const raw = formValues.UCI_Elo;
+  if (raw === undefined || raw.trim() === '') return null;
+  const elo = Number(raw);
+  if (!Number.isFinite(elo)) return null;
+  const named = Number(match[1]);
+  if (elo === named) return null;
+  return `${elo} ELO`;
+}

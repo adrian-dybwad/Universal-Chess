@@ -14,6 +14,7 @@ import {
   orderSchemaGroups,
   profileFormIsDirty,
   shouldConfirmProfileReplace,
+  suggestedEloRungRename,
   toOverridePayload,
   valuesForProfile,
 } from './engineOptions';
@@ -172,9 +173,10 @@ export function EngineProfileEditor({
     // Editing the open profile must use its exact spelling. Remap only on
     // create/save-as (e.g. "1200 elo" -> "1200 ELO"); ambiguous twins leave
     // findExisting undefined so we do not silently overwrite the wrong section.
-    const writeName = saveAsNew
+    let writeName = saveAsNew
       ? (findExistingProfileName(name, existingNames) ?? name)
       : name;
+    let renameTo: string | null = null;
     if (
       saveAsNew
       && !findExistingProfileName(name, existingNames)
@@ -182,6 +184,28 @@ export function EngineProfileEditor({
     ) {
       setActionError(t('engineProfile.ambiguousCaseName', { name }));
       return;
+    }
+    if (!saveAsNew && selectedName) {
+      const suggested = suggestedEloRungRename(selectedName, formValues);
+      if (suggested) {
+        const target = findExistingProfileName(suggested, existingNames) ?? suggested;
+        if (
+          window.confirm(
+            t('engineProfile.confirmEloRename', { from: selectedName, to: target }),
+          )
+        ) {
+          if (
+            target !== selectedName
+            && existingNames.some((n) => n.toLowerCase() === target.toLowerCase())
+            && findExistingProfileName(target, existingNames) !== selectedName
+          ) {
+            if (!window.confirm(t('engineProfile.confirmReplace', { name: target }))) {
+              return;
+            }
+          }
+          renameTo = target;
+        }
+      }
     }
     if (
       shouldConfirmProfileReplace(
@@ -202,15 +226,19 @@ export function EngineProfileEditor({
       const resp = await apiFetch(`/api/engines/${engineName}/profiles/${encodeURIComponent(writeName)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ values: payload }),
+        body: JSON.stringify({
+          values: payload,
+          ...(renameTo ? { rename_to: renameTo } : {}),
+        }),
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || data.success === false) {
         setActionError(data.error || t('engineProfile.saveFailedStatus', { status: resp.status }));
         return;
       }
-      setNotice(t('engineProfile.saved', { name: writeName }));
-      await fetchProfiles(writeName);
+      const savedName = typeof data.name === 'string' ? data.name : (renameTo ?? writeName);
+      setNotice(t('engineProfile.saved', { name: savedName }));
+      await fetchProfiles(savedName);
     } catch (e) {
       setActionError(t('engineProfile.saveFailed', { error: e instanceof Error ? e.message : t('engineProfile.unknownError') }));
     } finally {

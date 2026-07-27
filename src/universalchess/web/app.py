@@ -4821,10 +4821,12 @@ def api_reconcile_engine_profile_case(engine_name):
 def api_save_engine_profile(engine_name, profile_name):
     """Create or replace a profile. Body: ``{"values": {key: value}}``.
 
-    Values are validated against the probed engine schema (unknown keys and
-    out-of-range values are rejected, not clamped, because engines apply them
-    verbatim) before the section is written atomically. The whole section is
-    replaced, so the client must submit the complete set of keys to retain.
+    Optional ``rename_to`` writes under a new section name and removes
+    ``profile_name`` (Elo-rung rename when ``UCI_Elo`` drifts). Values are
+    validated against the probed engine schema (unknown keys and out-of-range
+    values are rejected, not clamped, because engines apply them verbatim)
+    before the section is written atomically. The whole section is replaced, so
+    the client must submit the complete set of keys to retain.
     """
     config_path = _config_uci_path(engine_name)
     if config_path is None:
@@ -4854,8 +4856,53 @@ def api_save_engine_profile(engine_name, profile_name):
     value_error = engine_profiles.validation_error(groups, values)
     if value_error is not None:
         return jsonify({"success": False, "error": value_error}), 400
-    # Ambiguous case twins: refuse rather than overwriting the wrong section.
+    rename_to = body.get("rename_to")
     names = engine_profiles.read_profile_names(config_path)
+
+    if rename_to is not None:
+        if not isinstance(rename_to, str) or not rename_to.strip():
+            return jsonify({"success": False, "error": "rename_to must be a non-empty string"}), 400
+        rename_to = rename_to.strip()
+        if not engine_profiles.is_valid_profile_name(rename_to):
+            if (
+                rename_to.casefold()
+                == engine_profiles.SEEDED_DEFAULT_PROFILE.casefold()
+            ):
+                return jsonify({
+                    "success": False,
+                    "error": "Default is reserved; save under a new profile name",
+                }), 400
+            return jsonify({"success": False, "error": "Invalid rename_to name"}), 400
+        if profile_name not in names:
+            matches = engine_profiles.casefold_matches(names, profile_name)
+            if len(matches) > 1:
+                return jsonify({
+                    "success": False,
+                    "error": (
+                        f"Ambiguous profile name: case variants {matches} exist. "
+                        "Keep one spelling first."
+                    ),
+                    "case_collisions": _case_collisions(config_path),
+                }), 409
+            if not matches:
+                return jsonify({"success": False, "error": "Profile not found"}), 404
+        if rename_to not in names:
+            matches = engine_profiles.casefold_matches(names, rename_to)
+            if len(matches) > 1:
+                return jsonify({
+                    "success": False,
+                    "error": (
+                        f"Ambiguous profile name: case variants {matches} exist. "
+                        "Keep one spelling first."
+                    ),
+                    "case_collisions": _case_collisions(config_path),
+                }), 409
+        written = engine_profiles.rename_profile(
+            config_path, profile_name, rename_to, values, groups,
+        )
+        return jsonify({"success": True, "name": written})
+
+    # Ambiguous case twins: refuse rather than overwriting the wrong section.
     if profile_name not in names:
         matches = engine_profiles.casefold_matches(names, profile_name)
         if len(matches) > 1:

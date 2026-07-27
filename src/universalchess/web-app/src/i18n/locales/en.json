@@ -762,12 +762,13 @@
     "createProfile": "Create profile",
     "saveChanges": "Save changes",
     "caseCollisionTitle": "Duplicate profile names (different capitalization)",
-    "caseCollisionHelp": "These profiles differ only by letter case. Saving one used to overwrite another. Keep the spelling you want; the others are removed.",
+    "caseCollisionHelp": "These profiles differ only by letter case, so they cannot both be kept. Choose the spelling to keep; the others are removed.",
     "caseCollisionKeep": "Keep \"{{name}}\"",
     "caseCollisionConfirm": "Keep \"{{name}}\" and delete {{others}}?",
     "caseCollisionFailed": "Could not resolve duplicates: {{error}}",
     "caseCollisionDone": "Kept \"{{name}}\"; removed {{removed}}.",
-    "ambiguousCaseName": "Several profiles match \"{{name}}\" with different capitalization. Resolve the duplicates below first."
+    "ambiguousCaseName": "Several profiles match \"{{name}}\" with different capitalization. Resolve the duplicates below first.",
+    "confirmEloRename": "Elo no longer matches the profile name. Rename \"{{from}}\" to \"{{to}}\"?"
   },
   "connectivity": {
     "title": "Connectivity",

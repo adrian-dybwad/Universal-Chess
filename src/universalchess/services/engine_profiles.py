@@ -28,6 +28,7 @@ only the targeted profile section, writing atomically.
 
 import configparser
 import os
+import re
 import tempfile
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union
@@ -50,7 +51,11 @@ __all__ = [
     "strength_level_choices",
     "UNLIMITED_LABEL",
     "SEEDED_DEFAULT_PROFILE",
+    "default_section_picker_label",
+    "profile_display_label",
+    "suggested_elo_rung_name",
     "write_profile",
+    "rename_profile",
     "delete_profile",
     "delete_blocked_reason",
 ]
@@ -78,6 +83,10 @@ UNLIMITED_LABEL = "Unlimited"
 # create, overwrite, or delete a profile with this name (edits save-as under a
 # new name). Every probed engine gets one via ``uci_schema.derive_sections``.
 SEEDED_DEFAULT_PROFILE = "Default"
+
+# Seeded ladder / display names like "1200 ELO". Used to detect when a section
+# name embeds an Elo that may drift from the live UCI_Elo value.
+_ELO_RUNG_NAME = re.compile(r"^(\d+)\s+ELO$", re.IGNORECASE)
 
 ProfileValue = Union[int, str, bool]
 
@@ -544,6 +553,75 @@ def _default_profile_analysis(
     return (False, alias)
 
 
+def _effective_uci_elo(values: Dict[str, str]) -> Optional[int]:
+    """Return the capped UCI_Elo from profile values, or None when uncapped/absent.
+
+    When ``UCI_LimitStrength`` is explicitly false the Elo setting is ignored by
+    the engine, so there is no truthful single Elo to show.
+    """
+    limit = (values.get("UCI_LimitStrength") or "").strip().lower()
+    if limit == "false":
+        return None
+    raw = values.get("UCI_Elo")
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        return int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def profile_display_label(name: str, values: Optional[Dict[str, str]] = None) -> str:
+    """Return a picker/editor label that stays truthful about playing strength.
+
+    ``Default`` is left to :func:`default_section_picker_label` / callers that
+    know uncapped vs alias analysis. For other sections:
+
+    * Name is ``N ELO`` and live capped Elo is ``N`` -> ``N ELO`` (unchanged).
+    * Name is ``N ELO`` but live Elo is ``M`` -> ``N ELO (plays M)``.
+    * Name is ``N ELO`` and strength is uncapped -> ``N ELO (Unlimited)``.
+    * Custom name with a capped Elo -> ``Name (M ELO)``.
+    * Otherwise the bare section name.
+    """
+    vals = values or {}
+    if name == SEEDED_DEFAULT_PROFILE:
+        return name
+    elo = _effective_uci_elo(vals)
+    match = _ELO_RUNG_NAME.match(name.strip())
+    if match:
+        named_elo = int(match.group(1))
+        limit = (vals.get("UCI_LimitStrength") or "").strip().lower()
+        if limit == "false":
+            return f"{name} ({UNLIMITED_LABEL})"
+        if elo is None:
+            return name
+        if elo == named_elo:
+            return name
+        return f"{name} (plays {elo})"
+    if elo is not None:
+        return f"{name} ({elo} ELO)"
+    return name
+
+
+def suggested_elo_rung_name(name: str, values: Dict[str, str]) -> Optional[str]:
+    """If ``name`` is an Elo rung whose live Elo drifted, return the matching rung name.
+
+    Used by the editor to offer renaming ``1000 ELO`` -> ``1400 ELO`` when the
+    user changes ``UCI_Elo``. Returns None when no rename is appropriate
+    (not a rung name, uncapped, Elo matches the name, or Elo missing).
+    """
+    match = _ELO_RUNG_NAME.match((name or "").strip())
+    if not match:
+        return None
+    elo = _effective_uci_elo(values)
+    if elo is None:
+        return None
+    named_elo = int(match.group(1))
+    if elo == named_elo:
+        return None
+    return f"{elo} ELO"
+
+
 def default_section_picker_label(
     *, is_uncapped: bool, alias_rung_name: Optional[str]
 ) -> str:
@@ -580,11 +658,15 @@ def strength_level_choices(
       while ``Default`` stays selectable -- pick it and the slot tracks the
       default if that net ever changes.
 
-    Otherwise the label is the section name. A ``Default`` entry is always present
-    (inserted first when the config defines none) so the stored default always
-    has a matching row. The profile editor uses the same labels.
+    Otherwise the label comes from :func:`profile_display_label` so a rung whose
+    ``UCI_Elo`` drifted from its name (e.g. section ``1000 ELO`` playing 1400)
+    shows as ``1000 ELO (plays 1400)``, and a custom profile with Elo shows
+    ``Name (1400 ELO)``. A ``Default`` entry is always present (inserted first
+    when the config defines none) so the stored default always has a matching
+    row. The profile editor uses the same labels.
     """
     profiles = read_profiles(uci_path, defaults_path)
+    values_by_name = {profile["name"]: profile["values"] for profile in profiles}
     names = [profile["name"] for profile in profiles]
     if not any(name == SEEDED_DEFAULT_PROFILE for name in names):
         names.insert(0, SEEDED_DEFAULT_PROFILE)
@@ -597,7 +679,7 @@ def strength_level_choices(
     def label_for(name: str) -> str:
         if name == SEEDED_DEFAULT_PROFILE:
             return default_label
-        return name
+        return profile_display_label(name, values_by_name.get(name))
 
     return [{"value": name, "label": label_for(name)} for name in names]
 
@@ -612,7 +694,9 @@ def strength_section_display(
     the raw section (e.g. ``Default``); this resolves it to what the engine
     actually plays:
 
-    * a non-``Default`` section is its own name (``"1500 ELO"``);
+    * a non-``Default`` Elo rung uses the live capped Elo when present
+      (``"1400 ELO"``) so a renamed-in-values rung stays truthful on the card;
+    * other non-``Default`` sections use their name (``"Club Player"``);
     * an uncapped ``Default`` -> ``"Unlimited"``;
     * a net-selected ``Default`` that copies a rung -> that rung (``"1500 ELO"``),
       so the card shows the concrete ELO rather than a bare, uninformative
@@ -624,6 +708,18 @@ def strength_section_display(
     without nested parentheses.
     """
     if section != "Default":
+        profiles = read_profiles(uci_path, defaults_path)
+        values = next(
+            (p["values"] for p in profiles if p["name"] == section),
+            {},
+        )
+        if _ELO_RUNG_NAME.match(section.strip()):
+            elo = _effective_uci_elo(values)
+            if elo is not None:
+                return f"{elo} ELO"
+            limit = (values.get("UCI_LimitStrength") or "").strip().lower()
+            if limit == "false":
+                return UNLIMITED_LABEL
         return section
     profiles = read_profiles(uci_path, defaults_path)
     is_uncapped, alias = _default_profile_analysis(profiles)
@@ -673,6 +769,59 @@ def write_profile(
     # Assigning a fresh mapping replaces the section's local keys wholesale.
     parser[section] = dict(coerced)
     _atomic_write(parser, uci_path)
+
+
+def rename_profile(
+    uci_path: str,
+    old_name: str,
+    new_name: str,
+    values: Dict[str, object],
+    groups: Tuple[ProfileGroup, ...],
+    defaults_path: Optional[str] = None,
+) -> str:
+    """Write ``values`` under ``new_name`` and remove ``old_name`` when different.
+
+    Returns the on-disk section spelling written. Used when an Elo rung's
+    ``UCI_Elo`` drifts and the editor renames ``1000 ELO`` -> ``1400 ELO``.
+    ``new_name`` may already exist (replace). Raises
+    :class:`ProfileValidationError` on invalid/reserved/ambiguous names.
+    """
+    if old_name == SEEDED_DEFAULT_PROFILE or is_reserved_profile_name(old_name):
+        raise ProfileValidationError("cannot rename the Default profile")
+    if not is_valid_profile_name(new_name):
+        raise ProfileValidationError(f"invalid profile name '{new_name}'")
+    coerced = validate_profile_values(groups, values)
+
+    parser = _load(uci_path, defaults_path)
+    sections = list(parser.sections())
+    if old_name not in sections:
+        matches = casefold_matches(sections, old_name)
+        if len(matches) == 1:
+            old_name = matches[0]
+        elif len(matches) > 1:
+            raise ProfileValidationError(
+                f"ambiguous profile name '{old_name}': case variants "
+                f"{matches} exist; keep one spelling first"
+            )
+        else:
+            raise ProfileValidationError(f"profile '{old_name}' not found")
+
+    if new_name in sections:
+        target = new_name
+    else:
+        matches = casefold_matches(sections, new_name)
+        if len(matches) > 1:
+            raise ProfileValidationError(
+                f"ambiguous profile name '{new_name}': case variants "
+                f"{matches} exist; keep one spelling first"
+            )
+        target = matches[0] if matches else new_name
+
+    parser[target] = dict(coerced)
+    if old_name != target and parser.has_section(old_name):
+        parser.remove_section(old_name)
+    _atomic_write(parser, uci_path)
+    return target
 
 
 def delete_blocked_reason(name: str) -> Optional[str]:
