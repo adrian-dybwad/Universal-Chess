@@ -64,6 +64,7 @@ export function EngineProfileEditor({
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [caseCollisions, setCaseCollisions] = useState<string[][]>([]);
 
   // Opened from a mid-page engines list. Document scroll only -- scrollIntoView
   // on the editor aligns it under the sticky navbar and leaves Settings chrome
@@ -100,6 +101,7 @@ export function EngineProfileEditor({
         const ordered = orderSchemaGroups(data.schema ?? []);
         setSchema(ordered);
         setProfiles(data.profiles);
+        setCaseCollisions(data.case_collisions ?? []);
 
         const names = data.profiles.map((p) => p.name);
         const next = selectAfter && names.includes(selectAfter) ? selectAfter : names[0] ?? null;
@@ -167,7 +169,20 @@ export function EngineProfileEditor({
       return;
     }
     const existingNames = profiles.map((p) => p.name);
-    const writeName = findExistingProfileName(name, existingNames) ?? name;
+    // Editing the open profile must use its exact spelling. Remap only on
+    // create/save-as (e.g. "1200 elo" -> "1200 ELO"); ambiguous twins leave
+    // findExisting undefined so we do not silently overwrite the wrong section.
+    const writeName = saveAsNew
+      ? (findExistingProfileName(name, existingNames) ?? name)
+      : name;
+    if (
+      saveAsNew
+      && !findExistingProfileName(name, existingNames)
+      && existingNames.some((n) => n.toLowerCase() === name.toLowerCase())
+    ) {
+      setActionError(t('engineProfile.ambiguousCaseName', { name }));
+      return;
+    }
     if (
       shouldConfirmProfileReplace(
         saveAsNew,
@@ -243,6 +258,7 @@ export function EngineProfileEditor({
       const ordered = orderSchemaGroups(data.schema ?? []);
       setSchema(ordered);
       setProfiles(data.profiles ?? []);
+      setCaseCollisions(data.case_collisions ?? []);
       const names = (data.profiles ?? []).map((p: Profile) => p.name);
       const next = names[0] ?? null;
       setSelectedName(next);
@@ -257,6 +273,50 @@ export function EngineProfileEditor({
       setSaving(false);
     }
   }, [engineName, loadField, onProfilesReset, t]);
+
+  const reconcileCase = useCallback(async (keep: string, group: string[]) => {
+    const others = group.filter((n) => n !== keep);
+    if (!window.confirm(t('engineProfile.caseCollisionConfirm', {
+      name: keep,
+      others: others.map((n) => `"${n}"`).join(', '),
+    }))) {
+      return;
+    }
+    setSaving(true);
+    setActionError(null);
+    setNotice(null);
+    try {
+      const resp = await apiFetch(`/api/engines/${engineName}/profiles/reconcile-case`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keep }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.success === false) {
+        setActionError(data.error || t('engineProfile.caseCollisionFailed', { error: `HTTP ${resp.status}` }));
+        return;
+      }
+      setProfiles(data.profiles ?? []);
+      setCaseCollisions(data.case_collisions ?? []);
+      const names = (data.profiles ?? []).map((p: Profile) => p.name);
+      const next = names.includes(keep) ? keep : names[0] ?? null;
+      setSelectedName(next);
+      setIsNew(false);
+      setNameInput('');
+      loadField(schema, data.profiles ?? [], next);
+      const removed = (data.removed ?? []) as string[];
+      setNotice(t('engineProfile.caseCollisionDone', {
+        name: keep,
+        removed: removed.map((n) => `"${n}"`).join(', ') || '—',
+      }));
+    } catch (e) {
+      setActionError(t('engineProfile.caseCollisionFailed', {
+        error: e instanceof Error ? e.message : t('engineProfile.unknownError'),
+      }));
+    } finally {
+      setSaving(false);
+    }
+  }, [engineName, loadField, schema, t]);
 
   const profileOptions = useMemo(
     () => profiles.map((p) => ({ value: p.name, label: p.label ?? p.name })),
@@ -300,6 +360,35 @@ export function EngineProfileEditor({
         </Card>
       ) : (
         <>
+          {caseCollisions.length > 0 && (
+            <Card className="mb-6">
+              <h3 className="card-title">{t('engineProfile.caseCollisionTitle')}</h3>
+              <p className="text-muted">{t('engineProfile.caseCollisionHelp')}</p>
+              {caseCollisions.map((group) => (
+                <div key={group.join('\0')} className="profile-case-collision-group">
+                  <div className="profile-case-collision-names">
+                    {group.map((name) => (
+                      <code key={name}>{name}</code>
+                    ))}
+                  </div>
+                  <div className="profile-case-collision-actions">
+                    {group.map((name) => (
+                      <Button
+                        key={`keep-${name}`}
+                        variant="secondary"
+                        size="sm"
+                        disabled={saving}
+                        onClick={() => void reconcileCase(name, group)}
+                      >
+                        {t('engineProfile.caseCollisionKeep', { name })}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </Card>
+          )}
+
           <Card className="mb-6">
             <div className="profile-editor-select">
               <FormRow

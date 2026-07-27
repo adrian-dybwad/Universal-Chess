@@ -605,6 +605,95 @@ def test_matching_section_name_is_case_insensitive():
     assert ep.matching_section_name(names, "Fresh") is None
 
 
+def test_matching_section_name_prefers_exact_when_case_twins_exist():
+    """Exact spelling wins when both Attacker and attacker are on disk.
+
+    Why: remapping to the first casefold match silently overwrote the other
+    twin. How regression shows: matching_section_name('attacker') returns
+    'Attacker' when both exist.
+    """
+    names = ["Attacker", "attacker"]
+    assert ep.matching_section_name(names, "attacker") == "attacker"
+    assert ep.matching_section_name(names, "Attacker") == "Attacker"
+    assert ep.matching_section_name(names, "ATTACKER") is None  # ambiguous
+
+
+def test_case_collision_groups_lists_twins():
+    """case_collision_groups returns only groups with two or more spellings."""
+    assert ep.case_collision_groups(["Default", "Attacker", "1200 ELO"]) == []
+    assert ep.case_collision_groups(["Attacker", "1200 ELO", "attacker"]) == [
+        ["Attacker", "attacker"],
+    ]
+
+
+def test_reconcile_case_duplicate_keeps_chosen_spelling(uci_file, groups):
+    """Reconcile keeps one twin's values and removes the other section.
+
+    Why: operators need a safe way to heal legacy case-duplicate .uci files.
+    How regression shows: both sections remain, or the kept section's values
+    are replaced by the discarded twin's.
+    """
+    # Bypass write_profile (which remaps sole casefold matches) to create a
+    # legacy twin beside Attacker (OwnAttack=125 in SAMPLE_UCI).
+    with open(uci_file, "a", encoding="utf-8") as handle:
+        handle.write("\n[attacker]\nOwnAttack = 50\n")
+    names = ep.read_profile_names(str(uci_file))
+    assert "Attacker" in names and "attacker" in names
+
+    removed = ep.reconcile_case_duplicate(str(uci_file), "Attacker")
+    assert removed == ["attacker"]
+    names = ep.read_profile_names(str(uci_file))
+    assert "Attacker" in names
+    assert "attacker" not in names
+    profiles = {p["name"]: p["values"] for p in ep.read_profiles(str(uci_file))}
+    assert profiles["Attacker"]["OwnAttack"] == "125"
+
+
+def test_write_refuses_ambiguous_case_when_no_exact_match(uci_file, groups):
+    """Writing a third casing when twins already exist is rejected.
+
+    Why: without an exact match, remapping would pick an arbitrary twin.
+    How regression shows: write succeeds and one twin's values change.
+    """
+    with open(uci_file, "a", encoding="utf-8") as handle:
+        handle.write("\n[attacker]\nOwnAttack = 50\n")
+    before = {
+        p["name"]: p["values"]
+        for p in ep.read_profiles(str(uci_file))
+        if p["name"].casefold() == "attacker"
+    }
+    with pytest.raises(ep.ProfileValidationError, match="ambiguous"):
+        ep.write_profile(str(uci_file), "ATTACKER", {"OwnAttack": 99}, groups)
+    after = {
+        p["name"]: p["values"]
+        for p in ep.read_profiles(str(uci_file))
+        if p["name"].casefold() == "attacker"
+    }
+    assert after == before
+
+
+def test_write_exact_twin_does_not_clobber_other_casing(uci_file, groups):
+    """Saving [attacker] leaves [Attacker] untouched when both exist.
+
+    Why: the silent overwrite the user hit. How regression shows: Attacker
+    OwnAttack changes when writing attacker.
+    """
+    with open(uci_file, "a", encoding="utf-8") as handle:
+        handle.write("\n[attacker]\nOwnAttack = 50\n")
+    before_upper = next(
+        p for p in ep.read_profiles(str(uci_file)) if p["name"] == "Attacker"
+    )
+    ep.write_profile(str(uci_file), "attacker", {"OwnAttack": 77}, groups)
+    after_upper = next(
+        p for p in ep.read_profiles(str(uci_file)) if p["name"] == "Attacker"
+    )
+    after_lower = next(
+        p for p in ep.read_profiles(str(uci_file)) if p["name"] == "attacker"
+    )
+    assert after_upper == before_upper
+    assert after_lower["values"]["OwnAttack"] == "77"
+
+
 # ---------------------------------------------------------------------------
 # Writing
 # ---------------------------------------------------------------------------

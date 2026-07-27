@@ -331,6 +331,36 @@
   flex-wrap: wrap;
 }
 
+.profile-case-collision-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border, rgba(0, 0, 0, 0.12));
+}
+
+.profile-case-collision-group:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+.profile-case-collision-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.profile-case-collision-names code {
+  font-size: var(--text-sm, 0.875rem);
+}
+
+.profile-case-collision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
 .profile-editor-footer {
   position: sticky;
   bottom: 0;

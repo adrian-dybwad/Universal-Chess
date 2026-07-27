@@ -760,7 +760,14 @@
     "newProfilePlaceholder": "p. ej. Mi agresivo",
     "saving": "Guardando...",
     "createProfile": "Crear perfil",
-    "saveChanges": "Guardar cambios"
+    "saveChanges": "Guardar cambios",
+    "caseCollisionTitle": "Nombres de perfil duplicados (distinta capitalización)",
+    "caseCollisionHelp": "Estos perfiles solo difieren en mayúsculas/minúsculas. Guardar uno podía sobrescribir otro. Conserva la grafía que quieras; las demás se eliminan.",
+    "caseCollisionKeep": "Conservar «{{name}}»",
+    "caseCollisionConfirm": "¿Conservar «{{name}}» y eliminar {{others}}?",
+    "caseCollisionFailed": "No se pudieron resolver los duplicados: {{error}}",
+    "caseCollisionDone": "Se conservó «{{name}}»; se eliminaron {{removed}}.",
+    "ambiguousCaseName": "Varios perfiles coinciden con «{{name}}» con distinta capitalización. Resuelve los duplicados abajo primero."
   },
   "connectivity": {
     "title": "Conectividad",

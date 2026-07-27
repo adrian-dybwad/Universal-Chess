@@ -4708,6 +4708,7 @@ def api_get_engine_uci_schema(engine_name):
     except uci_schema.EngineProbeError:
         return jsonify({
             "engine": engine_name, "editable": False, "schema": [], "profiles": [],
+            "case_collisions": [],
         })
     return jsonify({
         "engine": engine_name,
@@ -4717,6 +4718,7 @@ def api_get_engine_uci_schema(engine_name):
         # (Default (Unlimited) / Default (1500 ELO)) so the profile editor list
         # never drifts from Players/board strength rows.
         "profiles": _profiles_with_labels(config_path),
+        "case_collisions": _case_collisions(config_path),
     })
 
 
@@ -4730,6 +4732,13 @@ def _profiles_with_labels(config_path):
         {**profile, "label": labels.get(profile["name"], profile["name"])}
         for profile in engine_profiles.read_profiles(config_path)
     ]
+
+
+def _case_collisions(config_path):
+    """Case-only duplicate profile name groups for the reconcile UI."""
+    return engine_profiles.case_collision_groups(
+        engine_profiles.read_profile_names(config_path)
+    )
 
 
 # Profile mutations use POST, not PUT/DELETE: the app's WebDAV before_request
@@ -4760,6 +4769,51 @@ def api_reset_engine_profiles(engine_name):
         "editable": True,
         "schema": engine_profiles.schema_to_json(groups),
         "profiles": _profiles_with_labels(config_path),
+        "case_collisions": _case_collisions(config_path),
+    })
+
+
+@app.route("/api/engines/<engine_name>/profiles/reconcile-case", methods=["POST"])
+def api_reconcile_engine_profile_case(engine_name):
+    """Keep one spelling of a case-colliding profile and delete the twins.
+
+    Body: ``{"keep": "<exact section name>"}``. Used when a ``.uci`` file has
+    both e.g. ``[Attacker]`` and ``[attacker]`` -- saving either used to
+    overwrite the other via case-insensitive match. 404 when the keep name is
+    absent; 400 when there are no case twins or a twin is reserved.
+    """
+    config_path = _config_uci_path(engine_name)
+    if config_path is None:
+        return jsonify({"success": False, "error": "Invalid engine"}), 400
+    body = request.get_json(silent=True) or {}
+    keep = body.get("keep")
+    if not isinstance(keep, str) or not keep:
+        return jsonify({"success": False, "error": "keep is required"}), 400
+    names = engine_profiles.read_profile_names(config_path)
+    if keep not in names:
+        return jsonify({"success": False, "error": "Profile not found"}), 404
+    group = next(
+        (g for g in engine_profiles.case_collision_groups(names) if keep in g),
+        None,
+    )
+    if group is None:
+        return jsonify({
+            "success": False,
+            "error": "No case-variant duplicates for that profile",
+        }), 400
+    for twin in group:
+        if twin == keep:
+            continue
+        blocked = engine_profiles.delete_blocked_reason(twin)
+        if blocked is not None:
+            return jsonify({"success": False, "error": blocked}), 400
+    removed = engine_profiles.reconcile_case_duplicate(config_path, keep)
+    return jsonify({
+        "success": True,
+        "keep": keep,
+        "removed": removed,
+        "profiles": _profiles_with_labels(config_path),
+        "case_collisions": _case_collisions(config_path),
     })
 
 
@@ -4800,6 +4854,19 @@ def api_save_engine_profile(engine_name, profile_name):
     value_error = engine_profiles.validation_error(groups, values)
     if value_error is not None:
         return jsonify({"success": False, "error": value_error}), 400
+    # Ambiguous case twins: refuse rather than overwriting the wrong section.
+    names = engine_profiles.read_profile_names(config_path)
+    if profile_name not in names:
+        matches = engine_profiles.casefold_matches(names, profile_name)
+        if len(matches) > 1:
+            return jsonify({
+                "success": False,
+                "error": (
+                    f"Ambiguous profile name: case variants {matches} exist. "
+                    "Keep one spelling first."
+                ),
+                "case_collisions": _case_collisions(config_path),
+            }), 409
     engine_profiles.write_profile(config_path, profile_name, values, groups)
     return jsonify({"success": True})
 
@@ -4820,6 +4887,20 @@ def api_delete_engine_profile(engine_name, profile_name):
     blocked = engine_profiles.delete_blocked_reason(profile_name)
     if blocked is not None:
         return jsonify({"success": False, "error": blocked}), 400
+    names = engine_profiles.read_profile_names(config_path)
+    if profile_name not in names:
+        matches = engine_profiles.casefold_matches(names, profile_name)
+        if len(matches) > 1:
+            return jsonify({
+                "success": False,
+                "error": (
+                    f"Ambiguous profile name: case variants {matches} exist. "
+                    "Keep one spelling first."
+                ),
+                "case_collisions": _case_collisions(config_path),
+            }), 409
+        if not matches:
+            return jsonify({"success": False, "error": "Profile not found"}), 404
     removed = engine_profiles.delete_profile(config_path, profile_name)
     if not removed:
         return jsonify({"success": False, "error": "Profile not found"}), 404

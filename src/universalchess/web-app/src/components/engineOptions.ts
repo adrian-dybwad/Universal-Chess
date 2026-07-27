@@ -47,6 +47,8 @@ export interface SchemaResponse {
   editable: boolean;
   schema: SchemaGroup[];
   profiles: Profile[];
+  /** Groups of profile names that differ only by case (legacy twins). */
+  case_collisions?: string[][];
 }
 
 // Group id -> shared menu icon. The probed schema groups options into
@@ -167,16 +169,39 @@ export function isReservedProfileName(name: string): boolean {
 }
 
 /**
- * On-disk section spelling that matches ``name`` case-insensitively, if any.
- * Used so save-as onto "1200 elo" updates the existing "1200 ELO" section.
+ * On-disk section spelling that matches ``name``.
+ *
+ * Prefers an exact match so editing ``attacker`` does not remap to ``Attacker``
+ * when both exist. A sole case-insensitive match still remaps (``1200 elo`` ->
+ * ``1200 ELO``). Multiple case-only variants return undefined (ambiguous).
  */
 export function findExistingProfileName(
   name: string,
   existingNames: readonly string[],
 ): string | undefined {
   if (!name) return undefined;
+  if (existingNames.includes(name)) return name;
   const folded = name.toLowerCase();
-  return existingNames.find((existing) => existing.toLowerCase() === folded);
+  const matches = existingNames.filter((existing) => existing.toLowerCase() === folded);
+  if (matches.length === 1) return matches[0];
+  return undefined;
+}
+
+/**
+ * Groups of two or more profile names that differ only by case.
+ */
+export function caseCollisionGroups(names: readonly string[]): string[][] {
+  const buckets = new Map<string, string[]>();
+  const order: string[] = [];
+  for (const name of names) {
+    const key = name.toLowerCase();
+    if (!buckets.has(key)) {
+      order.push(key);
+      buckets.set(key, []);
+    }
+    buckets.get(key)!.push(name);
+  }
+  return order.map((key) => buckets.get(key)!).filter((group) => group.length > 1);
 }
 
 /**

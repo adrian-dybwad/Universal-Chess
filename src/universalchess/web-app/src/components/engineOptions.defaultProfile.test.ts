@@ -87,6 +87,15 @@ describe('findExistingProfileName', () => {
     expect(findExistingProfileName('attacker', names)).toBe('Attacker')
     expect(findExistingProfileName('Fresh', names)).toBeUndefined()
   })
+
+  it('prefers exact spelling when case twins exist', () => {
+    // Why: remapping attacker -> Attacker silently overwrote the upper twin.
+    // Failure: returns 'Attacker' for input 'attacker' when both exist.
+    const names = ['Attacker', 'attacker']
+    expect(findExistingProfileName('attacker', names)).toBe('attacker')
+    expect(findExistingProfileName('Attacker', names)).toBe('Attacker')
+    expect(findExistingProfileName('ATTACKER', names)).toBeUndefined()
+  })
 })
 
 describe('shouldConfirmProfileReplace', () => {

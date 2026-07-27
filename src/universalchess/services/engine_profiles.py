@@ -39,6 +39,9 @@ __all__ = [
     "is_valid_profile_name",
     "is_reserved_profile_name",
     "matching_section_name",
+    "casefold_matches",
+    "case_collision_groups",
+    "reconcile_case_duplicate",
     "ProfileValidationError",
     "validate_profile_values",
     "validation_error",
@@ -172,19 +175,77 @@ def is_reserved_profile_name(name: str) -> bool:
 
 
 def matching_section_name(existing_names: List[str], name: str) -> Optional[str]:
-    """Return the on-disk section spelling that matches ``name`` case-insensitively.
+    """Return the on-disk section spelling that matches ``name``.
 
-    Used so create/save-as onto ``1200 elo`` updates the existing ``1200 ELO``
-    section instead of adding a second near-duplicate. Returns None when no
-    section matches.
+    Prefers an exact spelling match so editing ``attacker`` updates ``[attacker]``
+    when both ``[Attacker]`` and ``[attacker]`` exist. When there is no exact
+    match, returns the sole case-insensitive match, or None when none / when
+    several case-only variants collide (ambiguous -- caller must reconcile).
     """
     if not isinstance(name, str) or not name:
         return None
-    folded = name.casefold()
-    for existing in existing_names:
-        if existing.casefold() == folded:
-            return existing
+    if name in existing_names:
+        return name
+    matches = casefold_matches(existing_names, name)
+    if len(matches) == 1:
+        return matches[0]
     return None
+
+
+def casefold_matches(existing_names: List[str], name: str) -> List[str]:
+    """Return every on-disk name that equals ``name`` case-insensitively."""
+    if not isinstance(name, str) or not name:
+        return []
+    folded = name.casefold()
+    return [existing for existing in existing_names if existing.casefold() == folded]
+
+
+def case_collision_groups(names: List[str]) -> List[List[str]]:
+    """Return groups of two or more profile names that differ only by case.
+
+    Order within each group follows ``names`` order; groups are ordered by first
+    appearance. Used to surface legacy twin sections for operator reconcile.
+    """
+    buckets: Dict[str, List[str]] = {}
+    order: List[str] = []
+    for name in names:
+        key = name.casefold()
+        if key not in buckets:
+            order.append(key)
+            buckets[key] = []
+        buckets[key].append(name)
+    return [buckets[key] for key in order if len(buckets[key]) > 1]
+
+
+def reconcile_case_duplicate(
+    uci_path: str,
+    keep: str,
+    defaults_path: Optional[str] = None,
+) -> List[str]:
+    """Keep section ``keep`` and delete other sections that match it case-insensitively.
+
+    Returns the removed section names (empty when ``keep`` had no twins). Raises
+    :class:`ProfileValidationError` when ``keep`` is missing, reserved, or when
+    removing a twin would delete the seeded Default / DEFAULT section.
+    """
+    if not isinstance(keep, str) or not keep:
+        raise ProfileValidationError("keep name is required")
+    parser = _load(uci_path, defaults_path)
+    sections = list(parser.sections())
+    if keep not in sections:
+        raise ProfileValidationError(f"profile '{keep}' not found")
+    removed: List[str] = []
+    for twin in casefold_matches(sections, keep):
+        if twin == keep:
+            continue
+        blocked = delete_blocked_reason(twin)
+        if blocked is not None:
+            raise ProfileValidationError(blocked)
+        parser.remove_section(twin)
+        removed.append(twin)
+    if removed:
+        _atomic_write(parser, uci_path)
+    return removed
 
 
 def is_valid_profile_name(name: str) -> bool:
@@ -595,10 +656,20 @@ def write_profile(
     coerced = validate_profile_values(groups, values)
 
     parser = _load(uci_path, defaults_path)
-    # Case-insensitive collide with an existing section: write under that
-    # section's on-disk spelling so "1200 elo" updates "1200 ELO" instead of
-    # creating a second section (ConfigParser treats those as distinct).
-    section = matching_section_name(list(parser.sections()), name) or name
+    sections = list(parser.sections())
+    # Prefer exact spelling; sole casefold match remaps "1200 elo" -> "1200 ELO".
+    # Ambiguous case twins refuse the write so the operator reconciles first
+    # instead of silently overwriting the wrong section.
+    if name in sections:
+        section = name
+    else:
+        matches = casefold_matches(sections, name)
+        if len(matches) > 1:
+            raise ProfileValidationError(
+                f"ambiguous profile name '{name}': case variants "
+                f"{matches} exist; keep one spelling first"
+            )
+        section = matches[0] if matches else name
     # Assigning a fresh mapping replaces the section's local keys wholesale.
     parser[section] = dict(coerced)
     _atomic_write(parser, uci_path)
@@ -642,9 +713,21 @@ def delete_profile(
         raise ProfileValidationError(blocked)
 
     parser = _load(uci_path, defaults_path)
-    section = matching_section_name(list(parser.sections()), name)
-    if section is None:
-        return False
+    sections = list(parser.sections())
+    # Prefer exact spelling so deleting [attacker] does not remove [Attacker]
+    # when both exist. Sole casefold match still deletes the remapped name.
+    if name in sections:
+        section = name
+    else:
+        matches = casefold_matches(sections, name)
+        if len(matches) > 1:
+            raise ProfileValidationError(
+                f"ambiguous profile name '{name}': case variants "
+                f"{matches} exist; keep one spelling first"
+            )
+        if not matches:
+            return False
+        section = matches[0]
     parser.remove_section(section)
     _atomic_write(parser, uci_path)
     return True

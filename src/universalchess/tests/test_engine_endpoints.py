@@ -1133,6 +1133,46 @@ def test_reset_profiles_non_editable_engine_returns_404(client, profile_paths):
     assert resp.status_code == 404
 
 
+def test_uci_schema_reports_case_collisions(client, profile_paths):
+    """GET uci-schema includes case_collisions when twin sections exist.
+
+    Why: the editor needs the list to show the reconcile banner. How regression
+    shows: case_collisions missing or empty while both Attacker/attacker exist.
+    """
+    client.get(f"/api/engines/{PROFILES_ENGINE}/profiles")
+    # Seed first, then append a case twin (write_profile remaps sole matches).
+    with open(profile_paths, "a", encoding="utf-8") as handle:
+        handle.write("\n[1400 elo]\nUCI_LimitStrength = true\nUCI_Elo = 1400\n")
+    resp = client.get(f"/api/engines/{PROFILES_ENGINE}/uci-schema")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert any(set(g) == {"1400 ELO", "1400 elo"} for g in body["case_collisions"])
+
+
+def test_reconcile_case_keeps_chosen_spelling(client, profile_paths):
+    """POST reconcile-case keeps one twin and drops the other.
+
+    Why: operator escape hatch for silent overwrite of case duplicates.
+    How regression shows: both spellings remain after reconcile.
+    """
+    client.get(f"/api/engines/{PROFILES_ENGINE}/profiles")
+    with open(profile_paths, "a", encoding="utf-8") as handle:
+        handle.write("\n[1400 elo]\nUCI_LimitStrength = true\nUCI_Elo = 1400\n")
+    resp = client.post(
+        f"/api/engines/{PROFILES_ENGINE}/profiles/reconcile-case",
+        data=json.dumps({"keep": "1400 ELO"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["success"] is True
+    assert body["removed"] == ["1400 elo"]
+    names = {p["name"] for p in body["profiles"]}
+    assert "1400 ELO" in names
+    assert "1400 elo" not in names
+    assert body["case_collisions"] == []
+
+
 def test_save_non_editable_engine_returns_404(client, profile_paths):
     """Saving against a non-probeable engine is rejected with 404.
 
