@@ -37,6 +37,8 @@ __all__ = [
     "ProfileGroup",
     "schema_to_json",
     "is_valid_profile_name",
+    "is_reserved_profile_name",
+    "matching_section_name",
     "ProfileValidationError",
     "validate_profile_values",
     "validation_error",
@@ -153,6 +155,36 @@ def _field_index(groups: Tuple[ProfileGroup, ...]) -> Dict[str, ProfileField]:
     return index
 
 
+def is_reserved_profile_name(name: str) -> bool:
+    """Return whether ``name`` collides with a reserved section (case-insensitive).
+
+    ``[DEFAULT]`` holds engine-wide Threads/Hash; ``[Default]`` is the seeded
+    strength anchor. ConfigParser keeps those as distinct sections, so a
+    case-only variant (``default``, ``DeFaUlT``) would otherwise create a twin
+    that bypasses the immutability rules while looking like the same profile.
+    """
+    if not isinstance(name, str) or not name:
+        return False
+    folded = name.casefold()
+    return folded in (_DEFAULTS_SECTION.casefold(), SEEDED_DEFAULT_PROFILE.casefold())
+
+
+def matching_section_name(existing_names: List[str], name: str) -> Optional[str]:
+    """Return the on-disk section spelling that matches ``name`` case-insensitively.
+
+    Used so create/save-as onto ``1200 elo`` updates the existing ``1200 ELO``
+    section instead of adding a second near-duplicate. Returns None when no
+    section matches.
+    """
+    if not isinstance(name, str) or not name:
+        return None
+    folded = name.casefold()
+    for existing in existing_names:
+        if existing.casefold() == folded:
+            return existing
+    return None
+
+
 def is_valid_profile_name(name: str) -> bool:
     """Return whether ``name`` is a usable, safe profile (section) name.
 
@@ -160,8 +192,8 @@ def is_valid_profile_name(name: str) -> bool:
     empty after trimming, that are too long, or that collide with reserved
     sections: engine-wide ``[DEFAULT]`` (Threads/Hash) and the seeded strength
     profile ``[Default]`` (owned by seed/reconcile; user edits must save-as under
-    a new name). Internal spaces are allowed because real profiles use them
-    (``"1200 ELO"``, ``"Club Player"``).
+    a new name). Reserved collisions are case-insensitive. Internal spaces are
+    allowed because real profiles use them (``"1200 ELO"``, ``"Club Player"``).
     """
     if not isinstance(name, str):
         return False
@@ -169,7 +201,7 @@ def is_valid_profile_name(name: str) -> bool:
         return False
     if len(name) > _MAX_NAME_LEN:
         return False
-    if name in (_DEFAULTS_SECTION, SEEDED_DEFAULT_PROFILE):
+    if is_reserved_profile_name(name):
         return False
     return not any(ch in name for ch in "[]\r\n")
 
@@ -557,8 +589,12 @@ def write_profile(
     coerced = validate_profile_values(groups, values)
 
     parser = _load(uci_path, defaults_path)
+    # Case-insensitive collide with an existing section: write under that
+    # section's on-disk spelling so "1200 elo" updates "1200 ELO" instead of
+    # creating a second section (ConfigParser treats those as distinct).
+    section = matching_section_name(list(parser.sections()), name) or name
     # Assigning a fresh mapping replaces the section's local keys wholesale.
-    parser[name] = dict(coerced)
+    parser[section] = dict(coerced)
     _atomic_write(parser, uci_path)
 
 
@@ -568,11 +604,15 @@ def delete_blocked_reason(name: str) -> Optional[str]:
     The value-returning counterpart to the guard inside :func:`delete_profile`,
     so an HTTP handler can reject the request by returning a plain message
     instead of catching :class:`ProfileValidationError` and echoing its text into
-    the response (flagged as information exposure by static analysis).
+    the response (flagged as information exposure by static analysis). Reserved
+    names are matched case-insensitively.
     """
-    if name == _DEFAULTS_SECTION:
+    if not isinstance(name, str) or not name:
+        return None
+    folded = name.casefold()
+    if folded == _DEFAULTS_SECTION.casefold():
         return "cannot delete the DEFAULT section"
-    if name == SEEDED_DEFAULT_PROFILE:
+    if folded == SEEDED_DEFAULT_PROFILE.casefold():
         return "cannot delete the Default profile"
     return None
 
@@ -585,17 +625,20 @@ def delete_profile(
     """Remove profile ``name``. Returns whether a section was removed.
 
     Refuses to touch the reserved ``[DEFAULT]`` section and the seeded
-    ``[Default]`` strength profile. The defaults are seeded first when the
-    writable file is absent, so deleting from a never-edited install removes the
-    profile from a real, complete copy rather than a no-op.
+    ``[Default]`` strength profile (case-insensitive). Other names match an
+    existing section case-insensitively so deleting ``attacker`` removes
+    ``Attacker``. The defaults are seeded first when the writable file is
+    absent, so deleting from a never-edited install removes the profile from a
+    real, complete copy rather than a no-op.
     """
     blocked = delete_blocked_reason(name)
     if blocked is not None:
         raise ProfileValidationError(blocked)
 
     parser = _load(uci_path, defaults_path)
-    if not parser.has_section(name):
+    section = matching_section_name(list(parser.sections()), name)
+    if section is None:
         return False
-    parser.remove_section(name)
+    parser.remove_section(section)
     _atomic_write(parser, uci_path)
     return True

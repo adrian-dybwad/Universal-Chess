@@ -139,11 +139,34 @@ export function mustSaveDefaultAsNew(
 }
 
 /**
+ * Reserved section names (engine-wide DEFAULT / seeded Default), case-insensitive.
+ * Creating a case-only variant would bypass immutability while looking identical.
+ */
+export function isReservedProfileName(name: string): boolean {
+  return name.trim().toLowerCase() === 'default';
+}
+
+/**
+ * On-disk section spelling that matches ``name`` case-insensitively, if any.
+ * Used so save-as onto "1200 elo" updates the existing "1200 ELO" section.
+ */
+export function findExistingProfileName(
+  name: string,
+  existingNames: readonly string[],
+): string | undefined {
+  if (!name) return undefined;
+  const folded = name.toLowerCase();
+  return existingNames.find((existing) => existing.toLowerCase() === folded);
+}
+
+/**
  * True when a create/save-as would overwrite another profile's section.
  *
  * Saving the profile already open for edit (same name, not save-as) is an
- * intentional update and must not prompt. How regression shows: silent replace
- * of e.g. "1200 ELO" when the user typed that name for a new profile.
+ * intentional update and must not prompt. Match is case-insensitive so
+ * "1200 elo" cannot silently create a twin of "1200 ELO". How regression
+ * shows: silent replace of e.g. "1200 ELO" when the user typed that name for
+ * a new profile, or a second near-duplicate section for a case variant.
  */
 export function shouldConfirmProfileReplace(
   saveAsNew: boolean,
@@ -151,5 +174,5 @@ export function shouldConfirmProfileReplace(
   existingNames: readonly string[],
 ): boolean {
   if (!saveAsNew || !name) return false;
-  return existingNames.includes(name);
+  return findExistingProfileName(name, existingNames) !== undefined;
 }

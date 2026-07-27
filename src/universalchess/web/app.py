@@ -4787,7 +4787,11 @@ def api_save_engine_profile(engine_name, profile_name):
     # value-based checks below carry the same user-facing messages without that.
     if not engine_profiles.is_valid_profile_name(profile_name):
         # Default is reserved (seed-owned); name it so the UI can prompt save-as.
-        if profile_name == engine_profiles.SEEDED_DEFAULT_PROFILE:
+        # Match case-insensitively so "default" / "DeFaUlT" cannot bypass the guard.
+        if (
+            isinstance(profile_name, str)
+            and profile_name.casefold() == engine_profiles.SEEDED_DEFAULT_PROFILE.casefold()
+        ):
             return jsonify({
                 "success": False,
                 "error": "Default is reserved; save under a new profile name",

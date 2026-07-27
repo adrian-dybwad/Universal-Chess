@@ -517,7 +517,18 @@ def test_delete_blocked_reason_blocks_reserved_sections_and_allows_others():
     """
     assert ep.delete_blocked_reason("DEFAULT") is not None
     assert ep.delete_blocked_reason("Default") is not None
+    assert ep.delete_blocked_reason("default") is not None
     assert ep.delete_blocked_reason("Attacker") is None
+
+
+def test_delete_matches_existing_section_case_insensitively(uci_file):
+    """Deleting 'attacker' removes the on-disk 'Attacker' section.
+
+    Why: URL/path casing should not leave an orphan section. How regression
+    shows: delete returns False / Attacker remains.
+    """
+    assert ep.delete_profile(str(uci_file), "attacker") is True
+    assert "Attacker" not in ep.read_profile_names(str(uci_file))
 
 
 # ---------------------------------------------------------------------------
@@ -537,6 +548,8 @@ def test_valid_profile_names_accepted(name):
     " Tal",        # leading space (would be trimmed by configparser -> mismatch)
     "DEFAULT",     # reserved engine-wide defaults section
     "Default",     # reserved seeded strength profile (edit = save-as new name)
+    "default",     # case-insensitive reserved
+    "DeFaUlT",     # case-insensitive reserved
     "a[b]",        # brackets break the INI header
     "x\ny",        # newline
     "x" * 65,      # too long
@@ -546,9 +559,30 @@ def test_invalid_profile_names_rejected(name):
 
     Why Default is reserved: overwriting it would leave a section still named
     Default whose options are no longer the seeded default (Maia net / uncapped
-    Stockfish). Edits must be saved under a new name instead.
+    Stockfish). Edits must be saved under a new name instead. Case variants are
+    rejected too because ConfigParser keeps case-distinct sections.
     """
     assert ep.is_valid_profile_name(name) is False
+
+
+@pytest.mark.parametrize("name", ["Default", "default", "DEFAULT", "DeFaUlT"])
+def test_is_reserved_profile_name_case_insensitive(name):
+    """Reserved Default/DEFAULT collide regardless of spelling case.
+
+    Why: a twin [default] section would look like Default in the picker while
+    bypassing seed ownership. How regression shows: is_reserved false for
+    "default" and write_profile creates a second section.
+    """
+    assert ep.is_reserved_profile_name(name) is True
+    assert ep.is_reserved_profile_name("1200 ELO") is False
+
+
+def test_matching_section_name_is_case_insensitive():
+    """Find the on-disk spelling for a typed name that differs only by case."""
+    names = ["Default", "1200 ELO", "Attacker"]
+    assert ep.matching_section_name(names, "1200 elo") == "1200 ELO"
+    assert ep.matching_section_name(names, "attacker") == "Attacker"
+    assert ep.matching_section_name(names, "Fresh") is None
 
 
 # ---------------------------------------------------------------------------
@@ -675,6 +709,36 @@ def test_write_profile_refuses_to_overwrite_default(uci_file, groups):
         )
     after = next(p for p in ep.read_profiles(str(uci_file)) if p["name"] == "Default")
     assert after == before
+
+
+@pytest.mark.parametrize("name", ["default", "DEFAULT", "DeFaUlT"])
+def test_write_profile_refuses_case_variants_of_default(uci_file, groups, name):
+    """Case-only variants of Default are rejected the same as Default.
+
+    Why: ConfigParser would otherwise create a twin [default] section. How
+    regression shows: write succeeds and read_profile_names includes both
+    Default and the typed casing.
+    """
+    with pytest.raises(ep.ProfileValidationError):
+        ep.write_profile(str(uci_file), name, {"OwnAttack": 100}, groups)
+    names = ep.read_profile_names(str(uci_file))
+    assert names.count("Default") == 1
+    assert name not in names
+
+
+def test_write_updates_existing_section_when_casing_differs(uci_file, groups):
+    """Save-as with different casing updates the existing section spelling.
+
+    Why: "attacker" must not create a second section beside "Attacker". How
+    regression shows: both Attacker and attacker appear in read_profile_names,
+    or Attacker keeps its old OwnAttack value.
+    """
+    ep.write_profile(str(uci_file), "attacker", {"OwnAttack": 200}, groups)
+    names = ep.read_profile_names(str(uci_file))
+    assert "Attacker" in names
+    assert "attacker" not in names
+    profiles = {p["name"]: p["values"] for p in ep.read_profiles(str(uci_file))}
+    assert profiles["Attacker"] == {"OwnAttack": "200"}
 
 
 # ---------------------------------------------------------------------------

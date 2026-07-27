@@ -8,6 +8,8 @@ import {
   type SchemaResponse,
   GROUP_ICONS,
   defaultString,
+  findExistingProfileName,
+  isReservedProfileName,
   mustSaveDefaultAsNew,
   profileFormIsDirty,
   shouldConfirmProfileReplace,
@@ -143,18 +145,20 @@ export function EngineProfileEditor({
       );
       return;
     }
-    if (name === 'Default') {
+    if (isReservedProfileName(name)) {
       setActionError(t('engineProfile.defaultNameReserved'));
       return;
     }
+    const existingNames = profiles.map((p) => p.name);
+    const writeName = findExistingProfileName(name, existingNames) ?? name;
     if (
       shouldConfirmProfileReplace(
         saveAsNew,
         name,
-        profiles.map((p) => p.name),
+        existingNames,
       )
     ) {
-      if (!window.confirm(t('engineProfile.confirmReplace', { name }))) {
+      if (!window.confirm(t('engineProfile.confirmReplace', { name: writeName }))) {
         return;
       }
     }
@@ -163,7 +167,7 @@ export function EngineProfileEditor({
     setNotice(null);
     try {
       const payload = toOverridePayload(schema, formValues);
-      const resp = await apiFetch(`/api/engines/${engineName}/profiles/${encodeURIComponent(name)}`, {
+      const resp = await apiFetch(`/api/engines/${engineName}/profiles/${encodeURIComponent(writeName)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ values: payload }),
@@ -173,8 +177,8 @@ export function EngineProfileEditor({
         setActionError(data.error || t('engineProfile.saveFailedStatus', { status: resp.status }));
         return;
       }
-      setNotice(t('engineProfile.saved', { name }));
-      await fetchProfiles(name);
+      setNotice(t('engineProfile.saved', { name: writeName }));
+      await fetchProfiles(writeName);
     } catch (e) {
       setActionError(t('engineProfile.saveFailed', { error: e instanceof Error ? e.message : t('engineProfile.unknownError') }));
     } finally {

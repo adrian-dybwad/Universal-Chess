@@ -1057,6 +1057,27 @@ def test_put_rejects_overwrite_of_default_profile(client, profile_paths):
     assert after["Default"] == before["Default"]
 
 
+def test_put_rejects_case_variant_of_default_profile(client, profile_paths):
+    """POST to 'default' is rejected the same as Default (case-insensitive).
+
+    Why: ConfigParser would create a twin section. How regression shows: 200 and
+    a second profile named 'default' beside Default.
+    """
+    client.get(f"/api/engines/{PROFILES_ENGINE}/profiles")
+    resp = client.post(
+        f"/api/engines/{PROFILES_ENGINE}/profiles/default",
+        data=json.dumps({"values": {"UCI_LimitStrength": True, "UCI_Elo": 1500}}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 400
+    assert "Default" in resp.get_json()["error"]
+    names = {
+        p["name"]
+        for p in client.get(f"/api/engines/{PROFILES_ENGINE}/profiles").get_json()["profiles"]
+    }
+    assert "default" not in names
+
+
 def test_delete_rejects_seeded_default_profile(client, profile_paths):
     """DELETE of the seeded Default profile is rejected with 400.
 
