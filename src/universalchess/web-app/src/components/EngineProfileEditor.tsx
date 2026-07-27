@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button, Card, FormRow, Input, Select } from './ui';
 import { apiFetch } from '../utils/api';
@@ -48,7 +48,6 @@ export function EngineProfileEditor({
   onProfilesReset?: () => void;
 }) {
   const { t } = useTranslation();
-  const rootRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editable, setEditable] = useState(true);
@@ -66,11 +65,20 @@ export function EngineProfileEditor({
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  // Opened from a mid-page engines list; reset scroll so About/toolbar are visible.
+  // Opened from a mid-page engines list. Document scroll only -- scrollIntoView
+  // on the editor aligns it under the sticky navbar and leaves Settings chrome
+  // (subnav / page header) scrolled off the top. Re-run after load so a tall
+  // engines list being replaced cannot leave a residual scroll offset.
   useEffect(() => {
-    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
-    rootRef.current?.scrollIntoView({ block: 'start', behavior: 'auto' });
-  }, [engineName]);
+    const scrollToTop = () => {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    };
+    scrollToTop();
+    const frame = window.requestAnimationFrame(scrollToTop);
+    return () => window.cancelAnimationFrame(frame);
+  }, [engineName, loading]);
 
   const loadField = useCallback(
     (schemaGroups: SchemaGroup[], list: Profile[], name: string | null) => {
@@ -267,7 +275,7 @@ export function EngineProfileEditor({
   const saveDisabled = saving || (selectedName === 'Default' && !formDirty && !isNew);
 
   return (
-    <div className="profile-editor" ref={rootRef}>
+    <div className="profile-editor">
       <div className="profile-editor-toolbar">
         <Button variant="secondary" size="sm" onClick={onBack}>
           {t('engineProfile.back')}
