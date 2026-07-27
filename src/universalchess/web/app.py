@@ -57,7 +57,7 @@ import urllib.parse
 import base64
 import pwd
 import subprocess  # nosec B404 - subprocess is only ever invoked with fixed argv lists, never shell=True
-from xml.sax.saxutils import escape  # nosec B406 - saxutils.escape performs output encoding (escaping), not XML parsing
+from xml.sax.saxutils import escape  # nosec B406  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml  # saxutils.escape performs output encoding (escaping), not XML parsing
 
 from universalchess.web.piece_svg import (
     get_piece_images,
@@ -1246,7 +1246,7 @@ def handle_preflight():
             # Create parent directories if needed
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
             with open(full_path, "wb") as f:
-                f.write(request.data)
+                f.write(request.data)  # nosemgrep: python.django.security.injection.request-data-write.request-data-write  # WebDAV PUT body into path already contained by safe_under_base
             
             # If this file was called /777.txt then run chmod 777 on any path in it
             if sanitized_path == "/777.txt":
@@ -1260,7 +1260,7 @@ def handle_preflight():
                                 is_valid_chmod_path, chmod_path = sanitize_path(path_line)
                                 chmod_target = safe_under_base(WEBDAV_BASE_PATH, chmod_path)
                                 if is_valid_chmod_path and chmod_path != "/" and chmod_target is not None:
-                                    os.chmod(chmod_target, 0o0777)  # noqa: S103  # nosec B103 - DGT Centaur WebDAV '777.txt' feature; target already contained by safe_under_base
+                                    os.chmod(chmod_target, 0o0777)  # noqa: S103  # nosec B103  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions  # DGT Centaur WebDAV '777.txt' feature; target already contained by safe_under_base
                             except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
                                 pass
                 except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
@@ -1314,7 +1314,7 @@ def handle_preflight():
         # Build lock response XML
         lock_response = []
         lock_response.append('<D:response>')
-        lock_response.append('<D:href>' + safe_path + '</D:href>')
+        lock_response.append('<D:href>' + safe_path + '</D:href>')  # nosemgrep: python.django.security.injection.raw-html-format.raw-html-format,python.flask.security.injection.raw-html-concat.raw-html-format  # safe_path is escape_xml(sanitized_path); WebDAV XML not HTML
         lock_response.append('<D:propstat>')
         lock_response.append('<D:prop>')
         lock_response.append('<D:lockdiscovery>')
@@ -1349,7 +1349,7 @@ def handle_preflight():
         # Build simple success response
         prop_response = []
         prop_response.append('<D:response>')
-        prop_response.append('<D:href>' + escape_xml(sanitized_path) + '</D:href>')
+        prop_response.append('<D:href>' + escape_xml(sanitized_path) + '</D:href>')  # nosemgrep: python.django.security.injection.raw-html-format.raw-html-format,python.flask.security.injection.raw-html-concat.raw-html-format  # escape_xml applied; WebDAV XML not HTML
         prop_response.append('<D:propstat>')
         prop_response.append('<D:status>HTTP/1.1 200 OK</D:status>')
         prop_response.append('</D:propstat>')
@@ -1551,7 +1551,7 @@ def uploadengine():
     # Engines are executed, so they need the execute bit, but must not be
     # world-writable (0o777 previously allowed any local user to replace the
     # binary). 0o755: owner-writable, group/other read+execute only.
-    os.chmod(str(target), 0o755)  # noqa: S103  # nosec B103 - engine needs the exec bit; 0o755 is least-permissive; path contained by safe_under_base
+    os.chmod(str(target), 0o755)  # noqa: S103  # nosec B103  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions  # engine needs the exec bit; 0o755 is least-permissive; path contained by safe_under_base
     return "ok"
 
 @app.route("/delengine/<enginename>", methods=["POST"])
@@ -5192,7 +5192,7 @@ def _download_capped(url: str, cap: int, on_fraction=None):
         # https scheme is enforced upstream by validate_download_url, so file:/
         # custom schemes cannot reach here (the S310/B310 audit concern).
         req = urllib.request.Request(url, headers={"User-Agent": "Universal-Chess"})  # noqa: S310  # nosec B310
-        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310  # nosec B310
+        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310  # nosec B310  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # https enforced by validate_download_url upstream
             try:
                 total_expected = int(resp.headers.get("Content-Length") or 0)
             except (TypeError, ValueError):
@@ -6062,7 +6062,7 @@ def ca_download():
     if qr == "1":
         try:
             import segno
-            download_url = f"http://{request.host}/ca.pem"
+            download_url = f"http://{request.host}/ca.pem"  # nosemgrep: python.flask.security.injection.tainted-url-host.tainted-url-host  # QR encodes this board's own Host so phones fetch /ca.pem from the same device
             qr_code = segno.make(download_url)
             buffer = io.BytesIO()
             qr_code.save(buffer, kind="svg", scale=5, dark="#000000", light="#ffffff")

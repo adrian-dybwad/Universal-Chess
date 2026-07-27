@@ -835,10 +835,14 @@ def delete_blocked_reason(name: str) -> Optional[str]:
     """
     if not isinstance(name, str) or not name:
         return None
-    folded = name.casefold()
-    if folded == _DEFAULTS_SECTION.casefold():
+    # ConfigParser's defaults section is exactly ``DEFAULT``. Prefer that exact
+    # message only for the literal spelling; every other casefold of ``default``
+    # (including ``Default`` / ``default``) is the seeded strength profile --
+    # casefold alone cannot distinguish them, and the API delete path always
+    # targets the seeded profile name.
+    if name == _DEFAULTS_SECTION:
         return "cannot delete the DEFAULT section"
-    if folded == SEEDED_DEFAULT_PROFILE.casefold():
+    if name.casefold() == SEEDED_DEFAULT_PROFILE.casefold():
         return "cannot delete the Default profile"
     return None
 

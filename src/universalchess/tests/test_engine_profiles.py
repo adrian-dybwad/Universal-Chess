@@ -600,10 +600,14 @@ def test_delete_blocked_reason_blocks_reserved_sections_and_allows_others():
     anchor (Unlimited / median net). Deleting either leaves the picker without a
     true default. How regression shows: Default disappears from the Elo list or
     Threads inheritance breaks after a delete.
+
+    Exact ``DEFAULT`` keeps the ConfigParser message; any other casefold of
+    ``default`` (including ``Default``) uses the seeded-profile message so the
+    API error still contains ``Default`` for the Elo-picker delete path.
     """
-    assert ep.delete_blocked_reason("DEFAULT") is not None
-    assert ep.delete_blocked_reason("Default") is not None
-    assert ep.delete_blocked_reason("default") is not None
+    assert ep.delete_blocked_reason("DEFAULT") == "cannot delete the DEFAULT section"
+    assert ep.delete_blocked_reason("Default") == "cannot delete the Default profile"
+    assert ep.delete_blocked_reason("default") == "cannot delete the Default profile"
     assert ep.delete_blocked_reason("Attacker") is None
 
 

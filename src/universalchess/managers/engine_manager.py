@@ -2152,7 +2152,7 @@ class EngineManager:
                 # Make binaries executable
                 for binary in dest_path.glob('*'):
                     if binary.is_file() and not binary.suffix:
-                        os.chmod(binary, 0o755)  # noqa: S103  # nosec B103  # engine binary must be world-executable to run
+                        os.chmod(binary, 0o755)  # noqa: S103  # nosec B103  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions  # engine binary must be world-executable to run
                 
                 log.info(f"[EngineManager] _try_install_prebuilt: Installed directory '{engine.name}'")
             elif source_path.exists():
@@ -2162,7 +2162,7 @@ class EngineManager:
                 
                 update_progress(f"Installing {engine.display_name}...", InstallStage.INSTALLING_FILES)
                 shutil.copy2(source_path, dest_path)
-                os.chmod(dest_path, 0o755)  # noqa: S103  # nosec B103  # engine binary must be world-executable to run
+                os.chmod(dest_path, 0o755)  # noqa: S103  # nosec B103  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions  # engine binary must be world-executable to run
 
                 # Install any extra files shipped alongside the binary in the archive
                 # (e.g. Arasan's NNUE network, Rodent IV's personalities/books). The
@@ -2238,7 +2238,7 @@ class EngineManager:
         """
         proc = subprocess.Popen(  # noqa: S602  # nosec B602  # cmd is from the static in-module engine registry (build_commands), never user input; shell is required for the &&/pipes/redirects in build steps
             cmd,
-            shell=True,
+            shell=True,  # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
             cwd=str(cwd),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -2497,7 +2497,7 @@ class EngineManager:
                 annotation) instead of duplicating it."""
                 return subprocess.run(  # noqa: S602  # nosec B602  # deps joined from the static engine registry (dependencies), never user input; fixed apt-get shell string
                     f"sudo apt-get install -y {deps}",
-                    shell=True, capture_output=True, text=True, timeout=300
+                    shell=True, capture_output=True, text=True, timeout=300,  # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
                 )
 
             log.info(f"[EngineManager] _install_from_source: Installing dependencies: {deps}")
@@ -2689,7 +2689,7 @@ class EngineManager:
         dst_binary = self.engines_dir / engine.name
         log.info(f"[EngineManager] _install_from_source: Copying binary {src_binary} -> {dst_binary}")
         shutil.copy2(src_binary, dst_binary)
-        os.chmod(dst_binary, 0o755)  # noqa: S103  # nosec B103  # engine binary must be world-executable to run
+        os.chmod(dst_binary, 0o755)  # noqa: S103  # nosec B103  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions  # engine binary must be world-executable to run
         log.info(f"[EngineManager] _install_from_source: Binary installed and made executable")
         
         # Copy extra files (personalities, books, weights, NNUE networks, etc.).

@@ -5901,7 +5901,7 @@ def _run_centaur():
         # 0o755 is the conventional mode for an executable program (not data);
         # the launcher runs it via sudo below.
         try:
-            os.chmod(software_path, 0o755)  # noqa: S103  # nosec B103
+            os.chmod(software_path, 0o755)  # noqa: S103  # nosec B103  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions
         except Exception as e:
             log.warning(f"Could not set execute permissions on centaur: {e}")
         # Run Centaur from its own directory, without a shell. The command is a
@@ -6099,7 +6099,7 @@ def _run_centaur_translate():
 
     def _launch_centaur(software_path: str) -> None:
         try:
-            os.chmod(software_path, 0o755)  # noqa: S103  # nosec B103
+            os.chmod(software_path, 0o755)  # noqa: S103  # nosec B103  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions
         except Exception as e:
             log.warning(f"Could not set execute permissions on centaur: {e}")
         # Launch as the current (pi) user -- NOT via sudo -- so RPi.GPIO uses
