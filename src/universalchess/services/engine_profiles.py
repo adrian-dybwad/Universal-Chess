@@ -44,6 +44,7 @@ __all__ = [
     "read_profile_names",
     "strength_level_choices",
     "UNLIMITED_LABEL",
+    "SEEDED_DEFAULT_PROFILE",
     "write_profile",
     "delete_profile",
     "delete_blocked_reason",
@@ -62,10 +63,16 @@ _DEFAULTS_SECTION = "DEFAULT"
 _MAX_NAME_LEN = 64
 _MAX_TEXT_LEN = 200
 
-# Display label for a "Default" section that disables the strength cap. "Default"
-# there means the engine plays uncapped (stronger than any numbered ELO rung),
-# which users misread as a moderate setting; "Unlimited" states what it does.
+# Meaning shown inside "Default (...)" for an uncapped Default section (Stockfish
+# etc.). Picker/editor labels use ``Default (Unlimited)`` so every engine's
+# Default row stays recognisably named Default; card/PGN display uses the bare
+# ``Unlimited`` so composed names read ``Stockfish (Unlimited)`` without nesting.
 UNLIMITED_LABEL = "Unlimited"
+
+# Seeded strength-anchor section name. Owned by seed/reconcile -- users cannot
+# create, overwrite, or delete a profile with this name (edits save-as under a
+# new name). Every probed engine gets one via ``uci_schema.derive_sections``.
+SEEDED_DEFAULT_PROFILE = "Default"
 
 ProfileValue = Union[int, str, bool]
 
@@ -150,9 +157,11 @@ def is_valid_profile_name(name: str) -> bool:
     """Return whether ``name`` is a usable, safe profile (section) name.
 
     Rejects names that would break the INI file (``[``/``]``/newlines), that are
-    empty after trimming, that are too long, or that collide with the engine's
-    reserved ``[DEFAULT]`` section. Internal spaces are allowed because real
-    profiles use them (``"1200 ELO"``, ``"Club Player"``).
+    empty after trimming, that are too long, or that collide with reserved
+    sections: engine-wide ``[DEFAULT]`` (Threads/Hash) and the seeded strength
+    profile ``[Default]`` (owned by seed/reconcile; user edits must save-as under
+    a new name). Internal spaces are allowed because real profiles use them
+    (``"1200 ELO"``, ``"Club Player"``).
     """
     if not isinstance(name, str):
         return False
@@ -160,7 +169,7 @@ def is_valid_profile_name(name: str) -> bool:
         return False
     if len(name) > _MAX_NAME_LEN:
         return False
-    if name == _DEFAULTS_SECTION:
+    if name in (_DEFAULTS_SECTION, SEEDED_DEFAULT_PROFILE):
         return False
     return not any(ch in name for ch in "[]\r\n")
 
@@ -436,6 +445,25 @@ def _default_profile_analysis(
     return (False, alias)
 
 
+def default_section_picker_label(
+    *, is_uncapped: bool, alias_rung_name: Optional[str]
+) -> str:
+    """Picker/editor label for the seeded ``Default`` section.
+
+    Always keeps the word ``Default`` so every engine's list is uniform; the
+    parenthetical carries the meaning:
+
+    * uncapped (Stockfish) -> ``Default (Unlimited)``
+    * net alias (Maia median) -> ``Default (1500 ELO)``
+    * otherwise -> ``Default``
+    """
+    if is_uncapped:
+        return f"Default ({UNLIMITED_LABEL})"
+    if alias_rung_name:
+        return f"Default ({alias_rung_name})"
+    return SEEDED_DEFAULT_PROFILE
+
+
 def strength_level_choices(
     uci_path: str, defaults_path: Optional[str] = None
 ) -> List[Dict[str, str]]:
@@ -443,11 +471,10 @@ def strength_level_choices(
 
     ``value`` is the section name persisted as the player's ``elo`` -- it is left
     exactly as stored so existing configs keep resolving. ``label`` is what the UI
-    shows; ``Default`` is relabelled in two cases so it never hides its meaning:
+    shows; ``Default`` is annotated so it never hides its meaning:
 
-    * An uncapped ``Default`` (``UCI_LimitStrength=false``, e.g. a ``UCI_Elo``
-      engine) plays at full strength, so it shows as ``"Unlimited"`` -- "Default"
-      misled users into reading it as a moderate setting.
+    * An uncapped ``Default`` (``UCI_LimitStrength=false``, e.g. Stockfish) shows
+      as ``"Default (Unlimited)"``.
     * A net-selected ``Default`` that is a copy of a numbered rung (e.g. Maia,
       whose ``Default`` picks the middle net) shows as ``"Default (<rung>)"``
       (e.g. ``"Default (1500 ELO)"``) so the picker reveals which ELO it plays
@@ -456,22 +483,21 @@ def strength_level_choices(
 
     Otherwise the label is the section name. A ``Default`` entry is always present
     (inserted first when the config defines none) so the stored default always
-    has a matching row.
+    has a matching row. The profile editor uses the same labels.
     """
     profiles = read_profiles(uci_path, defaults_path)
     names = [profile["name"] for profile in profiles]
-    if not any(name == "Default" for name in names):
-        names.insert(0, "Default")
+    if not any(name == SEEDED_DEFAULT_PROFILE for name in names):
+        names.insert(0, SEEDED_DEFAULT_PROFILE)
 
     is_uncapped, alias = _default_profile_analysis(profiles)
+    default_label = default_section_picker_label(
+        is_uncapped=is_uncapped, alias_rung_name=alias
+    )
 
     def label_for(name: str) -> str:
-        if name != "Default":
-            return name
-        if is_uncapped:
-            return UNLIMITED_LABEL
-        if alias:
-            return f"Default ({alias})"
+        if name == SEEDED_DEFAULT_PROFILE:
+            return default_label
         return name
 
     return [{"value": name, "label": label_for(name)} for name in names]
@@ -546,6 +572,8 @@ def delete_blocked_reason(name: str) -> Optional[str]:
     """
     if name == _DEFAULTS_SECTION:
         return "cannot delete the DEFAULT section"
+    if name == SEEDED_DEFAULT_PROFILE:
+        return "cannot delete the Default profile"
     return None
 
 
@@ -556,12 +584,14 @@ def delete_profile(
 ) -> bool:
     """Remove profile ``name``. Returns whether a section was removed.
 
-    Refuses to touch the reserved ``[DEFAULT]`` section. The defaults are seeded
-    first when the writable file is absent, so deleting from a never-edited
-    install removes the profile from a real, complete copy rather than a no-op.
+    Refuses to touch the reserved ``[DEFAULT]`` section and the seeded
+    ``[Default]`` strength profile. The defaults are seeded first when the
+    writable file is absent, so deleting from a never-edited install removes the
+    profile from a real, complete copy rather than a no-op.
     """
-    if name == _DEFAULTS_SECTION:
-        raise ProfileValidationError("cannot delete the DEFAULT section")
+    blocked = delete_blocked_reason(name)
+    if blocked is not None:
+        raise ProfileValidationError(blocked)
 
     parser = _load(uci_path, defaults_path)
     if not parser.has_section(name):

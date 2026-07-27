@@ -36,6 +36,8 @@ export interface SchemaGroup {
 
 export interface Profile {
   name: string;
+  /** Display label from the server (e.g. Default (Unlimited)); falls back to name. */
+  label?: string;
   values: Record<string, string>;
 }
 
@@ -105,4 +107,49 @@ export function toOverridePayload(
     }
   }
   return payload;
+}
+
+/** True when the form differs from the values shown for ``baseline`` (defaults filled). */
+export function profileFormIsDirty(
+  schema: SchemaGroup[],
+  formValues: Record<string, string>,
+  baseline: Profile | null,
+): boolean {
+  const expected = valuesForProfile(schema, baseline);
+  for (const group of schema) {
+    for (const field of group.fields) {
+      if ((formValues[field.key] ?? '') !== (expected[field.key] ?? '')) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Editing the seeded Default profile with a dirty form must save-as under a new
+ * name: Default is seed-owned and cannot be overwritten.
+ */
+export function mustSaveDefaultAsNew(
+  selectedName: string | null,
+  isNew: boolean,
+  dirty: boolean,
+): boolean {
+  return !isNew && selectedName === 'Default' && dirty;
+}
+
+/**
+ * True when a create/save-as would overwrite another profile's section.
+ *
+ * Saving the profile already open for edit (same name, not save-as) is an
+ * intentional update and must not prompt. How regression shows: silent replace
+ * of e.g. "1200 ELO" when the user typed that name for a new profile.
+ */
+export function shouldConfirmProfileReplace(
+  saveAsNew: boolean,
+  name: string,
+  existingNames: readonly string[],
+): boolean {
+  if (!saveAsNew || !name) return false;
+  return existingNames.includes(name);
 }

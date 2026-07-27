@@ -725,8 +725,12 @@
   "engineProfile": {
     "loadError": "No se pudieron cargar las opciones del motor: {{error}}",
     "enterName": "Introduce un nombre de perfil.",
+    "defaultRequiresNewName": "Default no se puede sobrescribir. Introduce un nombre de perfil nuevo para guardar los cambios.",
+    "defaultNameReserved": "«Default» está reservado para el perfil generado. Elige otro nombre.",
+    "defaultSaveAsHelp": "Default es el ancla de fuerza generada y no se puede cambiar en su sitio. Guarda tus cambios como un perfil nuevo.",
     "saved": "Se guardó «{{name}}». Los cambios se aplican en la próxima partida.",
     "confirmDelete": "¿Eliminar el perfil «{{name}}»?",
+    "confirmReplace": "Ya existe un perfil llamado «{{name}}». ¿Reemplazarlo?",
     "saveFailedStatus": "Error al guardar (HTTP {{status}}).",
     "saveFailed": "Error al guardar: {{error}}",
     "deleteFailedStatus": "Error al eliminar (HTTP {{status}}).",

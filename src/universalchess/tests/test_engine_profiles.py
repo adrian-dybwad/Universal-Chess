@@ -194,28 +194,27 @@ def test_read_profile_names_lists_each_profile_once_in_order(uci_file):
 
 
 # ---------------------------------------------------------------------------
-# Strength picker labels (Default -> "Unlimited" only when uncapped)
+# Strength picker labels (Default -> "Default (Unlimited)" when uncapped)
 # ---------------------------------------------------------------------------
 
 
 def test_strength_level_choices_labels_uncapped_default_as_unlimited(uci_file):
-    """An ELO engine's uncapped Default is shown as "Unlimited" without changing
-    its stored value.
+    """An ELO engine's uncapped Default is shown as "Default (Unlimited)".
 
     Why this exists: for a UCI_Elo engine, [Default] sets
     UCI_LimitStrength=false, so it plays uncapped/full strength -- stronger than
-    any numbered rung -- and the word "Default" misled users. The relabel must be
-    display-only: the persisted value stays "Default" so existing player configs
-    and the .uci section keep matching.
+    any numbered rung. Keeping the word Default in the label keeps every
+    engine's list uniform with Maia's "Default (1500 ELO)". The persisted value
+    stays "Default".
 
-    How the regression manifests: the Default row's label reverts to "Default"
-    (users confused again) or its value changes away from "Default" (stored elo
-    no longer resolves to the [Default] section).
+    How the regression manifests: the Default row's label reverts to bare
+    "Default" or bare "Unlimited" (lists disagree with the profile editor) or
+    its value changes away from "Default".
     """
     choices = ep.strength_level_choices(str(uci_file))
 
     assert choices == [
-        {"value": "Default", "label": ep.UNLIMITED_LABEL},
+        {"value": "Default", "label": f"Default ({ep.UNLIMITED_LABEL})"},
         {"value": "1200 ELO", "label": "1200 ELO"},
         {"value": "Attacker", "label": "Attacker"},
     ]
@@ -226,12 +225,12 @@ def test_strength_level_choices_never_labels_capped_default_unlimited(tmp_path):
 
     Why this exists: "Unlimited" is only truthful when Default disables the cap.
     A file-selector engine's [Default] merely picks a net and carries no
-    UCI_LimitStrength=false, so relabelling it "Unlimited" would be a lie. The
+    UCI_LimitStrength=false, so relabelling it with Unlimited would be a lie. The
     relabel is keyed off the cap being off, not off the name.
 
     How the regression manifests: a name-based relabel would mark this Default
-    "Unlimited" too, mislabelling a non-full-strength default. Here the Default net
-    matches no rung (custom /nets path), so it stays the bare "Default".
+    "Default (Unlimited)" too, mislabelling a non-full-strength default. Here the
+    Default net matches no rung (custom /nets path), so it stays the bare "Default".
     """
     path = tmp_path / "maia.uci"
     path.write_text(
@@ -283,7 +282,7 @@ def test_strength_level_choices_always_offers_default(tmp_path):
     Why this exists: the picker must always offer Default so the stored default
     setting resolves even for a sparse/edited config. When no Default section
     exists there is no cap signal, so it stays labelled "Default", not
-    "Unlimited".
+    "Default (Unlimited)".
 
     How the regression manifests: the picker omits Default and the stored
     default value has no matching row (blank/again-unselectable strength).
@@ -312,7 +311,7 @@ def test_strength_section_display_uncapped_default_is_unlimited(uci_file):
     so the card should read "<engine> (Unlimited)".
 
     How the regression manifests: the card shows a bare "(Default)" again while
-    the settings picker says "Unlimited".
+    the settings picker says "Default (Unlimited)".
     """
     assert ep.strength_section_display(str(uci_file), "Default") == ep.UNLIMITED_LABEL
 
@@ -508,9 +507,16 @@ def test_validation_error_matches_raising_path(groups):
     assert ep.validation_error(groups, bad) == str(exc_info.value)
 
 
-def test_delete_blocked_reason_blocks_default_and_allows_others():
-    """delete_blocked_reason flags the reserved DEFAULT section, else None."""
+def test_delete_blocked_reason_blocks_reserved_sections_and_allows_others():
+    """delete_blocked_reason flags both reserved sections; other names are free.
+
+    Why: [DEFAULT] is engine-wide Threads/Hash; [Default] is the seeded strength
+    anchor (Unlimited / median net). Deleting either leaves the picker without a
+    true default. How regression shows: Default disappears from the Elo list or
+    Threads inheritance breaks after a delete.
+    """
     assert ep.delete_blocked_reason("DEFAULT") is not None
+    assert ep.delete_blocked_reason("Default") is not None
     assert ep.delete_blocked_reason("Attacker") is None
 
 
@@ -519,7 +525,7 @@ def test_delete_blocked_reason_blocks_default_and_allows_others():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", ["Default", "1200 ELO", "Club Player", "Tal"])
+@pytest.mark.parametrize("name", ["1200 ELO", "Club Player", "Tal"])
 def test_valid_profile_names_accepted(name):
     """Real profile names (with spaces/digits) are accepted."""
     assert ep.is_valid_profile_name(name) is True
@@ -529,13 +535,19 @@ def test_valid_profile_names_accepted(name):
     "",            # empty
     "  ",          # whitespace only
     " Tal",        # leading space (would be trimmed by configparser -> mismatch)
-    "DEFAULT",     # reserved engine defaults section
+    "DEFAULT",     # reserved engine-wide defaults section
+    "Default",     # reserved seeded strength profile (edit = save-as new name)
     "a[b]",        # brackets break the INI header
     "x\ny",        # newline
     "x" * 65,      # too long
 ])
 def test_invalid_profile_names_rejected(name):
-    """Names that break the INI file or collide with DEFAULT are rejected."""
+    """Names that break the INI file or collide with reserved sections are rejected.
+
+    Why Default is reserved: overwriting it would leave a section still named
+    Default whose options are no longer the seeded default (Maia net / uncapped
+    Stockfish). Edits must be saved under a new name instead.
+    """
     assert ep.is_valid_profile_name(name) is False
 
 
@@ -645,6 +657,26 @@ def test_write_invalid_name_raises(uci_file, groups):
         ep.write_profile(str(uci_file), "DEFAULT", {"OwnAttack": 100}, groups)
 
 
+def test_write_profile_refuses_to_overwrite_default(uci_file, groups):
+    """The seeded Default profile cannot be replaced via write_profile.
+
+    Why: Default is the seed/reconcile-owned strength anchor. Saving edited Maia
+    weights (or Stockfish limit-strength) under the name Default would leave a
+    section that claims to be default but is not. How regression shows: Default's
+    values change after a save while the picker still offers "Default"/"Unlimited".
+    """
+    before = next(p for p in ep.read_profiles(str(uci_file)) if p["name"] == "Default")
+    with pytest.raises(ep.ProfileValidationError):
+        ep.write_profile(
+            str(uci_file),
+            "Default",
+            {"UCI_LimitStrength": True, "UCI_Elo": 1500},
+            groups,
+        )
+    after = next(p for p in ep.read_profiles(str(uci_file)) if p["name"] == "Default")
+    assert after == before
+
+
 # ---------------------------------------------------------------------------
 # Deleting
 # ---------------------------------------------------------------------------
@@ -667,3 +699,14 @@ def test_delete_default_section_refused(uci_file):
     """Refuse to delete the reserved [DEFAULT] section."""
     with pytest.raises(ep.ProfileValidationError):
         ep.delete_profile(str(uci_file), "DEFAULT")
+
+
+def test_delete_seeded_default_profile_refused(uci_file):
+    """Refuse to delete the seeded [Default] strength profile.
+
+    Why: the Elo picker and player configs rely on a Default section always
+    existing. How regression shows: Default vanishes from /levels after delete.
+    """
+    with pytest.raises(ep.ProfileValidationError):
+        ep.delete_profile(str(uci_file), "Default")
+    assert "Default" in ep.read_profile_names(str(uci_file))

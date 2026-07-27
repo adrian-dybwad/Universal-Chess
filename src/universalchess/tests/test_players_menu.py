@@ -321,26 +321,25 @@ def test_elo_row_shows_provider_label_not_raw_stored_value():
 
     Why this test exists: ``field.player.elo`` is a provider-backed select whose
     submenu shows the ``engine_levels`` provider labels (an uncapped "Default"
-    section displays as "Unlimited"). The parent "ELO\\n{value}" button must
-    resolve the same label source so it matches the submenu. How a regression
-    manifests: the stored value "Default" is shown verbatim ("ELO\\nDefault") on
-    the parent button while drilling in shows "Unlimited" -- the mismatch this
-    guards.
+    section displays as "Default (Unlimited)"). The parent "ELO\\n{value}" button
+    must resolve the same label source so it matches the submenu. How a
+    regression manifests: the stored value "Default" is shown verbatim
+    ("ELO\\nDefault") on the parent button while drilling in shows
+    "Default (Unlimited)".
     """
     calls = []
     ctx = _detail_ctx(_player_state(type="engine", elo="Default"), calls=calls)
-    # Override the provider so the Default section is labeled "Unlimited",
-    # mirroring an uncapped engine (e.g. Stockfish).
+    # Override the provider so the Default section is labeled like Stockfish.
     ctx.register_provider(
         "engine_levels",
         lambda: [
-            MenuRow(key="Default", label="Unlimited", icon="elo"),
+            MenuRow(key="Default", label="Default (Unlimited)", icon="elo"),
             MenuRow(key="1500", label="1500", icon="elo"),
         ],
     )
     rows = build_rows("settings.player_detail", ctx, platform="board", catalog=load_catalog())
     by_id = {r.node["id"]: r for r in rows}
-    assert by_id["field.player.elo"].label == "ELO\nUnlimited"
+    assert by_id["field.player.elo"].label == "ELO\nDefault (Unlimited)"
 
 
 def test_name_row_shows_entered_name_via_compute_token():

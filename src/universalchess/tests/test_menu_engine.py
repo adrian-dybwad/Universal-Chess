@@ -162,10 +162,10 @@ def test_resolve_label_value_placeholder_uses_provider_label():
     Why this test exists: provider-backed selects (ELO/Engine) carry a
     ``provider`` instead of an ``optionSet``, and their submenu shows the
     provider row's *label* (e.g. an uncapped "Default" section displays as
-    "Unlimited"). The parent {value} button must resolve the same label source
-    so it does not drift from the submenu. How a regression manifests: the
-    parent button shows the raw stored value ("ELO\\nDefault") while opening the
-    submenu correctly shows "Unlimited" -- the exact mismatch this guards.
+    "Default (Unlimited)"). The parent {value} button must resolve the same
+    label source so it does not drift from the submenu. How a regression
+    manifests: the parent button shows the raw stored value ("ELO\\nDefault")
+    while opening the submenu correctly shows "Default (Unlimited)".
     """
     node = {
         "id": "field.player.elo",
@@ -179,12 +179,12 @@ def test_resolve_label_value_placeholder_uses_provider_label():
         state={"player": {"elo": "Default"}},
         providers={
             "engine_levels": [
-                MenuRow(key="Default", label="Unlimited", icon="elo"),
+                MenuRow(key="Default", label="Default (Unlimited)", icon="elo"),
                 MenuRow(key="1400 ELO", label="1400 ELO", icon="elo"),
             ]
         },
     )
-    assert resolve_label(node, ctx, platform="board") == "ELO\nUnlimited"
+    assert resolve_label(node, ctx, platform="board") == "ELO\nDefault (Unlimited)"
 
 
 def test_resolve_label_provider_value_falls_back_to_raw_when_unmatched():
@@ -205,7 +205,7 @@ def test_resolve_label_provider_value_falls_back_to_raw_when_unmatched():
     }
     ctx = _FakeContext(
         state={"player": {"elo": "1800 ELO"}},
-        providers={"engine_levels": [MenuRow(key="Default", label="Unlimited", icon="elo")]},
+        providers={"engine_levels": [MenuRow(key="Default", label="Default (Unlimited)", icon="elo")]},
     )
     assert resolve_label(node, ctx, platform="board") == "ELO\n1800 ELO"
 

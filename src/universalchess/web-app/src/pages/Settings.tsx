@@ -567,7 +567,7 @@ export function Settings() {
   const [accounts, setAccounts] = useState<AccountRecord[]>([]);
   // Per-engine strength picker rows from /levels: {value,label} where value is
   // the persisted `elo` section name and label is the display text (an uncapped
-  // "Default" shows as "Unlimited").
+  // "Default" shows as "Default (Unlimited)").
   const [engineLevels, setEngineLevels] = useState<{ [key: string]: MenuOption[] }>({});
   const [spriteSheets, setSpriteSheets] = useState<string[]>(['default']);
   // Every registered AI agent (built-in + user modules) from GET /api/agents,

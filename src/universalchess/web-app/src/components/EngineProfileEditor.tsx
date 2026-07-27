@@ -8,6 +8,9 @@ import {
   type SchemaResponse,
   GROUP_ICONS,
   defaultString,
+  mustSaveDefaultAsNew,
+  profileFormIsDirty,
+  shouldConfirmProfileReplace,
   toOverridePayload,
   valuesForProfile,
 } from './engineOptions';
@@ -122,10 +125,35 @@ export function EngineProfileEditor({
   }, []);
 
   const save = useCallback(async () => {
-    const name = (isNew ? nameInput : selectedName ?? '').trim();
+    const dirty = profileFormIsDirty(
+      schema,
+      formValues,
+      selectedName ? profiles.find((p) => p.name === selectedName) ?? null : null,
+    );
+    const saveAsNew = isNew || mustSaveDefaultAsNew(selectedName, isNew, dirty);
+    const name = (saveAsNew ? nameInput : selectedName ?? '').trim();
     if (!name) {
-      setActionError(t('engineProfile.enterName'));
+      setActionError(
+        saveAsNew && selectedName === 'Default' && dirty
+          ? t('engineProfile.defaultRequiresNewName')
+          : t('engineProfile.enterName'),
+      );
       return;
+    }
+    if (name === 'Default') {
+      setActionError(t('engineProfile.defaultNameReserved'));
+      return;
+    }
+    if (
+      shouldConfirmProfileReplace(
+        saveAsNew,
+        name,
+        profiles.map((p) => p.name),
+      )
+    ) {
+      if (!window.confirm(t('engineProfile.confirmReplace', { name }))) {
+        return;
+      }
     }
     setSaving(true);
     setActionError(null);
@@ -149,10 +177,10 @@ export function EngineProfileEditor({
     } finally {
       setSaving(false);
     }
-  }, [isNew, nameInput, selectedName, schema, formValues, engineName, fetchProfiles, t]);
+  }, [isNew, nameInput, selectedName, schema, formValues, profiles, engineName, fetchProfiles, t]);
 
   const remove = useCallback(async () => {
-    if (!selectedName) return;
+    if (!selectedName || selectedName === 'Default') return;
     if (!window.confirm(t('engineProfile.confirmDelete', { name: selectedName }))) return;
     setSaving(true);
     setActionError(null);
@@ -176,9 +204,20 @@ export function EngineProfileEditor({
   }, [selectedName, engineName, fetchProfiles, t]);
 
   const profileOptions = useMemo(
-    () => profiles.map((p) => ({ value: p.name, label: p.name })),
+    () => profiles.map((p) => ({ value: p.name, label: p.label ?? p.name })),
     [profiles],
   );
+
+  const selectedProfile = useMemo(
+    () => (selectedName ? profiles.find((p) => p.name === selectedName) ?? null : null),
+    [profiles, selectedName],
+  );
+  const formDirty = useMemo(
+    () => profileFormIsDirty(schema, formValues, selectedProfile),
+    [schema, formValues, selectedProfile],
+  );
+  const saveAsNew = isNew || mustSaveDefaultAsNew(selectedName, isNew, formDirty);
+  const saveDisabled = saving || (selectedName === 'Default' && !formDirty && !isNew);
 
   return (
     <div className="profile-editor">
@@ -231,15 +270,22 @@ export function EngineProfileEditor({
                   variant="danger"
                   size="sm"
                   onClick={remove}
-                  disabled={saving || isNew || !selectedName}
+                  disabled={saving || isNew || !selectedName || selectedName === 'Default'}
                 >
                   {t('engineProfile.delete')}
                 </Button>
               </div>
             </div>
 
-            {isNew && (
-              <FormRow label={t('engineProfile.newProfileNameLabel')} help={t('engineProfile.newProfileNameHelp')}>
+            {saveAsNew && (
+              <FormRow
+                label={t('engineProfile.newProfileNameLabel')}
+                help={
+                  selectedName === 'Default' && formDirty
+                    ? t('engineProfile.defaultSaveAsHelp')
+                    : t('engineProfile.newProfileNameHelp')
+                }
+              >
                 <Input
                   value={nameInput}
                   onChange={(e) => setNameInput(e.target.value)}
@@ -270,8 +316,12 @@ export function EngineProfileEditor({
           <div className="profile-editor-footer">
             {actionError && <p className="engine-card-error" role="alert">{actionError}</p>}
             {notice && <p className="profile-editor-notice">{notice}</p>}
-            <Button variant="primary" onClick={save} disabled={saving}>
-              {saving ? t('engineProfile.saving') : isNew ? t('engineProfile.createProfile') : t('engineProfile.saveChanges')}
+            <Button variant="primary" onClick={save} disabled={saveDisabled}>
+              {saving
+                ? t('engineProfile.saving')
+                : saveAsNew
+                  ? t('engineProfile.createProfile')
+                  : t('engineProfile.saveChanges')}
             </Button>
           </div>
         </>

@@ -170,7 +170,7 @@ def _display_value(node: dict, ctx: MenuContext) -> str:
     ``provider`` instead of an ``optionSet``, e.g. ELO/Engine), the label is
     resolved from the provider's rows -- the same source the submenu renders --
     so the parent ``{value}`` button cannot drift from the submenu (an uncapped
-    ELO "Default" section shows as "Unlimited" in both). Falls back to the raw
+    ELO "Default" section shows as "Default (Unlimited)" in both). Falls back to the raw
     value as text when no label is found. Returns an empty string when the node
     has no binding, so a stray placeholder collapses rather than raising.
 

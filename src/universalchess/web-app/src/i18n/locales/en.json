@@ -725,8 +725,12 @@
   "engineProfile": {
     "loadError": "Could not load engine options: {{error}}",
     "enterName": "Enter a profile name.",
+    "defaultRequiresNewName": "Default cannot be overwritten. Enter a new profile name to save your changes.",
+    "defaultNameReserved": "\"Default\" is reserved for the seeded profile. Choose a different name.",
+    "defaultSaveAsHelp": "Default is the seeded strength anchor and cannot be changed in place. Save your edits as a new profile.",
     "saved": "Saved \"{{name}}\". Changes apply on the next game.",
     "confirmDelete": "Delete profile \"{{name}}\"?",
+    "confirmReplace": "A profile named \"{{name}}\" already exists. Replace it?",
     "saveFailedStatus": "Save failed (HTTP {{status}}).",
     "saveFailed": "Save failed: {{error}}",
     "deleteFailedStatus": "Delete failed (HTTP {{status}}).",

@@ -4713,8 +4713,23 @@ def api_get_engine_uci_schema(engine_name):
         "engine": engine_name,
         "editable": True,
         "schema": engine_profiles.schema_to_json(groups),
-        "profiles": engine_profiles.read_profiles(config_path),
+        # Enrich with the same display labels the Elo picker uses
+        # (Default (Unlimited) / Default (1500 ELO)) so the profile editor list
+        # never drifts from Players/board strength rows.
+        "profiles": _profiles_with_labels(config_path),
     })
+
+
+def _profiles_with_labels(config_path):
+    """Return read_profiles rows plus a ``label`` matching strength_level_choices."""
+    labels = {
+        row["value"]: row["label"]
+        for row in engine_profiles.strength_level_choices(config_path)
+    }
+    return [
+        {**profile, "label": labels.get(profile["name"], profile["name"])}
+        for profile in engine_profiles.read_profiles(config_path)
+    ]
 
 
 # Profile mutations use POST, not PUT/DELETE: the app's WebDAV before_request
@@ -4744,6 +4759,12 @@ def api_save_engine_profile(engine_name, profile_name):
     # exception's text into the response (CodeQL py/stack-trace-exposure); the
     # value-based checks below carry the same user-facing messages without that.
     if not engine_profiles.is_valid_profile_name(profile_name):
+        # Default is reserved (seed-owned); name it so the UI can prompt save-as.
+        if profile_name == engine_profiles.SEEDED_DEFAULT_PROFILE:
+            return jsonify({
+                "success": False,
+                "error": "Default is reserved; save under a new profile name",
+            }), 400
         return jsonify({"success": False, "error": "Invalid profile name"}), 400
     value_error = engine_profiles.validation_error(groups, values)
     if value_error is not None:
@@ -4782,7 +4803,7 @@ def api_get_engine_levels(engine_name):
     binary, then returns its sections as ``{"value", "label"}`` rows (via
     ``strength_level_choices``), always including ``Default``. ``value`` is the
     section name persisted as the player's ``elo``; ``label`` is the display text
-    (an uncapped ``Default`` shows as ``"Unlimited"``). Falls back to a single
+    (an uncapped ``Default`` shows as ``"Default (Unlimited)"``). Falls back to a single
     ``Default`` row when the engine cannot be probed or the name is invalid.
     """
     default_only = [{"value": "Default", "label": "Default"}]

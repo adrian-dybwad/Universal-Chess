@@ -954,7 +954,10 @@ def test_get_profiles_returns_schema_and_seeded_profiles(client, profile_paths):
     assert data["schema"] and isinstance(data["schema"], list)
     names = {p["name"] for p in data["profiles"]}
     assert names == _SEEDED_NAMES
+    default = next(p for p in data["profiles"] if p["name"] == "Default")
+    assert default["label"] == "Default (Unlimited)"
     rung = next(p for p in data["profiles"] if p["name"] == "1600 ELO")
+    assert rung["label"] == "1600 ELO"
     # Section-local values only -- no inherited Threads from [DEFAULT]; the rung
     # both sets the target Elo and enables the limit (else the engine ignores it).
     assert rung["values"] == {"UCI_LimitStrength": "true", "UCI_Elo": "1600"}
@@ -1024,6 +1027,56 @@ def test_put_rejects_out_of_range_value_with_400(client, profile_paths):
     assert "Tactical" not in names
 
 
+def test_put_rejects_overwrite_of_default_profile(client, profile_paths):
+    """POST to the seeded Default profile is rejected; Default values stay intact.
+
+    Why: editing Default (e.g. Maia WeightsFile) and saving under that name would
+    leave a section that still claims to be Default but is no longer the seeded
+    default. The UI must save-as under a new name; the API enforces the same.
+    How regression shows: Default's values change after POST while the name stays
+    Default.
+    """
+    before = {
+        p["name"]: p["values"]
+        for p in client.get(f"/api/engines/{PROFILES_ENGINE}/profiles").get_json()["profiles"]
+    }
+    resp = client.post(
+        f"/api/engines/{PROFILES_ENGINE}/profiles/Default",
+        data=json.dumps({"values": {"UCI_LimitStrength": True, "UCI_Elo": 1500}}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "Default" in body["error"]
+
+    after = {
+        p["name"]: p["values"]
+        for p in client.get(f"/api/engines/{PROFILES_ENGINE}/profiles").get_json()["profiles"]
+    }
+    assert after["Default"] == before["Default"]
+
+
+def test_delete_rejects_seeded_default_profile(client, profile_paths):
+    """DELETE of the seeded Default profile is rejected with 400.
+
+    Why: Default is the strength anchor for the Elo picker. How regression shows:
+    Default disappears from /levels after a delete call.
+    """
+    client.get(f"/api/engines/{PROFILES_ENGINE}/profiles")
+    resp = client.post(f"/api/engines/{PROFILES_ENGINE}/profiles/Default/delete")
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "Default" in body["error"]
+
+    names = {
+        p["name"]
+        for p in client.get(f"/api/engines/{PROFILES_ENGINE}/profiles").get_json()["profiles"]
+    }
+    assert "Default" in names
+
+
 def test_save_non_editable_engine_returns_404(client, profile_paths):
     """Saving against a non-probeable engine is rejected with 404.
 
@@ -1070,17 +1123,17 @@ def test_levels_endpoint_seeds_and_returns_labeled_sections(client, profile_path
     The picker (web and on-device) reads this. It must probe/seed on first use
     and return the derived ladder with Default first. Because this engine
     advertises UCI_LimitStrength, its Default runs uncapped, so its display label
-    is "Unlimited" while its persisted value stays "Default" (existing configs
-    keep resolving). A regression that stopped seeding would return only the
-    single Default row; one that relabelled by name or changed the stored value
-    would break config matching.
+    is "Default (Unlimited)" while its persisted value stays "Default" (existing
+    configs keep resolving). A regression that stopped seeding would return only
+    the single Default row; one that dropped the Default prefix or changed the
+    stored value would break config matching / list uniformity with Maia.
     """
     resp = client.get(f"/api/engines/{PROFILES_ENGINE}/levels")
     assert resp.status_code == 200
     levels = resp.get_json()
-    assert levels[0] == {"value": "Default", "label": "Unlimited"}
+    assert levels[0] == {"value": "Default", "label": "Default (Unlimited)"}
     assert {level["value"] for level in levels} == _SEEDED_NAMES
-    # Only Default is relabelled; the numbered rungs show their value verbatim.
+    # Only Default is annotated; the numbered rungs show their value verbatim.
     assert all(
         level["label"] == level["value"]
         for level in levels

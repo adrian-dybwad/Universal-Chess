@@ -2024,8 +2024,8 @@ def _get_engine_elo_levels(engine_name: str) -> List[dict]:
     Returns:
         Ordered ``{"value", "label"}`` rows. ``value`` is the section name
         persisted as the player's ``elo``; ``label`` is the display text (an
-        uncapped ``Default`` shows as ``"Unlimited"``), e.g.
-        ``[{"value": "Default", "label": "Unlimited"}, {"value": "1400 ELO", ...}]``.
+        uncapped ``Default`` shows as ``"Default (Unlimited)"``), e.g.
+        ``[{"value": "Default", "label": "Default (Unlimited)"}, {"value": "1400 ELO", ...}]``.
     """
     global _engine_elo_levels
 
