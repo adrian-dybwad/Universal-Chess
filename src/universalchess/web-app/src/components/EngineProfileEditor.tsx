@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button, Card, FormRow, Input, Select } from './ui';
 import { apiFetch } from '../utils/api';
@@ -11,6 +11,7 @@ import {
   findExistingProfileName,
   isReservedProfileName,
   mustSaveDefaultAsNew,
+  orderSchemaGroups,
   profileFormIsDirty,
   shouldConfirmProfileReplace,
   toOverridePayload,
@@ -47,6 +48,7 @@ export function EngineProfileEditor({
   onProfilesReset?: () => void;
 }) {
   const { t } = useTranslation();
+  const rootRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editable, setEditable] = useState(true);
@@ -63,6 +65,12 @@ export function EngineProfileEditor({
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // Opened from a mid-page engines list; reset scroll so About/toolbar are visible.
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    rootRef.current?.scrollIntoView({ block: 'start', behavior: 'auto' });
+  }, [engineName]);
 
   const loadField = useCallback(
     (schemaGroups: SchemaGroup[], list: Profile[], name: string | null) => {
@@ -81,7 +89,8 @@ export function EngineProfileEditor({
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data: SchemaResponse = await resp.json();
         setEditable(Boolean(data.editable));
-        setSchema(data.schema);
+        const ordered = orderSchemaGroups(data.schema ?? []);
+        setSchema(ordered);
         setProfiles(data.profiles);
 
         const names = data.profiles.map((p) => p.name);
@@ -89,7 +98,7 @@ export function EngineProfileEditor({
         setSelectedName(next);
         setIsNew(false);
         setNameInput('');
-        loadField(data.schema, data.profiles, next);
+        loadField(ordered, data.profiles, next);
       } catch (e) {
         setLoadError(t('engineProfile.loadError', { error: e instanceof Error ? e.message : t('engineProfile.unknownError') }));
       } finally {
@@ -223,14 +232,15 @@ export function EngineProfileEditor({
         return;
       }
       setEditable(Boolean(data.editable));
-      setSchema(data.schema ?? []);
+      const ordered = orderSchemaGroups(data.schema ?? []);
+      setSchema(ordered);
       setProfiles(data.profiles ?? []);
       const names = (data.profiles ?? []).map((p: Profile) => p.name);
       const next = names[0] ?? null;
       setSelectedName(next);
       setIsNew(false);
       setNameInput('');
-      loadField(data.schema ?? [], data.profiles ?? [], next);
+      loadField(ordered, data.profiles ?? [], next);
       setNotice(t('engineProfile.resetDone'));
       onProfilesReset?.();
     } catch (e) {
@@ -257,7 +267,7 @@ export function EngineProfileEditor({
   const saveDisabled = saving || (selectedName === 'Default' && !formDirty && !isNew);
 
   return (
-    <div className="profile-editor">
+    <div className="profile-editor" ref={rootRef}>
       <div className="profile-editor-toolbar">
         <Button variant="secondary" size="sm" onClick={onBack}>
           {t('engineProfile.back')}

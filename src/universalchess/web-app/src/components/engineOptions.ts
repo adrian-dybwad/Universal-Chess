@@ -50,14 +50,24 @@ export interface SchemaResponse {
 }
 
 // Group id -> shared menu icon. The probed schema groups options into
-// strength/engine/advanced/about; unknown ids fall back to a generic tune icon
+// about/strength/engine/advanced; unknown ids fall back to a generic tune icon
 // so a backend schema change can never break the render.
 export const GROUP_ICONS: Record<string, string> = {
+  about: 'info',
   strength: 'trending',
   engine: 'settings',
   advanced: 'tune',
-  about: 'info',
 };
+
+/**
+ * Put the About group first when present so engine identity (UCI_EngineAbout)
+ * appears above strength/tuning cards. Other groups keep their relative order.
+ */
+export function orderSchemaGroups(schema: SchemaGroup[]): SchemaGroup[] {
+  const about = schema.filter((g) => g.id === 'about');
+  const rest = schema.filter((g) => g.id !== 'about');
+  return [...about, ...rest];
+}
 
 /** Stringified engine default, used as the form value when a profile omits a key. */
 export function defaultString(field: SchemaField): string {

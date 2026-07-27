@@ -11,6 +11,7 @@ import {
   shouldConfirmProfileReplace,
   findExistingProfileName,
   isReservedProfileName,
+  orderSchemaGroups,
   toOverridePayload,
   type Profile,
   type SchemaGroup,
@@ -151,5 +152,26 @@ describe('info fields in form helpers', () => {
       Description: '',
     }
     expect(profileFormIsDirty(ABOUT_SCHEMA, form, null)).toBe(false)
+  })
+})
+
+describe('orderSchemaGroups', () => {
+  it('moves About ahead of other groups without reordering the rest', () => {
+    // Why: About (UCI_EngineAbout) must greet at the top of the editor.
+    // Failure: about stays last when API order drifts or is stale.
+    const ordered = orderSchemaGroups([
+      { id: 'strength', label: 'Strength', fields: [] },
+      { id: 'advanced', label: 'Advanced', fields: [] },
+      { id: 'about', label: 'About', fields: [] },
+    ])
+    expect(ordered.map((g) => g.id)).toEqual(['about', 'strength', 'advanced'])
+  })
+
+  it('is a no-op when there is no About group', () => {
+    const ordered = orderSchemaGroups([
+      { id: 'strength', label: 'Strength', fields: [] },
+      { id: 'engine', label: 'Engine', fields: [] },
+    ])
+    expect(ordered.map((g) => g.id)).toEqual(['strength', 'engine'])
   })
 })

@@ -315,7 +315,9 @@ def build_groups(
         "about": "About",
     }
     groups: List[ProfileGroup] = []
-    for gid in ("strength", "engine", "advanced", "about"):
+    # About first: informational text (UCI_EngineAbout) should greet the user
+    # before strength/tuning knobs, not sit below a long Advanced list.
+    for gid in ("about", "strength", "engine", "advanced"):
         if buckets[gid]:
             groups.append(ProfileGroup(gid, labels[gid], tuple(buckets[gid])))
     return tuple(groups)

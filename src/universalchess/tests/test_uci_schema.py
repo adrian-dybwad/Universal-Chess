@@ -330,11 +330,12 @@ def test_build_groups_orders_and_buckets_fields(tmp_path):
 
 
 def test_build_groups_puts_about_fields_in_about_bucket(tmp_path):
-    """Informational strings land in a trailing About group.
+    """Informational strings land in a leading About group.
 
-    Why: about text is not a tuning knob; burying it in Advanced next to Contempt
-    invites editing. How regression shows: UCI_EngineAbout appears under advanced
-    with type text, or is missing from the schema.
+    Why: about text is not a tuning knob; showing it first (before Strength)
+    makes engine identity visible without scrolling past Advanced. How
+    regression shows: UCI_EngineAbout appears under advanced with type text,
+    is missing from the schema, or is ordered after strength/advanced.
     """
     groups = us.build_groups(
         [
@@ -348,8 +349,8 @@ def test_build_groups_puts_about_fields_in_about_bucket(tmp_path):
         engine_name="eng",
         engines_dir=str(tmp_path),
     )
-    assert [g.id for g in groups] == ["strength", "about"]
-    about = groups[-1].fields[0]
+    assert [g.id for g in groups] == ["about", "strength"]
+    about = groups[0].fields[0]
     assert about.key == "UCI_EngineAbout"
     assert about.type == "info"
 
