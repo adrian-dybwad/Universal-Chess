@@ -1309,6 +1309,13 @@ export function Settings() {
             if (result && result.success === false) {
               const label = enginesData.find((e) => e.name === finishedEngine)?.display_name ?? finishedEngine;
               setEngineError({ engine: finishedEngine, message: `${t('settingsPage.enginesUi.failInstall', { name: label })}${result.error ? ` ${result.error}` : ''}` });
+            } else if (result && result.success) {
+              // Install seeds a fresh .uci; drop any stale /levels cache for this engine.
+              setEngineLevels((prev) => {
+                const next = { ...prev };
+                delete next[finishedEngine];
+                return next;
+              });
             }
           } else if (status.interrupted && status.engine) {
             // An install was running before the last restart; offer Resume/Cancel.
@@ -1508,6 +1515,39 @@ export function Settings() {
       console.error('Failed to repair engine:', e);
       setInstallingEngine(null);
       setEngineError({ engine: engineName, message: t('settingsPage.enginesUi.failRepairRetry', { name: engineName }) });
+    }
+  }, [t]);
+
+  // Wipe and re-seed config/engines/<name>.uci from a live UCI probe. Busts the
+  // cached Elo picker rows for that engine so the next open refetches /levels.
+  const resetEngineProfiles = useCallback(async (engineName: string, displayName: string) => {
+    if (!window.confirm(t('settingsPage.enginesUi.resetProfilesConfirm', { name: displayName }))) {
+      return;
+    }
+    setEngineError(null);
+    try {
+      const response = await apiFetch(`/api/engines/${encodeURIComponent(engineName)}/profiles/reset`, {
+        method: 'POST',
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.success === false) {
+        setEngineError({
+          engine: engineName,
+          message: data.error || t('settingsPage.enginesUi.resetProfilesFailed', { name: displayName }),
+        });
+        return;
+      }
+      setEngineLevels((prev) => {
+        const next = { ...prev };
+        delete next[engineName];
+        return next;
+      });
+    } catch (e) {
+      console.error('Failed to reset engine profiles:', e);
+      setEngineError({
+        engine: engineName,
+        message: t('settingsPage.enginesUi.resetProfilesFailed', { name: displayName }),
+      });
     }
   }, [t]);
 
@@ -2228,6 +2268,13 @@ export function Settings() {
                 engineName={profileEngine.name}
                 displayName={profileEngine.display_name}
                 onBack={() => setProfileEngine(null)}
+                onProfilesReset={() => {
+                  setEngineLevels((prev) => {
+                    const next = { ...prev };
+                    delete next[profileEngine.name];
+                    return next;
+                  });
+                }}
               />
             ) : (
               <>
@@ -2244,6 +2291,7 @@ export function Settings() {
                   onResume={resumeInstall}
                   onCancel={cancelInstall}
                   onConfigureProfiles={setProfileEngine}
+                  onResetProfiles={resetEngineProfiles}
                 />
 
                 <CustomEnginesPanel
@@ -2491,6 +2539,7 @@ function EnginesList({
   onResume,
   onCancel,
   onConfigureProfiles,
+  onResetProfiles,
 }: {
   engines: EngineDefinition[];
   installingEngine: string | null;
@@ -2501,6 +2550,7 @@ function EnginesList({
   onResume: () => void;
   onCancel: () => void;
   onConfigureProfiles: (engine: EngineDefinition) => void;
+  onResetProfiles: (engineName: string, displayName: string) => void;
 }) {
   const { t } = useTranslation();
   // Group engines by tier
@@ -2546,6 +2596,7 @@ function EnginesList({
                   onResume={onResume}
                   onCancel={onCancel}
                   onConfigureProfiles={onConfigureProfiles}
+                  onResetProfiles={onResetProfiles}
                 />
               ))}
             </div>
@@ -2567,6 +2618,7 @@ function EngineCard({
   onResume,
   onCancel,
   onConfigureProfiles,
+  onResetProfiles,
 }: {
   engine: EngineDefinition;
   isInstalling: boolean;
@@ -2585,6 +2637,7 @@ function EngineCard({
   onResume: () => void;
   onCancel: () => void;
   onConfigureProfiles: (engine: EngineDefinition) => void;
+  onResetProfiles: (engineName: string, displayName: string) => void;
 }) {
   const { t } = useTranslation();
   const isSystem = engine.name === 'stockfish'; // Stockfish is a system package
@@ -2765,14 +2818,24 @@ function EngineCard({
               exposes an editable UCI schema, including the Stockfish system
               package. The backend marks such engines has_profiles=true. */}
           {engine.has_profiles && engine.installed && !isInterrupted && (
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={installInProgress}
-              onClick={() => onConfigureProfiles(engine)}
-            >
-              {t('settingsPage.enginesUi.configureProfiles')}
-            </Button>
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={installInProgress}
+                onClick={() => onConfigureProfiles(engine)}
+              >
+                {t('settingsPage.enginesUi.configureProfiles')}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={installInProgress}
+                onClick={() => onResetProfiles(engine.name, engine.display_name)}
+              >
+                {t('settingsPage.enginesUi.resetProfiles')}
+              </Button>
+            </>
           )}
           {!isSystem && isInstalling && !isUninstalling && !isActiveInstall && (
             <span className="engine-install-note">

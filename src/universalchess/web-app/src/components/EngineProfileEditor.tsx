@@ -36,10 +36,13 @@ export function EngineProfileEditor({
   engineName,
   displayName,
   onBack,
+  onProfilesReset,
 }: {
   engineName: string;
   displayName: string;
   onBack: () => void;
+  /** Called after a successful reset so the parent can bust cached Elo levels. */
+  onProfilesReset?: () => void;
 }) {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
@@ -203,6 +206,36 @@ export function EngineProfileEditor({
     }
   }, [selectedName, engineName, fetchProfiles, t]);
 
+  const resetProfiles = useCallback(async () => {
+    if (!window.confirm(t('engineProfile.confirmReset'))) return;
+    setSaving(true);
+    setActionError(null);
+    setNotice(null);
+    try {
+      const resp = await apiFetch(`/api/engines/${engineName}/profiles/reset`, { method: 'POST' });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.success === false) {
+        setActionError(data.error || t('engineProfile.resetFailedStatus', { status: resp.status }));
+        return;
+      }
+      setEditable(Boolean(data.editable));
+      setSchema(data.schema ?? []);
+      setProfiles(data.profiles ?? []);
+      const names = (data.profiles ?? []).map((p: Profile) => p.name);
+      const next = names[0] ?? null;
+      setSelectedName(next);
+      setIsNew(false);
+      setNameInput('');
+      loadField(data.schema ?? [], data.profiles ?? [], next);
+      setNotice(t('engineProfile.resetDone'));
+      onProfilesReset?.();
+    } catch (e) {
+      setActionError(t('engineProfile.resetFailed', { error: e instanceof Error ? e.message : t('engineProfile.unknownError') }));
+    } finally {
+      setSaving(false);
+    }
+  }, [engineName, loadField, onProfilesReset, t]);
+
   const profileOptions = useMemo(
     () => profiles.map((p) => ({ value: p.name, label: p.label ?? p.name })),
     [profiles],
@@ -265,6 +298,14 @@ export function EngineProfileEditor({
               <div className="profile-editor-select-actions">
                 <Button variant="secondary" size="sm" onClick={startNewProfile} disabled={saving}>
                   {t('engineProfile.newProfile')}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={resetProfiles}
+                  disabled={saving}
+                >
+                  {t('engineProfile.resetProfiles')}
                 </Button>
                 <Button
                   variant="danger"

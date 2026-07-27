@@ -1077,6 +1077,41 @@ def test_delete_rejects_seeded_default_profile(client, profile_paths):
     assert "Default" in names
 
 
+def test_reset_profiles_reseeds_ladder_from_probe(client, profile_paths):
+    """POST /profiles/reset wipes the writable .uci and seeds a fresh ladder.
+
+    Why: a stuck Default-only file (or deleted Elo sections) never self-heals
+    because seed_config is create-if-absent. Reset is the operator escape hatch.
+    How regression shows: reset returns success but profiles stay Default-only,
+    or custom sections survive.
+    """
+    config = profile_paths
+    # Seed, then corrupt to Default-only (the stuck state).
+    client.get(f"/api/engines/{PROFILES_ENGINE}/profiles")
+    config.write_text(
+        "[DEFAULT]\nThreads = 1\n\n[Default]\nUCI_LimitStrength = false\n",
+        encoding="utf-8",
+    )
+    assert {p["name"] for p in client.get(
+        f"/api/engines/{PROFILES_ENGINE}/profiles"
+    ).get_json()["profiles"]} == {"Default"}
+
+    resp = client.post(f"/api/engines/{PROFILES_ENGINE}/profiles/reset")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["success"] is True
+    names = {p["name"] for p in body["profiles"]}
+    assert names == _SEEDED_NAMES
+    default = next(p for p in body["profiles"] if p["name"] == "Default")
+    assert default["label"] == "Default (Unlimited)"
+
+
+def test_reset_profiles_non_editable_engine_returns_404(client, profile_paths):
+    """Reset against a non-probeable engine is rejected with 404."""
+    resp = client.post(f"/api/engines/{SYSTEM_ENGINE}/profiles/reset")
+    assert resp.status_code == 404
+
+
 def test_save_non_editable_engine_returns_404(client, profile_paths):
     """Saving against a non-probeable engine is rejected with 404.
 

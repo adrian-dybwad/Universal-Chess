@@ -4736,6 +4736,33 @@ def _profiles_with_labels(config_path):
 # (handle_preflight) intercepts every PUT/DELETE app-wide and demands WebDAV
 # auth, so REST routes cannot use those verbs. All engine endpoints (install,
 # uninstall, resume, cancel) already use POST for the same reason.
+# ``profiles/reset`` is registered before ``profiles/<profile_name>`` so the
+# literal path is not captured as a profile name.
+@app.route("/api/engines/<engine_name>/profiles/reset", methods=["POST"])
+def api_reset_engine_profiles(engine_name):
+    """Delete the writable ``.uci`` and re-seed strength profiles from a probe.
+
+    Escape hatch for a stuck Default-only config (or discarded custom profiles).
+    Returns the same shape as GET profiles so the editor can refresh in one
+    round-trip. 404 when the engine cannot be probed.
+    """
+    config_path = _config_uci_path(engine_name)
+    if config_path is None:
+        return jsonify({"success": False, "error": "Invalid engine"}), 400
+    try:
+        uci_schema.reset_config(engine_name, config_path=config_path)
+        groups = uci_schema.get_schema(engine_name)
+    except uci_schema.EngineProbeError:
+        return jsonify({"success": False, "error": "Engine is not installed"}), 404
+    return jsonify({
+        "success": True,
+        "engine": engine_name,
+        "editable": True,
+        "schema": engine_profiles.schema_to_json(groups),
+        "profiles": _profiles_with_labels(config_path),
+    })
+
+
 @app.route("/api/engines/<engine_name>/profiles/<profile_name>", methods=["POST"])
 def api_save_engine_profile(engine_name, profile_name):
     """Create or replace a profile. Body: ``{"values": {key: value}}``.
@@ -5132,6 +5159,7 @@ def _run_custom_url_install(engine_id: str, display_name: str, url: str):
                 created_at=_now_iso(),
             )
         )
+        _seed_uci_after_install(engine_id)
         _engine_install_store.finish(success=True, error=None)
     except Exception as e:
         app.logger.exception("Custom URL engine install failed: %s", e)
@@ -5139,6 +5167,28 @@ def _run_custom_url_install(engine_id: str, display_name: str, url: str):
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+
+def _seed_uci_after_install(engine_name: str) -> None:
+    """Best-effort seed of ``config/engines/<name>.uci`` after a successful install.
+
+    Mirrors the post-install seed in ``EngineManager.install_engine`` for paths
+    that install outside the manager (custom upload / URL). Failures are logged
+    only -- the binary is already installed and first-use seed still applies.
+    """
+    try:
+        config_path = _config_uci_path(engine_name)
+        if config_path is None:
+            return
+        uci_schema.seed_config(engine_name, config_path=config_path)
+    except uci_schema.EngineProbeError as seed_error:
+        app.logger.warning(
+            "Installed %s but UCI profile seed failed: %s", engine_name, seed_error,
+        )
+    except Exception as seed_error:
+        app.logger.warning(
+            "Installed %s but UCI profile seed failed: %s", engine_name, seed_error,
+        )
 
 
 def _run_engine_install(engine_name: str, ref: Optional[str] = None):
@@ -5405,6 +5455,7 @@ def api_upload_engine():
                 created_at=_now_iso(),
             )
         )
+        _seed_uci_after_install(engine_id)
         return jsonify({"success": True, "message": f"Uploaded {display_name}"})
     except Exception as e:
         return _internal_error(e)

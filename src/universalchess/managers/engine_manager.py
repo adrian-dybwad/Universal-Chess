@@ -1758,6 +1758,19 @@ class EngineManager:
 
             if success:
                 log.info(f"[EngineManager] install_engine: Successfully installed '{engine_name}' (ref={resolved_ref})")
+                # Probe-seed the writable .uci now so the Elo picker has a ladder
+                # without waiting for first open (and without racing a client that
+                # opened levels while the binary was still missing). Failure is
+                # non-fatal: seed_config remains create-if-absent on first use.
+                try:
+                    from universalchess.services import uci_schema
+                    uci_schema.seed_config(engine_name)
+                except Exception as seed_error:
+                    log.warning(
+                        "[EngineManager] install_engine: installed '%s' but UCI "
+                        "profile seed failed: %s",
+                        engine_name, seed_error,
+                    )
             else:
                 log.error(f"[EngineManager] install_engine: Failed to install '{engine_name}' - error: {self._install_error}")
             

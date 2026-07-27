@@ -44,6 +44,8 @@ __all__ = [
     "build_groups",
     "get_schema",
     "seed_config",
+    "reset_config",
+    "reconcile_config",
     "derive_sections",
     "help_for",
 ]
@@ -464,6 +466,41 @@ def seed_config(
     log.info("[uci_schema] Seeded config for %s at %s (%d sections)",
              engine_name, path, len(sections))
     return path
+
+
+def reset_config(
+    engine_name: str,
+    *,
+    engine_path: Optional[str] = None,
+    config_path: Optional[str] = None,
+    engines_dir: str = ENGINES_DIR,
+    threads: int = 1,
+) -> str:
+    """Delete any existing writable config and seed a fresh one from a probe.
+
+    Used by the profile editor / engine manager "Reset profiles" action to heal
+    a stuck Default-only file or discard user edits and restore the derived
+    strength ladder. Unlike :func:`seed_config`, an existing file is removed
+    first so the next write is never skipped.
+
+    Returns the config path. Raises :class:`EngineProbeError` when the name is
+    invalid or the binary cannot be probed (in that case an existing file is
+    still removed so a later successful probe can seed cleanly -- leaving a
+    known-bad file in place would keep ``seed_config`` skipping forever).
+    """
+    path = config_path or config_path_for(engine_name)
+    if path is None:
+        raise EngineProbeError(f"invalid engine name: {engine_name!r}")
+    if os.path.exists(path):
+        os.remove(path)
+        log.info("[uci_schema] Removed config for %s at %s before reset", engine_name, path)
+    return seed_config(
+        engine_name,
+        engine_path=engine_path,
+        config_path=path,
+        engines_dir=engines_dir,
+        threads=threads,
+    )
 
 
 def reconcile_config(

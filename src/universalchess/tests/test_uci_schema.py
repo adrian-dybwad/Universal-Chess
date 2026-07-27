@@ -530,6 +530,43 @@ def test_seed_config_creates_missing_parent_directories(monkeypatch, tmp_path):
     assert config.exists()
 
 
+def test_reset_config_replaces_existing_file_with_fresh_seed(monkeypatch, tmp_path):
+    """Reset deletes a stale config and writes a full probe-derived ladder.
+
+    Why: a Default-only (or hand-edited) .uci makes seed_config a no-op forever.
+    Reset is the escape hatch. How regression shows: reset leaves the old file
+    byte-identical (seed skipped) or drops Elo sections.
+    """
+    monkeypatch.setattr(us, "probe_options", lambda path: [
+        FakeOption("UCI_LimitStrength", "check", False),
+        FakeOption("UCI_Elo", "spin", 1500, 1400, 1800),
+    ])
+    config = tmp_path / "eng.uci"
+    config.write_text("[Default]\nUCI_LimitStrength = false\n", encoding="utf-8")
+
+    result = us.reset_config("eng", engine_path="/fake/eng", config_path=str(config))
+    assert result == str(config)
+    assert ep.read_profile_names(str(config)) == [
+        "Default", "1400 ELO", "1600 ELO", "1800 ELO",
+    ]
+
+
+def test_reset_config_seeds_when_absent(monkeypatch, tmp_path):
+    """Reset on a missing file behaves like a fresh seed.
+
+    Why: first-time reset (or after a failed prior probe left nothing) must still
+    produce the ladder. How regression shows: reset raises or writes nothing.
+    """
+    monkeypatch.setattr(us, "probe_options", lambda path: [
+        FakeOption("UCI_LimitStrength", "check", False),
+        FakeOption("UCI_Elo", "spin", 1500, 1400, 1600),
+    ])
+    config = tmp_path / "config" / "engines" / "eng.uci"
+
+    us.reset_config("eng", engine_path="/fake/eng", config_path=str(config))
+    assert ep.read_profile_names(str(config)) == ["Default", "1400 ELO", "1600 ELO"]
+
+
 # ---------------------------------------------------------------------------
 # reconcile_config: add-only merge with the current on-disk net set
 # ---------------------------------------------------------------------------
