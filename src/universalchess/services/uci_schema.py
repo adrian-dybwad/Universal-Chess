@@ -48,6 +48,8 @@ __all__ = [
     "reconcile_config",
     "derive_sections",
     "help_for",
+    "is_info_option",
+    "option_to_field",
 ]
 
 # UCI option names (compared case-insensitively) that select playing strength.
@@ -56,6 +58,24 @@ _STRENGTH_NAMES = frozenset({"uci_limitstrength", "uci_elo", "skill level", "str
 
 # Engine-wide resources written to the shared [DEFAULT] section, not per profile.
 _ENGINE_WIDE_NAMES = frozenset({"hash", "threads"})
+
+# Informational string options the UCI protocol (and engines) expose for the GUI
+# to display, not edit. ``UCI_EngineAbout`` is the standard; names ending in
+# ``about`` cover engine-specific aliases. Writing them via setoption is not
+# meaningful, so the editor shows them as read-only linkified text.
+_INFO_OPTION_EXACT = frozenset({"uci_engineabout", "copyright"})
+
+
+def is_info_option(name: str) -> bool:
+    """Return whether ``name`` is a display-only informational UCI option.
+
+    Matched case-insensitively: the official ``UCI_EngineAbout``, ``Copyright``,
+    and any option whose name ends with ``about`` (after stripping spaces).
+    """
+    if not isinstance(name, str) or not name:
+        return False
+    compact = name.casefold().replace(" ", "")
+    return compact in _INFO_OPTION_EXACT or compact.endswith("about")
 
 def _file_option_overrides() -> Dict[str, Dict[str, Tuple[str, str]]]:
     """Build the file-option override registry from the engine catalog.
@@ -208,8 +228,9 @@ def option_to_field(
     itself) and buttons (no persisted value). ``spin`` -> int with the engine's
     bounds, ``check`` -> bool, ``combo`` -> select over its ``var`` values,
     ``string`` -> text or, when it is file-backed, a select of installed files
-    with a free-text escape hatch. Unknown types degrade to text so a novel
-    engine is still editable rather than dropped.
+    with a free-text escape hatch. Informational strings such as
+    ``UCI_EngineAbout`` map to ``info`` (display-only). Unknown types degrade to
+    text so a novel engine is still editable rather than dropped.
 
     ``help`` is the description to attach (the probe itself provides none; callers
     resolve it via :func:`help_for`). It is carried through to the web form's
@@ -234,6 +255,10 @@ def option_to_field(
         return ProfileField(name, name, "select", default, options=options, help=help)
     if otype in _TEXT_TYPES:
         default = "" if option.default is None else str(option.default)
+        if is_info_option(name):
+            # Display-only: the UCI protocol says the GUI should not setoption
+            # these (license / about text). Never turn them into a file picker.
+            return ProfileField(name, name, "info", default, help=help)
         choices = file_choices(option) if file_choices is not None else None
         if choices:
             opts = tuple((c, os.path.basename(c)) for c in choices)
@@ -249,6 +274,8 @@ def option_to_field(
 def _group_for(field: ProfileField) -> str:
     """Return the form group id for a mapped field."""
     low = field.key.lower()
+    if field.type == "info":
+        return "about"
     # File-backed selectors (Maia nets) are the strength selector for that engine.
     if low in _STRENGTH_NAMES or (field.type == "select" and field.allow_custom):
         return "strength"
@@ -268,7 +295,9 @@ def build_groups(
     def choices_for(option: object) -> Optional[List[str]]:
         return enumerate_file_choices(engine_name, option, engines_dir)
 
-    buckets: Dict[str, List[ProfileField]] = {"strength": [], "engine": [], "advanced": []}
+    buckets: Dict[str, List[ProfileField]] = {
+        "strength": [], "engine": [], "advanced": [], "about": [],
+    }
     for option in options:
         field = option_to_field(
             option,
@@ -279,9 +308,14 @@ def build_groups(
             continue
         buckets[_group_for(field)].append(field)
 
-    labels = {"strength": "Strength", "engine": "Engine", "advanced": "Advanced"}
+    labels = {
+        "strength": "Strength",
+        "engine": "Engine",
+        "advanced": "Advanced",
+        "about": "About",
+    }
     groups: List[ProfileGroup] = []
-    for gid in ("strength", "engine", "advanced"):
+    for gid in ("strength", "engine", "advanced", "about"):
         if buckets[gid]:
             groups.append(ProfileGroup(gid, labels[gid], tuple(buckets[gid])))
     return tuple(groups)

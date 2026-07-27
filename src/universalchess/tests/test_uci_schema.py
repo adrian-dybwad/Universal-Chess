@@ -94,6 +94,49 @@ def test_plain_string_maps_to_text():
     assert field.default == "hello"
 
 
+def test_uci_engine_about_maps_to_info():
+    """UCI_EngineAbout is display-only info, not an editable text box.
+
+    Why: the UCI protocol says the GUI should not setoption this string (license
+    / about text). How regression shows: type stays 'text' and the form offers
+    an input that would write nonsense into the profile.
+    """
+    about = "Shredder by Stefan Meyer-Kahlen, see www.shredderchess.com"
+    field = us.option_to_field(FakeOption("UCI_EngineAbout", "string", about))
+    assert field is not None
+    assert field.type == "info"
+    assert field.default == about
+
+
+@pytest.mark.parametrize("name", [
+    "EngineAbout",
+    "engine about",
+    "Copyright",
+    "UCI_EngineAbout",
+])
+def test_info_option_names_detected(name):
+    """About/copyright option names are classified as informational."""
+    assert us.is_info_option(name) is True
+    assert us.is_info_option("Comment") is False
+    assert us.is_info_option("UCI_Elo") is False
+
+
+def test_info_option_skips_file_picker_even_if_default_looks_like_path(tmp_path):
+    """An About string must never become a file select via the path heuristic."""
+    fake_file = tmp_path / "about.txt"
+    fake_file.write_text("x", encoding="utf-8")
+
+    def choices(_option):
+        return [str(fake_file)]
+
+    field = us.option_to_field(
+        FakeOption("UCI_EngineAbout", "string", str(fake_file)), choices
+    )
+    assert field is not None
+    assert field.type == "info"
+    assert field.options is None
+
+
 def test_button_and_managed_options_are_skipped():
     """Buttons (no value) and engine-managed options are not editable.
 
@@ -284,6 +327,31 @@ def test_build_groups_orders_and_buckets_fields(tmp_path):
     assert layout["strength"] == ["UCI_Elo", "UCI_LimitStrength"]
     assert layout["engine"] == ["Threads", "Hash"]
     assert layout["advanced"] == ["Contempt"]
+
+
+def test_build_groups_puts_about_fields_in_about_bucket(tmp_path):
+    """Informational strings land in a trailing About group.
+
+    Why: about text is not a tuning knob; burying it in Advanced next to Contempt
+    invites editing. How regression shows: UCI_EngineAbout appears under advanced
+    with type text, or is missing from the schema.
+    """
+    groups = us.build_groups(
+        [
+            FakeOption("UCI_Elo", "spin", 1500, 800, 2850),
+            FakeOption(
+                "UCI_EngineAbout",
+                "string",
+                "Engine X, see https://example.com/engine",
+            ),
+        ],
+        engine_name="eng",
+        engines_dir=str(tmp_path),
+    )
+    assert [g.id for g in groups] == ["strength", "about"]
+    about = groups[-1].fields[0]
+    assert about.key == "UCI_EngineAbout"
+    assert about.type == "info"
 
 
 def test_build_groups_populates_help_from_registry(tmp_path):

@@ -11,6 +11,7 @@ import {
   shouldConfirmProfileReplace,
   findExistingProfileName,
   isReservedProfileName,
+  toOverridePayload,
   type Profile,
   type SchemaGroup,
 } from './engineOptions'
@@ -106,5 +107,49 @@ describe('shouldConfirmProfileReplace', () => {
     const names = ['Default', '1200 ELO', 'Attacker']
     expect(shouldConfirmProfileReplace(true, '1200 elo', names)).toBe(true)
     expect(shouldConfirmProfileReplace(true, 'ATTACKER', names)).toBe(true)
+  })
+})
+
+describe('info fields in form helpers', () => {
+  const ABOUT_SCHEMA: SchemaGroup[] = [
+    {
+      id: 'about',
+      label: 'About',
+      fields: [
+        {
+          key: 'UCI_EngineAbout',
+          label: 'UCI_EngineAbout',
+          type: 'info',
+          default: 'see www.example.com',
+        },
+      ],
+    },
+    {
+      id: 'advanced',
+      label: 'Advanced',
+      fields: [
+        { key: 'Description', label: 'Description', type: 'text', default: '' },
+      ],
+    },
+  ]
+
+  it('never includes info fields in the save payload', () => {
+    // Why: about text is display-only; sending it would hit the read-only API
+    // reject. Failure: payload contains UCI_EngineAbout.
+    const form = {
+      UCI_EngineAbout: 'tampered',
+      Description: 'Hello',
+    }
+    expect(toOverridePayload(ABOUT_SCHEMA, form)).toEqual({ Description: 'Hello' })
+  })
+
+  it('ignores info fields when deciding dirty', () => {
+    // Why: showing the engine default for info must not force save-as on Default.
+    // Failure: dirty=true because formValues differ from a stale stored about.
+    const form = {
+      UCI_EngineAbout: 'anything',
+      Description: '',
+    }
+    expect(profileFormIsDirty(ABOUT_SCHEMA, form, null)).toBe(false)
   })
 })

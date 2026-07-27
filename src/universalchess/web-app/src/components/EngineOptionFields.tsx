@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next';
 import { FormRow, InfoTip, Input, Select, Slider, Toggle } from './ui';
 import { MenuIcon } from './MenuIcon';
 import type { SchemaField } from './engineOptions';
+import { linkifyText } from '../utils/linkifyText';
 
 /**
  * Presentation for one probed engine option and a schema group heading, shared
@@ -9,7 +10,8 @@ import type { SchemaField } from './engineOptions';
  *
  * Controls follow the option type: bounded integers render as sliders (with the
  * range/default in the hint), booleans as toggles, combo/file options as
- * dropdowns (file options also accept a custom path), and everything else as a
+ * dropdowns (file options also accept a custom path), informational strings
+ * (UCI_EngineAbout) as read-only linkified text, and everything else as a
  * text box.
  */
 
@@ -46,6 +48,30 @@ function splitHelp(help: string | undefined, extra?: string): {
   return { inline, info: isLong ? text : undefined };
 }
 
+/** Read-only info option: engine about/copyright text with clickable URLs. */
+function InfoFieldText({ text }: { text: string }) {
+  const segments = linkifyText(text);
+  return (
+    <p className="profile-info-text">
+      {segments.map((segment) => {
+        if (segment.kind === 'text') {
+          return <span key={`t-${segment.start}`}>{segment.text}</span>;
+        }
+        return (
+          <a
+            key={`l-${segment.start}`}
+            href={segment.href}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {segment.text}
+          </a>
+        );
+      })}
+    </p>
+  );
+}
+
 /** Render one probed option as the appropriate control. */
 export function SchemaFieldRow({
   field,
@@ -59,6 +85,15 @@ export function SchemaFieldRow({
   onChange: (value: string) => void;
 }) {
   const { t } = useTranslation();
+  if (field.type === 'info') {
+    const { inline, info } = splitHelp(field.help);
+    return (
+      <FormRow label={field.label} help={inline} info={info ? <InfoTip text={info} /> : undefined}>
+        <InfoFieldText text={value || String(field.default ?? '')} />
+      </FormRow>
+    );
+  }
+
   if (field.type === 'bool') {
     const { inline, info } = splitHelp(field.help);
     // Toggle renders its own labelled form row.

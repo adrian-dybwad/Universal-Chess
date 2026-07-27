@@ -507,6 +507,26 @@ def test_validation_error_matches_raising_path(groups):
     assert ep.validation_error(groups, bad) == str(exc_info.value)
 
 
+def test_info_fields_cannot_be_written():
+    """Submitting an informational option is rejected as read-only.
+
+    Why: UCI_EngineAbout is for the GUI to display; writing it into a profile
+    would persist a setoption that engines ignore or misuse. How regression
+    shows: validation succeeds and the key appears in the coerced write dict.
+    """
+    groups = (
+        ep.ProfileGroup("about", "About", (
+            ep.ProfileField(
+                "UCI_EngineAbout", "About", "info",
+                "see https://example.com",
+            ),
+        )),
+    )
+    err = ep.validation_error(groups, {"UCI_EngineAbout": "changed"})
+    assert err is not None
+    assert "read-only" in err
+
+
 def test_delete_blocked_reason_blocks_reserved_sections_and_allows_others():
     """delete_blocked_reason flags both reserved sections; other names are free.
 

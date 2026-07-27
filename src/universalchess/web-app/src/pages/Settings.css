@@ -303,6 +303,20 @@
   margin: 0;
 }
 
+/* Read-only UCI about/copyright text; links open in a new tab. */
+.profile-info-text {
+  margin: 0;
+  line-height: 1.5;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.profile-info-text a {
+  color: var(--color-accent, var(--color-primary));
+  text-decoration: underline;
+}
+
 .profile-editor-select {
   display: flex;
   align-items: flex-end;

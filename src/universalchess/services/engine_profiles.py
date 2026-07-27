@@ -87,7 +87,9 @@ class ProfileField:
         key: Exact UCI option name written to the ``.uci`` file (case-sensitive,
             preserved as the engine advertised it, e.g. ``UCI_Elo``, ``Skill Level``).
         label: Human-friendly label for the form.
-        type: One of ``"int"``, ``"bool"``, ``"select"``, ``"text"``.
+        type: One of ``"int"``, ``"bool"``, ``"select"``, ``"text"``, ``"info"``.
+            ``info`` is display-only (e.g. ``UCI_EngineAbout``); it is never
+            written back to a profile.
         default: The engine's default value (shown when a profile omits the key).
         minimum/maximum: Inclusive bounds for ``int`` fields (the engine's own
             tuning range). ``None`` for non-numeric fields.
@@ -276,6 +278,10 @@ def _validate_and_coerce(
             error, value = _coerce_select(field, raw)
         elif field.type == "text":
             error, value = _coerce_text(field, raw)
+        elif field.type == "info":
+            # Informational options (UCI_EngineAbout, etc.) are display-only;
+            # rejecting a write keeps setoption from being abused via the API.
+            return f"'{key}' is read-only", {}
         else:  # pragma: no cover - schema types are closed and exhaustive
             return f"unsupported field type '{field.type}' for '{key}'", {}
 

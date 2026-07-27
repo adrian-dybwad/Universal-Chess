@@ -17,7 +17,8 @@ export interface SchemaFieldOption {
 export interface SchemaField {
   key: string;
   label: string;
-  type: 'int' | 'bool' | 'select' | 'text';
+  /** ``info`` is display-only (e.g. UCI_EngineAbout); never included in saves. */
+  type: 'int' | 'bool' | 'select' | 'text' | 'info';
   default: number | boolean | string;
   min?: number;
   max?: number;
@@ -49,12 +50,13 @@ export interface SchemaResponse {
 }
 
 // Group id -> shared menu icon. The probed schema groups options into
-// strength/engine/advanced; unknown ids fall back to a generic tune icon so a
-// backend schema change can never break the render.
+// strength/engine/advanced/about; unknown ids fall back to a generic tune icon
+// so a backend schema change can never break the render.
 export const GROUP_ICONS: Record<string, string> = {
   strength: 'trending',
   engine: 'settings',
   advanced: 'tune',
+  about: 'info',
 };
 
 /** Stringified engine default, used as the form value when a profile omits a key. */
@@ -71,6 +73,11 @@ export function valuesForProfile(
   const out: Record<string, string> = {};
   for (const group of schema) {
     for (const field of group.fields) {
+      if (field.type === 'info') {
+        // Display-only: always show the engine default, never a saved override.
+        out[field.key] = defaultString(field);
+        continue;
+      }
       const stored = profile?.values?.[field.key];
       out[field.key] = stored !== undefined ? stored : defaultString(field);
     }
@@ -82,6 +89,7 @@ export function valuesForProfile(
  * Reduce the full form map to the sparse override set sent to the backend: a key
  * is included only when its value differs from the engine default. Booleans and
  * bounded integers are sent typed; combo/file/text values are sent as strings.
+ * Informational fields are never sent.
  */
 export function toOverridePayload(
   schema: SchemaGroup[],
@@ -90,6 +98,7 @@ export function toOverridePayload(
   const payload: Record<string, number | boolean | string> = {};
   for (const group of schema) {
     for (const field of group.fields) {
+      if (field.type === 'info') continue;
       const raw = formValues[field.key] ?? '';
       if (field.type === 'bool') {
         const on = raw === 'true';
@@ -118,6 +127,7 @@ export function profileFormIsDirty(
   const expected = valuesForProfile(schema, baseline);
   for (const group of schema) {
     for (const field of group.fields) {
+      if (field.type === 'info') continue;
       if ((formValues[field.key] ?? '') !== (expected[field.key] ?? '')) {
         return true;
       }
