@@ -53,6 +53,9 @@ beforeEach(() => {
     if (url === '/api/connectivity/wifi/saved') return jsonResponse({ networks: [] });
     if (url === '/api/connectivity/bluetooth/status')
       return jsonResponse({ enabled: false, paired: [], advertised_names: [], adv_state: 'radio_off' });
+    // The Chromecast card treats a source reply without useLiveBoard as unread,
+    // so give it the shape the endpoint actually returns.
+    if (url === '/api/connectivity/chromecast/source') return jsonResponse({ useLiveBoard: true });
     return jsonResponse({});
   });
   vi.stubGlobal('fetch', fetchMock);

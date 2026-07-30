@@ -155,6 +155,33 @@ export function ConnectivityPanel() {
   );
 }
 
+// Outcome of one of a card's reads. `failed` exists so an unreadable response is
+// never rendered as a successful one: without it a 502 was indistinguishable
+// from "the catalog declares no account types", from "no saved networks", and
+// from "the board streams the board-only layout".
+type LoadState = 'loading' | 'ready' | 'failed';
+
+/**
+ * Error line plus a Retry control for a card whose data could not be read.
+ *
+ * Shared so every card reports an unreadable response the same way instead of
+ * falling back to a confident default or a silently missing section. Reuses the
+ * cards' existing message and action styles, so it needs no CSS of its own.
+ */
+function LoadFailure({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <div className="conn-message conn-message--error">{message}</div>
+      <div className="conn-actions">
+        <Button variant="secondary" onClick={onRetry}>
+          {t('common.retry')}
+        </Button>
+      </div>
+    </>
+  );
+}
+
 function signalLabel(signal: number, t: TFunction): string {
   if (signal >= 70) return t('connectivity.signal.strong');
   if (signal >= 40) return t('connectivity.signal.good');
@@ -167,6 +194,7 @@ function WifiCard() {
   const [status, setStatus] = useState<WifiStatus | null>(null);
   const [scanResults, setScanResults] = useState<ScanNetwork[] | null>(null);
   const [saved, setSaved] = useState<SavedNetwork[]>([]);
+  const [savedState, setSavedState] = useState<LoadState>('loading');
   const [scanning, setScanning] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
@@ -183,15 +211,36 @@ function WifiCard() {
     }
   }, []);
 
+  // The saved list is behind auth and is rendered only when non-empty, so a
+  // failure must be reported: silently dropping the section takes the Forget
+  // button for every saved network with it. A 401 stays quiet (the list is
+  // optional; don't force a login just to view the page), and leaves the section
+  // hidden without claiming the board has no saved networks.
   const fetchSaved = useCallback(async () => {
     try {
       const r = await apiFetch('/api/connectivity/wifi/saved', { requiresAuth: true });
-      if (r.status === 401) return; // saved list is optional; don't force login on load
-      if (r.ok) setSaved((await r.json()).networks ?? []);
+      if (r.status === 401) {
+        setSavedState('ready');
+        return;
+      }
+      if (!r.ok) {
+        setSavedState('failed');
+        return;
+      }
+      setSaved((await r.json()).networks ?? []);
+      setSavedState('ready');
     } catch {
-      /* best-effort */
+      setSavedState('failed');
     }
   }, []);
+
+  // Clearing the error on click is the only feedback that the retry started, so
+  // the reset lives here rather than in the loader (which runs on mount, where
+  // the state is already `loading`).
+  const retrySaved = useCallback(() => {
+    setSavedState('loading');
+    void fetchSaved();
+  }, [fetchSaved]);
 
   useEffect(() => {
     fetchStatus();
@@ -433,6 +482,10 @@ function WifiCard() {
               ))
             )}
           </div>
+        )}
+
+        {savedState === 'failed' && (
+          <LoadFailure message={t('connectivity.wifi.savedLoadFailed')} onRetry={retrySaved} />
         )}
 
         {saved.length > 0 && (
@@ -982,6 +1035,7 @@ function ChromecastCard() {
   const [discovering, setDiscovering] = useState(false);
   const [busy, setBusy] = useState(false);
   const [useLiveBoard, setUseLiveBoard] = useState(true);
+  const [sourceState, setSourceState] = useState<LoadState>('loading');
   const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const { dialog, onUnauthorized } = useAuthedAction();
 
@@ -1000,19 +1054,48 @@ function ChromecastCard() {
   }, []);
   useSseEvent('chromecast_state', onChromecastState, true);
 
-  // Ask the board for the current source and streaming state once on mount; the
-  // resulting chromecast_state push arrives on the shared connection above.
-  useEffect(() => {
-    apiFetch('/api/connectivity/chromecast/source')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data && typeof data.useLiveBoard === 'boolean') {
-          setUseLiveBoard(data.useLiveBoard);
-        }
-      })
-      .catch(() => {});
-    apiFetch('/api/connectivity/chromecast/status', { method: 'POST', requiresAuth: true }).catch(() => {});
+  // Read the stored streaming source. The toggle's position asserts what the
+  // board holds, so nothing is rendered until the value is known: a failure used
+  // to leave the optimistic `true` default on screen, telling the user the board
+  // streams the board-only layout when it may be set to classic. A 200 without a
+  // boolean `useLiveBoard` is the same unknown -- the endpoint always sends the
+  // field, so a response without it came from something other than the API (a
+  // stale service worker, a proxy page) and must not be trusted either. The value
+  // is not pushed over SSE, so recovery is an explicit retry.
+  const loadSource = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/connectivity/chromecast/source');
+      if (!r.ok) {
+        setSourceState('failed');
+        return;
+      }
+      const data = await r.json();
+      if (typeof data?.useLiveBoard !== 'boolean') {
+        setSourceState('failed');
+        return;
+      }
+      setUseLiveBoard(data.useLiveBoard);
+      setSourceState('ready');
+    } catch {
+      setSourceState('failed');
+    }
   }, []);
+
+  // Ask the board for the current source and streaming state once on mount; the
+  // resulting chromecast_state push arrives on the shared connection above. The
+  // status kick is best-effort: losing it only delays the first snapshot until
+  // the board's next push, and it 401s by design for an unauthenticated viewer.
+  useEffect(() => {
+    void loadSource();
+    apiFetch('/api/connectivity/chromecast/status', { method: 'POST', requiresAuth: true }).catch(() => {});
+  }, [loadSource]);
+
+  // Clears the error on click; the loader itself only records the outcome, since
+  // on mount the state is already `loading`.
+  const retrySource = useCallback(() => {
+    setSourceState('loading');
+    void loadSource();
+  }, [loadSource]);
 
   const updateSource = useCallback(
     async (nextUseLiveBoard: boolean) => {
@@ -1117,13 +1200,19 @@ function ChromecastCard() {
       <Card className="mb-6">
         <CardHeader title={t('connectivity.chromecast.header')} />
 
-        <Toggle
-          checked={useLiveBoard}
-          onChange={updateSource}
-          disabled={busy}
-          label={t('connectivity.chromecast.streamBoardOnly')}
-          help={t('connectivity.chromecast.streamBoardOnlyHelp')}
-        />
+        {sourceState === 'ready' && (
+          <Toggle
+            checked={useLiveBoard}
+            onChange={updateSource}
+            disabled={busy}
+            label={t('connectivity.chromecast.streamBoardOnly')}
+            help={t('connectivity.chromecast.streamBoardOnlyHelp')}
+          />
+        )}
+
+        {sourceState === 'failed' && (
+          <LoadFailure message={t('connectivity.chromecast.sourceLoadFailed')} onRetry={retrySource} />
+        )}
 
         {status.devices.length === 0 ? (
           <div className="conn-status">
@@ -1228,6 +1317,15 @@ const ADD_ERROR_KEYS: Record<string, string> = {
  * type's definition. Adding authenticates the credential server-side to resolve
  * the account's identity and reject duplicates; secrets never round-trip to the
  * browser. Exported for focused testing.
+ *
+ * Both reads report failure and offer a retry. A previous version swallowed
+ * them, which cost a user the whole Add Account form: mounting while the board
+ * was rebooting behind nginx returned 502, the empty `accountTypes` hid the form
+ * with no message, and nothing refetched, so only a page reload brought it back.
+ * Unlike the sibling cards this one has no status poll to recover on (the
+ * catalog is static per locale, so polling it would spend board CPU re-reading a
+ * one-time definition), which is why the retry is explicit. A 401 on the list is
+ * an outcome rather than a failure -- see `fetchAccounts`.
  */
 export function AccountsCard() {
   const { t } = useTranslation();
@@ -1236,7 +1334,8 @@ export function AccountsCard() {
   const [selectedType, setSelectedType] = useState('');
   // Add-form field values, keyed by field key (reset after a successful add).
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
-  const [loaded, setLoaded] = useState(false);
+  const [catalogState, setCatalogState] = useState<LoadState>('loading');
+  const [listState, setListState] = useState<LoadState>('loading');
   const [submitting, setSubmitting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
@@ -1245,32 +1344,65 @@ export function AccountsCard() {
   // The account list is behind auth. On 401 at load, degrade quietly to an empty
   // list (mirrors the WiFi saved-networks card) rather than forcing a login just
   // to view the page; a mutation will trigger the login flow and then refresh.
+  // That is a `ready` outcome, not a failure: an unauthenticated visitor must not
+  // be met with an error banner on every page load.
   const fetchAccounts = useCallback(async () => {
     try {
       const r = await apiFetch('/api/accounts', { requiresAuth: true });
       if (r.status === 401) {
         setAccounts([]);
+        setListState('ready');
         return;
       }
-      if (r.ok) setAccounts((await r.json()).accounts ?? []);
+      if (!r.ok) {
+        setListState('failed');
+        return;
+      }
+      setAccounts((await r.json()).accounts ?? []);
+      setListState('ready');
     } catch {
-      /* best-effort */
+      setListState('failed');
     }
   }, []);
 
+  // Read the account-type definitions the Add Account form is built from. Shared
+  // by the mount effect and the retry control so both take the same path.
+  const loadCatalog = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/menu-schema');
+      if (!r.ok) {
+        setCatalogState('failed');
+        return;
+      }
+      const data = await r.json();
+      const types: AccountType[] = data?.accountTypes ?? [];
+      setAccountTypes(types);
+      if (types.length > 0) setSelectedType(types[0].id);
+      setCatalogState('ready');
+    } catch {
+      setCatalogState('failed');
+    }
+  }, []);
+
+  // Retry runs the same two loads as mount, clearing the error on click; the
+  // loaders record only outcomes, since on mount both states are already
+  // `loading`.
+  const reload = useCallback(() => {
+    setCatalogState('loading');
+    setListState('loading');
+    void loadCatalog();
+    void fetchAccounts();
+  }, [loadCatalog, fetchAccounts]);
+
   useEffect(() => {
-    apiFetch('/api/menu-schema')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        const types: AccountType[] = data?.accountTypes ?? [];
-        setAccountTypes(types);
-        if (types.length > 0) setSelectedType(types[0].id);
-      })
-      .catch(() => {});
-    void fetchAccounts().finally(() => setLoaded(true));
-  }, [fetchAccounts]);
+    void loadCatalog();
+    void fetchAccounts();
+  }, [loadCatalog, fetchAccounts]);
 
   const currentType = accountTypes.find((t) => t.id === selectedType);
+  // Either read failing costs the user something they cannot see is missing (the
+  // add form, or their saved accounts), so both surface the same retry.
+  const loadFailed = catalogState === 'failed' || listState === 'failed';
 
   const setField = (key: string, value: string) =>
     setFieldValues((prev) => ({ ...prev, [key]: value }));
@@ -1345,7 +1477,9 @@ export function AccountsCard() {
 
         {message && <div className={`conn-message conn-message--${message.kind}`}>{message.text}</div>}
 
-        {loaded && accounts.length === 0 && (
+        {loadFailed && <LoadFailure message={t('connectivity.accounts.loadFailed')} onRetry={reload} />}
+
+        {listState === 'ready' && accounts.length === 0 && (
           <p className="text-muted">{t('connectivity.accounts.none')}</p>
         )}
 
@@ -1411,15 +1545,17 @@ export function AccountsCard() {
                   type={field.type === 'password' ? 'password' : 'text'}
                   value={fieldValues[field.key] ?? ''}
                   placeholder={field.placeholder}
-                  disabled={!loaded}
                   onChange={(e) => setField(field.key, e.target.value)}
                 />
                 {field.help && <p className="text-muted conn-field-help">{field.help}</p>}
               </div>
             ))}
 
+            {/* Adding does not depend on the saved-account list: duplicates are
+                rejected server-side by identity, so the form stays usable even
+                when the list read failed or was unauthorized. */}
             <div className="conn-actions">
-              <Button type="submit" variant="primary" disabled={submitting || !loaded}>
+              <Button type="submit" variant="primary" disabled={submitting}>
                 {submitting ? t('connectivity.accounts.adding') : t('connectivity.accounts.add')}
               </Button>
             </div>

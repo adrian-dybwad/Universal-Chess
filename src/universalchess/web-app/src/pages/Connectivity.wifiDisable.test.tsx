@@ -89,7 +89,10 @@ beforeEach(() => {
     // Bluetooth card reads status.paired.length, so give it a valid empty shape.
     if (url === '/api/connectivity/bluetooth/status')
       return jsonResponse({ enabled: false, paired: [], advertised_names: [], adv_state: 'radio_off' });
-    // Chromecast/Accounts cards: benign empty payloads.
+    // The Chromecast card treats a source reply without useLiveBoard as unread,
+    // so give it the shape the endpoint actually returns.
+    if (url === '/api/connectivity/chromecast/source') return jsonResponse({ useLiveBoard: true });
+    // Accounts card: benign empty payload.
     return jsonResponse({});
   });
 

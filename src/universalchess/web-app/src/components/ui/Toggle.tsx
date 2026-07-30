@@ -28,6 +28,9 @@ export function Toggle({ checked, onChange, disabled = false, label, help, info 
           type="button"
           className={`toggle ${checked ? 'toggle--active' : ''}`}
           role="switch"
+          // The visible label is a plain <label> with no control to point at, so
+          // name the switch explicitly; without this it is announced unnamed.
+          aria-label={label}
           aria-checked={checked}
           disabled={disabled}
           onClick={() => onChange(!checked)}

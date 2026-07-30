@@ -11,6 +11,10 @@ import menuSchemaFixture from '../test/fixtures/menuSchema.json';
  * built from the catalog's accountTypes, surfaces the duplicate-username
  * conflict, and deletes an account. These drive the real <AccountsCard> against
  * a mocked API so they exercise the fetch -> render -> submit path, not internals.
+ *
+ * The load-failure group guards the reported bug where a board reboot made the
+ * card lose its controls permanently: the catalog fetch failed, the form that is
+ * built from it silently disappeared, and only a page reload brought it back.
  */
 
 const menuSchema: unknown = menuSchemaFixture;
@@ -39,20 +43,55 @@ interface AccountRecord {
   secretsSet: Record<string, boolean>;
 }
 
+interface MockOptions {
+  /** Status for POST /api/accounts (>=400 short-circuits with `addBody`). */
+  addStatus?: number;
+  addBody?: unknown;
+  /**
+   * How many GET /api/menu-schema calls fail before one succeeds. Use
+   * `ALWAYS_FAILS` for an outage that never clears and 1 for a transient one
+   * (the mount fails, a retry succeeds).
+   */
+  schemaFailures?: number;
+  /** Status the failing GET /api/menu-schema calls return. */
+  schemaStatus?: number;
+  /** Status for GET /api/accounts; non-2xx returns no body. */
+  listStatus?: number;
+}
+
+// A failure count no test can exhaust, for "the backend stayed down".
+const ALWAYS_FAILS = Number.POSITIVE_INFINITY;
+
+// Mirrors what nginx returns while the board's Flask process is not yet
+// listening -- the condition that produced the reported bug.
+const BAD_GATEWAY = 502;
+
 /**
  * Build a stateful fetch mock over /api/menu-schema, /api/accounts (GET/POST),
  * and the POST delete route. Returns the mock and the mutable account list so a
- * test can seed accounts and assert the endpoints the card called.
+ * test can seed accounts and assert the endpoints the card called. `opts` can
+ * fail the catalog and list reads to exercise the card's load-failure handling.
  */
-function mockAccounts(initial: AccountRecord[], opts?: { addStatus?: number; addBody?: unknown }) {
+function mockAccounts(initial: AccountRecord[], opts?: MockOptions) {
   const accounts = [...initial];
   const calls: { url: string; method: string; body?: unknown }[] = [];
+  let schemaCalls = 0;
   const fetchMock = vi.fn(async (url: string, init?: RequestInit): Promise<JsonResponseLike> => {
     const method = ((init?.method as string) ?? 'GET').toUpperCase();
     const body = init?.body ? JSON.parse(init.body as string) : undefined;
     calls.push({ url, method, body });
-    if (url === '/api/menu-schema') return jsonResponse(menuSchema);
-    if (url === '/api/accounts' && method === 'GET') return jsonResponse({ accounts });
+    if (url === '/api/menu-schema') {
+      schemaCalls += 1;
+      if (schemaCalls <= (opts?.schemaFailures ?? 0)) {
+        return jsonResponse({}, opts?.schemaStatus ?? BAD_GATEWAY);
+      }
+      return jsonResponse(menuSchema);
+    }
+    if (url === '/api/accounts' && method === 'GET') {
+      const status = opts?.listStatus ?? 200;
+      if (status >= 300) return jsonResponse({}, status);
+      return jsonResponse({ accounts });
+    }
     if (url === '/api/accounts' && method === 'POST') {
       if (opts?.addStatus && opts.addStatus >= 400) {
         return jsonResponse(opts.addBody ?? { error: 'error' }, opts.addStatus);
@@ -165,5 +204,78 @@ describe('Accounts card (multi-account)', () => {
     fireEvent.click(screen.getByRole('button', { name: /delete/i }));
     await waitFor(() => expect(screen.queryByText('MagnusC')).not.toBeInTheDocument());
     expect(calls.some((c) => c.url === '/api/accounts/lichess/magnusc/delete' && c.method === 'POST')).toBe(true);
+  });
+});
+
+describe('Accounts card load failures', () => {
+  beforeEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it('shows a retryable error instead of silently dropping the Add Account form when the catalog read fails', async () => {
+    // The reported bug: a 502 on /api/menu-schema (board rebooting behind nginx)
+    // left accountTypes empty, so the whole definition-driven form vanished with
+    // no explanation and no way back short of a page reload. The card must say it
+    // could not load and offer a retry. The regression manifests as no error text
+    // and no Retry button while the token field is also absent -- a card that
+    // looks loaded but has lost every control.
+    mockAccounts([], { schemaFailures: ALWAYS_FAILS });
+    render(<AccountsCard />);
+
+    await waitFor(() => expect(screen.getByText(/could not load accounts/i)).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+    expect(screen.queryByLabelText(/API Token/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /add account/i })).not.toBeInTheDocument();
+  });
+
+  it('rebuilds the Add Account form when Retry succeeds after a transient catalog failure', async () => {
+    // Recovery is the point of the fix: the mount races a restarting backend and
+    // fails, then a retry must re-read the catalog and rebuild every field from
+    // it. The regression manifests as the error persisting (no second
+    // /api/menu-schema GET) or the fields never returning, which is today's
+    // reload-only behaviour.
+    const { calls } = mockAccounts([], { schemaFailures: 1 });
+    render(<AccountsCard />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }));
+
+    await waitFor(() => expect(screen.getByLabelText(/API Token/i)).toBeInTheDocument());
+    expect(screen.getByLabelText(/Rating Range/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /add account/i })).toBeInTheDocument();
+    expect(screen.queryByText(/could not load accounts/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
+    expect(calls.filter((c) => c.url === '/api/menu-schema').length).toBe(2);
+  });
+
+  it('does not claim there are no accounts when the saved-account list fails to load', async () => {
+    // An unreadable list is not an empty list: rendering the "no accounts yet"
+    // copy would assert something the card cannot know, hiding real accounts
+    // behind a confident empty state. The catalog read succeeds here, so the form
+    // must stay usable and only the list is reported as failed. The regression
+    // manifests as the empty-state copy appearing for a board that holds accounts.
+    mockAccounts([lichessAccount], { listStatus: 500 });
+    render(<AccountsCard />);
+
+    await waitFor(() => expect(screen.getByText(/could not load accounts/i)).toBeInTheDocument());
+    expect(screen.queryByText(/no accounts yet/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/API Token/i)).toBeInTheDocument();
+  });
+
+  it('keeps the Add Account form usable and quiet when the saved-account list is unauthorized', async () => {
+    // 401 on the list is a deliberate quiet degrade: viewing the page must not
+    // force a login, and adding an account triggers the login flow on demand. It
+    // is an outcome, not a failure, so it must not be swept into the new error
+    // path. The regression manifests as an error banner and a Retry button on
+    // every unauthenticated page load.
+    mockAccounts([lichessAccount], { listStatus: 401 });
+    render(<AccountsCard />);
+
+    await waitFor(() => expect(screen.getByLabelText(/API Token/i)).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: /add account/i })).toBeEnabled();
+    expect(screen.queryByText(/could not load accounts/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
   });
 });

@@ -805,6 +805,7 @@
       "none": "No networks found.",
       "secured": "Secured",
       "saved": "Saved networks",
+      "savedLoadFailed": "Could not load saved networks. Check the connection and try again.",
       "connectedBadge": "connected",
       "forget": "Forget",
       "connectedTo": "Connected to {{ssid}}.",
@@ -885,6 +886,7 @@
       "stream": "Stream",
       "sourceFailed": "Could not save Chromecast source.",
       "sourceError": "Network error saving Chromecast source.",
+      "sourceLoadFailed": "Could not read the streaming source setting.",
       "discoveryFailed": "Discovery failed.",
       "startFailed": "Could not start streaming.",
       "state": {
@@ -909,6 +911,7 @@
       "removeConfirm": "Remove the account \"{{identity}}\"?",
       "removeFailed": "Could not remove account.",
       "addFailed": "Could not add account.",
+      "loadFailed": "Could not load accounts. Check the connection and try again.",
       "errors": {
         "duplicate": "An account with that player name already exists.",
         "missing_field": "Please fill in all required fields.",

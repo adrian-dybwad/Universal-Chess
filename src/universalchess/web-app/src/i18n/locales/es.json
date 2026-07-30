@@ -805,6 +805,7 @@
       "none": "No se encontraron redes.",
       "secured": "Protegida",
       "saved": "Redes guardadas",
+      "savedLoadFailed": "No se pudieron cargar las redes guardadas. Revisa la conexión e inténtalo de nuevo.",
       "connectedBadge": "conectado",
       "forget": "Olvidar",
       "connectedTo": "Conectado a {{ssid}}.",
@@ -885,6 +886,7 @@
       "stream": "Transmitir",
       "sourceFailed": "No se pudo guardar la fuente de Chromecast.",
       "sourceError": "Error de red al guardar la fuente de Chromecast.",
+      "sourceLoadFailed": "No se pudo leer el ajuste de la fuente de transmisión.",
       "discoveryFailed": "Falló la búsqueda.",
       "startFailed": "No se pudo iniciar la transmisión.",
       "state": {
@@ -909,6 +911,7 @@
       "removeConfirm": "¿Eliminar la cuenta «{{identity}}»?",
       "removeFailed": "No se pudo eliminar la cuenta.",
       "addFailed": "No se pudo añadir la cuenta.",
+      "loadFailed": "No se pudieron cargar las cuentas. Revisa la conexión e inténtalo de nuevo.",
       "errors": {
         "duplicate": "Ya existe una cuenta con ese nombre de jugador.",
         "missing_field": "Rellena todos los campos obligatorios.",
