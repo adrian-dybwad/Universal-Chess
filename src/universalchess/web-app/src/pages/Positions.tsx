@@ -3,11 +3,11 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Card } from '../components/ui';
 import { ChessBoard } from '../components/ChessBoard';
-import { LoginDialog } from '../components/LoginDialog';
+import { useLoginRetry } from '../components/useLoginRetry';
 import { MenuIcon } from '../components/MenuIcon';
 import { useGameStore } from '../stores/gameStore';
 import { isGameInProgress } from '../utils/gameProgress';
-import { apiFetch, getStoredCredentials } from '../utils/api';
+import { apiFetch } from '../utils/api';
 import '../components/ApiSettingsDialog.css';
 import './Positions.css';
 
@@ -110,18 +110,17 @@ export function Positions() {
   const [status, setStatus] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const [pending, setPending] = useState<PositionEntry | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [loginOpen, setLoginOpen] = useState(false);
-  const [loginError, setLoginError] = useState<string | undefined>();
 
-  // Add-position form (shown only for the Custom category). A pending payload is
-  // held so a save interrupted by a login can be retried after authenticating,
-  // mirroring how position setup retries via the same LoginDialog.
+  // Both writes here are auth-gated and queue themselves for replay after a
+  // login: the setup captures its entry, the save captures the typed payload.
+  const { requireLogin, loginDialog } = useLoginRetry();
+
+  // Add-position form (shown only for the Custom category).
   const [addName, setAddName] = useState('');
   const [addFen, setAddFen] = useState('');
   const [addHint, setAddHint] = useState('');
   const [addError, setAddError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  const pendingAddRef = useRef<{ name: string; fen: string; hint: string } | null>(null);
 
   // Test positions are developer/QA fixtures, so they render after the
   // player-facing categories (puzzles, endgames, ...) regardless of their order
@@ -170,70 +169,69 @@ export function Positions() {
 
   const sendSetup = useCallback(async (entry: PositionEntry): Promise<void> => {
     setStatus(null);
-    try {
-      const response = await apiFetch('/api/board/setup-position', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fen: entry.fen, name: prettify(entry.name), hint: entry.hint ?? undefined }),
-        requiresAuth: true,
-      });
+    // Named inner closure so a login-retry replays this exact entry.
+    const submit = async (): Promise<void> => {
+      try {
+        const response = await apiFetch('/api/board/setup-position', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fen: entry.fen, name: prettify(entry.name), hint: entry.hint ?? undefined }),
+          requiresAuth: true,
+        });
 
-      if (response.status === 401) {
-        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
-        setLoginOpen(true);
-        return;
-      }
+        if (requireLogin(response, submit)) return;
 
-      const data = await response.json().catch(() => ({}));
-      if (response.ok && data.success) {
-        setStatus({ kind: 'success', text: t('positions.setupSuccess', { name: prettify(entry.name) }) });
-      } else {
-        setStatus({ kind: 'error', text: data.error || t('positions.setupFailed') });
+        const data = await response.json().catch(() => ({}));
+        if (response.ok && data.success) {
+          setStatus({ kind: 'success', text: t('positions.setupSuccess', { name: prettify(entry.name) }) });
+        } else {
+          setStatus({ kind: 'error', text: data.error || t('positions.setupFailed') });
+        }
+      } catch (e) {
+        console.error('Failed to set up position:', e);
+        setStatus({ kind: 'error', text: t('common.networkError') });
       }
-    } catch (e) {
-      console.error('Failed to set up position:', e);
-      setStatus({ kind: 'error', text: t('common.networkError') });
-    }
-  }, [t]);
+    };
+    await submit();
+  }, [requireLogin, t]);
 
   const submitAdd = useCallback(async (payload: { name: string; fen: string; hint: string }): Promise<void> => {
     setAddError(null);
     setStatus(null);
     setAdding(true);
-    try {
-      const response = await apiFetch('/api/positions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: payload.name, fen: payload.fen, hint: payload.hint || undefined }),
-        requiresAuth: true,
-      });
+    // Named inner closure so a login-retry resends the values as typed, rather
+    // than re-reading a form the user may have started editing again.
+    const submit = async (): Promise<void> => {
+      try {
+        const response = await apiFetch('/api/positions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: payload.name, fen: payload.fen, hint: payload.hint || undefined }),
+          requiresAuth: true,
+        });
 
-      if (response.status === 401) {
-        // Keep the entered values so the save resumes after login succeeds.
-        pendingAddRef.current = payload;
-        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
-        setLoginOpen(true);
-        return;
-      }
+        if (requireLogin(response, submit)) return;
 
-      const data = await response.json().catch(() => ({}));
-      if (response.ok && data.success) {
-        setAddName('');
-        setAddFen('');
-        setAddHint('');
-        setStatus({ kind: 'success', text: t('positions.addSuccess', { name: payload.name }) });
-        await loadPositions();
-      } else {
-        // 400s carry a user-safe validation message from the server.
-        setAddError(data.error || t('positions.addFailed'));
+        const data = await response.json().catch(() => ({}));
+        if (response.ok && data.success) {
+          setAddName('');
+          setAddFen('');
+          setAddHint('');
+          setStatus({ kind: 'success', text: t('positions.addSuccess', { name: payload.name }) });
+          await loadPositions();
+        } else {
+          // 400s carry a user-safe validation message from the server.
+          setAddError(data.error || t('positions.addFailed'));
+        }
+      } catch (e) {
+        console.error('Failed to save position:', e);
+        setAddError(t('common.networkError'));
+      } finally {
+        setAdding(false);
       }
-    } catch (e) {
-      console.error('Failed to save position:', e);
-      setAddError(t('common.networkError'));
-    } finally {
-      setAdding(false);
-    }
-  }, [t, loadPositions]);
+    };
+    await submit();
+  }, [requireLogin, t, loadPositions]);
 
   const onAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -252,20 +250,6 @@ export function Positions() {
   const onConfirm = () => {
     setConfirmOpen(false);
     if (pending) void sendSetup(pending);
-  };
-
-  const onLoginSuccess = () => {
-    setLoginOpen(false);
-    setLoginError(undefined);
-    // Resume whichever action prompted the login. A pending add takes priority
-    // because it is only set by the add form's own 401 path.
-    const add = pendingAddRef.current;
-    if (add) {
-      pendingAddRef.current = null;
-      void submitAdd(add);
-    } else if (pending) {
-      void sendSetup(pending);
-    }
   };
 
   const renderPositionTile = (entry: PositionEntry) => (
@@ -299,12 +283,7 @@ export function Positions() {
 
   return (
     <>
-      <LoginDialog
-        isOpen={loginOpen}
-        onClose={() => setLoginOpen(false)}
-        onSuccess={onLoginSuccess}
-        errorMessage={loginError}
-      />
+      {loginDialog}
 
       {confirmOpen && pending && (
         <div className="dialog-overlay" onClick={() => setConfirmOpen(false)}>

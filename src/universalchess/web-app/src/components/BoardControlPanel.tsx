@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState, type PointerEvent, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { LoginDialog } from './LoginDialog';
-import { apiFetch, buildApiUrl, getStoredCredentials } from '../utils/api';
+import { useLoginRetry } from './useLoginRetry';
+import { apiFetch, buildApiUrl } from '../utils/api';
 import { useSseEvent, type SseEventPayload } from '../utils/sseBus';
 import './BoardControlPanel.css';
 
@@ -72,8 +72,7 @@ interface BoardControlPanelProps {
 export function BoardControlPanel({ isOpen, onClose }: BoardControlPanelProps) {
   const { t } = useTranslation();
   const [status, setStatus] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
-  const [loginOpen, setLoginOpen] = useState(false);
-  const [loginError, setLoginError] = useState<string | undefined>();
+  const { requireLogin, loginDialog } = useLoginRetry();
   const [confirm, setConfirm] = useState<PendingPress | null>(null);
   const [activeKey, setActiveKey] = useState<RemoteKey | null>(null);
   const [longArmed, setLongArmed] = useState(false);
@@ -93,10 +92,9 @@ export function BoardControlPanel({ isOpen, onClose }: BoardControlPanelProps) {
   useSseEvent('epaper_changed', onEpaperChanged);
 
   // Tracks the in-flight press so release can classify short vs long without
-  // stale closures, and so login can replay the exact press that hit 401.
+  // stale closures.
   const pressStartRef = useRef<number | null>(null);
   const longTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingSendRef = useRef<PendingPress | null>(null);
 
   const clearLongTimer = useCallback(() => {
     if (longTimerRef.current !== null) {
@@ -107,36 +105,36 @@ export function BoardControlPanel({ isOpen, onClose }: BoardControlPanelProps) {
 
   const doSend = useCallback(async (press: PendingPress): Promise<void> => {
     setStatus(null);
-    try {
-      const response = await apiFetch('/api/board/key', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: press.key, long_press: press.longPress }),
-        requiresAuth: true,
-      });
+    // Named inner closure so a login-retry replays this exact press; a press is
+    // momentary, so nothing on screen would tell the user which key was lost.
+    const submit = async (): Promise<void> => {
+      try {
+        const response = await apiFetch('/api/board/key', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: press.key, long_press: press.longPress }),
+          requiresAuth: true,
+        });
 
-      if (response.status === 401) {
-        pendingSendRef.current = press;
-        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
-        setLoginOpen(true);
-        return;
-      }
+        if (requireLogin(response, submit)) return;
 
-      const data = await response.json().catch(() => ({}));
-      if (response.ok && data.success) {
-        // Quiet success: the live feed reflects the change. Surface only the
-        // shutdown gesture, which has no immediate on-screen feedback.
-        if (press.key === 'PLAY' && press.longPress) {
-          setStatus({ kind: 'success', text: t('boardControl.poweringOff') });
+        const data = await response.json().catch(() => ({}));
+        if (response.ok && data.success) {
+          // Quiet success: the live feed reflects the change. Surface only the
+          // shutdown gesture, which has no immediate on-screen feedback.
+          if (press.key === 'PLAY' && press.longPress) {
+            setStatus({ kind: 'success', text: t('boardControl.poweringOff') });
+          }
+        } else {
+          setStatus({ kind: 'error', text: data.error || t('boardControl.buttonFailed') });
         }
-      } else {
-        setStatus({ kind: 'error', text: data.error || t('boardControl.buttonFailed') });
+      } catch (e) {
+        console.error('Failed to send board key:', e);
+        setStatus({ kind: 'error', text: t('common.networkError') });
       }
-    } catch (e) {
-      console.error('Failed to send board key:', e);
-      setStatus({ kind: 'error', text: t('common.networkError') });
-    }
-  }, [t]);
+    };
+    await submit();
+  }, [requireLogin, t]);
 
   // Long-press PLAY is the shutdown gesture; confirm before sending it.
   const requestPress = useCallback((press: PendingPress): void => {
@@ -187,14 +185,6 @@ export function BoardControlPanel({ isOpen, onClose }: BoardControlPanelProps) {
     requestPress({ key, longPress: false });
   }, [requestPress]);
 
-  const onLoginSuccess = useCallback(() => {
-    setLoginOpen(false);
-    setLoginError(undefined);
-    const queuedPress = pendingSendRef.current;
-    pendingSendRef.current = null;
-    if (queuedPress) void doSend(queuedPress);
-  }, [doSend]);
-
   // Render the panel body only when open so the /screen.jpg snapshot is not
   // fetched in the background (the SSE subscription above stays active regardless
   // but performs no network I/O).
@@ -202,12 +192,7 @@ export function BoardControlPanel({ isOpen, onClose }: BoardControlPanelProps) {
 
   return (
     <>
-      <LoginDialog
-        isOpen={loginOpen}
-        onClose={() => { setLoginOpen(false); pendingSendRef.current = null; }}
-        onSuccess={onLoginSuccess}
-        errorMessage={loginError}
-      />
+      {loginDialog}
 
       {confirm && (
         <div className="dialog-overlay" onClick={() => setConfirm(null)}>

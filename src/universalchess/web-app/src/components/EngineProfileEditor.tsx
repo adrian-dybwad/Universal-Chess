@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button, Card, FormRow, Input, Select } from './ui';
-import { LoginDialog } from './LoginDialog';
-import { apiFetch, getStoredCredentials } from '../utils/api';
+import { useLoginRetry } from './useLoginRetry';
+import { apiFetch } from '../utils/api';
 import {
   type Profile,
   type SchemaGroup,
@@ -77,14 +77,10 @@ export function EngineProfileEditor({
   const [notice, setNotice] = useState<string | null>(null);
   const [caseCollisions, setCaseCollisions] = useState<string[][]>([]);
 
-  const [loginOpen, setLoginOpen] = useState(false);
-  const [loginError, setLoginError] = useState<string | undefined>();
-  // The write rejected for want of credentials, held so a successful login can
-  // replay it. A closure rather than a description of the request: each action
-  // queues the send step it had already computed (resolved profile name, sparse
-  // payload, rename target), so the replay is byte-identical and skips the
-  // confirmations the user has already answered.
-  const pendingWriteRef = useRef<(() => Promise<void>) | null>(null);
+  // Each write queues the send step it had already computed (resolved profile
+  // name, sparse payload, rename target), so a login replay is identical and
+  // skips the confirmations the user has already answered.
+  const { requireLogin, loginDialog } = useLoginRetry();
 
   // Opened from a mid-page engines list. Document scroll only -- scrollIntoView
   // on the editor aligns it under the sticky navbar and leaves Settings chrome
@@ -167,33 +163,6 @@ export function EngineProfileEditor({
   const setFieldValue = useCallback((key: string, value: string) => {
     setNotice(null);
     setFormValues((prev) => ({ ...prev, [key]: value }));
-  }, []);
-
-  /**
-   * Handle a write the server refused for lack of credentials.
-   *
-   * Returns true when the caller must stop: `retry` has been queued and the
-   * login dialog opened. Returns false for any other response so the caller
-   * handles it normally. Kept in one place because all four writes need the
-   * identical treatment, and a missed one would surface to the user as a bare
-   * "HTTP 401" with no way to authenticate.
-   */
-  const requireLogin = useCallback((resp: Response, retry: () => Promise<void>) => {
-    if (resp.status !== 401) return false;
-    // Credentials already stored means the ones held are wrong, not absent --
-    // say so, otherwise the dialog reopens with no explanation.
-    setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
-    pendingWriteRef.current = retry;
-    setLoginOpen(true);
-    return true;
-  }, [t]);
-
-  const handleLoginSuccess = useCallback(async () => {
-    setLoginOpen(false);
-    setLoginError(undefined);
-    const retry = pendingWriteRef.current;
-    pendingWriteRef.current = null;
-    if (retry) await retry();
   }, []);
 
   const save = useCallback(async () => {
@@ -435,17 +404,7 @@ export function EngineProfileEditor({
 
   return (
     <div className="profile-editor">
-      <LoginDialog
-        isOpen={loginOpen}
-        onClose={() => {
-          setLoginOpen(false);
-          // Abandoning the dialog abandons the write; leaving it queued would
-          // fire it unexpectedly at the next unrelated login.
-          pendingWriteRef.current = null;
-        }}
-        onSuccess={handleLoginSuccess}
-        errorMessage={loginError}
-      />
+      {loginDialog}
 
       <div className="profile-editor-toolbar">
         <Button variant="secondary" size="sm" onClick={onBack}>

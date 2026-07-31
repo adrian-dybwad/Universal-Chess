@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ChessboardOptions } from 'react-chessboard';
-import { LoginDialog } from './LoginDialog';
-import { apiFetch, getStoredCredentials } from '../utils/api';
+import { useLoginRetry } from './useLoginRetry';
+import { apiFetch } from '../utils/api';
 import { applyMoveToPlacement } from '../utils/chessPosition';
 import './BoardMove.css';
 
@@ -99,15 +99,17 @@ interface UseBoardMove {
 
 export function useBoardMove({ fen, turn, gameOver, enabled, authoritativeVersion }: UseBoardMoveArgs): UseBoardMove {
   const { t } = useTranslation();
-  const [loginOpen, setLoginOpen] = useState(false);
-  const [loginError, setLoginError] = useState<string | undefined>();
   const [promotion, setPromotion] = useState<PendingPromotion | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Placement-only FEN shown while a move is in flight so the dropped piece stays
   // at its destination. Null when there is no move in flight.
   const [optimisticFen, setOptimisticFen] = useState<string | null>(null);
-  // A move that hit 401 and must be replayed after a successful login.
-  const pendingMoveRef = useRef<string | null>(null);
+
+  // Abandoning the login abandons the move, so the piece must go back: no
+  // authoritative update will arrive to clear the optimistic frame, and it would
+  // otherwise sit on a square it never reached.
+  const revertOptimisticFrame = useCallback(() => setOptimisticFen(null), []);
+  const { requireLogin, loginDialog } = useLoginRetry({ onAbandon: revertOptimisticFrame });
 
   // A fresh authoritative snapshot supersedes any optimistic frame. For a legal
   // move the incoming FEN matches the frame (no visible change). For a rejected
@@ -128,33 +130,33 @@ export function useBoardMove({ fen, turn, gameOver, enabled, authoritativeVersio
   // optimistic frame in place; a hard rejection reverts it.
   const doSendMove = useCallback(async (uci: string): Promise<void> => {
     setError(null);
-    try {
-      const response = await apiFetch('/api/board/move', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ move: uci }),
-        requiresAuth: true,
-      });
+    // Named inner closure so a login-retry replays this exact move, keeping the
+    // optimistic frame in place meanwhile.
+    const submit = async (): Promise<void> => {
+      try {
+        const response = await apiFetch('/api/board/move', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ move: uci }),
+          requiresAuth: true,
+        });
 
-      if (response.status === 401) {
-        pendingMoveRef.current = uci;
-        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
-        setLoginOpen(true);
-        return;
-      }
+        if (requireLogin(response, submit)) return;
 
-      const data = await response.json().catch(() => ({}));
-      if (!(response.ok && data.success)) {
-        // Rejected: no authoritative update will arrive, so revert the piece.
+        const data = await response.json().catch(() => ({}));
+        if (!(response.ok && data.success)) {
+          // Rejected: no authoritative update will arrive, so revert the piece.
+          setOptimisticFen(null);
+          setError(data.error || t('boardMove.moveFailed'));
+        }
+      } catch (e) {
+        console.error('Failed to send move:', e);
         setOptimisticFen(null);
-        setError(data.error || t('boardMove.moveFailed'));
+        setError(t('common.networkError'));
       }
-    } catch (e) {
-      console.error('Failed to send move:', e);
-      setOptimisticFen(null);
-      setError(t('common.networkError'));
-    }
-  }, [t]);
+    };
+    await submit();
+  }, [requireLogin, t]);
 
   const onPieceDrop = useCallback<OnPieceDrop>(
     ({ piece, sourceSquare, targetSquare }) => {
@@ -196,27 +198,9 @@ export function useBoardMove({ fen, turn, gameOver, enabled, authoritativeVersio
     void doSendMove(`${pending.from}${pending.to}${pieceLetter}`);
   }, [promotion, fen, doSendMove]);
 
-  const onLoginSuccess = useCallback(() => {
-    setLoginOpen(false);
-    setLoginError(undefined);
-    const queued = pendingMoveRef.current;
-    pendingMoveRef.current = null;
-    if (queued) void doSendMove(queued);
-  }, [doSendMove]);
-
   const overlays = (
     <>
-      <LoginDialog
-        isOpen={loginOpen}
-        onClose={() => {
-          // Abandoned login: drop the queued move and revert its optimistic frame.
-          setLoginOpen(false);
-          pendingMoveRef.current = null;
-          setOptimisticFen(null);
-        }}
-        onSuccess={onLoginSuccess}
-        errorMessage={loginError}
-      />
+      {loginDialog}
 
       {promotion && (
         <div className="dialog-overlay" onClick={() => setPromotion(null)}>

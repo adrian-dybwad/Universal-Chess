@@ -46,13 +46,29 @@ interface RecordedCall {
   authorization: string | undefined;
 }
 
-const idleStatus = {
+// Shape of GET /api/engines/status. Declared here (Settings keeps its copy
+// private) and annotated rather than inferred, so `engine: null` in the idle
+// value does not narrow the field to the null type and reject the named engine
+// in the interrupted one.
+interface InstallStatus {
+  active: boolean;
+  installing: boolean;
+  engine: string | null;
+  display_name: string | null;
+  stage: string | null;
+  message: string;
+  percent: number;
+  interrupted: boolean;
+  result: { success: boolean; error: string | null } | null;
+}
+
+const idleStatus: InstallStatus = {
   active: false, installing: false, engine: null, display_name: null,
   stage: null, message: '', percent: 0, interrupted: false, result: null,
 };
 
 // An install that died with the board; this is the state that renders Cancel.
-const interruptedStatus = {
+const interruptedStatus: InstallStatus = {
   ...idleStatus, engine: ENGINE, display_name: DISPLAY_NAME, interrupted: true,
 };
 
@@ -85,7 +101,10 @@ const berserk: EngineDefinition = {
 };
 
 class MockEventSource {
-  constructor(public url: string) {}
+  // A plain field, not a constructor parameter property: the project builds
+  // with erasableSyntaxOnly, which rejects the shorthand.
+  url: string;
+  constructor(url: string) { this.url = url; }
   close(): void {}
   addEventListener(): void {}
   removeEventListener(): void {}
@@ -104,7 +123,7 @@ function jsonResponse(body: unknown, status = 200) {
  * Stub fetch: reads succeed, and every engine POST answers `postStatus`.
  * Returns the recorded calls so tests can assert method, URL and credentials.
  */
-function mockFetch(postStatus: number, status: typeof idleStatus) {
+function mockFetch(postStatus: number, status: InstallStatus) {
   const calls: RecordedCall[] = [];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET';
