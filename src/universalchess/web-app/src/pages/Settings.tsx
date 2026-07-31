@@ -2668,12 +2668,20 @@ function EngineFailureNotice({
     : t('settingsPage.enginesUi.failureInitializeTitle', { name: engine.display_name });
   const reasonKey = FAILURE_REASON_KEYS[failure.reason_code]
     ?? 'settingsPage.enginesUi.reasonLaunchFailed';
+  // Only an engine whose binary is on disk can be uninstalled, and only its card
+  // shows the Uninstall button the remedy names. An install that never produced
+  // a binary offers Install instead, so the same sentence there would point at a
+  // control the user cannot find.
+  const remedy = failure.phase === 'initialize'
+    ? t('settingsPage.enginesUi.failureRemedy')
+    : null;
 
   return (
     <div className="engine-failure-notice" role="alert">
       <div className="engine-failure-notice-summary">
         <span className="engine-failure-notice-text">
           <strong>{title}</strong> {t(reasonKey)}
+          {remedy && <> {remedy}</>}
         </span>
         <span className="engine-failure-notice-actions">
           <Button

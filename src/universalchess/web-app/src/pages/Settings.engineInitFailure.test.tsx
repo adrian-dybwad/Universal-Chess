@@ -257,6 +257,41 @@ describe('Engine card for an engine that installed but will not start', () => {
     expect(within(card).getByText(/architecture/i)).toBeInTheDocument();
   });
 
+  it('tells the user to uninstall and reinstall the engine', async () => {
+    // The remedy must match the button actually on the card. An installed
+    // engine shows "Uninstall", not "Install", so advice to "install it again"
+    // names a control the user cannot see and reads as a dead end. Naming both
+    // steps points at the two buttons that exist, in the order they are used.
+    mockFetch([ct800WontStart]);
+    renderSettings();
+    const card = await findEngineCard('CT800');
+
+    await waitFor(() =>
+      expect(within(card).getByText(/did not start/i)).toBeInTheDocument()
+    );
+    expect(within(card).getByText(/uninstall it, then install it again/i))
+      .toBeInTheDocument();
+    // The remedy is only reachable if the control it names is present.
+    expect(within(card).getByRole('button', { name: /^uninstall$/i }))
+      .toBeInTheDocument();
+  });
+
+  it('does not tell the user to uninstall an engine that never installed', async () => {
+    // A failed install left no binary, so there is nothing to uninstall and the
+    // card offers Install. Repeating the reinstall remedy here would send the
+    // user looking for a button that is not on this card, which is the same
+    // class of mismatch this change fixes for the initialize case.
+    mockFetch([arasanInstallFailed]);
+    renderSettings();
+    const card = await findEngineCard('Arasan');
+
+    await waitFor(() =>
+      expect(within(card).getByText(/could not be installed/i)).toBeInTheDocument()
+    );
+    expect(within(card).queryByText(/uninstall it, then install it again/i))
+      .not.toBeInTheDocument();
+  });
+
   it('withholds the profile editor that cannot load', async () => {
     // Offering "Configure profiles" sends the user into an editor that answers
     // with an error -- the loop the report described, where Reset was clicked

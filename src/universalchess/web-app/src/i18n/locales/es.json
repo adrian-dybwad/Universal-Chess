@@ -462,12 +462,13 @@
       "failureReasonCode": "Código del motivo",
       "failureTechnicalDetail": "Detalles",
       "failureRecordedAt": "Registrado",
-      "reasonBinaryMissing": "Falta su archivo de programa. Vuelve a instalarlo.",
-      "reasonNotExecutable": "Su archivo de programa no se puede ejecutar en este dispositivo. Vuelve a instalarlo.",
-      "reasonIncompatibleBinary": "Su archivo de programa se compiló para otra arquitectura de CPU, así que este dispositivo no puede ejecutarlo. Al instalarlo de nuevo se recompila para este dispositivo.",
-      "reasonCrashedAtStartup": "Se detuvo nada más iniciarse, lo que suele indicar una compilación dañada. Vuelve a instalarlo.",
-      "reasonHandshakeTimeout": "Se inició pero nunca respondió, así que no se pudo configurar. Vuelve a instalarlo.",
-      "reasonLaunchFailed": "No se pudo iniciar. Vuelve a instalarlo y consulta el Registro de eventos en Sistema para más información.",
+      "failureRemedy": "Desinstálalo y luego vuelve a instalarlo para recompilarlo para este dispositivo.",
+      "reasonBinaryMissing": "Falta su archivo de programa.",
+      "reasonNotExecutable": "Su archivo de programa no se puede ejecutar en este dispositivo.",
+      "reasonIncompatibleBinary": "Su archivo de programa se compiló para otra arquitectura de CPU, así que este dispositivo no puede ejecutarlo.",
+      "reasonCrashedAtStartup": "Se detuvo nada más iniciarse, lo que suele indicar una compilación dañada.",
+      "reasonHandshakeTimeout": "Se inició pero nunca respondió, así que no se pudo configurar.",
+      "reasonLaunchFailed": "No se pudo iniciar. El Registro de eventos en Sistema tiene más información.",
       "reasonBuildFailed": "La compilación no se completó. Consulta el Registro de eventos en Sistema para ver qué falló."
     },
     "customEngines": {
@@ -784,7 +785,7 @@
     "caseCollisionDone": "Se conservó «{{name}}»; se eliminaron {{removed}}.",
     "ambiguousCaseName": "Varios perfiles coinciden con «{{name}}» con distinta capitalización. Resuelve los duplicados abajo primero.",
     "confirmEloRename": "El Elo ya no coincide con el nombre del perfil. ¿Renombrar «{{from}}» a «{{to}}»?",
-    "startFailed": "Este motor está instalado pero no se inició, así que no se pudieron leer sus opciones. Vuelve a instalarlo desde la pestaña Motores; el Registro de eventos en Sistema tiene los detalles."
+    "startFailed": "Este motor está instalado pero no se inició, así que no se pudieron leer sus opciones. Desinstálalo y vuelve a instalarlo desde la pestaña Motores; el Registro de eventos en Sistema tiene los detalles."
   },
   "connectivity": {
     "title": "Conectividad",

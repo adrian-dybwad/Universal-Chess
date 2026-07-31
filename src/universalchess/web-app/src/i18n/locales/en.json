@@ -462,12 +462,13 @@
       "failureReasonCode": "Reason code",
       "failureTechnicalDetail": "Details",
       "failureRecordedAt": "Recorded",
-      "reasonBinaryMissing": "Its program file is missing. Install it again.",
-      "reasonNotExecutable": "Its program file cannot be run on this device. Install it again.",
-      "reasonIncompatibleBinary": "Its program file was built for a different CPU architecture, so this device cannot run it. Installing it again rebuilds it for this device.",
-      "reasonCrashedAtStartup": "It stopped immediately when started, which usually means the build is damaged. Install it again.",
-      "reasonHandshakeTimeout": "It started but never answered, so it could not be set up. Install it again.",
-      "reasonLaunchFailed": "It could not be started. Install it again, and check the Event Log under System for more.",
+      "failureRemedy": "Uninstall it, then install it again to rebuild it for this device.",
+      "reasonBinaryMissing": "Its program file is missing.",
+      "reasonNotExecutable": "Its program file cannot be run on this device.",
+      "reasonIncompatibleBinary": "Its program file was built for a different CPU architecture, so this device cannot run it.",
+      "reasonCrashedAtStartup": "It stopped immediately when started, which usually means the build is damaged.",
+      "reasonHandshakeTimeout": "It started but never answered, so it could not be set up.",
+      "reasonLaunchFailed": "It could not be started. The Event Log under System has more.",
       "reasonBuildFailed": "Building it did not finish. Check the Event Log under System for what went wrong."
     },
     "customEngines": {
@@ -784,7 +785,7 @@
     "caseCollisionDone": "Kept \"{{name}}\"; removed {{removed}}.",
     "ambiguousCaseName": "Several profiles match \"{{name}}\" with different capitalization. Resolve the duplicates below first.",
     "confirmEloRename": "Elo no longer matches the profile name. Rename \"{{from}}\" to \"{{to}}\"?",
-    "startFailed": "This engine is installed but did not start, so its options could not be read. Install it again from the Engines tab; the Event Log under System has the details."
+    "startFailed": "This engine is installed but did not start, so its options could not be read. Uninstall it, then install it again from the Engines tab; the Event Log under System has the details."
   },
   "connectivity": {
     "title": "Connectivity",
