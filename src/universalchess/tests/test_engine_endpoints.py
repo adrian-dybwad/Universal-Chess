@@ -802,6 +802,36 @@ def test_all_engines_list_shape(client, monkeypatch):
     assert by_name[INSTALLABLE_ENGINE]["has_profiles"] is False  # not installed
 
 
+def test_all_engines_carries_the_documentation_link_for_each_engine(client, monkeypatch):
+    """GET /api/engines/all resolves each engine's "learn more" link for the UI.
+
+    Why: the Engines tab links every card to a page describing the engine, and that
+    link is resolved server-side from the catalog (``documentation_url``), so the
+    frontend holds no table of engine URLs. The bundled novelty engines have no
+    upstream page and are sent as an empty string, which the UI reads as "no link".
+
+    How a regression manifests: the hand-built payload dict omits ``info_url``, so
+    every card loses its link; or it forwards the raw ``.git`` clone URL, which is
+    not a page a browser can show.
+    """
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.EngineManager.is_installed",
+        lambda self, name: False,
+    )
+
+    by_name = {e["name"]: e for e in json.loads(client.get("/api/engines/all").data)}
+
+    assert by_name[SYSTEM_ENGINE]["info_url"] == "https://stockfishchess.org"
+    assert by_name["berserk"]["info_url"] == "https://github.com/jhonnold/berserk"
+    # Bundled novelty engine: no upstream project, so no link.
+    assert by_name["worstfish"]["info_url"] == ""
+    # No entry may carry a clone URL, and the field is always present (a missing key
+    # would break the typed frontend contract rather than degrade to "no link").
+    for name, entry in by_name.items():
+        assert "info_url" in entry, name
+        assert not entry["info_url"].endswith(".git"), name
+
+
 def test_all_engines_marks_arch_unsupported(client, monkeypatch):
     """On 32-bit ARM, Berserk is reported unsupported with a reason; others aren't.
 

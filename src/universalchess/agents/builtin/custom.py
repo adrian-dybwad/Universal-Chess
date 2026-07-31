@@ -5,6 +5,12 @@ from __future__ import annotations
 from universalchess.agents.base import FIELD_MODEL_TEXT, AgentConfig
 from universalchess.agents.openai_compatible import OpenAICompatibleAgent
 
+# Documentation shown behind the agent card's "learn more" link. This agent has no
+# vendor of its own -- the user supplies the endpoint -- so the useful reference is
+# the Chat Completions API that endpoint has to implement to work here. It lives with
+# this agent rather than in the shared transport, which stays free of vendor URLs.
+CUSTOM_INFO_URL = "https://platform.openai.com/docs/api-reference/chat"
+
 
 class CustomAgent(OpenAICompatibleAgent):
     """OpenAI-compatible agent pointed at a user-supplied base URL.
@@ -18,6 +24,7 @@ class CustomAgent(OpenAICompatibleAgent):
     id = "custom"
     name = "Custom (OpenAI-compatible)"
     description = "Any OpenAI-compatible Chat Completions endpoint at your base URL."
+    info_url = CUSTOM_INFO_URL
     requires_base_url = True
     fallback_models = ()
     model_field_kind = FIELD_MODEL_TEXT

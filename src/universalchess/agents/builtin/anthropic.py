@@ -12,6 +12,10 @@ from universalchess.agents.base import Agent, AgentConfig, AgentError
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models"
 ANTHROPIC_VERSION = "2023-06-01"
+# Documentation shown behind the agent card's "learn more" link. The models overview
+# covers the Claude ids offered in the model dropdown, their capabilities, and
+# pricing -- what a user needs before choosing one.
+ANTHROPIC_INFO_URL = "https://docs.claude.com/en/docs/about-claude/models/overview"
 # Fast, low-cost, current model. The previous default (claude-3-5-haiku-latest)
 # was retired by Anthropic and now returns 404, which surfaced as "Coach
 # unavailable"; keep this pointing at a live model id.
@@ -36,6 +40,7 @@ class Anthropic(Agent):
     id = "anthropic"
     name = "Anthropic"
     description = "Anthropic Claude Messages API (api.anthropic.com)."
+    info_url = ANTHROPIC_INFO_URL
     default_model = ANTHROPIC_DEFAULT_MODEL
     fallback_models = ANTHROPIC_FALLBACK_MODELS
     requires_base_url = False

@@ -5065,7 +5065,7 @@ def api_get_all_engines():
     try:
         from universalchess.managers.engine_manager import (
             EngineManager, ENGINES, arch_unsupported_reason, get_current_arch,
-            canonical_ref,
+            canonical_ref, documentation_url,
         )
 
         engine_manager = EngineManager()
@@ -5097,6 +5097,11 @@ def api_get_all_engines():
                 "display_name": engine_def.display_name,
                 "summary": engine_def.summary,
                 "description": engine_def.description,
+                # Page describing the engine, for the card's "learn more" link;
+                # empty when the engine has none (the bundled novelty engines,
+                # which exist only inside this project). Resolved here so the
+                # frontend keeps no table of engine URLs.
+                "info_url": documentation_url(engine_def) or "",
                 "installed": installed,
                 # A net-backed engine missing its nets is installed but broken:
                 # `needs_repair` drives the UI's Repair affordance and a "needs
@@ -5165,6 +5170,11 @@ def api_get_all_engines():
                 "display_name": custom.display_name,
                 "summary": "Custom engine",
                 "description": description,
+                # No documentation link: an operator-added engine has no catalog
+                # entry, and ``custom.url`` (when present) is where the binary was
+                # downloaded from -- not a page describing the engine. It is already
+                # shown in the description above.
+                "info_url": "",
                 "installed": installed,
                 # Custom engines declare no companion nets, so they are never a
                 # repair candidate; keep the field shape identical to catalog rows.

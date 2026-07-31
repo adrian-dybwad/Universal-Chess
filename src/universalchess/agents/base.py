@@ -26,10 +26,10 @@ returns text -- so any feature (coaching today, others later) can reuse it. The
 coaching-specific prompt content lives in :mod:`universalchess.services.coach`,
 which resolves an agent by id and delegates transport to it.
 
-Each agent carries display metadata (``name``, ``description``) and declares its
-settings via :meth:`Agent.settings_schema`, so the "list all agents and their
-settings" surfaces (web Agents tab and board Agents submenu) render every agent's
-fields without hardcoding provider names.
+Each agent carries display metadata (``name``, ``description``, ``info_url``) and
+declares its settings via :meth:`Agent.settings_schema`, so the "list all agents
+and their settings" surfaces (web Agents tab and board Agents submenu) render every
+agent's fields and documentation link without hardcoding provider names.
 
 Networking is not done here: agents build ``(url, headers, body)`` and parse the
 returned dict, so payloads and parsing are unit-tested without any network. The
@@ -117,6 +117,12 @@ class Agent:
     name: str = ""
     #: One-line description of the service.
     description: str = ""
+    #: Documentation page describing the service (its models, account setup, and
+    #: pricing), surfaced as the "learn more" link on the agent's settings card so a
+    #: user can read about a provider before pasting a credential into it. Must be an
+    #: ``https`` URL; leave blank when the agent has no public documentation page
+    #: (the link is then omitted).
+    info_url: str = ""
     #: Model id used when the configured model is empty.
     default_model: str = ""
     #: Curated fallback model ids (best-first) for when the live list is absent.
@@ -210,6 +216,7 @@ class Agent:
             "id": self.id,
             "name": self.name,
             "description": self.description,
+            "info_url": self.info_url,
             "requires_base_url": self.requires_base_url,
             "default_model": self.default_model,
             "supports_model_listing": self.supports_model_listing(),

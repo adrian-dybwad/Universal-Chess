@@ -317,6 +317,7 @@
     "saving": "Saving…",
     "saved": "Saved",
     "saveError": "Could not save. Check your connection and try again.",
+    "moreInfo": "Learn more about {{name}}",
     "players": {
       "title": "Player Settings",
       "description": "Configure player names, types, and engine preferences",
@@ -413,7 +414,7 @@
       "badgeInstalled": "Installed",
       "badgeNotSupported": "Not Supported",
       "badgeNotInstalled": "Not Installed",
-      "estimatedInstall": "Estimated install time: {{time}}",
+      "estimatedInstall": "Estimated install time: ~{{minutes}} min",
       "prebuiltAvailable": " (pre-built available)",
       "installedRelease": "Installed release:",
       "install": "Install",

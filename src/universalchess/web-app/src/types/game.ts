@@ -133,9 +133,21 @@ export interface EngineDefinition {
   display_name: string;
   description: string;
   summary: string;
+  /**
+   * Page describing the engine (usually its repository), resolved server-side
+   * from the catalog and rendered as the card's "learn more" link. Empty for an
+   * engine with no such page: the bundled novelty engines, which exist only
+   * inside this project, and operator-added custom engines.
+   */
+  info_url: string;
   installed: boolean;
   has_prebuilt: boolean;
-  install_time: string | null;
+  /**
+   * How long a fresh install is expected to take, in minutes, from the catalog.
+   * 0 means there is nothing to wait for: a system package, or a bundled engine
+   * whose install just writes a launcher shim.
+   */
+  estimated_install_minutes: number;
   /**
    * Whether this engine exposes a user-editable UCI option schema (served by
    * GET /api/engines/{name}/profiles). Drives whether the "Configure profiles"

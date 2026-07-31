@@ -24,12 +24,17 @@ from universalchess.agents.base import (
 
 
 class _FixedAgent(Agent):
-    """Minimal concrete agent with a fixed endpoint (no base URL required)."""
+    """Minimal concrete agent with a fixed endpoint (no base URL required).
+
+    Declares ``info_url`` so the documentation-link contract is covered; the
+    base-URL agent below deliberately omits it (see the info_url tests).
+    """
 
     id = "fixed"
     name = "Fixed"
     default_model = "m-default"
     requires_base_url = False
+    info_url = "https://docs.example.test/fixed"
 
 
 class _BaseUrlAgent(Agent):
@@ -104,3 +109,18 @@ def test_get_info_exposes_fields_for_the_settings_ui():
     assert info["requires_base_url"] is True
     field_bases = [f["key_base"] for f in info["fields"]]
     assert field_bases == ["coach_api_key", "coach_model", "coach_base_url"]
+
+
+def test_get_info_carries_the_agents_documentation_url():
+    # The Agents tab renders a "learn more" link per agent from get_info(), so the
+    # documentation URL must be agent-declared metadata (a user agent supplies its
+    # own) rather than a provider table in the frontend. Regression: dropping the
+    # key from get_info() leaves every card without a link.
+    assert _FixedAgent().get_info()["info_url"] == "https://docs.example.test/fixed"
+
+
+def test_get_info_reports_an_empty_documentation_url_when_the_agent_declares_none():
+    # An agent (typically a user module) that declares no documentation link must
+    # report an empty string, not a missing key: the UI decides "no link" from the
+    # value, and a KeyError-prone absent key would break rendering for every agent.
+    assert _BaseUrlAgent().get_info()["info_url"] == ""

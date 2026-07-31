@@ -13,6 +13,10 @@ from universalchess.agents.openai_compatible import OpenAICompatibleAgent
 # transport. Fallbacks are ordered best-first and back the model dropdown only
 # when the live list cannot be fetched (offline, key not yet valid, endpoint down).
 OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1"
+# Documentation shown behind the agent card's "learn more" link. The models page is
+# the most useful entry point for this card: it lists the ids offered in the model
+# dropdown with their capabilities and per-token pricing.
+OPENAI_INFO_URL = "https://platform.openai.com/docs/models"
 OPENAI_DEFAULT_MODEL = "gpt-4o-mini"
 OPENAI_FALLBACK_MODELS: Tuple[str, ...] = (
     "gpt-4o-mini",
@@ -66,6 +70,7 @@ class OpenAIAgent(OpenAICompatibleAgent):
     id = "openai"
     name = "OpenAI"
     description = "OpenAI Chat Completions (api.openai.com)."
+    info_url = OPENAI_INFO_URL
     default_model = OPENAI_DEFAULT_MODEL
     fallback_models = OPENAI_FALLBACK_MODELS
     requires_base_url = False

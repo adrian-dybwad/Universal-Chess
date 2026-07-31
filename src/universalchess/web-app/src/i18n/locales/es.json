@@ -317,6 +317,7 @@
     "saving": "Guardando…",
     "saved": "Guardado",
     "saveError": "No se pudo guardar. Revisa tu conexión e inténtalo de nuevo.",
+    "moreInfo": "Más información sobre {{name}}",
     "players": {
       "title": "Ajustes de jugadores",
       "description": "Configura los nombres de jugador, los tipos y las preferencias de motor",
@@ -413,7 +414,7 @@
       "badgeInstalled": "Instalado",
       "badgeNotSupported": "No compatible",
       "badgeNotInstalled": "No instalado",
-      "estimatedInstall": "Tiempo estimado de instalación: {{time}}",
+      "estimatedInstall": "Tiempo estimado de instalación: ~{{minutes}} min",
       "prebuiltAvailable": " (precompilado disponible)",
       "installedRelease": "Versión instalada:",
       "install": "Instalar",

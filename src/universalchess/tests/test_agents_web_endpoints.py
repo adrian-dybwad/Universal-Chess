@@ -202,6 +202,24 @@ def test_agents_endpoint_lists_all_agents_without_leaking_keys(client, monkeypat
     assert all("fields" in a for a in body["agents"])
 
 
+def test_agents_endpoint_exposes_a_documentation_url_for_every_agent(client, monkeypatch):
+    # The Agents tab links each card to its service's documentation, and the link
+    # is agent-declared metadata carried through this endpoint (so a user agent's
+    # own link reaches the UI too). Regression: the endpoint spreading only a
+    # hand-picked subset of get_info() would strip info_url and leave every card
+    # without a link. Only https is accepted -- the value becomes an anchor href,
+    # where any other scheme would be an injection vector.
+    monkeypatch.setattr(
+        Settings, "read", staticmethod(lambda section, key, default="": default)
+    )
+
+    body = json.loads(client.get("/api/agents").data)
+
+    by_id = {a["id"]: a for a in body["agents"]}
+    for agent_id in ("openai", "anthropic", "custom"):
+        assert by_id[agent_id]["info_url"].startswith("https://"), agent_id
+
+
 def test_delete_agent_key_clears_only_that_key(client, config_files):
     # Removing a stored key is the only way to unset it (a blank save keeps it),
     # so DELETE must clear the agent's own API key while leaving its model/base URL

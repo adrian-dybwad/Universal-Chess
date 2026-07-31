@@ -77,9 +77,10 @@ const berserk: EngineDefinition = {
   display_name: DISPLAY_NAME,
   description: 'desc',
   summary: 'summary',
+  info_url: '',
   installed: true,
   has_prebuilt: false,
-  install_time: null,
+  estimated_install_minutes: 0,
   has_profiles: true,
   profiles_ready: true,
   // Undismissed failure, so the notice and its Dismiss button render.

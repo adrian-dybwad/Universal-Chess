@@ -403,6 +403,39 @@ class EngineDefinition:
     # is used instead). Runs through the same command runner and progress
     # plumbing as a source build (see EngineManager.repair_engine).
     repair_commands: List[str] = field(default_factory=list)
+    # Page describing the engine for the "learn more" link on its card, for engines
+    # whose project page is not their repository. Leave None to use ``repo_url``
+    # (the usual case -- see documentation_url); set it for an engine installed
+    # without a git clone (a system package, a downloaded net-backed engine).
+    info_url: Optional[str] = None
+
+
+# Clone-URL suffix that must come off before a repository URL can be opened as a
+# page: GitHub serves ".../project.git" as a git endpoint, not a project page.
+_GIT_URL_SUFFIX = ".git"
+
+
+def documentation_url(engine: "EngineDefinition") -> Optional[str]:
+    """Return the page describing ``engine``, or None when it has none.
+
+    Backs the "learn more" link on the web engine card. The repository is the
+    engine's documentation for the source-built catalog entries, so the link is
+    derived from ``repo_url`` (with the ``.git`` clone suffix removed) instead of
+    duplicating a URL per engine -- a new catalog engine is then linked by the same
+    field the installer already clones from, and the two cannot drift apart. An
+    engine whose page is elsewhere pins ``info_url``, which wins.
+
+    Only https URLs qualify: the result becomes an anchor href, and a repository
+    reached over ssh or a local path is not a page a browser can open.
+    """
+    if engine.info_url:
+        return engine.info_url
+    repo_url = engine.repo_url or ""
+    if not repo_url.startswith("https://"):
+        return None
+    if repo_url.endswith(_GIT_URL_SUFFIX):
+        return repo_url[: -len(_GIT_URL_SUFFIX)]
+    return repo_url
 
 
 def engine_supports_arch(engine: "EngineDefinition", arch: str) -> bool:
@@ -672,6 +705,8 @@ ENGINES = {
         dependencies=[],
         can_uninstall=False,
         estimated_install_minutes=0,  # Pre-installed
+        # Installed from apt, so there is no repo_url to derive the link from.
+        info_url="https://stockfishchess.org",
     ),
     "berserk": EngineDefinition(
         name="berserk",
@@ -1070,6 +1105,12 @@ ENGINES = {
         repair_commands=[
             f"{SCRIPTS_DIR}/build-maia.sh --weights-only {ENGINES_DIR}/maia",
         ],
+        # Installed by build script rather than a clone, so there is no repo_url to
+        # derive the link from. Points at the Maia project whose nets the script
+        # fetches (MAIA_WEIGHTS_URL in build-lc0.sh), which is what the card offers:
+        # human-like play. The lc0 binary it runs on is the backend, not the engine
+        # the user is choosing.
+        info_url="https://github.com/CSSLab/maia-chess",
     ),
     
     # === LIGHTWEIGHT/FAST COMPILE ===

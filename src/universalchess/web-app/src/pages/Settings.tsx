@@ -16,6 +16,7 @@ import type { MenuCatalog, MenuOption } from '../types/menuCatalog';
 import { fieldById } from '../types/menuCatalog';
 import { apiFetch, buildApiUrl, getStoredCredentials, encodeBasicAuth, storeCredentials, isCrossOriginApi } from '../utils/api';
 import { formatDateTime } from '../utils/datetime';
+import { externalLinkHref } from '../utils/externalLink';
 import { useSettingsStore } from '../stores/settingsStore';
 import './Settings.css';
 
@@ -515,6 +516,10 @@ interface AgentInfo {
   id: string;
   name: string;
   description: string;
+  // Documentation page for the service, declared by the agent itself so a
+  // user-dropped agent module carries its own link. Empty when the agent declares
+  // none, in which case its card shows no link.
+  info_url: string;
   requires_base_url: boolean;
   default_model: string;
   supports_model_listing: boolean;
@@ -2025,15 +2030,27 @@ export function Settings() {
                 const usesFreeTextModel = agent.fields.some(
                   (f) => f.key_base === 'coach_model' && f.kind === 'model_text'
                 );
+                // The agent (possibly a user-supplied module) declares this URL, so it
+                // is scheme-checked before becoming an href; null means show no link.
+                const infoHref = externalLinkHref(agent.info_url);
                 return (
                   <Card key={agent.id} className="mb-6">
                     <CardHeader
                       title={agent.name}
                       action={isActive ? <Badge variant="success">{t('settingsPage.agentsUi.active')}</Badge> : undefined}
                     />
-                    {agent.description && (
+                    {/* Description and the agent's own documentation link share one
+                        paragraph so the card keeps a single introductory block
+                        whether the agent declares a link, a description, or both. */}
+                    {(agent.description || infoHref) && (
                       <p className="text-muted mb-4" style={{ fontSize: '0.85em' }}>
                         {agent.description}
+                        {agent.description && infoHref ? ' ' : null}
+                        {infoHref && (
+                          <a href={infoHref} target="_blank" rel="noopener noreferrer">
+                            {t('settingsPage.moreInfo', { name: agent.name })}
+                          </a>
+                        )}
                       </p>
                     )}
 
@@ -2694,6 +2711,7 @@ function EngineCard({
 }) {
   const { t } = useTranslation();
   const isSystem = engine.name === 'stockfish'; // Stockfish is a system package
+  const infoHref = externalLinkHref(engine.info_url);
   const isActiveInstall = status?.active === true;
   const isInterrupted = status?.interrupted === true;
 
@@ -2798,13 +2816,28 @@ function EngineCard({
         </div>
       </div>
       <p className="engine-summary">{engine.summary}</p>
-      <p className="engine-description">{engine.description}</p>
+      <p className="engine-description">
+        {engine.description}
+        {/* The URL arrives as payload data, so it is scheme-checked before becoming
+            an href; a null result (or an engine with no page) shows no link. */}
+        {infoHref && (
+          <>
+            {' '}
+            <a href={infoHref} target="_blank" rel="noopener noreferrer">
+              {t('settingsPage.moreInfo', { name: engine.display_name })}
+            </a>
+          </>
+        )}
+      </p>
       {notice && (
         <EngineFailureNotice engine={engine} failure={notice} onDismiss={onDismissFailure} />
       )}
-      {!isSystem && !engine.installed && engine.install_time && (
+      {/* Only for an install that is actually ahead of the user and takes time: a
+          system package and an already-installed engine have nothing to wait for,
+          and a bundled engine reports 0 minutes (its install writes a shim). */}
+      {!isSystem && !engine.installed && engine.estimated_install_minutes > 0 && (
         <p className="engine-install-time">
-          {t('settingsPage.enginesUi.estimatedInstall', { time: engine.install_time })}
+          {t('settingsPage.enginesUi.estimatedInstall', { minutes: engine.estimated_install_minutes })}
           {engine.has_prebuilt && t('settingsPage.enginesUi.prebuiltAvailable')}
         </p>
       )}

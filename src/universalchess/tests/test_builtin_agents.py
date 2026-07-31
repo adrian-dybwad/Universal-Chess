@@ -15,14 +15,16 @@ import pytest
 from universalchess.agents.base import AgentConfig, AgentError
 from universalchess.agents.builtin.anthropic import (
     ANTHROPIC_API_URL,
+    ANTHROPIC_INFO_URL,
     ANTHROPIC_MODELS_URL,
     ANTHROPIC_VERSION,
     Anthropic,
 )
-from universalchess.agents.builtin.custom import CustomAgent
+from universalchess.agents.builtin.custom import CUSTOM_INFO_URL, CustomAgent
 from universalchess.agents.builtin.openai import (
     _REASONING_EFFORT,
     _REASONING_TOKEN_HEADROOM,
+    OPENAI_INFO_URL,
     OpenAIAgent,
     is_reasoning_model,
 )
@@ -231,6 +233,28 @@ def test_fallback_models_per_agent():
     assert Anthropic().fallback_models[0] == "claude-haiku-4-5"
     assert "gpt-4o-mini" in OpenAIAgent().fallback_models
     assert CustomAgent().fallback_models == ()
+
+
+@pytest.mark.parametrize(
+    "agent, expected_url",
+    [
+        (OpenAIAgent(), OPENAI_INFO_URL),
+        (Anthropic(), ANTHROPIC_INFO_URL),
+        (CustomAgent(), CUSTOM_INFO_URL),
+    ],
+    ids=["openai", "anthropic", "custom"],
+)
+def test_every_builtin_agent_links_to_its_documentation(agent, expected_url):
+    # The Agents tab shows a "learn more" link per agent, so every built-in must
+    # declare where to read about the service (its models and account setup); the
+    # custom agent points at the OpenAI-compatible API its endpoint must implement.
+    # Regression: a blank info_url silently drops that agent's link, leaving the
+    # user with an API-key field and no explanation of what the service is.
+    assert agent.info_url == expected_url
+    # Rendered as an anchor href in the browser, so only https is acceptable: an
+    # http link would downgrade the user's navigation, and any other scheme
+    # (javascript:, data:) would be an injection vector.
+    assert expected_url.startswith("https://")
 
 
 def test_anthropic_default_model_is_a_live_id():
