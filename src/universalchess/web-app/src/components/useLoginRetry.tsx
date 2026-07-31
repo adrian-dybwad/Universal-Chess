@@ -53,6 +53,14 @@ export interface UseLoginRetry {
    * error handling runs unchanged.
    */
   requireLogin: (response: Pick<Response, 'status'>, retry: () => Promise<void>) => boolean;
+  /**
+   * Queue `retry` and open the dialog unconditionally.
+   *
+   * For callers with no fetch Response to inspect: an XHR upload reading
+   * `xhr.status`, or a request not attempted at all because no credentials are
+   * held. Prefer `requireLogin` where there is a response.
+   */
+  promptLogin: (retry: () => Promise<void>) => void;
   /** The dialog element. Render it once, anywhere in the caller's tree. */
   loginDialog: ReactNode;
 }
@@ -63,15 +71,19 @@ export function useLoginRetry({ onAbandon }: UseLoginRetryOptions = {}): UseLogi
   const [errorMessage, setErrorMessage] = useState<string | undefined>();
   const pendingRetryRef = useRef<(() => Promise<void>) | null>(null);
 
-  const requireLogin = useCallback((response: Pick<Response, 'status'>, retry: () => Promise<void>) => {
-    if (response.status !== 401) return false;
+  const promptLogin = useCallback((retry: () => Promise<void>) => {
     // Credentials already stored means the ones held are wrong, not missing --
     // say so, otherwise the dialog reappears with no explanation.
     setErrorMessage(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
     pendingRetryRef.current = retry;
     setIsOpen(true);
-    return true;
   }, [t]);
+
+  const requireLogin = useCallback((response: Pick<Response, 'status'>, retry: () => Promise<void>) => {
+    if (response.status !== 401) return false;
+    promptLogin(retry);
+    return true;
+  }, [promptLogin]);
 
   const handleSuccess = useCallback(async () => {
     setIsOpen(false);
@@ -98,5 +110,5 @@ export function useLoginRetry({ onAbandon }: UseLoginRetryOptions = {}): UseLogi
     />
   );
 
-  return { requireLogin, loginDialog };
+  return { requireLogin, promptLogin, loginDialog };
 }

@@ -119,11 +119,17 @@ function jsonResponse(body: unknown, status = 200) {
   };
 }
 
+// Installed but missing its required files, which is the state that offers
+// Repair rather than Install/Uninstall.
+const berserkNeedingRepair: EngineDefinition = {
+  ...berserk, needs_repair: true, can_repair: true, missing_net_count: 1,
+};
+
 /**
  * Stub fetch: reads succeed, and every engine POST answers `postStatus`.
  * Returns the recorded calls so tests can assert method, URL and credentials.
  */
-function mockFetch(postStatus: number, status: InstallStatus) {
+function mockFetch(postStatus: number, status: InstallStatus, engine: EngineDefinition = berserk) {
   const calls: RecordedCall[] = [];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET';
@@ -144,7 +150,7 @@ function mockFetch(postStatus: number, status: InstallStatus) {
       });
     }
     if (url === '/api/accounts') return jsonResponse({ accounts: [] });
-    if (url === '/api/engines/all') return jsonResponse([berserk]);
+    if (url === '/api/engines/all') return jsonResponse([engine]);
     if (url === '/api/sprites') return jsonResponse(['default']);
     if (url === '/api/agents') return jsonResponse({ agents: [] });
     if (url === '/api/engines/status') return jsonResponse(status);
@@ -183,12 +189,37 @@ async function clickInCard(name: RegExp) {
   fireEvent.click(button);
 }
 
-const ACTIONS = [
+interface AuthedAction {
+  name: string;
+  url: string;
+  status: InstallStatus;
+  engine?: EngineDefinition;
+  trigger: () => Promise<void>;
+}
+
+const ACTIONS: AuthedAction[] = [
   {
     name: 'cancel a stuck install',
     url: '/api/engines/cancel',
     status: interruptedStatus,
     trigger: () => clickInCard(/^cancel$/i),
+  },
+  // Uninstall and repair once queued a record of their arguments for the
+  // post-login retry, rebuilt by a five-way dispatch that had to tell repair
+  // from uninstall by a flag. They now queue the request itself; these guard
+  // that the replayed call is still the right one.
+  {
+    name: 'uninstall an engine',
+    url: '/api/engines/uninstall',
+    status: idleStatus,
+    trigger: () => clickInCard(/^uninstall$/i),
+  },
+  {
+    name: 'repair an engine',
+    url: '/api/engines/repair',
+    status: idleStatus,
+    engine: berserkNeedingRepair,
+    trigger: () => clickInCard(/^repair$/i),
   },
   {
     name: 'reset profiles',
@@ -220,9 +251,9 @@ describe('Settings engines tab authentication', () => {
     localStorage.clear();
   });
 
-  it.each(ACTIONS)('sends stored credentials to $name', async ({ url, status, trigger }) => {
+  it.each(ACTIONS)('sends stored credentials to $name', async ({ url, status, engine, trigger }) => {
     localStorage.setItem(AUTH_STORAGE_KEY, CREDENTIALS);
-    const calls = mockFetch(200, status);
+    const calls = mockFetch(200, status, engine);
     renderSettings();
     await trigger();
 
@@ -230,8 +261,8 @@ describe('Settings engines tab authentication', () => {
     expect(postsTo(calls, url)[0].authorization).toBe(`Basic ${CREDENTIALS}`);
   });
 
-  it.each(ACTIONS)('prompts for login and retries when rejected: $name', async ({ url, status, trigger }) => {
-    const calls = mockFetch(401, status);
+  it.each(ACTIONS)('prompts for login and retries when rejected: $name', async ({ url, status, engine, trigger }) => {
+    const calls = mockFetch(401, status, engine);
     renderSettings();
     await trigger();
 

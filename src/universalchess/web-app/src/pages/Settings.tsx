@@ -8,7 +8,7 @@ import { MenuContainer, renderCatalogRow } from '../menu/MenuContainer';
 import { buildSections } from '../menu/engine';
 import { EngineProfileEditor } from '../components/EngineProfileEditor';
 import type { FieldValue } from '../components/CatalogField';
-import { LoginDialog } from '../components/LoginDialog';
+import { useLoginRetry } from '../components/useLoginRetry';
 import { MenuIcon } from '../components/MenuIcon';
 import { ConnectivityPanel } from './Connectivity';
 import type { EngineDefinition, EngineFailure, EngineRef, EngineRefsResponse } from '../types/game';
@@ -619,30 +619,12 @@ export function Settings() {
   // When set, the Engines tab shows the profile editor for this engine instead
   // of the install list. Cleared via the editor's "Back to engines" control.
   const [profileEngine, setProfileEngine] = useState<EngineDefinition | null>(null);
-  const [loginDialogOpen, setLoginDialogOpen] = useState(false);
-  const [loginError, setLoginError] = useState<string | undefined>();
-  const [pendingAction, setPendingAction] = useState<'save' | null>(null);
-  // "Retry after login" for engine install/uninstall, which (unlike the
-  // string-based save/apply pendingAction) carry arguments. The arguments are
-  // stashed -- not a callback that closes over toggleEngine, which would access
-  // it before declaration and trip the react-hooks immutability rule -- and
-  // re-applied by handleLoginSuccess once the login dialog succeeds.
-  const pendingEngineActionRef = useRef<{ engineName: string; install: boolean; ref?: string; repair?: boolean } | null>(null);
-  // Retry-after-login for the remaining auth-gated engine writes: adding a
-  // custom engine (upload / install-from-URL), resetting an engine's profiles,
-  // dismissing a failure notice, and clearing a stuck install. Each is stored as
-  // a closure that recaptures its own arguments -- a File, an engine name, or
-  // nothing -- because they share no argument shape the way install/uninstall do
-  // above. Re-run by handleLoginSuccess after a successful login.
-  const pendingAuthActionRef = useRef<(() => Promise<unknown>) | null>(null);
-  // Changing the device timezone is auth-gated and applied through a dedicated
-  // endpoint (not the generic settings save). Stash the target zone so a login
-  // retry re-applies exactly the zone the user picked.
-  const pendingTimezoneRef = useRef<string | null>(null);
-  // Changing the device UI language is auth-gated and applied through a dedicated
-  // endpoint (not the generic settings save) so the board is notified to
-  // re-render. Stash the target locale so a login retry re-applies the user's pick.
-  const pendingLanguageRef = useRef<string | null>(null);
+  // Retry-after-login for every auth-gated write on this page: the settings
+  // save, the timezone and language applies (each has its own endpoint), engine
+  // install/uninstall/repair, adding a custom engine, resetting profiles,
+  // dismissing a failure notice, and clearing a stuck install. Each queues a
+  // closure recapturing its own arguments, so they need no shared shape.
+  const { requireLogin, loginDialog } = useLoginRetry();
   // Busy/error for the custom-engine add forms. URL installs hand off to the
   // shared install-status watcher; uploads complete in-request and refresh.
   const [customEngineBusy, setCustomEngineBusy] = useState(false);
@@ -1127,13 +1109,8 @@ export function Settings() {
         requiresAuth: true,
       });
       
-      if (response.status === 401) {
-        // Authentication required - show login dialog
-        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
-        setPendingAction('save');
-        setLoginDialogOpen(true);
-        return false;
-      }
+      if (requireLogin(response, async () => { await saveSettings(); })) return false;
+
       
       if (!response.ok) {
         const error = await response.json();
@@ -1170,11 +1147,7 @@ export function Settings() {
         body: JSON.stringify({ timezone: tz }),
         requiresAuth: true,
       });
-      if (response.status === 401) {
-        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
-        pendingTimezoneRef.current = tz;
-        setLoginDialogOpen(true);
-      }
+      requireLogin(response, () => saveTimezone(tz));
     } catch (e) {
       console.error('Failed to set timezone:', e);
     }
@@ -1196,11 +1169,7 @@ export function Settings() {
         body: JSON.stringify({ language: code }),
         requiresAuth: true,
       });
-      if (response.status === 401) {
-        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
-        pendingLanguageRef.current = code;
-        setLoginDialogOpen(true);
-      }
+      requireLogin(response, () => saveLanguage(code));
     } catch (e) {
       console.error('Failed to set language:', e);
     }
@@ -1213,74 +1182,6 @@ export function Settings() {
     saveSettingsRef.current = saveSettings;
     coachUnmetRef.current = coachAgentRequirementUnmet();
   });
-
-  // Handle successful login - retry the pending action
-  const handleLoginSuccess = async () => {
-    setLoginDialogOpen(false);
-    setLoginError(undefined);
-
-    // Engine install/uninstall retry (carries args, so it is stashed separately
-    // from the save/apply string). Runs first and returns; pendingAction is null
-    // for these, so the save/apply branches below never fire here.
-    if (pendingEngineActionRef.current) {
-      const { engineName, install, ref, repair } = pendingEngineActionRef.current;
-      pendingEngineActionRef.current = null;
-      if (repair) {
-        await repairEngine(engineName);
-      } else {
-        await toggleEngine(engineName, install, ref);
-      }
-      return;
-    }
-
-    // Closure-based engine retry (custom-engine add, profile reset, failure
-    // dismiss, install cancel): re-runs the request it recaptured.
-    if (pendingAuthActionRef.current) {
-      const run = pendingAuthActionRef.current;
-      pendingAuthActionRef.current = null;
-      await run();
-      return;
-    }
-
-    if (pendingTimezoneRef.current) {
-      const tz = pendingTimezoneRef.current;
-      pendingTimezoneRef.current = null;
-      await saveTimezone(tz);
-      return;
-    }
-
-    if (pendingLanguageRef.current) {
-      const code = pendingLanguageRef.current;
-      pendingLanguageRef.current = null;
-      await saveLanguage(code);
-      return;
-    }
-
-    if (pendingAction === 'save') {
-      setPendingAction(null);
-      await saveSettings();
-    }
-  };
-
-  /**
-   * Handle a request the server refused for lack of credentials.
-   *
-   * Returns true when the caller must stop: `retry` is queued on
-   * pendingAuthActionRef and the login dialog is open. Returns false for every
-   * other response so the caller's normal error handling runs.
-   *
-   * Used by the closure-retry writes; the older call sites above stash an
-   * argument record or an action string instead and so open the dialog inline.
-   */
-  const requireLogin = useCallback((response: Response, retry: () => Promise<void>) => {
-    if (response.status !== 401) return false;
-    // Credentials already stored means the ones held are wrong, not missing --
-    // say so, otherwise the dialog reappears with no explanation.
-    setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
-    pendingAuthActionRef.current = retry;
-    setLoginDialogOpen(true);
-    return true;
-  }, [t]);
 
   // Refresh the full engine list and the installed-engine subset used by the
   // player/analysis dropdowns. Returns the fetched list so callers can inspect
@@ -1431,43 +1332,106 @@ export function Settings() {
     setEngineError(null);
     setInstallingEngine(engineName);
     const endpoint = install ? 'install' : 'uninstall';
-    try {
-      // Only source-built installs carry a ref; uninstall and ref-less installs
-      // send just the engine name (the backend treats a missing ref as canonical).
-      const body: { engine: string; ref?: string } = { engine: engineName };
-      if (install && ref) body.ref = ref;
-      const response = await apiFetch(`/api/engines/${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        requiresAuth: true,
-      });
-      // install/uninstall are @requires_auth (they mutate the system). On 401,
-      // open the shared login dialog and queue this exact action to re-run after
-      // a successful login -- otherwise the user sees only a red "auth required"
-      // message with no way to authenticate.
-      if (response.status === 401) {
-        setInstallingEngine(null);
-        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
-        pendingEngineActionRef.current = { engineName, install, ref };
-        setLoginDialogOpen(true);
-        return;
-      }
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || data.success === false) {
+    // Named inner closure so a login-retry replays this exact action; without
+    // one the user would see only a red "auth required" message with no way to
+    // authenticate. (A useCallback cannot queue itself as its own retry.)
+    const submit = async (): Promise<void> => {
+      try {
+        // Only source-built installs carry a ref; uninstall and ref-less installs
+        // send just the engine name (the backend treats a missing ref as canonical).
+        const body: { engine: string; ref?: string } = { engine: engineName };
+        if (install && ref) body.ref = ref;
+        const response = await apiFetch(`/api/engines/${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          requiresAuth: true,
+        });
+        if (response.status === 401) {
+          // Clear the spinner before prompting: the action is paused on the
+          // user, not in flight.
+          setInstallingEngine(null);
+          requireLogin(response, submit);
+          return;
+        }
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.success === false) {
+          setInstallingEngine(null);
+          setEngineError({
+            engine: engineName,
+            message: data.error || (install
+              ? t('settingsPage.enginesUi.failInstall', { name: engineName })
+              : t('settingsPage.enginesUi.failUninstall', { name: engineName })),
+          });
+          return;
+        }
+        if (install) {
+          // Hand off to the status watcher: track this engine and show an immediate
+          // optimistic progress state so the initiating client does not wait a full
+          // poll interval. The watcher refines it and handles completion/failure.
+          installTrackRef.current = engineName;
+          setInstallStatus({
+            active: true,
+            installing: true,
+            engine: engineName,
+            display_name: null,
+            stage: 'starting',
+            message: t('settingsPage.enginesUi.statusStarting'),
+            percent: 0,
+            interrupted: false,
+            result: null,
+          });
+        } else {
+          await refreshEngines();
+          setInstallingEngine(null);
+        }
+      } catch (e) {
+        console.error(`Failed to ${endpoint} engine:`, e);
         setInstallingEngine(null);
         setEngineError({
           engine: engineName,
-          message: data.error || (install
-            ? t('settingsPage.enginesUi.failInstall', { name: engineName })
-            : t('settingsPage.enginesUi.failUninstall', { name: engineName })),
+          message: install
+            ? t('settingsPage.enginesUi.failInstallRetry', { name: engineName })
+            : t('settingsPage.enginesUi.failUninstallRetry', { name: engineName }),
         });
-        return;
       }
-      if (install) {
-        // Hand off to the status watcher: track this engine and show an immediate
-        // optimistic progress state so the initiating client does not wait a full
-        // poll interval. The watcher refines it and handles completion/failure.
+    };
+    await submit();
+  }, [refreshEngines, requireLogin, t]);
+
+  // Repair an installed-but-incomplete engine in place (a net-backed engine like
+  // Maia whose weight download failed). The endpoint is @requires_auth and runs
+  // asynchronously through the SAME install-status store as an install, so on
+  // success this hands off to the shared status watcher exactly like a catalog
+  // install (optimistic progress, completion/failure handled by the poll). On
+  // 401 the action is re-queued and re-run after login, mirroring toggleEngine.
+  const repairEngine = useCallback(async (engineName: string) => {
+    setEngineError(null);
+    setInstallingEngine(engineName);
+    // Named inner closure so a login-retry replays the repair itself, rather
+    // than an install/uninstall reconstructed from stashed arguments.
+    const submit = async (): Promise<void> => {
+      try {
+        const response = await apiFetch('/api/engines/repair', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ engine: engineName }),
+          requiresAuth: true,
+        });
+        if (response.status === 401) {
+          // Clear the spinner before prompting: the repair is paused on the
+          // user, not in flight.
+          setInstallingEngine(null);
+          requireLogin(response, submit);
+          return;
+        }
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.success === false) {
+          setInstallingEngine(null);
+          setEngineError({ engine: engineName, message: data.error || t('settingsPage.enginesUi.failRepair', { name: engineName }) });
+          return;
+        }
+        // Hand off to the status watcher exactly like an install.
         installTrackRef.current = engineName;
         setInstallStatus({
           active: true,
@@ -1480,72 +1444,14 @@ export function Settings() {
           interrupted: false,
           result: null,
         });
-      } else {
-        await refreshEngines();
+      } catch (e) {
+        console.error('Failed to repair engine:', e);
         setInstallingEngine(null);
+        setEngineError({ engine: engineName, message: t('settingsPage.enginesUi.failRepairRetry', { name: engineName }) });
       }
-    } catch (e) {
-      console.error(`Failed to ${endpoint} engine:`, e);
-      setInstallingEngine(null);
-      setEngineError({
-        engine: engineName,
-        message: install
-          ? t('settingsPage.enginesUi.failInstallRetry', { name: engineName })
-          : t('settingsPage.enginesUi.failUninstallRetry', { name: engineName }),
-      });
-    }
-  }, [refreshEngines, t]);
-
-  // Repair an installed-but-incomplete engine in place (a net-backed engine like
-  // Maia whose weight download failed). The endpoint is @requires_auth and runs
-  // asynchronously through the SAME install-status store as an install, so on
-  // success this hands off to the shared status watcher exactly like a catalog
-  // install (optimistic progress, completion/failure handled by the poll). On
-  // 401 the action is re-queued and re-run after login, mirroring toggleEngine.
-  const repairEngine = useCallback(async (engineName: string) => {
-    setEngineError(null);
-    setInstallingEngine(engineName);
-    try {
-      const response = await apiFetch('/api/engines/repair', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ engine: engineName }),
-        requiresAuth: true,
-      });
-      if (response.status === 401) {
-        setInstallingEngine(null);
-        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
-        // Repair carries no ref and always installs=false semantics; the queued
-        // action re-runs the repair itself rather than toggleEngine.
-        pendingEngineActionRef.current = { engineName, install: false, ref: undefined, repair: true };
-        setLoginDialogOpen(true);
-        return;
-      }
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || data.success === false) {
-        setInstallingEngine(null);
-        setEngineError({ engine: engineName, message: data.error || t('settingsPage.enginesUi.failRepair', { name: engineName }) });
-        return;
-      }
-      // Hand off to the status watcher exactly like an install.
-      installTrackRef.current = engineName;
-      setInstallStatus({
-        active: true,
-        installing: true,
-        engine: engineName,
-        display_name: null,
-        stage: 'starting',
-        message: t('settingsPage.enginesUi.statusStarting'),
-        percent: 0,
-        interrupted: false,
-        result: null,
-      });
-    } catch (e) {
-      console.error('Failed to repair engine:', e);
-      setInstallingEngine(null);
-      setEngineError({ engine: engineName, message: t('settingsPage.enginesUi.failRepairRetry', { name: engineName }) });
-    }
-  }, [t]);
+    };
+    await submit();
+  }, [requireLogin, t]);
 
   // Wipe and re-seed config/engines/<name>.uci from a live UCI probe. Busts the
   // cached Elo picker rows for that engine so the next open refetches /levels.
@@ -1626,12 +1532,7 @@ export function Settings() {
       // Browser sets the multipart Content-Type (with boundary); do not set it.
       form.append('file', file);
       const response = await apiFetch('/api/engines/upload', { method: 'POST', body: form, requiresAuth: true });
-      if (response.status === 401) {
-        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
-        pendingAuthActionRef.current = () => uploadCustomEngine(id, displayName, file);
-        setLoginDialogOpen(true);
-        return false;
-      }
+      if (requireLogin(response, async () => { await uploadCustomEngine(id, displayName, file); })) return false;
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.success === false) {
         setCustomEngineError(data.error || t('settingsPage.customEngines.uploadFailed'));
@@ -1646,7 +1547,7 @@ export function Settings() {
     } finally {
       setCustomEngineBusy(false);
     }
-  }, [refreshEngines, t]);
+  }, [refreshEngines, requireLogin, t]);
 
   // Install a custom engine from an HTTPS URL. The endpoint is @requires_auth and
   // dispatches an async download/install tracked by the shared install-status
@@ -1662,12 +1563,7 @@ export function Settings() {
         body: JSON.stringify({ id, display_name: displayName, url }),
         requiresAuth: true,
       });
-      if (response.status === 401) {
-        setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
-        pendingAuthActionRef.current = () => installCustomEngineFromUrl(id, displayName, url);
-        setLoginDialogOpen(true);
-        return false;
-      }
+      if (requireLogin(response, async () => { await installCustomEngineFromUrl(id, displayName, url); })) return false;
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.success === false) {
         setCustomEngineError(data.error || t('settingsPage.customEngines.installFailed'));
@@ -1695,7 +1591,7 @@ export function Settings() {
     } finally {
       setCustomEngineBusy(false);
     }
-  }, [t]);
+  }, [requireLogin, t]);
 
 
   if (loading) {
@@ -2016,17 +1912,7 @@ export function Settings() {
 
   return (
     <>
-      <LoginDialog
-        isOpen={loginDialogOpen}
-        onClose={() => {
-          setLoginDialogOpen(false);
-          setPendingAction(null);
-          pendingEngineActionRef.current = null;
-          pendingAuthActionRef.current = null;
-        }}
-        onSuccess={handleLoginSuccess}
-        errorMessage={loginError}
-      />
+      {loginDialog}
 
       <div className="page">
       <div className="subnav-layout settings-layout">
@@ -3116,8 +3002,7 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
   // can only claim "latest version" based on a check made now -- never a stale
   // historical one that predates a newer release.
   const [sessionChecked, setSessionChecked] = useState(false);
-  const [showLoginDialog, setShowLoginDialog] = useState(false);
-  const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
+  const { requireLogin, loginDialog } = useLoginRetry();
   // Set when an install is launched from this session so the status poll can
   // flip the notice to "complete" once the install finishes. The install runs
   // asynchronously and restarts the web service; the poll auto-reconnects.
@@ -3187,28 +3072,12 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
     }
   }, [status, t]);
 
-  const handleAuthRequired = (action: () => Promise<void>) => {
-    pendingActionRef.current = action;
-    setShowLoginDialog(true);
-  };
-
-  const handleLoginSuccess = async () => {
-    setShowLoginDialog(false);
-    if (pendingActionRef.current) {
-      await pendingActionRef.current();
-      pendingActionRef.current = null;
-    }
-  };
-
   const checkForUpdates = async () => {
     setChecking(true);
     setError(null);
     try {
       const response = await apiFetch('/api/updates/check', { method: 'POST', requiresAuth: true });
-      if (response.status === 401) {
-        handleAuthRequired(checkForUpdates);
-        return;
-      }
+      if (requireLogin(response, checkForUpdates)) return;
       if (!response.ok) {
         const data = await response.json();
         setError(data.error || t('settingsPage.updates.checkFailed'));
@@ -3228,10 +3097,7 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
     setError(null);
     try {
       const response = await apiFetch('/api/updates/download', { method: 'POST', requiresAuth: true });
-      if (response.status === 401) {
-        handleAuthRequired(downloadUpdate);
-        return;
-      }
+      if (requireLogin(response, downloadUpdate)) return;
       if (!response.ok) {
         const data = await response.json();
         setError(data.error || t('settingsPage.updates.downloadFailed'));
@@ -3252,10 +3118,7 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
     setNotice(null);
     try {
       const response = await apiFetch('/api/updates/install', { method: 'POST', requiresAuth: true });
-      if (response.status === 401) {
-        handleAuthRequired(installUpdate);
-        return;
-      }
+      if (requireLogin(response, installUpdate)) return;
       if (!response.ok) {
         const data = await response.json();
         setError(data.error || t('settingsPage.updates.installFailed'));
@@ -3283,10 +3146,7 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
         body: JSON.stringify({ channel }),
         requiresAuth: true,
       });
-      if (response.status === 401) {
-        handleAuthRequired(() => setChannel(channel));
-        return;
-      }
+      if (requireLogin(response, () => setChannel(channel))) return;
       await fetchStatus();
     } catch {
       setError(t('settingsPage.updates.channelFailed'));
@@ -3301,10 +3161,7 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
         body: JSON.stringify({ enabled }),
         requiresAuth: true,
       });
-      if (response.status === 401) {
-        handleAuthRequired(() => setAutoUpdate(enabled));
-        return;
-      }
+      if (requireLogin(response, () => setAutoUpdate(enabled))) return;
       await fetchStatus();
     } catch {
       setError(t('settingsPage.updates.autoFailed'));
@@ -3356,12 +3213,8 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
 
   return (
     <>
-      <LoginDialog
-        isOpen={showLoginDialog}
-        onClose={() => setShowLoginDialog(false)}
-        onSuccess={handleLoginSuccess}
-      />
-      
+      {loginDialog}
+
       <div className="update-manager">
         {/* Current Version */}
         <div className="update-version-info mb-4">
@@ -3480,17 +3333,7 @@ function PasswordChange() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [showLoginDialog, setShowLoginDialog] = useState(false);
-  const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
-
-  const handleLoginSuccess = async () => {
-    setShowLoginDialog(false);
-    if (pendingActionRef.current) {
-      const action = pendingActionRef.current;
-      pendingActionRef.current = null;
-      await action();
-    }
-  };
+  const { requireLogin, loginDialog } = useLoginRetry();
 
   const handleSubmit = async () => {
     setError(null);
@@ -3525,11 +3368,7 @@ function PasswordChange() {
         }),
       });
 
-      if (response.status === 401) {
-        pendingActionRef.current = handleSubmit;
-        setShowLoginDialog(true);
-        return;
-      }
+      if (requireLogin(response, handleSubmit)) return;
 
       const data = await response.json().catch(() => ({}));
 
@@ -3563,14 +3402,7 @@ function PasswordChange() {
 
   return (
     <>
-      <LoginDialog
-        isOpen={showLoginDialog}
-        onClose={() => {
-          setShowLoginDialog(false);
-          pendingActionRef.current = null;
-        }}
-        onSuccess={handleLoginSuccess}
-      />
+      {loginDialog}
       <Card className="mb-6">
         <CardHeader title={t('settingsPage.password.title')} />
         {!isHttps ? (
@@ -3704,33 +3536,31 @@ function LogViewer() {
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showLoginDialog, setShowLoginDialog] = useState(false);
+  const { requireLogin, loginDialog } = useLoginRetry();
 
   const loadEvents = useCallback(async () => {
-    try {
-      const response = await apiFetch('/api/system/event-log?limit=200', { requiresAuth: true });
-      if (response.status === 401) {
-        // The only action this card performs is loading events, so the login
-        // dialog's onSuccess simply re-runs loadEvents -- no need to stash a
-        // self-referential callback (which the react-hooks immutability rule
-        // rejects as accessing loadEvents before it is declared).
-        setShowLoginDialog(true);
-        return;
+    // Named inner closure so the load can queue itself as its own retry, which
+    // referencing loadEvents from inside its own useCallback cannot do.
+    const submit = async (): Promise<void> => {
+      try {
+        const response = await apiFetch('/api/system/event-log?limit=200', { requiresAuth: true });
+        if (requireLogin(response, submit)) return;
+        if (!response.ok) {
+          setError(t('settingsPage.eventLog.loadFailed'));
+          return;
+        }
+        const data = await response.json().catch(() => ({ events: [] }));
+        setError(null);
+        setEvents(Array.isArray(data.events) ? data.events : []);
+        setLoaded(true);
+      } catch {
+        setError(t('settingsPage.eventLog.networkError'));
+      } finally {
+        setLoading(false);
       }
-      if (!response.ok) {
-        setError(t('settingsPage.eventLog.loadFailed'));
-        return;
-      }
-      const data = await response.json().catch(() => ({ events: [] }));
-      setError(null);
-      setEvents(Array.isArray(data.events) ? data.events : []);
-      setLoaded(true);
-    } catch {
-      setError(t('settingsPage.eventLog.networkError'));
-    } finally {
-      setLoading(false);
-    }
-  }, [t]);
+    };
+    await submit();
+  }, [requireLogin, t]);
 
   const handleRefresh = () => {
     setLoading(true);
@@ -3746,18 +3576,9 @@ function LogViewer() {
     })();
   }, [loadEvents]);
 
-  const handleLoginSuccess = async () => {
-    setShowLoginDialog(false);
-    await loadEvents();
-  };
-
   return (
     <>
-      <LoginDialog
-        isOpen={showLoginDialog}
-        onClose={() => setShowLoginDialog(false)}
-        onSuccess={handleLoginSuccess}
-      />
+      {loginDialog}
       <section>
         <h4 className="settings-group-title">{t('settingsPage.eventLog.title')}</h4>
         <p className="text-muted mb-4">
@@ -3811,8 +3632,7 @@ function DebugCard() {
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [showLoginDialog, setShowLoginDialog] = useState(false);
-  const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
+  const { requireLogin, loginDialog } = useLoginRetry();
 
   useEffect(() => {
     fetch(buildApiUrl('/api/system/debug-serial'))
@@ -3825,25 +3645,12 @@ function DebugCard() {
       });
   }, []);
 
-  const handleLoginSuccess = async () => {
-    setShowLoginDialog(false);
-    if (pendingActionRef.current) {
-      const action = pendingActionRef.current;
-      pendingActionRef.current = null;
-      await action();
-    }
-  };
-
   // The flag is read only at board startup, so a toggle has no effect until the
   // next reboot. This reboots via the same endpoint the Power card uses; a 401
   // reuses the card's login-retry plumbing so the reboot resumes after login.
   const reboot = async () => {
     const response = await apiFetch('/api/system/reboot', { method: 'POST', requiresAuth: true });
-    if (response.status === 401) {
-      pendingActionRef.current = reboot;
-      setShowLoginDialog(true);
-      return;
-    }
+    if (requireLogin(response, reboot)) return;
     const data = await response.json().catch(() => ({}));
     if (response.ok && data.success) {
       setNotice(t('settingsPage.debug.rebooting'));
@@ -3863,11 +3670,7 @@ function DebugCard() {
         body: JSON.stringify({ enabled: next }),
         requiresAuth: true,
       });
-      if (response.status === 401) {
-        pendingActionRef.current = () => setSerialDebug(next);
-        setShowLoginDialog(true);
-        return;
-      }
+      if (requireLogin(response, () => setSerialDebug(next))) return;
       if (!response.ok) {
         setError(t('settingsPage.debug.updateFailed'));
         return;
@@ -3899,11 +3702,7 @@ function DebugCard() {
     setNotice(null);
     try {
       const response = await apiFetch('/api/system/debug-log', { requiresAuth: true });
-      if (response.status === 401) {
-        pendingActionRef.current = downloadLog;
-        setShowLoginDialog(true);
-        return;
-      }
+      if (requireLogin(response, downloadLog)) return;
       if (response.status === 404) {
         setError(t('settingsPage.debug.noLog'));
         return;
@@ -3930,14 +3729,7 @@ function DebugCard() {
 
   return (
     <>
-      <LoginDialog
-        isOpen={showLoginDialog}
-        onClose={() => {
-          setShowLoginDialog(false);
-          pendingActionRef.current = null;
-        }}
-        onSuccess={handleLoginSuccess}
-      />
+      {loginDialog}
       <section className="mt-6">
         <h4 className="settings-group-title">{t('settingsPage.debug.title')}</h4>
         <p className="text-muted mb-4">
@@ -4063,8 +3855,7 @@ function DisplayTuningCard() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [showLoginDialog, setShowLoginDialog] = useState(false);
-  const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
+  const { requireLogin, loginDialog } = useLoginRetry();
 
   useEffect(() => {
     fetch(buildApiUrl('/api/system/display-tuning'))
@@ -4087,15 +3878,6 @@ function DisplayTuningCard() {
       });
   }, []);
 
-  const handleLoginSuccess = async () => {
-    setShowLoginDialog(false);
-    if (pendingActionRef.current) {
-      const action = pendingActionRef.current;
-      pendingActionRef.current = null;
-      await action();
-    }
-  };
-
   // Persist the selection and apply it live: the board re-inits the panel and
   // forces a full refresh, so the change takes effect without a reboot. On 401
   // the login dialog opens and the same apply is retried after authentication.
@@ -4116,11 +3898,7 @@ function DisplayTuningCard() {
         body: JSON.stringify({ profile, high_contrast: contrast, three_color: tricolor, batch_updates: batching }),
         requiresAuth: true,
       });
-      if (response.status === 401) {
-        pendingActionRef.current = () => apply(updates);
-        setShowLoginDialog(true);
-        return;
-      }
+      if (requireLogin(response, () => apply(updates))) return;
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.success) {
         setError(data.error || t('settingsPage.displayTuning.updateFailed'));
@@ -4155,14 +3933,7 @@ function DisplayTuningCard() {
 
   return (
     <>
-      <LoginDialog
-        isOpen={showLoginDialog}
-        onClose={() => {
-          setShowLoginDialog(false);
-          pendingActionRef.current = null;
-        }}
-        onSuccess={handleLoginSuccess}
-      />
+      {loginDialog}
       <Card className="mb-6">
         <CardHeader title={t(copy.titleKey)} />
         <p className="text-muted mb-4">{t(copy.descriptionKey)}</p>
@@ -4225,11 +3996,10 @@ function DisplayTuningCard() {
 
 /**
  * Shared plumbing for the authenticated system actions used by both the System
- * tab (Reset/Power) and the Original Centaur tab. Owns the login-retry flow: an
- * action that returns 401 stashes a retry via ``requireAuth`` and resumes it
- * after a successful login. ``runAction`` covers the confirm -> POST -> outcome
- * pattern; ``requireAuth`` is exposed for the bespoke flows (direct mode, engine
- * save, image upload) that POST differently but share the same retry.
+ * tab (Reset/Power) and the Original Centaur tab. ``runAction`` covers the
+ * confirm -> POST -> outcome pattern; ``requireLogin`` is re-exposed for the
+ * bespoke flows (direct mode, engine save, image upload) that POST differently
+ * but share the same login-and-replay behaviour.
  */
 function useAuthedSystemAction() {
   const { t } = useTranslation();
@@ -4237,64 +4007,36 @@ function useAuthedSystemAction() {
   // Outcome of a card action, tagged with the scope that produced it so it
   // renders inline beside that control rather than in a detached page-top banner.
   const [actionOutcome, setActionOutcome] = useState<{ scope: string; ok: boolean; text: string } | null>(null);
-  const [showLoginDialog, setShowLoginDialog] = useState(false);
-  const pendingActionRef = useRef<(() => Promise<void>) | null>(null);
-
-  // Open the login dialog and stash a retry to run once login succeeds.
-  const requireAuth = useCallback((retry: () => Promise<void>) => {
-    pendingActionRef.current = retry;
-    setShowLoginDialog(true);
-  }, []);
-
-  // Holds the latest runAction so the post-login retry can re-invoke it without
-  // the callback referencing its own binding before it is declared.
-  const runActionRef = useRef<
-    ((scope: string, key: string, endpoint: string, confirmText: string, successText: string) => Promise<void>) | null
-  >(null);
+  const { requireLogin, promptLogin, loginDialog } = useLoginRetry();
 
   // Run a system action: confirm, POST, and surface the outcome. ``scope`` tags
-  // where the outcome renders. On 401 the login dialog opens and the action is
-  // retried (via the ref) after a successful login.
+  // where the outcome renders. The confirmation is answered before the POST, so
+  // a login-retry replays only the POST and does not ask again.
   const runAction = useCallback(
     async (scope: string, key: string, endpoint: string, confirmText: string, successText: string) => {
       if (!confirm(confirmText)) return;
       setBusy(key);
       setActionOutcome(null);
-      try {
-        const response = await apiFetch(`/api/system/${endpoint}`, { method: 'POST', requiresAuth: true });
-        if (response.status === 401) {
-          requireAuth(async () => {
-            await runActionRef.current?.(scope, key, endpoint, confirmText, successText);
-          });
-          return;
+      const submit = async (): Promise<void> => {
+        try {
+          const response = await apiFetch(`/api/system/${endpoint}`, { method: 'POST', requiresAuth: true });
+          if (requireLogin(response, submit)) return;
+          const data = await response.json().catch(() => ({}));
+          if (response.ok && data.success) {
+            setActionOutcome({ scope, ok: true, text: successText });
+          } else {
+            setActionOutcome({ scope, ok: false, text: data.error || t('settingsPage.systemActions.actionFailed') });
+          }
+        } catch {
+          setActionOutcome({ scope, ok: false, text: t('settingsPage.systemActions.networkError') });
+        } finally {
+          setBusy(null);
         }
-        const data = await response.json().catch(() => ({}));
-        if (response.ok && data.success) {
-          setActionOutcome({ scope, ok: true, text: successText });
-        } else {
-          setActionOutcome({ scope, ok: false, text: data.error || t('settingsPage.systemActions.actionFailed') });
-        }
-      } catch {
-        setActionOutcome({ scope, ok: false, text: t('settingsPage.systemActions.networkError') });
-      } finally {
-        setBusy(null);
-      }
+      };
+      await submit();
     },
-    [t, requireAuth]
+    [t, requireLogin]
   );
-
-  useEffect(() => {
-    runActionRef.current = runAction;
-  }, [runAction]);
-
-  const handleLoginSuccess = useCallback(async () => {
-    setShowLoginDialog(false);
-    if (pendingActionRef.current) {
-      const action = pendingActionRef.current;
-      pendingActionRef.current = null;
-      await action();
-    }
-  }, []);
 
   // Inline outcome banner for a single action; renders only for its scope, so
   // each control reports its own result in place.
@@ -4308,18 +4050,7 @@ function useAuthedSystemAction() {
     [actionOutcome, t]
   );
 
-  const loginDialog = (
-    <LoginDialog
-      isOpen={showLoginDialog}
-      onClose={() => {
-        setShowLoginDialog(false);
-        pendingActionRef.current = null;
-      }}
-      onSuccess={handleLoginSuccess}
-    />
-  );
-
-  return { busy, setActionOutcome, runAction, requireAuth, renderOutcome, loginDialog };
+  return { busy, setActionOutcome, runAction, requireLogin, promptLogin, renderOutcome, loginDialog };
 }
 
 
@@ -4424,7 +4155,7 @@ function PowerActions() {
 // installed; the body switches between the installed controls and the importer.
 function CentaurSettings() {
   const { t } = useTranslation();
-  const { busy, runAction, requireAuth, setActionOutcome, renderOutcome, loginDialog } = useAuthedSystemAction();
+  const { busy, runAction, requireLogin, promptLogin, setActionOutcome, renderOutcome, loginDialog } = useAuthedSystemAction();
   const [centaurAvailable, setCentaurAvailable] = useState(false);
   const [centaurRunning, setCentaurRunning] = useState(false);
   const [directMode, setDirectMode] = useState(false);
@@ -4560,10 +4291,7 @@ function CentaurSettings() {
         body: JSON.stringify({ direct_mode: next }),
         requiresAuth: true,
       });
-      if (response.status === 401) {
-        requireAuth(() => updateDirectMode(next));
-        return;
-      }
+      if (requireLogin(response, () => updateDirectMode(next))) return;
       if (!response.ok) {
         setActionOutcome({ scope: 'centaur', ok: false, text: t('settingsPage.systemActions.directModeFailed') });
         return;
@@ -4589,10 +4317,7 @@ function CentaurSettings() {
         body: JSON.stringify({ engine: centaurEngine, level: centaurLevel }),
         requiresAuth: true,
       });
-      if (response.status === 401) {
-        requireAuth(() => saveCentaurEngine());
-        return;
-      }
+      if (requireLogin(response, () => saveCentaurEngine())) return;
       if (!response.ok) {
         setActionOutcome({ scope: 'engine', ok: false, text: t('settingsPage.systemActions.engineSaveFailed') });
         return;
@@ -4678,7 +4403,7 @@ function CentaurSettings() {
   const uploadCentaurImage = (file: File) => {
     const credentials = getStoredCredentials();
     if (!credentials) {
-      requireAuth(async () => uploadCentaurImage(file));
+      promptLogin(async () => uploadCentaurImage(file));
       return;
     }
     setImportBusy(true);
@@ -4696,7 +4421,7 @@ function CentaurSettings() {
     xhr.onload = () => {
       if (xhr.status === 401) {
         setImportBusy(false);
-        requireAuth(async () => uploadCentaurImage(file));
+        promptLogin(async () => uploadCentaurImage(file));
         return;
       }
       let data: { success?: boolean; error?: string; status?: string } = {};
