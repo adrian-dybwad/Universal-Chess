@@ -1,0 +1,110 @@
+"""Tests for the shipped package's ``Depends`` field.
+
+Engine build tools are deliberately NOT declared here. They are provisioned on
+demand by the pinned ``uc-engine-deps`` helper, which holds the only sudoers
+grant that authorizes apt, so declaring them again in ``Depends`` would put them
+on every board including the majority that never build an engine.
+
+This file previously pinned ``git`` and ``build-essential`` into ``Depends`` as
+the fix for the CT800 field failure ("Could not install required build
+dependencies: git"). That guarantee now lives with the mechanism that provides
+it, in ``test_engine_deps_helper.py``: the helper's allow-list must cover every
+package the engine catalog can request, the postinst must grant the helper
+passwordless sudo, and the installer must invoke it with ``sudo -n``. Those three
+together are what make a build dependency obtainable, so asserting a duplicate
+copy of the list here added no protection.
+
+The compiler is the one exception, and it is not an engine dependency at all:
+the Centaur display shim is compiled on-device outside the engine installer, so
+the helper never runs for it. That is what the compiler test below pins.
+"""
+
+import re
+from pathlib import Path
+
+import universalchess.managers.engine_manager as engine_manager_module
+
+# Repo layout: .../src/universalchess/managers/engine_manager.py
+# -> repo root is four parents up, then packaging/deb-root/DEBIAN/control.
+CONTROL = (
+    Path(engine_manager_module.__file__).resolve().parent.parent.parent.parent
+    / "packaging"
+    / "deb-root"
+    / "DEBIAN"
+    / "control"
+)
+
+
+# Packages that provide a native C compiler. `build-essential` pulls gcc plus
+# the libc headers the shim link needs; a bare `gcc` plus `libc6-dev` would also
+# satisfy it, so either spelling passes.
+NATIVE_COMPILER_PROVIDERS = frozenset({"build-essential", "gcc"})
+
+
+def _declared_depends() -> set:
+    """Package names in the control file's ``Depends`` field."""
+    return set(_depends_occurrences())
+
+
+def _depends_occurrences() -> list:
+    """Package names in ``Depends`` in order, keeping duplicates.
+
+    Parses the Debian field properly rather than substring-matching the raw text:
+    a naive ``"git" in text`` search matches ``gir1.2-glib-2.0``. Handles folded
+    continuation lines, ``|`` alternatives, and parenthesised version constraints.
+    """
+    text = CONTROL.read_text()
+    match = re.search(r"^Depends:(.*?)(?=^\S|\Z)", text, re.MULTILINE | re.DOTALL)
+    assert match, f"no Depends field in {CONTROL}"
+
+    names = []
+    for clause in match.group(1).split(","):
+        for alternative in clause.split("|"):
+            name = alternative.split("(")[0].strip()
+            if name:
+                names.append(name)
+    return names
+
+
+def test_depends_provides_a_native_compiler_for_the_display_shim():
+    """``Depends`` must provide a native C compiler.
+
+    Why this test exists: this is the one compile that is NOT an engine build, so
+    it cannot come from the uc-engine-deps helper. ``centaur_display.shim_builder``
+    compiles ``spishim.so`` on-device for Centaur translate mode, and on a 32-bit
+    board ``_resolve_compiler`` returns the native ``gcc``. Nothing else installs
+    it there: ``centaur-armhf-setup`` provisions the *cross* toolchain and exits
+    immediately when the host arch is not arm64, and ``Recommends`` covers only
+    the cross packages. So on a Pi Zero W or Pi 1 the compiler must come from
+    this field.
+
+    How a regression manifests: removing build-essential (e.g. while trimming
+    engine build tools now that the helper supplies them) leaves an armhf board
+    with no compiler, and Centaur translate mode fails at first use with
+    "compiler 'gcc' not found" -- on a board that has no other way to obtain it.
+    It would still pass on any board whose base image happens to ship gcc, which
+    is precisely the ambient-state assumption this pins down.
+    """
+    declared = _declared_depends()
+    assert declared & NATIVE_COMPILER_PROVIDERS, (
+        "Depends provides no native C compiler; the Centaur display shim cannot "
+        f"be built on a 32-bit board. Expected one of: {sorted(NATIVE_COMPILER_PROVIDERS)}"
+    )
+
+
+def test_depends_lists_each_package_once():
+    """No package may appear twice in ``Depends``.
+
+    Why this test exists: a duplicated entry is a merge artifact that hides real
+    edits -- the field is one long line, so a second copy of a name makes it
+    ambiguous whether a dependency was added deliberately or pasted twice, and
+    it defeats review of exactly this kind of change. It caught a duplicate
+    ``python3-github`` when it was written.
+
+    How a regression manifests: appending a package already present leaves the
+    build working (dpkg tolerates duplicates) while the field silently accretes
+    noise; this assertion names the repeated package.
+    """
+    occurrences = _depends_occurrences()
+    duplicates = sorted({name for name in occurrences if occurrences.count(name) > 1})
+    assert not duplicates, f"Depends lists these packages more than once: {duplicates}"

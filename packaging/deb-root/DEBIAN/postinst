@@ -452,6 +452,31 @@ else
     echo -e "::: Warning: centaur-armhf helper not found at $ARMHF_SETUP_HELPER"
 fi
 
+# Grant the pinned engine-dependency helper. Most engines build with the
+# toolchain this package already Depends on (build-essential, git), but a few
+# need more -- Zahak needs golang, Arasan needs clang -- and those are hundreds
+# of megabytes the vast majority of boards never use, so they are installed on
+# demand instead of being pulled onto every board. The helper hard-codes an
+# allow-list of exactly the packages the engine catalog declares and refuses
+# anything else, so the grant cannot become a general apt-install primitive.
+# Without it, installing those engines fails on any board lacking blanket
+# passwordless sudo (the "a terminal is required to read the password" error).
+echo -e "::: Configuring sudoers for engine dependencies"
+ENGINE_DEPS_HELPER="${DGTCM_PATH}/scripts/uc-engine-deps"
+if [ -f "$ENGINE_DEPS_HELPER" ]; then
+    chmod +x "$ENGINE_DEPS_HELPER"
+    ENGINE_DEPS_SUDOERS_FILE="/etc/sudoers.d/universal-chess-engine-deps"
+    echo "$PRIMARY_USER ALL=(root) NOPASSWD: $ENGINE_DEPS_HELPER" > "$ENGINE_DEPS_SUDOERS_FILE"
+    chmod 440 "$ENGINE_DEPS_SUDOERS_FILE"
+    # Validate before it can take effect; a malformed drop-in can lock out sudo.
+    if ! visudo -cf "$ENGINE_DEPS_SUDOERS_FILE" >/dev/null 2>&1; then
+        echo -e "::: Warning: engine-deps sudoers entry invalid; removing"
+        rm -f "$ENGINE_DEPS_SUDOERS_FILE"
+    fi
+else
+    echo -e "::: Warning: engine deps helper not found at $ENGINE_DEPS_HELPER"
+fi
+
 # Undo the armhf cross toolchain this package used to recommend onto every board.
 # gcc-arm-linux-gnueabihf + libc6-dev-armhf-cross are only usable on arm64, where
 # Centaur's 32-bit display shim must be cross-compiled; centaur-armhf-setup above

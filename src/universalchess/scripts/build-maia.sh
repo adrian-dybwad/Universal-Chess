@@ -216,42 +216,48 @@ report_memory() {
 # Dependencies
 # =============================================================================
 
+# Packages the build needs. This script does NOT install them: it runs as the
+# unprivileged service user, and package installation goes through the pinned
+# uc-engine-deps helper, which is the only path holding a sudoers grant for apt.
+# The engine installer provisions Maia's declared dependencies before invoking
+# this script, so by the time it runs these must already be present.
+#
+# Kept in step with Maia's `dependencies` in the engine catalog;
+# tests/test_engine_build_commands.py fails if the two drift, because a package
+# the script needs but the catalog omits would surface as a cryptic meson or
+# compiler error partway through a 45-60 minute build.
+REQUIRED_PACKAGES="build-essential git clang meson ninja-build pkg-config libopenblas-dev zlib1g-dev wget"
+
 require_wget() {
-    # Weights-only mode skips install_dependencies (no apt/build), so it cannot
-    # assume wget was just installed. download_weights uses wget, so verify it is
+    # Weights-only mode skips the build and its dependency check, so it cannot
+    # assume the full set is present. download_weights uses wget, so verify it is
     # present and fail with an actionable message rather than letting every
     # download fail and tripping the "no nets" guard with a confusing cause.
     if ! command -v wget &>/dev/null; then
         log_error "wget is required to download weights but is not installed."
-        log_error "Install it with: sudo apt-get install -y wget"
         exit 1
     fi
 }
 
-install_dependencies() {
-    log_step "Installing build dependencies"
-    
-    if ! command -v apt-get &>/dev/null; then
-        log_error "apt-get not found. This script requires a Debian-based system."
+verify_dependencies() {
+    log_step "Verifying build dependencies"
+
+    local missing=()
+    local pkg
+    for pkg in $REQUIRED_PACKAGES; do
+        if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+            missing+=("$pkg")
+        fi
+    done
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        log_error "Missing build dependencies: ${missing[*]}"
+        log_error "The engine installer provisions these before this script runs;"
+        log_error "reinstall Maia so they are fetched, rather than building without them."
         exit 1
     fi
-    
-    log "Updating package lists..."
-    apt-get update
-    
-    log "Installing required packages..."
-    apt-get install -y \
-        build-essential \
-        git \
-        clang \
-        meson \
-        ninja-build \
-        pkg-config \
-        libopenblas-dev \
-        zlib1g-dev \
-        wget
-    
-    log "Dependencies installed successfully"
+
+    log "All build dependencies present"
 }
 
 # =============================================================================
@@ -611,7 +617,7 @@ main() {
     log "Build directory: $BUILD_DIR"
     check_architecture
     report_memory
-    install_dependencies
+    verify_dependencies
     clone_lc0
     configure_build
     build_lc0

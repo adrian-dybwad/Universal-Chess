@@ -382,3 +382,69 @@ def test_summarize_apt_error_respects_char_limit():
     summary = apt_recovery.summarize_apt_error(stderr, "", limit=300)
 
     assert len(summary) <= 300
+
+
+def _privileged_calls(calls) -> list:
+    """The recorded commands that invoke sudo."""
+    return [cmd for cmd in calls if isinstance(cmd, list) and cmd and cmd[0] == "sudo"]
+
+
+def test_repairs_invoke_sudo_non_interactively():
+    """Every privileged repair must use ``sudo -n``.
+
+    Why this test exists: these repairs run from the web service, which has no
+    controlling terminal. Without ``-n``, sudo on a board that requires a
+    password fails with "sudo: a terminal is required to read the password" --
+    the unreadable error that made the CT800 dependency failure hard to diagnose
+    -- instead of failing immediately as unauthorized. Neither repair has a
+    sudoers grant (both configure arbitrary pending packages, so granting them
+    would be equivalent to unrestricted root), so failing fast and legibly is the
+    correct behavior, not an edge case.
+
+    How the regression manifests: dropping ``-n`` restores the TTY error, and on
+    a board where sudo is configured to prompt, the call blocks until its timeout
+    rather than returning a usable failure.
+    """
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "dpkg-query" in cmd:
+            return _FakeProc(returncode=0, stdout="install ok installed")
+        return _FakeProc(returncode=0)
+
+    apt_recovery.recover_interrupted_dpkg(run=fake_run, launch_detached=lambda run: True)
+    apt_recovery.attempt_fix_broken(run=fake_run, launch_detached=lambda run: True)
+
+    privileged = _privileged_calls(calls)
+    assert privileged, "no privileged repair command was issued"
+    for cmd in privileged:
+        assert cmd[:2] == ["sudo", "-n"], f"repair does not use sudo -n: {cmd}"
+
+
+def test_detached_repair_launcher_uses_sudo_non_interactively():
+    """The out-of-process repair launcher must also use ``sudo -n``.
+
+    Why this test exists: this path runs when universal-chess itself is pending
+    configuration -- the state where the in-process repair would SIGKILL its own
+    dpkg child. It is the recovery of last resort, so a silent block on a
+    password prompt here leaves the board wedged with no diagnostic at all.
+
+    How the regression manifests: without ``-n`` the systemd-run launch hangs or
+    reports the TTY error, ``launch_detached`` returns False, and the caller
+    reports FAILED instead of DEFERRED_RESTART -- losing the "retry after the
+    restart" message the user needs.
+    """
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return _FakeProc(returncode=0)
+
+    assert apt_recovery._launch_detached_configure(fake_run) is True
+
+    privileged = _privileged_calls(calls)
+    assert privileged, "detached launcher issued no privileged command"
+    for cmd in privileged:
+        assert cmd[:2] == ["sudo", "-n"], f"launcher does not use sudo -n: {cmd}"
+        assert "systemd-run" in cmd

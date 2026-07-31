@@ -130,6 +130,7 @@ def _launch_detached_configure(
         result = run(
             [
                 "sudo",
+                "-n",
                 "systemd-run",
                 "--collect",
                 f"--unit={_REPAIR_UNIT}",
@@ -237,7 +238,7 @@ def recover_interrupted_dpkg(
     return _run_guarded_repair(
         run,
         launch_detached,
-        ["sudo", "dpkg", "--configure", "-a"],
+        ["sudo", "-n", "dpkg", "--configure", "-a"],
         _CONFIGURE_TIMEOUT_SECONDS,
         "'dpkg --configure -a'",
     )
@@ -278,7 +279,7 @@ def attempt_fix_broken(
     return _run_guarded_repair(
         run,
         launch_detached,
-        ["sudo", "apt-get", "install", "-f", "-y"],
+        ["sudo", "-n", "apt-get", "install", "-f", "-y"],
         _FIX_BROKEN_TIMEOUT_SECONDS,
         "'apt-get install -f'",
     )

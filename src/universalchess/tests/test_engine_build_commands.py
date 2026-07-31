@@ -25,6 +25,19 @@ def _build_script(engine_name: str) -> str:
     return "\n".join(ENGINES[engine_name].build_commands)
 
 
+def _maia_script_packages() -> set:
+    """The apt packages build-maia.sh declares it needs, from REQUIRED_PACKAGES.
+
+    The script verifies these are present rather than installing them, so this
+    list is the contract between the script and the engine catalog that supplies
+    them.
+    """
+    text = (SCRIPTS_DIR / "build-maia.sh").read_text()
+    match = re.search(r'^REQUIRED_PACKAGES="([^"]*)"', text, re.MULTILINE)
+    assert match, "no REQUIRED_PACKAGES assignment in build-maia.sh"
+    return set(match.group(1).split())
+
+
 class TestRodentIVBuildCommand:
     """Guards the 32-bit ARM libatomic link fix for Rodent IV."""
 
@@ -375,6 +388,73 @@ class TestMaiaBuildCommand:
     cloning and compiling inline, so its command embeds a filesystem path. That
     path must resolve on an *installed board*, not just in a dev checkout.
     """
+
+    def test_commands_do_not_invoke_sudo(self):
+        """Maia's build and repair commands must not use sudo.
+
+        Why this test exists: these commands ran ``sudo build-maia.sh``, but the
+        postinst grants passwordless sudo only to specific pinned helpers and
+        build-maia.sh is not one of them. On a board without blanket passwordless
+        sudo -- e.g. one provisioned by cloud-init rather than the userconf path
+        that carries /etc/sudoers.d/010_pi-nopasswd forward -- that sudo is
+        denied and the whole Maia install dies before the script runs. Root is
+        not needed either: the only privileged step was apt, which now goes
+        through uc-engine-deps, and everything else writes under
+        /opt/universalchess, which the postinst chowns to the service user.
+
+        How the regression manifests: reintroducing sudo makes Maia install and
+        repair fail with "sudo: a password is required" on exactly the boards
+        this change exists to support, while still passing on boards that happen
+        to have an ambient NOPASSWD grant.
+        """
+        maia = ENGINES["maia"]
+        for command in [*maia.build_commands, *maia.repair_commands]:
+            assert "sudo" not in command.split(), (
+                f"Maia command needs a sudoers grant that does not exist: {command}"
+            )
+
+    def test_declares_every_package_the_build_script_requires(self):
+        """Maia must declare the build script's packages as engine dependencies.
+
+        Why this test exists: build-maia.sh used to apt-install its own toolchain
+        as root. It no longer can, so the packages must come from the catalog,
+        which routes them through the pinned uc-engine-deps helper before the
+        script runs. The script's list and the catalog's list are in different
+        files and different languages, so they can drift.
+
+        How the regression manifests: a package the script needs but the catalog
+        omits is never installed, and the build fails partway through with a
+        cryptic meson/compiler error (e.g. "Program 'ninja' not found") after
+        the user has already waited -- the exact class of late, unreadable
+        failure the dependency gate exists to prevent.
+        """
+        script_packages = _maia_script_packages()
+        declared = set(ENGINES["maia"].dependencies)
+
+        assert script_packages, "build-maia.sh declares no REQUIRED_PACKAGES"
+        missing = script_packages - declared
+        assert not missing, (
+            f"build-maia.sh needs packages Maia does not declare: {sorted(missing)}"
+        )
+
+    def test_build_script_does_not_install_packages_itself(self):
+        """build-maia.sh must not run apt.
+
+        Why this test exists: the script runs unprivileged now. An apt call in it
+        would fail for lack of root, and "fixing" that by restoring sudo would
+        reintroduce the ungranted privileged call. Package installation belongs
+        to uc-engine-deps, which is behind the one grant that authorizes it.
+
+        How the regression manifests: adding an apt-get line back makes the
+        script fail with a permissions error mid-install, or silently skip
+        provisioning if the failure is tolerated.
+        """
+        commands = [
+            line for line in (SCRIPTS_DIR / "build-maia.sh").read_text().splitlines()
+            if not line.lstrip().startswith("#")
+        ]
+        offenders = [line.strip() for line in commands if "apt-get " in line]
+        assert not offenders, f"build-maia.sh still runs apt: {offenders}"
 
     def test_invokes_packaged_build_script_that_exists(self):
         """The command must invoke ``{SCRIPTS_DIR}/build-maia.sh`` and that file

@@ -1,0 +1,107 @@
+#!/bin/sh
+# Root helper that installs the apt packages an engine build declares.
+#
+# Most engines need only the toolchain the package already pulls in via Depends
+# (build-essential, git), but a few need more: Zahak needs golang, Arasan needs
+# clang. Those cannot go in Depends -- they are hundreds of megabytes the vast
+# majority of boards never use -- so they are installed on demand, which needs
+# root.
+#
+# Invoked through a single pinned, passwordless sudo grant the package postinst
+# installs:
+#
+#   <service-user> ALL=(root) NOPASSWD: /opt/universalchess/scripts/uc-engine-deps
+#
+# Why a fixed helper instead of NOPASSWD on apt directly: apt-get install is a
+# general primitive (any package) and granting it would be equivalent to
+# unrestricted root -- the same reasoning as centaur-armhf-setup. Unlike that
+# helper this one must accept arguments, because the package set differs per
+# engine, so the boundary is ALLOWED_PACKAGES below: every argument must appear
+# in that list verbatim or the run is refused before apt is touched. That also
+# rejects option-shaped arguments (-o, --allow-*), which would otherwise let a
+# caller reconfigure apt as root. Do NOT add a passthrough or a prefix match.
+#
+# ALLOWED_PACKAGES must stay in step with the engine catalog's `dependencies`
+# and system `package_name` values; tests/test_engine_deps_helper.py fails if the
+# two drift in either direction (an uncovered package makes an engine
+# uninstallable, an extra one is unearned privilege).
+#
+# Callers use `sudo -n` so a missing grant fails fast rather than hanging on a
+# password prompt. Idempotent: only missing packages are installed, so a board
+# that already has them is a fast no-op.
+set -u
+
+ALLOWED_PACKAGES="build-essential ca-certificates clang curl git golang libopenblas-dev meson ninja-build pkg-config stockfish wget zlib1g-dev"
+
+log() { echo "uc-engine-deps: $*"; }
+
+# An empty request means the caller computed an empty dependency set, which is a
+# bug there. `apt-get install` with no operands exits 0, so forwarding it would
+# report a successful provision that never happened.
+if [ "$#" -eq 0 ]; then
+	log "no packages requested; refusing (caller passed an empty dependency set)"
+	exit 2
+fi
+
+for requested in "$@"; do
+	case " $ALLOWED_PACKAGES " in
+		*" $requested "*) ;;
+		*)
+			log "refusing '$requested': not an engine dependency in the allow-list"
+			exit 2
+			;;
+	esac
+done
+
+# True when the named package is fully installed. `half-configured`/`unpacked`
+# count as missing, matching EngineManager._missing_packages, so the caller's
+# post-install verification and this helper agree on what "present" means.
+pkg_installed() {
+	dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "install ok installed"
+}
+
+missing=""
+for requested in "$@"; do
+	pkg_installed "$requested" || missing="$missing $requested"
+done
+if [ -z "$missing" ]; then
+	log "already installed:$*"
+	exit 0
+fi
+log "missing packages:$missing"
+
+# sudoers env_reset strips caller env, so set the frontend here to keep apt fully
+# non-interactive under the grant.
+export DEBIAN_FRONTEND=noninteractive
+
+# Wait (bounded) for any in-flight dpkg/apt transaction to release the frontend
+# lock, so this cannot collide with a concurrent package operation.
+i=0
+while command -v fuser >/dev/null 2>&1 && \
+      fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && \
+      [ "$i" -lt 60 ]; do
+	sleep 2
+	i=$((i + 1))
+done
+
+# Refresh the index first. A stale index cannot satisfy versioned inter-package
+# dependencies -- Zahak's `golang` metapackage pulls `golang-1.24 ->
+# golang-1.24-go (>= X)`, and against an out-of-date index apt aborts with
+# "unmet dependencies ... not going to be installed", which `apt --fix-broken`
+# cannot repair because nothing is actually broken. Non-fatal: a cached index
+# may still satisfy the request, and the install below surfaces the real error.
+log "updating package lists"
+apt-get update -qq || log "apt-get update failed (continuing; a cached index may suffice)"
+
+log "installing:$missing"
+# shellcheck disable=SC2086 - $missing holds only allow-list entries, validated above
+apt-get install -y --no-install-recommends $missing || { log "install failed"; exit 1; }
+
+# Verify rather than trusting apt's exit status: a partial provision would let
+# the build fail later with a cryptic compiler error instead of a clear one here.
+for requested in "$@"; do
+	pkg_installed "$requested" || { log "install reported success but $requested is still missing"; exit 1; }
+done
+
+log "installed:$missing"
+exit 0

@@ -183,6 +183,13 @@ def _build_env(parallelism: Optional[int] = None) -> dict:
 # "sudo //scripts/engines/build-maia.sh: command not found" install failure.
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 
+# Pinned root helper that installs an engine's apt dependencies. The postinst
+# grants passwordless sudo to this one path; apt itself is deliberately NOT
+# granted, because `apt-get install` accepts any package and so is equivalent to
+# unrestricted root. The helper enforces an allow-list of the packages this
+# catalog declares.
+ENGINE_DEPS_HELPER = SCRIPTS_DIR / "uc-engine-deps"
+
 # GitHub release URL for pre-built engine binaries.
 GITHUB_REPO = "adrian-dybwad/Universal-Chess"
 # List endpoint (newest-first), NOT /releases/latest: the latter ignores
@@ -191,6 +198,19 @@ GITHUB_REPO = "adrian-dybwad/Universal-Chess"
 # release (nightly prerelease or full) be found.
 GITHUB_RELEASES_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
 PREBUILT_ARCHIVE_NAME_TEMPLATE = "engines-{arch}.tar.gz"  # arm64 or armhf
+
+
+def engine_deps_command(packages: List[str]) -> List[str]:
+    """argv that installs ``packages`` through the pinned root helper.
+
+    ``-n`` is required, not cosmetic: the web service has no controlling
+    terminal, so an interactive sudo cannot read a password and fails with
+    "sudo: a terminal is required to read the password" instead of a usable
+    error. With ``-n`` a missing grant fails immediately and is reported as
+    such. Matches the convention used for every other privileged call in this
+    codebase (see ``connectivity.bluetooth`` and ``services.update_service``).
+    """
+    return ["sudo", "-n", str(ENGINE_DEPS_HELPER), *packages]
 
 
 def get_current_arch() -> str:
@@ -993,7 +1013,7 @@ ENGINES = {
             # Swap headroom is provided by the build_memory() wrapper around this
             # install (uc-build-memory), not by the script. The script builds on
             # disk under /opt/universalchess/tmp, never the small /tmp tmpfs.
-            f"sudo {SCRIPTS_DIR}/build-maia.sh {ENGINES_DIR}/maia",
+            f"{SCRIPTS_DIR}/build-maia.sh {ENGINES_DIR}/maia",
         ],
         binary_path="lc0",  # Script installs to ENGINES_DIR/maia/lc0
         is_system_package=False,
@@ -1005,7 +1025,21 @@ ENGINES = {
         # never reached for Maia, so declaring it here would be dead + inaccurate
         # (it also omits leela_weights).
         extra_files=[],
-        dependencies=[],  # Build script handles dependencies
+        # The packages build-maia.sh needs. Declared here rather than apt-installed
+        # by the script: the script runs unprivileged, so these are provisioned
+        # through the pinned uc-engine-deps helper before it is invoked. Kept in
+        # step with REQUIRED_PACKAGES in build-maia.sh (a test pins the two together).
+        dependencies=[
+            "build-essential",
+            "git",
+            "clang",
+            "meson",
+            "ninja-build",
+            "pkg-config",
+            "libopenblas-dev",
+            "zlib1g-dev",
+            "wget",
+        ],
         clone_with_submodules=False,  # Build script handles cloning
         build_timeout=7200,  # 2 hours - may need swap which is slow
         estimated_install_minutes=60,
@@ -1034,7 +1068,7 @@ ENGINES = {
         # the build entirely and fetches nets only, and aborts if zero nets
         # download so a still-broken repair is reported as a failure.
         repair_commands=[
-            f"sudo {SCRIPTS_DIR}/build-maia.sh --weights-only {ENGINES_DIR}/maia",
+            f"{SCRIPTS_DIR}/build-maia.sh --weights-only {ENGINES_DIR}/maia",
         ],
     ),
     
@@ -1844,13 +1878,13 @@ class EngineManager:
         if not self._recover_dpkg_or_abort(f"install {engine.display_name}"):
             return False
 
-        # Update package list
-        self._apt_update()
-        
-        # Install package
+        # Install package through the pinned helper, which refreshes the index
+        # and installs only allow-listed names. Going through it (rather than
+        # sudo apt-get) is what makes this work on a board without blanket
+        # passwordless sudo.
         update_progress(f"Installing {engine.package_name}...")
-        log.info(f"[EngineManager] _install_system_package: Running apt-get install -y {engine.package_name}")
-        result = subprocess.run(["sudo", "apt-get", "install", "-y", engine.package_name], capture_output=True, text=True, timeout=300)  # noqa: S603, S607  # nosec B603 B607
+        log.info(f"[EngineManager] _install_system_package: Installing {engine.package_name} via {ENGINE_DEPS_HELPER.name}")
+        result = subprocess.run(engine_deps_command([engine.package_name]), capture_output=True, text=True, timeout=300)  # noqa: S603  # nosec B603
         if result.returncode != 0:
             self._install_error = result.stderr.strip() or f"apt-get install failed with code {result.returncode}"
             log.error(f"[EngineManager] _install_system_package: apt-get install failed with code {result.returncode}")
@@ -1988,27 +2022,6 @@ class EngineManager:
             )
             return False
         return True
-
-    def _apt_update(self) -> None:
-        """Refresh the apt package index before an install (best-effort).
-
-        A stale index cannot satisfy versioned inter-package dependencies -- e.g.
-        Zahak's ``golang`` metapackage pulls ``golang-1.24 -> golang-1.24-go
-        (>= X)``, and against an out-of-date index apt aborts with "unmet
-        dependencies ... not going to be installed" (which ``apt --fix-broken``
-        cannot repair, since nothing is actually broken). Refreshing first is the
-        real remedy. Non-fatal: a failed update must not block the install, which
-        will surface the genuine apt error itself.
-        """
-        log.debug("[EngineManager] _apt_update: Running apt-get update")
-        result = subprocess.run(["sudo", "apt-get", "update", "-qq"], capture_output=True, text=True, timeout=120)  # noqa: S607  # nosec B603 B607
-        if result.returncode != 0:
-            log.warning(
-                f"[EngineManager] _apt_update: apt-get update returned non-zero "
-                f"({result.returncode}): {result.stderr.strip()}"
-            )
-        else:
-            log.debug("[EngineManager] _apt_update: completed successfully")
 
     def _copy_extra_files(self, src_base: Path, patterns: List[str]) -> None:
         """Install an engine's ``extra_files`` from ``src_base`` into engines_dir.
@@ -2481,21 +2494,14 @@ class EngineManager:
             # below aborts on "dpkg was interrupted" (the Zahak golang failure).
             if not self._recover_dpkg_or_abort(f"install {engine.display_name}"):
                 return False
-            # Refresh the index before installing: source deps like golang are
-            # metapackages with versioned inter-dependencies, and a stale index
-            # makes apt abort with "unmet dependencies ... not going to be
-            # installed" (the observed Zahak failure) -- a resolution error that
-            # fix-broken cannot repair. Mirrors _install_system_package.
-            self._apt_update()
             deps = " ".join(engine.dependencies)
 
             def run_apt_install():
                 """Run the dependency install. Isolated so the fix-broken retry
-                reuses the exact command (one shell string, one static-input
-                annotation) instead of duplicating it."""
-                return subprocess.run(  # noqa: S602  # nosec B602  # deps joined from the static engine registry (dependencies), never user input; fixed apt-get shell string
-                    f"sudo apt-get install -y {deps}",
-                    shell=True, capture_output=True, text=True, timeout=300,  # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
+                reuses the exact command instead of duplicating it."""
+                return subprocess.run(  # noqa: S603  # nosec B603
+                    engine_deps_command(engine.dependencies),
+                    capture_output=True, text=True, timeout=300,
                 )
 
             log.info(f"[EngineManager] _install_from_source: Installing dependencies: {deps}")
