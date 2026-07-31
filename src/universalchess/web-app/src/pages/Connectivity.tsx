@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import { Button, Card, CardHeader, Input, Select, Toggle } from '../components/ui';
 import { MenuIcon } from '../components/MenuIcon';
 import { useAuthedAction } from '../components/useAuthedAction';

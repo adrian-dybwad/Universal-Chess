@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Link, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, Navigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useDeviceLanguage } from './i18n/useDeviceLanguage';
 import { BackgroundActivityBanner } from './components/BackgroundActivityBanner';

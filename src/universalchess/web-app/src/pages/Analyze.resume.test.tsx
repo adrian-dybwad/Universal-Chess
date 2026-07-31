@@ -43,7 +43,7 @@ vi.mock('../utils/api', () => ({
 vi.mock('../components/LoginDialog', () => ({ LoginDialog: () => null }));
 
 const navigateMock = vi.fn();
-vi.mock('react-router-dom', () => ({
+vi.mock('react-router', () => ({
   useParams: () => ({ gameId: '5' }),
   useNavigate: () => navigateMock,
 }));
