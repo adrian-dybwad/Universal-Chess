@@ -31,20 +31,29 @@
 # unit becomes a general "remove anything" primitive.
 set -u
 
-# Only these two, and only ever these two. gcc-arm-linux-gnueabihf depends on
-# libc6-dev-armhf-cross, so they are named together and removed in one
-# transaction rather than left in an order-dependent half state.
-CROSS_PACKAGES="gcc-arm-linux-gnueabihf libc6-dev-armhf-cross"
+# This one package, and only ever this one. It is the only member of the pair
+# that is both unusable and harmful off arm64: it owns the ARMv7 startup objects
+# under /usr/arm-linux-gnueabihf/lib described above.
+#
+# gcc-arm-linux-gnueabihf is deliberately NOT here. The name reads as a cross
+# compiler, but on an armhf host arm-linux-gnueabihf is the *native* triplet and
+# Raspberry Pi OS ships `gcc` with
+# `Depends: gcc-arm-linux-gnueabihf (= 4:14.2.0-1+rpi1)`. An earlier version of
+# this script purged it and took gcc, g++, build-essential and universal-chess
+# off a board with them -- the cleanup removed the application it shipped with.
+# On arm64 it is a genuine cross compiler and the arch gate below keeps it, so
+# there is no host on which this script should remove it.
+CROSS_PACKAGES="libc6-dev-armhf-cross"
 
 log() { echo "uc-drop-armhf-cross: $*"; }
 
-# Same gate centaur-armhf-setup uses, so the script that installs these packages
-# and the script that removes them cannot disagree about who needs them. Anything
-# that is not arm64 -- including an unreadable architecture -- has no use for a
-# cross toolchain targeting 32-bit ARM.
+# Same gate centaur-armhf-setup uses, so the script that installs this package
+# and the script that removes it cannot disagree about who needs it. Anything
+# that is not arm64 -- including an unreadable architecture -- is a host whose
+# native compiler already targets 32-bit ARM and needs no cross libc.
 host_arch="$(dpkg --print-architecture 2>/dev/null || echo unknown)"
 if [ "$host_arch" = "arm64" ]; then
-	log "host arch arm64 builds the Centaur shim with these; keeping them"
+	log "host arch arm64 cross-builds the Centaur shim with it; keeping it"
 	exit 0
 fi
 
@@ -87,6 +96,41 @@ export DEBIAN_FRONTEND=noninteractive
 # Keep universal-chess-armhf-cleanup.service's TimeoutStartSec above this, or
 # systemd kills the helper mid-wait -- or worse, mid-purge.
 LOCK_WAIT_SECONDS=900
+
+# Ask apt what the purge would do, and abort if the answer names anything this
+# script did not. Reasoning about which package is a "cross" package is exactly
+# what failed here once: the name looked like a cross toolchain and was the
+# native compiler, and the resulting cascade removed the application. Only apt
+# knows the real dependency graph of the image it is running on, so the plan is
+# checked rather than predicted -- which keeps a future error in the list above
+# from being fatal instead of merely wrong.
+#
+# A plan that cannot be obtained is not an all-clear. apt fails to plan on the
+# boards where purging is most dangerous -- a half-finished transaction, a
+# broken dependency state -- so every unreadable answer stops the removal.
+#
+# `apt-get -s` takes no locks, so this runs before the lock wait below.
+# shellcheck disable=SC2086 - $present is a subset of the fixed list above
+if ! plan="$(apt-get -s purge $present 2>/dev/null)"; then
+	log "refusing to purge:$present -- apt could not produce a removal plan"
+	exit 1
+fi
+
+removals="$(printf '%s\n' "$plan" | sed -nE 's/^(Purg|Remv) ([^ :]+).*/\2/p')"
+if [ -z "$removals" ]; then
+	log "refusing to purge:$present -- apt reported no removals for it"
+	exit 1
+fi
+
+for pkg in $removals; do
+	case " $CROSS_PACKAGES " in
+		*" $pkg "*) ;;
+		*)
+			log "refusing to purge:$present -- apt would also remove $pkg"
+			exit 1
+			;;
+	esac
+done
 
 # Purge only what is actually installed: naming an absent package makes some apt
 # versions exit non-zero, which would report a healed board as a unit failure.

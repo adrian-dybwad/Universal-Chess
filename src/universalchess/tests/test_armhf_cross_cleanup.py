@@ -17,8 +17,19 @@ to the native crt with ``-B/usr/lib/arm-linux-gnueabihf/``. Every engine built
 from source on such a board crashes at startup while its binary sits on disk
 looking installed.
 
+The first version of this cleanup then caused a worse failure than the one it
+fixed, and most of what is pinned below comes from that. It purged
+``gcc-arm-linux-gnueabihf`` as well, on the theory that a package named for a
+cross triplet cannot be needed on a board that is not arm64. On Raspberry Pi OS
+armhf that triplet is the *native* one and ``gcc`` declares
+``Depends: gcc-arm-linux-gnueabihf (= 4:14.2.0-1+rpi1)``, so the purge cascaded
+through gcc, g++, build-essential and finally universal-chess itself, taking the
+board's application down mid-transaction. Only ``libc6-dev-armhf-cross`` is both
+unusable and harmful here, and purging it alone removes exactly one package.
+
 The tests run the real helper with fake dpkg/dpkg-query/apt-get on PATH, so the
-arch gate and the exact removal command are pinned rather than described.
+arch gate, the package set, and the exact removal command are pinned rather than
+described.
 """
 
 import os
@@ -37,9 +48,14 @@ _UNIT = (
     / "universal-chess-armhf-cleanup.service"
 )
 
-# The two packages the control file used to recommend onto every board.
+# The two packages the control file used to recommend onto every board. Only the
+# second may ever be removed: on an armhf host the first is the native compiler.
 CROSS_COMPILER_PKG = "gcc-arm-linux-gnueabihf"
 CROSS_LIBC_DEV_PKG = "libc6-dev-armhf-cross"
+
+# A package apt might drag out with the purge. Stands in for the real cascade
+# (gcc -> g++ -> build-essential -> universal-chess) that took the board down.
+COLLATERAL_PKG = "build-essential"
 
 # Floor for how long the purge may wait on the dpkg lock. Measured on a Pi Zero
 # W: the upgrade that starts the cleanup unit still held the lock more than
@@ -69,8 +85,29 @@ done
 exit 1
 """
 
+# Fake apt-get. A `-s` run answers with the removal plan apt would produce: the
+# packages it was asked to purge, plus any collateral the test injects via
+# UC_TEST_EXTRA_REMOVALS. Anything else is treated as the real purge and honours
+# UC_TEST_APT_EXIT.
 _FAKE_APT_GET = """#!/bin/sh
 echo "apt-get $*" >> "$UC_TEST_LOG"
+simulate=no
+for arg in "$@"; do
+    [ "$arg" = "-s" ] && simulate=yes
+done
+if [ "$simulate" = yes ]; then
+    [ "${UC_TEST_SIM_EXIT:-0}" = "0" ] || exit "$UC_TEST_SIM_EXIT"
+    for arg in "$@"; do
+        case "$arg" in
+            -*|purge) ;;
+            *) echo "Purg $arg [1.0]" ;;
+        esac
+    done
+    for extra in ${UC_TEST_EXTRA_REMOVALS:-}; do
+        echo "Remv $extra [1.0]"
+    done
+    exit 0
+fi
 exit ${UC_TEST_APT_EXIT:-0}
 """
 
@@ -111,6 +148,15 @@ def _run(env):
 
 def _apt_calls(calls):
     return [c for c in calls if c.startswith("apt-get ")]
+
+
+def _purge_calls(calls):
+    """apt-get invocations that actually remove something (not `-s` dry runs)."""
+    return [c for c in _apt_calls(calls) if "-s" not in c.split()]
+
+
+def _simulation_calls(calls):
+    return [c for c in _apt_calls(calls) if "-s" in c.split()]
 
 
 def _lock_wait_seconds(apt_call):
@@ -183,55 +229,58 @@ class TestArchGate:
         proc, calls = _run(env)
 
         assert proc.returncode == 0
-        assert len(_apt_calls(calls)) == 1
+        assert len(_purge_calls(calls)) == 1
 
 
 class TestRemoval:
     """What the helper actually asks apt to do."""
 
-    def test_removes_both_packages_in_one_transaction(self, helper_env):
-        """Both packages are purged together, non-interactively.
+    def test_never_removes_the_native_compiler_package(self, helper_env):
+        """``gcc-arm-linux-gnueabihf`` must survive even when installed.
 
-        Why this test exists: the cross compiler depends on the cross libc, so
-        removing them in separate transactions makes the first one's outcome
-        depend on ordering. One command with both named is unambiguous, and -y
-        matters because this runs unattended from a boot unit with no terminal.
+        Why this test exists: this is the field failure. On Raspberry Pi OS
+        armhf that triplet is the native one, and ``gcc`` declares
+        ``Depends: gcc-arm-linux-gnueabihf``, so purging it removed gcc, g++,
+        build-essential and universal-chess itself -- the cleanup took down the
+        application it shipped with, mid-transaction. The package is only ever a
+        real cross compiler on arm64, and the arch gate already keeps everything
+        there, so no host exists on which this script should remove it.
 
-        How the regression manifests: two apt-get lines instead of one, or a
-        missing -y that leaves the unit hanging on a confirmation prompt.
+        How the regression manifests: the package name reappears in the purge
+        command, and the next board to run the cleanup loses its toolchain and
+        its application.
         """
         env, _log = helper_env
         env["UC_TEST_INSTALLED"] = f"{CROSS_COMPILER_PKG} {CROSS_LIBC_DEV_PKG}"
 
         proc, calls = _run(env)
 
-        apt = _apt_calls(calls)
         assert proc.returncode == 0
-        assert len(apt) == 1
-        assert CROSS_COMPILER_PKG in apt[0]
-        assert CROSS_LIBC_DEV_PKG in apt[0]
-        assert " -y" in apt[0]
+        purge = _purge_calls(calls)
+        assert len(purge) == 1
+        assert CROSS_LIBC_DEV_PKG in purge[0]
+        assert CROSS_COMPILER_PKG not in purge[0]
+        assert " -y" in purge[0]
 
-    def test_removes_only_the_package_that_is_present(self, helper_env):
-        """A partially-installed pair names only what is actually installed.
+    def test_touches_nothing_when_only_the_compiler_is_installed(self, helper_env):
+        """A board with the compiler but not the cross libc is left alone.
 
-        Why this test exists: naming an absent package makes apt exit non-zero
-        on some versions, which would turn a successful cleanup into a unit
-        failure and stop the board from reporting itself healed.
+        Why this test exists: the compiler alone is harmless -- it is the native
+        one -- and the ARMv7 startup objects come solely from
+        libc6-dev-armhf-cross. With nothing removable present the helper must
+        not invoke apt at all, rather than running a purge with an empty package
+        list (which upgrades or errors depending on the subcommand).
 
-        How the regression manifests: the apt line carries both names when only
-        one is installed.
+        How the regression manifests: apt-get is called on a board that has
+        nothing this script is allowed to remove.
         """
         env, _log = helper_env
-        env["UC_TEST_INSTALLED"] = CROSS_LIBC_DEV_PKG
+        env["UC_TEST_INSTALLED"] = CROSS_COMPILER_PKG
 
         proc, calls = _run(env)
 
-        apt = _apt_calls(calls)
         assert proc.returncode == 0
-        assert len(apt) == 1
-        assert CROSS_LIBC_DEV_PKG in apt[0]
-        assert CROSS_COMPILER_PKG not in apt[0]
+        assert _apt_calls(calls) == []
 
     def test_touches_nothing_when_neither_package_is_installed(self, helper_env):
         """The healthy board -- and every boot after the first -- is a no-op.
@@ -268,9 +317,75 @@ class TestRemoval:
 
         _proc, calls = _run(env)
 
-        apt = _apt_calls(calls)[0]
+        apt = _purge_calls(calls)[0]
         assert "--auto-remove" not in apt
         assert "autoremove" not in apt
+
+    def test_aborts_when_apt_would_remove_anything_else(self, helper_env):
+        """A plan with collateral is refused instead of executed.
+
+        Why this test exists: reasoning about which package is a cross package
+        is exactly what failed -- the name looked like a cross toolchain and was
+        the native compiler. apt is the only thing that knows the real
+        dependency graph on a given image, so the helper asks it first and
+        stops if the answer names anything it did not. This guard is what keeps
+        a future mistake in the package list from being fatal rather than
+        merely wrong.
+
+        How the regression manifests: the purge runs anyway and removes
+        build-essential (and, behind it, the application), which is precisely
+        the outage this replaces.
+        """
+        env, _log = helper_env
+        env["UC_TEST_INSTALLED"] = CROSS_LIBC_DEV_PKG
+        env["UC_TEST_EXTRA_REMOVALS"] = COLLATERAL_PKG
+
+        proc, calls = _run(env)
+
+        assert proc.returncode != 0
+        assert _simulation_calls(calls), "helper must ask apt for the plan first"
+        assert _purge_calls(calls) == [], "no removal may run after a bad plan"
+
+    def test_aborts_when_the_plan_cannot_be_obtained(self, helper_env):
+        """No plan means no purge, rather than a purge with no information.
+
+        Why this test exists: apt fails to plan on exactly the boards where
+        proceeding is most dangerous -- a half-finished transaction, a broken
+        dependency state. Treating "could not ask" as "nothing to worry about"
+        reinstates the unguarded purge under the one condition that makes it
+        most likely to cascade.
+
+        How the regression manifests: the guard reads an empty plan, finds no
+        offending package in it, and falls through to the real removal.
+        """
+        env, _log = helper_env
+        env["UC_TEST_INSTALLED"] = CROSS_LIBC_DEV_PKG
+        env["UC_TEST_SIM_EXIT"] = "100"
+
+        proc, calls = _run(env)
+
+        assert proc.returncode != 0
+        assert _purge_calls(calls) == []
+
+    def test_checks_the_plan_before_every_removal(self, helper_env):
+        """The dry run happens first, and only then the purge.
+
+        Why this test exists: a guard that runs after the removal, or not at
+        all on the common path, protects nothing. Ordering is the whole point,
+        so it is asserted rather than assumed.
+
+        How the regression manifests: the purge is recorded before the -s call,
+        or there is no -s call at all on the path that does remove something.
+        """
+        env, _log = helper_env
+        env["UC_TEST_INSTALLED"] = CROSS_LIBC_DEV_PKG
+
+        proc, calls = _run(env)
+
+        assert proc.returncode == 0
+        simulation_index = calls.index(_simulation_calls(calls)[0])
+        purge_index = calls.index(_purge_calls(calls)[0])
+        assert simulation_index < purge_index
 
     def test_reports_failure_when_apt_cannot_remove_them(self, helper_env):
         """A failed removal exits non-zero instead of claiming success.
@@ -314,7 +429,7 @@ class TestRemoval:
         proc, calls = _run(env)
 
         assert proc.returncode == 0
-        wait_seconds = _lock_wait_seconds(_apt_calls(calls)[0])
+        wait_seconds = _lock_wait_seconds(_purge_calls(calls)[0])
         assert wait_seconds is not None, "purge must ask apt to wait for the lock"
         assert wait_seconds >= MIN_LOCK_WAIT_SECONDS
 
@@ -372,7 +487,7 @@ class TestPackagingWiring:
 
         _proc, calls = _run(env)
 
-        wait_seconds = _lock_wait_seconds(_apt_calls(calls)[0])
+        wait_seconds = _lock_wait_seconds(_purge_calls(calls)[0])
         # The purge itself still has to run after the wait ends, so the unit
         # needs headroom beyond the wait rather than merely matching it.
         assert _unit_start_timeout_seconds() > wait_seconds
