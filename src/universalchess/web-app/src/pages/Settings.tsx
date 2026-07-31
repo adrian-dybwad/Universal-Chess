@@ -628,11 +628,13 @@ export function Settings() {
   // it before declaration and trip the react-hooks immutability rule -- and
   // re-applied by handleLoginSuccess once the login dialog succeeds.
   const pendingEngineActionRef = useRef<{ engineName: string; install: boolean; ref?: string; repair?: boolean } | null>(null);
-  // Adding a custom engine (upload / install-from-URL) is also auth-gated. Unlike
-  // the catalog install above, the action carries a File and/or free-form fields,
-  // so the retry is stored as a closure that recaptures them rather than as a
-  // plain argument record. Re-run by handleLoginSuccess after a successful login.
-  const pendingCustomActionRef = useRef<(() => Promise<unknown>) | null>(null);
+  // Retry-after-login for the remaining auth-gated engine writes: adding a
+  // custom engine (upload / install-from-URL), resetting an engine's profiles,
+  // dismissing a failure notice, and clearing a stuck install. Each is stored as
+  // a closure that recaptures its own arguments -- a File, an engine name, or
+  // nothing -- because they share no argument shape the way install/uninstall do
+  // above. Re-run by handleLoginSuccess after a successful login.
+  const pendingAuthActionRef = useRef<(() => Promise<unknown>) | null>(null);
   // Changing the device timezone is auth-gated and applied through a dedicated
   // endpoint (not the generic settings save). Stash the target zone so a login
   // retry re-applies exactly the zone the user picked.
@@ -1231,11 +1233,11 @@ export function Settings() {
       return;
     }
 
-    // Custom-engine add retry (upload / install-from-URL): stored as a closure
-    // that recaptures the File/fields.
-    if (pendingCustomActionRef.current) {
-      const run = pendingCustomActionRef.current;
-      pendingCustomActionRef.current = null;
+    // Closure-based engine retry (custom-engine add, profile reset, failure
+    // dismiss, install cancel): re-runs the request it recaptured.
+    if (pendingAuthActionRef.current) {
+      const run = pendingAuthActionRef.current;
+      pendingAuthActionRef.current = null;
       await run();
       return;
     }
@@ -1259,6 +1261,26 @@ export function Settings() {
       await saveSettings();
     }
   };
+
+  /**
+   * Handle a request the server refused for lack of credentials.
+   *
+   * Returns true when the caller must stop: `retry` is queued on
+   * pendingAuthActionRef and the login dialog is open. Returns false for every
+   * other response so the caller's normal error handling runs.
+   *
+   * Used by the closure-retry writes; the older call sites above stash an
+   * argument record or an action string instead and so open the dialog inline.
+   */
+  const requireLogin = useCallback((response: Response, retry: () => Promise<void>) => {
+    if (response.status !== 401) return false;
+    // Credentials already stored means the ones held are wrong, not missing --
+    // say so, otherwise the dialog reappears with no explanation.
+    setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
+    pendingAuthActionRef.current = retry;
+    setLoginDialogOpen(true);
+    return true;
+  }, [t]);
 
   // Refresh the full engine list and the installed-engine subset used by the
   // player/analysis dropdowns. Returns the fetched list so callers can inspect
@@ -1376,23 +1398,30 @@ export function Settings() {
   const cancelInstall = useCallback(async () => {
     const engineName = installStatus?.engine;
     setEngineError(null);
-    try {
-      const response = await apiFetch('/api/engines/cancel', { method: 'POST' });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || data.success === false) {
-        if (engineName) {
-          setEngineError({ engine: engineName, message: data.error || t('settingsPage.enginesUi.failCancel') });
+    // Named inner closure so a login-retry can re-run exactly this request. A
+    // self-reference to the useCallback would have to be listed as its own
+    // dependency, which the react-hooks rule rejects.
+    const submit = async (): Promise<void> => {
+      try {
+        const response = await apiFetch('/api/engines/cancel', { method: 'POST', requiresAuth: true });
+        if (requireLogin(response, submit)) return;
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.success === false) {
+          if (engineName) {
+            setEngineError({ engine: engineName, message: data.error || t('settingsPage.enginesUi.failCancel') });
+          }
+          return;
         }
-        return;
+        setInstallStatus(null);
+      } catch (e) {
+        console.error('Failed to cancel engine install:', e);
+        if (engineName) {
+          setEngineError({ engine: engineName, message: t('settingsPage.enginesUi.failCancelRetry') });
+        }
       }
-      setInstallStatus(null);
-    } catch (e) {
-      console.error('Failed to cancel engine install:', e);
-      if (engineName) {
-        setEngineError({ engine: engineName, message: t('settingsPage.enginesUi.failCancelRetry') });
-      }
-    }
-  }, [installStatus, t]);
+    };
+    await submit();
+  }, [installStatus, requireLogin, t]);
 
   // The backend contract is POST /api/engines/{install,uninstall} with the
   // engine name in the JSON body (matching the legacy configure page). Install
@@ -1525,47 +1554,63 @@ export function Settings() {
       return;
     }
     setEngineError(null);
-    try {
-      const response = await apiFetch(`/api/engines/${encodeURIComponent(engineName)}/profiles/reset`, {
-        method: 'POST',
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || data.success === false) {
+    // Inner closure so a login-retry replays the reset without re-asking for the
+    // confirmation the user has already given.
+    const submit = async (): Promise<void> => {
+      try {
+        const response = await apiFetch(`/api/engines/${encodeURIComponent(engineName)}/profiles/reset`, {
+          method: 'POST',
+          requiresAuth: true,
+        });
+        if (requireLogin(response, submit)) return;
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.success === false) {
+          setEngineError({
+            engine: engineName,
+            message: data.error || t('settingsPage.enginesUi.resetProfilesFailed', { name: displayName }),
+          });
+          return;
+        }
+        setEngineLevels((prev) => {
+          const next = { ...prev };
+          delete next[engineName];
+          return next;
+        });
+      } catch (e) {
+        console.error('Failed to reset engine profiles:', e);
         setEngineError({
           engine: engineName,
-          message: data.error || t('settingsPage.enginesUi.resetProfilesFailed', { name: displayName }),
+          message: t('settingsPage.enginesUi.resetProfilesFailed', { name: displayName }),
         });
-        return;
       }
-      setEngineLevels((prev) => {
-        const next = { ...prev };
-        delete next[engineName];
-        return next;
-      });
-    } catch (e) {
-      console.error('Failed to reset engine profiles:', e);
-      setEngineError({
-        engine: engineName,
-        message: t('settingsPage.enginesUi.resetProfilesFailed', { name: displayName }),
-      });
-    }
-  }, [t]);
+    };
+    await submit();
+  }, [requireLogin, t]);
 
   // Acknowledge an engine's failure notice. The server owns the dismissed flag,
   // so this refreshes rather than hiding locally: a local-only hide would come
   // back on the next poll and make the button look broken. A failed dismiss is
   // logged and left alone -- the notice simply stays, which is the safe outcome
   // for a message about something being wrong.
+  //
+  // A 401 is the one failure that is not left alone: the flag is server-owned,
+  // so without a login the button can never work, and this handler shows no
+  // error, which would make it look simply broken.
   const dismissEngineFailure = useCallback(async (engineName: string) => {
-    try {
-      await apiFetch(`/api/engines/${encodeURIComponent(engineName)}/failure/dismiss`, {
-        method: 'POST',
-      });
-      await refreshEngines();
-    } catch (e) {
-      console.error('Failed to dismiss engine failure:', e);
-    }
-  }, [refreshEngines]);
+    const submit = async (): Promise<void> => {
+      try {
+        const response = await apiFetch(`/api/engines/${encodeURIComponent(engineName)}/failure/dismiss`, {
+          method: 'POST',
+          requiresAuth: true,
+        });
+        if (requireLogin(response, submit)) return;
+        await refreshEngines();
+      } catch (e) {
+        console.error('Failed to dismiss engine failure:', e);
+      }
+    };
+    await submit();
+  }, [refreshEngines, requireLogin]);
 
   // Upload a custom engine binary or .tar.gz. The endpoint is @requires_auth and
   // completes in-request (no install thread), so on success the engine list is
@@ -1583,7 +1628,7 @@ export function Settings() {
       const response = await apiFetch('/api/engines/upload', { method: 'POST', body: form, requiresAuth: true });
       if (response.status === 401) {
         setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
-        pendingCustomActionRef.current = () => uploadCustomEngine(id, displayName, file);
+        pendingAuthActionRef.current = () => uploadCustomEngine(id, displayName, file);
         setLoginDialogOpen(true);
         return false;
       }
@@ -1619,7 +1664,7 @@ export function Settings() {
       });
       if (response.status === 401) {
         setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
-        pendingCustomActionRef.current = () => installCustomEngineFromUrl(id, displayName, url);
+        pendingAuthActionRef.current = () => installCustomEngineFromUrl(id, displayName, url);
         setLoginDialogOpen(true);
         return false;
       }
@@ -1977,7 +2022,7 @@ export function Settings() {
           setLoginDialogOpen(false);
           setPendingAction(null);
           pendingEngineActionRef.current = null;
-          pendingCustomActionRef.current = null;
+          pendingAuthActionRef.current = null;
         }}
         onSuccess={handleLoginSuccess}
         errorMessage={loginError}

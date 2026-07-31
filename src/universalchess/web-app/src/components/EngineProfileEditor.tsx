@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button, Card, FormRow, Input, Select } from './ui';
-import { apiFetch } from '../utils/api';
+import { LoginDialog } from './LoginDialog';
+import { apiFetch, getStoredCredentials } from '../utils/api';
 import {
   type Profile,
   type SchemaGroup,
@@ -35,6 +36,11 @@ import { ProfileGroupHeader, SchemaFieldRow } from './EngineOptionFields';
  * Profiles are kept sparse on save: only fields whose value differs from the
  * engine default are written, so a profile tracks engine defaults for everything
  * it does not explicitly change.
+ *
+ * Reads are open; every write (save, delete, reset, reconcile) is authenticated,
+ * because each rewrites configuration the board plays with. A rejected write
+ * opens the shared LoginDialog and replays the identical request afterwards, so
+ * the user never loses an edit or has to answer a confirmation twice.
  */
 export function EngineProfileEditor({
   engineName,
@@ -70,6 +76,15 @@ export function EngineProfileEditor({
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [caseCollisions, setCaseCollisions] = useState<string[][]>([]);
+
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [loginError, setLoginError] = useState<string | undefined>();
+  // The write rejected for want of credentials, held so a successful login can
+  // replay it. A closure rather than a description of the request: each action
+  // queues the send step it had already computed (resolved profile name, sparse
+  // payload, rename target), so the replay is byte-identical and skips the
+  // confirmations the user has already answered.
+  const pendingWriteRef = useRef<(() => Promise<void>) | null>(null);
 
   // Opened from a mid-page engines list. Document scroll only -- scrollIntoView
   // on the editor aligns it under the sticky navbar and leaves Settings chrome
@@ -154,6 +169,33 @@ export function EngineProfileEditor({
     setFormValues((prev) => ({ ...prev, [key]: value }));
   }, []);
 
+  /**
+   * Handle a write the server refused for lack of credentials.
+   *
+   * Returns true when the caller must stop: `retry` has been queued and the
+   * login dialog opened. Returns false for any other response so the caller
+   * handles it normally. Kept in one place because all four writes need the
+   * identical treatment, and a missed one would surface to the user as a bare
+   * "HTTP 401" with no way to authenticate.
+   */
+  const requireLogin = useCallback((resp: Response, retry: () => Promise<void>) => {
+    if (resp.status !== 401) return false;
+    // Credentials already stored means the ones held are wrong, not absent --
+    // say so, otherwise the dialog reopens with no explanation.
+    setLoginError(getStoredCredentials() ? t('common.invalidCredentials') : undefined);
+    pendingWriteRef.current = retry;
+    setLoginOpen(true);
+    return true;
+  }, [t]);
+
+  const handleLoginSuccess = useCallback(async () => {
+    setLoginOpen(false);
+    setLoginError(undefined);
+    const retry = pendingWriteRef.current;
+    pendingWriteRef.current = null;
+    if (retry) await retry();
+  }, []);
+
   const save = useCallback(async () => {
     const dirty = profileFormIsDirty(
       schema,
@@ -223,90 +265,108 @@ export function EngineProfileEditor({
         return;
       }
     }
-    setSaving(true);
-    setActionError(null);
-    setNotice(null);
-    try {
-      const payload = toOverridePayload(schema, formValues);
-      const resp = await apiFetch(`/api/engines/${engineName}/profiles/${encodeURIComponent(writeName)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          values: payload,
-          ...(renameTo ? { rename_to: renameTo } : {}),
-        }),
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok || data.success === false) {
-        setActionError(data.error || t('engineProfile.saveFailedStatus', { status: resp.status }));
-        return;
+    // Snapshot the values as submitted, so a login-retry writes what the user
+    // clicked Save on rather than whatever the form holds by then.
+    const payload = toOverridePayload(schema, formValues);
+    const submit = async (): Promise<void> => {
+      setSaving(true);
+      setActionError(null);
+      setNotice(null);
+      try {
+        const resp = await apiFetch(`/api/engines/${engineName}/profiles/${encodeURIComponent(writeName)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            values: payload,
+            ...(renameTo ? { rename_to: renameTo } : {}),
+          }),
+          requiresAuth: true,
+        });
+        if (requireLogin(resp, submit)) return;
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || data.success === false) {
+          setActionError(data.error || t('engineProfile.saveFailedStatus', { status: resp.status }));
+          return;
+        }
+        const savedName = typeof data.name === 'string' ? data.name : (renameTo ?? writeName);
+        setNotice(t('engineProfile.saved', { name: savedName }));
+        await fetchProfiles(savedName);
+      } catch (e) {
+        setActionError(t('engineProfile.saveFailed', { error: e instanceof Error ? e.message : t('engineProfile.unknownError') }));
+      } finally {
+        setSaving(false);
       }
-      const savedName = typeof data.name === 'string' ? data.name : (renameTo ?? writeName);
-      setNotice(t('engineProfile.saved', { name: savedName }));
-      await fetchProfiles(savedName);
-    } catch (e) {
-      setActionError(t('engineProfile.saveFailed', { error: e instanceof Error ? e.message : t('engineProfile.unknownError') }));
-    } finally {
-      setSaving(false);
-    }
-  }, [isNew, nameInput, selectedName, schema, formValues, profiles, engineName, fetchProfiles, t]);
+    };
+    await submit();
+  }, [isNew, nameInput, selectedName, schema, formValues, profiles, engineName, fetchProfiles, requireLogin, t]);
 
   const remove = useCallback(async () => {
     if (!selectedName || selectedName === 'Default') return;
     if (!window.confirm(t('engineProfile.confirmDelete', { name: selectedName }))) return;
-    setSaving(true);
-    setActionError(null);
-    setNotice(null);
-    try {
-      const resp = await apiFetch(
-        `/api/engines/${engineName}/profiles/${encodeURIComponent(selectedName)}/delete`,
-        { method: 'POST' },
-      );
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok || data.success === false) {
-        setActionError(data.error || t('engineProfile.deleteFailedStatus', { status: resp.status }));
-        return;
+    const submit = async (): Promise<void> => {
+      setSaving(true);
+      setActionError(null);
+      setNotice(null);
+      try {
+        const resp = await apiFetch(
+          `/api/engines/${engineName}/profiles/${encodeURIComponent(selectedName)}/delete`,
+          { method: 'POST', requiresAuth: true },
+        );
+        if (requireLogin(resp, submit)) return;
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || data.success === false) {
+          setActionError(data.error || t('engineProfile.deleteFailedStatus', { status: resp.status }));
+          return;
+        }
+        await fetchProfiles();
+      } catch (e) {
+        setActionError(t('engineProfile.deleteFailed', { error: e instanceof Error ? e.message : t('engineProfile.unknownError') }));
+      } finally {
+        setSaving(false);
       }
-      await fetchProfiles();
-    } catch (e) {
-      setActionError(t('engineProfile.deleteFailed', { error: e instanceof Error ? e.message : t('engineProfile.unknownError') }));
-    } finally {
-      setSaving(false);
-    }
-  }, [selectedName, engineName, fetchProfiles, t]);
+    };
+    await submit();
+  }, [selectedName, engineName, fetchProfiles, requireLogin, t]);
 
   const resetProfiles = useCallback(async () => {
     if (!window.confirm(t('engineProfile.confirmReset'))) return;
-    setSaving(true);
-    setActionError(null);
-    setNotice(null);
-    try {
-      const resp = await apiFetch(`/api/engines/${engineName}/profiles/reset`, { method: 'POST' });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok || data.success === false) {
-        setActionError(data.error || t('engineProfile.resetFailedStatus', { status: resp.status }));
-        return;
+    const submit = async (): Promise<void> => {
+      setSaving(true);
+      setActionError(null);
+      setNotice(null);
+      try {
+        const resp = await apiFetch(`/api/engines/${engineName}/profiles/reset`, {
+          method: 'POST',
+          requiresAuth: true,
+        });
+        if (requireLogin(resp, submit)) return;
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || data.success === false) {
+          setActionError(data.error || t('engineProfile.resetFailedStatus', { status: resp.status }));
+          return;
+        }
+        setEditable(Boolean(data.editable));
+        setUnavailableReason(data.unavailable_reason ?? null);
+        const ordered = orderSchemaGroups(data.schema ?? []);
+        setSchema(ordered);
+        setProfiles(data.profiles ?? []);
+        setCaseCollisions(data.case_collisions ?? []);
+        const names = (data.profiles ?? []).map((p: Profile) => p.name);
+        const next = names[0] ?? null;
+        setSelectedName(next);
+        setIsNew(false);
+        setNameInput('');
+        loadField(ordered, data.profiles ?? [], next);
+        setNotice(t('engineProfile.resetDone'));
+        onProfilesReset?.();
+      } catch (e) {
+        setActionError(t('engineProfile.resetFailed', { error: e instanceof Error ? e.message : t('engineProfile.unknownError') }));
+      } finally {
+        setSaving(false);
       }
-      setEditable(Boolean(data.editable));
-      setUnavailableReason(data.unavailable_reason ?? null);
-      const ordered = orderSchemaGroups(data.schema ?? []);
-      setSchema(ordered);
-      setProfiles(data.profiles ?? []);
-      setCaseCollisions(data.case_collisions ?? []);
-      const names = (data.profiles ?? []).map((p: Profile) => p.name);
-      const next = names[0] ?? null;
-      setSelectedName(next);
-      setIsNew(false);
-      setNameInput('');
-      loadField(ordered, data.profiles ?? [], next);
-      setNotice(t('engineProfile.resetDone'));
-      onProfilesReset?.();
-    } catch (e) {
-      setActionError(t('engineProfile.resetFailed', { error: e instanceof Error ? e.message : t('engineProfile.unknownError') }));
-    } finally {
-      setSaving(false);
-    }
-  }, [engineName, loadField, onProfilesReset, t]);
+    };
+    await submit();
+  }, [engineName, loadField, onProfilesReset, requireLogin, t]);
 
   const reconcileCase = useCallback(async (keep: string, group: string[]) => {
     const others = group.filter((n) => n !== keep);
@@ -316,41 +376,46 @@ export function EngineProfileEditor({
     }))) {
       return;
     }
-    setSaving(true);
-    setActionError(null);
-    setNotice(null);
-    try {
-      const resp = await apiFetch(`/api/engines/${engineName}/profiles/reconcile-case`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keep }),
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok || data.success === false) {
-        setActionError(data.error || t('engineProfile.caseCollisionFailed', { error: `HTTP ${resp.status}` }));
-        return;
+    const submit = async (): Promise<void> => {
+      setSaving(true);
+      setActionError(null);
+      setNotice(null);
+      try {
+        const resp = await apiFetch(`/api/engines/${engineName}/profiles/reconcile-case`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ keep }),
+          requiresAuth: true,
+        });
+        if (requireLogin(resp, submit)) return;
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || data.success === false) {
+          setActionError(data.error || t('engineProfile.caseCollisionFailed', { error: `HTTP ${resp.status}` }));
+          return;
+        }
+        setProfiles(data.profiles ?? []);
+        setCaseCollisions(data.case_collisions ?? []);
+        const names = (data.profiles ?? []).map((p: Profile) => p.name);
+        const next = names.includes(keep) ? keep : names[0] ?? null;
+        setSelectedName(next);
+        setIsNew(false);
+        setNameInput('');
+        loadField(schema, data.profiles ?? [], next);
+        const removed = (data.removed ?? []) as string[];
+        setNotice(t('engineProfile.caseCollisionDone', {
+          name: keep,
+          removed: removed.map((n) => `"${n}"`).join(', ') || '—',
+        }));
+      } catch (e) {
+        setActionError(t('engineProfile.caseCollisionFailed', {
+          error: e instanceof Error ? e.message : t('engineProfile.unknownError'),
+        }));
+      } finally {
+        setSaving(false);
       }
-      setProfiles(data.profiles ?? []);
-      setCaseCollisions(data.case_collisions ?? []);
-      const names = (data.profiles ?? []).map((p: Profile) => p.name);
-      const next = names.includes(keep) ? keep : names[0] ?? null;
-      setSelectedName(next);
-      setIsNew(false);
-      setNameInput('');
-      loadField(schema, data.profiles ?? [], next);
-      const removed = (data.removed ?? []) as string[];
-      setNotice(t('engineProfile.caseCollisionDone', {
-        name: keep,
-        removed: removed.map((n) => `"${n}"`).join(', ') || '—',
-      }));
-    } catch (e) {
-      setActionError(t('engineProfile.caseCollisionFailed', {
-        error: e instanceof Error ? e.message : t('engineProfile.unknownError'),
-      }));
-    } finally {
-      setSaving(false);
-    }
-  }, [engineName, loadField, schema, t]);
+    };
+    await submit();
+  }, [engineName, loadField, schema, requireLogin, t]);
 
   const profileOptions = useMemo(
     () => profiles.map((p) => ({ value: p.name, label: p.label ?? p.name })),
@@ -370,6 +435,18 @@ export function EngineProfileEditor({
 
   return (
     <div className="profile-editor">
+      <LoginDialog
+        isOpen={loginOpen}
+        onClose={() => {
+          setLoginOpen(false);
+          // Abandoning the dialog abandons the write; leaving it queued would
+          // fire it unexpectedly at the next unrelated login.
+          pendingWriteRef.current = null;
+        }}
+        onSuccess={handleLoginSuccess}
+        errorMessage={loginError}
+      />
+
       <div className="profile-editor-toolbar">
         <Button variant="secondary" size="sm" onClick={onBack}>
           {t('engineProfile.back')}

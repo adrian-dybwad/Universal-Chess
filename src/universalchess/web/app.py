@@ -4783,6 +4783,7 @@ def _case_collisions(config_path):
 # ``profiles/reset`` is registered before ``profiles/<profile_name>`` so the
 # literal path is not captured as a profile name.
 @app.route("/api/engines/<engine_name>/profiles/reset", methods=["POST"])
+@requires_auth
 def api_reset_engine_profiles(engine_name):
     """Delete the writable ``.uci`` and re-seed strength profiles from a probe.
 
@@ -4824,6 +4825,7 @@ def api_reset_engine_profiles(engine_name):
 
 
 @app.route("/api/engines/<engine_name>/profiles/reconcile-case", methods=["POST"])
+@requires_auth
 def api_reconcile_engine_profile_case(engine_name):
     """Keep one spelling of a case-colliding profile and delete the twins.
 
@@ -4868,6 +4870,7 @@ def api_reconcile_engine_profile_case(engine_name):
 
 
 @app.route("/api/engines/<engine_name>/profiles/<profile_name>", methods=["POST"])
+@requires_auth
 def api_save_engine_profile(engine_name, profile_name):
     """Create or replace a profile. Body: ``{"values": {key: value}}``.
 
@@ -4969,6 +4972,7 @@ def api_save_engine_profile(engine_name, profile_name):
 
 
 @app.route("/api/engines/<engine_name>/profiles/<profile_name>/delete", methods=["POST"])
+@requires_auth
 def api_delete_engine_profile(engine_name, profile_name):
     """Delete a profile section.
 
@@ -5030,6 +5034,7 @@ def api_get_engine_levels(engine_name):
 
 
 @app.route("/api/engines/<engine_name>/failure/dismiss", methods=["POST"])
+@requires_auth
 def api_dismiss_engine_failure(engine_name):
     """Acknowledge an engine's last failure so its card stops showing the notice.
 
@@ -5810,6 +5815,14 @@ def api_resume_engine_install():
     for that engine; the cached git clone is reused (git pull), so engine source
     is not re-downloaded. True mid-build continuation is not possible -- "resume"
     re-runs the install operation, which is idempotent.
+
+    Deliberately not ``@requires_auth``, unlike every other engine mutation: it
+    can only re-run an install a user already authenticated to start, and the
+    engine name comes from the persisted state rather than the request, so a
+    caller cannot choose what gets built. Any other precondition (no interrupted
+    install, one already active) is rejected below. The exception is pinned in
+    tests/test_engine_endpoint_auth.py; do not add endpoints to that list without
+    an equivalent argument.
     """
     try:
         status = _engine_install_store.status_dict()
@@ -5831,6 +5844,7 @@ def api_resume_engine_install():
 
 
 @app.route("/api/engines/cancel", methods=["POST"])
+@requires_auth
 def api_cancel_engine_install():
     """Dismiss an interrupted or finished install by clearing its persisted state.
 
