@@ -259,6 +259,54 @@
   border-radius: var(--radius-md, 8px);
 }
 
+/* Dismissible "last error" notice under an engine's description. Warning-toned
+   rather than danger: the engine is broken, but the notice is informational and
+   acknowledgeable, unlike .engine-card-error which reports a just-failed action. */
+.engine-failure-notice {
+  margin: var(--space-3) 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-warning-dark, var(--color-text));
+  background: var(--color-warning-light, var(--color-surface-muted));
+  border-radius: var(--radius-md, 8px);
+}
+
+.engine-failure-notice-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.engine-failure-notice-text {
+  flex: 1 1 16rem;
+}
+
+.engine-failure-notice-actions {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+
+/* Two-column key/value list of the tokens a user is asked to screenshot. The
+   values are monospaced so an errno or exception name is unambiguous. */
+.engine-failure-details {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: var(--space-3) 0 0;
+}
+
+.engine-failure-details dt {
+  font-weight: 600;
+}
+
+.engine-failure-details dd {
+  margin: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  overflow-wrap: anywhere;
+}
+
 /* Custom engines panel (operator-supplied uploads / URL installs) */
 .custom-engine-row {
   display: flex;

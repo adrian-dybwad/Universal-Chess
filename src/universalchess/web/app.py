@@ -4661,7 +4661,38 @@ def api_get_engines():
 # holds the selectable sections the engine player loads at game start. Editing
 # reads/writes that file (the [DEFAULT] section is preserved), so edits take
 # effect on the next game.
-from universalchess.services import engine_profiles, uci_schema
+from universalchess.services import engine_bootstrap, engine_failure_record, engine_profiles, uci_schema
+from universalchess.services.engine_registry import (
+    LOAD_FAILURE_BINARY_MISSING,
+    sanitize_detail,
+    sanitize_reason_code,
+)
+
+# Durable per-engine record of the last install/initialize failure. Module-level
+# like the install-state store so tests can swap in a temp-backed instance.
+_engine_failure_store = engine_failure_record.STORE
+
+
+def _failure_payload(engine_name):
+    """Serialize an engine's last failure for the management card, or None.
+
+    Only fixed tokens and a timestamp cross this boundary. This endpoint is not
+    auth-gated, and the exception text the reason was derived from carries the
+    engine's absolute path; the fuller message goes to the auth-gated event log.
+    The record is re-checked against the published vocabulary on the way out
+    rather than trusted for having been checked on the way in, since it is read
+    back from a file that outlives the process that wrote it.
+    """
+    failure = _engine_failure_store.get(engine_name)
+    if failure is None:
+        return None
+    return {
+        "phase": failure.phase,
+        "reason_code": sanitize_reason_code(failure.reason_code),
+        "detail": sanitize_detail(failure.detail),
+        "failed_at": failure.failed_at,
+        "dismissed": failure.dismissed,
+    }
 
 
 def _config_uci_path(engine_name):
@@ -4696,23 +4727,27 @@ def api_get_engine_uci_schema(engine_name):
     """Return the probed option schema and current sections for an engine.
 
     Probes the installed binary for its real UCI options and seeds the writable
-    config on first use. Engines that are not installed (cannot be probed) return
-    ``editable: false`` so the UI hides the editor. Sections come from the
-    writable config.
+    config on first use. Engines that cannot be probed return ``editable: false``
+    with an ``unavailable_reason``: a missing binary and one that is present but
+    will not launch both land here, and reporting both as "not installed" is what
+    let an engine show an Installed badge and a "not installed" editor at once.
+    Sections come from the writable config.
     """
     config_path = _config_uci_path(engine_name)
     if config_path is None:
         return jsonify({"success": False, "error": "Invalid engine"}), 400
     try:
         groups = _seed_and_probe_schema(engine_name, config_path)
-    except uci_schema.EngineProbeError:
+    except uci_schema.EngineProbeError as probe_error:
         return jsonify({
             "engine": engine_name, "editable": False, "schema": [], "profiles": [],
             "case_collisions": [],
+            "unavailable_reason": sanitize_reason_code(probe_error.reason_code),
         })
     return jsonify({
         "engine": engine_name,
         "editable": True,
+        "unavailable_reason": None,
         "schema": engine_profiles.schema_to_json(groups),
         # Enrich with the same display labels the Elo picker uses
         # (Default (Unlimited) / Default (1500 ELO)) so the profile editor list
@@ -4753,16 +4788,31 @@ def api_reset_engine_profiles(engine_name):
 
     Escape hatch for a stuck Default-only config (or discarded custom profiles).
     Returns the same shape as GET profiles so the editor can refresh in one
-    round-trip. 404 when the engine cannot be probed.
+    round-trip.
+
+    404 only when the binary is genuinely absent; an installed engine that will
+    not launch answers 409 with its reason code. The distinction matters because
+    the reported symptom was a user clicking Reset repeatedly against a 404
+    saying the engine was not installed while its card said it was -- a response
+    describing a state they could see was false.
     """
     config_path = _config_uci_path(engine_name)
     if config_path is None:
         return jsonify({"success": False, "error": "Invalid engine"}), 400
     try:
-        uci_schema.reset_config(engine_name, config_path=config_path)
+        engine_bootstrap.reset_profiles(
+            engine_name, config_path=config_path, store=_engine_failure_store,
+        )
         groups = uci_schema.get_schema(engine_name)
-    except uci_schema.EngineProbeError:
-        return jsonify({"success": False, "error": "Engine is not installed"}), 404
+    except uci_schema.EngineProbeError as probe_error:
+        if probe_error.reason_code == LOAD_FAILURE_BINARY_MISSING:
+            return jsonify({"success": False, "error": "Engine is not installed"}), 404
+        return jsonify({
+            "success": False,
+            "error": "Engine is installed but did not start",
+            "reason_code": sanitize_reason_code(probe_error.reason_code),
+            "detail": sanitize_detail(probe_error.detail),
+        }), 409
     return jsonify({
         "success": True,
         "engine": engine_name,
@@ -4979,6 +5029,31 @@ def api_get_engine_levels(engine_name):
     return jsonify(levels)
 
 
+@app.route("/api/engines/<engine_name>/failure/dismiss", methods=["POST"])
+def api_dismiss_engine_failure(engine_name):
+    """Acknowledge an engine's last failure so its card stops showing the notice.
+
+    Dismissal silences the notice only. ``profiles_ready`` is derived from the
+    engine's actual state on disk and is unaffected, because dismissing is not a
+    fix -- letting it clear the badge would put the card back to claiming a
+    broken engine is healthy. A later failure on the same engine reopens the
+    notice.
+
+    The name is validated against the catalog and the custom-engine store: it
+    arrives from the URL, and accepting anything would let a caller grow the
+    record store without bound and would hide a client sending the wrong name.
+    """
+    from universalchess.managers.engine_manager import ENGINES
+
+    known = engine_name in ENGINES or any(
+        custom.id == engine_name for custom in _custom_engine_store.list()
+    )
+    if not known:
+        return jsonify({"success": False, "error": "Unknown engine"}), 404
+    _engine_failure_store.dismiss(engine_name)
+    return jsonify({"success": True})
+
+
 @app.route("/api/engines/all", methods=["GET"])
 def api_get_all_engines():
     """Get full details of all engines for management UI."""
@@ -5039,6 +5114,19 @@ def api_get_all_engines():
                 # its schema has nothing to offer (only an empty Default), so the
                 # Repair action is surfaced instead of a broken profile editor.
                 "has_profiles": installed and not needs_repair,
+                # Whether the engine actually produced a strength ladder. Read
+                # from the seeded .uci on disk, never by launching anything: this
+                # list renders every catalog engine at once. `installed` only
+                # says a file exists and stays true forever once written, so an
+                # engine that installs and then fails to start would otherwise
+                # keep reporting itself healthy -- the contradiction between the
+                # card's badge and the profile editor's error.
+                "profiles_ready": installed and not needs_repair and uci_schema.has_seeded_profiles(
+                    name, config_path=_config_uci_path(name),
+                ),
+                # The last install/initialize failure, or None. Fixed tokens only
+                # (see _failure_payload).
+                "last_failure": _failure_payload(name),
                 # Architecture support for THIS device. `supported` drives the UI's
                 # install button state; `unsupported_reason` explains why when False.
                 "supported": unsupported_reason is None,
@@ -5085,6 +5173,10 @@ def api_get_all_engines():
                 # Custom engines are probed for their schema just like catalog
                 # engines, so they are editable whenever their binary is present.
                 "has_profiles": installed,
+                "profiles_ready": installed and uci_schema.has_seeded_profiles(
+                    custom.id, config_path=_config_uci_path(custom.id),
+                ),
+                "last_failure": _failure_payload(custom.id),
                 "supported": True,
                 "unsupported_reason": None,
                 "source_installable": False,
@@ -5301,26 +5393,23 @@ def _run_custom_url_install(engine_id: str, display_name: str, url: str):
             os.unlink(tmp_path)
 
 
-def _seed_uci_after_install(engine_name: str) -> None:
-    """Best-effort seed of ``config/engines/<name>.uci`` after a successful install.
+def _seed_uci_after_install(engine_name: str, display_name: Optional[str] = None) -> None:
+    """Seed ``config/engines/<name>.uci`` after an install outside EngineManager.
 
-    Mirrors the post-install seed in ``EngineManager.install_engine`` for paths
-    that install outside the manager (custom upload / URL). Failures are logged
-    only -- the binary is already installed and first-use seed still applies.
+    Covers the custom upload / URL paths; catalog installs run the same step from
+    ``EngineManager.install_engine``. Never raises: the binary is already
+    installed, and first-use seeding still applies. A failure is recorded and
+    event-logged by ``engine_bootstrap`` so the card can report it.
     """
-    try:
-        config_path = _config_uci_path(engine_name)
-        if config_path is None:
-            return
-        uci_schema.seed_config(engine_name, config_path=config_path)
-    except uci_schema.EngineProbeError as seed_error:
-        app.logger.warning(
-            "Installed %s but UCI profile seed failed: %s", engine_name, seed_error,
-        )
-    except Exception as seed_error:
-        app.logger.warning(
-            "Installed %s but UCI profile seed failed: %s", engine_name, seed_error,
-        )
+    config_path = _config_uci_path(engine_name)
+    if config_path is None:
+        return
+    engine_bootstrap.initialize_profiles(
+        engine_name,
+        config_path=config_path,
+        display_name=display_name,
+        store=_engine_failure_store,
+    )
 
 
 def _run_engine_install(engine_name: str, ref: Optional[str] = None):

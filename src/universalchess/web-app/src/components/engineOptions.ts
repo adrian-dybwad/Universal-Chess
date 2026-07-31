@@ -49,6 +49,14 @@ export interface SchemaResponse {
   profiles: Profile[];
   /** Groups of profile names that differ only by case (legacy twins). */
   case_collisions?: string[][];
+  /**
+   * Why the editor is unavailable when `editable` is false, as a stable token
+   * (see the backend's load-failure reason codes). "binary_missing" means the
+   * engine is genuinely not installed; anything else means it is installed and
+   * would not start -- a distinction the editor previously could not make, so it
+   * told users an installed engine was not installed.
+   */
+  unavailable_reason?: string | null;
 }
 
 // Group id -> shared menu icon. The probed schema groups options into

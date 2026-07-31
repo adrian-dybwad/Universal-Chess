@@ -370,7 +370,6 @@
       "reverseHand": "The engine finds the best move with that piece, shown via LEDs.",
       "reverseNote": "Great for practicing piece coordination while engine handles tactics."
     },
-    "connectError": "Could not connect to the Universal Chess backend. Make sure the board is running and accessible.",
     "developingLocally": "If you're developing locally, configure the API URL in <0>vite.config.ts</0> proxy settings or run the <1>run-react</1> script with the <2>--api</2> flag.",
     "agentsUi": {
       "none": "No agents are available.",
@@ -454,7 +453,22 @@
       "failRepair": "Failed to repair {{name}}.",
       "failRepairRetry": "Failed to repair {{name}}. Check the connection and try again.",
       "statusStarting": "Starting...",
-      "statusResuming": "Resuming install..."
+      "statusResuming": "Resuming install...",
+      "badgeProfilesUnavailable": "Profiles Unavailable",
+      "dismiss": "Dismiss",
+      "failureInitializeTitle": "{{name}} is installed but did not start.",
+      "failureInstallTitle": "{{name}} could not be installed.",
+      "failureEngine": "Engine",
+      "failureReasonCode": "Reason code",
+      "failureTechnicalDetail": "Details",
+      "failureRecordedAt": "Recorded",
+      "reasonBinaryMissing": "Its program file is missing. Install it again.",
+      "reasonNotExecutable": "Its program file cannot be run on this device. Install it again.",
+      "reasonIncompatibleBinary": "Its program file was built for a different CPU architecture, so this device cannot run it. Installing it again rebuilds it for this device.",
+      "reasonCrashedAtStartup": "It stopped immediately when started, which usually means the build is damaged. Install it again.",
+      "reasonHandshakeTimeout": "It started but never answered, so it could not be set up. Install it again.",
+      "reasonLaunchFailed": "It could not be started. Install it again, and check the Event Log under System for more.",
+      "reasonBuildFailed": "Building it did not finish. Check the Event Log under System for what went wrong."
     },
     "customEngines": {
       "title": "Custom Engines",
@@ -557,7 +571,8 @@
       "categoryEngineUninstall": "Engine",
       "categoryBluetooth": "Bluetooth",
       "categoryUpdate": "Update",
-      "categorySystem": "System"
+      "categorySystem": "System",
+      "categoryEngineInit": "Engine startup"
     },
     "debug": {
       "title": "Debug",
@@ -768,7 +783,8 @@
     "caseCollisionFailed": "Could not resolve duplicates: {{error}}",
     "caseCollisionDone": "Kept \"{{name}}\"; removed {{removed}}.",
     "ambiguousCaseName": "Several profiles match \"{{name}}\" with different capitalization. Resolve the duplicates below first.",
-    "confirmEloRename": "Elo no longer matches the profile name. Rename \"{{from}}\" to \"{{to}}\"?"
+    "confirmEloRename": "Elo no longer matches the profile name. Rename \"{{from}}\" to \"{{to}}\"?",
+    "startFailed": "This engine is installed but did not start, so its options could not be read. Install it again from the Engines tab; the Event Log under System has the details."
   },
   "connectivity": {
     "title": "Connectivity",

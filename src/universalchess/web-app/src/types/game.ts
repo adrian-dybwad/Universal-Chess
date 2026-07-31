@@ -93,6 +93,39 @@ export interface GameRecord {
 }
 
 /**
+ * Which step of bringing an engine up failed.
+ *
+ * The phase selects both the sentence shown and the action offered: an engine
+ * that never installed needs Install, while one that installed and will not
+ * start needs a rebuild or reinstall.
+ */
+export type EngineFailurePhase = 'install' | 'initialize';
+
+/**
+ * Why an engine is unusable, as recorded by the backend.
+ *
+ * `reason_code` and `detail` are fixed tokens, never text derived from an
+ * exception: this payload is served by an endpoint that is not auth-gated, and
+ * the underlying exception messages contain engine filesystem paths. The fuller
+ * text lives in the auth-gated system event log.
+ */
+export interface EngineFailure {
+  phase: EngineFailurePhase;
+  /** Stable token naming the failure mode; localized for display. */
+  reason_code: string;
+  /** Short technical token such as "OSError ENOEXEC", or null. */
+  detail: string | null;
+  /** Unix seconds when the failure was recorded. */
+  failed_at: number | null;
+  /**
+   * Whether the user acknowledged this particular failure. Hides the notice
+   * only -- the engine is still unusable, so the badge is unaffected. A later
+   * failure on the same engine arrives undismissed.
+   */
+  dismissed: boolean;
+}
+
+/**
  * Engine definition from backend.
  */
 export interface EngineDefinition {
@@ -110,6 +143,24 @@ export interface EngineDefinition {
    * including the Stockfish system package -- not limited to a curated list.
    */
   has_profiles: boolean;
+  /**
+   * Whether the engine actually produced a strength ladder, read server-side
+   * from the seeded .uci on disk without launching anything.
+   *
+   * Distinct from `installed`, which only says a binary file exists and stays
+   * true forever once written. An engine can install cleanly and then fail to
+   * start -- a build for the wrong architecture, say -- leaving it "installed"
+   * with no profiles, no Elo rungs and no way to play. This is the field that
+   * makes that state visible; without it the card claimed such an engine was
+   * healthy while the profile editor reported it as not installed.
+   */
+  profiles_ready: boolean;
+  /**
+   * The last install or initialization failure recorded for this engine, or null.
+   * Rendered as a dismissible notice on the card; every occurrence is also in
+   * the system event log.
+   */
+  last_failure: EngineFailure | null;
   /**
    * Whether this engine is installed but missing required companion files (a
    * net-backed engine like Maia whose weight download failed): the binary is

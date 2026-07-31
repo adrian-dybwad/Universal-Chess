@@ -105,6 +105,25 @@ def install_store(tmp_path):
     webapp._engine_install_store = original
 
 
+@pytest.fixture(autouse=True)
+def failure_store(tmp_path):
+    """Point the durable engine-failure store at an isolated temp file per test.
+
+    Autouse for the same reason as ``install_store``: the store is a module-level
+    singleton persisting under CONFIG_DIR (``/opt``), which is neither writable
+    nor shared in tests, and any endpoint that fails to initialize an engine
+    writes to it -- including tests that never mention failures. Yields the store
+    so tests can seed and inspect records.
+    """
+    from universalchess.services.engine_failure_record import EngineFailureStore
+
+    original = webapp._engine_failure_store
+    store = EngineFailureStore(path=tmp_path / "engine_failures.json")
+    webapp._engine_failure_store = store
+    yield store
+    webapp._engine_failure_store = original
+
+
 # ---------------------------------------------------------------------------
 # Install contract
 # ---------------------------------------------------------------------------
@@ -1247,3 +1266,332 @@ def test_levels_endpoint_falls_back_to_default_when_not_probeable(client, profil
     resp = client.get(f"/api/engines/{SYSTEM_ENGINE}/levels")
     assert resp.status_code == 200
     assert resp.get_json() == [{"value": "Default", "label": "Default"}]
+
+
+# ---------------------------------------------------------------------------
+# Reporting an engine that installed but will not start
+#
+# Why this section exists
+# -----------------------
+# A user reported CT800 showing a green "Installed" badge on its card and
+# "This engine cannot be configured because it is not installed" in the profile
+# editor, on the same page load. Both were produced by the code as written: the
+# card asks only whether the binary exists and is executable, while the editor
+# tries to launch it. Neither statement is useful, and the contradiction made the
+# report undiagnosable remotely -- the actual launch error existed only in the
+# board's journal.
+#
+# The fix keeps the engines list free of probes (it renders every catalog engine
+# at once) by deriving readiness from the seeded .uci already on disk, and makes
+# the editor say what actually failed. These tests pin both.
+# ---------------------------------------------------------------------------
+
+
+def _probe_failure(reason_code):
+    """Return a probe_options stand-in that fails the way a dead binary does."""
+    def failing_probe(path):
+        raise webapp.uci_schema.EngineProbeError(
+            "could not launch", reason_code=reason_code
+        )
+    return failing_probe
+
+
+def test_all_engines_reports_profiles_not_ready_without_launching_anything(
+    client, monkeypatch, profile_paths, failure_store
+):
+    """An installed engine with no seeded .uci reports profiles_ready false.
+
+    Why this test exists: this is the CT800 card. The binary is present and
+    executable, so `installed` is true and always will be -- the card needs a
+    second, independent field to stop claiming the engine is ready. It must come
+    from disk: the list renders every catalog engine, so probing here would spawn
+    one process per card.
+
+    How a regression manifests: if readiness were derived from `installed`,
+    profiles_ready is true for an engine with no ladder and the card is back to
+    contradicting the editor. If it were derived from a probe, the assertion
+    below that probe_options was never called fails -- and on a real board the
+    engines page would launch every installed engine at once.
+    """
+    probe_calls = []
+    monkeypatch.setattr(
+        webapp.uci_schema, "probe_options",
+        lambda path: probe_calls.append(path) or _FAKE_OPTIONS,
+    )
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.EngineManager.is_installed",
+        lambda self, name: name == PROFILES_ENGINE,
+    )
+
+    resp = client.get("/api/engines/all")
+
+    assert resp.status_code == 200
+    by_name = {e["name"]: e for e in json.loads(resp.data)}
+    assert by_name[PROFILES_ENGINE]["installed"] is True
+    assert by_name[PROFILES_ENGINE]["profiles_ready"] is False
+    assert probe_calls == [], "the engines list must not launch engines"
+
+
+def test_all_engines_reports_profiles_ready_once_the_ladder_is_seeded(
+    client, monkeypatch, profile_paths, failure_store
+):
+    """A seeded engine reports profiles_ready true and no failure.
+
+    Why this test exists: the negative case above is only meaningful paired with
+    this one. A readiness check that is too strict would flag every healthy
+    engine, which is a louder bug than the one being fixed.
+
+    How a regression manifests: profiles_ready is false for an engine with a
+    full ladder on disk, so every card grows a warning badge.
+    """
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.EngineManager.is_installed",
+        lambda self, name: name == PROFILES_ENGINE,
+    )
+    # Seeding happens through the editor's first GET, which probes via the fixture.
+    client.get(f"/api/engines/{PROFILES_ENGINE}/profiles")
+
+    resp = client.get("/api/engines/all")
+
+    by_name = {e["name"]: e for e in json.loads(resp.data)}
+    assert by_name[PROFILES_ENGINE]["profiles_ready"] is True
+    assert by_name[PROFILES_ENGINE]["last_failure"] is None
+
+
+def test_all_engines_surfaces_the_recorded_failure_reason(
+    client, monkeypatch, profile_paths, failure_store
+):
+    """A recorded initialize failure reaches the card as phase plus reason.
+
+    Why this test exists: "profiles unavailable" alone still leaves the user with
+    no next step. The reason code is what distinguishes a binary built for the
+    wrong architecture (rebuild) from a crash at startup (reinstall), and it is
+    the one fact a screenshot can carry back to a maintainer.
+
+    How a regression manifests: last_failure stays null even though the store
+    holds a record, so the card can only report that something is wrong.
+    """
+    from universalchess.services.engine_failure_record import PHASE_INITIALIZE
+
+    failure_store.record_failure(
+        PROFILES_ENGINE,
+        phase=PHASE_INITIALIZE,
+        reason_code="incompatible_binary",
+        detail="OSError ENOEXEC",
+    )
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.EngineManager.is_installed",
+        lambda self, name: name == PROFILES_ENGINE,
+    )
+
+    resp = client.get("/api/engines/all")
+
+    entry = {e["name"]: e for e in json.loads(resp.data)}[PROFILES_ENGINE]
+    assert entry["last_failure"] == {
+        "phase": PHASE_INITIALIZE,
+        "reason_code": "incompatible_binary",
+        "detail": "OSError ENOEXEC",
+        "failed_at": failure_store.get(PROFILES_ENGINE).failed_at,
+        "dismissed": False,
+    }
+
+
+def test_dismissing_a_failure_hides_the_notice_but_not_the_badge(
+    client, monkeypatch, profile_paths, failure_store
+):
+    """Dismissal acknowledges the notice; the engine is still reported unready.
+
+    Why this test exists: dismissal must not be mistaken for a fix. The notice is
+    a message about an event and can be acknowledged; profiles_ready describes
+    the engine's current state and is derived from disk, so it has to survive.
+    Letting dismissal flip the badge back to a healthy "Installed" would recreate
+    the exact false claim this whole change removes.
+
+    How a regression manifests: profiles_ready is true after dismissing, and the
+    card says the engine is fine while its Elo menu is still empty.
+    """
+    from universalchess.services.engine_failure_record import PHASE_INITIALIZE
+
+    failure_store.record_failure(
+        PROFILES_ENGINE, phase=PHASE_INITIALIZE, reason_code="incompatible_binary"
+    )
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.EngineManager.is_installed",
+        lambda self, name: name == PROFILES_ENGINE,
+    )
+
+    dismiss = client.post(f"/api/engines/{PROFILES_ENGINE}/failure/dismiss")
+
+    assert dismiss.status_code == 200
+    assert dismiss.get_json()["success"] is True
+    entry = {
+        e["name"]: e for e in json.loads(client.get("/api/engines/all").data)
+    }[PROFILES_ENGINE]
+    assert entry["last_failure"]["dismissed"] is True
+    assert entry["profiles_ready"] is False
+
+
+def test_dismissing_an_unknown_engine_is_rejected(client, profile_paths, failure_store):
+    """Dismiss validates the engine name instead of writing an arbitrary record.
+
+    Why this test exists: the engine name arrives from the URL. An endpoint that
+    recorded a dismissal for any string would let a caller grow the store without
+    bound, and would mask a genuine client bug that sends the wrong name.
+
+    How a regression manifests: the endpoint answers 200 for a name that is in
+    neither the catalog nor the custom-engine store.
+    """
+    resp = client.post("/api/engines/not-a-real-engine/failure/dismiss")
+
+    assert resp.status_code == 404
+
+
+def test_all_engines_response_carries_no_filesystem_paths(
+    client, monkeypatch, profile_paths, failure_store
+):
+    """The failure payload exposes codes only, never engine paths.
+
+    Why this test exists: the reason travels from an exception raised while
+    launching a binary, and the obvious "helpful" implementation attaches the
+    exception's text -- which contains the absolute path of the engine. That is
+    the stack-trace exposure class of finding, and it is easiest to reintroduce
+    exactly here, at the boundary where the record becomes a response.
+
+    How a regression manifests: the engines directory appears in the JSON body.
+    """
+    from universalchess.services.engine_failure_record import PHASE_INITIALIZE
+
+    failure_store.record_failure(
+        PROFILES_ENGINE, phase=PHASE_INITIALIZE, reason_code="incompatible_binary"
+    )
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.EngineManager.is_installed",
+        lambda self, name: name == PROFILES_ENGINE,
+    )
+
+    resp = client.get("/api/engines/all")
+
+    assert "/opt/universalchess/engines" not in resp.get_data(as_text=True)
+
+
+def test_get_profiles_distinguishes_a_dead_binary_from_a_missing_one(
+    client, monkeypatch, profile_paths, failure_store
+):
+    """The editor reports why it cannot configure the engine, not a false claim.
+
+    Why this test exists: today both "no binary" and "binary will not launch"
+    render the same sentence -- "not installed" -- which is untrue in the second
+    case and is the half of the contradiction the user saw. The reason code lets
+    the editor pick the truthful message without probing anything extra.
+
+    How a regression manifests: unavailable_reason is absent or is
+    "binary_missing" for an engine whose binary is present, and the editor goes
+    back to telling the user to install something already installed.
+    """
+    monkeypatch.setattr(
+        webapp.uci_schema, "probe_options", _probe_failure("incompatible_binary")
+    )
+
+    resp = client.get(f"/api/engines/{PROFILES_ENGINE}/profiles")
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["editable"] is False
+    assert body["unavailable_reason"] == "incompatible_binary"
+
+
+def test_get_profiles_reports_binary_missing_for_an_uninstalled_engine(
+    client, profile_paths, failure_store
+):
+    """A genuinely absent binary still reports binary_missing.
+
+    Why this test exists: the truthful-message change must not overcorrect. An
+    engine that really is not installed has to keep saying so, or the install
+    prompt disappears for the case where installing is the fix.
+
+    How a regression manifests: unavailable_reason reports a launch failure for
+    an engine that was never installed, and the editor suggests a rebuild
+    instead of an install.
+    """
+    resp = client.get(f"/api/engines/{SYSTEM_ENGINE}/profiles")
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["editable"] is False
+    assert body["unavailable_reason"] == "binary_missing"
+
+
+def test_reset_profiles_reports_409_and_the_reason_when_the_engine_wont_start(
+    client, monkeypatch, profile_paths, failure_store
+):
+    """Reset against an installed-but-dead engine is 409, not 404.
+
+    Why this test exists: the user in the report clicked Reset repeatedly. It
+    answered 404 "Engine is not installed", which is why they kept trying -- the
+    response described a state they could see was false. 404 has to stay reserved
+    for a missing binary so the client can tell the two apart.
+
+    How a regression manifests: the status stays 404 and the client cannot
+    distinguish "install this" from "this install is broken", so Reset keeps
+    presenting an action that cannot succeed.
+    """
+    monkeypatch.setattr(
+        webapp.uci_schema, "probe_options", _probe_failure("crashed_at_startup")
+    )
+
+    resp = client.post(f"/api/engines/{PROFILES_ENGINE}/profiles/reset")
+
+    assert resp.status_code == 409
+    body = resp.get_json()
+    assert body["success"] is False
+    assert body["reason_code"] == "crashed_at_startup"
+
+
+def test_failed_reset_records_the_reason_for_the_card(
+    client, monkeypatch, profile_paths, failure_store
+):
+    """A failed reset updates the durable record the engines list reads.
+
+    Why this test exists: Reset is an initialize attempt, and it is the one the
+    user performs deliberately after seeing something wrong. If only install-time
+    failures were recorded, the card would keep showing a stale reason (or none)
+    while the editor shows a fresh one -- the same disagreement in a new place.
+
+    How a regression manifests: the store holds no record after a failed reset,
+    so the card shows "profiles unavailable" with no explanation.
+    """
+    from universalchess.services.engine_failure_record import PHASE_INITIALIZE
+
+    monkeypatch.setattr(
+        webapp.uci_schema, "probe_options", _probe_failure("crashed_at_startup")
+    )
+
+    client.post(f"/api/engines/{PROFILES_ENGINE}/profiles/reset")
+
+    failure = failure_store.get(PROFILES_ENGINE)
+    assert failure is not None
+    assert (failure.phase, failure.reason_code) == (PHASE_INITIALIZE, "crashed_at_startup")
+
+
+def test_successful_reset_clears_a_stale_failure(
+    client, profile_paths, failure_store
+):
+    """A reset that succeeds retracts the recorded failure.
+
+    Why this test exists: Reset is the documented repair for a stuck profile
+    config. Leaving the record behind would keep warning about an engine the user
+    just fixed, which is how warnings become noise.
+
+    How a regression manifests: the store still holds the failure after a
+    successful reseed and the card keeps its warning badge indefinitely.
+    """
+    from universalchess.services.engine_failure_record import PHASE_INITIALIZE
+
+    failure_store.record_failure(
+        PROFILES_ENGINE, phase=PHASE_INITIALIZE, reason_code="crashed_at_startup"
+    )
+
+    resp = client.post(f"/api/engines/{PROFILES_ENGINE}/profiles/reset")
+
+    assert resp.status_code == 200
+    assert failure_store.get(PROFILES_ENGINE) is None

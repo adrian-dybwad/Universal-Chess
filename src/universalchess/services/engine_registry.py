@@ -12,8 +12,10 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import pathlib
+import re
 import shutil
 import threading
 from dataclasses import dataclass, field
@@ -23,6 +25,125 @@ import chess
 import chess.engine
 
 from universalchess.board.logging import log
+
+# Stable reason codes for a failed engine launch. Each names a different repair,
+# which is the point: an engine that installed cleanly and then refuses to start
+# leaves the user with nothing to act on unless the failure mode is named.
+# Values are fixed tokens, never derived from exception text -- they are returned
+# by an endpoint that is not auth-gated, and an exception's message carries the
+# absolute path of the engine binary.
+LOAD_FAILURE_BINARY_MISSING = "binary_missing"
+LOAD_FAILURE_NOT_EXECUTABLE = "not_executable"
+LOAD_FAILURE_INCOMPATIBLE_BINARY = "incompatible_binary"
+LOAD_FAILURE_CRASHED_AT_STARTUP = "crashed_at_startup"
+LOAD_FAILURE_HANDSHAKE_TIMEOUT = "handshake_timeout"
+LOAD_FAILURE_UNKNOWN = "launch_failed"
+
+# The complete published vocabulary. Anything outside it is not a reason code,
+# and :func:`sanitize_reason_code` refuses to emit it.
+LOAD_FAILURE_REASONS = frozenset({
+    LOAD_FAILURE_BINARY_MISSING,
+    LOAD_FAILURE_NOT_EXECUTABLE,
+    LOAD_FAILURE_INCOMPATIBLE_BINARY,
+    LOAD_FAILURE_CRASHED_AT_STARTUP,
+    LOAD_FAILURE_HANDSHAKE_TIMEOUT,
+    LOAD_FAILURE_UNKNOWN,
+})
+
+# A publishable detail token: a leading letter, then letters, digits, spaces and
+# underscores only, bounded in length. Deliberately excludes '/', '.', ':' and
+# quotes, so no filesystem path, URL or exception message can satisfy it.
+_SAFE_DETAIL = re.compile(r"^[A-Za-z][A-Za-z0-9_ ]{0,63}$")
+
+# errno -> reason code. ENOEXEC is the signature of a binary built for another
+# architecture, the one failure whose repair (rebuild) is invisible otherwise.
+_ERRNO_REASONS = {
+    errno.ENOENT: LOAD_FAILURE_BINARY_MISSING,
+    errno.EACCES: LOAD_FAILURE_NOT_EXECUTABLE,
+    errno.EPERM: LOAD_FAILURE_NOT_EXECUTABLE,
+    errno.ENOEXEC: LOAD_FAILURE_INCOMPATIBLE_BINARY,
+}
+
+
+class EngineLoadError(Exception):
+    """An engine binary could not be launched or did not complete the handshake.
+
+    Carries a classified :attr:`reason_code` and a short, path-free
+    :attr:`detail` token so the failure can be reported to the user rather than
+    existing only in the journal of the board it happened on.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: str = LOAD_FAILURE_UNKNOWN,
+        detail: Optional[str] = None,
+    ):
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.detail = detail
+
+
+def classify_load_failure(exc: BaseException) -> str:
+    """Reduce a launch exception to one of the fixed load-failure reason codes.
+
+    Pure. Matches on exception type and ``errno`` only; nothing from the
+    exception's message reaches the result, because the caller publishes it.
+    """
+    if isinstance(exc, chess.engine.EngineTerminatedError):
+        return LOAD_FAILURE_CRASHED_AT_STARTUP
+    if isinstance(exc, TimeoutError):
+        return LOAD_FAILURE_HANDSHAKE_TIMEOUT
+    if isinstance(exc, OSError):
+        return _ERRNO_REASONS.get(exc.errno, LOAD_FAILURE_UNKNOWN)
+    return LOAD_FAILURE_UNKNOWN
+
+
+def describe_load_failure(exc: BaseException) -> str:
+    """Return a short technical token naming the exception and its errno.
+
+    Pure. ``"OSError ENOEXEC"`` tells a maintainer exactly what the operating
+    system reported while remaining safe to publish: the exception's message,
+    which contains the engine's absolute path, is deliberately excluded. The
+    fuller text goes to the auth-gated event log instead.
+    """
+    name = type(exc).__name__
+    code = getattr(exc, "errno", None)
+    symbol = errno.errorcode.get(code) if code is not None else None
+    return f"{name} {symbol}" if symbol else name
+
+
+def sanitize_reason_code(reason_code: Optional[str]) -> str:
+    """Reduce ``reason_code`` to a member of :data:`LOAD_FAILURE_REASONS`.
+
+    Pure. The reason travels from an exception attribute, through a persisted
+    record, to a response served without authentication, so the value is checked
+    against the vocabulary at the point it is published rather than trusted
+    because every producer is currently careful. An unrecognized code is
+    reported as :data:`LOAD_FAILURE_UNKNOWN`: the UI has no localized sentence
+    for it, and echoing it would publish whatever a future caller assigned --
+    the exception's message, and with it the engine's absolute path.
+    """
+    if reason_code in LOAD_FAILURE_REASONS:
+        return reason_code
+    return LOAD_FAILURE_UNKNOWN
+
+
+def sanitize_detail(detail: Optional[str]) -> Optional[str]:
+    """Return ``detail`` if it is a publishable token, otherwise None.
+
+    Pure. Companion to :func:`sanitize_reason_code` for the free-form half of a
+    failure record. :func:`describe_load_failure` already produces only
+    ``"OSError ENOEXEC"``-shaped text, but the detail reaches the same
+    unauthenticated response from a record on disk, so it is re-checked against
+    a character allowlist here. Dropping it is the correct failure mode: the
+    reason code still explains the failure, while a path or exception message
+    admitted "just this once" cannot be taken back.
+    """
+    if detail and _SAFE_DETAIL.match(detail):
+        return detail
+    return None
 
 
 @dataclass
@@ -266,19 +387,47 @@ class EngineRegistry:
         on_ready: Optional[Callable[[EngineHandle], None]] = None
     ) -> Optional[EngineHandle]:
         """Acquire a handle to an engine, loading it if necessary.
-        
-        This is a blocking call that may take time on first load.
-        For async loading, use acquire_async().
-        
-        If another thread is already loading the same engine, this thread
-        will wait for that load to complete rather than starting a duplicate.
-        
+
+        Thin wrapper over :meth:`acquire_or_raise` preserving the None-on-failure
+        contract every consumer branches on (players, analysis, the display).
+        Callers that need to report *why* a load failed -- the UCI option probe,
+        whose failure the user has to see -- use :meth:`acquire_or_raise`.
+
         Args:
             engine_path: Path to engine executable
             on_ready: Optional callback when engine is ready (for async pattern)
-            
+
         Returns:
             EngineHandle for the engine, or None on failure
+        """
+        try:
+            return self.acquire_or_raise(engine_path, on_ready=on_ready)
+        except EngineLoadError:
+            return None
+
+    def acquire_or_raise(
+        self,
+        engine_path: str,
+        on_ready: Optional[Callable[[EngineHandle], None]] = None
+    ) -> EngineHandle:
+        """Acquire a handle to an engine, raising with the reason on failure.
+
+        This is a blocking call that may take time on first load.
+        For async loading, use acquire_async().
+
+        If another thread is already loading the same engine, this thread
+        will wait for that load to complete rather than starting a duplicate.
+
+        Args:
+            engine_path: Path to engine executable
+            on_ready: Optional callback when engine is ready (for async pattern)
+
+        Returns:
+            EngineHandle for the engine.
+
+        Raises:
+            EngineLoadError: The engine could not be launched, carrying a
+                classified reason code and a path-free detail token.
         """
         resolved = self._canonicalize_path(engine_path)
         wait_event: Optional[threading.Event] = None
@@ -337,11 +486,14 @@ class EngineRegistry:
                     return handle
                 else:
                     log.error(f"[EngineRegistry] Other thread failed to load {resolved}")
-                    return None
+                    raise EngineLoadError(
+                        f"engine load failed in another thread: {resolved}"
+                    )
         
         # We're responsible for loading
         log.info(f"[EngineRegistry] Loading engine: {resolved}")
         handle: Optional[EngineHandle] = None
+        load_error: Optional[EngineLoadError] = None
         try:
             engine = chess.engine.SimpleEngine.popen_uci(resolved, timeout=None)
             handle = EngineHandle(path=resolved, engine=engine, ref_count=1)
@@ -351,14 +503,21 @@ class EngineRegistry:
                 log.info(f"[EngineRegistry] Engine loaded: {resolved}")
         except Exception as e:
             log.error(f"[EngineRegistry] Failed to load engine {resolved}: {e}")
+            load_error = EngineLoadError(
+                f"could not launch engine at {resolved}",
+                reason_code=classify_load_failure(e),
+                detail=describe_load_failure(e),
+            )
         finally:
             # Signal waiting threads
             with self._lock:
                 if resolved in self._loading:
                     self._loading[resolved].set()
                     del self._loading[resolved]
-        
-        if handle and on_ready:
+
+        if load_error is not None:
+            raise load_error
+        if on_ready:
             on_ready(handle)
         return handle
     
@@ -495,6 +654,41 @@ class EngineRegistry:
             self._quit_engine_quietly(engine)
             log.info(f"[EngineRegistry] Evicted unused engine: {path}")
         return len(reaped)
+
+    def evict_if_unused(self, engine_path: str) -> bool:
+        """Quit one named pooled engine if no consumer still references it.
+
+        The targeted counterpart to :meth:`evict_unused`, for consumers that must
+        clean up after themselves rather than wait for a teardown boundary. The
+        UCI option probe is the case that requires it: the web process never
+        reaches a game teardown and so never calls ``evict_unused``, which left
+        one idle engine process resident per distinct engine the profile editor
+        had ever opened, for the lifetime of the service.
+
+        Deliberately narrower than a full sweep -- reaping every ref-zero engine
+        here would unload an engine another consumer left pooled for reuse, which
+        is not the probe's business. A still-referenced engine (a game is playing
+        with it) and a dedicated pondering handle are both left alone, and an
+        unpooled path is a quiet no-op, since this is called from a ``finally``
+        that also runs when the load failed.
+
+        Args:
+            engine_path: Path to the engine executable, in any form the registry
+                canonicalizes.
+
+        Returns:
+            True if an engine was quit and dropped from the pool.
+        """
+        resolved = self._canonicalize_path(engine_path)
+        with self._lock:
+            handle = self._engines.get(resolved)
+            if handle is None or handle.ref_count > 0:
+                return False
+            del self._engines[resolved]
+
+        self._quit_engine_quietly(handle.engine)
+        log.info(f"[EngineRegistry] Evicted unused engine: {resolved}")
+        return True
     
     def shutdown(self) -> None:
         """Shutdown all engines and clear the registry.
@@ -532,8 +726,14 @@ def get_engine_registry() -> EngineRegistry:
 
 
 __all__ = [
+    "LOAD_FAILURE_REASONS",
     "EngineHandle",
+    "EngineLoadError",
     "EngineRegistry",
+    "classify_load_failure",
+    "describe_load_failure",
     "get_engine_registry",
+    "sanitize_detail",
+    "sanitize_reason_code",
 ]
 

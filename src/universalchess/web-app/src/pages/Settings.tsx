@@ -11,7 +11,7 @@ import type { FieldValue } from '../components/CatalogField';
 import { LoginDialog } from '../components/LoginDialog';
 import { MenuIcon } from '../components/MenuIcon';
 import { ConnectivityPanel } from './Connectivity';
-import type { EngineDefinition, EngineRef, EngineRefsResponse } from '../types/game';
+import type { EngineDefinition, EngineFailure, EngineRef, EngineRefsResponse } from '../types/game';
 import type { MenuCatalog, MenuOption } from '../types/menuCatalog';
 import { fieldById } from '../types/menuCatalog';
 import { apiFetch, buildApiUrl, getStoredCredentials, encodeBasicAuth, storeCredentials, isCrossOriginApi } from '../utils/api';
@@ -1551,6 +1551,22 @@ export function Settings() {
     }
   }, [t]);
 
+  // Acknowledge an engine's failure notice. The server owns the dismissed flag,
+  // so this refreshes rather than hiding locally: a local-only hide would come
+  // back on the next poll and make the button look broken. A failed dismiss is
+  // logged and left alone -- the notice simply stays, which is the safe outcome
+  // for a message about something being wrong.
+  const dismissEngineFailure = useCallback(async (engineName: string) => {
+    try {
+      await apiFetch(`/api/engines/${encodeURIComponent(engineName)}/failure/dismiss`, {
+        method: 'POST',
+      });
+      await refreshEngines();
+    } catch (e) {
+      console.error('Failed to dismiss engine failure:', e);
+    }
+  }, [refreshEngines]);
+
   // Upload a custom engine binary or .tar.gz. The endpoint is @requires_auth and
   // completes in-request (no install thread), so on success the engine list is
   // refreshed immediately. On 401 the action is re-queued and re-run after login,
@@ -2292,6 +2308,7 @@ export function Settings() {
                   onCancel={cancelInstall}
                   onConfigureProfiles={setProfileEngine}
                   onResetProfiles={resetEngineProfiles}
+                  onDismissFailure={dismissEngineFailure}
                 />
 
                 <CustomEnginesPanel
@@ -2540,6 +2557,7 @@ function EnginesList({
   onCancel,
   onConfigureProfiles,
   onResetProfiles,
+  onDismissFailure,
 }: {
   engines: EngineDefinition[];
   installingEngine: string | null;
@@ -2551,6 +2569,7 @@ function EnginesList({
   onCancel: () => void;
   onConfigureProfiles: (engine: EngineDefinition) => void;
   onResetProfiles: (engineName: string, displayName: string) => void;
+  onDismissFailure: (engineName: string) => void;
 }) {
   const { t } = useTranslation();
   // Group engines by tier
@@ -2597,12 +2616,99 @@ function EnginesList({
                   onCancel={onCancel}
                   onConfigureProfiles={onConfigureProfiles}
                   onResetProfiles={onResetProfiles}
+                  onDismissFailure={onDismissFailure}
                 />
               ))}
             </div>
           </Card>
         );
       })}
+    </div>
+  );
+}
+
+// Localized explanation per failure reason. Each sentence names the repair, so
+// the notice is actionable rather than merely alarming. An unrecognised token
+// (a backend newer than this build) falls back to the generic launch failure
+// rather than rendering a raw key.
+const FAILURE_REASON_KEYS: Record<string, string> = {
+  binary_missing: 'settingsPage.enginesUi.reasonBinaryMissing',
+  not_executable: 'settingsPage.enginesUi.reasonNotExecutable',
+  incompatible_binary: 'settingsPage.enginesUi.reasonIncompatibleBinary',
+  crashed_at_startup: 'settingsPage.enginesUi.reasonCrashedAtStartup',
+  handshake_timeout: 'settingsPage.enginesUi.reasonHandshakeTimeout',
+  launch_failed: 'settingsPage.enginesUi.reasonLaunchFailed',
+  build_failed: 'settingsPage.enginesUi.reasonBuildFailed',
+};
+
+/**
+ * The dismissible "last error" notice under an engine's description.
+ *
+ * Sits on the card rather than only in the log because the failure it reports
+ * is most often discovered by someone who cannot read the board's journal. The
+ * summary stays one sentence; the exact tokens a maintainer needs are one click
+ * away and screenshottable. Dismissal acknowledges this occurrence only -- the
+ * engine's usability is reported separately by the badge, and every occurrence
+ * remains in the system event log.
+ */
+function EngineFailureNotice({
+  engine,
+  failure,
+  onDismiss,
+}: {
+  engine: EngineDefinition;
+  failure: EngineFailure;
+  onDismiss: (engineName: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+
+  const title = failure.phase === 'install'
+    ? t('settingsPage.enginesUi.failureInstallTitle', { name: engine.display_name })
+    : t('settingsPage.enginesUi.failureInitializeTitle', { name: engine.display_name });
+  const reasonKey = FAILURE_REASON_KEYS[failure.reason_code]
+    ?? 'settingsPage.enginesUi.reasonLaunchFailed';
+
+  return (
+    <div className="engine-failure-notice" role="alert">
+      <div className="engine-failure-notice-summary">
+        <span className="engine-failure-notice-text">
+          <strong>{title}</strong> {t(reasonKey)}
+        </span>
+        <span className="engine-failure-notice-actions">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setExpanded((prev) => !prev)}
+            aria-expanded={expanded}
+          >
+            {t(expanded ? 'settingsPage.hideDetails' : 'settingsPage.showDetails')}
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => onDismiss(engine.name)}>
+            {t('settingsPage.enginesUi.dismiss')}
+          </Button>
+        </span>
+      </div>
+      {expanded && (
+        <dl className="engine-failure-details">
+          <dt>{t('settingsPage.enginesUi.failureEngine')}</dt>
+          <dd>{engine.name}</dd>
+          <dt>{t('settingsPage.enginesUi.failureReasonCode')}</dt>
+          <dd>{failure.reason_code}</dd>
+          {failure.detail && (
+            <>
+              <dt>{t('settingsPage.enginesUi.failureTechnicalDetail')}</dt>
+              <dd>{failure.detail}</dd>
+            </>
+          )}
+          {failure.failed_at !== null && (
+            <>
+              <dt>{t('settingsPage.enginesUi.failureRecordedAt')}</dt>
+              <dd>{formatDateTime(new Date(failure.failed_at * 1000).toISOString())}</dd>
+            </>
+          )}
+        </dl>
+      )}
     </div>
   );
 }
@@ -2619,6 +2725,7 @@ function EngineCard({
   onCancel,
   onConfigureProfiles,
   onResetProfiles,
+  onDismissFailure,
 }: {
   engine: EngineDefinition;
   isInstalling: boolean;
@@ -2638,11 +2745,26 @@ function EngineCard({
   onCancel: () => void;
   onConfigureProfiles: (engine: EngineDefinition) => void;
   onResetProfiles: (engineName: string, displayName: string) => void;
+  onDismissFailure: (engineName: string) => void;
 }) {
   const { t } = useTranslation();
   const isSystem = engine.name === 'stockfish'; // Stockfish is a system package
   const isActiveInstall = status?.active === true;
   const isInterrupted = status?.interrupted === true;
+
+  // An unacknowledged failure to bring the engine up after a successful install.
+  // Withholds the profile editor, which cannot load for such an engine -- the
+  // reported symptom was a user repeatedly opening it and being told the engine
+  // was not installed while its card said it was. "Reset profiles" stays: it is
+  // the documented repair for a stuck config and now answers with the real
+  // reason when it cannot help.
+  const unresolvedInitFailure =
+    engine.last_failure && engine.last_failure.phase === 'initialize'
+      ? engine.last_failure
+      : null;
+  const notice = engine.last_failure && !engine.last_failure.dismissed
+    ? engine.last_failure
+    : null;
 
   // Release (git ref) picker state. Only source-built engines expose it. Tags are
   // fetched lazily -- on first interaction with the select -- so the engine list
@@ -2712,6 +2834,13 @@ function EngineCard({
             // is present but it cannot play until repaired, so it is neither a
             // plain "Installed" nor "Not Installed" state.
             <Badge variant="warning">{t('settingsPage.enginesUi.badgeNeedsRepair')}</Badge>
+          ) : engine.installed && !engine.profiles_ready ? (
+            // The binary exists but produced no strength ladder, so nothing
+            // behind the badge works: no Elo rungs, no profile editor, no game.
+            // Ordered before `installed` because `installed` is true here and
+            // would otherwise claim the engine is healthy -- the contradiction
+            // this state exists to remove.
+            <Badge variant="warning">{t('settingsPage.enginesUi.badgeProfilesUnavailable')}</Badge>
           ) : engine.installed ? (
             <Badge variant="success">{t('settingsPage.enginesUi.badgeInstalled')}</Badge>
           ) : !engine.supported ? (
@@ -2725,6 +2854,9 @@ function EngineCard({
       </div>
       <p className="engine-summary">{engine.summary}</p>
       <p className="engine-description">{engine.description}</p>
+      {notice && (
+        <EngineFailureNotice engine={engine} failure={notice} onDismiss={onDismissFailure} />
+      )}
       {!isSystem && !engine.installed && engine.install_time && (
         <p className="engine-install-time">
           {t('settingsPage.enginesUi.estimatedInstall', { time: engine.install_time })}
@@ -2819,14 +2951,16 @@ function EngineCard({
               package. The backend marks such engines has_profiles=true. */}
           {engine.has_profiles && engine.installed && !isInterrupted && (
             <>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={installInProgress}
-                onClick={() => onConfigureProfiles(engine)}
-              >
-                {t('settingsPage.enginesUi.configureProfiles')}
-              </Button>
+              {!unresolvedInitFailure && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={installInProgress}
+                  onClick={() => onConfigureProfiles(engine)}
+                >
+                  {t('settingsPage.enginesUi.configureProfiles')}
+                </Button>
+              )}
               <Button
                 variant="secondary"
                 size="sm"
@@ -3465,6 +3599,7 @@ interface EventLogEntry {
 // listed here.
 const EVENT_CATEGORY_LABEL_KEYS: Record<string, string> = {
   engine_install: 'settingsPage.eventLog.categoryEngineInstall',
+  engine_init: 'settingsPage.eventLog.categoryEngineInit',
   engine_uninstall: 'settingsPage.eventLog.categoryEngineUninstall',
   bluez_selfheal: 'settingsPage.eventLog.categoryBluetooth',
   update: 'settingsPage.eventLog.categoryUpdate',

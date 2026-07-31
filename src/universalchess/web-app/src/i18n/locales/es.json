@@ -313,7 +313,7 @@
   "settingsPage": {
     "title": "Ajustes",
     "loading": "Cargando ajustes...",
-    "connectError": "No se pudo conectar con el backend de Universal Chess. Asegúrate de que el tablero esté encendido y accesible.",
+    "connectError": "No se pudo conectar con el backend de Universal Chess. Asegúrate de que el tablero esté en marcha y accesible.",
     "saving": "Guardando…",
     "saved": "Guardado",
     "saveError": "No se pudo guardar. Revisa tu conexión e inténtalo de nuevo.",
@@ -370,7 +370,6 @@
       "reverseHand": "El motor encuentra la mejor jugada con esa pieza, indicada por los LED.",
       "reverseNote": "Ideal para practicar la coordinación de piezas mientras el motor se encarga de la táctica."
     },
-    "connectError": "No se pudo conectar con el backend de Universal Chess. Asegúrate de que el tablero esté en marcha y accesible.",
     "developingLocally": "Si estás desarrollando en local, configura la URL de la API en los ajustes de proxy de <0>vite.config.ts</0> o ejecuta el script <1>run-react</1> con la opción <2>--api</2>.",
     "agentsUi": {
       "none": "No hay agentes disponibles.",
@@ -454,7 +453,22 @@
       "failRepair": "No se pudo reparar {{name}}.",
       "failRepairRetry": "No se pudo reparar {{name}}. Revisa la conexión e inténtalo de nuevo.",
       "statusStarting": "Iniciando...",
-      "statusResuming": "Reanudando la instalación..."
+      "statusResuming": "Reanudando la instalación...",
+      "badgeProfilesUnavailable": "Perfiles no disponibles",
+      "dismiss": "Descartar",
+      "failureInitializeTitle": "{{name}} está instalado pero no se inició.",
+      "failureInstallTitle": "No se pudo instalar {{name}}.",
+      "failureEngine": "Motor",
+      "failureReasonCode": "Código del motivo",
+      "failureTechnicalDetail": "Detalles",
+      "failureRecordedAt": "Registrado",
+      "reasonBinaryMissing": "Falta su archivo de programa. Vuelve a instalarlo.",
+      "reasonNotExecutable": "Su archivo de programa no se puede ejecutar en este dispositivo. Vuelve a instalarlo.",
+      "reasonIncompatibleBinary": "Su archivo de programa se compiló para otra arquitectura de CPU, así que este dispositivo no puede ejecutarlo. Al instalarlo de nuevo se recompila para este dispositivo.",
+      "reasonCrashedAtStartup": "Se detuvo nada más iniciarse, lo que suele indicar una compilación dañada. Vuelve a instalarlo.",
+      "reasonHandshakeTimeout": "Se inició pero nunca respondió, así que no se pudo configurar. Vuelve a instalarlo.",
+      "reasonLaunchFailed": "No se pudo iniciar. Vuelve a instalarlo y consulta el Registro de eventos en Sistema para más información.",
+      "reasonBuildFailed": "La compilación no se completó. Consulta el Registro de eventos en Sistema para ver qué falló."
     },
     "customEngines": {
       "title": "Motores personalizados",
@@ -557,7 +571,8 @@
       "categoryEngineUninstall": "Motor",
       "categoryBluetooth": "Bluetooth",
       "categoryUpdate": "Actualización",
-      "categorySystem": "Sistema"
+      "categorySystem": "Sistema",
+      "categoryEngineInit": "Inicio del motor"
     },
     "debug": {
       "title": "Depuración",
@@ -768,7 +783,8 @@
     "caseCollisionFailed": "No se pudieron resolver los duplicados: {{error}}",
     "caseCollisionDone": "Se conservó «{{name}}»; se eliminaron {{removed}}.",
     "ambiguousCaseName": "Varios perfiles coinciden con «{{name}}» con distinta capitalización. Resuelve los duplicados abajo primero.",
-    "confirmEloRename": "El Elo ya no coincide con el nombre del perfil. ¿Renombrar «{{from}}» a «{{to}}»?"
+    "confirmEloRename": "El Elo ya no coincide con el nombre del perfil. ¿Renombrar «{{from}}» a «{{to}}»?",
+    "startFailed": "Este motor está instalado pero no se inició, así que no se pudieron leer sus opciones. Vuelve a instalarlo desde la pestaña Motores; el Registro de eventos en Sistema tiene los detalles."
   },
   "connectivity": {
     "title": "Conectividad",

@@ -519,6 +519,223 @@ def test_get_schema_raises_when_binary_missing(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# probe_options: the registry boundary
+#
+# Why this section exists
+# -----------------------
+# probe_options is the only place the schema service touches a real process.
+# Releasing a *shared* handle deliberately does not quit it -- reaping is
+# deferred to evict_unused() at a game-teardown boundary. The web process has no
+# such boundary and never calls evict_unused(), so before this the probe left one
+# idle engine process resident per distinct engine it had ever probed, for the
+# lifetime of the service. The probe must therefore reap by name itself.
+# ---------------------------------------------------------------------------
+
+
+class FakeHandle:
+    """Stand-in for EngineHandle exposing just the options dict the probe reads."""
+
+    def __init__(self, path, options):
+        self.path = path
+        self.engine = type("FakeEngine", (), {"options": options})()
+
+
+class RecordingRegistry:
+    """Registry double recording the acquire/release/evict calls the probe makes.
+
+    Raises ``load_error`` from ``acquire_or_raise`` when one is supplied, so the
+    failure path can be exercised without a real binary.
+    """
+
+    def __init__(self, options=None, load_error=None):
+        self._options = {} if options is None else options
+        self._load_error = load_error
+        self.calls = []
+
+    def acquire_or_raise(self, engine_path):
+        self.calls.append(("acquire", engine_path))
+        if self._load_error is not None:
+            raise self._load_error
+        return FakeHandle(engine_path, self._options)
+
+    def release(self, handle):
+        self.calls.append(("release", handle.path))
+
+    def evict_if_unused(self, engine_path):
+        self.calls.append(("evict", engine_path))
+        return True
+
+
+def test_probe_options_releases_and_reaps_the_engine_it_used(monkeypatch):
+    """A successful probe leaves no engine process behind.
+
+    Why this test exists: the web process never calls evict_unused(), so any
+    engine the probe pools stays resident until the service restarts. Opening the
+    profile editor for four engines left four idle engine processes in
+    universal-chess-web. The probe must release and then reap by name.
+
+    How the regression manifests: dropping the evict call leaves the call log
+    without an ("evict", ...) entry -- on a board that is one leaked process per
+    engine probed, invisible until memory runs out.
+    """
+    registry = RecordingRegistry(options={"UCI_Elo": FakeOption("UCI_Elo", "spin", 1500)})
+    monkeypatch.setattr(us, "get_engine_registry", lambda: registry)
+
+    options = us.probe_options("/fake/bin/ct800")
+
+    assert [o.name for o in options] == ["UCI_Elo"]
+    assert registry.calls == [
+        ("acquire", "/fake/bin/ct800"),
+        ("release", "/fake/bin/ct800"),
+        ("evict", "/fake/bin/ct800"),
+    ], "the probe must release before reaping, and must reap by name"
+
+
+def test_probe_options_reaps_when_the_launch_fails(monkeypatch):
+    """A failed probe reaps too, and never releases a handle it does not hold.
+
+    Why this test exists: the failure path is the one that repeats -- a user
+    retrying a broken engine probes it over and over. Cleanup lives in a finally
+    block, so it must tolerate there being no handle at all.
+
+    How the regression manifests: calling release(None) raises AttributeError
+    from the finally block, replacing the informative EngineProbeError with a
+    500; skipping the evict re-introduces the leak on exactly the hot path.
+    """
+    from universalchess.services.engine_registry import EngineLoadError
+
+    registry = RecordingRegistry(
+        load_error=EngineLoadError("could not launch", reason_code="incompatible_binary")
+    )
+    monkeypatch.setattr(us, "get_engine_registry", lambda: registry)
+
+    with pytest.raises(us.EngineProbeError):
+        us.probe_options("/fake/bin/ct800")
+
+    assert registry.calls == [
+        ("acquire", "/fake/bin/ct800"),
+        ("evict", "/fake/bin/ct800"),
+    ], "no release without a handle; still reap"
+
+
+def test_probe_options_propagates_the_reason_code(monkeypatch):
+    """EngineProbeError carries the classified reason from the registry.
+
+    Why this test exists: this code is the whole reason the failure becomes
+    visible in the UI instead of only in the journal. If probe_options discarded
+    it, every endpoint above would be back to reporting a bare "not installed".
+
+    How the regression manifests: reason_code is None (or the attribute is
+    missing) and the API falls back to its generic message.
+    """
+    from universalchess.services.engine_registry import EngineLoadError
+
+    registry = RecordingRegistry(
+        load_error=EngineLoadError("could not launch", reason_code="crashed_at_startup")
+    )
+    monkeypatch.setattr(us, "get_engine_registry", lambda: registry)
+
+    with pytest.raises(us.EngineProbeError) as excinfo:
+        us.probe_options("/fake/bin/ct800")
+
+    assert excinfo.value.reason_code == "crashed_at_startup"
+
+
+def test_probe_error_for_a_missing_binary_reports_binary_missing(monkeypatch):
+    """get_schema distinguishes "no binary" from "binary will not start".
+
+    Why this test exists: these two produce identical user-facing text today,
+    which is what makes the card ("Installed") and the editor ("not installed")
+    contradict each other. The reason code is what lets the endpoint tell them
+    apart without probing anything extra.
+
+    How the regression manifests: reason_code is None for the missing-binary
+    case, so the endpoint cannot pick the truthful message.
+    """
+    monkeypatch.setattr(us, "get_engine_path", lambda name: None)
+
+    with pytest.raises(us.EngineProbeError) as excinfo:
+        us.get_schema("eng")
+
+    assert excinfo.value.reason_code == "binary_missing"
+
+
+# ---------------------------------------------------------------------------
+# has_seeded_profiles: readiness from disk, without launching anything
+#
+# The engines list renders every catalog engine at once, so it cannot probe --
+# that would be one process per card. The seeded .uci already on disk is proof a
+# probe once succeeded, and a stat plus a small ini parse costs nothing.
+# ---------------------------------------------------------------------------
+
+
+def test_has_seeded_profiles_false_when_config_absent(tmp_path):
+    """No .uci means the post-install probe never produced one.
+
+    Why this test exists: this is the CT800 case -- binary installed, probe
+    failed, no config written, so the board's Elo menu falls back to a lone
+    "Default". The card must be able to see that without launching the engine.
+
+    How the regression manifests: returning True for a missing file makes the
+    card claim profiles are ready and hides the failure again.
+    """
+    assert us.has_seeded_profiles("eng", config_path=str(tmp_path / "eng.uci")) is False
+
+
+def test_has_seeded_profiles_false_for_default_only_config(tmp_path):
+    """A config carrying only [DEFAULT] is not a usable strength ladder.
+
+    Why this test exists: seed_config always writes [DEFAULT] with Threads, so
+    file existence alone is not proof of a successful derivation -- a
+    Default-only file is the known stuck state that "Reset profiles" exists to
+    heal. Treating it as ready would leave the user with no rungs and no warning.
+
+    How the regression manifests: an existence-only check returns True here, and
+    the engine card looks healthy while the Elo picker is empty.
+    """
+    config = tmp_path / "eng.uci"
+    config.write_text("[DEFAULT]\nThreads = 1\n\n")
+
+    assert us.has_seeded_profiles("eng", config_path=str(config)) is False
+
+
+def test_has_seeded_profiles_true_when_ladder_present(tmp_path):
+    """A config with derived sections reports ready.
+
+    Why this test exists: the positive case must not be starved by an
+    over-strict check, or every healthy engine gets a warning badge.
+
+    How the regression manifests: returning False here flags every working
+    engine as broken -- far more visible than the bug being fixed, and the
+    reason this assertion is paired with the two negatives above.
+    """
+    config = tmp_path / "eng.uci"
+    config.write_text(
+        "[DEFAULT]\nThreads = 1\n\n"
+        "[Default]\nUCI_LimitStrength = false\n\n"
+        "[1600 ELO]\nUCI_LimitStrength = true\nUCI_Elo = 1600\n\n"
+    )
+
+    assert us.has_seeded_profiles("eng", config_path=str(config)) is True
+
+
+def test_has_seeded_profiles_false_for_an_unreadable_config(tmp_path):
+    """A corrupt .uci reports not-ready instead of raising.
+
+    Why this test exists: this runs once per card on every load of the engines
+    list. A parse error there would take down the whole page rather than flagging
+    one engine, and a corrupt file genuinely is not a usable ladder.
+
+    How the regression manifests: configparser.MissingSectionHeaderError escapes
+    and GET /api/engines/all returns 500, so no engine renders at all.
+    """
+    config = tmp_path / "eng.uci"
+    config.write_text("this is not an ini file\n")
+
+    assert us.has_seeded_profiles("eng", config_path=str(config)) is False
+
+
+# ---------------------------------------------------------------------------
 # seed_config: lazy, atomic, idempotent
 # ---------------------------------------------------------------------------
 

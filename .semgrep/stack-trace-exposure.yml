@@ -31,6 +31,16 @@ rules:
       # not the exception text. Project value-based validation helpers return
       # fixed strings, so a literal in the response is never tainted by $E.
       - pattern: "\"...\""
+      # Engine load-failure allowlists. These are sanitizers in the strict sense
+      # rather than an exemption: sanitize_reason_code returns its argument only
+      # when it is one of the six LOAD_FAILURE_* constants and otherwise returns
+      # a fixed token, and sanitize_detail returns its argument only when it
+      # matches a token shape that excludes '/', '.', ':' and quotes -- so no
+      # path, URL or exception message can pass through either. Their tests
+      # (TestSanitizeReasonCode, TestSanitizeDetail) assert exactly that, so
+      # weakening a helper fails the suite rather than silently widening this.
+      - pattern: sanitize_reason_code(...)
+      - pattern: sanitize_detail(...)
     pattern-sinks:
       # Flask response builders that serialise their argument into the body.
       - patterns:
@@ -102,6 +112,10 @@ rules:
       - pattern: "\"...\""
       # The project's exception sink: logs server-side, returns a generic body.
       - pattern: _internal_error(...)
+      # Engine load-failure allowlists; see the rule above for why these are
+      # true sanitizers and not an exemption.
+      - pattern: sanitize_reason_code(...)
+      - pattern: sanitize_detail(...)
     pattern-sinks:
       - patterns:
           - pattern: return $RET

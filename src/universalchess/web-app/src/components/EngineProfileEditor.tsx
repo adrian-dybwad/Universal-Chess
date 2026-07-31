@@ -52,6 +52,10 @@ export function EngineProfileEditor({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editable, setEditable] = useState(true);
+  // Why the editor is unavailable, when it is. Distinguishes an engine that is
+  // not installed from one that is installed and will not start; both used to
+  // render "not installed", which contradicted the engine card's badge.
+  const [unavailableReason, setUnavailableReason] = useState<string | null>(null);
   const [schema, setSchema] = useState<SchemaGroup[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
 
@@ -99,6 +103,7 @@ export function EngineProfileEditor({
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data: SchemaResponse = await resp.json();
         setEditable(Boolean(data.editable));
+        setUnavailableReason(data.unavailable_reason ?? null);
         const ordered = orderSchemaGroups(data.schema ?? []);
         setSchema(ordered);
         setProfiles(data.profiles);
@@ -283,6 +288,7 @@ export function EngineProfileEditor({
         return;
       }
       setEditable(Boolean(data.editable));
+      setUnavailableReason(data.unavailable_reason ?? null);
       const ordered = orderSchemaGroups(data.schema ?? []);
       setSchema(ordered);
       setProfiles(data.profiles ?? []);
@@ -383,7 +389,9 @@ export function EngineProfileEditor({
       ) : !editable ? (
         <Card>
           <p className="text-muted">
-            {t('engineProfile.notInstalled')}
+            {unavailableReason && unavailableReason !== 'binary_missing'
+              ? t('engineProfile.startFailed')
+              : t('engineProfile.notInstalled')}
           </p>
         </Card>
       ) : (

@@ -64,6 +64,8 @@ function engine(overrides: Partial<EngineDefinition>): EngineDefinition {
     has_prebuilt: false,
     install_time: null,
     has_profiles: true,
+    profiles_ready: true,
+    last_failure: null,
     needs_repair: false,
     can_repair: false,
     missing_net_count: 0,

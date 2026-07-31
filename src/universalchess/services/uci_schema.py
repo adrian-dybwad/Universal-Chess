@@ -36,13 +36,19 @@ from typing import Callable, Dict, List, Optional, Tuple
 from universalchess.board.logging import log
 from universalchess.paths import CONFIG_DIR, ENGINES_DIR, get_engine_path
 from universalchess.services.engine_profiles import ProfileField, ProfileGroup
-from universalchess.services.engine_registry import get_engine_registry
+from universalchess.services.engine_registry import (
+    LOAD_FAILURE_BINARY_MISSING,
+    LOAD_FAILURE_UNKNOWN,
+    EngineLoadError,
+    get_engine_registry,
+)
 from universalchess.utils.safe_path import safe_under_base
 
 __all__ = [
     "EngineProbeError",
     "build_groups",
     "get_schema",
+    "has_seeded_profiles",
     "seed_config",
     "reset_config",
     "reconcile_config",
@@ -163,7 +169,26 @@ FileChoices = Callable[[object], Optional[List[str]]]
 
 
 class EngineProbeError(RuntimeError):
-    """Raised when an engine cannot be launched/probed for its UCI options."""
+    """Raised when an engine cannot be launched/probed for its UCI options.
+
+    Carries the classified ``reason_code`` (see
+    :mod:`universalchess.services.engine_registry`) and a short, path-free
+    ``detail`` token. Both exist so callers can tell a missing binary apart from
+    one that is present but will not start: those look identical to a user
+    otherwise, which is how an engine came to show an "Installed" badge and a
+    "not installed" editor message on the same page.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: str = LOAD_FAILURE_UNKNOWN,
+        detail: Optional[str] = None,
+    ):
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.detail = detail
 
 
 def _file_suffix(path: str) -> str:
@@ -327,16 +352,36 @@ def probe_options(engine_path: str) -> List[object]:
     """Launch the engine and return its advertised UCI options.
 
     Uses the shared registry so the probe reuses an already-loaded instance when
-    possible and never leaves a duplicate process behind.
+    possible and never leaves a duplicate process behind. Reading ``options``
+    sends nothing to the engine -- the dict is filled during the initial
+    handshake -- so probing an engine a game is playing with is safe.
+
+    Reaps the engine afterwards via ``evict_if_unused``. Releasing a shared
+    handle deliberately does not quit it (reaping is deferred to a game-teardown
+    boundary), but the web process has no such boundary and never calls
+    ``evict_unused``, so without this every engine the profile editor opened
+    stayed resident until the service restarted.
+
+    Raises:
+        EngineProbeError: The engine could not be launched, carrying the
+            classified reason and a path-free detail token.
     """
     registry = get_engine_registry()
-    handle = registry.acquire(engine_path)
-    if handle is None:
-        raise EngineProbeError(f"could not launch engine at {engine_path}")
+    handle = None
     try:
+        try:
+            handle = registry.acquire_or_raise(engine_path)
+        except EngineLoadError as load_error:
+            raise EngineProbeError(
+                str(load_error),
+                reason_code=load_error.reason_code,
+                detail=load_error.detail,
+            ) from load_error
         return list(handle.engine.options.values())
     finally:
-        registry.release(handle)
+        if handle is not None:
+            registry.release(handle)
+        registry.evict_if_unused(engine_path)
 
 
 def get_schema(
@@ -351,7 +396,10 @@ def get_schema(
     """
     path = engine_path or get_engine_path(engine_name)
     if not path:
-        raise EngineProbeError(f"engine binary not found: {engine_name}")
+        raise EngineProbeError(
+            f"engine binary not found: {engine_name}",
+            reason_code=LOAD_FAILURE_BINARY_MISSING,
+        )
     options = probe_options(path)
     return build_groups(options, engine_name=engine_name, engines_dir=engines_dir)
 
@@ -461,6 +509,38 @@ def config_path_for(engine_name: str) -> Optional[str]:
     return safe_under_base(os.path.join(CONFIG_DIR, "engines"), f"{engine_name}.uci")
 
 
+def has_seeded_profiles(
+    engine_name: str,
+    *,
+    config_path: Optional[str] = None,
+) -> bool:
+    """Report whether a usable profile ladder exists on disk, without probing.
+
+    The engines list renders every catalog engine at once, so it cannot answer
+    "is this engine actually usable?" by launching them -- that would be one
+    process per card. The seeded ``.uci`` is standing proof that a probe once
+    succeeded, and a stat plus a small ini parse costs nothing.
+
+    A file carrying only ``[DEFAULT]`` does not count: ``seed_config`` always
+    writes that section, so its presence proves nothing about the probe, and a
+    Default-only file is the known stuck state that "Reset profiles" exists to
+    heal. An unreadable file does not count either and does not raise -- this is
+    called once per card while rendering the list, where a parse error would
+    cost the whole page instead of flagging one engine.
+    """
+    path = config_path or config_path_for(engine_name)
+    if not path or not os.path.exists(path):
+        return False
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.optionxform = str
+    try:
+        parser.read(path, encoding="utf-8")
+    except (configparser.Error, OSError, UnicodeDecodeError):
+        log.warning("[uci_schema] Unreadable config for %s at %s", engine_name, path)
+        return False
+    return bool(parser.sections())
+
+
 def seed_config(
     engine_name: str,
     *,
@@ -487,7 +567,10 @@ def seed_config(
 
     binary = engine_path or get_engine_path(engine_name)
     if not binary:
-        raise EngineProbeError(f"engine binary not found: {engine_name}")
+        raise EngineProbeError(
+            f"engine binary not found: {engine_name}",
+            reason_code=LOAD_FAILURE_BINARY_MISSING,
+        )
 
     options = probe_options(binary)
     sections = derive_sections(options, engine_name=engine_name, engines_dir=engines_dir)
@@ -588,7 +671,10 @@ def reconcile_config(
 
     binary = engine_path or get_engine_path(engine_name)
     if not binary:
-        raise EngineProbeError(f"engine binary not found: {engine_name}")
+        raise EngineProbeError(
+            f"engine binary not found: {engine_name}",
+            reason_code=LOAD_FAILURE_BINARY_MISSING,
+        )
 
     options = probe_options(binary)
     desired = derive_sections(options, engine_name=engine_name, engines_dir=engines_dir)

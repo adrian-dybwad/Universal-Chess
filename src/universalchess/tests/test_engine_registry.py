@@ -9,6 +9,7 @@
 # Licensed under the GNU General Public License v3.0 or later.
 # See LICENSE.md for details.
 
+import errno
 import os
 import threading
 import time
@@ -708,6 +709,112 @@ class TestEngineRegistry:
         assert evicted == 0
         mock_engine.quit.assert_not_called()
 
+    @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
+    def test_evict_if_unused_reaps_only_the_named_ref_zero_engine(self, mock_popen):
+        """evict_if_unused() quits one named pooled engine, leaving others pooled.
+
+        Why this test exists: a UCI option probe in the web process spawns an
+        engine that nothing else wants afterwards, and the web process has no
+        game-teardown boundary that calls evict_unused(). The probe therefore
+        reaps its own engine by name. It must not sweep the whole pool the way
+        evict_unused() does, or a probe of one engine would unload an idle
+        engine another consumer intends to reuse.
+
+        How the regression manifests: if the method fell back to a full sweep,
+        the arasan assertion below fails because arasan was quit too; if it
+        reaped nothing, ct800's process lingers and the web process leaks one
+        engine per distinct engine ever probed.
+        """
+        from universalchess.services.engine_registry import get_engine_registry
+
+        e_ct800 = MagicMock(); e_ct800._shutdown = False
+        e_arasan = MagicMock(); e_arasan._shutdown = False
+        mock_popen.side_effect = [e_ct800, e_arasan]
+
+        registry = get_engine_registry()
+        h_ct800 = registry.acquire("/opt/universalchess/engines/ct800")
+        h_arasan = registry.acquire("/opt/universalchess/engines/arasan")
+        registry.release(h_ct800)
+        registry.release(h_arasan)  # both pooled at ref 0
+
+        reaped = registry.evict_if_unused("/opt/universalchess/engines/ct800")
+
+        assert reaped is True
+        e_ct800.quit.assert_called_once()
+        e_arasan.quit.assert_not_called()
+        loaded = registry.get_loaded_engines()
+        assert not any("ct800" in path for path in loaded), "probed engine must be dropped"
+        assert any("arasan" in path for path in loaded), "unnamed engine must stay pooled"
+
+    @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
+    def test_evict_if_unused_keeps_engine_another_consumer_holds(self, mock_popen):
+        """evict_if_unused() must not quit an engine still referenced.
+
+        Why this test exists: probing reads only the handshake options dict, so a
+        probe can legitimately run against the very engine a game is playing
+        with. Reaping on ref > 0 would kill the engine mid-game -- the probe must
+        clean up only when it is the last consumer.
+
+        How the regression manifests: with a ref check that ignores outstanding
+        references, quit() is called on a live game engine and the pool no longer
+        contains it, so the player's next move request fails.
+        """
+        from universalchess.services.engine_registry import get_engine_registry
+
+        mock_engine = MagicMock(); mock_engine._shutdown = False
+        mock_popen.return_value = mock_engine
+
+        registry = get_engine_registry()
+        registry.acquire("/usr/games/stockfish")            # the game's reference
+        probe_handle = registry.acquire("/usr/games/stockfish")  # the probe's
+        registry.release(probe_handle)                      # back to ref 1
+
+        reaped = registry.evict_if_unused("/usr/games/stockfish")
+
+        assert reaped is False
+        mock_engine.quit.assert_not_called()
+        assert any("stockfish" in path for path in registry.get_loaded_engines())
+
+    def test_evict_if_unused_is_a_noop_for_an_unpooled_path(self):
+        """evict_if_unused() on a path that was never pooled reports False.
+
+        Why this test exists: the probe calls this unconditionally in a finally
+        block, including on the failure path where no engine was ever pooled. It
+        must be a quiet no-op there, not a KeyError that masks the real launch
+        error the caller is about to raise.
+
+        How the regression manifests: an unguarded pool lookup raises KeyError
+        out of the finally block, replacing EngineProbeError with a 500.
+        """
+        from universalchess.services.engine_registry import get_engine_registry
+
+        registry = get_engine_registry()
+
+        assert registry.evict_if_unused("/opt/universalchess/engines/never-loaded") is False
+
+    @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
+    def test_evict_if_unused_ignores_dedicated_engines(self, mock_popen):
+        """evict_if_unused() must not reach a dedicated (ponder) engine.
+
+        Why this test exists: dedicated handles are owned by one consumer and are
+        never pooled by path. A probe of the same binary must not quit the
+        pondering engine that shares that path.
+
+        How the regression manifests: if dedicated handles were matched by path,
+        quit() is called on a live pondering engine and the game loses its
+        opponent mid-search.
+        """
+        from universalchess.services.engine_registry import get_engine_registry
+
+        mock_engine = MagicMock(); mock_engine._shutdown = False
+        mock_popen.return_value = mock_engine
+
+        registry = get_engine_registry()
+        registry.acquire_dedicated("/usr/games/stockfish")
+
+        assert registry.evict_if_unused("/usr/games/stockfish") is False
+        mock_engine.quit.assert_not_called()
+
     def test_configure_forwards_only_engine_advertised_options(self):
         """EngineHandle.configure drops options the engine does not advertise.
 
@@ -929,4 +1036,341 @@ class TestCanonicalizePath:
 
         registry = get_engine_registry()
         assert registry._canonicalize_path(str(missing)) == os.path.realpath(str(missing))
+
+
+# ---------------------------------------------------------------------------
+# Load-failure classification
+#
+# Why this section exists
+# -----------------------
+# When an installed engine will not start, the only person who can see the
+# exception is whoever reads the journal on that board. Remote reports arrive as
+# a screenshot, so the reason must survive into the UI. Raw exception text
+# cannot: it carries filesystem paths and would reintroduce the stack-trace
+# exposure finding. classify_load_failure() reduces the exception to a stable,
+# path-free code the UI can localize, and each code names a genuinely different
+# repair (rebuild for the wrong architecture, chmod for a permission problem,
+# reinstall for a crash at startup).
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyLoadFailure:
+    """Pure mapping from a launch exception to a stable, path-free reason code."""
+
+    @pytest.mark.parametrize("exc,expected", [
+        (FileNotFoundError(errno.ENOENT, "No such file or directory"), "binary_missing"),
+        (PermissionError(errno.EACCES, "Permission denied"), "not_executable"),
+        (OSError(errno.ENOEXEC, "Exec format error"), "incompatible_binary"),
+        (OSError(errno.EIO, "Input/output error"), "launch_failed"),
+        (ValueError("something else entirely"), "launch_failed"),
+    ], ids=["enoent", "eacces", "enoexec", "other-oserror", "non-oserror"])
+    def test_maps_launch_exception_to_reason_code(self, exc, expected):
+        """Each launch failure mode maps to the code describing its repair.
+
+        Why this test exists: ENOEXEC is the signature of a binary built for the
+        wrong architecture -- the single most useful thing to tell a user whose
+        engine installed cleanly but will not run. Collapsing it into a generic
+        code would leave them with no next step.
+
+        How the regression manifests: an over-broad branch (e.g. catching OSError
+        before checking errno) returns "binary_missing" or "launch_failed" for
+        every case, so the enoexec/eacces parameters fail while the generic ones
+        still pass.
+        """
+        from universalchess.services.engine_registry import classify_load_failure
+
+        assert classify_load_failure(exc) == expected
+
+    def test_maps_engine_terminated_to_crashed_at_startup(self):
+        """An engine that dies during the handshake is reported as a crash.
+
+        Why this test exists: python-chess raises EngineTerminatedError when the
+        process exits before answering `uci`. That is distinct from never having
+        started (binary_missing) and points at a broken build rather than a
+        broken install path.
+
+        How the regression manifests: without an explicit branch this falls
+        through to "launch_failed", and the UI tells the user nothing more than
+        that something went wrong.
+        """
+        import chess.engine
+
+        from universalchess.services.engine_registry import classify_load_failure
+
+        assert classify_load_failure(
+            chess.engine.EngineTerminatedError("engine process died")
+        ) == "crashed_at_startup"
+
+    def test_maps_timeout_to_handshake_timeout(self):
+        """A handshake that never completes is distinguished from a crash.
+
+        Why this test exists: a hung engine (started, never answered `uciok`) and
+        a crashed engine need different advice, and both are invisible without
+        separate codes.
+
+        How the regression manifests: a missing branch collapses this into
+        "launch_failed".
+        """
+        from universalchess.services.engine_registry import classify_load_failure
+
+        assert classify_load_failure(TimeoutError()) == "handshake_timeout"
+
+    def test_reason_code_carries_no_filesystem_path(self):
+        """Codes are fixed tokens, never derived from the exception's text.
+
+        Why this test exists: these codes are returned over the API, so anything
+        interpolated from the exception would leak absolute paths to the client
+        -- the stack-trace exposure class of finding this design exists to avoid.
+
+        How the regression manifests: if an implementation appended str(exc) for
+        "extra detail", the path below appears in the returned code.
+        """
+        from universalchess.services.engine_registry import classify_load_failure
+
+        secret_path = "/opt/universalchess/engines/ct800"
+        code = classify_load_failure(OSError(errno.ENOEXEC, "Exec format error", secret_path))
+
+        assert secret_path not in code
+        assert code == "incompatible_binary"
+
+
+class TestDescribeLoadFailure:
+    """The short technical token shown beside the reason in the UI and event log."""
+
+    def test_names_the_exception_and_its_errno(self):
+        """An OSError is described by its class and symbolic errno.
+
+        Why this test exists: the reason code says what to do; this token says
+        what the operating system actually reported, which is what a maintainer
+        needs from a screenshot. "OSError ENOEXEC" identifies an architecture
+        mismatch unambiguously, while the numeric errno alone would not be
+        recognisable and the class alone would not distinguish it from any other
+        OS-level failure.
+
+        How a regression manifests: the token degrades to a bare class name and
+        every OSError looks alike in the report.
+        """
+        from universalchess.services.engine_registry import describe_load_failure
+
+        assert describe_load_failure(
+            OSError(errno.ENOEXEC, "Exec format error")
+        ) == "OSError ENOEXEC"
+
+    def test_names_the_exception_alone_when_there_is_no_errno(self):
+        """A non-OS exception is described by its class name only.
+
+        Why this test exists: python-chess raises EngineTerminatedError with no
+        errno. Appending an empty or None errno would produce a ragged token like
+        "EngineTerminatedError None" in the UI.
+
+        How a regression manifests: the rendered detail carries a trailing None.
+        """
+        import chess.engine
+
+        from universalchess.services.engine_registry import describe_load_failure
+
+        assert describe_load_failure(
+            chess.engine.EngineTerminatedError("engine process died")
+        ) == "EngineTerminatedError"
+
+    def test_omits_the_exception_message_and_any_path(self):
+        """The token is built from types and errno, never from the message.
+
+        Why this test exists: this string is returned by an endpoint that is not
+        auth-gated, and the exception's message is where the absolute engine path
+        lives. The fuller text belongs in the event log, which is auth-gated;
+        this token must stay safe to publish.
+
+        How a regression manifests: the engine path and the OS message text
+        appear in the browser payload.
+        """
+        from universalchess.services.engine_registry import describe_load_failure
+
+        secret_path = "/opt/universalchess/engines/ct800"
+        detail = describe_load_failure(
+            OSError(errno.ENOEXEC, "Exec format error", secret_path)
+        )
+
+        assert secret_path not in detail
+        assert "Exec format error" not in detail
+
+
+class TestSanitizeReasonCode:
+    """The allowlist applied where a reason code is published to a client."""
+
+    @pytest.mark.parametrize("code", [
+        "binary_missing",
+        "not_executable",
+        "incompatible_binary",
+        "crashed_at_startup",
+        "handshake_timeout",
+        "launch_failed",
+    ])
+    def test_passes_through_every_published_reason(self, code):
+        """Each code the UI can localize survives the boundary unchanged.
+
+        Why this test exists: the allowlist is only correct if it admits the
+        whole vocabulary. One omission silently downgrades a specific,
+        actionable reason to the generic one, which reads as a bug in the
+        diagnosis rather than in the filter.
+
+        How the regression manifests: dropping a constant from
+        LOAD_FAILURE_REASONS fails exactly that parameter while the rest pass.
+        """
+        from universalchess.services.engine_registry import sanitize_reason_code
+
+        assert sanitize_reason_code(code) == code
+
+    @pytest.mark.parametrize("code", [
+        None,
+        "",
+        "made_up_code",
+        "/opt/universalchess/engines/ct800: Exec format error",
+    ], ids=["none", "empty", "unknown-token", "exception-text"])
+    def test_replaces_anything_outside_the_vocabulary(self, code):
+        """Unrecognized values are reported as the generic reason, not echoed.
+
+        Why this test exists: the reason reaches an endpoint that is not
+        auth-gated, having passed through an exception attribute and a file on
+        disk. If a future caller assigns str(exc) to reason_code, echoing it
+        publishes the engine's absolute path. The filter is what makes that
+        impossible rather than merely unlikely.
+
+        How the regression manifests: returning the input unchanged leaks the
+        path in the exception-text parameter; the others then also fail because
+        the UI has no sentence for them.
+        """
+        from universalchess.services.engine_registry import sanitize_reason_code
+
+        assert sanitize_reason_code(code) == "launch_failed"
+
+
+class TestSanitizeDetail:
+    """The character allowlist for the free-form half of a failure record."""
+
+    @pytest.mark.parametrize("detail", [
+        "OSError ENOEXEC",
+        "EngineTerminatedError",
+        "TimeoutError",
+    ])
+    def test_passes_through_tokens_describe_load_failure_produces(self, detail):
+        """Everything the producer emits is publishable.
+
+        Why this test exists: the filter and the producer must agree. A filter
+        stricter than describe_load_failure silently deletes the detail from
+        every report, removing the one line a maintainer reads off a screenshot.
+
+        How the regression manifests: a pattern that forbids the space (or
+        anchors wrongly) drops "OSError ENOEXEC" to None.
+        """
+        from universalchess.services.engine_registry import sanitize_detail
+
+        assert sanitize_detail(detail) == detail
+
+    @pytest.mark.parametrize("detail", [
+        "/opt/universalchess/engines/ct800",
+        "failed to open '/opt/universalchess/engines/ct800'",
+        "https://example.test/engines.tar.gz",
+        "OSError: Exec format error",
+        "a" * 64 + "b",
+        "",
+        None,
+    ], ids=["path", "message-with-path", "url", "message", "over-length", "empty", "none"])
+    def test_drops_anything_that_could_carry_a_path_or_message(self, detail):
+        """Values outside the token shape are dropped rather than truncated.
+
+        Why this test exists: this is the half of the record that is not drawn
+        from a fixed vocabulary, so it is the half that can leak. Truncating
+        instead of dropping would still publish the leading characters of an
+        absolute path, and the separators excluded here ('/', '.', ':', quotes)
+        are exactly what a path, URL or exception message needs.
+
+        How the regression manifests: a permissive pattern returns the input, so
+        the path and url parameters fail; an unbounded one fails over-length.
+        """
+        from universalchess.services.engine_registry import sanitize_detail
+
+        assert sanitize_detail(detail) is None
+
+
+class TestAcquireOrRaise:
+    """acquire_or_raise() surfaces the launch failure that acquire() swallows."""
+
+    @pytest.fixture(autouse=True)
+    def reset_registry(self):
+        from universalchess.services.engine_registry import EngineRegistry
+        EngineRegistry._instance = None
+        yield
+        if EngineRegistry._instance is not None:
+            EngineRegistry._instance._engines.clear()
+            EngineRegistry._instance = None
+
+    @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
+    def test_raises_typed_error_carrying_the_reason_code(self, mock_popen):
+        """A failed load raises EngineLoadError with the classified reason.
+
+        Why this test exists: acquire() returns None on failure, which discards
+        the one fact the UI needs. The probe path needs the reason, so it goes
+        through acquire_or_raise instead.
+
+        How the regression manifests: if the reason were not attached, the
+        endpoint has nothing to report and falls back to the old, untrue
+        "not installed" message.
+        """
+        from universalchess.services.engine_registry import (
+            EngineLoadError,
+            get_engine_registry,
+        )
+
+        mock_popen.side_effect = OSError(errno.ENOEXEC, "Exec format error")
+
+        registry = get_engine_registry()
+        with pytest.raises(EngineLoadError) as excinfo:
+            registry.acquire_or_raise("/opt/universalchess/engines/ct800")
+
+        assert excinfo.value.reason_code == "incompatible_binary"
+
+    @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
+    def test_acquire_still_returns_none_on_failure(self, mock_popen):
+        """acquire() keeps its None-on-failure contract for existing callers.
+
+        Why this test exists: players, the analysis service and the display all
+        branch on a None handle. Refactoring the load path to raise must not
+        change what they see.
+
+        How the regression manifests: if acquire stopped catching, an unhandled
+        EngineLoadError propagates into the board's game loop instead of the
+        graceful "engine unavailable" path.
+        """
+        from universalchess.services.engine_registry import get_engine_registry
+
+        mock_popen.side_effect = OSError(errno.ENOEXEC, "Exec format error")
+
+        registry = get_engine_registry()
+
+        assert registry.acquire("/opt/universalchess/engines/ct800") is None
+
+    @patch('universalchess.services.engine_registry.chess.engine.SimpleEngine.popen_uci')
+    def test_pools_and_reuses_like_acquire_on_success(self, mock_popen):
+        """A successful acquire_or_raise pools the engine exactly as acquire does.
+
+        Why this test exists: the two entry points must share one load path. If
+        acquire_or_raise spawned outside the pool, the probe would create a
+        duplicate process alongside the engine a game is already using.
+
+        How the regression manifests: popen_uci is called twice and the handles
+        differ, so the board runs two copies of the same engine.
+        """
+        from universalchess.services.engine_registry import get_engine_registry
+
+        mock_engine = MagicMock(); mock_engine._shutdown = False
+        mock_popen.return_value = mock_engine
+
+        registry = get_engine_registry()
+        first = registry.acquire_or_raise("/usr/games/stockfish")
+        second = registry.acquire("/usr/games/stockfish")
+
+        assert first is second
+        assert first.ref_count == 2
+        mock_popen.assert_called_once()
 
