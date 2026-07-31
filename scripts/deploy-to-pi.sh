@@ -188,42 +188,6 @@ echo "Event log ready at \$EVENT_LOG_DIR/events.jsonl (owner \$PRIMARY_USER)"
 REMOTE
 }
 
-# Provision the persistent runtime swap the .deb postinst would set up but a
-# src-only rsync deploy does not: the swap unit and swappiness drop-in live under
-# packaging/deb-root/etc (not the synced python tree), so ship them here, then
-# enable+start the unit and apply the sysctl. The uc-runtime-swap helper itself is
-# already synced under scripts/. Idempotent: the helper re-activates the existing
-# swapfile rather than rewriting the card. Non-fatal -- a warning must not abort an
-# otherwise good code deploy.
-provision_runtime_swap() {
-	local unit_src sysctl_src helper_path
-	unit_src="${SCRIPT_DIR}/../packaging/deb-root/etc/systemd/system/universal-chess-swap.service"
-	sysctl_src="${SCRIPT_DIR}/../packaging/deb-root/etc/sysctl.d/99-universalchess-swap.conf"
-	helper_path="${REMOTE_PATH%/}/scripts/uc-runtime-swap"
-	if [[ ! -f "$unit_src" || ! -f "$sysctl_src" ]]; then
-		echo "WARNING: runtime-swap unit/sysctl source missing; skipping swap provisioning"
-		return 0
-	fi
-	echo "Provisioning persistent runtime swap on ${HOST} ..."
-	# Ship the two files the .deb would place (src rsync doesn't cover /etc).
-	$SSH_OPTS "$HOST" "sudo tee /etc/systemd/system/universal-chess-swap.service >/dev/null" < "$unit_src" \
-		|| { echo "WARNING: could not install swap unit"; return 0; }
-	$SSH_OPTS "$HOST" "sudo tee /etc/sysctl.d/99-universalchess-swap.conf >/dev/null" < "$sysctl_src" \
-		|| { echo "WARNING: could not install swap sysctl drop-in"; return 0; }
-	$SSH_OPTS "$HOST" "sudo bash -s" <<REMOTE || echo "WARNING: runtime swap not fully provisioned (see message above)"
-set -euo pipefail
-HELPER='${helper_path}'
-if [ -f "\$HELPER" ]; then chmod +x "\$HELPER"; else echo "WARNING: runtime-swap helper missing at \$HELPER"; fi
-systemctl daemon-reload
-systemctl enable universal-chess-swap.service 2>/dev/null || true
-sysctl -p /etc/sysctl.d/99-universalchess-swap.conf >/dev/null 2>&1 || true
-systemctl start universal-chess-swap.service 2>/dev/null || true
-echo "runtime-swap status:"
-"\$HELPER" status 2>/dev/null || true
-echo "vm.swappiness now: \$(cat /proc/sys/vm/swappiness 2>/dev/null)"
-REMOTE
-}
-
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		-n|--dry-run) DRY_RUN=1; shift ;;
