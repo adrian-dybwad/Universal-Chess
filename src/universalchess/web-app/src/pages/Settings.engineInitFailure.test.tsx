@@ -257,11 +257,14 @@ describe('Engine card for an engine that installed but will not start', () => {
     expect(within(card).getByText(/architecture/i)).toBeInTheDocument();
   });
 
-  it('tells the user to uninstall and reinstall the engine', async () => {
-    // The remedy must match the button actually on the card. An installed
-    // engine shows "Uninstall", not "Install", so advice to "install it again"
-    // names a control the user cannot see and reads as a dead end. Naming both
-    // steps points at the two buttons that exist, in the order they are used.
+  it('suggests uninstalling and reinstalling without asserting a cause', async () => {
+    // The remedy must match the button actually on the card -- an installed
+    // engine shows "Uninstall", not "Install" -- and must stay a suggestion.
+    // The reason codes say what the OS reported, not why: a board whose C
+    // toolchain links the wrong startup objects produces the same
+    // crashed_at_startup as a genuinely damaged build, and a reinstall does not
+    // help there. Wording that promises a fix ("this rebuilds it for your
+    // device") is a claim the evidence does not support.
     mockFetch([ct800WontStart]);
     renderSettings();
     const card = await findEngineCard('CT800');
@@ -269,18 +272,35 @@ describe('Engine card for an engine that installed but will not start', () => {
     await waitFor(() =>
       expect(within(card).getByText(/did not start/i)).toBeInTheDocument()
     );
-    expect(within(card).getByText(/uninstall it, then install it again/i))
+    expect(within(card).getByText(/try uninstalling and reinstalling/i))
       .toBeInTheDocument();
-    // The remedy is only reachable if the control it names is present.
+    // The suggestion is only actionable if the control it names is present.
     expect(within(card).getByRole('button', { name: /^uninstall$/i }))
       .toBeInTheDocument();
   });
 
-  it('does not tell the user to uninstall an engine that never installed', async () => {
+  it('does not promise that reinstalling will fix the engine', async () => {
+    // Guards the specific phrasing regression: an engine can fail to start for
+    // reasons a reinstall cannot touch (a broken device toolchain being the one
+    // that motivated this). Stating a cause or a guaranteed outcome sends the
+    // user in a loop of reinstalls and hides the real fault.
+    mockFetch([ct800WontStart]);
+    renderSettings();
+    const card = await findEngineCard('CT800');
+
+    await waitFor(() =>
+      expect(within(card).getByText(/did not start/i)).toBeInTheDocument()
+    );
+    expect(within(card).queryByText(/rebuild it for this device/i))
+      .not.toBeInTheDocument();
+    expect(within(card).queryByText(/build is damaged/i)).not.toBeInTheDocument();
+  });
+
+  it('does not suggest uninstalling an engine that never installed', async () => {
     // A failed install left no binary, so there is nothing to uninstall and the
-    // card offers Install. Repeating the reinstall remedy here would send the
-    // user looking for a button that is not on this card, which is the same
-    // class of mismatch this change fixes for the initialize case.
+    // card offers Install. Repeating the reinstall suggestion here would send
+    // the user looking for a button that is not on this card, the same mismatch
+    // this change fixes for the initialize case.
     mockFetch([arasanInstallFailed]);
     renderSettings();
     const card = await findEngineCard('Arasan');
@@ -288,7 +308,7 @@ describe('Engine card for an engine that installed but will not start', () => {
     await waitFor(() =>
       expect(within(card).getByText(/could not be installed/i)).toBeInTheDocument()
     );
-    expect(within(card).queryByText(/uninstall it, then install it again/i))
+    expect(within(card).queryByText(/try uninstalling and reinstalling/i))
       .not.toBeInTheDocument();
   });
 

@@ -2669,9 +2669,15 @@ function EngineFailureNotice({
   const reasonKey = FAILURE_REASON_KEYS[failure.reason_code]
     ?? 'settingsPage.enginesUi.reasonLaunchFailed';
   // Only an engine whose binary is on disk can be uninstalled, and only its card
-  // shows the Uninstall button the remedy names. An install that never produced
-  // a binary offers Install instead, so the same sentence there would point at a
-  // control the user cannot find.
+  // shows the Uninstall button the suggestion names. An install that never
+  // produced a binary offers Install instead, so the same sentence there would
+  // point at a control the user cannot find.
+  //
+  // Deliberately a suggestion, not a diagnosis. A reason code says what the
+  // operating system reported, never why it happened -- a board whose C
+  // toolchain links the wrong startup objects crashes engines identically to a
+  // genuinely damaged build, and reinstalling does not help there. Promising an
+  // outcome would send that user through repeated reinstalls.
   const remedy = failure.phase === 'initialize'
     ? t('settingsPage.enginesUi.failureRemedy')
     : null;
