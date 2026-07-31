@@ -22,6 +22,7 @@ arch gate and the exact removal command are pinned rather than described.
 """
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -39,6 +40,12 @@ _UNIT = (
 # The two packages the control file used to recommend onto every board.
 CROSS_COMPILER_PKG = "gcc-arm-linux-gnueabihf"
 CROSS_LIBC_DEV_PKG = "libc6-dev-armhf-cross"
+
+# Floor for how long the purge may wait on the dpkg lock. Measured on a Pi Zero
+# W: the upgrade that starts the cleanup unit still held the lock more than
+# three minutes after the unit began, so anything under ten minutes risks
+# repeating the failure this floor exists to prevent.
+MIN_LOCK_WAIT_SECONDS = 600
 
 # Fake dpkg: reports the architecture the test is simulating.
 _FAKE_DPKG = """#!/bin/sh
@@ -67,18 +74,6 @@ echo "apt-get $*" >> "$UC_TEST_LOG"
 exit ${UC_TEST_APT_EXIT:-0}
 """
 
-# Fake fuser: reports the dpkg frontend lock held until a counter file says
-# otherwise, so the helper's wait loop can be observed rather than assumed.
-_FAKE_FUSER = """#!/bin/sh
-count=0
-[ -f "$UC_TEST_FUSER_COUNT" ] && count=$(cat "$UC_TEST_FUSER_COUNT")
-count=$((count + 1))
-echo "$count" > "$UC_TEST_FUSER_COUNT"
-echo "fuser $*" >> "$UC_TEST_LOG"
-# Non-zero means "no process holds it", which releases the helper's wait.
-[ "$count" -le "${UC_TEST_LOCK_HELD_TIMES:-0}" ]
-"""
-
 
 def _write_tool(bindir: Path, name: str, body: str) -> None:
     path = bindir / name
@@ -88,13 +83,12 @@ def _write_tool(bindir: Path, name: str, body: str) -> None:
 
 @pytest.fixture
 def helper_env(tmp_path):
-    """Fake dpkg/dpkg-query/apt-get/fuser on PATH plus a call log."""
+    """Fake dpkg/dpkg-query/apt-get on PATH plus a call log."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
     _write_tool(bindir, "dpkg", _FAKE_DPKG)
     _write_tool(bindir, "dpkg-query", _FAKE_DPKG_QUERY)
     _write_tool(bindir, "apt-get", _FAKE_APT_GET)
-    _write_tool(bindir, "fuser", _FAKE_FUSER)
 
     log = tmp_path / "calls.log"
     env = dict(os.environ)
@@ -102,7 +96,6 @@ def helper_env(tmp_path):
     env["UC_TEST_LOG"] = str(log)
     env["UC_TEST_ARCH"] = "armhf"
     env["UC_TEST_INSTALLED"] = ""
-    env["UC_TEST_FUSER_COUNT"] = str(tmp_path / "fuser.count")
     return env, log
 
 
@@ -118,6 +111,24 @@ def _run(env):
 
 def _apt_calls(calls):
     return [c for c in calls if c.startswith("apt-get ")]
+
+
+def _lock_wait_seconds(apt_call):
+    """Seconds the helper told apt to block on the dpkg lock, or None."""
+    match = re.search(r"DPkg::Lock::Timeout=(\d+)", apt_call)
+    return int(match.group(1)) if match else None
+
+
+def _unit_start_timeout_seconds():
+    """TimeoutStartSec from the shipped unit, in seconds.
+
+    Only the bare-integer form is accepted: systemd also parses "10min" and
+    "1h", but allowing them here would mean reimplementing systemd's time
+    parser in a test. The unit is required to state plain seconds instead.
+    """
+    match = re.search(r"^TimeoutStartSec=(\d+)$", _UNIT.read_text(), re.MULTILINE)
+    assert match, "unit must set TimeoutStartSec as a plain number of seconds"
+    return int(match.group(1))
 
 
 def test_helper_exists_and_is_shipped():
@@ -280,32 +291,32 @@ class TestRemoval:
 
         assert proc.returncode != 0
 
-    def test_waits_for_an_in_flight_dpkg_transaction(self, helper_env):
-        """The purge waits until the dpkg frontend lock is free.
+    def test_asks_apt_to_wait_out_the_in_flight_dpkg_transaction(self, helper_env):
+        """The purge blocks on the dpkg lock instead of polling for it.
 
-        Why this test exists: the postinst starts this unit while its own dpkg
-        transaction still holds the lock, which is exactly why the cleanup is a
-        unit rather than an inline postinst step. Without the wait the first
-        run -- the one that matters, immediately after the upgrade that ships
-        this fix -- fails to acquire the lock and the board stays broken until
-        the next boot.
+        Why this test exists: the postinst starts this unit from inside its own
+        apt transaction, so the lock is always held when the helper begins.
+        The first implementation polled fuser for a bounded 120 s and then ran
+        the purge regardless. On a Pi Zero W the installing transaction was
+        still going three minutes in, so the purge lost the race with the very
+        upgrade shipping it -- "Could not get lock /var/lib/dpkg/lock-frontend.
+        It is held by process (apt-get)" -- and the board stayed broken.
+        Handing the wait to apt removes both the too-short bound and the
+        check-then-act gap between observing a free lock and taking it.
 
-        How the regression manifests: apt-get is invoked before fuser reports
-        the lock free, so the recorded call order has apt-get first.
+        How the regression manifests: no DPkg::Lock::Timeout on the command, so
+        the purge fails the instant it collides with the upgrade; or a timeout
+        short enough to expire on a slow board, which is the original bug.
         """
         env, _log = helper_env
         env["UC_TEST_INSTALLED"] = CROSS_LIBC_DEV_PKG
-        env["UC_TEST_LOCK_HELD_TIMES"] = "1"
 
         proc, calls = _run(env)
 
         assert proc.returncode == 0
-        fuser_calls = [i for i, c in enumerate(calls) if c.startswith("fuser ")]
-        apt_index = next(i for i, c in enumerate(calls) if c.startswith("apt-get "))
-        # The lock was reported held once, so the helper must have polled at
-        # least twice and only then purged.
-        assert len(fuser_calls) >= 2
-        assert apt_index > max(fuser_calls)
+        wait_seconds = _lock_wait_seconds(_apt_calls(calls)[0])
+        assert wait_seconds is not None, "purge must ask apt to wait for the lock"
+        assert wait_seconds >= MIN_LOCK_WAIT_SECONDS
 
 
 class TestPackagingWiring:
@@ -341,6 +352,30 @@ class TestPackagingWiring:
         unit = _UNIT.read_text()
         assert f"ExecStart=/opt/universalchess/scripts/{_HELPER.name}" in unit
         assert "Type=oneshot" in unit
+
+    def test_unit_outlasts_the_time_the_helper_spends_waiting(self, helper_env):
+        """systemd must not kill the helper while it waits for the lock.
+
+        Why this test exists: TimeoutStartSec bounds the whole ExecStart, and
+        nearly all of that budget goes on waiting for the installing
+        transaction to finish. A unit timeout at or below the lock wait means
+        systemd SIGTERMs the helper on exactly the slow boards the wait was
+        lengthened for -- and if it lands mid-purge, dpkg is left interrupted
+        and needs `dpkg --configure -a` by hand before anything installs again.
+
+        How the regression manifests: the two numbers are edited independently
+        and the unit's timeout is left behind, so the cleanup dies before apt
+        ever gets the lock.
+        """
+        env, _log = helper_env
+        env["UC_TEST_INSTALLED"] = CROSS_LIBC_DEV_PKG
+
+        _proc, calls = _run(env)
+
+        wait_seconds = _lock_wait_seconds(_apt_calls(calls)[0])
+        # The purge itself still has to run after the wait ends, so the unit
+        # needs headroom beyond the wait rather than merely matching it.
+        assert _unit_start_timeout_seconds() > wait_seconds
 
     def test_postinst_enables_and_starts_the_cleanup(self):
         """The postinst must both enable the unit and start it now.

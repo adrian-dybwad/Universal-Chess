@@ -92,6 +92,28 @@ def test_depends_provides_a_native_compiler_for_the_display_shim():
     )
 
 
+def test_depends_provides_fuser_for_the_dpkg_lock_wait():
+    """``Depends`` must guarantee ``fuser`` (psmisc) is present.
+
+    Why this test exists: the postinst's fresh-install reboot waits for the
+    dpkg locks to clear by polling ``fuser``, because rebooting during the
+    transaction (trigger processing continues after this postinst returns) can
+    leave packages half-configured. Without fuser the reboot command cannot
+    tell whether the transaction ended, so it declines to reboot at all -- a
+    fresh install that never comes back up on its own. psmisc is present on
+    stock Raspberry Pi OS, which is exactly why relying on it silently is a
+    trap: the dependency is real but invisible until a slimmer image appears.
+
+    How a regression manifests: dropping psmisc leaves the wait unable to run,
+    and the failure is a fresh install that prints "rebooting to complete
+    setup" and then does not.
+    """
+    assert "psmisc" in _declared_depends(), (
+        "Depends must include psmisc; the postinst reboot wait needs fuser to "
+        "detect that the dpkg transaction has finished"
+    )
+
+
 def test_depends_lists_each_package_once():
     """No package may appear twice in ``Depends``.
 

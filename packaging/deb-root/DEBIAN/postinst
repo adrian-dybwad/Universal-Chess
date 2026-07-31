@@ -825,11 +825,42 @@ case $1 in
             # the work to PID 1, which outlives apt. Same lesson already applied
             # in scripts/install-update.
             #
-            # The unit first waits for the dpkg frontend lock to clear so the
-            # reboot cannot interrupt the tail of the current apt transaction
-            # (trigger processing continues after this postinst returns), which
-            # could otherwise leave packages half-configured.
-            REBOOT_CMD='i=0; while command -v fuser >/dev/null 2>&1 && fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && [ "$i" -lt 150 ]; do sleep 2; i=$((i+1)); done; sleep 2; systemctl reboot'
+            # The unit first waits for the dpkg locks to clear so the reboot
+            # cannot interrupt the tail of the current apt transaction (trigger
+            # processing continues after this postinst returns), which could
+            # otherwise leave packages half-configured and needing a manual
+            # `dpkg --configure -a` before anything else installs.
+            #
+            # Both locks are watched: apt holds lock-frontend for the whole
+            # transaction, but a plain `dpkg -i` takes only /var/lib/dpkg/lock,
+            # so the frontend alone reads as free during exactly that install.
+            #
+            # Every path that cannot confirm the transaction ended declines to
+            # reboot rather than rebooting anyway. The earlier version did the
+            # opposite -- it polled for 300s and then rebooted regardless, and
+            # skipped the wait entirely when fuser was missing -- so the two
+            # cases it could not handle were the two that reboot into a live
+            # dpkg. Not rebooting is recoverable: the install prints that a
+            # reboot is recommended, and the boot-time units re-run on the next
+            # one. (psmisc is in Depends so fuser is present; the guard covers
+            # the case where it is not, instead of silently not waiting.)
+            REBOOT_CMD='
+if ! command -v fuser >/dev/null 2>&1; then
+    echo "universal-chess: no fuser, cannot tell when dpkg finishes -- skipping automatic reboot" >&2
+    exit 0
+fi
+i=0
+while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1; do
+    if [ "$i" -ge 360 ]; then
+        echo "universal-chess: dpkg still busy after 30 minutes -- skipping automatic reboot" >&2
+        exit 0
+    fi
+    sleep 5
+    i=$((i + 1))
+done
+sleep 2
+systemctl reboot
+'
             if [ -d /run/systemd/system ] && command -v systemd-run >/dev/null 2>&1; then
                 systemd-run --collect --unit=universal-chess-firstboot-reboot \
                     /bin/sh -c "$REBOOT_CMD" >/dev/null 2>&1

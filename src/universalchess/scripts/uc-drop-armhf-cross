@@ -70,24 +70,30 @@ log "removing armhf cross development packages:$present"
 export DEBIAN_FRONTEND=noninteractive
 
 # The postinst starts this unit while its own dpkg transaction still holds the
-# frontend lock -- that is why the cleanup is a unit and not an inline postinst
-# step, which would deadlock. Wait for the lock so the repair lands on the same
-# update that ships it instead of waiting for the next boot. Bounded, so a stuck
-# transaction fails this unit rather than hanging boot forever.
-i=0
-while command -v fuser >/dev/null 2>&1 && \
-      fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && \
-      [ "$i" -lt 60 ]; do
-	sleep 2
-	i=$((i + 1))
-done
+# lock -- that is why the cleanup is a unit and not an inline postinst step,
+# which would deadlock. So the purge has to outlast that transaction to land on
+# the same update that ships it instead of waiting for the next boot.
+#
+# apt does this wait itself. An earlier version polled `fuser` on the frontend
+# lock for a bounded 120s and then purged regardless, which failed on the first
+# board it ran on: the installing transaction on a Pi Zero W was still holding
+# the lock three minutes in, so apt exited with "Could not get lock
+# /var/lib/dpkg/lock-frontend. It is held by process (apt-get)" and the board
+# kept its ARMv7 crt. DPkg::Lock::Timeout also closes the gap between seeing a
+# free lock and acquiring it, which polling cannot. Bounded rather than
+# infinite, so a genuinely stuck transaction fails this unit instead of pinning
+# it forever; the unit stays enabled and retries on the next boot.
+#
+# Keep universal-chess-armhf-cleanup.service's TimeoutStartSec above this, or
+# systemd kills the helper mid-wait -- or worse, mid-purge.
+LOCK_WAIT_SECONDS=900
 
 # Purge only what is actually installed: naming an absent package makes some apt
 # versions exit non-zero, which would report a healed board as a unit failure.
 # Deliberately no --auto-remove -- this fixes one specific packaging mistake and
 # must not garbage-collect build dependencies a user installed by hand.
 # shellcheck disable=SC2086 - $present is a subset of the fixed list above
-if ! apt-get purge -y $present; then
+if ! apt-get purge -y -o DPkg::Lock::Timeout="$LOCK_WAIT_SECONDS" $present; then
 	log "removal failed; this board's native toolchain may still be broken"
 	exit 1
 fi
