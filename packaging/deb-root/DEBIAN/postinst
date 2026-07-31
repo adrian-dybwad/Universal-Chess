@@ -452,6 +452,31 @@ else
     echo -e "::: Warning: centaur-armhf helper not found at $ARMHF_SETUP_HELPER"
 fi
 
+# Undo the armhf cross toolchain this package used to recommend onto every board.
+# gcc-arm-linux-gnueabihf + libc6-dev-armhf-cross are only usable on arm64, where
+# Centaur's 32-bit display shim must be cross-compiled; centaur-armhf-setup above
+# installs them there on demand. On an ARMv6 board (Pi Zero W, Pi 1) the cross
+# package's ARMv7 crt objects under /usr/arm-linux-gnueabihf/lib shadow the native
+# ones on gcc's search path, so every locally linked binary segfaults before main
+# -- every engine built from source crashed at startup while its binary sat on
+# disk looking installed. The Recommends is gone, which fixes new installs; this
+# unit heals boards that already carry the packages.
+#
+# It must be a unit rather than an inline apt-get: this postinst holds the dpkg
+# frontend lock, so removing packages here would deadlock. The helper waits for
+# that lock, so starting the unit --no-block lets the repair land on this update
+# instead of the next boot, without blocking the install on our own lock.
+echo -e "::: Removing unusable armhf cross toolchain"
+ARMHF_CLEANUP_HELPER="${DGTCM_PATH}/scripts/uc-drop-armhf-cross"
+if [ -f "$ARMHF_CLEANUP_HELPER" ]; then
+    chmod +x "$ARMHF_CLEANUP_HELPER"
+    systemctl daemon-reload
+    systemctl enable universal-chess-armhf-cleanup.service 2>/dev/null || true
+    systemctl start --no-block universal-chess-armhf-cleanup.service 2>/dev/null || true
+else
+    echo -e "::: Warning: armhf-cleanup helper not found at $ARMHF_CLEANUP_HELPER"
+fi
+
 # Allow the service user to restart Universal Chess without a password. Returning
 # from the original Centaur software brings the board back by restarting its own
 # unit: the on-board path (services/power.py RESTART_UNIVERSAL_CHESS_CMD) and the

@@ -1,0 +1,96 @@
+#!/bin/sh
+# Remove the armhf cross toolchain from boards that cannot use it.
+#
+# The package used to declare:
+#
+#   Recommends: gcc-arm-linux-gnueabihf, libc6-dev-armhf-cross
+#
+# and apt installs Recommends by default. Those two exist for one purpose: on a
+# 64-bit (arm64) host the native compiler cannot emit Centaur's 32-bit armhf ABI,
+# so the display "translate" shim is cross-compiled. On 32-bit ARM they are never
+# used -- centaur-armhf-setup exits immediately unless the host is arm64, and the
+# shim is built there by the native gcc.
+#
+# On an ARMv6 board (Pi Zero W, Pi 1) they are actively destructive.
+# libc6-dev-armhf-cross installs ARMv7-A startup objects under
+# /usr/arm-linux-gnueabihf/lib, and gcc searches that directory ahead of the
+# native /usr/lib/arm-linux-gnueabihf. Every locally linked binary therefore gets
+# an ARMv7 crt1.o and dies with SIGSEGV in the startup code, before main, on the
+# ARMv6 CPU. Measured on a Pi Zero W: `int main(void){return 0;}` exits 139 with
+# the default link and 0 with -B/usr/lib/arm-linux-gnueabihf/. The visible
+# symptom is that every engine built from source segfaults at startup while its
+# binary sits on disk looking installed.
+#
+# Dropping the Recommends fixes new installs but not the boards already carrying
+# the package, so this runs from universal-chess-armhf-cleanup.service to heal
+# them on update. Idempotent: once the packages are gone every later boot is two
+# dpkg-query calls and an exit.
+#
+# Runs as root from the unit, so it needs no sudoers grant. It takes no arguments
+# and the package set is hard-coded -- do not add a package argument, or a boot
+# unit becomes a general "remove anything" primitive.
+set -u
+
+# Only these two, and only ever these two. gcc-arm-linux-gnueabihf depends on
+# libc6-dev-armhf-cross, so they are named together and removed in one
+# transaction rather than left in an order-dependent half state.
+CROSS_PACKAGES="gcc-arm-linux-gnueabihf libc6-dev-armhf-cross"
+
+log() { echo "uc-drop-armhf-cross: $*"; }
+
+# Same gate centaur-armhf-setup uses, so the script that installs these packages
+# and the script that removes them cannot disagree about who needs them. Anything
+# that is not arm64 -- including an unreadable architecture -- has no use for a
+# cross toolchain targeting 32-bit ARM.
+host_arch="$(dpkg --print-architecture 2>/dev/null || echo unknown)"
+if [ "$host_arch" = "arm64" ]; then
+	log "host arch arm64 builds the Centaur shim with these; keeping them"
+	exit 0
+fi
+
+pkg_installed() {
+	dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "install ok installed"
+}
+
+present=""
+for p in $CROSS_PACKAGES; do
+	if pkg_installed "$p"; then
+		present="$present $p"
+	fi
+done
+
+if [ -z "$present" ]; then
+	log "no armhf cross development packages installed; nothing to do"
+	exit 0
+fi
+
+log "removing armhf cross development packages:$present"
+
+# No terminal here; a confirmation prompt would hang the unit until its timeout.
+export DEBIAN_FRONTEND=noninteractive
+
+# The postinst starts this unit while its own dpkg transaction still holds the
+# frontend lock -- that is why the cleanup is a unit and not an inline postinst
+# step, which would deadlock. Wait for the lock so the repair lands on the same
+# update that ships it instead of waiting for the next boot. Bounded, so a stuck
+# transaction fails this unit rather than hanging boot forever.
+i=0
+while command -v fuser >/dev/null 2>&1 && \
+      fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && \
+      [ "$i" -lt 60 ]; do
+	sleep 2
+	i=$((i + 1))
+done
+
+# Purge only what is actually installed: naming an absent package makes some apt
+# versions exit non-zero, which would report a healed board as a unit failure.
+# Deliberately no --auto-remove -- this fixes one specific packaging mistake and
+# must not garbage-collect build dependencies a user installed by hand.
+# shellcheck disable=SC2086 - $present is a subset of the fixed list above
+if ! apt-get purge -y $present; then
+	log "removal failed; this board's native toolchain may still be broken"
+	exit 1
+fi
+
+log "removed:$present"
+exit 0

@@ -1,0 +1,31 @@
+[Unit]
+# Remove the armhf cross toolchain from boards that cannot use it. The package
+# used to recommend gcc-arm-linux-gnueabihf + libc6-dev-armhf-cross onto every
+# board, but they are only usable on arm64 (where Centaur's 32-bit display shim
+# is cross-compiled). On an ARMv6 board the cross package's ARMv7 startup objects
+# shadow the native ones on gcc's search path, so every locally built binary
+# segfaults before main -- which meant every engine built from source crashed at
+# startup while looking installed. Dropping the Recommends fixes new installs;
+# this heals the boards that already have it. See scripts/uc-drop-armhf-cross.
+Description=Universal Chess armhf cross toolchain cleanup
+# The helper runs apt, so it needs the local filesystems mounted.
+#
+# Deliberately NOT ordered Before= the app services. The postinst starts this
+# unit while holding the dpkg lock and then restarts those services; a Before=
+# would let systemd hold the restart behind this unit's lock wait, stalling an
+# update by up to two minutes. Nothing needs the ordering: the toolchain only
+# matters when a user asks to build an engine from source, which cannot happen
+# before the services are up anyway.
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# The helper waits (bounded, 2 minutes) for an in-flight dpkg transaction to
+# release the frontend lock, because the postinst starts this unit while still
+# holding it. Allow for that wait plus the removal itself.
+TimeoutStartSec=600
+ExecStart=/opt/universalchess/scripts/uc-drop-armhf-cross
+
+[Install]
+WantedBy=multi-user.target
