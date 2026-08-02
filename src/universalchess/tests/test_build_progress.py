@@ -25,10 +25,15 @@ from pathlib import Path
 import pytest
 
 from universalchess.services.build_progress import (
+    BuildCeiling,
     BuildProgressTracker,
     BuildReportReader,
     ProcessInfo,
 )
+
+# The ceiling Maia was given on the Pi Zero W (4x its 3600s catalog estimate), and
+# the one that killed its build at four hours while it was still compiling.
+_MAIA_CEILING_SECONDS = 14400
 
 # Maia builds lc0 through meson/ninja with CC=clang, which differs from every other
 # catalog engine in two ways that together defeat process observation: ninja invokes
@@ -377,6 +382,177 @@ class TestBuildReportReader:
         reader.read_line(f"UC_BUILD_PROGRESS units={_MAIA_TOTAL_EDGES + 10}/{_MAIA_TOTAL_EDGES}")
 
         assert reader.progress().fraction == 1.0
+
+
+class TestReportedEta:
+    """Projecting the time left for a build that publishes its own unit counts.
+
+    Why this class exists: Maia's install on a Pi Zero W ran for four hours and
+    reached "module 177 of 259 (68%)" without ever showing a remaining time,
+    because only the process-observed path computed one. The user had no way to
+    learn that this board needs six to eight hours for that build until four of
+    them had been spent.
+    """
+
+    def test_no_estimate_from_a_single_report(self):
+        """One report establishes a baseline but cannot imply a rate.
+
+        Why this test exists: a rate needs two observations. Dividing the elapsed
+        time by the first reported fraction assumes the build began when this run
+        began, which is exactly the assumption that breaks on a resume.
+
+        How a regression manifests: an estimate appears immediately and is wildly
+        wrong, which is worse than showing none -- it was the reason the observed
+        path already withholds one below 5%.
+        """
+        reader = BuildReportReader()
+        reader.read_line(f"UC_BUILD_PROGRESS units=10/{_MAIA_TOTAL_EDGES}")
+
+        assert reader.progress(now=100.0).eta_seconds is None
+
+    def test_estimate_projects_the_remaining_units_at_the_observed_rate(self):
+        """Remaining time comes from how long the completed units actually took.
+
+        Why this test exists: this is the number that tells a user a build is a
+        multi-hour job. The rate here is one unit per 60s over 10 units, with 20
+        units left, so the projection is 1200s -- derived from the build's own
+        pace on this board rather than from a catalog estimate written elsewhere.
+
+        How a regression manifests: reverting to elapsed/fraction arithmetic gives
+        a different number here, and reintroduces the resume bug below.
+        """
+        reader = BuildReportReader()
+        reader.read_line("UC_BUILD_PROGRESS units=10/40")
+        reader.progress(now=0.0)
+        reader.read_line("UC_BUILD_PROGRESS units=20/40")
+
+        assert reader.progress(now=600.0).eta_seconds == 1200
+
+    def test_a_resumed_build_is_projected_from_this_runs_work_only(self):
+        """Units finished by an earlier run do not inflate the measured rate.
+
+        Why this test exists: build-maia.sh reconciles ninja's per-invocation
+        counter across resumes, so a resumed build's first report can be well
+        above zero. Treating those units as work done since this process started
+        implies an enormous rate and a near-zero estimate, telling the user a
+        six-hour build is minutes from finishing.
+
+        How a regression manifests: projecting from the absolute count rather than
+        the delta returns roughly 26s here instead of 1200s, because it credits
+        this run with the 200 units a previous run compiled.
+        """
+        reader = BuildReportReader()
+        reader.read_line("UC_BUILD_PROGRESS units=200/240")
+        reader.progress(now=0.0)
+        reader.read_line("UC_BUILD_PROGRESS units=210/240")
+
+        assert reader.progress(now=600.0).eta_seconds == 1800
+
+    def test_no_estimate_without_a_clock(self):
+        """Callers that do not supply a time get counts but no projection.
+
+        Why this test exists: the reader is also used purely to drive the bar, and
+        an ETA needs a clock the caller owns. Fabricating one from a module-level
+        time call would make the reader untestable and couple it to wall time.
+
+        How a regression manifests: an internal clock makes the assertions above
+        depend on real elapsed time and turn flaky.
+        """
+        reader = BuildReportReader()
+        reader.read_line("UC_BUILD_PROGRESS units=10/40")
+
+        assert reader.progress().eta_seconds is None
+
+
+class TestBuildCeiling:
+    """The backstop deadline, and when finishing work earns more of it.
+
+    Why this class exists: Maia's build was killed at exactly four hours -- its
+    ceiling of 4x a 3600s catalog estimate -- while healthy and advancing, at
+    module 177 of 259. The ceiling had become the thing this whole design was
+    meant to remove: a hardware-independent guess that kills working builds.
+    """
+
+    def test_work_completing_extends_the_deadline_past_the_base(self):
+        """A build that keeps finishing units earns time beyond its base ceiling.
+
+        Why this test exists: this is the Maia failure. The base ceiling here is
+        the 14400s that killed it; a build still completing units with hours of
+        projected work left must be allowed past it.
+
+        How a regression manifests: reverting to a fixed deadline leaves the
+        ceiling at the base and this build is killed while working, exactly as it
+        was on the board.
+        """
+        ceiling = BuildCeiling(started_at=0.0, base_seconds=_MAIA_CEILING_SECONDS)
+
+        ceiling.note_progress(now=14000.0, fraction=0.68, eta_seconds=6700)
+
+        assert ceiling.deadline() > _MAIA_CEILING_SECONDS
+
+    def test_the_deadline_stops_moving_when_work_stops_completing(self):
+        """Time is granted for finished work, never for elapsed time.
+
+        Why this test exists: this is what keeps the ceiling a real backstop. A
+        compiler spinning in an infinite loop refreshes every liveness signal
+        forever, so if the deadline advanced simply because the clock did, nothing
+        would ever stop it. Grants are tied to the fraction increasing.
+
+        How a regression manifests: extending on every call instead of on new work
+        makes the deadline here keep climbing, and a runaway build runs forever.
+        """
+        # A base small enough that the first grant really does move the deadline,
+        # so a deadline that never moves again is evidence and not a coincidence.
+        ceiling = BuildCeiling(started_at=0.0, base_seconds=60)
+        ceiling.note_progress(now=100.0, fraction=0.5, eta_seconds=100)
+        granted = ceiling.deadline()
+        assert granted > 60
+
+        # The same fraction reported again later: the build is burning CPU but has
+        # not finished anything since.
+        for now in (200.0, 400.0, 800.0):
+            ceiling.note_progress(now=now, fraction=0.5, eta_seconds=100)
+
+        assert ceiling.deadline() == granted
+
+    def test_the_deadline_is_never_shortened(self):
+        """A shrinking projection cannot pull the deadline in.
+
+        Why this test exists: the projection is an estimate and can fall as a
+        build speeds up. If it could lower the deadline, a build could be killed
+        because it started going faster.
+
+        How a regression manifests: assigning the deadline instead of taking the
+        later of the two brings it below the base and kills short builds early.
+        """
+        ceiling = BuildCeiling(started_at=0.0, base_seconds=_MAIA_CEILING_SECONDS)
+
+        ceiling.note_progress(now=10.0, fraction=0.9, eta_seconds=1)
+
+        assert ceiling.deadline() == _MAIA_CEILING_SECONDS
+
+    @pytest.mark.parametrize(
+        ("fraction", "eta_seconds"),
+        [(None, 600), (0.5, None), (None, None)],
+        ids=["no_fraction", "no_estimate", "nothing_observable"],
+    )
+    def test_an_unobservable_build_keeps_its_base_deadline(self, fraction, eta_seconds):
+        """With nothing to project from, the base ceiling is what applies.
+
+        Why this test exists: not every toolchain can be watched, and a build with
+        no readings is precisely the case the fixed backstop exists for. It must
+        not be extended on the strength of a missing measurement.
+
+        How a regression manifests: treating a missing reading as zero progress
+        with a zero estimate would extend the deadline to the current time on
+        every sample, which both defeats the backstop and is arithmetic on data
+        that does not exist.
+        """
+        ceiling = BuildCeiling(started_at=0.0, base_seconds=_MAIA_CEILING_SECONDS)
+
+        ceiling.note_progress(now=500.0, fraction=fraction, eta_seconds=eta_seconds)
+
+        assert ceiling.deadline() == _MAIA_CEILING_SECONDS
 
 
 class TestRealCommandLines:

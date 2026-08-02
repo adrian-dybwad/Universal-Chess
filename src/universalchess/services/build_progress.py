@@ -142,6 +142,73 @@ class ReportedBuildProgress:
     units_finished: int
     units_total: int
     fraction: float | None
+    # Projected seconds until the last unit finishes, or None before there is a
+    # measured rate to project from. Without this a build that publishes its own
+    # counts showed a percentage and nothing else: Maia sat at "module 177 of 259
+    # (68%)" on a Pi Zero W for four hours with no indication that the board needs
+    # six to eight of them.
+    eta_seconds: int | None = None
+
+
+# Multiple of the projected remaining time granted whenever a build finishes more
+# work. Generous because the projection is a rate measured over past units and the
+# later units of a build are commonly the slowest -- Maia's went from 1.5 to 3.2
+# minutes each over one run -- so a tight multiple would expire mid-unit.
+BUILD_CEILING_PROJECTION_HEADROOM = 2.0
+
+
+class BuildCeiling:
+    """A backstop deadline that finished work can push further out.
+
+    The ceiling exists for one pathology: a build consuming CPU forever without
+    ever completing, which every liveness signal reads as work. It cannot be a
+    fixed budget, because a budget is a guess about hardware. Maia's was four
+    times its catalog estimate and still killed a healthy Pi Zero W build at four
+    hours, at module 177 of 259 -- the same failure as the ten-minute budget that
+    started all of this, only more expensive to discover.
+
+    So time is granted for work completed, never for time elapsed: each time the
+    finished fraction increases, the deadline moves to the projected finish plus
+    headroom. A build that keeps compiling keeps earning time and can run as long
+    as it genuinely needs, while one that stops finishing units earns nothing more
+    and runs out at the last deadline it was granted.
+    """
+
+    def __init__(
+        self,
+        started_at: float,
+        base_seconds: float,
+        headroom: float = BUILD_CEILING_PROJECTION_HEADROOM,
+    ) -> None:
+        self._deadline = started_at + base_seconds
+        self._headroom = headroom
+        self._granted_at_fraction: float | None = None
+
+    def deadline(self) -> float:
+        """The monotonic time at which the build should be given up on."""
+        return self._deadline
+
+    def note_progress(
+        self,
+        now: float,
+        fraction: float | None,
+        eta_seconds: int | None,
+    ) -> None:
+        """Grant more time if the build has finished work since the last grant.
+
+        A reading that is missing either half is ignored rather than defaulted.
+        Treating an absent fraction as zero progress would extend the deadline on
+        every sample of an unobservable build, which is the one case the fixed
+        backstop is there to cover.
+        """
+        if fraction is None or eta_seconds is None:
+            return
+        if self._granted_at_fraction is not None and fraction <= self._granted_at_fraction:
+            return
+        self._granted_at_fraction = fraction
+        # Only ever later: a projection that falls as a build speeds up must not
+        # pull in a deadline the build is already relying on.
+        self._deadline = max(self._deadline, now + eta_seconds * self._headroom)
 
 
 class BuildReportReader:
@@ -167,6 +234,13 @@ class BuildReportReader:
     def __init__(self) -> None:
         self._units_finished = 0
         self._units_total = 0
+        # First reading seen with a clock, used as the origin for the rate. Not the
+        # start of the process: build-maia.sh reconciles ninja's counter across
+        # resumes, so a resumed build's first report can be at 200/240 having done
+        # none of it in this run. Crediting those units to this run's elapsed time
+        # implies a huge rate and reports a six-hour build as nearly done.
+        self._baseline_units: int | None = None
+        self._baseline_at = 0.0
 
     def read_line(self, line: str) -> bool:
         """Consume one line, returning whether it was a progress report.
@@ -187,14 +261,17 @@ class BuildReportReader:
         self._units_finished = max(self._units_finished, int(match.group(1)))
         return True
 
-    def progress(self) -> ReportedBuildProgress:
-        """Report the latest published counts, or no fraction if none were seen.
+    def progress(self, now: float | None = None) -> ReportedBuildProgress:
+        """Report the latest published counts, with a projection when ``now`` is given.
 
         The fraction is None until something has actually been reported. Zero would
         be a fabricated measurement -- "no work done" rather than "not known" -- and
         the install-percent calculation prefers any non-None fraction over its
         time-based fallback, so a fabricated zero would pin the bar at the bottom of
         the build band for the whole build.
+
+        ``now`` is supplied by the caller rather than read here so the projection
+        stays a pure function of the readings it was given.
         """
         if self._units_total <= 0:
             return ReportedBuildProgress(0, 0, None)
@@ -202,7 +279,21 @@ class BuildReportReader:
             units_finished=self._units_finished,
             units_total=self._units_total,
             fraction=min(self._units_finished / self._units_total, 1.0),
+            eta_seconds=None if now is None else self._eta_seconds(now),
         )
+
+    def _eta_seconds(self, now: float) -> int | None:
+        """Seconds of work left at the rate measured since the first reading."""
+        if self._baseline_units is None:
+            self._baseline_units = self._units_finished
+            self._baseline_at = now
+            return None
+        units_done = self._units_finished - self._baseline_units
+        elapsed = now - self._baseline_at
+        if units_done <= 0 or elapsed <= 0:
+            return None
+        remaining = max(0, self._units_total - self._units_finished)
+        return int(remaining * elapsed / units_done)
 
 
 def _is_source_path(candidate: str) -> bool:

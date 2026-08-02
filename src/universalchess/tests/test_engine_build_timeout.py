@@ -34,7 +34,7 @@ from universalchess.managers.engine_manager import (
     EngineManager,
     build_ceiling_seconds,
 )
-from universalchess.services.build_progress import ProcessInfo
+from universalchess.services.build_progress import ProcessInfo, ReportedBuildProgress
 
 # The budget Rodent IV had when the Pi Zero W install was killed mid-compile.
 _FIELD_FAILURE_TIMEOUT_SECONDS = 600
@@ -277,6 +277,85 @@ class TestStallDetection:
         required_margin = 10
 
         assert measured_worst_quiet_stretch_seconds * required_margin <= BUILD_STALL_SECONDS
+
+
+class TestAdaptiveCeiling:
+    """The backstop as the runner applies it, against a real subprocess.
+
+    Why this class exists: Maia's Pi Zero W build was killed at exactly its 14400s
+    ceiling while healthy, at module 177 of 259 with hours of work left. The stall
+    window had correctly stayed quiet the whole time. The ceiling was still a
+    multiple of a catalog estimate, so on a board six times slower than the one
+    that estimate came from it killed working builds -- the original bug, moved
+    from ten minutes to four hours.
+    """
+
+    def test_a_build_that_keeps_finishing_work_outlives_its_base_ceiling(self, tmp_path):
+        """Reported progress buys the time the base ceiling did not allow.
+
+        Why this test exists: this is the field failure end to end. The base
+        ceiling is one second and the command runs for three, so it survives only
+        if completing units extends the deadline.
+
+        How a regression manifests: a fixed deadline raises TimeoutExpired here
+        after one second, which is what the board did after four hours.
+        """
+        manager = _manager(tmp_path)
+        units = {"done": 0}
+
+        def read_reported_progress():
+            units["done"] += 1
+            return ReportedBuildProgress(
+                units_finished=units["done"], units_total=100,
+                fraction=units["done"] / 100, eta_seconds=30,
+            )
+
+        started = time.monotonic()
+        returncode, _tail = manager._run_monitored_command(
+            "sleep 3", tmp_path, on_line=lambda _line: None,
+            stall_seconds=30, ceiling_seconds=1,
+            read_processes=lambda root_pid: _live_process_table(root_pid, cpu_ticks=1),
+            read_reported_progress=read_reported_progress,
+        )
+
+        assert returncode == 0
+        assert time.monotonic() - started >= 3
+
+    def test_a_build_that_stops_finishing_work_is_still_killed(self, tmp_path):
+        """Extending the ceiling must not disable it.
+
+        Why this test exists: the ceiling's whole purpose is the one pathology no
+        liveness signal can detect -- a build consuming CPU forever without ever
+        completing. Here the process tree keeps burning CPU (so the stall window
+        never fires) and the reported fraction never moves, so no further time is
+        granted and the existing deadline must arrive.
+
+        How a regression manifests: granting time per sample rather than per unit
+        of finished work lets this ``sleep 60`` run to completion, and the test
+        fails by not raising.
+        """
+        manager = _manager(tmp_path)
+        ticks = {"value": 0}
+
+        def read_processes(root_pid):
+            ticks["value"] += 1000
+            return _live_process_table(root_pid, ticks["value"])
+
+        frozen = ReportedBuildProgress(
+            units_finished=50, units_total=100, fraction=0.5, eta_seconds=1,
+        )
+
+        started = time.monotonic()
+        with pytest.raises(subprocess.TimeoutExpired):
+            manager._run_monitored_command(
+                "sleep 60", tmp_path, on_line=lambda _line: None,
+                stall_seconds=30, ceiling_seconds=1, read_processes=read_processes,
+                read_reported_progress=lambda: frozen,
+            )
+
+        # Bounded by the single grant its one reported fraction earned, not by the
+        # 60s the command would otherwise run for.
+        assert time.monotonic() - started < 30
 
 
 class TestFailureMessage:

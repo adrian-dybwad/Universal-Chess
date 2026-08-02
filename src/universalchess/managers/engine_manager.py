@@ -72,10 +72,12 @@ from universalchess.services import apt_recovery
 from universalchess.services.apt_recovery import RecoveryOutcome
 from universalchess.services.build_memory import build_memory
 from universalchess.services.build_progress import (
+    BuildCeiling,
     BuildProgress,
     BuildProgressTracker,
     BuildReportReader,
     ProcessInfo,
+    ReportedBuildProgress,
     read_process_table,
 )
 from universalchess.services.apt_progress import AptPhase, AptProgressReader
@@ -155,6 +157,22 @@ _STAGE_VERBS = {
     InstallStage.DOWNLOADING: "Downloading",
     InstallStage.FETCHING_NETS: "Downloading",
 }
+
+
+def _best_outlook(
+    observed: BuildProgress,
+    reported: Optional[ReportedBuildProgress],
+) -> Tuple[Optional[float], Optional[int]]:
+    """Pick the reading to judge the build's remaining work by.
+
+    A build reporting its own unit counts is preferred over process observation
+    because it is exact where observation is inferential -- and for a toolchain
+    that cannot be watched per unit (Maia's ninja+clang) it is the only reading
+    there is. Falls back to observation, which is all most engines offer.
+    """
+    if reported is not None and reported.fraction is not None:
+        return reported.fraction, reported.eta_seconds
+    return observed.fraction, observed.eta_seconds
 
 
 def build_ceiling_seconds(engine: "EngineDefinition") -> int:
@@ -277,6 +295,18 @@ _DEPS_PHASE_TEXT = {
     AptPhase.UPDATING_INDEX: "refreshing package lists",
     AptPhase.INSTALLING: "installing packages",
 }
+
+
+def _describe_remaining(eta_seconds: Optional[int]) -> str:
+    """Trailing " - about Xm left", or nothing before there is a rate to project.
+
+    Says nothing rather than guessing: an install has no remaining time until the
+    build has finished enough units to measure a pace, and a fabricated number is
+    what the catalog estimate already was.
+    """
+    if eta_seconds is None:
+        return ""
+    return f" - about {_format_duration(eta_seconds)} left"
 
 
 def _format_duration(seconds: Optional[float]) -> str:
@@ -2387,6 +2417,7 @@ class EngineManager:
         ceiling_seconds: int = MIN_BUILD_CEILING_SECONDS,
         read_processes: Optional[Callable[[int], Mapping[int, ProcessInfo]]] = None,
         on_progress: Optional[Callable[[BuildProgress], None]] = None,
+        read_reported_progress: Optional[Callable[[], ReportedBuildProgress]] = None,
     ) -> Tuple[int, str]:
         """Run one long command, streaming combined stdout+stderr line-by-line.
 
@@ -2409,7 +2440,12 @@ class EngineManager:
           the limit that matters -- the previous fixed wall-clock budget killed a
           healthy 831s compile at 600s and let a hung Maia install run for 2 hours.
         - ``ceiling_seconds``: a backstop for a command that spins forever while
-          consuming CPU, which no progress signal can distinguish from work.
+          consuming CPU, which no progress signal can distinguish from work. It is
+          a starting point, not a budget: every time the build finishes more work
+          the deadline is pushed out past the projected finish (see
+          :class:`BuildCeiling`), because a fixed ceiling is a guess about the
+          hardware and killed a healthy Maia build at four hours. A build that
+          stops finishing work stops earning time, so the backstop still bites.
 
         On either, the whole process group is killed and ``TimeoutExpired`` is
         raised carrying the output tail, so the failure message can say what the
@@ -2454,23 +2490,29 @@ class EngineManager:
         tracker = BuildProgressTracker(
             root_pid=proc.pid, source_root=cwd, started_at=started_at
         )
-        ceiling_deadline = started_at + ceiling_seconds
+        ceiling = BuildCeiling(started_at=started_at, base_seconds=ceiling_seconds)
         last_sampled_at = 0.0
 
         while True:
             now = time.monotonic()
-            if now >= ceiling_deadline:
+            if now >= ceiling.deadline():
                 self._kill_process_group(proc)
                 raise subprocess.TimeoutExpired(
-                    cmd, ceiling_seconds, output="\n".join(tail)
+                    cmd, int(now - started_at), output="\n".join(tail)
                 )
             # Sampled about once a second: fine enough to catch short translation
             # units, cheap enough to be irrelevant beside a compile.
             if now - last_sampled_at >= 1.0:
                 last_sampled_at = now
                 tracker.record(sample_processes(proc.pid), now)
+                observed = tracker.progress(now)
                 if on_progress is not None:
-                    on_progress(tracker.progress(now))
+                    on_progress(observed)
+                fraction, eta_seconds = _best_outlook(
+                    observed,
+                    None if read_reported_progress is None else read_reported_progress(),
+                )
+                ceiling.note_progress(now, fraction, eta_seconds)
                 if now - tracker.last_activity_at >= stall_seconds:
                     self._kill_process_group(proc)
                     raise subprocess.TimeoutExpired(
@@ -2678,6 +2720,7 @@ class EngineManager:
         *,
         download_stage: InstallStage,
         default_stage: InstallStage = InstallStage.BUILDING,
+        build_reports: Optional[BuildReportReader] = None,
     ) -> Callable[[str], None]:
         """Return an ``on_line`` callback that reports whatever a line carries.
 
@@ -2707,9 +2750,14 @@ class EngineManager:
 
         Updates are throttled because each one persists install state to the SD card
         and build output is chatty.
+
+        ``build_reports`` may be supplied by a caller that also needs the reader's
+        readings -- the build path judges its ceiling by them -- so that both uses
+        read one reader rather than two that would each see half the output.
         """
         downloads = DownloadProgressReader()
-        build_reports = BuildReportReader()
+        if build_reports is None:
+            build_reports = BuildReportReader()
         last_update = {"at": 0.0}
         # Set once the producer announces a file, so later unrecognised output is
         # attributed to the fetch rather than to a build that has already finished.
@@ -2740,14 +2788,16 @@ class EngineManager:
                 return
 
             if is_build_report:
-                reported = build_reports.progress()
+                reported = build_reports.progress(now)
                 if reported.fraction is not None:
                     update_progress(
                         f"Building {display_name}: module "
                         f"{reported.units_finished} of {reported.units_total} "
-                        f"({reported.fraction * 100:.0f}%)",
+                        f"({reported.fraction * 100:.0f}%)"
+                        f"{_describe_remaining(reported.eta_seconds)}",
                         InstallStage.BUILDING,
                         build_fraction=reported.fraction,
+                        build_eta_seconds=reported.eta_seconds,
                     )
                     return
 
@@ -3044,10 +3094,15 @@ class EngineManager:
         # compiles lc0 and then fetches its weights on the same stream. Those bytes
         # report in FETCHING_NETS, which sits above BUILDING, because they arrive
         # after the compile rather than before it.
+        # Shared with the runner below: the same readings that move the bar are what
+        # the ceiling grants time against, so the two cannot disagree about how far
+        # along the build is.
+        build_reports = BuildReportReader()
         on_build_line = self._make_output_progress_updater(
             engine.display_name, update_progress,
             download_stage=InstallStage.FETCHING_NETS,
             default_stage=InstallStage.BUILDING,
+            build_reports=build_reports,
         )
         on_build_progress = self._make_observed_progress_updater(
             engine.display_name, update_progress
@@ -3062,6 +3117,9 @@ class EngineManager:
                     stall_seconds=BUILD_STALL_SECONDS,
                     ceiling_seconds=ceiling_seconds,
                     on_progress=on_build_progress,
+                    read_reported_progress=lambda: build_reports.progress(
+                        time.monotonic()
+                    ),
                 )
             except subprocess.TimeoutExpired as timeout:
                 self._install_error = self._describe_build_timeout(timeout)
