@@ -118,6 +118,10 @@ interface EngineInstallStatus {
   message: string;
   percent: number;
   interrupted: boolean;
+  // Remaining seconds projected from work the server actually observed (compiled
+  // translation units, downloaded bytes), not from a fixed per-engine estimate.
+  // Null before there is completed work to project from, and once the install ends.
+  eta_seconds: number | null;
   result: { success: boolean; error: string | null } | null;
 }
 
@@ -1383,6 +1387,7 @@ export function Settings() {
             stage: 'starting',
             message: t('settingsPage.enginesUi.statusStarting'),
             percent: 0,
+            eta_seconds: null,
             interrupted: false,
             result: null,
           });
@@ -1446,6 +1451,7 @@ export function Settings() {
           stage: 'starting',
           message: t('settingsPage.enginesUi.statusStarting'),
           percent: 0,
+          eta_seconds: null,
           interrupted: false,
           result: null,
         });
@@ -1585,6 +1591,7 @@ export function Settings() {
         stage: 'starting',
         message: t('settingsPage.customEngines.starting'),
         percent: 0,
+        eta_seconds: null,
         interrupted: false,
         result: null,
       });
@@ -2963,6 +2970,18 @@ function EngineCard({
             percent={status.percent}
             label={status.message || t('settingsPage.enginesUi.installingProgress', { name: engine.display_name })}
           />
+          {/* Projected from work already observed, so it is rounded to whole
+              minutes: showing seconds would imply a precision an extrapolation
+              does not have and would read as a jittering countdown. */}
+          {status.eta_seconds !== null && (
+            <span className="engine-install-note">
+              {status.eta_seconds < 60
+                ? t('settingsPage.enginesUi.timeRemainingUnderMinute')
+                : t('settingsPage.enginesUi.timeRemaining', {
+                    count: Math.round(status.eta_seconds / 60),
+                  })}
+            </span>
+          )}
         </div>
       )}
       {!isSystem && !engine.installed && !engine.supported && engine.unsupported_reason && (

@@ -77,6 +77,33 @@ def _is_apt_install(cmd) -> bool:
     )
 
 
+def _record_commands(monkeypatch, manager):
+    """Record every command the install runs, letting only the deps install through.
+
+    The dependency install streams through ``_run_monitored_command`` so its output
+    can drive the UI; it is no longer a captured ``subprocess.run``. Both seams are
+    intercepted here so "no other command was reached" still means exactly that --
+    watching only one of them would let a clone slip past unnoticed.
+    """
+    seen = []
+
+    def fake_monitored(cmd, cwd, on_line, **kwargs):
+        seen.append(cmd)
+        if _is_apt_install(cmd):
+            return 0, ""
+        raise AssertionError(f"build must not proceed past missing deps; ran: {cmd}")
+
+    def fake_run(cmd, **kwargs):
+        seen.append(cmd)
+        raise AssertionError(f"build must not proceed past missing deps; ran: {cmd}")
+
+    monkeypatch.setattr(manager, "_run_monitored_command", fake_monitored)
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.subprocess.run", fake_run
+    )
+    return seen
+
+
 def _make_engine(deps):
     """A throwaway source-built engine carrying the given apt dependencies."""
     return EngineDefinition(
@@ -158,17 +185,7 @@ def test_install_from_source_aborts_when_dependency_missing(monkeypatch, tmp_pat
     manager.build_tmp = Path(tmp_path) / "build"
     engine = _make_engine(["build-essential", "git", "bc"])
 
-    seen = []
-
-    def fake_run(cmd, **kwargs):
-        seen.append(cmd)
-        if _is_apt_install(cmd):
-            return _FakeProc(returncode=0, stdout="", stderr="")
-        raise AssertionError(f"build must not proceed past missing deps; ran: {cmd}")
-
-    monkeypatch.setattr(
-        "universalchess.managers.engine_manager.subprocess.run", fake_run
-    )
+    seen = _record_commands(monkeypatch, manager)
     # bc remains missing after the (mocked) apt install.
     monkeypatch.setattr(manager, "_missing_packages", lambda pkgs: ["bc"])
 
@@ -203,17 +220,7 @@ def test_install_from_source_retries_apt_once_after_fix_broken_then_aborts(monke
     manager.build_tmp = Path(tmp_path) / "build"
     engine = _make_engine(["build-essential", "git", "bc"])
 
-    seen = []
-
-    def fake_run(cmd, **kwargs):
-        seen.append(cmd)
-        if _is_apt_install(cmd):
-            return _FakeProc(returncode=0, stdout="", stderr="")
-        raise AssertionError(f"build must not proceed past missing deps; ran: {cmd}")
-
-    monkeypatch.setattr(
-        "universalchess.managers.engine_manager.subprocess.run", fake_run
-    )
+    seen = _record_commands(monkeypatch, manager)
     monkeypatch.setattr(manager, "_missing_packages", lambda pkgs: ["bc"])
 
     result = manager._install_from_source(engine, lambda *a, **k: None)

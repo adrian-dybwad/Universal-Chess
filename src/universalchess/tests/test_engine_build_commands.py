@@ -7,7 +7,10 @@ regression can be guarded.
 """
 
 import re
+import subprocess  # nosec B404  # runs the repo's own build script to verify its real output
 from pathlib import Path
+
+import pytest
 
 import universalchess.managers.engine_manager as engine_manager_module
 from universalchess.managers.engine_manager import (
@@ -18,6 +21,7 @@ from universalchess.managers.engine_manager import (
     _build_parallelism,
     _mem_total_mb,
 )
+from universalchess.services.build_progress import BuildReportReader
 
 
 def _build_script(engine_name: str) -> str:
@@ -36,6 +40,233 @@ def _maia_script_packages() -> set:
     match = re.search(r'^REQUIRED_PACKAGES="([^"]*)"', text, re.MULTILINE)
     assert match, "no REQUIRED_PACKAGES assignment in build-maia.sh"
     return set(match.group(1).split())
+
+
+class TestMaiaProgressReporting:
+    """The progress contract between build-maia.sh and the installer's parser."""
+
+    @staticmethod
+    def _emit(completed: int, total: int) -> str:
+        """Run build-maia.sh's real progress emitter and capture what it prints.
+
+        Sources the script and calls the function rather than reproducing its logic,
+        so this exercises the shipped shell code. Captured output is a pipe, not a
+        terminal, which is exactly the installer's situation and selects the
+        machine-readable branch.
+        """
+        script = SCRIPTS_DIR / "build-maia.sh"
+        # `trap - EXIT` clears the script's cleanup trap. The trap belongs to a real
+        # build and fires when this sourced shell exits, printing its own log lines;
+        # leaving it armed would mix that output into the progress being asserted.
+        result = subprocess.run(  # noqa: S603  # nosec B603  # runs the repo's own script through a resolved interpreter, with no external input
+            ["/bin/bash", "-c",
+             f'source "{script}"; trap - EXIT; '
+             f"report_build_progress {completed} {total}"],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    def test_piped_progress_is_parsed_by_the_installers_reader(self):
+        """The script's real output, through a pipe, drives the real reader.
+
+        Why this test exists: the format contract is checked textually elsewhere, but
+        that cannot catch the failure that actually occurred -- output written only
+        with a carriage return never reaches a line-oriented reader. Running the
+        shipped emitter with its stdout captured reproduces the installer's exact
+        conditions and proves the whole producer-to-consumer path, across two
+        languages, works end to end.
+
+        How a regression manifests: the emitter takes its terminal branch under a
+        pipe, or changes format, and the reader parses nothing -- so a 45-60 minute
+        Maia install silently falls back to a time estimate.
+        """
+        reader = BuildReportReader()
+        recognised = [
+            reader.read_line(line)
+            for line in self._emit(130, 259).splitlines()
+            if line.strip()
+        ]
+
+        assert any(recognised), "no line the reader recognised"
+        assert reader.progress().units_finished == 130
+        assert reader.progress().units_total == 259
+        assert reader.progress().fraction == pytest.approx(130 / 259)
+
+    def test_piped_progress_rises_monotonically_across_a_build(self):
+        """Successive readings drive the fraction forward, never backward.
+
+        Why this test exists: the counts are derived arithmetically from ninja's
+        per-invocation numbers plus a persisted total, so this checks the emitted
+        sequence a real build produces actually increases through the reader rather
+        than only the endpoints being right.
+
+        How a regression manifests: the emitted count or total is computed wrongly at
+        some point in the range and the bar stalls or retreats mid-build.
+        """
+        reader = BuildReportReader()
+        fractions = []
+        for completed in (0, 1, 65, 130, 258, 259):
+            for line in self._emit(completed, 259).splitlines():
+                reader.read_line(line)
+            fractions.append(reader.progress().fraction)
+
+        assert fractions == sorted(fractions)
+        assert fractions[-1] == pytest.approx(1.0)
+
+    def test_a_zero_total_publishes_nothing(self):
+        """No total established yet means nothing is reported, not a division.
+
+        Why this test exists: the emitter divides by the total to render a percentage.
+        A zero would abort the build under `set -e` on a purely cosmetic logging path,
+        turning a progress bug into a failed install.
+
+        How a regression manifests: the emitter exits non-zero (asserted inside
+        _emit) or prints a nonsense reading.
+        """
+        assert self._emit(0, 0).strip() == ""
+        assert BuildReportReader().progress().fraction is None
+
+    @staticmethod
+    def _shell(arch: str, snippet: str) -> subprocess.CompletedProcess:
+        """Run a snippet against the real script with `uname -m` reporting `arch`.
+
+        Shadowing uname with a shell function is what allows the shipped
+        architecture logic to be exercised for boards not on hand. The function is
+        defined after sourcing because the script only calls uname from inside its
+        functions, never at load time.
+        """
+        script = SCRIPTS_DIR / "build-maia.sh"
+        return subprocess.run(  # noqa: S603  # nosec B603  # runs the repo's own script through a resolved interpreter, with no external input
+            ["/bin/bash", "-c",
+             f'source "{script}"; trap - EXIT; '
+             f'uname() {{ echo "{arch}"; }}; {snippet}'],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+
+    @pytest.mark.parametrize(("arch", "expected"), [
+        ("armv6l", True),
+        ("armv7l", True),
+        ("aarch64", True),
+        ("x86_64", True),
+        ("riscv64", False),
+    ])
+    def test_architecture_gate_accepts_the_boards_this_project_targets(self, arch, expected):
+        """ARMv6 must pass the gate, since Maia is offered on those boards.
+
+        Why this test exists: the gate previously rejected armv6l, while the engine
+        catalog placed no architecture restriction on Maia. A Pi Zero W user was
+        therefore offered Maia, waited through dependency installation, and got
+        "Unsupported architecture: armv6l". The catalog and the script have to agree
+        on where Maia can be installed.
+
+        How a regression manifests: armv6l falls through to the catch-all branch and
+        the install dies before cloning.
+        """
+        result = self._shell(arch, "check_architecture")
+
+        assert (result.returncode == 0) is expected, result.stdout + result.stderr
+
+    @pytest.mark.parametrize(("arch", "targets_armv6"), [
+        ("armv6l", True),
+        ("armv7l", False),
+        ("aarch64", False),
+    ])
+    def test_clang_is_aimed_at_the_actual_cpu_on_armv6(self, arch, targets_armv6):
+        """On ARMv6 the compiler must be told to target ARMv6.
+
+        Why this test exists: Raspbian's clang defaults to ``__ARM_ARCH 7`` even on
+        a Pi Zero W, so every binary it produces -- including the trivial one meson
+        compiles and *runs* as its configure-time sanity check -- dies with SIGILL
+        on that hardware. The build therefore failed at "Executables created by cpp
+        compiler clang++ are not runnable" before compiling a single line of lc0.
+        Raspbian's gcc targets armv6 by default, which is why every other engine
+        builds there and only Maia, which uses clang, broke.
+
+        How a regression manifests: dropping these flags returns the install to
+        failing during meson setup with a message that names the compiler rather
+        than the architecture, roughly two minutes into a Maia install.
+        """
+        result = self._shell(arch, "arch_meson_options")
+
+        assert result.returncode == 0, result.stderr
+        # Both languages: meson applies each to its own sanity check, and abseil
+        # compiles C as well as C++.
+        for option in ("-Dcpp_args=", "-Dc_args="):
+            targeted = any(
+                line.startswith(option) and "arm1176jzf-s" in line
+                for line in result.stdout.splitlines()
+            )
+            assert targeted is targets_armv6, f"{option} on {arch}: {result.stdout!r}"
+
+    @pytest.mark.parametrize(("arch", "neon_disabled"), [
+        ("armv6l", True),
+        ("armv7l", False),
+        ("aarch64", False),
+    ])
+    def test_neon_is_disabled_only_where_the_cpu_lacks_it(self, arch, neon_disabled):
+        """ARMv6 must build without NEON; every other ARM must keep it.
+
+        Why this test exists: lc0's `neon` meson option defaults to true and its
+        meson.build adds -mfpu=neon unconditionally when set. The guard it uses only
+        filters flags the compiler rejects, and clang accepts -mfpu=neon while
+        targeting ARMv6 -- so NEON instructions are emitted for the ARM1176JZF-S,
+        which has no NEON unit. The build succeeds and the binary dies with "Illegal
+        instruction" on its first evaluation (upstream lc0 issue #1551). Disabling it
+        everywhere would instead cost real speed on ARMv7 and ARMv8, which do have
+        NEON, so this must be conditional rather than blanket.
+
+        How a regression manifests: armv6l loses the flag and Maia installs
+        "successfully" but crashes when it plays; or ARMv7/ARMv8 gain it and every
+        capable board silently loses vector performance.
+        """
+        result = self._shell(arch, "arch_meson_options")
+
+        assert result.returncode == 0, result.stderr
+        assert ("-Dneon=false" in result.stdout) is neon_disabled
+
+    @pytest.mark.parametrize(("arch", "lto_disabled"), [
+        ("armv6l", True),
+        ("armv7l", True),
+        ("aarch64", False),
+    ])
+    def test_lto_stays_disabled_on_every_32_bit_arm(self, arch, lto_disabled):
+        """The existing 32-bit LTO workaround must still cover ARMv6.
+
+        Why this test exists: whole-program LTO of lc0 plus abseil exhausts the ~3 GB
+        virtual address space on 32-bit ARM and the linker segfaults. ARMv6 is 32-bit
+        and so needs the same workaround; adding it to the gate must not accidentally
+        route it down the 64-bit path.
+
+        How a regression manifests: armv6l keeps LTO on and the build fails at the
+        final link after hours of compiling -- the most expensive possible failure.
+        """
+        result = self._shell(arch, "arch_meson_options")
+
+        assert result.returncode == 0, result.stderr
+        assert ("-Db_lto=false" in result.stdout) is lto_disabled
+        # The abseil subproject must drop LTO too, or LTO bitcode survives in its
+        # archives and re-triggers LTO codegen at link time despite the main override.
+        assert ("-Dabseil-cpp:b_lto=false" in result.stdout) is lto_disabled
+
+    def test_published_progress_is_newline_terminated(self):
+        """Each reading must arrive as its own complete line.
+
+        Why this test exists: this is the specific defect that made the script's
+        correct counts useless. The installer iterates newline-separated lines, so a
+        reading written only with a carriage return is never delivered -- it
+        accumulates invisibly until some unrelated newline arrives. Asserting on the
+        captured bytes catches that where a format check cannot.
+
+        How a regression manifests: output comes back with no trailing newline, or
+        several readings share one line, and the installer sees nothing until the
+        build ends.
+        """
+        emitted = self._emit(130, 259)
+
+        assert emitted.endswith("\n")
+        assert "\r" not in emitted
+        assert len([line for line in emitted.splitlines() if line.strip()]) == 1
 
 
 class TestRodentIVBuildCommand:
@@ -547,28 +778,11 @@ class TestMaiaBuildCommand:
         assert "Reusing existing lc0 checkout" in content
         assert "meson setup --reconfigure" in content
 
-    def test_lto_disabled_on_32bit_to_avoid_linker_segfault(self):
-        """build-maia.sh must disable LTO on 32-bit ARM, where the LTO link segfaults.
-
-        Why this test exists: lc0 pins ``b_lto=true``, so the release build does a
-        whole-program LTO link of lc0 + abseil. On 32-bit (arm-linux-gnueabihf) that
-        link exhausts the ~3 GB virtual address-space ceiling and clang's linker
-        dies with a Segmentation fault -- every unit compiles, only the final link
-        fails, and swap cannot help an address-space limit. The fix gates
-        ``-Db_lto=false`` on a non-aarch64 ``uname -m``; 64-bit keeps LTO.
-
-        How the regression manifests: dropping the gate (or the b_lto override)
-        restores ``-flto`` on 32-bit and the install fails at "[1/1] Linking target
-        lc0" with "linker command failed due to signal", after a full ~30-60 min
-        compile -- the worst possible place to fail.
-        """
-        content = (SCRIPTS_DIR / "build-maia.sh").read_text()
-        # LTO is gated on the 32-bit (non-aarch64) architecture, not unconditional.
-        assert '"$(uname -m)" != "aarch64"' in content
-        # Both the main project and the abseil subproject must drop LTO so no LTO
-        # bitcode survives in abseil's archives to re-trigger LTO codegen at link.
-        assert "-Db_lto=false" in content
-        assert "-Dabseil-cpp:b_lto=false" in content
+    # The LTO gate was previously pinned here by matching the script's source text.
+    # It is now covered by executing arch_meson_options across each architecture in
+    # TestMaiaProgressReporting, which checks the behaviour rather than the wording
+    # and caught nothing the textual version did while surviving the refactor that
+    # moved the logic into a function.
 
     def test_resume_progress_is_cumulative_not_per_invocation(self):
         """Resumed Maia builds must show cumulative progress, not ninja's per-run count.
@@ -684,7 +898,7 @@ class TestRecklessBuildCommand:
         """rustup install, cargo-env sourcing, and the build must be one command.
 
         Why this test exists: each entry in ``build_commands`` runs in its own
-        subprocess (see EngineManager._run_build_command), so a PATH exported by a
+        subprocess (see EngineManager._run_monitored_command), so a PATH exported by a
         separate rustup step would not reach a later build step -- the build would
         die with "cargo: command not found". The bootstrap, the
         ``. $HOME/.cargo/env`` that puts cargo on PATH, and the ``cargo rustc``

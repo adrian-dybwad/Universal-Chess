@@ -1,0 +1,37 @@
+{
+  "engine": "ct800",
+  "phase": "failed",
+  "returncode": 1,
+  "build_command": "cd source/application-uci && mkdir -p output && bash make_ct800_raspi.sh && mv output/CT800_* output/ct800",
+  "git_ref": null,
+  "parallelism": 1,
+  "clone_seconds": 0,
+  "build_seconds": 478,
+  "build_memory_held": true,
+  "units_compiled": 8,
+  "units_observed": 8,
+  "units_total": 8,
+  "total_is_exact": true,
+  "monitoring_available": true,
+  "peak_build_rss_mb": 78,
+  "min_mem_available_mb": 131,
+  "min_swap_free_mb": 3402,
+  "last_output_line": "mv: cannot stat 'output/CT800_*': No such file or directory",
+  "hardware": {
+    "pi_model": "Raspberry Pi Zero W Rev 1.1",
+    "revision": "9000c1",
+    "cpu_model_name": "ARMv6-compatible processor rev 7 (v6l)",
+    "machine": "armv6l",
+    "kernel": "6.18.34+rpt-rpi-v6",
+    "cores": 1,
+    "memory": {
+      "MemTotal": 426,
+      "MemAvailable": 165,
+      "SwapTotal": 3670,
+      "SwapFree": 3402
+    }
+  },
+  "finished_at": 1785643786.4391081,
+  "max_gap_seconds_cpu_only": 7.0,
+  "max_gap_seconds_with_io": 4.4
+}

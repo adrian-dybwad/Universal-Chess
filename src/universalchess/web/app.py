@@ -5437,8 +5437,11 @@ def _run_engine_install(engine_name: str, ref: Optional[str] = None):
     """
     from universalchess.managers.engine_manager import EngineManager
 
-    def on_stage(stage, message, fraction):
-        _engine_install_store.update(stage, message, fraction)
+    def on_stage(stage, message, fraction, **measurements):
+        # Measurements are passed straight through: naming them here meant this
+        # signature had to be updated in step with every new reading the installer
+        # produces, and missing one raised a TypeError that killed the install.
+        _engine_install_store.update(stage, message, fraction, **measurements)
 
     try:
         engine_manager = EngineManager()
@@ -5477,8 +5480,11 @@ def _run_engine_repair(engine_name: str):
     """
     from universalchess.managers.engine_manager import EngineManager
 
-    def on_stage(stage, message, fraction):
-        _engine_install_store.update(stage, message, fraction)
+    def on_stage(stage, message, fraction, **measurements):
+        # Measurements are passed straight through: naming them here meant this
+        # signature had to be updated in step with every new reading the installer
+        # produces, and missing one raised a TypeError that killed the install.
+        _engine_install_store.update(stage, message, fraction, **measurements)
 
     try:
         engine_manager = EngineManager()

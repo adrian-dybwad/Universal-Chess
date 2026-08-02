@@ -1,0 +1,37 @@
+{
+  "engine": "rodentIV",
+  "phase": "succeeded",
+  "returncode": 0,
+  "build_command": "cd sources && LDFLAGS='-s -lm'; case \"$(uname -m)\" in arm|armv*) LDFLAGS=\"$LDFLAGS -Wl,--no-as-needed -latomic\";; esac; make EXENAME=../rodentIV LDFLAGS=\"$LDFLAGS\"",
+  "git_ref": null,
+  "parallelism": 1,
+  "clone_seconds": 0,
+  "build_seconds": 811,
+  "build_memory_held": true,
+  "units_compiled": 33,
+  "units_observed": 33,
+  "units_total": 33,
+  "total_is_exact": false,
+  "monitoring_available": true,
+  "peak_build_rss_mb": 97,
+  "min_mem_available_mb": 132,
+  "min_swap_free_mb": 3413,
+  "last_output_line": "g++ -s -lm -Wl,--no-as-needed -latomic -g -w -Wfatal-errors -pipe -DNDEBUG -O3 -fno-rtti -finline-functions -fprefetch-loop-arrays -DBOOKPATH=/usr/share/rodentIV -std=c++14 src/*.cpp -o ../rodentIV",
+  "hardware": {
+    "pi_model": "Raspberry Pi Zero W Rev 1.1",
+    "revision": "9000c1",
+    "cpu_model_name": "ARMv6-compatible processor rev 7 (v6l)",
+    "machine": "armv6l",
+    "kernel": "6.18.34+rpt-rpi-v6",
+    "cores": 1,
+    "memory": {
+      "MemTotal": 426,
+      "MemAvailable": 161,
+      "SwapTotal": 3670,
+      "SwapFree": 3413
+    }
+  },
+  "finished_at": 1785644620.6471474,
+  "max_gap_seconds_cpu_only": 3.1,
+  "max_gap_seconds_with_io": 3.1
+}

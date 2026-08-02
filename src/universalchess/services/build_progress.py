@@ -1,0 +1,612 @@
+"""Real progress for a source build, read from the compiler's own processes.
+
+Why this exists: a build is the longest phase of an engine install and the least
+willing to say so. Rodent IV compiles with one ``g++ ... src/*.cpp`` invocation and
+``-w``, which on a Raspberry Pi Zero W means 13m31s of work and exactly one line
+of output (measured). Output can therefore drive neither a progress bar nor a hang
+detector, and an install that guessed from elapsed time was killed mid-compile at
+95% because the guess ran out before the compiler did.
+
+What is observable: compiler drivers list every input on their command line, and
+they fork one backend process (``cc1``, ``cc1plus``, ``rustc``, Go's ``compile``)
+per translation unit which names the file it is working on. Sampling the build's
+process tree therefore yields an exact denominator and a real numerator for a
+build that prints nothing.
+
+Three things measured on the board shaped this design:
+
+1. Units are missed by sampling. Claudia's 14-unit build finished in 83s and only
+   six units were ever caught in a sample. Because a driver processes inputs in
+   the order listed, seeing unit N proves the earlier ones are done, which
+   recovers the rest exactly.
+2. Units are wildly unequal. CT800's generated ``bookdata.c`` is 828875 bytes,
+   4.4x the next largest file, and its single unit outlasted the other seven
+   combined. Counting units equally pins the bar near its ceiling for minutes, so
+   units are weighted by source size.
+3. A long unit is loud, not silent. Across 21 minutes of compiling, the longest
+   stretch with no signal of any kind was 7.0s. Liveness therefore comes from
+   consumed CPU and moved bytes as well as units and output, which keeps a build
+   inside one four-minute unit -- or blocked on slow SD-card I/O -- from being
+   mistaken for a wedged one.
+
+Structure: everything here is pure and takes an injected process table, so it is
+testable without ``/proc`` or a live compiler. Reading ``/proc`` is isolated in
+:func:`read_process_table`, the only function that touches the system.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+# Compiler front ends: invoked once per file by a makefile, or once with every
+# input by a single-invocation build. More than one input means the command line
+# declares the whole unit set.
+_COMPILER_DRIVERS = frozenset({"gcc", "g++", "cc", "c++", "clang", "clang++", "cc1obj"})
+
+# Per-unit backends. These name exactly the file being compiled, which is what
+# makes the current unit observable. ``compile`` is Go's; ``rustc`` is Rust's.
+_COMPILER_BACKENDS = frozenset({"cc1", "cc1plus", "rustc", "compile"})
+
+# Extensions treated as translation units.
+_SOURCE_SUFFIXES = (".c", ".cc", ".cpp", ".cxx", ".c++", ".cu", ".rs", ".go", ".S", ".s")
+
+# Options whose following argument is a path and must not be read as an input.
+#
+# The -dump*/-aux* group is what the GCC driver adds when it invokes cc1plus, and it
+# is the reason this set has to cover more than the user-facing options: cc1plus
+# receives `-dumpbase eval.cpp` -- the unit it is already compiling, named again
+# without its directory -- so omitting these counted every unit twice. A 32-file
+# Rodent IV build reported 65 units on the Pi Zero W.
+_OPTIONS_TAKING_A_VALUE = frozenset({
+    "-o", "-I", "-include", "-isystem", "-iquote", "-MF", "-MT", "-MQ", "-x",
+    "-aux-info", "--out-dir", "-L", "-idirafter",
+    "-dumpbase", "-dumpbase-ext", "-dumpdir", "-auxbase", "-auxbase-strip",
+    "-imultilib", "-imultiarch",
+    # Separated macro forms: `-D NDEBUG` and `-D BOOKPATH=/usr/share/rodentIV`.
+    "-D", "-U", "-A",
+})
+
+# Observed progress is capped just below completion: the last unit finishing is not
+# the build finishing, because linking follows and is not instant on this hardware.
+# Reporting 1.0 would drive the bar to its ceiling and hold there, which is the
+# frozen-bar symptom this work removes.
+_MAX_OBSERVED_FRACTION = 0.99
+
+# Completed share required before a remaining-time projection is published. Below
+# this, elapsed time is dominated by fixed startup costs rather than by compiling,
+# so the extrapolation is wildly high: measured on the board, a Rodent IV build that
+# took about 11 minutes projected 5689s remaining when 0.5% done, then 2054s, before
+# settling near 650s. Withholding the number until there is something to extrapolate
+# from is more useful than showing one that immediately contradicts itself.
+_MIN_FRACTION_FOR_ETA = 0.05
+
+# Indices into /proc/<pid>/stat, counted after the comm field (which is skipped
+# because a process name may itself contain spaces or brackets). The fields run:
+# state, ppid, pgrp, session, tty, tpgid, flags, minflt, cminflt, majflt, cmajflt,
+# utime, stime -- so ppid is at 1 and the two CPU counters at 11 and 12.
+_STAT_PPID_INDEX = 1
+_STAT_UTIME_INDEX = 11
+_STAT_STIME_INDEX = 12
+_STAT_FIELDS_THROUGH_STIME = _STAT_STIME_INDEX + 1
+
+
+@dataclass(frozen=True)
+class ProcessInfo:
+    """One sampled process. ``cpu_ticks`` and ``io_bytes`` are cumulative counters."""
+
+    pid: int
+    ppid: int
+    comm: str
+    args: tuple[str, ...] = ()
+    cpu_ticks: int = 0
+    io_bytes: int = 0
+    # The process's own working directory, which is where its relative input paths
+    # resolve. Needed because a build command commonly navigates before compiling
+    # (Rodent IV runs "cd sources && make"), so the directory the installer knows
+    # about is not the one the compiler names its files from. None when unreadable.
+    cwd: str | None = None
+
+
+@dataclass(frozen=True)
+class BuildProgress:
+    """A progress reading. ``fraction`` is None when the build is unobservable."""
+
+    observed: bool
+    fraction: float | None
+    units_finished: int
+    units_total: int | None
+    total_is_exact: bool
+    current_unit: str | None
+    eta_seconds: int | None
+    # Seconds the current unit has been compiling. A compiler reports nothing about
+    # its progress through one translation unit, so this is the only measurable
+    # thing about the module in flight -- and it is what tells a slow one (CT800's
+    # 829 KB bookdata.c) apart from a wedged one. None when no unit is observable.
+    current_unit_seconds: float | None = None
+
+
+# Sentinel a build script uses to publish its own exact unit counts. Newline
+# terminated by the producer, because the installer reads its output line by line.
+_REPORTED_UNITS_PATTERN = re.compile(r"^UC_BUILD_PROGRESS\s+units=(\d+)/(\d+)\s*$")
+
+
+@dataclass(frozen=True)
+class ReportedBuildProgress:
+    """Unit counts a build published about itself, and the fraction they imply."""
+    units_finished: int
+    units_total: int
+    fraction: float | None
+
+
+class BuildReportReader:
+    """Exact progress read from a build that reports its own unit counts.
+
+    Process observation cannot cover every toolchain. Maia builds lc0 through
+    meson/ninja with clang, where ninja invokes the compiler once per file (so no
+    command line ever declares the whole unit set) and clang compiles in-process
+    rather than forking a named backend (so no per-unit process is ever visible).
+    Nothing in that build's process tree reveals how far along it is.
+
+    What the build does know is exact: ninja counts its edges. ``build-maia.sh``
+    already reconciles that count against resumes -- ninja's own ``[current/total]``
+    is per-invocation, so a resumed build restarts at zero against a smaller total --
+    and publishes the reconciled figure on a sentinel line. Parsing that line is
+    therefore both more accurate than observation and the only option here.
+
+    Only the sentinel is parsed, deliberately. Ninja's raw ``[14/245]`` is ignored
+    because reading it would duplicate the resume accounting the script has already
+    done, and a second implementation of it is a second chance to get it wrong.
+    """
+
+    def __init__(self) -> None:
+        self._units_finished = 0
+        self._units_total = 0
+
+    def read_line(self, line: str) -> bool:
+        """Consume one line, returning whether it was a progress report.
+
+        Reports that would move the count backwards are ignored rather than applied:
+        the publisher derives its figure arithmetically across resumes, and a bar
+        that retreats reads as a fault.
+        """
+        match = _REPORTED_UNITS_PATTERN.match(line.strip())
+        if match is None:
+            return False
+        total = int(match.group(2))
+        if total <= 0:
+            # The total is a denominator; a zero one is a publisher bug, and treating
+            # it as data would either divide by zero or assert completion.
+            return False
+        self._units_total = total
+        self._units_finished = max(self._units_finished, int(match.group(1)))
+        return True
+
+    def progress(self) -> ReportedBuildProgress:
+        """Report the latest published counts, or no fraction if none were seen.
+
+        The fraction is None until something has actually been reported. Zero would
+        be a fabricated measurement -- "no work done" rather than "not known" -- and
+        the install-percent calculation prefers any non-None fraction over its
+        time-based fallback, so a fabricated zero would pin the bar at the bottom of
+        the build band for the whole build.
+        """
+        if self._units_total <= 0:
+            return ReportedBuildProgress(0, 0, None)
+        return ReportedBuildProgress(
+            units_finished=self._units_finished,
+            units_total=self._units_total,
+            fraction=min(self._units_finished / self._units_total, 1.0),
+        )
+
+
+def _is_source_path(candidate: str) -> bool:
+    """Whether ``candidate`` names a compilable source file.
+
+    Tests the parsed suffix rather than the trailing characters of the string. The
+    two differ for a bare extension: ``".cpp"`` ends with ``.cpp`` but is a name
+    with no suffix, and GCC passes exactly that as the value of ``-dumpbase-ext``.
+    A string test admitted it as a phantom unit.
+    """
+    return Path(candidate).suffix in _SOURCE_SUFFIXES
+
+
+def _source_arguments(args: Sequence[str]) -> list[str]:
+    """Source files named on a command line, in the order given, without repeats.
+
+    Order is load-bearing: it is what lets a unit seen mid-build imply that the
+    units before it are finished. Options that take a path are skipped so an
+    ``-o out.c`` or an include directory is never counted as an input.
+    """
+    sources: list[str] = []
+    skip_next = False
+    for arg in args[1:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in _OPTIONS_TAKING_A_VALUE:
+            skip_next = True
+            continue
+        if arg.startswith("-"):
+            continue
+        if _is_source_path(arg) and arg not in sources:
+            sources.append(arg)
+    return sources
+
+
+def _descendants(root_pid: int, table: Mapping[int, ProcessInfo]) -> list[ProcessInfo]:
+    """Every process descended from ``root_pid``, excluding the root itself.
+
+    The build runs under a shell that spawns make, which spawns the driver, which
+    spawns the backend, so the process of interest is several levels down. Walking
+    by ancestry (rather than matching on process name) keeps a compile belonging to
+    the app, or to a second install, out of this build's numbers.
+    """
+    children: dict[int, list[int]] = {}
+    for process in table.values():
+        children.setdefault(process.ppid, []).append(process.pid)
+
+    found: list[ProcessInfo] = []
+    stack = list(children.get(root_pid, ()))
+    while stack:
+        pid = stack.pop()
+        process = table.get(pid)
+        if process is None:
+            continue
+        found.append(process)
+        stack.extend(children.get(pid, ()))
+    return found
+
+
+def read_process_table() -> dict[int, ProcessInfo]:
+    """Sample every readable process from ``/proc``.
+
+    The only function here that touches the system. Returns an empty table where
+    ``/proc`` is absent or unreadable, which callers treat as "unobservable" and
+    fall back on rather than as "nothing is happening".
+    """
+    table: dict[int, ProcessInfo] = {}
+    try:
+        entries = [entry.name for entry in Path("/proc").iterdir()]
+    except OSError:
+        return table
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        process = _read_one_process(int(entry))
+        if process is not None:
+            table[process.pid] = process
+    return table
+
+
+def _read_one_process(pid: int) -> ProcessInfo | None:
+    """Read one process's identity and counters, or None if it has exited."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
+        return None
+    close = stat.rfind(")")
+    open_paren = stat.find("(")
+    if close == -1 or open_paren == -1:
+        return None
+    comm = stat[open_paren + 1:close]
+    fields = stat[close + 2:].split()
+    if len(fields) < _STAT_FIELDS_THROUGH_STIME:
+        return None
+    try:
+        ppid = int(fields[_STAT_PPID_INDEX])
+        cpu_ticks = int(fields[_STAT_UTIME_INDEX]) + int(fields[_STAT_STIME_INDEX])
+    except ValueError:
+        return None
+    return ProcessInfo(
+        pid=pid,
+        ppid=ppid,
+        comm=comm,
+        args=tuple(_read_cmdline(pid)),
+        cpu_ticks=cpu_ticks,
+        io_bytes=_read_io_bytes(pid),
+        cwd=_read_cwd(pid),
+    )
+
+
+def _read_cwd(pid: int) -> str | None:
+    """Resolve ``pid``'s working directory, or None if it cannot be read.
+
+    Unreadable for a process owned by another user, and for one that exits between
+    the scan and this read; both are ordinary, so callers fall back to the directory
+    the build was launched in rather than treating it as an error.
+
+    Uses readlink rather than ``resolve()`` deliberately. ``resolve()`` does not
+    raise when it cannot follow a link -- it returns the path it was given -- so on
+    a board where most processes belong to root it reported success for every one of
+    them and handed back "/proc/<pid>/cwd" as though that were a directory. A
+    fabricated base is worse than none, because it silently misdirects every source
+    path resolved against it instead of falling back.
+    """
+    try:
+        return str(Path(f"/proc/{pid}/cwd").readlink())
+    except OSError:
+        return None
+
+
+def _read_cmdline(pid: int) -> list[str]:
+    """Argument list for ``pid``; empty for a kernel thread or an exited process."""
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return []
+    return [part.decode("utf-8", "replace") for part in raw.split(b"\x00") if part]
+
+
+def _read_io_bytes(pid: int) -> int:
+    """Bytes ``pid`` has read and written, 0 when unreadable.
+
+    Needed because CPU time does not advance while a process is blocked. On this
+    board iowait is a large share of real time, and a repair command is a download
+    that is almost entirely waiting -- both would look wedged on CPU alone.
+    """
+    total = 0
+    try:
+        with Path(f"/proc/{pid}/io").open(encoding="utf-8") as handle:
+            for line in handle:
+                key, _, value = line.partition(":")
+                if key in ("rchar", "wchar"):
+                    total += int(value.strip())
+    except (OSError, ValueError):
+        return 0
+    return total
+
+
+@dataclass
+class _Counter:
+    """A cumulative total over a changing set of processes, made monotonic.
+
+    A plain sum over live processes falls every time a translation unit's backend
+    exits -- precisely when progress just happened. Remembering each pid's last
+    reading and retiring it on exit keeps the total non-decreasing.
+    """
+
+    last_seen: dict[int, int] = field(default_factory=dict)
+    retired: int = 0
+
+    def observe(self, pid: int, value: int) -> None:
+        self.last_seen[pid] = max(self.last_seen.get(pid, 0), value)
+
+    def retire_absent(self, live_pids: set[int]) -> None:
+        for pid in [pid for pid in self.last_seen if pid not in live_pids]:
+            self.retired += self.last_seen.pop(pid)
+
+    def total(self) -> int:
+        return self.retired + sum(self.last_seen.values())
+
+
+class BuildProgressTracker:
+    """Accumulates observations of one build's process tree.
+
+    ``record`` folds in a sample; ``progress`` reports the current reading. Both
+    take the current time so the caller controls the clock, and the tracker holds
+    no timing source of its own.
+    """
+
+    def __init__(self, root_pid: int, source_root: Path, started_at: float = 0.0) -> None:
+        """Track the tree under ``root_pid``, resolving unit paths under ``source_root``."""
+        self._root_pid = root_pid
+        self._source_root = Path(source_root)
+        self._started_at = started_at
+        self._declared_units: list[str] = []
+        self._total_is_exact = False
+        self._seen_units: set[str] = set()
+        self._active_units: set[str] = set()
+        self._source_dirs: set[str] = set()
+        self._current_unit: str | None = None
+        self._current_unit_since: float | None = None
+        self._max_ordinal = 0
+        self._observed = False
+        self._max_fraction = 0.0
+        self._sizes: dict[str, int | None] = {}
+        # Per-unit resolution base: the working directory of the process that named
+        # it. Falls back to source_root where a process's cwd could not be read.
+        self._unit_bases: dict[str, str] = {}
+        self._cpu = _Counter()
+        self._io = _Counter()
+        self._output_events = 0
+        self._previous_signals: tuple[int, int, int, int] | None = None
+        self._last_activity_at = started_at
+
+    # -- observation --------------------------------------------------------
+    def note_output(self, now: float) -> None:
+        """Record a line of build output, which is unambiguous proof of work."""
+        self._output_events += 1
+        self._last_activity_at = now
+
+    def record(self, processes: Mapping[int, ProcessInfo], now: float) -> None:
+        """Fold one sample of the process table into the accumulated picture."""
+        tree = _descendants(self._root_pid, processes)
+        live_pids: set[int] = set()
+        active: set[str] = set()
+        current: str | None = None
+
+        for process in tree:
+            live_pids.add(process.pid)
+            self._cpu.observe(process.pid, process.cpu_ticks)
+            self._io.observe(process.pid, process.io_bytes)
+            if process.comm not in _COMPILER_DRIVERS and process.comm not in _COMPILER_BACKENDS:
+                continue
+            sources = _source_arguments(process.args)
+            if not sources:
+                continue
+            self._observed = True
+            for source in sources:
+                self._source_dirs.add(str(Path(source).parent))
+                if process.cwd is not None:
+                    self._unit_bases.setdefault(source, process.cwd)
+            if process.comm in _COMPILER_DRIVERS and len(sources) > 1:
+                self._declare_units(sources)
+            if process.comm in _COMPILER_BACKENDS:
+                active.update(sources)
+                current = sources[0]
+
+        self._cpu.retire_absent(live_pids)
+        self._io.retire_absent(live_pids)
+        self._seen_units.update(active)
+        self._active_units = active
+        if current is not None:
+            if current != self._current_unit:
+                # Timed from the first sample naming this unit, not from every
+                # sample, or a long compile would always look freshly started.
+                self._current_unit_since = now
+            self._current_unit = current
+            self._advance_ordinal(current)
+        self._update_activity(now)
+
+    def _declare_units(self, sources: Sequence[str]) -> None:
+        """Adopt a driver's input list as the exact, ordered unit set."""
+        for source in sources:
+            if source not in self._declared_units:
+                self._declared_units.append(source)
+        self._total_is_exact = True
+
+    def _advance_ordinal(self, current: str) -> None:
+        """Remember the furthest position reached in the declared input order."""
+        if current in self._declared_units:
+            self._max_ordinal = max(self._max_ordinal, self._declared_units.index(current))
+
+    def _update_activity(self, now: float) -> None:
+        """Refresh the activity timestamp when any liveness signal has moved."""
+        signals = (
+            self._cpu.total(),
+            self._io.total(),
+            len(self._seen_units),
+            self._output_events,
+        )
+        # Any single counter advancing is enough; they are compared component-wise
+        # rather than as tuples, since a lexicographic comparison would miss a rise
+        # in a later component when an earlier one is unchanged.
+        if self._previous_signals is None or any(
+            new > old for new, old in zip(signals, self._previous_signals)
+        ):
+            self._last_activity_at = now
+        self._previous_signals = signals
+
+    # -- reads -------------------------------------------------------------
+    @property
+    def last_activity_at(self) -> float:
+        """When a liveness signal last moved. The stall deadline is measured off this."""
+        return self._last_activity_at
+
+    def progress(self, now: float) -> BuildProgress:
+        """Report the current reading, with an ETA once there is work to project from."""
+        if not self._observed:
+            return BuildProgress(
+                observed=False, fraction=None, units_finished=0, units_total=None,
+                total_is_exact=False, current_unit=None, eta_seconds=None,
+            )
+
+        finished = self._finished_units()
+        total_units = self._total_units()
+        # No unit seen yet means completion is unknown, not zero. Reporting 0.0 here
+        # would be a fabricated measurement, and because compute_percent prefers any
+        # non-None fraction over its time-based creep it would pin the bar at the
+        # bottom of the build band. That is the whole outcome for a toolchain this
+        # module cannot watch per unit: Maia's ninja+clang build declares no unit set
+        # and forks no named backend, so it would sit frozen for 45-60 minutes.
+        fraction = self._fraction(finished, total_units) if self._seen_units else None
+        eta_seconds = None
+        if fraction is not None and fraction >= _MIN_FRACTION_FOR_ETA:
+            elapsed = max(0.0, now - self._started_at)
+            if elapsed > 0.0:
+                eta_seconds = int(elapsed / fraction - elapsed)
+
+        return BuildProgress(
+            observed=True,
+            fraction=fraction,
+            units_finished=len(finished),
+            units_total=total_units,
+            total_is_exact=(
+                self._total_is_exact
+                and len(self._declared_units) >= len(self._seen_units)
+            ),
+            current_unit=self._current_unit,
+            eta_seconds=eta_seconds,
+            current_unit_seconds=(
+                None if self._current_unit_since is None
+                else max(0.0, now - self._current_unit_since)
+            ),
+        )
+
+    def _finished_units(self) -> set[str]:
+        """Units known complete: those observed finishing, plus those overtaken.
+
+        The second group is what a sampler cannot see directly. Claudia's build
+        finished with only six of fourteen units ever sampled; the input order
+        supplies the rest.
+        """
+        finished = self._seen_units - self._active_units
+        if self._declared_units:
+            finished |= set(self._declared_units[:self._max_ordinal])
+        return finished
+
+    def _total_units(self) -> int:
+        """Return the unit denominator, never below what has already been seen."""
+        if self._declared_units:
+            return max(len(self._declared_units), len(self._seen_units))
+        counted = 0
+        for directory in self._source_dirs:
+            base = Path(directory)
+            if not base.is_absolute():
+                base = self._source_root / base
+            try:
+                counted += sum(
+                    1 for entry in base.iterdir()
+                    if entry.is_file() and _is_source_path(entry.name)
+                )
+            except OSError:  # noqa: S112  # nosec B112  # an unlistable source dir is expected (a generated or out-of-tree layout); it contributes nothing and the seen-unit floor below keeps the total usable, so logging per poll would flood the log for no decision
+                continue
+        return max(counted, len(self._seen_units))
+
+    def _fraction(self, finished: set[str], total_units: int) -> float | None:
+        """Completed share of the work, weighted by source size where readable.
+
+        Monotonic and capped below 1.0: samples are noisy (a poll can land between
+        units), and a bar that retreats or completes early reads as a fault.
+        """
+        if total_units <= 0:
+            return None
+        units = self._declared_units or sorted(self._seen_units)
+        weights = {unit: self._weight(unit) for unit in units}
+        total_weight = sum(weights.values())
+        if total_weight <= 0:
+            return None
+        done_weight = sum(weights.get(unit, 0.0) for unit in finished)
+        fraction = min(done_weight / total_weight, _MAX_OBSERVED_FRACTION)
+        self._max_fraction = max(self._max_fraction, fraction)
+        return self._max_fraction
+
+    def _weight(self, unit: str) -> float:
+        """Relative cost of a unit: its source size, or the mean where unknown.
+
+        Size is a proxy for compile time, and a coarse one, but the spread it
+        captures is real: CT800's largest unit is 30x the mean and took longer than
+        the rest of the build. Units whose size cannot be read (generated sources,
+        an out-of-tree layout) fall back to the mean of those that can, so an
+        unreadable path costs accuracy rather than the whole reading.
+        """
+        if unit not in self._sizes:
+            path = Path(unit)
+            if not path.is_absolute():
+                base = self._unit_bases.get(unit)
+                path = (Path(base) if base is not None else self._source_root) / path
+            try:
+                self._sizes[unit] = path.stat().st_size
+            except OSError:
+                self._sizes[unit] = None
+        size = self._sizes[unit]
+        if size is not None:
+            return float(size)
+        known = [value for value in self._sizes.values() if value is not None]
+        return float(sum(known) / len(known)) if known else 1.0

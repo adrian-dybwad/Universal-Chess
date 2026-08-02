@@ -40,7 +40,7 @@ import platform
 import tarfile
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Optional, Callable, List, Dict, FrozenSet, Tuple
+from typing import Optional, Callable, List, Dict, FrozenSet, Mapping, Sequence, Tuple, Union
 from pathlib import Path
 from queue import Queue, Empty
 from enum import Enum
@@ -71,6 +71,18 @@ from universalchess.services.github_tag_cache import (
 from universalchess.services import apt_recovery
 from universalchess.services.apt_recovery import RecoveryOutcome
 from universalchess.services.build_memory import build_memory
+from universalchess.services.build_progress import (
+    BuildProgress,
+    BuildProgressTracker,
+    BuildReportReader,
+    ProcessInfo,
+    read_process_table,
+)
+from universalchess.services.apt_progress import AptPhase, AptProgressReader
+from universalchess.services.download_progress import (
+    DownloadProgress,
+    DownloadProgressReader,
+)
 from universalchess.services.event_log import log_event
 from universalchess.utils.safe_path import safe_under_base
 
@@ -96,6 +108,65 @@ _BUILD_PARALLELISM_ENV = "UC_BUILD_PARALLELISM"
 # in step with scripts/bluez-selfheal's BUILD_JOB_MB so both source-build paths
 # bound parallelism the same way.
 _BUILD_JOB_MB = 1024
+
+# How long a build may go with no sign of life before it is killed. A build is
+# stopped for lack of progress, not for taking time: hand-written per-engine
+# budgets killed a healthy Rodent IV compile on a Pi Zero W (831s of work against a
+# 600s budget), and no fixed figure can serve a catalog whose estimates were
+# measured 0.46x to 1.73x off on that one board.
+#
+# Liveness is any of: a translation unit starting or finishing, a line of output,
+# consumed CPU time, or bytes read/written (see services.build_progress). Measured
+# across 21 minutes of compiling on that board, the longest stretch with no signal
+# at all was 7.0s -- CT800's four-minute single unit keeps CPU climbing throughout,
+# and Rodent IV's 13m31s near-silent build peaked at 3.1s. This window is a wide
+# multiple of that, and it also covers a download: wget's dot progress emits a line
+# per 50KB and prints "Retrying" while backing off.
+BUILD_STALL_SECONDS = 120
+
+# Absolute backstop, applied on top of stall detection. Needed for the one failure
+# mode progress cannot distinguish from work: a compiler spinning in an infinite
+# loop refreshes every liveness signal forever. Derived from the catalog estimate
+# so it scales with the build (Maia's hour-long lc0 compile against Claudia's 83
+# seconds) rather than being another hand-set number per engine.
+BUILD_CEILING_HEADROOM = 4
+MIN_BUILD_CEILING_SECONDS = 1800
+
+# Dependency installs get their own limits, for the same reason builds stopped
+# using a fixed budget: a Maia toolchain (clang, build-essential, libopenblas and
+# the rest) is hundreds of megabytes to fetch and unpack on one slow ARMv6 core,
+# and the old flat 300s killed that healthy work with "Command timed out".
+#
+# The stall window is wider than a build's because apt legitimately goes quiet in
+# ways a compiler does not: the helper waits up to 120s for a held dpkg lock
+# before it starts, and a slow mirror can leave a fetch idle between packages.
+DEPS_STALL_SECONDS = 300
+# Backstop only; stall detection is what ends a wedged install. Sized so a large
+# toolchain over a slow link finishes well inside it.
+DEPS_CEILING_SECONDS = 5400
+
+_BYTES_PER_MB = 1024 * 1024
+
+# Verb that opens a live install message, per stage the message can belong to. Both
+# byte-driven stages read as "Downloading" to the user; they differ only in which
+# band they drive, which is not something a message should expose.
+_STAGE_VERBS = {
+    InstallStage.BUILDING: "Building",
+    InstallStage.DOWNLOADING: "Downloading",
+    InstallStage.FETCHING_NETS: "Downloading",
+}
+
+
+def build_ceiling_seconds(engine: "EngineDefinition") -> int:
+    """Absolute wall-clock limit for one engine's build, as a runaway backstop.
+
+    Deliberately generous: it must never be the thing that ends a build which is
+    still making progress, because that is the bug this replaces. The floor keeps a
+    missing or understated estimate from producing a budget too small to finish in,
+    so an inaccurate catalog entry costs extra patience rather than a failed install.
+    """
+    estimate_seconds = max(0, engine.estimated_install_minutes) * 60
+    return max(MIN_BUILD_CEILING_SECONDS, estimate_seconds * BUILD_CEILING_HEADROOM)
 
 
 def _mem_total_mb() -> Optional[int]:
@@ -198,6 +269,55 @@ GITHUB_REPO = "adrian-dybwad/Universal-Chess"
 # release (nightly prerelease or full) be found.
 GITHUB_RELEASES_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
 PREBUILT_ARCHIVE_NAME_TEMPLATE = "engines-{arch}.tar.gz"  # arm64 or armhf
+
+
+# What each dependency phase is doing, for the gap between a phase starting and
+# apt's first measurement of it.
+_DEPS_PHASE_TEXT = {
+    AptPhase.UPDATING_INDEX: "refreshing package lists",
+    AptPhase.INSTALLING: "installing packages",
+}
+
+
+def _format_duration(seconds: Optional[float]) -> str:
+    """Render an elapsed time compactly, or say it is not known."""
+    if seconds is None:
+        return "just started"
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    return f"{int(seconds) // 60}m{int(seconds) % 60:02d}s"
+
+
+def _describe_download(display_name: str, progress: "DownloadProgress") -> str:
+    """Render a download reading as a line that says what is happening right now.
+
+    Says which file of how many, what it is called, and how far the whole transfer
+    has got in both percent and megabytes. A bare percentage is not enough for a
+    multi-file fetch: Maia pulls ten nets, so without the file position the bar
+    appears to restart on each one with nothing to show progress is being made.
+    """
+    where = f"Downloading {display_name}"
+    if progress.file_index and progress.file_total:
+        where = f"{where}: file {progress.file_index} of {progress.file_total}"
+        if progress.file_name:
+            where = f"{where} ({progress.file_name})"
+    else:
+        where = f"{where}:"
+
+    # No current byte counters means the file either has not announced its size yet
+    # or has just finished and been banked. Those look identical here but must not
+    # read alike: calling a completed download "starting" contradicts what happened.
+    if not progress.file_bytes_total:
+        finished = progress.file_index and progress.files_completed >= progress.file_index
+        return f"{where} - {'done' if finished else 'starting'}"
+
+    # The percentage describes THIS file, matching the megabytes beside it. The
+    # overall figure drives the bar instead; putting it here would contradict the
+    # file it is attached to from the second file onwards.
+    done_mb = progress.file_bytes_done / _BYTES_PER_MB
+    total_mb = progress.file_bytes_total / _BYTES_PER_MB
+    percent = (progress.file_fraction or 0.0) * 100
+    return f"{where} {percent:.0f}% - {done_mb:.1f} of {total_mb:.1f} MB"
 
 
 def engine_deps_command(packages: List[str]) -> List[str]:
@@ -379,7 +499,11 @@ class EngineDefinition:
     # because its master NEON path has regressed, so an unpinned clone would
     # intermittently fail to compile depending on when the user happens to install.
     git_ref: Optional[str] = None
-    build_timeout: int = 600     # Timeout for build commands in seconds (default 10 min)
+    # Drives the install-time shown in the UI, and (via build_ceiling_seconds) the
+    # runaway backstop. It is NOT a budget the build must finish inside: a build is
+    # killed only when it stops making progress. Per-engine build timeouts used to
+    # live here and were removed -- thirteen independently guessed numbers are what
+    # killed a working Rodent IV compile on a Pi Zero W at 95%.
     estimated_install_minutes: int = 5  # Estimated install time in minutes for UI
     has_prebuilt: bool = False   # True if pre-built binary available from releases
     # Architectures (as returned by `_get_arch`: 'arm64' / 'armhf') this engine can
@@ -730,7 +854,6 @@ ENGINES = {
         package_name=None,
         extra_files=[],
         dependencies=["build-essential", "git"],
-        build_timeout=1200,
         estimated_install_minutes=15,  # NNUE engine with limited parallelism
         has_prebuilt=True,
         # 64-bit ARM only. Berserk uses `__int128` (unsupported on 32-bit targets)
@@ -806,7 +929,6 @@ ENGINES = {
         package_name=None,
         extra_files=[],
         dependencies=["build-essential", "git"],
-        build_timeout=1200,
         estimated_install_minutes=15,  # NNUE engine with limited parallelism
         has_prebuilt=True,
         # Both 64-bit (arm64) and 32-bit (armhf) ARM. Upstream's NEON path is
@@ -844,7 +966,6 @@ ENGINES = {
         package_name=None,
         extra_files=[],
         dependencies=["build-essential", "git"],
-        build_timeout=1200,
         estimated_install_minutes=15,  # NNUE engine with limited parallelism
         has_prebuilt=True,
     ),
@@ -964,7 +1085,6 @@ ENGINES = {
         # clang is required (see build_commands). bc/gawk are NOT needed: the Makefile
         # only invokes them in its g++ branch to compute the gcc version.
         dependencies=["build-essential", "git", "clang"],
-        build_timeout=1800,
         estimated_install_minutes=25,  # NNUE engine, single-threaded build
         has_prebuilt=True,
         # arm64-only. 32-bit ARM (armhf) has no SIMD path in Arasan -- the Makefile
@@ -1076,7 +1196,6 @@ ENGINES = {
             "wget",
         ],
         clone_with_submodules=False,  # Build script handles cloning
-        build_timeout=7200,  # 2 hours - may need swap which is slow
         estimated_install_minutes=60,
         has_prebuilt=True,  # Pre-built includes lc0 binary + all Maia weights
         # Maia is unusable without at least one net: lc0 has nothing to load and
@@ -1170,7 +1289,6 @@ ENGINES = {
         package_name=None,
         extra_files=[],
         dependencies=["build-essential", "git"],
-        build_timeout=1200,
         estimated_install_minutes=12,  # Compact NNUE, faster than full NNUE engines
         has_prebuilt=True,
     ),
@@ -1214,7 +1332,7 @@ ENGINES = {
             #
             # The bootstrap, the cargo-env source, and the build MUST share one
             # shell: each build_commands entry runs in its own subprocess (see
-            # _run_build_command), so a PATH exported by a separate entry would not
+            # _run_monitored_command), so a PATH exported by a separate entry would not
             # reach cargo, which would then be "command not found". Sourcing
             # $HOME/.cargo/env in the same command puts the rustup cargo on PATH.
             #
@@ -1254,7 +1372,6 @@ ENGINES = {
         dependencies=["build-essential", "git", "curl", "ca-certificates"],
         # A fat-LTO, single-codegen-unit Rust build plus the rustup toolchain
         # download runs far longer than any C engine here, especially on armhf.
-        build_timeout=7200,
         estimated_install_minutes=60,
         has_prebuilt=True,
     ),
@@ -1752,20 +1869,10 @@ class EngineManager:
             self._installing_engine = None
             return False
 
-        current_stage = InstallStage.STARTING
+        update_progress = self._make_progress_publisher(
+            progress_callback, stage_callback, "Progress"
+        )
 
-        def update_progress(msg: str, stage: Optional[InstallStage] = None,
-                            fraction: Optional[float] = None):
-            nonlocal current_stage
-            if stage is not None:
-                current_stage = stage
-            self._install_progress = msg
-            log.info(f"[EngineManager] [Progress] {msg}")
-            if progress_callback:
-                progress_callback(msg)
-            if stage_callback:
-                stage_callback(current_stage, msg, fraction)
-        
         # Resolve which ref to build and record. ``ref`` is the user's selection
         # (or None for the canonical ref). The prebuilt archive carries only the
         # canonical build, so it can satisfy the request only when the request is
@@ -1925,17 +2032,21 @@ class EngineManager:
         # passwordless sudo.
         update_progress(f"Installing {engine.package_name}...")
         log.info(f"[EngineManager] _install_system_package: Installing {engine.package_name} via {ENGINE_DEPS_HELPER.name}")
-        result = subprocess.run(engine_deps_command([engine.package_name]), capture_output=True, text=True, timeout=300)  # noqa: S603  # nosec B603
-        if result.returncode != 0:
-            self._install_error = result.stderr.strip() or f"apt-get install failed with code {result.returncode}"
-            log.error(f"[EngineManager] _install_system_package: apt-get install failed with code {result.returncode}")
-            log.error(f"[EngineManager] _install_system_package: stdout: {result.stdout.strip()}")
-            log.error(f"[EngineManager] _install_system_package: stderr: {result.stderr.strip()}")
+        returncode, apt_output = self._install_packages(
+            [engine.package_name], engine.display_name, update_progress
+        )
+        if returncode != 0:
+            self._install_error = (
+                apt_recovery.summarize_apt_error(apt_output, apt_output)
+                or f"apt-get install failed with code {returncode}"
+            )
+            log.error(f"[EngineManager] _install_system_package: apt-get install failed with code {returncode}")
+            log.error(f"[EngineManager] _install_system_package: output: {apt_output.strip()}")
             return False
-        
+
         log.info(f"[EngineManager] _install_system_package: apt-get install completed successfully")
-        if result.stdout.strip():
-            log.debug(f"[EngineManager] _install_system_package: stdout: {result.stdout.strip()[:200]}")
+        if apt_output.strip():
+            log.debug(f"[EngineManager] _install_system_package: output: {apt_output.strip()[:200]}")
         
         # Create symlink in engines directory
         system_path = shutil.which(engine.name)
@@ -2266,31 +2377,57 @@ class EngineManager:
             proc.kill()
         proc.wait()
 
-    def _run_build_command(
+    def _run_monitored_command(
         self,
-        cmd: str,
+        cmd: Union[str, Sequence[str]],
         cwd: Path,
-        timeout: int,
         on_line: Callable[[str], None],
+        *,
+        stall_seconds: int = BUILD_STALL_SECONDS,
+        ceiling_seconds: int = MIN_BUILD_CEILING_SECONDS,
+        read_processes: Optional[Callable[[int], Mapping[int, ProcessInfo]]] = None,
+        on_progress: Optional[Callable[[BuildProgress], None]] = None,
     ) -> Tuple[int, str]:
-        """Run one build command, streaming combined stdout+stderr line-by-line.
+        """Run one long command, streaming combined stdout+stderr line-by-line.
+
+        Used for every step that can run for minutes: source builds and the apt
+        dependency install. A string is run through a shell (build recipes need
+        ``&&`` and redirects); a sequence is executed directly, which is what the
+        dependency install uses so its package arguments never reach a shell.
 
         A build on a constrained board can run for many minutes producing no
-        captured output until it finishes, so the UI cannot distinguish a slow
-        build from a hung one. Streaming each line to ``on_line`` lets the caller
-        surface live progress.
+        captured output until it finishes -- Rodent IV on a Pi Zero W emits one line
+        across 13m31s -- so neither the UI nor a deadline can rely on output.
+        Progress and liveness are therefore read from the command's own process
+        tree each second (see :mod:`services.build_progress`) and reported through
+        ``on_progress``.
 
-        A reader thread drains the pipe so the main loop can enforce ``timeout``
-        even when the build is silent (no newline to unblock a plain ``readline``);
-        on timeout the whole process group is killed and ``TimeoutExpired`` is
-        raised. Returns ``(returncode, tail)`` where ``tail`` is the last
-        :data:`_BUILD_TAIL_LINES` lines of output, used to build the failure
-        message (stdout and stderr are merged so the real error -- e.g. the OOM
-        "compile: signal: killed" line -- is captured regardless of stream).
+        Two independent limits end a command:
+
+        - ``stall_seconds``: no liveness signal (unit, output, CPU time, or bytes)
+          for that long. This is what catches a genuinely wedged build, and it is
+          the limit that matters -- the previous fixed wall-clock budget killed a
+          healthy 831s compile at 600s and let a hung Maia install run for 2 hours.
+        - ``ceiling_seconds``: a backstop for a command that spins forever while
+          consuming CPU, which no progress signal can distinguish from work.
+
+        On either, the whole process group is killed and ``TimeoutExpired`` is
+        raised carrying the output tail, so the failure message can say what the
+        build was last doing rather than only how long it ran.
+
+        Returns ``(returncode, tail)`` where ``tail`` is the last
+        :data:`_BUILD_TAIL_LINES` lines of output (stdout and stderr are merged so
+        the real error -- e.g. the OOM "compile: signal: killed" line -- is
+        captured regardless of stream).
         """
-        proc = subprocess.Popen(  # noqa: S602  # nosec B602  # cmd is from the static in-module engine registry (build_commands), never user input; shell is required for the &&/pipes/redirects in build steps
+        # A sequence runs without a shell; only the static build recipes, which
+        # need shell operators, are passed as a string.
+        use_shell = isinstance(cmd, str)
+        proc = subprocess.Popen(  # noqa: S603  # nosec B603  # cmd is from the static in-module engine registry (build_commands) or the pinned deps helper, never user input
             cmd,
-            shell=True,  # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
+            # A shell only for the static build recipes, which need &&/pipes/redirects.
+            # Package installs pass an argv sequence and so never reach a shell.
+            shell=use_shell,  # noqa: S602  # nosec B602  # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
             cwd=str(cwd),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -2312,20 +2449,42 @@ class EngineManager:
         reader = threading.Thread(target=_reader, daemon=True)
         reader.start()
 
-        deadline = time.monotonic() + timeout
+        sample_processes = read_processes or (lambda _root_pid: read_process_table())
+        started_at = time.monotonic()
+        tracker = BuildProgressTracker(
+            root_pid=proc.pid, source_root=cwd, started_at=started_at
+        )
+        ceiling_deadline = started_at + ceiling_seconds
+        last_sampled_at = 0.0
+
         while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            now = time.monotonic()
+            if now >= ceiling_deadline:
                 self._kill_process_group(proc)
-                raise subprocess.TimeoutExpired(cmd, timeout)
+                raise subprocess.TimeoutExpired(
+                    cmd, ceiling_seconds, output="\n".join(tail)
+                )
+            # Sampled about once a second: fine enough to catch short translation
+            # units, cheap enough to be irrelevant beside a compile.
+            if now - last_sampled_at >= 1.0:
+                last_sampled_at = now
+                tracker.record(sample_processes(proc.pid), now)
+                if on_progress is not None:
+                    on_progress(tracker.progress(now))
+                if now - tracker.last_activity_at >= stall_seconds:
+                    self._kill_process_group(proc)
+                    raise subprocess.TimeoutExpired(
+                        cmd, stall_seconds, output="\n".join(tail)
+                    )
             try:
-                item = line_q.get(timeout=min(remaining, 1.0))
-            except Empty:  # noqa: S112  # nosec B112  # expected hot path; logging each empty <=1s poll slice would flood logs during a multi-minute silent compile
-                # No build output within this poll slice; re-check deadline and re-poll.
+                item = line_q.get(timeout=0.5)
+            except Empty:  # noqa: S112  # nosec B112  # expected hot path; logging each empty poll slice would flood logs during a multi-minute silent compile
+                # No build output within this poll slice; re-sample and re-check.
                 continue
             if item is None:
                 break
             tail.append(item)
+            tracker.note_output(time.monotonic())
             on_line(item)
 
         proc.wait()
@@ -2333,41 +2492,81 @@ class EngineManager:
             proc.stdout.close()
         return proc.returncode, "\n".join(tail)
 
-    def _make_build_progress_updater(
-        self,
-        display_name: str,
-        update_progress: Callable[..., None],
-    ) -> Callable[[str], None]:
-        """Return an ``on_line`` callback that surfaces throttled build progress.
+    def _describe_build_timeout(self, timeout: subprocess.TimeoutExpired) -> str:
+        """Turn a killed build into a message that says what it was doing.
 
-        Each non-empty build-output line becomes the live install message (still in
-        the BUILDING stage, so the time-based percent creep keeps running).
+        "Build timed out after 600s" was the entire failure report from the field,
+        and it could not distinguish a build that was still compiling from one that
+        was wedged -- the output tail was collected and then discarded. Naming the
+        last thing the build printed is what makes the two tellable apart.
         """
-        return self._make_line_progress_updater(
-            display_name, update_progress, InstallStage.BUILDING, "Building"
+        seconds = int(timeout.timeout)
+        reason = (
+            f"Build stalled: no progress for {seconds}s"
+            if seconds <= BUILD_STALL_SECONDS
+            else f"Build exceeded its {seconds}s limit"
         )
+        tail = (timeout.output or "").strip()
+        if not tail:
+            return reason
+        last_line = tail.splitlines()[-1].strip()
+        return f"{reason} (last output: {last_line[:120]})"
 
-    def _make_line_progress_updater(
+    def _make_progress_publisher(
+        self,
+        progress_callback: Optional[Callable[[str], None]],
+        stage_callback: Optional[Callable[..., None]],
+        log_label: str,
+    ) -> Callable[..., None]:
+        """Return the ``update_progress`` every install and repair step publishes to.
+
+        Remembers the last stage, so a step that only has a message to report keeps
+        the stage it is in rather than clearing it.
+
+        Measurements are forwarded by keyword without being named here. They were
+        previously listed explicitly in two identical copies of this closure, which
+        had to be edited in step with every producer and with the web layer's own
+        callback: adding the dependency reading updated the producer but not these,
+        so the first apt progress report raised ``TypeError: update_progress() got
+        an unexpected keyword argument 'deps_fraction'`` and killed the install it
+        was meant to display. The install-state store names the fields it accepts,
+        so an unknown one still fails loudly -- at the one place that owns them.
+        """
+        current_stage = InstallStage.STARTING
+
+        def update_progress(msg: str, stage: Optional[InstallStage] = None,
+                            fraction: Optional[float] = None,
+                            **measurements: Optional[float]) -> None:
+            nonlocal current_stage
+            if stage is not None:
+                current_stage = stage
+            self._install_progress = msg
+            log.info(f"[EngineManager] [{log_label}] {msg}")
+            if progress_callback:
+                progress_callback(msg)
+            if stage_callback:
+                stage_callback(current_stage, msg, fraction, **measurements)
+
+        return update_progress
+
+    def _make_deps_progress_updater(
         self,
         display_name: str,
         update_progress: Callable[..., None],
-        stage: InstallStage,
-        verb: str,
     ) -> Callable[[str], None]:
-        """Return an ``on_line`` callback that surfaces throttled line progress.
+        """Return an ``on_line`` callback that publishes the dependency install.
 
-        Each non-empty output line becomes the live message (kept in ``stage`` so
-        the time-based percent creep for that stage keeps running), prefixed with
-        ``verb`` (e.g. "Building" for a compile, "Downloading" for a repair).
-        Updates are throttled to :data:`_BUILD_PROGRESS_THROTTLE_SECONDS` because
-        every update persists the install state to the (SD-card) store and output
-        can be chatty; the throttle keeps the message current without hammering the
-        disk. Shared by the source build and the in-place repair so both stream
-        live progress the same way.
+        Every line the helper and apt produce reaches the banner: the ones apt
+        marks as progress move the bar and are shown as what apt says it is doing,
+        and the rest are shown as-is. Before this, the whole step ran with its
+        output captured and discarded, so the longest silent part of an install
+        displayed nothing and then failed with a bare timeout.
         """
+        reader = AptProgressReader()
         last_update = {"at": 0.0}
 
         def on_line(line: str) -> None:
+            carries_progress = reader.read_line(line)
             text = line.strip()
             if not text:
                 return
@@ -2375,7 +2574,187 @@ class EngineManager:
             if now - last_update["at"] < _BUILD_PROGRESS_THROTTLE_SECONDS:
                 return
             last_update["at"] = now
-            update_progress(f"{verb} {display_name}: {text[:80]}", stage)
+
+            progress = reader.progress()
+            if carries_progress:
+                # Before apt's first measurement there is a known step but no
+                # reading, so name the step rather than showing a placeholder.
+                detail = progress.activity or _DEPS_PHASE_TEXT.get(
+                    progress.phase, "working"
+                )
+                update_progress(
+                    f"Installing {display_name} dependencies: {detail}",
+                    InstallStage.INSTALLING_DEPS,
+                    deps_fraction=progress.fraction,
+                )
+                return
+            # The helper tags its own output; keeping that tag would double up with
+            # the step name this message already carries.
+            detail = text.removeprefix(f"{ENGINE_DEPS_HELPER.name}:").strip()
+            update_progress(
+                f"Installing {display_name} dependencies: {detail[:80]}",
+                InstallStage.INSTALLING_DEPS,
+            )
+
+        return on_line
+
+    def _install_packages(
+        self,
+        packages: List[str],
+        display_name: str,
+        update_progress: Callable[..., None],
+    ) -> Tuple[int, str]:
+        """Install apt ``packages`` through the pinned helper, streaming progress.
+
+        Returns ``(returncode, tail)``. A stall or the ceiling surfaces as a
+        non-zero result carrying what apt was last doing, rather than as an
+        exception: the caller already verifies the packages are actually present
+        afterwards and has a repair path, and that check is the authority on
+        whether the step succeeded.
+        """
+        try:
+            return self._run_monitored_command(
+                engine_deps_command(packages),
+                SCRIPTS_DIR,
+                self._make_deps_progress_updater(display_name, update_progress),
+                stall_seconds=DEPS_STALL_SECONDS,
+                ceiling_seconds=DEPS_CEILING_SECONDS,
+            )
+        except subprocess.TimeoutExpired as timeout:
+            log.error(
+                "[EngineManager] _install_packages: package install gave up after "
+                f"{int(timeout.timeout)}s"
+            )
+            return 1, (timeout.output or "").strip()
+
+    def _make_observed_progress_updater(
+        self,
+        display_name: str,
+        update_progress: Callable[..., None],
+    ) -> Callable[[BuildProgress], None]:
+        """Return an ``on_progress`` callback that publishes observed build progress.
+
+        Reports the real completed fraction and a remaining-time estimate projected
+        from work already done, which is what replaces pacing the bar against a
+        hand-written estimate. Readings from an unobservable toolchain are dropped so
+        the caller keeps its time-based fallback rather than being pinned at zero.
+        Throttled for the same reason as the line updater: each update persists state
+        to the SD card.
+        """
+        last_update = {"at": 0.0}
+
+        def on_progress(progress: BuildProgress) -> None:
+            if not progress.observed or progress.fraction is None:
+                return
+            now = time.monotonic()
+            if now - last_update["at"] < _BUILD_PROGRESS_THROTTLE_SECONDS:
+                return
+            last_update["at"] = now
+            message = f"Building {display_name}"
+            if progress.current_unit:
+                unit = os.path.basename(progress.current_unit)
+                total = progress.units_total or "?"
+                # Elapsed on this module rather than a percentage of it: a compiler
+                # exposes no progress within a translation unit, so any percentage
+                # here would be modelled, not measured. A percent of the overall
+                # count would only restate "N of M" in different digits.
+                message = (
+                    f"{message}: module {progress.units_finished + 1} of {total} "
+                    f"- {unit} ({_format_duration(progress.current_unit_seconds)})"
+                )
+            update_progress(
+                message,
+                InstallStage.BUILDING,
+                build_fraction=progress.fraction,
+                build_eta_seconds=progress.eta_seconds,
+            )
+
+        return on_progress
+
+    def _make_output_progress_updater(
+        self,
+        display_name: str,
+        update_progress: Callable[..., None],
+        *,
+        download_stage: InstallStage,
+        default_stage: InstallStage = InstallStage.BUILDING,
+    ) -> Callable[[str], None]:
+        """Return an ``on_line`` callback that reports whatever a line carries.
+
+        One build-output stream can carry three different kinds of information, and
+        an engine script emits all three: byte counts from its downloader, its own
+        report of how many compilation units it has finished, and ordinary log
+        chatter. This reads all three, so the fresh-install path and the in-place
+        repair path cannot drift apart in what they understand -- before it was
+        shared, repair read download bytes and install did not, so the nine weight
+        files a fresh Maia install fetches reported no byte progress at all.
+
+        Each line is attributed to the stage its content belongs to, taken from the
+        reader that recognised it rather than from whatever ran last:
+
+        - download bytes go to ``download_stage``. Callers pass the band that is
+          correct for *when* they download: a repair is nothing but a download, so it
+          uses the wide DOWNLOADING band, while a fresh install fetches nets only
+          after compiling and so must use a band above BUILDING's ceiling or the bar
+          would retreat by sixty points.
+        - a published unit count drives BUILDING, and is preferred over process
+          observation because it is exact where observation is inferential -- and it
+          is the only progress available at all for a toolchain that cannot be
+          watched per unit (see :class:`BuildReportReader`).
+        - anything else refreshes the message under ``default_stage`` without
+          asserting a fraction, so a script's logging stays visible and the
+          time-based fallback is left intact.
+
+        Updates are throttled because each one persists install state to the SD card
+        and build output is chatty.
+        """
+        downloads = DownloadProgressReader()
+        build_reports = BuildReportReader()
+        last_update = {"at": 0.0}
+        # Set once the producer announces a file, so later unrecognised output is
+        # attributed to the fetch rather than to a build that has already finished.
+        fetching = {"started": False}
+
+        def on_line(line: str) -> None:
+            is_download = downloads.read_line(line)
+            is_build_report = build_reports.read_line(line)
+            text = line.strip()
+            if not text:
+                return
+            progress = downloads.progress()
+            if progress.file_index:
+                fetching["started"] = True
+            now = time.monotonic()
+            if now - last_update["at"] < _BUILD_PROGRESS_THROTTLE_SECONDS:
+                return
+            last_update["at"] = now
+
+            # Anything the download reader recognised is reported here and never
+            # falls through, or the raw sentinel would be printed as build chatter.
+            if is_download:
+                update_progress(
+                    _describe_download(display_name, progress),
+                    download_stage,
+                    progress.fraction,
+                )
+                return
+
+            if is_build_report:
+                reported = build_reports.progress()
+                if reported.fraction is not None:
+                    update_progress(
+                        f"Building {display_name}: module "
+                        f"{reported.units_finished} of {reported.units_total} "
+                        f"({reported.fraction * 100:.0f}%)",
+                        InstallStage.BUILDING,
+                        build_fraction=reported.fraction,
+                    )
+                    return
+
+            stage = download_stage if fetching["started"] else default_stage
+            update_progress(
+                f"{_STAGE_VERBS[stage]} {display_name}: {text[:80]}", stage,
+            )
 
         return on_line
 
@@ -2424,38 +2803,39 @@ class EngineManager:
 
         self._installing_engine = engine_name
         self._install_error = None
-        current_stage = InstallStage.STARTING
-
-        def update_progress(msg: str, stage: Optional[InstallStage] = None,
-                            fraction: Optional[float] = None):
-            nonlocal current_stage
-            if stage is not None:
-                current_stage = stage
-            self._install_progress = msg
-            log.info(f"[EngineManager] [Repair] {msg}")
-            if progress_callback:
-                progress_callback(msg)
-            if stage_callback:
-                stage_callback(current_stage, msg, fraction)
+        update_progress = self._make_progress_publisher(
+            progress_callback, stage_callback, "Repair"
+        )
 
         try:
             update_progress(f"Repairing {engine.display_name}...", InstallStage.DOWNLOADING)
             # The repair commands are self-contained (they write into the install
             # dir); the engines dir is a stable, existing cwd for them.
             self.engines_dir.mkdir(parents=True, exist_ok=True)
-            on_line = self._make_line_progress_updater(
-                engine.display_name, update_progress, InstallStage.DOWNLOADING, "Downloading"
+            # Repair commands are downloads, so their progress is real bytes rather
+            # than translation units. They share the stall detection: a transfer that
+            # has stopped moving bytes is what should end it, not a wall-clock budget
+            # (Maia's was 2 hours for what measures ~12MB over Wi-Fi).
+            on_line = self._make_output_progress_updater(
+                engine.display_name, update_progress,
+                download_stage=InstallStage.DOWNLOADING,
+                default_stage=InstallStage.DOWNLOADING,
             )
+            ceiling_seconds = build_ceiling_seconds(engine)
             for i, cmd in enumerate(engine.repair_commands):
                 log.info(f"[EngineManager] repair_engine: Running repair command "
                          f"{i+1}/{len(engine.repair_commands)}: {cmd}")
                 try:
-                    returncode, tail = self._run_build_command(
-                        cmd, self.engines_dir, engine.build_timeout, on_line
+                    returncode, tail = self._run_monitored_command(
+                        cmd, self.engines_dir, on_line,
+                        stall_seconds=BUILD_STALL_SECONDS,
+                        ceiling_seconds=ceiling_seconds,
                     )
-                except subprocess.TimeoutExpired:
-                    self._install_error = f"Repair timed out after {engine.build_timeout}s"
-                    log.error(f"[EngineManager] repair_engine: command timed out: {cmd}")
+                except subprocess.TimeoutExpired as timeout:
+                    self._install_error = (
+                        f"Repair stalled: no progress for {int(timeout.timeout)}s"
+                    )
+                    log.error(f"[EngineManager] repair_engine: {self._install_error}: {cmd}")
                     return False
                 if returncode != 0:
                     detail = tail.strip()[-160:] or f"exit code {returncode}"
@@ -2537,19 +2917,18 @@ class EngineManager:
                 return False
             deps = " ".join(engine.dependencies)
 
-            def run_apt_install():
+            def run_apt_install() -> Tuple[int, str]:
                 """Run the dependency install. Isolated so the fix-broken retry
                 reuses the exact command instead of duplicating it."""
-                return subprocess.run(  # noqa: S603  # nosec B603
-                    engine_deps_command(engine.dependencies),
-                    capture_output=True, text=True, timeout=300,
+                return self._install_packages(
+                    engine.dependencies, engine.display_name, update_progress
                 )
 
             log.info(f"[EngineManager] _install_from_source: Installing dependencies: {deps}")
-            result = run_apt_install()
-            if result.returncode != 0:
-                log.warning(f"[EngineManager] _install_from_source: Dependency install returned non-zero ({result.returncode})")
-                log.warning(f"[EngineManager] _install_from_source: Dependency stderr: {result.stderr.strip()}")
+            returncode, apt_output = run_apt_install()
+            if returncode != 0:
+                log.warning(f"[EngineManager] _install_from_source: Dependency install returned non-zero ({returncode})")
+                log.warning(f"[EngineManager] _install_from_source: Dependency output: {apt_output.strip()}")
             else:
                 log.info(f"[EngineManager] _install_from_source: Dependencies installed successfully")
 
@@ -2574,7 +2953,7 @@ class EngineManager:
                     return False
                 if fix_outcome is RecoveryOutcome.PROCEEDED:
                     log.info("[EngineManager] _install_from_source: retrying dependency install after 'apt-get install -f'")
-                    result = run_apt_install()
+                    _returncode, apt_output = run_apt_install()
                     missing = self._missing_packages(engine.dependencies)
 
             if missing:
@@ -2582,7 +2961,10 @@ class EngineManager:
                 # unmet relationship) so the real cause -- not just apt's generic
                 # advice -- is visible in the install-error UI. Full output is in the
                 # log above.
-                apt_err = apt_recovery.summarize_apt_error(result.stderr, result.stdout)
+                # stderr is merged into the streamed output, so the tail is the
+                # only place the diagnostic can be; pass it as both halves rather
+                # than pretending the streams are still separate.
+                apt_err = apt_recovery.summarize_apt_error(apt_output, apt_output)
                 self._install_error = (
                     f"Could not install required build dependencies: {', '.join(missing)}. "
                     f"apt error: {apt_err}" if apt_err else
@@ -2653,23 +3035,37 @@ class EngineManager:
                 return False
             log.info(f"[EngineManager] _install_from_source: git clone successful")
         
-        # Build. Output is streamed line-by-line (not captured all-at-once) so the
-        # install message reflects live build activity -- on a constrained board a
-        # source build runs for minutes and a static message is indistinguishable
-        # from a hang. The percent continues to creep over the BUILDING band by
-        # elapsed time; the streamed lines only refresh the message.
+        # Build. Both the message and the percent come from the compiler's own
+        # processes: a source build on a constrained board runs for minutes and may
+        # print nothing at all, so elapsed time cannot place the bar and a static
+        # message is indistinguishable from a hang.
         update_progress(f"Building {engine.display_name}...", InstallStage.BUILDING)
-        on_build_line = self._make_build_progress_updater(engine.display_name, update_progress)
+        # A source build's own output can also carry net downloads: build-maia.sh
+        # compiles lc0 and then fetches its weights on the same stream. Those bytes
+        # report in FETCHING_NETS, which sits above BUILDING, because they arrive
+        # after the compile rather than before it.
+        on_build_line = self._make_output_progress_updater(
+            engine.display_name, update_progress,
+            download_stage=InstallStage.FETCHING_NETS,
+            default_stage=InstallStage.BUILDING,
+        )
+        on_build_progress = self._make_observed_progress_updater(
+            engine.display_name, update_progress
+        )
+        ceiling_seconds = build_ceiling_seconds(engine)
         for i, cmd in enumerate(engine.build_commands):
             log.info(f"[EngineManager] _install_from_source: Running build command {i+1}/{len(engine.build_commands)}: {cmd}")
-            log.info(f"[EngineManager] _install_from_source: Build timeout: {engine.build_timeout}s")
+            log.info(f"[EngineManager] _install_from_source: stall window {BUILD_STALL_SECONDS}s, ceiling {ceiling_seconds}s")
             try:
-                returncode, tail = self._run_build_command(
-                    cmd, repo_dir, engine.build_timeout, on_build_line
+                returncode, tail = self._run_monitored_command(
+                    cmd, repo_dir, on_build_line,
+                    stall_seconds=BUILD_STALL_SECONDS,
+                    ceiling_seconds=ceiling_seconds,
+                    on_progress=on_build_progress,
                 )
-            except subprocess.TimeoutExpired:
-                self._install_error = f"Build timed out after {engine.build_timeout}s"
-                log.error(f"[EngineManager] _install_from_source: Build command timed out after {engine.build_timeout}s: {cmd}")
+            except subprocess.TimeoutExpired as timeout:
+                self._install_error = self._describe_build_timeout(timeout)
+                log.error(f"[EngineManager] _install_from_source: {self._install_error}: {cmd}")
                 return False
             if returncode != 0:
                 # The merged tail holds the real cause (e.g. the compiler's

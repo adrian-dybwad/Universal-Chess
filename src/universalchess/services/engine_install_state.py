@@ -51,6 +51,11 @@ class InstallStage(str, Enum):
     INSTALLING_DEPS = "installing_deps"
     CLONING = "cloning"
     BUILDING = "building"
+    # Companion neural nets fetched after a build, not before it. Distinct from
+    # DOWNLOADING because of where it falls in the order: a Maia install compiles lc0
+    # and only then fetches its weights, so reporting those bytes in DOWNLOADING's
+    # band would move the bar backwards from the end of BUILDING.
+    FETCHING_NETS = "fetching_nets"
     INSTALLING_FILES = "installing_files"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -75,9 +80,15 @@ _STAGE_BANDS = {
     InstallStage.STARTING: (2, 2),
     InstallStage.CHECKING_PREBUILT: (5, 5),
     InstallStage.DOWNLOADING: (5, 85),
-    InstallStage.INSTALLING_DEPS: (15, 15),
+    # A range, not a point: installing a toolchain can take many minutes of real
+    # downloading and unpacking on a slow board, and a point band left the bar
+    # motionless for all of it. apt reports its own progress across that work.
+    InstallStage.INSTALLING_DEPS: (10, 28),
     InstallStage.CLONING: (30, 30),
     InstallStage.BUILDING: (35, 95),
+    # Sits above BUILDING's ceiling and below INSTALLING_FILES so a post-build net
+    # fetch runs forwards into the step that follows it.
+    InstallStage.FETCHING_NETS: (95, 97),
     InstallStage.INSTALLING_FILES: (97, 97),
 }
 
@@ -104,6 +115,26 @@ class InstallState:
     # Frozen percent recorded when the install reaches a terminal stage, so the
     # bar holds its last position instead of recomputing while idle.
     percent_snapshot: Optional[int]
+    # Observed build progress, derived from the compiler's own processes rather
+    # than from elapsed time. None when the toolchain could not be observed, in
+    # which case the build bar falls back to the time-based creep.
+    build_fraction: Optional[float] = None
+    # Remaining seconds projected from work actually completed. Shown by the UI;
+    # None until there is completed work to project from.
+    build_eta_seconds: Optional[int] = None
+    # How far apt has got through the dependency step, as apt itself reports it.
+    deps_fraction: Optional[float] = None
+
+
+# Stages whose position inside their band comes from a measurement rather than
+# from elapsed time, and which reading measures each. BUILDING is deliberately
+# absent: it has a measurement when the toolchain can be observed and falls back
+# to a time-based creep when it cannot, so it needs its own branch.
+_MEASURED_STAGE_FRACTIONS = {
+    InstallStage.DOWNLOADING: "download_fraction",
+    InstallStage.FETCHING_NETS: "download_fraction",
+    InstallStage.INSTALLING_DEPS: "deps_fraction",
+}
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -127,11 +158,22 @@ def compute_percent(state: InstallState, now: float) -> int:
     if start == end:
         return start
 
-    if state.stage == InstallStage.DOWNLOADING:
-        fraction = _clamp(state.download_fraction or 0.0, 0.0, 1.0)
+    # Every stage that can measure itself interpolates its band the same way; they
+    # differ only in which reading measures them. Kept as one path so a new
+    # measured stage cannot quietly acquire different interpolation behaviour.
+    measured = _MEASURED_STAGE_FRACTIONS.get(state.stage)
+    if measured is not None:
+        fraction = _clamp(getattr(state, measured) or 0.0, 0.0, 1.0)
         return int(start + (end - start) * fraction)
 
     if state.stage == InstallStage.BUILDING:
+        if state.build_fraction is not None:
+            # Real observed progress wins over elapsed time. The two disagree
+            # sharply on slow hardware -- measured on a Pi Zero W, Rodent IV ran
+            # 1.73x its estimate while Claudia ran 0.46x -- and it was the expiring
+            # estimate that pinned the bar at this band's ceiling mid-build.
+            fraction = _clamp(state.build_fraction, 0.0, 1.0)
+            return int(start + (end - start) * fraction)
         estimated = state.estimated_seconds if state.estimated_seconds > 0 else _DEFAULT_BUILD_ESTIMATE_SECONDS
         elapsed = max(0.0, now - state.stage_started_at)
         fraction = _clamp(elapsed / estimated, 0.0, 1.0)
@@ -170,16 +212,28 @@ class InstallStateStore:
                 active=True,
                 result=None,
                 percent_snapshot=None,
+                build_fraction=None,
+                build_eta_seconds=None,
             )
             self._save_locked()
             return self._state
 
     def update(self, stage: InstallStage, message: str,
-               download_fraction: Optional[float] = None) -> None:
+               download_fraction: Optional[float] = None,
+               build_fraction: Optional[float] = None,
+               build_eta_seconds: Optional[int] = None,
+               deps_fraction: Optional[float] = None) -> None:
         """Record a progress update from the install thread and persist it.
 
         Resets the per-stage clock whenever the stage changes so the build creep
         measures time spent building, not time since the install began.
+
+        An omitted fraction, of either kind, leaves any previously reported value in
+        place. Progress readings and log lines arrive independently, so a message-only
+        update carries no fraction; overwriting with None would make the bar oscillate
+        between real progress and its band floor on every ordinary line a build or a
+        downloader prints. A change of stage clears both, so a later phase cannot
+        inherit a stale reading from an earlier one.
         """
         now = time.time()
         with self._lock:
@@ -187,9 +241,21 @@ class InstallStateStore:
                 return
             if stage != self._state.stage:
                 self._state.stage_started_at = now
+                self._state.download_fraction = None
+                self._state.deps_fraction = None
+                if stage != InstallStage.BUILDING:
+                    self._state.build_fraction = None
+                    self._state.build_eta_seconds = None
             self._state.stage = stage
             self._state.message = message
-            self._state.download_fraction = download_fraction
+            if download_fraction is not None:
+                self._state.download_fraction = download_fraction
+            if deps_fraction is not None:
+                self._state.deps_fraction = deps_fraction
+            if build_fraction is not None:
+                self._state.build_fraction = build_fraction
+            if build_eta_seconds is not None:
+                self._state.build_eta_seconds = build_eta_seconds
             self._state.updated_at = now
             self._save_locked()
 
@@ -243,9 +309,11 @@ class InstallStateStore:
             self._state = None
             try:
                 self._path.unlink(missing_ok=True)
-            except OSError:
+            except OSError:  # noqa: S110  # nosec B110  # deliberate: see below
                 # A leftover file is harmless (overwritten on next start); failing
-                # to delete must not crash a dismiss/cancel action.
+                # to delete must not crash a dismiss/cancel action. Nothing is
+                # logged because this module has no logger and the outcome carries
+                # no information: the next start overwrites the file regardless.
                 pass
 
     # -- reads --------------------------------------------------------------
@@ -283,6 +351,7 @@ class InstallStateStore:
                     "percent": 0,
                     "interrupted": False,
                     "estimated_seconds": 0,
+                    "eta_seconds": None,
                     "started_at": None,
                     "result": None,
                     "last_result": None,
@@ -297,6 +366,9 @@ class InstallStateStore:
                 "percent": compute_percent(state, now),
                 "interrupted": state.stage == InstallStage.INTERRUPTED,
                 "estimated_seconds": state.estimated_seconds,
+                # Projected from observed work, so it is only meaningful while the
+                # install is running; a finished install must not advertise one.
+                "eta_seconds": state.build_eta_seconds if state.active else None,
                 "started_at": state.started_at,
                 "result": state.result,
                 "last_result": state.result,

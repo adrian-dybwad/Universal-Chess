@@ -88,6 +88,11 @@ MAIA_WEIGHTS_URL="https://github.com/CSSLab/maia-chess/releases/download/v1.0"
 # against a wholesale outage.
 MAX_NET_ATTEMPTS=3
 
+# Every net file this script fetches: the Maia ELO set plus the one Leela net. The
+# installer renders "file N of M", so M has to span both sets -- a total that reset
+# between them would read as the download starting over.
+NET_FILE_COUNT=$(( ${#MAIA_WEIGHTS[@]} + 1 ))
+
 # =============================================================================
 # Logging functions
 # =============================================================================
@@ -172,6 +177,13 @@ check_architecture() {
             ;;
         armv7l|armhf)
             log "Detected 32-bit ARM - OK (may be slower)"
+            ;;
+        armv6l)
+            # Accepted, but only because arch_meson_options turns NEON off for it.
+            # lc0 enables NEON by default and the ARM1176JZF-S has no NEON unit, so
+            # a default build here links fine and then dies with "Illegal
+            # instruction" on its first position evaluation.
+            log "Detected ARMv6 - OK (no NEON; expect a multi-hour build)"
             ;;
         x86_64)
             log_warn "Detected x86_64 - this script is optimized for ARM"
@@ -298,6 +310,61 @@ clone_lc0() {
     log "Source ready. Working directory: $(pwd)"
 }
 
+# Meson options that depend on the CPU this build is running on, one per line.
+#
+# Kept separate from the rest of the option list so the arch-specific decisions --
+# the two that have each already cost a failed build -- can be exercised directly
+# for boards that are not on hand.
+arch_meson_options() {
+    local arch
+    arch="$(uname -m)"
+
+    # Disable LTO on 32-bit ARM.
+    #
+    # lc0's meson.build pins b_lto=true, so the release build does a whole-program
+    # LTO link of lc0 + abseil. On 32-bit that link exhausts the process's ~3 GB
+    # virtual address-space ceiling and clang's linker dies with a Segmentation
+    # fault -- NOT an OOM kill, so swap cannot help (the limit is address space, not
+    # RAM). Every translation unit compiles fine; only the final link fails. 64-bit
+    # has the address space, so LTO stays on there. abseil inherits the global
+    # b_lto, but set it explicitly too so no LTO bitcode survives in its archives to
+    # re-trigger LTO codegen at link time.
+    if [[ "$arch" != "aarch64" ]]; then
+        echo "-Db_lto=false"
+        echo "-Dabseil-cpp:b_lto=false"
+    fi
+
+    # Disable NEON on ARMv6, which has no NEON unit.
+    #
+    # lc0's `neon` option defaults to true and its meson.build then adds -mfpu=neon
+    # through cc.get_supported_arguments(). That guard only drops flags the compiler
+    # rejects, and clang accepts -mfpu=neon while targeting ARMv6 -- so the flag
+    # survives and NEON instructions are emitted for a core that cannot execute
+    # them. The build succeeds and the binary dies with "Illegal instruction" on its
+    # first evaluation (upstream lc0 issue #1551). Only ARMv6 is affected; ARMv7 and
+    # ARMv8 have NEON and would lose real speed if this were applied broadly.
+    if [[ "$arch" == armv6* ]]; then
+        # Aim clang at the CPU this board actually has.
+        #
+        # Raspbian's clang defaults to armv7-a (__ARM_ARCH 7) even on a Pi Zero W,
+        # whose ARM1176JZF-S is armv6. Everything it emits then dies with SIGILL --
+        # including the trivial program meson compiles and *runs* as its
+        # configure-time sanity check, so the build failed at "Executables created
+        # by cpp compiler clang++ are not runnable" before touching lc0's sources.
+        # Raspbian's gcc already defaults to armv6+fp hard-float, which is why the
+        # other engines build here and only Maia, which uses clang, did not.
+        #
+        # Set for both languages because meson sanity-checks each separately and
+        # abseil compiles C as well as C++. These reach the sanity check, which
+        # -Dneon=false alone does not fix: that only stops lc0 adding NEON on top
+        # of a baseline that was already wrong.
+        local armv6_flags="-mcpu=arm1176jzf-s -mfpu=vfp -mfloat-abi=hard"
+        echo "-Dcpp_args=$armv6_flags"
+        echo "-Dc_args=$armv6_flags"
+        echo "-Dneon=false"
+    fi
+}
+
 configure_build() {
     log_step "Configuring meson build"
     
@@ -334,20 +401,11 @@ configure_build() {
         "-Dpython_bindings=false"
     )
 
-    # Disable LTO on 32-bit ARM.
-    #
-    # lc0's meson.build pins b_lto=true, so the release build does a whole-program
-    # LTO link of lc0 + abseil. On 32-bit (arm-linux-gnueabihf) that link exhausts
-    # the process's ~3 GB virtual address-space ceiling and clang's linker dies
-    # with a Segmentation fault -- NOT an OOM kill, so swap cannot help (the limit
-    # is address space, not RAM). Every translation unit compiles fine; only the
-    # final link fails. 64-bit (aarch64) has the address space, so LTO stays on
-    # there. abseil inherits the global b_lto, but set it explicitly too so no LTO
-    # bitcode survives in its archives to re-trigger LTO codegen at link time.
-    if [[ "$(uname -m)" != "aarch64" ]]; then
-        log "32-bit ARM ($(uname -m)) detected; disabling LTO to avoid linker segfault"
-        meson_opts+=("-Db_lto=false" "-Dabseil-cpp:b_lto=false")
-    fi
+    # Options this CPU needs (see arch_meson_options for why each one exists).
+    local arch_opt
+    while IFS= read -r arch_opt; do
+        [[ -n "$arch_opt" ]] && meson_opts+=("$arch_opt")
+    done < <(arch_meson_options)
 
     log "Meson options:"
     for opt in "${meson_opts[@]}"; do
@@ -370,6 +428,46 @@ configure_build() {
     fi
     
     log "Configuration complete"
+}
+
+# Publish one build-progress reading to whichever audience is listening.
+#
+# Two audiences need two formats. A terminal gets the carriage-returned line that
+# redraws in place. The app's installer gets a newline-terminated sentinel, because
+# it reads this stream line by line and so never sees output that is only ever
+# \r-terminated -- which is why the counts below, though correct, were previously
+# invisible to it and the install bar fell back to a time estimate.
+#
+# lc0 is the one engine whose progress the installer cannot observe from the process
+# tree: ninja invokes the compiler once per file, so no command line declares the
+# unit set, and clang compiles in-process rather than forking a named backend. This
+# sentinel is therefore its only source of real progress.
+report_build_progress() {
+    local completed="$1" total="$2"
+    # A zero total would divide by zero here and means the caller has not yet
+    # established one; there is nothing to report until it has.
+    if ((total <= 0)); then
+        return 0
+    fi
+    if [[ -t 1 ]]; then
+        local percent=$((completed * 100 / total))
+        echo -ne "\r$LOG_PREFIX Progress: [$completed/$total] ($percent%)     "
+    else
+        echo "UC_BUILD_PROGRESS units=$completed/$total"
+    fi
+}
+
+# Announce which net file is starting, so the installer can show "file N of M"
+# alongside the byte counts wget reports.
+#
+# Byte totals alone are not enough: wget announces a Length per file, so a bar
+# driven only by bytes restarts at zero ten times over with nothing to say how many
+# files remain. Naming the file and its position turns that into visible progress.
+report_download_file() {
+    local index="$1" total="$2" name="$3"
+    if [[ ! -t 1 ]]; then
+        echo "UC_DOWNLOAD_FILE index=$index total=$total name=$name"
+    fi
 }
 
 build_lc0() {
@@ -417,8 +515,7 @@ build_lc0() {
             if ((already < 0)); then already=0; fi
             local completed=$((already + current))
             if ((completed > full_total)); then completed=$full_total; fi
-            local percent=$((completed * 100 / full_total))
-            echo -ne "\r$LOG_PREFIX Progress: [$completed/$full_total] ($percent%)     "
+            report_build_progress "$completed" "$full_total"
         fi
     done; then
         echo ""
@@ -472,11 +569,20 @@ install_binary() {
 # every attempt failed. A partial/truncated file is removed between attempts (and
 # after the final failure) so a broken download is never left on disk to be
 # mistaken for a good net. $3 is a human label used only for log lines.
+#
+# --progress=dot rather than the previous "-q --show-progress": that pairing hid
+# the transfer from the installer entirely. -q suppressed the "Length:" header
+# carrying the file size, and --show-progress draws a bar with carriage returns,
+# which never terminate a line -- so the installer, which reads output by line,
+# saw nothing at all for the whole download and could report neither bytes nor
+# whether the transfer was alive. Dot style prints the exact total once and one
+# newline-terminated line per 50KB, which services/download_progress.py turns into
+# real "x of y bytes" progress and uses as the liveness signal.
 download_with_retries() {
     local url="$1" dest="$2" label="$3"
     local attempt
     for ((attempt = 1; attempt <= MAX_NET_ATTEMPTS; attempt++)); do
-        if wget -q --show-progress -O "$dest" "$url"; then
+        if wget --progress=dot -O "$dest" "$url"; then
             return 0
         fi
         rm -f "$dest"
@@ -495,12 +601,15 @@ download_weights() {
     mkdir -p "$weights_dir"
     
     local count=0
-    local total=${#MAIA_WEIGHTS[@]}
+    # Counted across BOTH net sets, because the installer shows one "file N of M"
+    # to the user and a total that reset partway would look like a restart.
+    local total=$NET_FILE_COUNT
     
     for weight in "${MAIA_WEIGHTS[@]}"; do
         count=$((count + 1))
         local url="$MAIA_WEIGHTS_URL/$weight"
         local dest="$weights_dir/$weight"
+        report_download_file "$count" "$total" "$weight"
         
         if [[ -f "$dest" ]]; then
             log "[$count/$total] $weight - already exists, skipping"
@@ -544,6 +653,7 @@ download_weights() {
         log "t1-256x10.pb.gz - already exists, skipping"
     else
         log "Downloading T1-256x10 (small/fast, ~25MB)..."
+        report_download_file "$NET_FILE_COUNT" "$NET_FILE_COUNT" "t1-256x10.pb.gz"
         if download_with_retries \
             "https://training.lczero.org/get_network?sha=00af53b081e80147172e6f281c01571016924e9aac89cdf6666a1cc3a4ecf5bf" \
             "$t1_dest" "t1-256x10.pb.gz"; then
@@ -626,5 +736,11 @@ main() {
     show_summary
 }
 
-main "$@"
+# Only run when executed, not when sourced, so the functions above can be exercised
+# individually by tests. The progress format is a contract with the installer's
+# parser and the two live in different languages, so being able to call the real
+# emitter and parse its real output is what keeps them from drifting apart.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
 

@@ -1,0 +1,35 @@
+{
+  "engine": "claudia",
+  "phase": "succeeded",
+  "returncode": 0,
+  "build_command": "make",
+  "git_ref": null,
+  "parallelism": 1,
+  "clone_seconds": 4,
+  "build_seconds": 83,
+  "build_memory_held": true,
+  "units_compiled": 6,
+  "units_observed": 6,
+  "units_total": 14,
+  "total_is_exact": true,
+  "monitoring_available": true,
+  "peak_build_rss_mb": 57,
+  "min_mem_available_mb": 121,
+  "min_swap_free_mb": 3528,
+  "last_output_line": "gcc -std=c99 -pthread -Wall -Wsign-compare -Winline -Wno-unused -Ofast -flto -o claudia attacked.o board.o book.o conversion.o eval.o fen.o hashtable.o legality.o main.o move.o moveeval.o movegen.o se",
+  "hardware": {
+    "pi_model": "Raspberry Pi Zero W Rev 1.1",
+    "revision": "9000c1",
+    "cpu_model_name": "ARMv6-compatible processor rev 7 (v6l)",
+    "machine": "armv6l",
+    "kernel": "6.18.34+rpt-rpi-v6",
+    "cores": 1,
+    "memory": {
+      "MemTotal": 426,
+      "MemAvailable": 122,
+      "SwapTotal": 3670,
+      "SwapFree": 3528
+    }
+  },
+  "finished_at": 1785641358.4514182
+}

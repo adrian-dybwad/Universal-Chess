@@ -1,0 +1,728 @@
+#!/usr/bin/env python3
+"""Time one engine source build on the board it will really run on.
+
+Purpose: the engine catalog's ``estimated_install_minutes`` (which paces the
+install progress bar) and its build timeout are hand-written numbers. This
+measures the real figure on a specific board so both can be set from data
+instead of from a guess made on faster hardware.
+
+Runs unprivileged, stdlib only, and touches nothing the app owns: the clone and
+build happen under ``--workdir`` (default /var/tmp/uc-build-timing), never the
+installer's build tree, and no binary is installed. Safe to leave running
+detached -- all state goes to files under ``--workdir``, so a dropped ssh session
+does not interrupt or lose the measurement.
+
+Progress, for a build that can be silent for its whole duration:
+    Rodent IV compiles with a single ``g++ ... src/*.cpp`` invocation and ``-w``,
+    so it prints nothing between start and finish. Output lines are therefore
+    useless as a liveness signal. Instead the compiler's own child processes are
+    polled: gcc/clang fork one ``cc1``/``cc1plus`` per translation unit and name
+    the source file on its command line, so the set of files already started is
+    observable even when the build is mute. That gives a real completed fraction,
+    and from it a remaining-time estimate.
+
+Outputs, all under ``--workdir/<engine>/``:
+    progress.json  overwritten every poll: phase, elapsed, units done/total,
+                   ETA, current file, memory headroom. Read this to watch a run.
+    result.json    written once at the end: wall-clock seconds per phase, exit
+                   status, unit counts, memory low-water marks.
+    build.log      every output line, prefixed with seconds since build start.
+"""
+
+import argparse
+import json
+import os
+import subprocess  # nosec B404  # subprocess use is intentional; it runs the git clone and the catalog build command, which is what this tool exists to time
+import sys
+import threading
+import time
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence, Set, Tuple
+
+# Source extensions whose compilation counts as one unit of build progress.
+_SOURCE_SUFFIXES = (".cpp", ".cc", ".cxx", ".c")
+
+# Process names that indicate a translation unit is being compiled. These are the
+# per-file compiler backends (the driver -- gcc/g++/clang -- forks one of these
+# per input file), which is what makes them a per-unit progress signal.
+_COMPILER_BACKENDS = frozenset({"cc1", "cc1plus", "clang", "clang++", "rustc"})
+
+# Process names of compiler DRIVERS, whose command line declares the full input
+# list. For a single-invocation build (Rodent IV) this yields the exact total.
+_COMPILER_DRIVERS = frozenset({"gcc", "g++", "cc", "c++", "clang", "clang++"})
+
+_POLL_SECONDS = 2.0
+
+# Scratch root for the clone, logs and results. Deliberately /var/tmp, not /tmp:
+# on these boards /tmp is a small tmpfs, and a multi-hour build's tree plus its
+# log must survive both the memory budget and a reboot mid-measurement.
+_DEFAULT_WORKDIR = "/var/tmp/uc-build-timing"  # noqa: S108  # nosec B108
+
+
+def _read_meminfo() -> Dict[str, int]:
+    """Selected /proc/meminfo values in MB. Empty off Linux."""
+    wanted = ("MemTotal", "MemAvailable", "SwapTotal", "SwapFree")
+    values: Dict[str, int] = {}
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as fh:
+            for line in fh:
+                key = line.split(":", 1)[0]
+                if key in wanted:
+                    values[key] = int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        return {}
+    return values
+
+
+def hardware_facts() -> Dict[str, object]:
+    """Identity of the board being measured, so a timing is attributable.
+
+    Without the model/core/RAM triple a recorded build time cannot be mapped to
+    a device class, which is the whole point of measuring it.
+    """
+    def _read(path: str) -> Optional[str]:
+        try:
+            return Path(path).read_text(encoding="utf-8", errors="replace").strip("\x00\n ")
+        except OSError:
+            return None
+
+    revision = None
+    model_name = None
+    try:
+        with open("/proc/cpuinfo", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("Revision"):
+                    revision = line.split(":", 1)[1].strip()
+                elif line.startswith("model name") and model_name is None:
+                    model_name = line.split(":", 1)[1].strip()
+    except OSError:  # noqa: S110  # off Linux there is no /proc/cpuinfo; the two optional fields stay None and every other fact below is still accurate
+        pass
+
+    return {
+        "pi_model": _read("/proc/device-tree/model"),
+        "revision": revision,
+        "cpu_model_name": model_name,
+        "machine": os.uname().machine,
+        "kernel": os.uname().release,
+        "cores": os.cpu_count(),
+        "memory": _read_meminfo(),
+    }
+
+
+def _proc_ppid_and_comm(pid: int) -> Optional[Tuple[int, str]]:
+    """(parent pid, process name) for ``pid``, or None if it is already gone.
+
+    Parsed from /proc/<pid>/stat rather than ``ps`` so polling stays cheap on a
+    single-core board -- the monitor must not measurably slow the build it times.
+    The command name is taken from the parenthesised field, which may itself
+    contain spaces or parentheses, so the LAST ')' delimits it.
+    """
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
+        return None
+    close = stat.rfind(")")
+    open_paren = stat.find("(")
+    if close == -1 or open_paren == -1:
+        return None
+    comm = stat[open_paren + 1:close]
+    rest = stat[close + 2:].split()
+    if len(rest) < 2:
+        return None
+    try:
+        return int(rest[1]), comm
+    except ValueError:
+        return None
+
+
+def _proc_cpu_ticks(pid: int) -> int:
+    """CPU time (utime + stime, in clock ticks) consumed by ``pid`` so far.
+
+    This is the liveness signal that covers a build which prints nothing and stays
+    inside one translation unit for minutes: the compiler is CPU-bound, so ticks
+    climb continuously even though no other observable changes.
+    """
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
+        return 0
+    close = stat.rfind(")")
+    if close == -1:
+        return 0
+    fields = stat[close + 2:].split()
+    # After the comm field: state, ppid, pgrp, session, tty, tpgid, flags,
+    # minflt, cminflt, majflt, cmajflt, utime, stime -> indices 11 and 12.
+    if len(fields) < 13:
+        return 0
+    try:
+        return int(fields[11]) + int(fields[12])
+    except ValueError:
+        return 0
+
+
+def _proc_io_bytes(pid: int) -> int:
+    """Bytes ``pid`` has read and written so far, 0 if unreadable.
+
+    Complements CPU ticks: a process blocked on slow SD-card I/O or on a network
+    read accumulates almost no CPU while doing real work, so bytes moved is what
+    distinguishes it from a wedged one. Readable for same-user processes, which is
+    what a build started by the app is.
+    """
+    total = 0
+    try:
+        with open(f"/proc/{pid}/io", encoding="utf-8") as handle:
+            for line in handle:
+                key, _, value = line.partition(":")
+                if key in ("rchar", "wchar"):
+                    total += int(value.strip())
+    except (OSError, ValueError):
+        return 0
+    return total
+
+
+def _proc_cmdline(pid: int) -> List[str]:
+    """Argument list for ``pid``; empty if it exited or is a kernel thread."""
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return []
+    return [part.decode("utf-8", "replace") for part in raw.split(b"\x00") if part]
+
+
+def _proc_rss_mb(pid: int) -> int:
+    """Resident set size of ``pid`` in MB, 0 if it exited."""
+    try:
+        with open(f"/proc/{pid}/statm", encoding="utf-8") as fh:
+            pages = int(fh.read().split()[1])
+    except (OSError, ValueError, IndexError):
+        return 0
+    return pages * os.sysconf("SC_PAGE_SIZE") // (1024 * 1024)
+
+
+def _all_processes() -> Dict[int, Tuple[int, str]]:
+    """Map of pid -> (ppid, comm) for every readable process.
+
+    Empty where /proc is absent (a macOS dev host). Progress monitoring then
+    reports nothing, but the timing -- the actual product of this tool -- is
+    unaffected, so a missing /proc must never abort a run that may be hours in.
+    """
+    table: Dict[int, Tuple[int, str]] = {}
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return table
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        info = _proc_ppid_and_comm(int(entry))
+        if info is not None:
+            table[int(entry)] = info
+    return table
+
+
+def _descendants(root_pid: int, table: Dict[int, Tuple[int, str]]) -> List[Tuple[int, str]]:
+    """Every (pid, comm) descended from ``root_pid``, root excluded.
+
+    The build runs under a shell, which spawns make, which spawns the compiler
+    driver, which spawns the per-file backend -- so the process of interest is
+    several levels down and the whole subtree must be walked.
+    """
+    children: Dict[int, List[int]] = {}
+    for pid, (ppid, _comm) in table.items():
+        children.setdefault(ppid, []).append(pid)
+
+    found: List[Tuple[int, str]] = []
+    stack = list(children.get(root_pid, ()))
+    while stack:
+        pid = stack.pop()
+        entry = table.get(pid)
+        if entry is None:
+            continue
+        found.append((pid, entry[1]))
+        stack.extend(children.get(pid, ()))
+    return found
+
+
+def _source_arguments(args: Sequence[str]) -> List[str]:
+    """Source files named on a compiler command line, in order.
+
+    Options are skipped so that, for example, an ``-o out.c`` style argument or a
+    ``-I`` path is never mistaken for an input. Only the basename is kept: it is
+    what identifies a translation unit for counting, and it keeps the progress
+    file readable.
+    """
+    sources = []
+    skip_next = False
+    for arg in args[1:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in ("-o", "-I", "-include", "-isystem", "-MF", "-MT", "-x", "-aux-info"):
+            skip_next = True
+            continue
+        if arg.startswith("-"):
+            continue
+        if arg.endswith(_SOURCE_SUFFIXES):
+            sources.append(os.path.basename(arg))
+    return sources
+
+
+class BuildMonitor:
+    """Polls a running build's process tree to derive unit progress and an ETA.
+
+    Two ways the total unit count is established, in priority order:
+
+    1. A compiler DRIVER invoked with more than one input file declares the whole
+       set on its command line, so the total is exact. This is the Rodent IV
+       shape (``g++ ... src/*.cpp``) and the reason unit progress is knowable at
+       all for a build that prints nothing.
+    2. Otherwise (one driver invocation per file, the usual makefile shape) the
+       total is the number of source files sitting in the directories that
+       observed compiles came from. This is an approximation -- a makefile may
+       compile a subset -- so ``total_is_exact`` records which rule was used and
+       the ETA must be read accordingly.
+
+    The ETA is a monitoring aid only. The measurement this tool reports is the
+    final wall-clock time, which needs no estimate.
+    """
+
+    def __init__(self, root_pid: int, repo_dir: Path) -> None:
+        self._root_pid = root_pid
+        self._repo_dir = repo_dir
+        self._units_started: Set[str] = set()
+        self._units_finished: Set[str] = set()
+        self._declared_units: Set[str] = set()
+        self._total_is_exact = False
+        self._source_dirs: Set[str] = set()
+        self._current_unit: Optional[str] = None
+        self._monitoring_available = False
+        self._peak_rss_mb = 0
+        self._min_mem_available_mb: Optional[int] = None
+        self._min_swap_free_mb: Optional[int] = None
+        # Liveness accounting. Both totals are made monotonic by remembering the
+        # last reading of every pid that has since exited: a raw sum over living
+        # processes drops each time a translation unit's backend finishes, which
+        # would read as "no progress" precisely when progress just occurred.
+        self._cpu_last_seen: Dict[int, int] = {}
+        self._cpu_retired = 0
+        self._io_last_seen: Dict[int, int] = {}
+        self._io_retired = 0
+        self._prev_cpu_total = -1
+        self._prev_io_total = -1
+        self._prev_unit_signature = (-1, -1)
+        self._output_events = 0
+        self._prev_output_events = -1
+        # Longest stretch with no signal, under two candidate policies, so the
+        # value of adding the I/O counter is measured rather than assumed.
+        self._last_signal_cpu_only: Optional[float] = None
+        self._last_signal_with_io: Optional[float] = None
+        self._max_gap_cpu_only = 0.0
+        self._max_gap_with_io = 0.0
+
+    def note_output(self) -> None:
+        """Record that the build produced a line, which is proof of activity."""
+        self._output_events += 1
+
+    def poll(self, now: float) -> None:
+        """Sample the process tree once and fold the sample into the totals.
+
+        A unit is counted finished once its backend process is no longer present:
+        completion is directly observable this way, so the progress fraction does
+        not have to assume anything about how far into a unit the compiler is.
+        """
+        table = _all_processes()
+        self._monitoring_available = bool(table)
+        tree = _descendants(self._root_pid, table)
+        active: Set[str] = set()
+        rss_mb = 0
+        live_pids = set()
+        for pid, comm in tree:
+            rss_mb += _proc_rss_mb(pid)
+            live_pids.add(pid)
+            self._cpu_last_seen[pid] = max(self._cpu_last_seen.get(pid, 0), _proc_cpu_ticks(pid))
+            self._io_last_seen[pid] = max(self._io_last_seen.get(pid, 0), _proc_io_bytes(pid))
+            if comm not in _COMPILER_BACKENDS and comm not in _COMPILER_DRIVERS:
+                continue
+            args = _proc_cmdline(pid)
+            if not args:
+                continue
+            sources = _source_arguments(args)
+            if not sources:
+                continue
+            for path in args[1:]:
+                if path.endswith(_SOURCE_SUFFIXES) and not path.startswith("-"):
+                    self._source_dirs.add(os.path.dirname(path) or ".")
+            if comm in _COMPILER_DRIVERS and len(sources) > 1:
+                # Rule 1: the driver names every input, so this is the exact set.
+                self._declared_units.update(sources)
+                self._total_is_exact = True
+            if comm in _COMPILER_BACKENDS:
+                active.update(sources)
+                self._current_unit = sources[0]
+
+        self._units_started.update(active)
+        self._units_finished = self._units_started - active
+        self._peak_rss_mb = max(self._peak_rss_mb, rss_mb)
+        self._record_liveness(now, live_pids)
+        mem = _read_meminfo()
+        if "MemAvailable" in mem:
+            avail = mem["MemAvailable"]
+            self._min_mem_available_mb = (
+                avail if self._min_mem_available_mb is None
+                else min(self._min_mem_available_mb, avail)
+            )
+        if "SwapFree" in mem:
+            free = mem["SwapFree"]
+            self._min_swap_free_mb = (
+                free if self._min_swap_free_mb is None
+                else min(self._min_swap_free_mb, free)
+            )
+
+    def _record_liveness(self, now: float, live_pids: Set[int]) -> None:
+        """Update the longest observed no-signal stretch under each policy.
+
+        Retires the readings of pids that have exited into a running total so both
+        counters only ever increase; see the note in ``__init__``.
+        """
+        for pid in [pid for pid in self._cpu_last_seen if pid not in live_pids]:
+            self._cpu_retired += self._cpu_last_seen.pop(pid)
+        for pid in [pid for pid in self._io_last_seen if pid not in live_pids]:
+            self._io_retired += self._io_last_seen.pop(pid)
+
+        cpu_total = self._cpu_retired + sum(self._cpu_last_seen.values())
+        io_total = self._io_retired + sum(self._io_last_seen.values())
+        unit_signature = (len(self._units_started), len(self._units_finished))
+
+        units_or_output_moved = (
+            unit_signature != self._prev_unit_signature
+            or self._output_events != self._prev_output_events
+        )
+        cpu_moved = cpu_total > self._prev_cpu_total
+        io_moved = io_total > self._prev_io_total
+
+        if self._last_signal_cpu_only is None:
+            self._last_signal_cpu_only = now
+            self._last_signal_with_io = now
+        if units_or_output_moved or cpu_moved:
+            self._max_gap_cpu_only = max(
+                self._max_gap_cpu_only, now - self._last_signal_cpu_only
+            )
+            self._last_signal_cpu_only = now
+        if units_or_output_moved or cpu_moved or io_moved:
+            self._max_gap_with_io = max(
+                self._max_gap_with_io, now - self._last_signal_with_io
+            )
+            self._last_signal_with_io = now
+
+        self._prev_cpu_total = cpu_total
+        self._prev_io_total = io_total
+        self._prev_unit_signature = unit_signature
+        self._prev_output_events = self._output_events
+
+    def liveness_gaps(self, now: float) -> Dict[str, float]:
+        """Longest no-signal stretch seen so far, per candidate policy.
+
+        The in-flight stretch is included so a run that is stalled right now is
+        reflected immediately rather than only after it resumes.
+        """
+        pending_cpu = 0.0 if self._last_signal_cpu_only is None else now - self._last_signal_cpu_only
+        pending_io = 0.0 if self._last_signal_with_io is None else now - self._last_signal_with_io
+        return {
+            "max_gap_seconds_cpu_only": round(max(self._max_gap_cpu_only, pending_cpu), 1),
+            "max_gap_seconds_with_io": round(max(self._max_gap_with_io, pending_io), 1),
+        }
+
+    def _total_units(self) -> int:
+        # Observation wins over either rule. A Zero W run compiled 33 units while
+        # the driver's command line named 32, which reported "33/32" and a fraction
+        # above 1.0. Whatever the cause of a one-unit shortfall (a name the driver
+        # spelled differently to its backend, a recipe adding an input), a total
+        # below the count already seen is knowably wrong, so it is raised to match.
+        if self._total_is_exact:
+            return max(len(self._declared_units), len(self._units_started))
+        total = 0
+        for directory in self._source_dirs:
+            base = Path(directory)
+            if not base.is_absolute():
+                base = self._repo_dir / base
+            try:
+                total += sum(
+                    1 for entry in base.iterdir()
+                    if entry.is_file() and entry.name.endswith(_SOURCE_SUFFIXES)
+                )
+            except OSError:  # noqa: S112  # a source directory that vanished (a build that cleans as it goes) simply contributes nothing to the total
+                continue
+        return max(total, len(self._units_started))
+
+    def snapshot(self, elapsed_seconds: float) -> Dict[str, object]:
+        """Current progress, including an ETA when one can be justified.
+
+        The ETA is withheld until at least one unit has finished; extrapolating
+        from zero completed work would produce a number with no basis.
+        """
+        total = self._total_units()
+        started = len(self._units_started)
+        completed = len(self._units_finished)
+        fraction = (completed / total) if total else 0.0
+        eta_seconds = None
+        if completed > 0 and 0.0 < fraction < 1.0:
+            eta_seconds = int(elapsed_seconds / fraction - elapsed_seconds)
+        return {
+            "units_started": started,
+            "units_finished": completed,
+            "units_total": total,
+            # Exactness is claimed only while the declared set still bounds what
+            # has been seen; once observation overtakes it the total is a lower
+            # bound, and an ETA derived from it reads optimistically.
+            "total_is_exact": (
+                self._total_is_exact and len(self._declared_units) >= started
+            ),
+            # Distinguishes "no compiles seen because none happened" from "no
+            # compiles seen because the process table was unreadable" -- without
+            # it a zero unit count silently looks like a real observation.
+            "monitoring_available": self._monitoring_available,
+            "fraction": round(fraction, 4),
+            "eta_seconds": eta_seconds,
+            "current_unit": self._current_unit,
+            "peak_build_rss_mb": self._peak_rss_mb,
+            "min_mem_available_mb": self._min_mem_available_mb,
+            "min_swap_free_mb": self._min_swap_free_mb,
+        }
+
+
+def _write_json_atomically(path: Path, payload: Dict[str, object]) -> None:
+    """Replace ``path`` with ``payload``.
+
+    Written to a sibling temp file and renamed so a reader polling the file never
+    observes a half-written document (which would make the watcher crash on a
+    JSON parse error rather than report progress).
+    """
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _build_env(parallelism: int) -> Dict[str, str]:
+    """Environment matching what the installer gives a build.
+
+    Mirrors ``engine_manager._build_env``: the measurement is only meaningful if
+    the build runs with the same compile parallelism the real install would use.
+    """
+    env = dict(os.environ)
+    env["MAKEFLAGS"] = f"-j{parallelism}"
+    env["GOFLAGS"] = f"-p={parallelism}"
+    env["CARGO_BUILD_JOBS"] = str(parallelism)
+    return env
+
+
+def resolve_parallelism(job_memory_mb: int) -> int:
+    """Jobs the installer would choose on THIS board.
+
+    Restates ``engine_manager._build_parallelism``'s bound (the lesser of core
+    count and what RAM can hold) so the measured build matches a real install.
+    The divisor is passed in from that module rather than duplicated here, so the
+    two cannot drift.
+    """
+    cores = os.cpu_count() or 1
+    mem = _read_meminfo()
+    total_mb = mem.get("MemTotal")
+    if total_mb is None:
+        return cores
+    return min(cores, max(1, total_mb // job_memory_mb))
+
+
+_BUILD_MEMORY_HELPER = "/opt/universalchess/scripts/uc-build-memory"
+
+
+def _build_memory(action: str) -> bool:
+    """Acquire or release the installer's temporary build swap.
+
+    The real install runs inside ``services.build_memory.build_memory()``, which
+    brings up extra swap for the build's duration. Measuring without it would
+    time a build under different memory conditions than a real install faces --
+    on a board whose free RAM is smaller than one compiler process, that
+    difference decides whether the build is CPU-bound or thrashing, so the timing
+    would not describe the failure being investigated.
+
+    Best-effort, exactly like the installer: a missing helper or absent sudo
+    grant is reported and the build proceeds, rather than the measurement being
+    abandoned.
+    """
+    if not Path(_BUILD_MEMORY_HELPER).exists():
+        sys.stderr.write(f"build memory: {_BUILD_MEMORY_HELPER} absent; continuing without it\n")
+        return False
+    argv = ["sudo", "-n", _BUILD_MEMORY_HELPER, action, "--owner-pid", str(os.getpid())]
+    proc = subprocess.run(argv, capture_output=True, text=True)  # noqa: S603  # nosec B603  # fixed argv against the pinned root helper the package grants, mirroring services.build_memory
+    if proc.returncode != 0:
+        sys.stderr.write(f"build memory: {action} exited {proc.returncode}: {proc.stderr.strip()}\n")
+        return False
+    return True
+
+
+def _clone(repo_url: str, repo_dir: Path, git_ref: Optional[str]) -> Tuple[int, float]:
+    """Shallow-clone the engine, returning (exit status, seconds).
+
+    Shallow and single-ref, matching the installer's clone, so the reported clone
+    time is the one a real install pays.
+    """
+    cmd = ["git", "clone", "--depth", "1"]
+    if git_ref:
+        cmd += ["--branch", git_ref]
+    cmd += [repo_url, str(repo_dir)]
+    started = time.monotonic()
+    proc = subprocess.run(cmd, capture_output=True, text=True)  # noqa: S603  # nosec B603  # fixed git argv with a catalog repo URL; git comes from PATH as it does in the installer
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+    return proc.returncode, time.monotonic() - started
+
+
+def run_measurement(args: argparse.Namespace) -> int:
+    """Clone, build, and record timings. Returns the build's exit status."""
+    out_dir = Path(args.workdir) / args.engine
+    out_dir.mkdir(parents=True, exist_ok=True)
+    repo_dir = out_dir / "src"
+    progress_path = out_dir / "progress.json"
+    result_path = out_dir / "result.json"
+    log_path = out_dir / "build.log"
+
+    parallelism = args.parallelism or resolve_parallelism(args.job_memory_mb)
+    facts = hardware_facts()
+    started_wall = time.time()
+
+    def publish(phase: str, elapsed: float, extra: Optional[Dict[str, object]] = None) -> None:
+        payload: Dict[str, object] = {
+            "engine": args.engine,
+            "phase": phase,
+            "started_at": started_wall,
+            "elapsed_seconds": int(elapsed),
+            "parallelism": parallelism,
+            "hardware": facts,
+        }
+        if extra:
+            payload.update(extra)
+        _write_json_atomically(progress_path, payload)
+
+    publish("cloning", 0.0)
+    clone_seconds = 0.0
+    if repo_dir.exists():
+        # A previous run's checkout is reused deliberately: it isolates compile
+        # time from download time on a slow link, and re-cloning would silently
+        # add minutes to a figure meant to describe compilation.
+        #
+        # Caveat, observed on CT800: a recipe ending in "mv output/CT800_* ..."
+        # fails on the second run, because the first run already renamed the file
+        # and the relink is skipped as up to date. A build that fails this way
+        # still yields valid *timing* for the compiles it ran, but delete the
+        # checkout before measuring an engine whose recipe consumes its own output.
+        sys.stderr.write(f"reusing existing checkout at {repo_dir}\n")
+    elif args.repo_url:
+        rc, clone_seconds = _clone(args.repo_url, repo_dir, args.git_ref)
+        if rc != 0:
+            _write_json_atomically(result_path, {
+                "engine": args.engine, "phase": "clone_failed",
+                "clone_seconds": int(clone_seconds), "returncode": rc,
+                "hardware": facts,
+            })
+            return rc
+    else:
+        repo_dir.mkdir(parents=True, exist_ok=True)
+
+    memory_held = _build_memory("acquire") if args.with_build_memory else False
+    publish("building", 0.0, {"clone_seconds": int(clone_seconds),
+                              "build_memory_held": memory_held})
+    build_started = time.monotonic()
+    proc = subprocess.Popen(  # noqa: S602  # nosec B602  # build command comes from the engine catalog, not user input; shell is required for its &&/case constructs
+        args.build_command,
+        shell=True,
+        cwd=str(repo_dir),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        start_new_session=True,
+        env=_build_env(parallelism),
+    )
+    monitor = BuildMonitor(proc.pid, repo_dir)
+    last_line = {"text": ""}
+    stop = threading.Event()
+
+    def drain_output() -> None:
+        with log_path.open("w", encoding="utf-8") as log:
+            for raw in proc.stdout:  # type: ignore[union-attr]
+                line = raw.rstrip("\n")
+                log.write(f"{int(time.monotonic() - build_started):6d}s {line}\n")
+                log.flush()
+                if line.strip():
+                    last_line["text"] = line.strip()
+                    monitor.note_output()
+
+    reader = threading.Thread(target=drain_output, daemon=True)
+    reader.start()
+
+    while proc.poll() is None and not stop.is_set():
+        sampled_at = time.monotonic()
+        monitor.poll(sampled_at)
+        elapsed = sampled_at - build_started
+        snapshot = monitor.snapshot(elapsed)
+        snapshot.update(monitor.liveness_gaps(sampled_at))
+        snapshot["last_output_line"] = last_line["text"][:200]
+        snapshot["clone_seconds"] = int(clone_seconds)
+        snapshot["build_memory_held"] = memory_held
+        publish("building", elapsed, snapshot)
+        time.sleep(_POLL_SECONDS)
+
+    build_seconds = time.monotonic() - build_started
+    reader.join(timeout=10)
+    if proc.stdout:
+        proc.stdout.close()
+    if memory_held:
+        _build_memory("release")
+
+    final = monitor.snapshot(build_seconds)
+    result: Dict[str, object] = {
+        "engine": args.engine,
+        "phase": "succeeded" if proc.returncode == 0 else "failed",
+        "returncode": proc.returncode,
+        "build_command": args.build_command,
+        "git_ref": args.git_ref,
+        "parallelism": parallelism,
+        "clone_seconds": int(clone_seconds),
+        "build_seconds": int(build_seconds),
+        "build_memory_held": memory_held,
+        "units_compiled": final["units_finished"],
+        "units_observed": final["units_started"],
+        "units_total": final["units_total"],
+        "total_is_exact": final["total_is_exact"],
+        "monitoring_available": final["monitoring_available"],
+        "peak_build_rss_mb": final["peak_build_rss_mb"],
+        "min_mem_available_mb": final["min_mem_available_mb"],
+        "min_swap_free_mb": final["min_swap_free_mb"],
+        "last_output_line": last_line["text"][:200],
+        "hardware": facts,
+        "finished_at": time.time(),
+        **monitor.liveness_gaps(time.monotonic()),
+    }
+    _write_json_atomically(result_path, result)
+    publish(str(result["phase"]), build_seconds, final)
+    return proc.returncode
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--engine", required=True, help="Catalog engine name, e.g. rodentIV")
+    parser.add_argument("--repo-url", default="", help="Git URL to clone; omit for script-built engines")
+    parser.add_argument("--git-ref", default=None, help="Tag/branch to clone, as the catalog pins it")
+    parser.add_argument("--build-command", required=True, help="The catalog build command, verbatim")
+    parser.add_argument("--workdir", default=_DEFAULT_WORKDIR,
+                        help="Where the clone, logs and results go")
+    parser.add_argument("--parallelism", type=int, default=0,
+                        help="Force -jN; default derives the value the installer would pick")
+    parser.add_argument("--job-memory-mb", type=int, required=True,
+                        help="RAM budget per compile job (engine_manager._BUILD_JOB_MB)")
+    parser.add_argument("--with-build-memory", action="store_true",
+                        help="Hold the installer's temporary build swap, as a real install does")
+    return run_measurement(parser.parse_args(argv))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

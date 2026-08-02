@@ -1,0 +1,35 @@
+{
+  "engine": "demolito",
+  "phase": "succeeded",
+  "returncode": 0,
+  "build_command": "cd src && make CC=gcc",
+  "git_ref": null,
+  "parallelism": 1,
+  "clone_seconds": 4,
+  "build_seconds": 187,
+  "build_memory_held": true,
+  "units_compiled": 9,
+  "units_observed": 9,
+  "units_total": 15,
+  "total_is_exact": true,
+  "monitoring_available": true,
+  "peak_build_rss_mb": 76,
+  "min_mem_available_mb": 109,
+  "min_swap_free_mb": 3492,
+  "last_output_line": "lto-wrapper: note: see the \u2018-flto\u2019 option documentation for more information",
+  "hardware": {
+    "pi_model": "Raspberry Pi Zero W Rev 1.1",
+    "revision": "9000c1",
+    "cpu_model_name": "ARMv6-compatible processor rev 7 (v6l)",
+    "machine": "armv6l",
+    "kernel": "6.18.34+rpt-rpi-v6",
+    "cores": 1,
+    "memory": {
+      "MemTotal": 426,
+      "MemAvailable": 132,
+      "SwapTotal": 3670,
+      "SwapFree": 3520
+    }
+  },
+  "finished_at": 1785641940.731293
+}

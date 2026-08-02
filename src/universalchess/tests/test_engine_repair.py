@@ -292,17 +292,18 @@ def test_repair_engine_succeeds_and_makes_maia_usable(tmp_path, monkeypatch):
     # Stand in for build-maia.sh --weights-only: the real command downloads nets
     # into the install dir. Simulate a successful download by creating one net,
     # returning (returncode, tail) like the real build-command runner.
-    def fake_run_build_command(cmd, cwd, timeout, on_line):
+    def fake_run_monitored_command(cmd, cwd, on_line, **kwargs):
         assert "--weights-only" in cmd
         _add_maia_net(engines_dir)
         on_line("downloaded maia-1500.pb.gz")
         return 0, ""
 
-    monkeypatch.setattr(manager, "_run_build_command", fake_run_build_command)
+    monkeypatch.setattr(manager, "_run_monitored_command", fake_run_monitored_command)
 
     stages = []
     ok = manager.repair_engine(
-        "maia", stage_callback=lambda stage, msg, frac: stages.append((stage, msg))
+        "maia",
+        stage_callback=lambda stage, msg, frac, **kwargs: stages.append((stage, msg)),
     )
 
     assert ok is True
@@ -325,10 +326,10 @@ def test_repair_engine_fails_when_command_fails(tmp_path, monkeypatch):
     _install_maia_binary_only(engines_dir)
     manager = EngineManager(engines_dir=str(engines_dir))
 
-    def fake_run_build_command(cmd, cwd, timeout, on_line):
+    def fake_run_monitored_command(cmd, cwd, on_line, **kwargs):
         return 1, "wget: unable to resolve host github.com"
 
-    monkeypatch.setattr(manager, "_run_build_command", fake_run_build_command)
+    monkeypatch.setattr(manager, "_run_monitored_command", fake_run_monitored_command)
 
     ok = manager.repair_engine("maia")
 
@@ -351,10 +352,10 @@ def test_repair_engine_fails_when_nets_still_missing(tmp_path, monkeypatch):
     _install_maia_binary_only(engines_dir)
     manager = EngineManager(engines_dir=str(engines_dir))
 
-    def fake_run_build_command(cmd, cwd, timeout, on_line):
+    def fake_run_monitored_command(cmd, cwd, on_line, **kwargs):
         return 0, ""  # "succeeds" but creates no net
 
-    monkeypatch.setattr(manager, "_run_build_command", fake_run_build_command)
+    monkeypatch.setattr(manager, "_run_monitored_command", fake_run_monitored_command)
 
     ok = manager.repair_engine("maia")
 
