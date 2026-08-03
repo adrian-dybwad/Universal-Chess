@@ -4,7 +4,13 @@
 const CACHE_VERSION = '__BUILD_TIMESTAMP__';
 const CACHE_NAME = `universal-chess-${CACHE_VERSION}`;
 
-// Assets to cache on install
+// Assets to cache on install.
+//
+// cache.addAll() below is atomic: a single entry that 404s rejects the whole
+// install, so the worker never activates and the app silently loses both
+// offline support and the update banner that depends on it. Every path here
+// must therefore resolve to a real file; serviceWorkerPrecache.test.ts fails if
+// one is renamed or removed without this list being updated.
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -12,6 +18,8 @@ const STATIC_ASSETS = [
   '/icons/favicon.ico',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
+  '/icons/icon-192-maskable.png',
+  '/icons/icon-512-maskable.png',
   '/stockfish/stockfish.js',
   '/stockfish/stockfish.wasm',
 ];

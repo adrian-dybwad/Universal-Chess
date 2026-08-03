@@ -8,6 +8,7 @@ import { CastButton } from './CastButton';
 import { MenuIcon } from './MenuIcon';
 import { UpdateIndicator } from './UpdateIndicator';
 import { BoardControlPanel } from './BoardControlPanel';
+import { PRIMARY_NAV } from '../config/navigation';
 import './Navbar.css';
 
 /**
@@ -69,34 +70,16 @@ export function Navbar() {
 
         <div className={`navbar-menu ${menuOpen ? 'is-active' : ''}`}>
           <div className="navbar-start">
-            <Link
-              to="/board"
-              className={`navbar-item ${isActive('/board') ? 'is-active' : ''}`}
-              onClick={() => setMenuOpen(false)}
-            >
-              {t('nav.liveBoard')}
-            </Link>
-            <Link
-              to="/games"
-              className={`navbar-item ${isActive('/games') ? 'is-active' : ''}`}
-              onClick={() => setMenuOpen(false)}
-            >
-              {t('nav.games')}
-            </Link>
-            <Link
-              to="/positions"
-              className={`navbar-item ${isActive('/positions') ? 'is-active' : ''}`}
-              onClick={() => setMenuOpen(false)}
-            >
-              {t('nav.positions')}
-            </Link>
-            <Link
-              to="/settings"
-              className={`navbar-item ${isActive('/settings') ? 'is-active' : ''}`}
-              onClick={() => setMenuOpen(false)}
-            >
-              {t('nav.settings')}
-            </Link>
+            {PRIMARY_NAV.map(({ path, labelKey }) => (
+              <Link
+                key={path}
+                to={path}
+                className={`navbar-item ${isActive(path) ? 'is-active' : ''}`}
+                onClick={() => setMenuOpen(false)}
+              >
+                {t(labelKey)}
+              </Link>
+            ))}
           </div>
         </div>
       </div>

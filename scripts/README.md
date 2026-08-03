@@ -112,6 +112,26 @@ the shared `menu.json` catalog changed (the web reads the catalog via
 | `config/` | Build configuration |
 | `releases/` | Built .deb artifacts (gitignored) |
 
+## Asset Generation
+
+One-off generators for checked-in binary assets. Re-run only when the source
+artwork changes; each writes its output straight into the tree.
+
+| Script | Purpose |
+|--------|---------|
+| `make-maskable-icons.py` | Build the PWA maskable icons (`icon-<size>-maskable.png`) from the full-bleed logo, scaling the artwork into the Android adaptive-icon safe zone |
+| `make-split-sprite-sheet.py` | Build a SPLIT chess sprite sheet (`chesssprites_<id>.bmp`, 1-bit ink + mask) from 12 piece PNGs |
+| `make-svg-sprite-sheet.py` | Build a COLORWAY chess sprite sheet (`chesssprites_<id>.png`, RGBA) by rasterising a packed piece SVG (needs `cairosvg`) |
+
+```bash
+python scripts/make-maskable-icons.py
+```
+
+Icon sizes come from `public/manifest.json`; adding a size there means passing
+it to `--sizes` and adding the file to the service worker's precache list.
+`src/manifest.test.ts` and `src/serviceWorkerPrecache.test.ts` fail until both
+are updated.
+
 ## Debugging & Development
 
 | Script | Purpose |
