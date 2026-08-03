@@ -5196,13 +5196,16 @@ def api_get_all_engines():
     try:
         from universalchess.managers.engine_manager import (
             EngineManager, ENGINES, arch_unsupported_reason, get_current_arch,
-            canonical_ref, documentation_url,
+            canonical_ref, documentation_url, host_has_neon,
         )
 
         engine_manager = EngineManager()
         # Resolve once: the device architecture is constant for this process, and
-        # it determines which engines can be installed here.
+        # it determines which engines can be installed here. NEON is read
+        # separately because one architecture token spans CPUs that have it and
+        # CPUs that do not.
         arch = get_current_arch()
+        has_neon = host_has_neon()
         engines_list = []
 
         for name, engine_def in ENGINES.items():
@@ -5217,7 +5220,9 @@ def api_get_all_engines():
             needs_repair = engine_manager.needs_repair(name)
             can_repair = engine_manager.can_repair(name)
             missing_net_count = len(engine_manager.missing_nets(name))
-            unsupported_reason = arch_unsupported_reason(engine_def, arch)
+            unsupported_reason = arch_unsupported_reason(
+                engine_def, arch, has_neon=has_neon
+            )
             # Source-built engines support the ref picker; system packages and
             # bundled engines (no repo_url) do not. Reported here so the list view
             # can decide whether to fetch/show the picker without a per-engine

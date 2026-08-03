@@ -866,6 +866,46 @@ def test_all_engines_marks_arch_unsupported(client, monkeypatch):
     assert by_name["rodentIV"]["unsupported_reason"] is None
 
 
+def test_all_engines_marks_a_neon_engine_unsupported_on_a_neon_less_board(
+    client, monkeypatch
+):
+    """Koivisto's card reports unsupported on an armhf board with no NEON unit.
+
+    Why this test exists: the install gate and the engine card read the same
+    helper, but only the card decides whether the Install button is offered at
+    all. A user on a Pi Zero W pressed it and got ``#include <immintrin.h> ...
+    compilation terminated`` after the clone and dependency install had already
+    run. Forcing both the arch token and the CPU capability keeps the assertion
+    independent of the test host.
+
+    How a regression manifests: passing only the architecture to the gate reports
+    supported=True here, and the button is offered for a build that cannot work.
+    """
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.EngineManager.is_installed",
+        lambda self, name: False,
+    )
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.get_current_arch",
+        lambda: "armhf",
+    )
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.host_has_neon",
+        lambda: False,
+    )
+
+    resp = client.get("/api/engines/all")
+    assert resp.status_code == 200
+    by_name = {e["name"]: e for e in json.loads(resp.data)}
+
+    assert by_name["koivisto"]["supported"] is False
+    assert "NEON" in by_name["koivisto"]["unsupported_reason"]
+    # Engines that need no SIMD stay installable on this board, which is a
+    # supported target -- the check must not empty the list.
+    assert by_name["rodentIV"]["supported"] is True
+    assert by_name["ct800"]["supported"] is True
+
+
 def test_all_engines_discovers_custom_from_store_by_binary_presence(client, monkeypatch, tmp_path):
     """Custom engines are discovered from the store + binary, not from .uci files.
 

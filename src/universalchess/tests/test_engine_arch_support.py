@@ -52,6 +52,10 @@ def _engine(supported_archs):
     )
 
 
+# A board reporting the armhf token whose CPU has no NEON unit: the Pi Zero W.
+_NEON_LESS_ARMHF = {"arch": "armhf", "has_neon": False}
+
+
 # ---------------------------------------------------------------------------
 # Arch support predicate + reason
 # ---------------------------------------------------------------------------
@@ -238,6 +242,150 @@ def test_koivisto_build_patches_all_aarch64_only_neon_before_compiling():
     assert build.index("vld1q_s16") < build.index("make")
     assert build.index("vpadd_s32") < build.index("make")
     assert build.index("vget_lane_s32") < build.index("make")
+
+
+# ---------------------------------------------------------------------------
+# NEON capability, which the arch token cannot express
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("machine,features,expected", [
+    # The Pi Zero W: ARM1176JZF-S has a VFPv2 FPU and no NEON unit at all.
+    ("armv6l", "half thumb fastmult vfp edsp java tls", False),
+    # The Pi 2/3 and Zero 2 W in 32-bit mode: same 'armhf' token, but NEON present.
+    ("armv7l", "half thumb fastmult vfp edsp neon vfpv3 tls", True),
+    # AArch64 spells it 'asimd', and every ARMv8-A part the project runs on has it.
+    ("aarch64", "fp asimd evtstrm crc32 cpuid", True),
+    # Not an ARM host: the engine's x86 SIMD path applies, so NEON is irrelevant.
+    ("x86_64", "", True),
+])
+def test_neon_detection_distinguishes_boards_sharing_the_armhf_token(
+    machine, features, expected
+):
+    """NEON presence is read from the CPU, not inferred from the arch token.
+
+    Why this test exists: 'armhf' is a Debian port name covering every 32-bit
+    hard-float ARM, so a Pi Zero W (ARMv6, no NEON) and a Pi 2 (ARMv7, NEON) carry
+    the same token. Koivisto was gated on that token, was therefore offered on the
+    Zero W, and failed after cloning and starting a compile with ``#include
+    <immintrin.h> ... compilation terminated`` -- its source falls back to the x86
+    header when ``__ARM_NEON`` is undefined.
+
+    How a regression manifests: inferring from the token returns True for armv6l
+    and the unbuildable engine is offered again.
+    """
+    from universalchess.managers.engine_manager import cpu_has_neon
+
+    assert cpu_has_neon(machine, features) is expected
+
+
+def test_an_engine_needing_neon_is_refused_on_an_arm_cpu_without_it():
+    """The gate blocks a NEON-dependent engine on a NEON-less ARM board.
+
+    Why this test exists: this is the reported failure. The engine's declared
+    architecture matches the host exactly, so nothing but the CPU capability can
+    tell the two apart.
+
+    How a regression manifests: dropping the capability check returns None here
+    and the install proceeds to a compile that cannot succeed.
+    """
+    engine = _engine(frozenset({"arm64", "armhf"}))
+    engine.requires_neon = True
+
+    reason = arch_unsupported_reason(engine, "armhf", has_neon=False)
+
+    assert reason is not None
+    assert engine.display_name in reason
+    # Naming the architecture alone would be wrong and confusing: other armhf
+    # boards run this engine. The missing hardware is what the user needs told.
+    assert "NEON" in reason
+
+
+def test_an_engine_needing_neon_is_still_offered_where_neon_exists():
+    """A Pi 2/3/Zero 2 W keeps the engine it can actually build.
+
+    Why this test exists: the narrow fix must stay narrow. Koivisto's 32-bit
+    support was validated on a real armv7l board, and blocking all of armhf to
+    solve the Zero W would remove a working engine from every other 32-bit board.
+
+    How a regression manifests: gating on the arch token instead of the capability
+    returns a reason here and silently drops support for hardware that works.
+    """
+    engine = _engine(frozenset({"arm64", "armhf"}))
+    engine.requires_neon = True
+
+    assert arch_unsupported_reason(engine, "armhf", has_neon=True) is None
+
+
+def test_engines_that_do_not_need_neon_are_unaffected_by_its_absence():
+    """The capability check applies only to engines that declare the requirement.
+
+    Why this test exists: most of the catalog compiles fine without SIMD, and the
+    Zero W is a supported board. A check applied to every engine would empty the
+    engine list on exactly the hardware this project targets.
+
+    How a regression manifests: testing the capability unconditionally blocks
+    Rodent IV, CT800 and the rest on the Zero W.
+    """
+    engine = _engine(None)
+
+    assert arch_unsupported_reason(engine, "armhf", has_neon=False) is None
+
+
+def test_koivisto_declares_the_neon_requirement_its_source_imposes():
+    """The real Koivisto entry is marked as needing NEON, and still lists armhf.
+
+    Why this test exists: Koivisto's nn/defs.h selects ``<arm_neon.h>`` only when
+    ``__ARM_NEON`` is defined and otherwise includes ``<immintrin.h>``; its NNUE
+    has AVX512, AVX2/AVX, SSE2 and NEON paths and no scalar fallback, so a
+    NEON-less ARM board has no buildable configuration. Both halves are asserted
+    together because dropping either one reintroduces a field failure: without the
+    flag the Zero W is offered a doomed build, and without 'armhf' every 32-bit
+    board loses a working engine.
+
+    How a regression manifests: removing the flag re-offers Koivisto on the Zero W
+    and it fails with the immintrin.h error again.
+    """
+    from universalchess.managers.engine_manager import ENGINES
+
+    assert ENGINES["koivisto"].requires_neon is True
+    assert ENGINES["koivisto"].supported_archs == frozenset({"arm64", "armhf"})
+
+
+def test_install_refuses_a_neon_engine_on_a_neon_less_board_without_building(
+    monkeypatch, tmp_path
+):
+    """install_engine consults the real CPU, not just the architecture token.
+
+    Why this test exists: the pure gate can be correct while the installer never
+    passes it the capability, which is precisely how this bug reached a board --
+    the gate existed and the arch matched. This drives the real entry point and
+    fails if any build path is reached.
+
+    How a regression manifests: an installer that omits the capability clones the
+    repo and starts a compile, raising the sentinel here instead of refusing.
+    """
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.get_current_arch",
+        lambda: "armhf",
+    )
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.host_has_neon",
+        lambda: False,
+    )
+
+    def _should_not_run(*args, **kwargs):
+        raise AssertionError("build path must not run without the required SIMD")
+
+    manager = EngineManager(engines_dir=str(tmp_path))
+    monkeypatch.setattr(manager, "_try_install_prebuilt", _should_not_run)
+    monkeypatch.setattr(manager, "_install_from_source", _should_not_run)
+
+    result = manager.install_engine("koivisto")
+
+    assert result is False
+    assert manager._install_error is not None
+    assert "NEON" in manager._install_error
+    assert manager._installing_engine is None
 
 
 # ---------------------------------------------------------------------------

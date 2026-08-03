@@ -363,12 +363,60 @@ def engine_deps_command(packages: List[str]) -> List[str]:
     return ["sudo", "-n", str(ENGINE_DEPS_HELPER), *packages]
 
 
+def cpu_has_neon(machine: str, features: str) -> bool:
+    """Whether this CPU offers ARM NEON, or has no need of it.
+
+    A capability the architecture token cannot carry. 'armhf' is a Debian port
+    name covering every 32-bit hard-float ARM, so a Pi Zero W (ARMv6, VFP only)
+    and a Pi 2 (ARMv7, NEON) are the same token -- which is how a NEON-dependent
+    engine came to be offered on a board whose CPU has no NEON unit at all.
+
+    ``features`` is the ``Features`` line of /proc/cpuinfo. AArch64 spells the
+    same unit 'asimd'. Non-ARM hosts return True: they are not short of anything,
+    because an engine reaching this check compiles its x86 SIMD path there.
+    """
+    if not machine.startswith(("arm", "aarch")):
+        return True
+    if machine in ("aarch64", "arm64"):
+        # Advanced SIMD is part of every ARMv8-A profile this project runs on.
+        return True
+    tokens = features.split()
+    return "neon" in tokens or "asimd" in tokens
+
+
+def _cpuinfo_features() -> str:
+    """The CPU's ``Features`` line from /proc/cpuinfo, or empty where unreadable.
+
+    Empty is only ever read on a non-ARM host (where :func:`cpu_has_neon` ignores
+    it) or a kernel that does not publish the line, so it cannot silently turn a
+    NEON-capable board into one that looks incapable.
+    """
+    try:
+        with open("/proc/cpuinfo", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("Features"):
+                    return line.split(":", 1)[1].strip()
+    except (OSError, IndexError):
+        return ""
+    return ""
+
+
+def host_has_neon() -> bool:
+    """Whether the running host offers ARM NEON (see :func:`cpu_has_neon`)."""
+    return cpu_has_neon(platform.machine().lower(), _cpuinfo_features())
+
+
 def get_current_arch() -> str:
     """Architecture token for the running host: 'arm64' or 'armhf'.
 
     Centralizes the ``platform.machine`` mapping so prebuilt selection, the
     install-time support check, and the catalog API all classify the device the
     same way. 64-bit ARM -> 'arm64'; 32-bit ARM -> 'armhf'.
+
+    Deliberately coarse: it names the binary target, which is what a prebuilt
+    archive is published under. A CPU capability that varies inside one token
+    (NEON, absent on ARMv6 and present on ARMv7) is reported by
+    :func:`host_has_neon` instead of by splitting this vocabulary.
     """
     machine = platform.machine().lower()
     if machine in ('aarch64', 'arm64'):
@@ -544,6 +592,12 @@ class EngineDefinition:
     # engine builds on no architecture this project targets (e.g. Koivisto is
     # x86-SIMD only with a broken upstream ARM NEON path).
     supported_archs: Optional[FrozenSet[str]] = None
+    # Set when the engine has no buildable configuration without ARM NEON. This
+    # cannot be expressed through supported_archs, because the 'armhf' token
+    # covers both NEON-less ARMv6 (Pi Zero W) and NEON-capable ARMv7 (Pi 2/3,
+    # Zero 2 W) -- and gating the whole token would drop hardware that works.
+    # Checked against the CPU itself (see host_has_neon).
+    requires_neon: bool = False
     # Companion net this engine needs before it can play (see RequiredNet). None
     # for ordinary single-binary engines (nothing to require). When set (Maia),
     # the binary being present is NOT sufficient -- at least one matching net must
@@ -605,14 +659,30 @@ def engine_supports_arch(engine: "EngineDefinition", arch: str) -> bool:
     return engine.supported_archs is None or arch in engine.supported_archs
 
 
-def arch_unsupported_reason(engine: "EngineDefinition", arch: str) -> Optional[str]:
-    """Human-readable reason an engine is unavailable on ``arch``, else None.
+def arch_unsupported_reason(
+    engine: "EngineDefinition",
+    arch: str,
+    *,
+    has_neon: bool = True,
+) -> Optional[str]:
+    """Human-readable reason an engine cannot be installed here, else None.
 
     Returned when the engine declares ``supported_archs`` and ``arch`` is not in
     it. Surfaced to the UI and used as the install failure message so the user
-    sees an honest "not supported on this architecture" notice instead of a
-    downstream compiler error (e.g. clang/`__int128`).
+    sees an honest "not supported on this device" notice instead of a downstream
+    compiler error (e.g. clang/`__int128`).
+
+    ``has_neon`` reports whether the CPU offers ARM NEON, which the architecture
+    token cannot express: 'armhf' covers both a Pi Zero W without it and a Pi 2
+    with it. It defaults to "present" so a caller that has no way to probe the
+    CPU keeps the architecture-only behaviour; the callers that gate real
+    installs pass :func:`host_has_neon`.
     """
+    if engine.requires_neon and not has_neon:
+        # Naming the architecture here would mislead: other boards reporting this
+        # same token do run the engine. The missing hardware is the actual reason.
+        return (f"{engine.display_name} needs ARM NEON, which this device's CPU "
+                f"does not have; it cannot be installed on this device.")
     if engine_supports_arch(engine, arch):
         return None
     # Empty set: the engine builds on no architecture this project targets
@@ -969,6 +1039,13 @@ ENGINES = {
         # __int128 dependency, and its x86-only _pext_u64 is guarded behind USE_PEXT
         # with a magic-bitboard fallback that the makefile selects off ARM.
         supported_archs=frozenset({"arm64", "armhf"}),
+        # ...but only where the CPU has NEON. nn/defs.h includes <arm_neon.h>
+        # only under __ARM_NEON and falls back to the x86 <immintrin.h>, and the
+        # NNUE has AVX512/AVX2/AVX/SSE2/NEON paths with no scalar fallback. On a
+        # Pi Zero W (ARMv6, no NEON) the patched build still failed with
+        # "#include <immintrin.h> ... compilation terminated", after the clone and
+        # dependency install had already run.
+        requires_neon=True,
     ),
     "ethereal": EngineDefinition(
         name="ethereal",
@@ -1892,7 +1969,7 @@ class EngineManager:
         # cannot build on this CPU (e.g. Berserk on 32-bit ARM) would fall through
         # to a source build and fail with a confusing downstream compiler error.
         arch = self._get_arch()
-        unsupported = arch_unsupported_reason(engine, arch)
+        unsupported = arch_unsupported_reason(engine, arch, has_neon=host_has_neon())
         if unsupported is not None:
             self._install_error = unsupported
             log.warning(f"[EngineManager] install_engine: {unsupported}")
