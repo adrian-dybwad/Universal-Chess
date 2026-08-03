@@ -195,6 +195,9 @@ class DisplayManager:
         self.analysis_widget = None
         self.coach_text_widget = None
         self._analysis_engine_handle = None  # EngineHandle from registry
+        # A ``?`` press awaiting the analysis of a specific position, as
+        # (fen, callback). Only the most recent request is held; see request_hint.
+        self._pending_hint = None
         self.alert_widget = None
         self.game_over_widget = None
         # Invoked with the selected ply (or None) so the coach coordinator can
@@ -580,15 +583,84 @@ class DisplayManager:
         """
         self._key_callback = callback
     
+    def request_hint(self, board_obj, on_hint) -> None:
+        """Produce a hint for ``board_obj`` and hand it to ``on_hint``.
+
+        The background AnalysisService already searches every position the game
+        reaches and keeps its principal variation, so the hint reuses that work
+        instead of running a second search for the same position:
+
+        - result already in: ``on_hint`` is called immediately, no engine call;
+        - search in flight: the request is held and resolved when the result for
+          *this* position arrives (matching on FEN, so a result for another
+          position -- a takeback re-evaluation, review navigation -- cannot
+          answer it);
+        - background analysis switched off: falls back to a fresh ``play()``
+          search, because nothing else will ever populate the PV and ``?`` must
+          keep working for those users.
+
+        Only the most recent request is outstanding; pressing ``?`` again for a
+        new position discards the previous one rather than showing a hint the
+        user has moved past.
+
+        ``on_hint`` may be invoked on the analysis worker thread.
+
+        Args:
+            board_obj: chess.Board for the position to hint.
+            on_hint: Callable receiving the chess.Move once one is available.
+                Never called when no hint can be produced.
+        """
+        fen = board_obj.fen()
+        from universalchess.services.analysis import get_analysis_service
+
+        service = get_analysis_service()
+
+        if self._analysis_mode_enabled():
+            result = service.get_position_analysis(fen)
+            if result is not None and result.best_move:
+                on_hint(chess.Move.from_uci(result.best_move))
+                return
+
+            self._pending_hint = (fen, on_hint)
+            service.on_position_analysed(self._on_analysis_for_pending_hint)
+            log.info(f"[DisplayManager] Hint pending analysis of {fen[:30]}...")
+            return
+
+        move = self.get_hint_move(board_obj)
+        if move is not None:
+            on_hint(move)
+
+    def _analysis_mode_enabled(self) -> bool:
+        """Whether background position analysis is running for this game."""
+        from universalchess.board.settings import Settings
+
+        return Settings.read('game', 'analysis_mode', 'true').lower() == 'true'
+
+    def _on_analysis_for_pending_hint(self, result) -> None:
+        """Resolve a hint that was waiting on this position's analysis."""
+        pending = self._pending_hint
+        if pending is None:
+            return
+        fen, on_hint = pending
+        if result.fen != fen or not result.best_move:
+            return
+
+        self._pending_hint = None
+        from universalchess.services.analysis import get_analysis_service
+
+        get_analysis_service().remove_position_listener(self._on_analysis_for_pending_hint)
+        on_hint(chess.Move.from_uci(result.best_move))
+
     def get_hint_move(self, board_obj, time_limit: float = 1.0):
-        """Get a hint move for the current position.
-        
-        Uses the analysis engine to find the best move.
-        
+        """Search the analysis engine directly for a hint move.
+
+        The fallback used when background analysis is off; ``request_hint`` is
+        the entry point that prefers the already-computed principal variation.
+
         Args:
             board_obj: chess.Board object to analyze
             time_limit: Analysis time limit in seconds (default 1.0 for hints)
-            
+
         Returns:
             chess.Move object if a hint is available, None otherwise
         """
@@ -598,7 +670,14 @@ class DisplayManager:
         
         try:
             import chess.engine
-            result = self._analysis_engine_handle.play(board_obj, chess.engine.Limit(time=time_limit))
+            # Clear any strength limit first: the analysis handle is pooled per
+            # binary, so a reduced-ELO opponent on the same engine would
+            # otherwise make the hint suggest a deliberately weakened move.
+            result = self._analysis_engine_handle.play(
+                board_obj,
+                chess.engine.Limit(time=time_limit),
+                options=self._analysis_engine_handle.full_strength_options(),
+            )
             if result.move:
                 log.info(f"[DisplayManager] Hint move: {result.move.uci()}")
                 return result.move

@@ -22,17 +22,17 @@ import { MoveTable } from './MoveTable';
 // A 960 history whose castling chess.js could not have replayed from the
 // standard start. positions[0] is the start; each later entry is one ply.
 const chess960Positions = [
-  { fen: 'nrbbqnkr/pppppppp/8/8/8/8/PPPPPPPP/NRBBQNKR w KQkq - 0 1', san: null, uci: null },
-  { fen: 'nrbbqnkr/pppppppp/8/8/8/8/PPPPP1PP/NRBBQNKR b KQkq - 0 1', san: 'f3', uci: 'f2f3' },
-  { fen: 'nrbbq1kr/ppppppnp/8/8/8/8/PPPPP1PP/NRBBQNKR w KQkq - 1 2', san: 'Nf6', uci: 'f8g6' },
-  { fen: 'nrbbq1kr/ppppppnp/8/8/8/8/PPPPP1PP/NRBBQRK1 b kq - 2 2', san: 'O-O', uci: 'g1f1' },
+  { fen: 'nrbbqnkr/pppppppp/8/8/8/8/PPPPPPPP/NRBBQNKR w KQkq - 0 1', san: null, uci: null, eval: null, best_move: null },
+  { fen: 'nrbbqnkr/pppppppp/8/8/8/8/PPPPP1PP/NRBBQNKR b KQkq - 0 1', san: 'f3', uci: 'f2f3', eval: null, best_move: null },
+  { fen: 'nrbbq1kr/ppppppnp/8/8/8/8/PPPPP1PP/NRBBQNKR w KQkq - 1 2', san: 'Nf6', uci: 'f8g6', eval: null, best_move: null },
+  { fen: 'nrbbq1kr/ppppppnp/8/8/8/8/PPPPP1PP/NRBBQRK1 b kq - 2 2', san: 'O-O', uci: 'g1f1', eval: null, best_move: null },
 ];
 
 const standardPositions = [
-  { fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', san: null, uci: null },
-  { fen: 'rnbqkbnr/pppppppp/8/8/8/8/4P3/PPPP1PPP/RNBQKBNR b KQkq - 0 1', san: 'e4', uci: 'e2e4' },
-  { fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2', san: 'e5', uci: 'e7e5' },
-  { fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2', san: 'Nf3', uci: 'g1f3' },
+  { fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', san: null, uci: null, eval: null, best_move: null },
+  { fen: 'rnbqkbnr/pppppppp/8/8/8/8/4P3/PPPP1PPP/RNBQKBNR b KQkq - 0 1', san: 'e4', uci: 'e2e4', eval: null, best_move: null },
+  { fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2', san: 'e5', uci: 'e7e5', eval: null, best_move: null },
+  { fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2', san: 'Nf3', uci: 'g1f3', eval: null, best_move: null },
 ];
 
 afterEach(() => cleanup());

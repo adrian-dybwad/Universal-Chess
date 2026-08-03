@@ -29,9 +29,6 @@
     "best": "Best:",
     "hideBestMove": "Hide best move",
     "showBest": "Show Best",
-    "analyzing": "Analyzing...",
-    "waiting": "Waiting...",
-    "loadingStockfish": "Loading Stockfish...",
     "firstMove": "First move",
     "previousMove": "Previous move",
     "nextMove": "Next move",
@@ -40,7 +37,8 @@
     "notAnalyzed": "Not analyzed",
     "pawns": "{{value}} pawns",
     "newMoves_one": "{{count}} new move - Click to view",
-    "newMoves_other": "{{count}} new moves - Click to view"
+    "newMoves_other": "{{count}} new moves - Click to view",
+    "notAnalyzedYet": "Not analysed yet"
   },
   "battery": {
     "level": "Battery {{percent}}%",
@@ -227,7 +225,10 @@
     "resumeSaving": "Resuming...",
     "resumeFailed": "Could not resume the game.",
     "confirmResumeTitle": "Resume this game?",
-    "confirmResumeBody": "A game is in progress on the board. Resuming this game abandons the current one (you can resume it again later) and continues this game from where it left off, with clocks preserved."
+    "confirmResumeBody": "A game is in progress on the board. Resuming this game abandons the current one (you can resume it again later) and continues this game from where it left off, with clocks preserved.",
+    "analyzeGame": "Analyse game",
+    "analyzeRequesting": "Requesting...",
+    "analyzeFailed": "Could not request analysis."
   },
   "coach": {
     "title": "Coach",
@@ -736,6 +737,7 @@
       "chessPiecesOnebit": "One-bit 16x16 pixel-art chess piece sprites used by the \"onebit\" e-paper board sprite style. Released into the public domain (CC0); attribution provided as a courtesy.",
       "cburnett": "The classic Cburnett/Wikimedia vector chess set, rasterised to a 16x16 sprite sheet. It is the default e-paper board sprite style (shown as \"Default\"); the previous DGTCentaur Mods set is still available as \"Original Mods\". Multi-licensed by the author under GPLv2+, GFDL and a BSD-style license; used here under the BSD option.",
       "stockfish": "The default chess engine for play and analysis. Stockfish is the strongest open source chess engine, providing move evaluation, best move suggestions, and opponent play.",
+      "stockfishJs": "Stockfish 16 compiled to WebAssembly, used only by the optional Deep Analysis setting. Nothing is distributed with this project: when you enable the setting, your browser downloads the engine, its WebAssembly and its neural network (about 39 MB in total) directly from the jsDelivr CDN at the pinned version stockfish@16.0.0, and each file is checked against a recorded SHA-256 before it runs. Licensed under the GPL-3.0; the corresponding source is at the linked repository.",
       "reckless": "An optionally installable chess engine written in Rust with an embedded NNUE evaluation, consistently among the strongest engines in CCC and TCEC. Installed binaries are built from an unmodified upstream release; the corresponding source is available at the linked repository under the AGPL-3.0.",
       "react": "The UI framework powering the web interface. React enables the component-based architecture, reactive state management, and efficient DOM updates.",
       "vite": "The build tool and development server. Vite provides fast hot module replacement during development and optimized production builds.",

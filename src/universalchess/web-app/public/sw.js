@@ -20,8 +20,6 @@ const STATIC_ASSETS = [
   '/icons/icon-512.png',
   '/icons/icon-192-maskable.png',
   '/icons/icon-512-maskable.png',
-  '/stockfish/stockfish.js',
-  '/stockfish/stockfish.wasm',
 ];
 
 // Install event - cache static assets
@@ -125,7 +123,6 @@ function shouldCache(pathname) {
   if (
     pathname.startsWith('/assets/') ||
     pathname.startsWith('/icons/') ||
-    pathname.startsWith('/stockfish/') ||
     pathname.endsWith('.js') ||
     pathname.endsWith('.css') ||
     pathname.endsWith('.woff') ||

@@ -103,7 +103,7 @@ export default defineConfig(({ mode }) => {
           target: apiTarget,
           changeOrigin: true,
         },
-        // Static assets from Flask (stockfish is in public/ now)
+        // Static assets from Flask
         '/static': {
           target: apiTarget,
           changeOrigin: true,

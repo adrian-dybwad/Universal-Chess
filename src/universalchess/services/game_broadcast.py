@@ -1247,6 +1247,42 @@ def broadcast_epaper_changed(mtime: float) -> bool:
     return get_broadcaster().broadcast_event("epaper_changed", {"mtime": mtime})
 
 
+def broadcast_position_analysed(
+    game_id: int,
+    fen: str,
+    eval_score: Optional[int],
+    best_move: Optional[str],
+) -> bool:
+    """Broadcast one gap-fill analysis result (board -> web).
+
+    Emitted while the board works through a stored game's unanalysed plies at
+    the review page's request. The reviewed game is usually not the live game,
+    so it is not covered by ``game_state``; this lets the eval chart fill in
+    ply by ply instead of the page having to re-fetch the whole game on a timer.
+
+    Args:
+        game_id: Game whose move row was updated. The browser ignores results
+            for any game other than the one on screen.
+        fen: Position the evaluation describes, matching a row's stored FEN.
+        eval_score: Centipawns from White's perspective, or the +/-10000 mate
+            sentinel. None only if the engine reported no score.
+        best_move: The engine's recommendation in UCI, or None if it reported
+            no principal variation.
+
+    Returns:
+        True if the broadcast was sent, False otherwise (e.g. no subscriber).
+    """
+    return get_broadcaster().broadcast_event(
+        "position_analysed",
+        {
+            "game_id": game_id,
+            "fen": fen,
+            "eval": eval_score,
+            "best_move": best_move,
+        },
+    )
+
+
 def broadcast_clock_status(
     white_time: int,
     black_time: int,

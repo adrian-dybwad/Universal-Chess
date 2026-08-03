@@ -67,7 +67,8 @@ from .database import (
     delete_last_move,
     update_game_result,
 )
-from .move_persistence import persist_move_and_maybe_create_game
+from .move_persistence import persist_move_and_maybe_create_game, update_move_analysis
+from universalchess.services.analysis import get_analysis_service
 from .post_move import handle_game_end, validate_physical_board_after_move
 from .correction_flow import handle_field_event_in_correction_mode
 from .starting_position import is_starting_position_state
@@ -232,6 +233,10 @@ class GameManager:
         self._task_worker = GameTaskWorker(stop_event=self._stop_event)
         self._task_worker.start()
         log.debug("[GameManager] Task worker started")
+
+        # An evaluation arrives after the move row is already written, so the
+        # row is backfilled from this callback rather than read at insert time.
+        get_analysis_service().on_position_analysed(self._on_position_analysed)
     
     def _chess_board_to_state(self, chess_board: chess.Board = None) -> bytearray:
         """Convert chess board to piece presence state.
@@ -301,21 +306,36 @@ class GameManager:
             log.debug(f"[GameManager._get_clock_times_for_db] Error getting clock times: {e}")
             return (None, None)
     
-    def _get_eval_score_for_db(self) -> int:
-        """Get evaluation score for database storage.
+    def _on_position_analysed(self, result) -> None:
+        """Backfill the move row for a position whose analysis just finished.
 
-        Returns:
-            Evaluation score in centipawns (from white's perspective), or None if unavailable
+        Registered with AnalysisService so the evaluation reaches the database
+        keyed by the position it describes. Reading the current analysis score
+        at insert time instead (the previous approach) recorded the *previous*
+        ply's evaluation, because push_move only enqueues the search.
+
+        Runs on the analysis worker thread, so the write is handed to the game
+        task worker that owns the SQLAlchemy session -- a session must only be
+        used on its owning thread.
         """
-        try:
-            from universalchess.state.analysis import get_analysis
-            analysis_state = get_analysis()
-            # score is in pawns (clamped to +/-AnalysisService.SCORE_CLAMP_PAWNS),
-            # convert to centipawns for storage
-            return int(analysis_state.score * 100)
-        except Exception as e:
-            log.debug(f"[GameManager._get_eval_score_for_db] Error getting eval score: {e}")
-            return None
+        if self.database_session is None or self.game_db_id < 0:
+            return
+
+        game_db_id = self.game_db_id
+
+        def write():
+            try:
+                update_move_analysis(
+                    self.database_session, game_db_id=game_db_id, result=result)
+            except Exception as e:
+                log.error(f"[GameManager] Failed to persist analysis for a move: {e}")
+                try:
+                    self.database_session.rollback()
+                except Exception:  # noqa: S110  # nosec - best-effort rollback; the original error is logged
+                    pass
+
+        self._task_worker.submit(write)
+
     
     def _update_game_result(self, result_string: str, termination: str, context: str = ""):
         """Update game result in database and trigger event callback."""
@@ -681,7 +701,12 @@ class GameManager:
                 if self.database_session is not None:
                     try:
                         white_clock, black_clock = self._get_clock_times_for_db()
-                        eval_score = self._get_eval_score_for_db()
+                        # Normally None: the search for this position is still
+                        # running and will backfill the row when it finishes.
+                        # Only already-completed analysis is written inline, for
+                        # the case where the search won the race against this
+                        # task.
+                        analysis = get_analysis_service().get_position_analysis(fen_after_move)
                         new_game_db_id, _committed = persist_move_and_maybe_create_game(
                             session=self.database_session,
                             is_first_move=is_first_move,
@@ -693,7 +718,7 @@ class GameManager:
                             fen_after_move=fen_after_move,
                             white_clock=white_clock,
                             black_clock=black_clock,
-                            eval_score=eval_score,
+                            analysis=analysis,
                             chess960=self._game_state.chess960,
                         )
                         self.game_db_id = new_game_db_id

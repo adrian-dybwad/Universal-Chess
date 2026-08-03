@@ -16,9 +16,12 @@ export function useNotation(): Notation {
   const notationValue = useSettingsStore((s) => s.raw?.game?.notation);
 
   // Ensure the store is seeded even if this hook mounts before anything else
-  // triggered a load; load() is idempotent (a no-op once loaded).
+  // triggered a load; load() is idempotent (a no-op once loaded). A failed
+  // fetch is swallowed: the notation falls back to the product default and the
+  // move list still renders, whereas an unhandled rejection would report an
+  // error for a view that is working.
   useEffect(() => {
-    void load();
+    load().catch(() => {});
   }, [load]);
 
   return asNotation(notationValue);

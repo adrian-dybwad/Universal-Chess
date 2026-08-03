@@ -78,8 +78,18 @@ class GameMove(Base):
     # Clock times in seconds remaining after this move (nullable for existing databases)
     white_clock = Column(Integer, nullable=True)
     black_clock = Column(Integer, nullable=True)
-    # Analysis score in centipawns from white's perspective (nullable for existing databases)
+    # Analysis score in centipawns from white's perspective, for the position
+    # *after* this move. NULL means the position was never analysed (analysis
+    # off, or the search had not finished) -- distinct from 0, which is a real
+    # evaluation meaning "dead equal". Forced mate is stored as the +/-10000
+    # sentinel (universalchess.services.analysis.MATE_SCORE_CP).
     eval_score = Column(Integer, nullable=True)
+    # The engine's best move (UCI) in the position after this move, taken from
+    # the first move of the analysis principal variation. Persisted so the web
+    # UI can draw the best-move arrow when reviewing a past game without
+    # re-running an engine. NULL when unanalysed or when the engine reported no
+    # principal variation.
+    best_move = Column(String(10), nullable=True)
     # AI-generated coach statement about this move (nullable; populated lazily the
     # first time a user reviews the move with a coach service configured). Stored
     # so a statement is fetched from the AI service at most once per move.
@@ -90,39 +100,54 @@ class GameMove(Base):
     def __repr__(self):
         return "<GameMove(id='%s', move_at='%s', move='%s', fen='%s')>" % (str(self.id), str(self.move_at), self.move, self.fen)
 
+# Columns added after the original schema, as (table, column, DDL type). Applied
+# by ALTER TABLE because create_all() only creates missing *tables*, never
+# missing columns on a table that already exists. Each entry is guarded by a
+# column-existence check, so the whole set is idempotent and may be re-run.
+_ADDED_COLUMNS = (
+    ('gameMove', 'white_clock', 'INTEGER'),
+    ('gameMove', 'black_clock', 'INTEGER'),
+    ('gameMove', 'eval_score', 'INTEGER'),
+    ('gameMove', 'best_move', 'VARCHAR(10)'),
+    ('gameMove', 'coach_statement', 'TEXT'),
+    ('game', 'termination', 'VARCHAR(255)'),
+    ('game', 'start_fen', 'VARCHAR(255)'),
+    ('game', 'chess960', 'BOOLEAN'),
+)
+
+
+def apply_pending_migrations(target_engine) -> None:
+    """Add any columns missing from an existing database.
+
+    Idempotent: every column is guarded by an existence check, so this is safe
+    to call repeatedly and on a database that create_all() just built.
+
+    Kept as a named function rather than import-time inline code so the upgrade
+    path can be tested against a database created by an older release -- the
+    failure mode it prevents (OperationalError "no such column" on every write)
+    only appears on upgrade, never on a fresh install.
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(target_engine)
+    existing = {
+        table: {col['name'] for col in inspector.get_columns(table)}
+        for table in {name for name, _, _ in _ADDED_COLUMNS}
+        if inspector.has_table(table)
+    }
+
+    with target_engine.connect() as conn:
+        for table, column, ddl_type in _ADDED_COLUMNS:
+            if table in existing and column not in existing[table]:
+                conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {column} {ddl_type}'))
+                conn.commit()
+
+
 engine = create_engine(get_database_uri())
 Base.metadata.create_all(bind=engine)
 
-# Schema migration: Add clock columns if they don't exist (for existing databases)
-# SQLAlchemy's create_all() doesn't add columns to existing tables, so we do it manually
 try:
-    from sqlalchemy import text, inspect
-    inspector = inspect(engine)
-    columns = [col['name'] for col in inspector.get_columns('gameMove')]
-    game_columns = [col['name'] for col in inspector.get_columns('game')]
-    
-    with engine.connect() as conn:
-        if 'white_clock' not in columns:
-            conn.execute(text('ALTER TABLE gameMove ADD COLUMN white_clock INTEGER'))
-            conn.commit()
-        if 'black_clock' not in columns:
-            conn.execute(text('ALTER TABLE gameMove ADD COLUMN black_clock INTEGER'))
-            conn.commit()
-        if 'eval_score' not in columns:
-            conn.execute(text('ALTER TABLE gameMove ADD COLUMN eval_score INTEGER'))
-            conn.commit()
-        if 'coach_statement' not in columns:
-            conn.execute(text('ALTER TABLE gameMove ADD COLUMN coach_statement TEXT'))
-            conn.commit()
-        if 'termination' not in game_columns:
-            conn.execute(text('ALTER TABLE game ADD COLUMN termination VARCHAR(255)'))
-            conn.commit()
-        if 'start_fen' not in game_columns:
-            conn.execute(text('ALTER TABLE game ADD COLUMN start_fen VARCHAR(255)'))
-            conn.commit()
-        if 'chess960' not in game_columns:
-            conn.execute(text('ALTER TABLE game ADD COLUMN chess960 BOOLEAN'))
-            conn.commit()
+    apply_pending_migrations(engine)
 except Exception:  # noqa: BLE001, S110  # nosec B110 - startup migration must never crash import
     # Migration may fail if the table doesn't exist yet (first run) - that's ok;
     # create_all() has already built the current schema and any missing legacy

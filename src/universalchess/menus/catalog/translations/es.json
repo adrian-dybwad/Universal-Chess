@@ -429,6 +429,10 @@
       "boardLabel": "Análisis\n{value}",
       "help": "Cuánto tiempo analiza el motor cada posición para su evaluación. Más tiempo es más preciso (más cercano al número de la web) pero consume más CPU y batería."
     },
+    "analysis.deep": {
+      "label": "Análisis profundo (navegador)",
+      "help": "Permite que la página web de revisión descargue un motor mucho más fuerte (Stockfish 16 NNUE, unos 39 MB la primera vez) desde la CDN jsDelivr y lo ejecute en tu navegador, para la posición que estás viendo. Es la única función que contacta con un tercero; con ella desactivada, nada de aquí sale a internet. El análisis del propio tablero no cambia en ningún caso."
+    },
     "coach.id": {
       "label": "Entrenador",
       "boardLabel": "Entrenador\n{fn:coach_selected_label}",

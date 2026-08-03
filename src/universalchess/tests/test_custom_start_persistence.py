@@ -83,7 +83,6 @@ def _persist_first_move(session, *, start_fen: str):
         fen_after_move=board.fen(),
         white_clock=None,
         black_clock=None,
-        eval_score=None,
         chess960=False,
     )
     assert committed is True

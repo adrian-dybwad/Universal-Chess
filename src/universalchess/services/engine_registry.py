@@ -195,6 +195,40 @@ class EngineHandle:
             )
         return supported
 
+    def full_strength_options(self) -> Dict[str, object]:
+        """Return the options that clear any playing-strength limit on this engine.
+
+        A pooled engine is shared by every consumer of the same binary, and a
+        player engine configures it down to its ELO profile
+        (``UCI_LimitStrength``/``UCI_Elo``/``Skill Level``). UCI options persist
+        for the life of the process, so an objective consumer -- position
+        analysis, the ``?`` hint -- must clear them before its own search or it
+        silently reports the opponent's weakened evaluation.
+
+        Values are read from the engine's own advertised metadata rather than
+        hardcoded: ``Skill Level`` tops out at 20 on Stockfish but not
+        everywhere, and python-chess rejects an out-of-range spin value, which
+        would turn a merely-weak search into a failed one. A spin option that
+        declares no maximum is skipped rather than given an invented ceiling.
+
+        Returns an empty dict for engines that advertise no strength limits
+        (the derived policy engines expose only Randomness/AvoidCaptures), which
+        is also what keeps this safe to call unconditionally.
+        """
+        advertised = self.engine.options
+        options: Dict[str, object] = {}
+
+        limit_strength = advertised.get("UCI_LimitStrength")
+        if limit_strength is not None:
+            options["UCI_LimitStrength"] = False
+
+        for name in ("UCI_Elo", "Skill Level"):
+            option = advertised.get(name)
+            if option is not None and getattr(option, "max", None) is not None:
+                options[name] = option.max
+
+        return options
+
     def configure(self, options: Dict[str, str]) -> None:
         """Configure UCI options (serialized).
         
@@ -253,7 +287,8 @@ class EngineHandle:
         self,
         board: chess.Board,
         limit: chess.engine.Limit,
-        multipv: Optional[int] = None
+        multipv: Optional[int] = None,
+        options: Optional[Dict[str, object]] = None,
     ):
         """Analyze position (serialized).
 
@@ -266,11 +301,21 @@ class EngineHandle:
                 makes it return a List[InfoDict]. Defaulting to 1 here silently
                 broke callers that index the result as a dict (e.g. analysis
                 score parsing got an empty result and never updated).
+            options: Optional UCI options to apply before this search, mirroring
+                ``play``. Analysis callers pass ``full_strength_options()`` so a
+                pooled engine left weakened by a reduced-ELO player does not
+                produce the objective evaluation. Applied under the same lock as
+                the search, so a concurrent consumer cannot interleave its own
+                options between the configure and the analyse.
 
         Returns:
             A single InfoDict when multipv is None, else a List[InfoDict].
         """
         with self.lock:
+            if options:
+                supported = self._supported_options(options)
+                if supported:
+                    self.engine.configure(supported)
             return self.engine.analyse(board, limit, multipv=multipv)
 
 

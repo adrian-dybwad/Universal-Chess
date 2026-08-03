@@ -60,8 +60,8 @@ const START_FULL = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const E4_FULL = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1';
 
 const POSITIONS = [
-  { fen: START_FULL, san: null, uci: null },
-  { fen: E4_FULL, san: 'e4', uci: 'e2e4' },
+  { fen: START_FULL, san: null, uci: null, eval: null, best_move: null },
+  { fen: E4_FULL, san: 'e4', uci: 'e2e4', eval: null, best_move: null },
 ];
 
 afterEach(() => {

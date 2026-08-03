@@ -29,9 +29,6 @@
     "best": "Mejor:",
     "hideBestMove": "Ocultar mejor jugada",
     "showBest": "Mostrar mejor",
-    "analyzing": "Analizando...",
-    "waiting": "Esperando...",
-    "loadingStockfish": "Cargando Stockfish...",
     "firstMove": "Primera jugada",
     "previousMove": "Jugada anterior",
     "nextMove": "Jugada siguiente",
@@ -40,7 +37,8 @@
     "notAnalyzed": "Sin analizar",
     "pawns": "{{value}} peones",
     "newMoves_one": "{{count}} jugada nueva - Haz clic para ver",
-    "newMoves_other": "{{count}} jugadas nuevas - Haz clic para ver"
+    "newMoves_other": "{{count}} jugadas nuevas - Haz clic para ver",
+    "notAnalyzedYet": "Aún no analizado"
   },
   "battery": {
     "level": "Batería {{percent}}%",
@@ -227,7 +225,10 @@
     "resumeSaving": "Reanudando...",
     "resumeFailed": "No se pudo reanudar la partida.",
     "confirmResumeTitle": "¿Reanudar esta partida?",
-    "confirmResumeBody": "Hay una partida en curso en el tablero. Reanudar esta partida abandona la actual (puedes reanudarla de nuevo más tarde) y continúa esta partida desde donde se quedó, conservando los relojes."
+    "confirmResumeBody": "Hay una partida en curso en el tablero. Reanudar esta partida abandona la actual (puedes reanudarla de nuevo más tarde) y continúa esta partida desde donde se quedó, conservando los relojes.",
+    "analyzeGame": "Analizar partida",
+    "analyzeRequesting": "Solicitando...",
+    "analyzeFailed": "No se pudo solicitar el análisis."
   },
   "coach": {
     "title": "Entrenador",
@@ -736,6 +737,7 @@
       "chessPiecesOnebit": "Sprites de piezas de ajedrez en pixel art de 16x16 de un bit usados por el estilo de sprites «onebit» de la pantalla de tinta electrónica. Publicados como dominio público (CC0); la atribución se ofrece por cortesía.",
       "cburnett": "El clásico juego vectorial de piezas Cburnett/Wikimedia, rasterizado a una hoja de sprites de 16x16. Es el estilo de sprites predeterminado de la pantalla de tinta electrónica (mostrado como «Predeterminado»); el juego anterior de DGTCentaur Mods sigue disponible como «Original Mods». El autor lo publicó con licencia múltiple bajo GPLv2+, GFDL y una licencia de estilo BSD; aquí se usa bajo la opción BSD.",
       "stockfish": "El motor de ajedrez predeterminado para jugar y analizar. Stockfish es el motor de ajedrez de código abierto más fuerte, ofreciendo evaluación de jugadas, sugerencias de la mejor jugada y juego del rival.",
+      "stockfishJs": "Stockfish 16 compilado a WebAssembly, usado únicamente por el ajuste opcional de Análisis profundo. Este proyecto no distribuye nada: al activar el ajuste, tu navegador descarga el motor, su WebAssembly y su red neuronal (unos 39 MB en total) directamente de la CDN jsDelivr en la versión fijada stockfish@16.0.0, y cada archivo se comprueba contra un SHA-256 registrado antes de ejecutarse. Publicado bajo la licencia GPL-3.0; el código fuente correspondiente está en el repositorio enlazado.",
       "reckless": "Un motor de ajedrez instalable de forma opcional, escrito en Rust con una evaluación NNUE integrada, sistemáticamente entre los motores más fuertes en CCC y TCEC. Los binarios instalados se compilan a partir de una versión oficial sin modificar; el código fuente correspondiente está disponible en el repositorio enlazado bajo la licencia AGPL-3.0.",
       "react": "El framework de interfaz que impulsa la interfaz web. React posibilita la arquitectura basada en componentes, la gestión reactiva del estado y las actualizaciones eficientes del DOM.",
       "vite": "La herramienta de compilación y el servidor de desarrollo. Vite ofrece un reemplazo rápido de módulos en caliente durante el desarrollo y compilaciones de producción optimizadas.",

@@ -61,6 +61,13 @@ const licenses: License[] = [
     url: 'https://github.com/official-stockfish/Stockfish',
   },
   {
+    name: 'Stockfish.js (deep analysis)',
+    type: 'GPL-3.0',
+    descriptionKey: 'stockfishJs',
+    copyright: 'Chess.com, LLC; Niklas Fiekas; Hiroshi Ogawa; Stockfish Authors',
+    url: 'https://github.com/nmrugg/stockfish.js',
+  },
+  {
     name: 'Reckless',
     type: 'AGPL-3.0',
     descriptionKey: 'reckless',

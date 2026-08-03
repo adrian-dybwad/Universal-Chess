@@ -3307,7 +3307,8 @@
       "children": [
         "analysis.enabled",
         "analysis.engine",
-        "analysis.time"
+        "analysis.time",
+        "analysis.deep"
       ]
     },
     {
@@ -4479,6 +4480,24 @@
         "height_ratio": 0.8,
         "layout": "horizontal"
       }
+    },
+    {
+      "id": "analysis.deep",
+      "type": "toggle",
+      "label": "Deep Analysis (browser)",
+      "help": "Let the web review page fetch a much stronger engine (Stockfish 16 NNUE, about 39 MB on first use) from the jsDelivr CDN and run it in your browser, for the position you are looking at. This is the only feature that contacts a third party; with it off, nothing here reaches the internet. The board's own analysis is unaffected either way.",
+      "section": "game",
+      "bind": {
+        "store": "game",
+        "key": "deep_analysis"
+      },
+      "icon": {
+        "true": "checkbox_checked",
+        "false": "checkbox_empty"
+      },
+      "platforms": [
+        "web"
+      ]
     },
     {
       "id": "coach.id",

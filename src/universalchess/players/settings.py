@@ -257,6 +257,12 @@ class GameSettings:
             seconds via ``analysis_time_seconds``; longer is more accurate but
             uses more CPU/battery. Stored as the name so the seconds can be
             retuned without invalidating saved configs.
+        deep_analysis: Allow the web review page to fetch a stronger engine
+            (Stockfish 16 NNUE, roughly 39 MB) from jsDelivr for the position
+            being viewed. Default False, which is the only configuration that
+            contacts no third party. Must be server-side rather than a browser
+            preference: the Content-Security-Policy that permits the fetch is
+            emitted by the web process, so the two have to agree.
         ponder: When True, engine players think on the opponent's time (UCI
             pondering). A             pondering engine runs in a dedicated process so its
             background search is never interrupted by analysis or the opponent;
@@ -326,6 +332,7 @@ class GameSettings:
     analysis_mode: bool = True
     analysis_engine: str = "stockfish"
     analysis_time_preset: str = ANALYSIS_TIME_DEFAULT
+    deep_analysis: bool = False
     ponder: bool = False
     chess960: bool = False
     show_board: bool = True
@@ -427,6 +434,7 @@ class GameSettings:
             "analysis_mode": self.analysis_mode,
             "analysis_engine": self.analysis_engine,
             "analysis_time_preset": self.analysis_time_preset,
+            "deep_analysis": self.deep_analysis,
             "ponder": self.ponder,
             "chess960": self.chess960,
             "show_board": self.show_board,
@@ -507,6 +515,7 @@ class GameSettings:
             analysis_mode=data["analysis_mode"],
             analysis_engine=data["analysis_engine"],
             analysis_time_preset=data["analysis_time_preset"],
+            deep_analysis=data["deep_analysis"],
             ponder=data["ponder"],
             chess960=data["chess960"],
             show_board=data["show_board"],

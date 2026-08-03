@@ -98,11 +98,11 @@ describe('GameOverPanel', () => {
         result: '1/2-1/2',
         termination: 'Termination.THREEFOLD_REPETITION',
         positions: [
-          { fen: 'a', san: null, uci: null },
-          { fen: 'b', san: 'e4', uci: 'e2e4' },
-          { fen: 'c', san: 'e5', uci: 'e7e5' },
-          { fen: 'd', san: 'Nf3', uci: 'g1f3' },
-          { fen: 'e', san: 'Nc6', uci: 'b8c6' },
+          { fen: 'a', san: null, uci: null, eval: null, best_move: null },
+          { fen: 'b', san: 'e4', uci: 'e2e4', eval: null, best_move: null },
+          { fen: 'c', san: 'e5', uci: 'e7e5', eval: null, best_move: null },
+          { fen: 'd', san: 'Nf3', uci: 'g1f3', eval: null, best_move: null },
+          { fen: 'e', san: 'Nc6', uci: 'b8c6', eval: null, best_move: null },
         ],
       }),
     );

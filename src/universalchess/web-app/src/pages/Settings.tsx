@@ -217,6 +217,10 @@ interface FormSettings {
     engine_move_clock_delay_seconds: string;
     analysis_mode: boolean;
     analysis_engine: string;
+    // Opt-in: lets the web review page fetch a stronger engine from a CDN. Must
+    // be server-persisted, not a browser preference -- the CSP that permits the
+    // fetch is emitted server-side, so the two have to agree.
+    deep_analysis: boolean;
     ponder: boolean;
     chess960: boolean;
     show_board: boolean;
@@ -271,6 +275,7 @@ const defaultFormSettings: FormSettings = {
     engine_move_clock_delay_seconds: '1',
     analysis_mode: true,
     analysis_engine: 'stockfish',
+    deep_analysis: false,
     ponder: false,
     chess960: false,
     show_board: true,
@@ -412,6 +417,7 @@ function parseRawSettings(data: SettingsData): FormSettings {
       engine_move_clock_delay_seconds: data.game?.engine_move_clock_delay_seconds || '1',
       analysis_mode: parseConfigBool(data.game?.analysis_mode, true),
       analysis_engine: data.game?.analysis_engine || 'stockfish',
+      deep_analysis: parseConfigBool(data.game?.deep_analysis, false),
       ponder: parseConfigBool(data.game?.ponder, false),
       chess960: parseConfigBool(data.game?.chess960, false),
       show_board: parseConfigBool(data.game?.show_board, true),

@@ -1,11 +1,12 @@
 import type { AnalysisResult } from '../types/game';
+import { loadDeepAnalysisEngine, type DeepAnalysisDeps } from './deepAnalysisEngine';
 
-// Upper bound on how long a single worker load + UCI handshake may take before
-// it is treated as failed. Sized generously because the first load compiles the
-// Stockfish WASM, which on a cold cache / slow device can take well over ten
-// seconds. A too-tight bound here rejects a worker that would have been ready
-// moments later, so keep this comfortably above observed cold-start times.
-const INIT_TIMEOUT_MS = 30000;
+// Upper bound on how long a single load + UCI handshake may take before it is
+// treated as failed. Generous because the first load downloads roughly 39 MB
+// from the CDN and then compiles the WebAssembly, which on a cold cache or a
+// slow device takes well over a minute. A too-tight bound rejects an engine that
+// would have been ready moments later.
+const INIT_TIMEOUT_MS = 180000;
 
 interface QueuedRequest {
   fen: string;
@@ -15,24 +16,35 @@ interface QueuedRequest {
 }
 
 /**
- * Stockfish web worker wrapper for chess analysis.
- * 
- * Handles request queuing internally - multiple analyze() calls are safe.
- * Requests are processed sequentially in FIFO order.
+ * Wrapper around the opt-in deep-analysis engine.
+ *
+ * Nothing is bundled: the engine is fetched from a CDN and hash-verified by
+ * {@link loadDeepAnalysisEngine}, which only happens once the user turns on the
+ * server-side `game.deep_analysis` setting (the CSP blocks the fetch otherwise).
+ * Board-sourced evaluations, which every install gets, do not come through here
+ * -- they arrive with the game state.
+ *
+ * Handles request queuing internally: multiple analyze() calls are safe and are
+ * processed sequentially in FIFO order.
  */
 export class StockfishService {
   private worker: Worker | null = null;
+  private objectUrls: readonly string[] = [];
   private isReady = false;
   private initPromise: Promise<void> | null = null;
-  private workerPath: string;
-  
+  private loaderDeps: DeepAnalysisDeps;
+
   // Request queue
   private queue: QueuedRequest[] = [];
   private currentRequest: QueuedRequest | null = null;
   private currentResult: Partial<AnalysisResult> = {};
 
-  constructor(workerPath = '/stockfish/stockfish.js') {
-    this.workerPath = workerPath;
+  /**
+   * @param loaderDeps Side effects for the CDN loader. Defaults to the real
+   *   fetch/WebCrypto/Worker; overridden in tests.
+   */
+  constructor(loaderDeps: DeepAnalysisDeps = {}) {
+    this.loaderDeps = loaderDeps;
   }
 
   async init(): Promise<void> {
@@ -49,17 +61,16 @@ export class StockfishService {
   }
 
   private async doInit(): Promise<void> {
-    return new Promise((resolve, reject) => {
+    return new Promise<void>((resolve, reject) => {
       // A single init attempt settles exactly once. `settled` guards against the
       // timeout, onerror, and readiness paths racing each other (e.g. uciok
       // arriving just as the timeout fires).
       let settled = false;
       let checkReady: ReturnType<typeof setInterval> | undefined;
-      let timeout: ReturnType<typeof setTimeout> | undefined;
 
       const clearTimers = () => {
         if (checkReady !== undefined) clearInterval(checkReady);
-        if (timeout !== undefined) clearTimeout(timeout);
+        clearTimeout(timeout);
       };
 
       const fail = (error: Error) => {
@@ -70,9 +81,7 @@ export class StockfishService {
         // from a clean slate. Leaving it alive leaks the worker and lets a late
         // uciok flip isReady to true behind a rejected promise, an inconsistent
         // state where callers think init failed but the service reports ready.
-        this.worker?.terminate();
-        this.worker = null;
-        this.isReady = false;
+        this.releaseWorker();
         this.initPromise = null;
         reject(error);
       };
@@ -85,34 +94,51 @@ export class StockfishService {
         resolve();
       };
 
-      try {
-        console.log(`[Stockfish] Loading worker from: ${this.workerPath}`);
-        this.worker = new Worker(this.workerPath);
+      // The timer starts before the download so a stalled fetch is bounded too,
+      // not just the WebAssembly compile.
+      const timeout = setTimeout(() => {
+        console.error('[Stockfish] Init timeout');
+        fail(new Error('Stockfish init timeout'));
+      }, INIT_TIMEOUT_MS);
 
-        this.worker.onmessage = (e) => this.handleMessage(e.data);
-
-        this.worker.onerror = (e) => {
-          console.error('[Stockfish] Worker error:', e);
-          fail(new Error(`Stockfish worker failed to load: ${e.message}`));
-        };
-
-        this.worker.postMessage('uci');
-
-        timeout = setTimeout(() => {
-          console.error('[Stockfish] Init timeout');
-          fail(new Error('Stockfish init timeout'));
-        }, INIT_TIMEOUT_MS);
-
-        checkReady = setInterval(() => {
-          if (this.isReady) {
-            succeed();
+      loadDeepAnalysisEngine(this.loaderDeps)
+        .then(({ worker, objectUrls }) => {
+          // A load that finishes after the timeout already failed must not
+          // install itself behind a rejected promise.
+          if (settled) {
+            worker.terminate();
+            for (const url of objectUrls) URL.revokeObjectURL(url);
+            return;
           }
-        }, 100);
-      } catch (e) {
-        console.error('[Stockfish] Init failed:', e);
-        fail(e instanceof Error ? e : new Error(String(e)));
-      }
+          this.worker = worker;
+          this.objectUrls = objectUrls;
+          worker.onmessage = (e) => this.handleMessage(e.data);
+          worker.onerror = (e) => {
+            console.error('[Stockfish] Worker error:', e);
+            fail(new Error(`Deep analysis engine failed to start: ${e.message}`));
+          };
+          checkReady = setInterval(() => {
+            if (this.isReady) {
+              succeed();
+            }
+          }, 100);
+        })
+        .catch((e) => {
+          console.error('[Stockfish] Init failed:', e);
+          fail(e instanceof Error ? e : new Error(String(e)));
+        });
     });
+  }
+
+  /** Terminate the worker and release the object URLs holding ~39 MB. */
+  private releaseWorker(): void {
+    this.worker?.terminate();
+    this.worker = null;
+    for (const url of this.objectUrls) {
+      URL.revokeObjectURL(url);
+    }
+    this.objectUrls = [];
+    this.isReady = false;
   }
 
   private handleMessage(line: string): void {
@@ -231,9 +257,7 @@ export class StockfishService {
 
   destroy(): void {
     this.stop();
-    this.worker?.terminate();
-    this.worker = null;
-    this.isReady = false;
+    this.releaseWorker();
     this.initPromise = null;
   }
 }
@@ -246,4 +270,16 @@ export function getStockfishService(): StockfishService {
     instance = new StockfishService();
   }
   return instance;
+}
+
+/**
+ * Release the singleton's worker and the object URLs holding the ~39 MB engine.
+ *
+ * A no-op when no engine was ever loaded, so callers reacting to the deep
+ * analysis setting being off do not construct the very service they are trying
+ * to avoid.
+ */
+export function destroyStockfishService(): void {
+  instance?.destroy();
+  instance = null;
 }

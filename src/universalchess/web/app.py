@@ -120,29 +120,108 @@ CACHE_LONG = 86400 * 7  # 7 days for static assets that rarely change
 CACHE_SHORT = 3600      # 1 hour for assets that may change
 CACHE_NONE = 0          # No caching for dynamic content
 
-# Content Security Policy applied to every response.
-# Notes on the relaxations (each is required by an existing, trusted feature):
-#   - script-src 'unsafe-inline': the ca_install.html certificate-install page
-#     (served over plain HTTP before the CA is trusted) embeds inline <script>
-#     and onclick handlers. The React build uses external bundles and does not
-#     rely on this.
-#   - script-src 'wasm-unsafe-eval' + worker-src blob:: the React analysis board
-#     runs Stockfish compiled to WebAssembly inside a Web Worker.
-#   - connect-src 'self': SSE (/events) and the JSON API are same-origin.
-# object-src 'none', base-uri 'self' and frame-ancestors 'self' are the
-# meaningful hardening (no plugins, no <base> hijack, no framing/clickjacking).
-CONTENT_SECURITY_POLICY = "; ".join([
-    "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
-    "font-src 'self' data:",
-    "connect-src 'self'",
-    "worker-src 'self' blob:",
-    "object-src 'none'",
-    "base-uri 'self'",
-    "frame-ancestors 'self'",
-])
+# Origin the opt-in deep-analysis engine is fetched from. Reached only when the
+# game.deep_analysis setting is on, and only by fetch() -- never as a script
+# source; see build_content_security_policy.
+DEEP_ANALYSIS_CDN_ORIGIN = "https://cdn.jsdelivr.net"
+
+
+def build_content_security_policy(deep_analysis: bool) -> str:
+    """Build the Content-Security-Policy header for this install.
+
+    Baseline relaxations, each required by an existing trusted feature:
+      - ``script-src 'unsafe-inline'``: the ca_install.html certificate-install
+        page (served over plain HTTP before the CA is trusted) embeds inline
+        ``<script>`` and onclick handlers. The React build uses external bundles
+        and does not rely on this.
+      - ``connect-src 'self'``: SSE (/events) and the JSON API are same-origin.
+
+    ``object-src 'none'``, ``base-uri 'self'`` and ``frame-ancestors 'self'`` are
+    the meaningful hardening (no plugins, no <base> hijack, no framing).
+
+    The default install executes no WebAssembly and creates no worker, so it
+    grants neither ``'wasm-unsafe-eval'`` nor ``worker-src blob:``. Both existed
+    for the bundled Stockfish WASM that has been removed.
+
+    Args:
+        deep_analysis: When True, permit the opt-in CDN engine: WebAssembly, a
+            Blob worker, and jsDelivr on ``connect-src`` *only*. Keeping the CDN
+            off ``script-src`` is deliberate -- the page fetches all three assets
+            and verifies each SHA-256 before creating the worker, and an origin
+            on ``script-src`` would let the CDN serve executable script that
+            bypasses that check entirely. ``blob:`` is granted on ``connect-src``
+            for the same reason: the worker reads its WebAssembly and its neural
+            net back from object URLs holding the already-verified bytes, so it
+            makes no network request of its own.
+
+    Returns:
+        The header value.
+    """
+    script_src = ["'self'", "'unsafe-inline'"]
+    connect_src = ["'self'"]
+    worker_src = ["'self'"]
+    if deep_analysis:
+        script_src.append("'wasm-unsafe-eval'")
+        connect_src.extend(["blob:", DEEP_ANALYSIS_CDN_ORIGIN])
+        worker_src.append("blob:")
+
+    return "; ".join([
+        "default-src 'self'",
+        f"script-src {' '.join(script_src)}",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data:",
+        "font-src 'self' data:",
+        f"connect-src {' '.join(connect_src)}",
+        f"worker-src {' '.join(worker_src)}",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "frame-ancestors 'self'",
+    ])
+
+
+# Cached (config mtime, flag) for deep_analysis. The CSP is emitted on every
+# response, so the setting cannot be re-parsed each time; keying the cache on the
+# file's mtime keeps it correct no matter which process wrote the change (the
+# board's menus write the same file).
+_deep_analysis_cache = (None, False)
+
+
+def reset_deep_analysis_cache() -> None:
+    """Discard the cached deep-analysis flag, forcing a re-read."""
+    global _deep_analysis_cache
+    _deep_analysis_cache = (None, False)
+
+
+def deep_analysis_enabled() -> bool:
+    """Whether opt-in CDN deep analysis is turned on for this install.
+
+    Fails closed: an unreadable or malformed config yields False, so a broken
+    centaur.ini cannot quietly hand every install the widened policy.
+    """
+    global _deep_analysis_cache
+    import configparser
+    import os
+
+    from universalchess.board.settings import Settings
+
+    try:
+        mtime = os.stat(Settings.configfile).st_mtime
+    except OSError:
+        return False
+
+    cached_mtime, cached_value = _deep_analysis_cache
+    if cached_mtime == mtime:
+        return cached_value
+
+    config = configparser.ConfigParser()
+    try:
+        config.read(Settings.configfile)
+        value = config.getboolean("game", "deep_analysis", fallback=False)
+    except configparser.Error:
+        return False
+
+    _deep_analysis_cache = (mtime, value)
+    return value
 
 
 def apply_security_headers(response):
@@ -155,7 +234,10 @@ def apply_security_headers(response):
     response.headers.setdefault('X-Content-Type-Options', 'nosniff')
     response.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
     response.headers.setdefault('Referrer-Policy', 'no-referrer')
-    response.headers.setdefault('Content-Security-Policy', CONTENT_SECURITY_POLICY)
+    response.headers.setdefault(
+        'Content-Security-Policy',
+        build_content_security_policy(deep_analysis_enabled()),
+    )
     return response
 
 
@@ -179,10 +261,10 @@ CACHEABLE_EXTENSIONS = {
 }
 
 # Path prefixes that serve immutable, content-addressed build assets (the Vite
-# bundle, icons and the Stockfish engine). Only responses under these prefixes
-# are eligible for long browser caching; everything else defaults to no-store
-# (see add_cache_headers) so dynamic data is never served stale.
-STATIC_ASSET_PREFIXES = ('/static/', '/assets/', '/icons/', '/stockfish/')
+# bundle and icons). Only responses under these prefixes are eligible for long
+# browser caching; everything else defaults to no-store (see add_cache_headers)
+# so dynamic data is never served stale.
+STATIC_ASSET_PREFIXES = ('/static/', '/assets/', '/icons/')
 
 
 @app.after_request
@@ -1427,18 +1509,6 @@ def react_icons(filename):
     abort(404)
 
 
-@app.route("/stockfish/<path:filename>")
-def react_stockfish(filename):
-    """Serve Stockfish WASM files for React app analysis."""
-    react_dir = get_react_app_dir()
-    if react_dir:
-        try:
-            return send_from_directory(react_dir / "stockfish", filename)
-        except NotFound:  # noqa: S110 - best-effort; failure here is non-fatal and intentionally ignored
-            pass
-    abort(404)
-
-
 @app.route("/manifest.json")
 def react_manifest():
     """Serve React app PWA manifest."""
@@ -1577,7 +1647,14 @@ def api_game_positions(gameid):
     """Return authoritative per-ply positions for a stored game.
 
     Response: ``{"chess960": bool, "start_fen": str,
-                 "positions": [{"fen", "san", "uci"}]}`` with the start first.
+                 "positions": [{"fen", "san", "uci", "eval", "best_move"}]}``
+    with the start first.
+
+    ``eval`` is the stored centipawn evaluation from White's perspective for the
+    position after that ply (+/-10000 for forced mate) and ``best_move`` the
+    engine's UCI recommendation, both NULL when the ply was never analysed. They
+    come from the board's own analysis: the browser no longer ships an engine,
+    so this is the source for the review page's eval chart and best-move arrow.
 
     The web analysis view navigates and lists a game's history by these
     server-computed FENs instead of replaying the PGN in the browser; the web no
@@ -1595,7 +1672,12 @@ def api_game_positions(gameid):
 
         chess960 = bool(getattr(game, "chess960", False))
         move_rows = session.execute(
-            select(models.GameMove.move, models.GameMove.fen)
+            select(
+                models.GameMove.move,
+                models.GameMove.fen,
+                models.GameMove.eval_score,
+                models.GameMove.best_move,
+            )
             .where(models.GameMove.gameid == gameid)
             .order_by(models.GameMove.id)
         ).all()
@@ -1613,8 +1695,13 @@ def api_game_positions(gameid):
         )
 
         board = chess.Board(start_fen, chess960=chess960)
-        positions = [{"fen": board.fen(), "san": None, "uci": None}]
-        for move_uci, stored_fen in played:
+        initial_eval = initial_row[2] if initial_row is not None else None
+        initial_best = initial_row[3] if initial_row is not None else None
+        positions = [{
+            "fen": board.fen(), "san": None, "uci": None,
+            "eval": initial_eval, "best_move": initial_best,
+        }]
+        for move_uci, stored_fen, eval_score, best_move in played:
             try:
                 move = chess.Move.from_uci(move_uci)
             except ValueError:
@@ -1629,9 +1716,15 @@ def api_game_positions(gameid):
             except (ValueError, AssertionError):
                 san = move_uci
             board.push(move)
-            positions.append(
-                {"fen": stored_fen or board.fen(), "san": san, "uci": move_uci}
-            )
+            positions.append({
+                "fen": stored_fen or board.fen(),
+                "san": san,
+                "uci": move_uci,
+                # NULL stays NULL: an unanalysed ply must draw a gap in the
+                # chart, not a point at 0.0 (a real "dead equal" evaluation).
+                "eval": eval_score,
+                "best_move": best_move,
+            })
 
         return jsonify(
             {"chess960": chess960, "start_fen": start_fen, "positions": positions}
@@ -3314,6 +3407,44 @@ def api_game_resume(game_id):
         sent = send_board_command("resume_game", {"game_id": game_id})
         if sent:
             return jsonify({"success": True, "message": "Game resume requested"})
+        return jsonify({"success": False, "error": "Board not running"}), 503
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/games/<int:game_id>/analyze", methods=["POST"])
+@requires_auth
+def api_game_analyze(game_id):
+    """Ask the board to evaluate a stored game's unanalysed plies.
+
+    Backs the review page's gap-fill action. A game played with ``analysis_mode``
+    off -- or recorded before evaluations were persisted -- has no eval chart and
+    no best-move arrows; this fills them in.
+
+    The work is done by the main process, never here: it owns the engine and the
+    analysis queue, and the pooled UCI process cannot be driven from two
+    processes at once on a board with 415 MiB of RAM. Results are written to the
+    move rows and pushed to this page as ``position_analysed`` SSE events, so the
+    chart fills in progressively; nothing is returned here but the hand-off
+    status.
+
+    404 when the game does not exist, so a stray id costs the board nothing.
+    """
+    try:
+        session = get_db_session()
+        try:
+            exists = session.query(models.Game.id).filter(
+                models.Game.id == game_id).first()
+        finally:
+            session.close()
+        if exists is None:
+            return jsonify({"success": False, "error": "not_found"}), 404
+
+        from universalchess.services import game_broadcast
+
+        sent = game_broadcast.send_board_command("analyze_game", {"game_id": game_id})
+        if sent:
+            return jsonify({"success": True, "message": "Analysis requested"})
         return jsonify({"success": False, "error": "Board not running"}), 503
     except Exception as e:
         return _internal_error(e)

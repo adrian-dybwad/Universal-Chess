@@ -6,6 +6,7 @@ import { useAuthedAction } from '../components/useAuthedAction';
 import { useGameStore } from '../stores/gameStore';
 import { isGameInProgress } from '../utils/gameProgress';
 import { apiFetch } from '../utils/api';
+import { useSseEvent, type SseEventPayload } from '../utils/sseBus';
 import type { PositionEntry } from '../types/game';
 
 const RESULT_KEYS: Record<string, string> = {
@@ -81,6 +82,12 @@ export function Analyze() {
   const [confirmResume, setConfirmResume] = useState(false);
   const [resumeBusy, setResumeBusy] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
+
+  // Gap-fill: asks the board to evaluate the plies it never analysed (a game
+  // played with analysis off, or recorded before evaluations were persisted).
+  // The browser ships no engine, so this is the only way to fill the chart.
+  const [analyzeBusy, setAnalyzeBusy] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
 
   // A live game "in progress" (unfinished, at least one move) would be ended by
   // playing from here, so it is confirmed first. Reading the store here is
@@ -232,6 +239,61 @@ export function Analyze() {
     void resumeGame();
   }, [gameInProgress, resumeGame]);
 
+  // Ask the board to analyse this game's unanalysed plies. Results are not in
+  // the response: the board searches one position at a time and streams each
+  // result back as a position_analysed event, handled below.
+  const analyzeGame = useCallback(async () => {
+    if (!gameId) return;
+    setAnalyzeBusy(true);
+    setAnalyzeError(null);
+    try {
+      const response = await apiFetch(`/api/games/${gameId}/analyze`, {
+        method: 'POST',
+        requiresAuth: true,
+      });
+      if (response.status === 401) {
+        onUnauthorized(analyzeGame);
+        return;
+      }
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) {
+        setAnalyzeError(data.error || t('analyze.analyzeFailed'));
+      }
+    } catch (e) {
+      console.error('Failed to request game analysis:', e);
+      setAnalyzeError(t('analyze.analyzeFailed'));
+    } finally {
+      setAnalyzeBusy(false);
+    }
+  }, [gameId, onUnauthorized, t]);
+
+  // Fold each streamed result into the position it describes. Scoped to this
+  // game: the live game keeps analysing during a review and shares this
+  // connection, and opening positions recur across games, so a FEN-only match
+  // would write another game's evaluations onto the one on screen.
+  const onPositionAnalysed = useCallback((payload: SseEventPayload) => {
+    const data = payload as {
+      game_id?: number;
+      fen?: string;
+      eval?: number | null;
+      best_move?: string | null;
+    };
+    if (!gameId || String(data.game_id) !== gameId || !data.fen) return;
+    const { fen, eval: evalScore = null, best_move: bestMove = null } = data;
+    setPositions((current) => {
+      if (!current) return current;
+      let changed = false;
+      const next = current.map((position) => {
+        if (position.fen !== fen) return position;
+        changed = true;
+        return { ...position, eval: evalScore, best_move: bestMove };
+      });
+      return changed ? next : current;
+    });
+  }, [gameId]);
+
+  useSseEvent('position_analysed', onPositionAnalysed);
+
   if (loading) {
     return <div className="loading">{t('analyze.loading')}</div>;
   }
@@ -254,12 +316,26 @@ export function Analyze() {
   // only games the board can resume. Finished games (decisive/draw) are review
   // only, so Resume is hidden for them.
   const resumable = result === '*';
+  // Gap-fill is offered only while a played ply still lacks an evaluation. The
+  // first entry is the start position, which is never analysed, so it is
+  // excluded -- otherwise the action would be offered on every game forever.
+  const hasUnanalysedPlies = (positions ?? []).slice(1).some((p) => p.eval === null);
 
   const header = (
     <div className="box">
       <div className="current-game-header">
         <h3 className="title is-5 box-title">{t('analyze.gameInfoTitle')}</h3>
         <div className="current-game-actions">
+          {hasUnanalysedPlies && (
+            <button
+              type="button"
+              className="button is-small"
+              onClick={() => void analyzeGame()}
+              disabled={analyzeBusy}
+            >
+              {analyzeBusy ? t('analyze.analyzeRequesting') : t('analyze.analyzeGame')}
+            </button>
+          )}
           {resumable && (
             <button
               type="button"
@@ -302,6 +378,11 @@ export function Analyze() {
         {resumeError && (
           <p className="text-muted" style={{ marginTop: '0.5rem' }}>
             {resumeError}
+          </p>
+        )}
+        {analyzeError && (
+          <p className="text-muted" style={{ marginTop: '0.5rem' }}>
+            {analyzeError}
           </p>
         )}
       </div>

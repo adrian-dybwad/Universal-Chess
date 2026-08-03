@@ -53,6 +53,17 @@ class ChessGameService:
         # the last position_change snapshot (game_over False) while the board's
         # game-over widget shows, so the game ends on the e-paper but not the web.
         self._state.on_game_over(self._on_game_over)
+        # Re-broadcast when a search completes. push_move() only *enqueues*
+        # analysis, so the broadcast accompanying a move cannot carry that ply's
+        # evaluation -- without this the web's eval chart and best-move arrow
+        # would stay a ply behind, updating only when the next move was played.
+        from universalchess.services.analysis import get_analysis_service
+
+        get_analysis_service().on_position_analysed(self._on_position_analysed)
+
+    def _on_position_analysed(self, _result) -> None:
+        """Push fresh state to the web now that a position has been evaluated."""
+        self.broadcast_state()
     
     # -------------------------------------------------------------------------
     # Properties (delegate to state for reads)
@@ -329,7 +340,18 @@ class ChessGameService:
             # source of truth for both variants: chess.js is no longer used on
             # the web, and it mis-computes Chess960 castling in any case.
             chess960 = bool(self._state.chess960)
-            positions = self._state.history_positions()
+            # Each entry also carries the board's evaluation and best move for
+            # that ply. The web has no engine of its own by default, so this is
+            # the only source for the eval chart and the best-move arrow.
+            from universalchess.services.analysis import (
+                annotate_positions_with_analysis,
+                get_analysis_service,
+            )
+
+            positions = annotate_positions_with_analysis(
+                self._state.history_positions(),
+                get_analysis_service().get_position_analysis,
+            )
 
             # In-play warning for the web, mirroring the e-paper AlertWidget:
             # check takes priority over a queen threat (see

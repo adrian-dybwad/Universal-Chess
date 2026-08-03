@@ -11,13 +11,64 @@ Keeping this logic here:
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 import chess
 
 from universalchess.board.logging import log
 
 from .deferred_imports import _get_models
+
+if TYPE_CHECKING:
+    from universalchess.services.analysis import PositionAnalysis
+
+
+def update_move_analysis(session, *, game_db_id: int,
+                         result: "PositionAnalysis") -> bool:
+    """Write a completed analysis onto the move row for the position it analysed.
+
+    The move row is inserted before its position has been evaluated (the search
+    runs on a separate thread and takes at least the analysis time limit), so
+    the evaluation is backfilled here when it finishes. Matching on the FEN --
+    not on "the most recent row" -- is what keeps the value on the ply it
+    actually describes; reading the live analysis state at insert time is what
+    previously attributed every eval to the preceding move.
+
+    The FEN is matched within ``game_db_id`` only. Opening positions and short
+    transpositions recur across games, so an unscoped match would overwrite an
+    unrelated game's evaluation.
+
+    Args:
+        session: SQLAlchemy session (must be used on the owning thread).
+        game_db_id: Game whose rows may be updated.
+        result: The completed analysis, carrying the FEN it applies to.
+
+    Returns:
+        True when a row was updated, False when the position has no row in this
+        game. False is an ordinary outcome, not an error: analysis legitimately
+        completes for positions that were taken back, or that belong to a review
+        gap-fill for a different game.
+    """
+    if session is None or game_db_id is None or game_db_id < 0:
+        return False
+
+    models = _get_models()
+    if models is None:
+        return False
+
+    row = (
+        session.query(models.GameMove)
+        .filter_by(gameid=game_db_id, fen=result.fen)
+        .order_by(models.GameMove.id.desc())
+        .first()
+    )
+    if row is None:
+        return False
+
+    row.eval_score = result.eval_score_cp
+    row.best_move = result.best_move
+    session.commit()
+    return True
 
 
 def persist_move_and_maybe_create_game(
@@ -32,7 +83,7 @@ def persist_move_and_maybe_create_game(
     fen_after_move: str,
     white_clock: Optional[int],
     black_clock: Optional[int],
-    eval_score: Optional[int],
+    analysis: Optional["PositionAnalysis"] = None,
     chess960: bool = False,
 ) -> Tuple[int, bool]:
     """Persist a move, creating the game record if needed.
@@ -48,7 +99,13 @@ def persist_move_and_maybe_create_game(
         fen_after_move: FEN recorded for the move row
         white_clock: White clock seconds (or None)
         black_clock: Black clock seconds (or None)
-        eval_score: Eval score in centipawns (or None)
+        analysis: Analysis of the position after this move, when one has already
+            completed. Usually None -- the search normally finishes after the
+            row is written and backfills it via :func:`update_move_analysis` --
+            but the two run on different threads and either can win, so a result
+            that is already available is written with the insert. Leaving the
+            columns NULL is the correct representation of "not analysed"; a 0
+            there is a real evaluation meaning the position is dead equal.
         chess960: True for a Chess960 game. Persisted on the game record so the
             variant can be restored on resume. The start FEN
             (``fen_before_move`` of the first move) is persisted whenever the
@@ -112,7 +169,8 @@ def persist_move_and_maybe_create_game(
             fen=fen_after_move,
             white_clock=white_clock,
             black_clock=black_clock,
-            eval_score=eval_score,
+            eval_score=analysis.eval_score_cp if analysis is not None else None,
+            best_move=analysis.best_move if analysis is not None else None,
         )
         session.add(game_move)
         session.commit()
@@ -205,7 +263,6 @@ def create_game_from_moves(
             fen_after_move=fen_after,
             white_clock=None,
             black_clock=None,
-            eval_score=None,
             chess960=chess960,
         )
         if not committed:

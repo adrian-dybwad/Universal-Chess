@@ -982,6 +982,84 @@ def _broadcast_clock_status() -> None:
         log.debug(f"[App] Failed to broadcast clock status: {e}")
 
 
+_gap_filler = None
+
+
+def _persist_gap_fill_result(game_db_id: int, result) -> None:
+    """Write one gap-fill analysis to its move row and tell the web about it.
+
+    Runs on the analysis worker thread. A short-lived session is opened per
+    result rather than holding one open for the whole fill: a SQLAlchemy session
+    may only be used on its owning thread, and results arrive seconds apart (one
+    engine search each), so the cost is irrelevant next to the search itself.
+    """
+    from sqlalchemy.exc import SQLAlchemyError
+    from sqlalchemy.orm import sessionmaker
+    from universalchess.db import models
+    from universalchess.managers.game.move_persistence import update_move_analysis
+    from universalchess.services.game_broadcast import broadcast_position_analysed
+
+    session = sessionmaker(bind=models.engine)()
+    try:
+        updated = update_move_analysis(session, game_db_id=game_db_id, result=result)
+    except SQLAlchemyError as e:
+        log.error(f"[GapFill] Failed to persist analysis for game {game_db_id}: {e}")
+        session.rollback()
+        return
+    finally:
+        session.close()
+
+    if updated:
+        broadcast_position_analysed(
+            game_db_id, result.fen, result.eval_score_cp, result.best_move)
+
+
+def _handle_web_analyze_game(game_id) -> None:
+    """Queue a stored game's unanalysed plies at the review page's request.
+
+    Handled off the main loop: it reads the game's moves and puts positions on
+    the analysis service's queue, doing no display or game-lifecycle work. The
+    live game keeps playing and analysing throughout; gap-fill results are
+    matched back by FEN to the game that asked for them.
+    """
+    global _gap_filler
+
+    if not isinstance(game_id, int) or game_id <= 0:
+        log.warning(f"[GapFill] Ignoring analyze_game with invalid id: {game_id!r}")
+        return
+
+    from sqlalchemy.exc import SQLAlchemyError
+    from sqlalchemy.orm import sessionmaker
+    from universalchess.db import models
+    from universalchess.services.analysis import get_analysis_service
+    from universalchess.services.game_gapfill import GameGapFiller
+
+    session = sessionmaker(bind=models.engine)()
+    try:
+        game = session.query(models.Game).filter(models.Game.id == game_id).first()
+        if game is None:
+            log.warning(f"[GapFill] Game id={game_id} not found")
+            return
+        rows = [
+            (row.move or "", row.fen, row.eval_score)
+            for row in session.query(models.GameMove)
+            .filter(models.GameMove.gameid == game_id)
+            .order_by(models.GameMove.id)
+            .all()
+        ]
+        chess960 = bool(getattr(game, "chess960", False))
+        start_fen = getattr(game, "start_fen", None) or chess.STARTING_FEN
+    except SQLAlchemyError as e:
+        log.error(f"[GapFill] Failed to read game {game_id}: {e}")
+        return
+    finally:
+        session.close()
+
+    if _gap_filler is None:
+        _gap_filler = GameGapFiller(get_analysis_service(), _persist_gap_fill_result)
+    _gap_filler.fill(game_id, rows, start_fen, chess960)
+
+
 def _handle_web_chromecast_command(command: str, parsed: dict) -> None:
     """Apply a web Chromecast command (start/stop/status) on the board.
 
@@ -1350,6 +1428,16 @@ def _build_resume_data(models, session, game) -> Optional[dict]:
         if m.move and getattr(m, 'eval_score', None) is not None
     ]
 
+    # Per-position analysis for the web: keyed by FEN so the resumed game's eval
+    # chart and best-move arrow are available immediately, instead of blank until
+    # every ply is re-analysed. Includes the initial-position row (unlike
+    # eval_scores, which feeds the e-paper graph and skips it). getattr guards a
+    # row read from a database created before the best_move column existed.
+    position_analyses = [
+        (m.fen, getattr(m, 'eval_score', None), getattr(m, 'best_move', None))
+        for m in moves
+    ]
+
     result = game.result
     termination = getattr(game, 'termination', None)
     # Chess960 metadata. getattr guards databases created before these columns
@@ -1376,6 +1464,7 @@ def _build_resume_data(models, session, game) -> Optional[dict]:
         'white_clock': white_clock,
         'black_clock': black_clock,
         'eval_scores': eval_scores,
+        'position_analyses': position_analyses,
         'result': result,
         'termination': termination,
         'chess960': chess960,
@@ -1577,6 +1666,13 @@ def _resume_game(game_data: dict) -> bool:
             from universalchess.services.analysis import get_analysis_service
             get_analysis_service().restore_history(eval_scores)
             log.info(f"[Resume] Eval scores restored: {len(eval_scores)} positions")
+
+        # Seed the per-position cache so the web's eval chart and best-move arrow
+        # are populated for the resumed game without re-running the engine.
+        position_analyses = game_data.get('position_analyses') or []
+        if position_analyses:
+            from universalchess.services.analysis import get_analysis_service
+            get_analysis_service().restore_position_results(position_analyses)
         
         # A finished game (result recorded) is resumed for review/takebacks, not
         # continued play: reproduce its game-over state and do not prompt a move
@@ -2988,6 +3084,12 @@ def _on_board_command(parsed: dict) -> None:
         return
     if command in ("chromecast_start", "chromecast_stop", "chromecast_status"):
         _handle_web_chromecast_command(command, parsed)
+        return
+    # Gap-fill of a stored game under review: reads move rows and puts positions
+    # on the analysis queue. No display or game-lifecycle work, so it is handled
+    # here rather than unwinding whatever the board is showing.
+    if command == "analyze_game":
+        _handle_web_analyze_game(parsed.get("game_id"))
         return
     if command == "reset_inactivity":
         board.signal_web_activity()
@@ -6823,16 +6925,20 @@ def key_callback(key_id):
                         _reset_unhandled_key_count()
                         return
                 
-                # Standard hint from analysis engine
-                hint_move = display_manager.get_hint_move(game_board)
-                if hint_move:
-                    # Show hint on display widget and LEDs
+                # Standard hint, reusing the background analysis for this
+                # position. The tip may arrive after this handler returns: when
+                # ? is pressed before the search for the current position has
+                # finished, request_hint holds the request and calls back once
+                # the result lands.
+                hint_fen = game_board.fen()
+
+                def _on_hint_ready(hint_move):
                     display_manager.show_hint(hint_move)
                     log.info(f"[App] Hint: {hint_move.uci()}")
                     # Add the AI coach's remark about the recommended move.
-                    _show_hint_coach_async(display_manager, game_board.fen(), hint_move.uci())
-                else:
-                    log.info("[App] No hint available (analysis engine not ready)")
+                    _show_hint_coach_async(display_manager, hint_fen, hint_move.uci())
+
+                display_manager.request_hint(game_board, _on_hint_ready)
             _reset_unhandled_key_count()
             return
         

@@ -12,8 +12,9 @@ import {
   Legend,
   Filler,
 } from 'chart.js';
-import { getStockfishService } from '../services/stockfish';
 import type { PositionEntry } from '../types/game';
+import { MATE_SCORE_CP } from '../types/game';
+import { useDeepAnalysis } from '../hooks/useDeepAnalysis';
 import './Analysis.css';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
@@ -44,9 +45,21 @@ interface AnalysisProps {
 interface MoveData {
   fen: string;
   san: string;
-  eval: number | null;  // centipawns, null if not analyzed
-  mate: number | null;  // mate in N, null if not mate
-  uci: string | null;   // UCI notation of the move (e.g., "e2e4"), null for start position
+  /**
+   * Centipawns from White's perspective as evaluated by the board, or
+   * +/-MATE_SCORE_CP for a forced mate. null means the board has not analysed
+   * this position -- distinct from 0, which is a real "dead equal" evaluation.
+   */
+  eval: number | null;
+  /** The board engine's best move in UCI, or null when unanalysed. */
+  bestMove: string | null;
+  /** UCI of the move that produced this position; null for the start. */
+  uci: string | null;
+}
+
+/** True when a centipawn value is the board's forced-mate sentinel. */
+function isMateScore(cp: number): boolean {
+  return Math.abs(cp) >= MATE_SCORE_CP;
 }
 
 // Pawn magnitude past which the headline eval number is capped for display.
@@ -76,122 +89,44 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
   const { t } = useTranslation();
   const [moves, setMoves] = useState<MoveData[]>([]);
   const [movePos, setMovePos] = useState(0);  // 0 = start, 1 = after first move, etc.
-  const [currentEval, setCurrentEval] = useState<{ cp: number; mate: number | null }>({ cp: 0, mate: null });
-  const [bestMove, setBestMove] = useState<string | null>(null);
-  const [analyzing, setAnalyzing] = useState(false);
   const [newMovesToast, setNewMovesToast] = useState(0);
-  const [sfReady, setSfReady] = useState(false);
-  
+
   const chartRef = useRef<ChartJS<'line'> | null>(null);
   const lastSignatureRef = useRef('');
-  const queueRef = useRef<number[]>([]);
-  const processingRef = useRef(false);
-  // Counter to track the latest analysis request - used to ignore stale results
-  const analysisRequestIdRef = useRef(0);
 
   // Total moves in the game
   const totalMoves = moves.length > 0 ? moves.length - 1 : 0;  // moves[0] is start position
 
-  // Initialize Stockfish, retrying with exponential backoff so a failed or
-  // slow worker load recovers on its own. Without a retry a single init failure
-  // (e.g. a cold-cache WASM compile exceeding the load timeout) would leave
-  // sfReady stuck false and analysis permanently disabled even though the worker
-  // becomes usable moments later. The service tears down its failed worker on
-  // rejection, so each retry starts a fresh worker.
-  useEffect(() => {
-    const sf = getStockfishService();
-    let cancelled = false;
-    let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    let attempt = 0;
-
-    const tryInit = () => {
-      sf.init()
-        .then(() => {
-          if (cancelled) return;
-          console.log('[Analysis] Stockfish ready');
-          setSfReady(true);
-        })
-        .catch((e) => {
-          if (cancelled) return;
-          attempt += 1;
-          // 1s, 2s, 4s, ... capped at 30s so a persistent failure keeps
-          // retrying without hammering.
-          const delayMs = Math.min(1000 * 2 ** (attempt - 1), 30000);
-          console.error(
-            `[Analysis] Failed to initialize Stockfish (attempt ${attempt}), retrying in ${delayMs}ms:`,
-            e,
-          );
-          retryTimer = setTimeout(tryInit, delayMs);
-        });
-    };
-
-    tryInit();
-
-    return () => {
-      cancelled = true;
-      if (retryTimer !== undefined) clearTimeout(retryTimer);
-      sf.stop();
-    };
-  }, []);
-
   // Build move history from the authoritative per-ply positions (python-chess
-  // computed on the server), preserving evals for unchanged positions. This is
-  // the single source for both variants; the web no longer replays the PGN with
-  // chess.js. A signature (the ordered FENs) gates rebuilds so frequent live
-  // broadcasts that don't change the move list (e.g. pending-move updates) do
-  // not churn state or discard in-flight analysis.
+  // computed on the server). This is the single source for both variants; the
+  // web no longer replays the PGN with chess.js, and it no longer runs an
+  // engine of its own -- each entry already carries the board's evaluation and
+  // best move for that ply.
+  //
+  // A signature gates rebuilds so frequent live broadcasts that don't change
+  // anything this component displays (e.g. pending-move updates) do not churn
+  // state. It includes the evals because the board re-broadcasts as searches
+  // complete: keying on FENs alone would ignore exactly those updates and the
+  // newest ply's evaluation would never appear.
   useEffect(() => {
     const entries = Array.isArray(positions) ? positions : [];
-    const signature = entries.map((p) => p.fen).join('|');
+    const signature = entries
+      .map((p) => `${p.fen}:${p.eval ?? ''}:${p.best_move ?? ''}`)
+      .join('|');
     if (signature === lastSignatureRef.current) return;
     lastSignatureRef.current = signature;
 
-    const preserveEvalAt = (index: number, fen: string): { eval: number | null; mate: number | null } => {
-      // Keep a previously computed eval when the position at this index is
-      // unchanged, so rebuilding after a new move doesn't re-analyze the whole
-      // game. Matching on FEN distinguishes a genuine position change from a
-      // no-op rebuild.
-      const existingMove = moves[index];
-      const same = existingMove?.fen === fen;
-      return {
-        eval: same ? existingMove.eval : null,
-        mate: same ? existingMove.mate : null,
-      };
-    };
-
     // The first entry is the start; later entries carry the post-move FEN/SAN/UCI.
-    const newMoves: MoveData[] = entries.map((p, i) => {
-      const preserved =
-        i === 0
-          ? { eval: moves[0]?.eval ?? null, mate: moves[0]?.mate ?? null }
-          : preserveEvalAt(i, p.fen);
-      return {
-        fen: p.fen,
-        san: i === 0 ? t('analysis.start') : (p.san ?? p.uci ?? ''),
-        eval: preserved.eval,
-        mate: preserved.mate,
-        uci: p.uci,
-      };
-    });
+    const newMoves: MoveData[] = entries.map((p, i) => ({
+      fen: p.fen,
+      san: i === 0 ? t('analysis.start') : (p.san ?? p.uci ?? ''),
+      eval: p.eval ?? null,
+      bestMove: p.best_move ?? null,
+      uci: p.uci,
+    }));
 
     const prevLength = moves.length;
     setMoves(newMoves);
-
-    // Build analysis queue - only queue positions that haven't been analyzed yet
-    const newQueue: number[] = [];
-    for (let i = 1; i < newMoves.length; i++) {
-      if (newMoves[i].eval === null) {
-        newQueue.push(i);
-      }
-    }
-    
-    // Merge with existing queue (avoid duplicates)
-    const existingQueue = new Set(queueRef.current);
-    for (const idx of newQueue) {
-      if (!existingQueue.has(idx)) {
-        queueRef.current.push(idx);
-      }
-    }
 
     // Handle position based on mode
     if (mode === 'live') {
@@ -205,153 +140,18 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
     }
   }, [positions, mode, t]);
 
-  // Store moves in a ref so processNext always has current data
-  const movesRef = useRef<MoveData[]>([]);
-  useEffect(() => {
-    movesRef.current = moves;
-  }, [moves]);
-
-  // Process queue when Stockfish is ready and we have moves
-  useEffect(() => {
-    if (!sfReady || queueRef.current.length === 0 || processingRef.current) return;
-    if (movesRef.current.length === 0) return;  // Wait for moves to be populated
-
-    const processNext = async () => {
-      if (queueRef.current.length === 0) {
-        processingRef.current = false;
-        setAnalyzing(false);
-        return;
-      }
-
-      processingRef.current = true;
-      setAnalyzing(true);
-
-      const index = queueRef.current.shift()!;
-      
-      // Get move data from ref (always current)
-      const move = movesRef.current[index];
-      if (!move) {
-        console.log(`[Analysis] Move ${index} not found, skipping`);
-        setTimeout(processNext, 0);
-        return;
-      }
-
-      if (move.eval !== null) {
-        // Already analyzed, skip
-        setTimeout(processNext, 0);
-        return;
-      }
-
-      // Capture the FEN before async operation
-      const fenToAnalyze = move.fen;
-      const isBlackToMove = fenToAnalyze.includes(' b ');
-
-      // Analyze this position
-      const sf = getStockfishService();
-      sf.analyze(fenToAnalyze, 10)
-        .then((result) => {
-          // Stockfish returns score from side-to-move's perspective.
-          // We want all scores from White's perspective for consistent chart.
-          let cp = result.score ?? 0;
-          let mate = result.mate;
-          
-          if (isBlackToMove) {
-            cp = -cp;
-            if (mate !== null) {
-              mate = -mate;
-            }
-          }
-          
-          // For chart: use large values for mate, otherwise centipawns
-          const evalValue = mate !== null ? (mate > 0 ? 10000 : -10000) : cp;
-
-          setMoves((prev) => {
-            const updated = [...prev];
-            if (updated[index]) {
-              updated[index] = {
-                ...updated[index],
-                eval: evalValue,
-                mate: mate,
-              };
-            }
-            return updated;
-          });
-
-          // Process next in queue
-          setTimeout(processNext, 0);
-        })
-        .catch((e) => {
-          console.error('[Analysis] Analysis failed for move', index, e);
-          setTimeout(processNext, 0);
-        });
-    };
-
-    processNext();
-  }, [sfReady, moves.length]);
-
-  // FEN of the position currently being viewed. Used as the analysis key below.
-  const currentPositionFen = moves[movePos]?.fen ?? null;
-
-  // Analyze the current position at higher depth for eval + best move.
+  // Evaluation and best move for the position being viewed, read straight from
+  // the board's per-ply data. Derived during render rather than held in state:
+  // there is nothing asynchronous left to await, and a state copy could only
+  // drift from the entry it mirrors.
   //
-  // Key this effect on the position FEN (a value), NOT the whole `moves` array.
-  // Background queue analysis mutates `moves` (a new array per analyzed ply), and
-  // if this effect re-ran on those updates it would bump analysisRequestId and
-  // discard its own in-flight result. While background analysis streams in, the
-  // best move would then never resolve and the green best-move arrow would never
-  // appear. Keying on the FEN re-runs only on a genuine position change.
-  useEffect(() => {
-    if (!sfReady || movePos < 0 || !currentPositionFen) return;
-
-    const fenToAnalyze = currentPositionFen;
-    
-    // Reset the best move for the new position before analyzing. Without this,
-    // bestMove keeps the previous position's value until the new analysis
-    // resolves; if the new best move is the same UCI string, the state never
-    // changes and the onBestMoveChange notify effect never fires. The parent
-    // (LiveBoard) clears its own arrow copy on every position change, so it
-    // would be left with no best move and the green arrow would not appear.
-    // Resetting here guarantees a null -> value transition that always re-notifies.
-    setBestMove(null);
-    
-    // Increment request ID to track this specific request
-    // This ensures we only use results from the latest analysis, not stale ones
-    analysisRequestIdRef.current += 1;
-    const thisRequestId = analysisRequestIdRef.current;
-
-    // Priority: this is the position the user is viewing, so surface its eval
-    // and best move ahead of the background chart-fill backlog.
-    const sf = getStockfishService();
-    sf.analyze(fenToAnalyze, 16, true)
-      .then((result) => {
-        // Ignore stale results - only update if this is still the latest request
-        if (analysisRequestIdRef.current !== thisRequestId) {
-          return;
-        }
-        
-        // Normalize to White's perspective
-        const isBlackToMove = fenToAnalyze.includes(' b ');
-        
-        let cp = result.score ?? 0;
-        let mate = result.mate;
-        
-        if (isBlackToMove) {
-          cp = -cp;
-          if (mate !== null) {
-            mate = -mate;
-          }
-        }
-        
-        setCurrentEval({
-          cp: mate !== null ? (mate > 0 ? 10000 : -10000) : cp,
-          mate: mate,
-        });
-        setBestMove(result.bestMove);
-      })
-      .catch(() => {
-        // Keep previous eval
-      });
-  }, [sfReady, movePos, currentPositionFen]);
+  // The opt-in deep-analysis engine, when the user has enabled it and its search
+  // has landed, overrides both for this one position; it is a far deeper search
+  // than the board's. It yields to the board whenever it is off or unavailable.
+  const currentMove = moves[movePos] ?? null;
+  const deep = useDeepAnalysis(currentMove?.fen ?? null);
+  const currentEvalCp = deep ? deep.evalCp : (currentMove?.eval ?? null);
+  const bestMove = deep ? deep.bestMove : (currentMove?.bestMove ?? null);
 
   // Notify parent of position change
   useEffect(() => {
@@ -422,22 +222,26 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
     setNewMovesToast(0);
   };
 
-  // Format eval display
-  const formatEval = (): { text: string; color: string } => {
-    if (currentEval.mate !== null) {
-      const m = currentEval.mate;
+  // Format eval display. Returns null when the board has not analysed this
+  // position: showing "0.0" there would claim the position is equal, which is
+  // a real evaluation and not what "unanalysed" means.
+  const formatEval = (): { text: string; color: string } | null => {
+    if (currentEvalCp === null) return null;
+    if (isMateScore(currentEvalCp)) {
+      const whiteMates = currentEvalCp > 0;
       return {
-        text: m > 0 ? `M${m}` : `M${-m}`,
-        color: m > 0 ? 'var(--color-success, green)' : 'var(--color-danger, red)',
+        // The board sends only the +/- sentinel, not the distance, so the
+        // number of moves to mate is deliberately not displayed rather than
+        // guessed at.
+        text: 'M',
+        color: whiteMates ? 'var(--color-success, green)' : 'var(--color-danger, red)',
       };
     }
-    // Cap the displayed number the way mainstream chess UIs do. Stockfish emits
-    // very large centipawn scores in crushing (but not forced-mate) positions --
-    // its PV wins tons of material -- so the raw value (e.g. +60.7) is both
-    // unusual to show and meaningless once a side is clearly winning. Show
-    // ">+35.0"/"<-35.0" past the cap; the underlying currentEval.cp is left
-    // untouched so the chart and eval bar (which clamp separately) are unchanged.
-    const pawns = currentEval.cp / 100;
+    // Cap the displayed number the way mainstream chess UIs do: past the cap
+    // the exact figure conveys nothing beyond "clearly winning", so show
+    // ">+35.0"/"<-35.0". The underlying centipawn value is left untouched so
+    // the chart and eval bar (which clamp separately) are unchanged.
+    const pawns = currentEvalCp / 100;
     const cappedMagnitude = Math.min(Math.abs(pawns), EVAL_DISPLAY_CAP_PAWNS).toFixed(1);
     const beyondCap = Math.abs(pawns) > EVAL_DISPLAY_CAP_PAWNS;
     const sign = pawns < 0 ? '-' : '+';
@@ -448,35 +252,29 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
     };
   };
 
-  // Eval bar value (0-100, 50 = equal)
+  // Eval bar value (0-100, 50 = equal). An unanalysed position sits at the
+  // midpoint, matching the absent headline rather than implying an advantage.
   const evalBarValue = (() => {
-    let effectiveCp = currentEval.cp;
-    if (currentEval.mate !== null) {
-      effectiveCp = currentEval.mate > 0 ? 10000 : -10000;
-    }
-    const clampedCp = Math.max(-1000, Math.min(1000, effectiveCp));
+    const clampedCp = Math.max(-1000, Math.min(1000, currentEvalCp ?? 0));
     return 50 - (clampedCp / 20);
   })();
 
   // Eval bar class
   const evalBarClass = (() => {
-    if (currentEval.cp > 100 || (currentEval.mate !== null && currentEval.mate > 0)) {
-      return 'progress is-success';
-    }
-    if (currentEval.cp < -100 || (currentEval.mate !== null && currentEval.mate < 0)) {
-      return 'progress is-danger';
-    }
+    if (currentEvalCp !== null && currentEvalCp > 100) return 'progress is-success';
+    if (currentEvalCp !== null && currentEvalCp < -100) return 'progress is-danger';
     return 'progress is-warning';
   })();
 
-  // Chart data - evaluations for each move after the start position
-  // The chart shows one point per move, with the evaluation from white's perspective
+  // Chart data - one point per played move, from White's perspective.
   const analyzedMoves = moves.slice(1);  // Skip start position
   const chartLabels = analyzedMoves.map((_, i) => String(i + 1));
-  const chartEvals = analyzedMoves.map((m) => {
-    if (m.eval === null) return 0;  // Show 0 for unanalyzed instead of null (avoids gaps)
-    return Math.max(-500, Math.min(500, m.eval));
-  });
+  // null renders as a gap (Chart.js skips null points), which is the honest
+  // representation of a ply the board has not analysed. The previous code
+  // substituted 0 here, drawing an unanalysed ply as a dead-equal position.
+  const chartEvals = analyzedMoves.map((m) =>
+    m.eval === null ? null : Math.max(-500, Math.min(500, m.eval))
+  );
 
   const chartData = {
     labels: chartLabels,
@@ -556,9 +354,9 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
       <div className="analysis-eval-display">
         <span
           className="eval-score"
-          style={{ color: evalDisplay.color || undefined }}
+          style={{ color: evalDisplay?.color || undefined }}
         >
-          {movePos > 0 ? evalDisplay.text : '0.0'}
+          {evalDisplay?.text ?? ''}
         </span>
         <span className="eval-best-move">
           {bestMove ? (
@@ -574,7 +372,7 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
               <>{t('analysis.best')} <strong>{bestMove}</strong></>
             )
           ) : (
-            analyzing ? t('analysis.analyzing') : (sfReady ? t('analysis.waiting') : t('analysis.loadingStockfish'))
+            t('analysis.notAnalyzedYet')
           )}
         </span>
       </div>

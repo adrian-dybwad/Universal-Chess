@@ -96,7 +96,6 @@ def seeded(monkeypatch):
                     fen_after_move=board.fen(),
                     white_clock=None,
                     black_clock=None,
-                    eval_score=None,
                     chess960=chess960,
                 )
                 first = False

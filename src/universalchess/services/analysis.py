@@ -13,7 +13,9 @@ This follows the pattern:
 
 import queue
 import threading
-from typing import Optional, TYPE_CHECKING
+from collections import OrderedDict
+from dataclasses import dataclass
+from typing import Callable, List, Optional, TYPE_CHECKING
 
 import chess
 import chess.engine
@@ -30,6 +32,80 @@ from universalchess.state.chess_game import ChessGameState
 
 if TYPE_CHECKING:
     from universalchess.services.engine_registry import EngineHandle
+
+
+# Sentinel centipawn magnitude used to represent a forced mate wherever a single
+# integer must carry the evaluation (the database column, the broadcast payload).
+# The web move table renders any |cp| >= this as "M", and the e-paper score does
+# the same, so the two surfaces agree.
+MATE_SCORE_CP = 10000
+
+
+def annotate_positions_with_analysis(
+    positions: List[dict],
+    lookup: Callable[[str], Optional["PositionAnalysis"]],
+) -> List[dict]:
+    """Attach ``eval`` and ``best_move`` to each per-ply position entry.
+
+    Pure: ``lookup`` supplies the analysis for a FEN, so the same function
+    serves the live broadcast (looking up the in-memory cache) and any other
+    consumer without either knowing where the results come from.
+
+    A position with no analysis gets ``None`` for both fields rather than a
+    zero. Null means "not analysed" and lets the chart draw a gap; 0 is a real
+    evaluation meaning the position is dead equal, and the two must not be
+    conflated.
+
+    Entries are copied rather than mutated: callers pass lists whose dicts are
+    shared with other consumers, and ``ChessGameState.history_positions()`` is
+    specified to return exactly ``{fen, san, uci}``.
+    """
+    annotated = []
+    for entry in positions:
+        result = lookup(entry["fen"])
+        annotated.append({
+            **entry,
+            "eval": result.eval_score_cp if result is not None else None,
+            "best_move": result.best_move if result is not None else None,
+        })
+    return annotated
+
+
+@dataclass(frozen=True)
+class PositionAnalysis:
+    """The engine's verdict on one position, addressed by its FEN.
+
+    Kept separate from ``AnalysisState`` (which is display state for the
+    currently shown position) because consumers ask about a *specific*
+    position: the database backfills the row for the ply that was analysed, and
+    the web draws an arrow for the ply the user is looking at. Answering those
+    from "whatever finished most recently" is what produced the off-by-one in
+    the persisted eval.
+
+    ``score_cp`` and ``mate_in`` are mutually exclusive and both are from
+    White's perspective. ``best_move`` is the first move of the principal
+    variation in UCI, or None when the engine reported no PV.
+    """
+
+    fen: str
+    score_cp: Optional[int]
+    mate_in: Optional[int]
+    best_move: Optional[str]
+
+    @property
+    def eval_score_cp(self) -> int:
+        """The single integer stored in the database and put on the wire.
+
+        Mate collapses to the +/-``MATE_SCORE_CP`` sentinel; a centipawn score
+        is clamped to ``AnalysisService.SCORE_CLAMP_CP``, which is deliberately
+        below that sentinel so a crushing-but-not-mating position can never be
+        mistaken for forced mate.
+        """
+        if self.mate_in is not None:
+            # Mate(0) means the side to move is mated, i.e. lost for White.
+            return MATE_SCORE_CP if self.mate_in > 0 else -MATE_SCORE_CP
+        clamp = AnalysisService.SCORE_CLAMP_CP
+        return max(-clamp, min(clamp, self.score_cp))
 
 
 class AnalysisService:
@@ -53,11 +129,26 @@ class AnalysisService:
     # read as a real number rather than pegging early. Mirrors the web-app's
     # EVAL_DISPLAY_CAP_PAWNS so both surfaces agree.
     SCORE_CLAMP_PAWNS = 35.0
-    
+
+    # The same clamp in centipawns, for the persisted/broadcast integer.
+    SCORE_CLAMP_CP = int(SCORE_CLAMP_PAWNS * 100)
+
+    # Upper bound on the per-FEN result cache. Two entries per move comfortably
+    # covers a full game plus review navigation, while keeping the memory
+    # footprint negligible on a 415 MiB board.
+    MAX_POSITION_RESULTS = 400
+
     def __init__(self):
         """Initialize the analysis service."""
         self._game_state: ChessGameState = get_chess_game()
         self._analysis_state: AnalysisState = get_analysis()
+
+        # Completed results keyed by the analysed FEN, oldest first so the cache
+        # can be trimmed by eviction. Guarded by its own lock: the worker thread
+        # writes while consumers (hint, web request handlers) read.
+        self._position_results: "OrderedDict[str, PositionAnalysis]" = OrderedDict()
+        self._results_lock = threading.Lock()
+        self._position_listeners: List[Callable[[PositionAnalysis], None]] = []
         
         # Analysis engine handle from registry
         self._engine_handle: Optional["EngineHandle"] = None
@@ -138,7 +229,13 @@ class AnalysisService:
         
         # Reset state
         self._analysis_state.reset()
-        
+
+        # Drop per-position results too: a repeated position (a transposition,
+        # or simply the start FEN) would otherwise answer the new game with the
+        # previous game's evaluation and best move.
+        with self._results_lock:
+            self._position_results.clear()
+
         log.debug(f"[AnalysisService] Reset (generation {self._reset_generation})")
     
     def restore_history(self, centipawn_scores: list) -> None:
@@ -244,6 +341,25 @@ class AnalysisService:
         
         self._queue_position(add_to_history=add_to_history, is_new_ply=False)
     
+    def analyze_position(self, board: chess.Board) -> None:
+        """Queue an arbitrary position for evaluation, outside the live game.
+
+        Used to gap-fill a stored game under review. The result is published
+        through the normal per-position channel (cache plus listeners) but is
+        deliberately kept out of the live game's display state: it neither
+        extends the e-paper eval graph nor counts towards accuracy, both of
+        which describe the game actually being played.
+
+        Args:
+            board: The position to evaluate. Copied, so the caller may reuse it.
+        """
+        try:
+            request = (board.copy(), board.fen(), False, self._time_limit,
+                       self._reset_generation, False)
+            self._analysis_queue.put_nowait(request)
+        except queue.Full:
+            log.warning("[AnalysisService] Queue full, dropping on-demand analysis")
+
     def _queue_position(self, add_to_history: bool, is_new_ply: bool) -> None:
         """Enqueue the current game position for the worker to analyze.
         
@@ -323,9 +439,17 @@ class AnalysisService:
                     self._analysis_queue.task_done()
                     continue
                 
-                # Run analysis (via handle for serialized access)
+                # Run analysis (via handle for serialized access). Strength
+                # limits are cleared per search: the handle is pooled per binary,
+                # so a reduced-ELO player engine on the same path leaves
+                # UCI_LimitStrength/Skill Level in force and the "objective"
+                # evaluation would come from a deliberately weakened search.
                 try:
-                    info = self._engine_handle.analyse(board_copy, chess.engine.Limit(time=time_limit))
+                    info = self._engine_handle.analyse(
+                        board_copy,
+                        chess.engine.Limit(time=time_limit),
+                        options=self._engine_handle.full_strength_options(),
+                    )
                     
                     # Check again after analysis
                     if request_generation != self._reset_generation:
@@ -337,7 +461,7 @@ class AnalysisService:
                     # in the analysed position. Only newly played plies feed the
                     # accuracy record; re-evaluations pass None.
                     mover_white = (not board_copy.turn) if is_new_ply else None
-                    self._update_state_from_analysis(info, add_to_history, mover_white)
+                    self._update_state_from_analysis(info, add_to_history, mover_white, fen)
                     
                 except Exception as e:
                     log.warning(f"[AnalysisService] Analysis error: {e}")
@@ -347,49 +471,145 @@ class AnalysisService:
             except Exception as e:
                 log.error(f"[AnalysisService] Worker error: {e}")
     
+    # -------------------------------------------------------------------------
+    # Per-position results
+    # -------------------------------------------------------------------------
+
+    def get_position_analysis(self, fen: str) -> Optional[PositionAnalysis]:
+        """Return the recorded analysis for ``fen``, or None if not analysed.
+
+        Absence is reported as None rather than a zero-valued result: a
+        fabricated 0.0 is indistinguishable from a genuinely equal position and
+        would be persisted and charted as a real evaluation.
+        """
+        with self._results_lock:
+            return self._position_results.get(fen)
+
+    def on_position_analysed(self, callback: Callable[[PositionAnalysis], None]) -> None:
+        """Register a callback invoked when any position finishes analysis.
+
+        Drives the three consumers that cannot poll: backfilling the persisted
+        ``eval_score``/``best_move``, rebroadcasting game state to the web, and
+        resolving a ``?`` hint pressed while the search was still in flight.
+        """
+        if callback not in self._position_listeners:
+            self._position_listeners.append(callback)
+
+    def remove_position_listener(self, callback: Callable[[PositionAnalysis], None]) -> None:
+        """Detach a previously registered result callback."""
+        if callback in self._position_listeners:
+            self._position_listeners.remove(callback)
+
+    def restore_position_results(self, stored: list) -> None:
+        """Seed the per-position cache from evaluations persisted for a game.
+
+        A resumed game has already been analysed once; without this the cache
+        starts empty and the web chart would be blank until every ply was
+        re-analysed, repeating work the board already stored.
+
+        Args:
+            stored: ``(fen, eval_score_cp, best_move)`` triples. A NULL
+                ``eval_score_cp`` means the ply was never analysed and is
+                skipped, so absence stays distinguishable from a real 0.
+        """
+        for fen, eval_cp, best_move in stored:
+            if fen is None or eval_cp is None:
+                continue
+            # The +/-MATE_SCORE_CP sentinel is how mate is stored; restoring it
+            # as an ordinary centipawn score would display "+100.0" where the
+            # board previously showed "M". The exact distance is not recoverable
+            # from the sentinel, so 1 stands for "mate, side unknown distance".
+            if eval_cp >= MATE_SCORE_CP:
+                result = PositionAnalysis(fen, None, 1, best_move)
+            elif eval_cp <= -MATE_SCORE_CP:
+                result = PositionAnalysis(fen, None, -1, best_move)
+            else:
+                result = PositionAnalysis(fen, eval_cp, None, best_move)
+            with self._results_lock:
+                self._position_results.pop(fen, None)
+                self._position_results[fen] = result
+                while len(self._position_results) > self.MAX_POSITION_RESULTS:
+                    self._position_results.popitem(last=False)
+
+    def _build_position_analysis(self, fen: str,
+                                 analysis_info: dict) -> Optional[PositionAnalysis]:
+        """Convert a python-chess InfoDict into a PositionAnalysis.
+
+        Scores are read through ``PovScore.white()`` rather than by slicing the
+        repr of the score object, which is what the previous implementation did:
+        fixed character offsets return a plausible but wrong number the moment
+        that repr changes, so the eval would be silently incorrect.
+
+        Returns None when the engine reported no score, so the caller records
+        nothing at all instead of inventing a value.
+        """
+        pov_score = analysis_info.get("score")
+        if pov_score is None:
+            return None
+
+        white_score = pov_score.white()
+        pv = analysis_info.get("pv")
+        # Engines omit the PV in some very short or terminal searches; that must
+        # not discard the evaluation, only the arrow.
+        best_move = pv[0].uci() if pv else None
+
+        return PositionAnalysis(
+            fen=fen,
+            score_cp=white_score.score(),
+            mate_in=white_score.mate(),
+            best_move=best_move,
+        )
+
+    def _record_position_analysis(self, result: Optional[PositionAnalysis]) -> None:
+        """Cache a completed result by FEN and notify listeners.
+
+        Listener exceptions are contained: an analysis result feeds several
+        independent consumers, and one failing (say, a web broadcast on a closed
+        socket) must not prevent the others from running or abort the worker.
+        """
+        if result is None:
+            return
+
+        with self._results_lock:
+            # Re-inserting moves the entry to the end, so a re-analysed position
+            # is treated as freshly used rather than evicted as stale.
+            self._position_results.pop(result.fen, None)
+            self._position_results[result.fen] = result
+            while len(self._position_results) > self.MAX_POSITION_RESULTS:
+                self._position_results.popitem(last=False)
+
+        for callback in list(self._position_listeners):
+            try:
+                callback(result)
+            except Exception:
+                log.exception("[AnalysisService] Position result listener failed")
+
     def _update_state_from_analysis(self, analysis_info: dict, add_to_history: bool,
-                                    mover_white: Optional[bool] = None) -> None:
-        """Update AnalysisState from engine analysis result.
-        
+                                    mover_white: Optional[bool] = None,
+                                    fen: Optional[str] = None) -> None:
+        """Update AnalysisState from an engine analysis result.
+
         Args:
             analysis_info: Raw analysis dict from chess engine.
             add_to_history: Whether to append the score to the history graph.
             mover_white: Colour of the side that just moved for a newly played
                 half-move (recorded for accuracy), or None for a re-evaluation.
+            fen: The analysed position, used to key the per-position record.
         """
-        if "score" not in analysis_info:
+        result = self._build_position_analysis(fen or self._game_state.fen, analysis_info)
+        if result is None:
             return
-        
-        score_str = str(analysis_info["score"])
-        
-        # Parse score
-        if "Mate" in score_str:
-            # Extract mate value
-            mate_str = score_str[13:24]
-            mate_str = mate_str[1:mate_str.find(")")]
-            mate_value = int(float(mate_str))
-            
-            # Negate if black is winning
-            if "BLACK" in score_str:
-                mate_value = -mate_value
-            
+
+        if result.mate_in is not None:
             self._analysis_state.set_mate_score(
-                mate_value, add_to_history=add_to_history, mover_white=mover_white)
+                result.mate_in, add_to_history=add_to_history, mover_white=mover_white)
         else:
-            # Extract centipawn value
-            cp_str = score_str[11:24]
-            cp_str = cp_str[1:cp_str.find(")")]
-            score_value = float(cp_str) / 100.0
-            
-            # Negate if black is winning
-            if "BLACK" in score_str:
-                score_value = -score_value
-            
-            # Clamp for display
-            display_score = max(-self.SCORE_CLAMP_PAWNS, min(self.SCORE_CLAMP_PAWNS, score_value))
-            
+            pawns = result.score_cp / 100.0
+            display_score = max(-self.SCORE_CLAMP_PAWNS, min(self.SCORE_CLAMP_PAWNS, pawns))
             self._analysis_state.set_score(
                 display_score, add_to_history=add_to_history, mover_white=mover_white)
+
+        self._record_position_analysis(result)
 
 
 # -----------------------------------------------------------------------------

@@ -61,7 +61,29 @@ export interface PositionEntry {
   san: string | null;
   /** UCI of the move that produced this position; null for the start. */
   uci: string | null;
+  /**
+   * The board's evaluation of this position, in centipawns from White's
+   * perspective, or `MATE_SCORE_CP` in magnitude for a forced mate.
+   *
+   * null means the position has not been analysed -- which is NOT the same as
+   * 0, a real evaluation meaning the position is dead equal. Unanalysed plies
+   * must be drawn as gaps in the eval chart, never as points at zero.
+   */
+  eval: number | null;
+  /**
+   * The board engine's best move for this position, in UCI, or null when the
+   * position was not analysed. Source of the green best-move arrow.
+   */
+  best_move: string | null;
 }
+
+/**
+ * Centipawn magnitude the board uses to represent a forced mate in the single
+ * integer carried by `PositionEntry.eval`. Matches MATE_SCORE_CP in
+ * universalchess/services/analysis.py; both surfaces render |eval| >= this as
+ * a mate rather than as a numeric advantage.
+ */
+export const MATE_SCORE_CP = 10000;
 
 /**
  * Stockfish analysis result for a position.

@@ -20,15 +20,17 @@ import { createRef } from 'react';
  * assertions would fail.
  */
 
-// Deterministic Stockfish stub: init resolves, analyze resolves to a fixed eval
-// so the component's queue/priority effects run without a real worker.
+// Stub the opt-in deep-analysis engine so no worker is ever constructed. Deep
+// analysis is off by default and this test never enables it, so only the
+// release path is reached; analyze() is stubbed purely to keep the double
+// faithful to the module's surface.
 vi.mock('../services/stockfish', () => ({
   getStockfishService: () => ({
-    init: () => Promise.resolve(),
-    stop: () => {},
     analyze: () =>
       Promise.resolve({ fen: '', score: 0, mate: null, bestMove: null, depth: 1 }),
+    destroy: () => {},
   }),
+  destroyStockfishService: () => {},
 }));
 
 // Chart.js pulls canvas APIs jsdom lacks; the chart is irrelevant here.
@@ -40,8 +42,8 @@ const START_PLACEMENT = '4k3/8/8/8/8/8/8/5K1R';
 const AFTER_CASTLE_PLACEMENT = '4k3/8/8/8/8/8/8/5RK1';
 
 const positions = [
-  { fen: '4k3/8/8/8/8/8/8/5K1R w K - 0 1', san: null, uci: null },
-  { fen: '4k3/8/8/8/8/8/8/5RK1 b - - 1 1', san: 'O-O', uci: 'f1h1' },
+  { fen: '4k3/8/8/8/8/8/8/5K1R w K - 0 1', san: null, uci: null, eval: null, best_move: null },
+  { fen: '4k3/8/8/8/8/8/8/5RK1 b - - 1 1', san: 'O-O', uci: 'f1h1', eval: null, best_move: null },
 ];
 
 afterEach(() => cleanup());
