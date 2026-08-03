@@ -954,6 +954,16 @@ class DisplayManager:
             black_seconds: Black's time in seconds
         """
         self._clock.set_times(white_seconds, black_seconds)
+
+    def sync_clock_to_position(self) -> None:
+        """Baseline the clock's move counters to the position now on the board.
+
+        For the resume path, once the stored moves have been replayed. This
+        manager configures the clock in its constructor, which the resume runs
+        while the board is still empty; without this the first turn event after
+        the replay would credit an increment for every replayed ply.
+        """
+        self._clock.sync_move_counters_to_position()
     
     def _sync_clock_refresh_mode(self) -> None:
         """Point the Manager at clock-driven refresh iff the clock is counting.

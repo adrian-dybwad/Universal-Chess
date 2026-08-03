@@ -1653,6 +1653,16 @@ def _resume_game(game_data: dict) -> bool:
         
         log.info(f"[Resume] Game resumed successfully at position: {current_fen[:50]}...")
         
+        # Baseline the clock onto the replayed position before any turn event can
+        # fire. The DisplayManager configured the clock while the board was still
+        # empty (it is built before these moves are replayed), so the first turn
+        # event after the resume would otherwise walk the whole history and
+        # credit an increment for every replayed ply. Unconditional: a game
+        # persisted without clock times (games created from history store none)
+        # must not earn that phantom time either.
+        if display_manager:
+            display_manager.sync_clock_to_position()
+
         # Restore clock times if available
         white_clock = game_data.get('white_clock')
         black_clock = game_data.get('black_clock')

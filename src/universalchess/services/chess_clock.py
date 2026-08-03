@@ -27,6 +27,14 @@ from universalchess.state.time_control import TimeControl
 # anchor is reset while not counting), so this only affects resume latency.
 _IDLE_POLL_SECONDS = 0.25
 
+# Name of the countdown thread, so a leaked one is identifiable in a stack dump.
+_COUNTDOWN_THREAD_NAME = "clock-service"
+
+# How long to wait for a countdown thread to exit. A cycle is bounded by
+# _IDLE_POLL_SECONDS plus the loop body (tick -> observers -> e-paper refresh),
+# so this is generous even when a full panel refresh is in flight.
+_THREAD_JOIN_TIMEOUT_SECONDS = 2.0
+
 
 def _elapsed_whole_seconds(last_anchor: float, now: float) -> tuple:
     """Return (whole_seconds_elapsed, advanced_anchor) since last_anchor.
@@ -164,7 +172,11 @@ class ChessClockService:
         # idempotent (a repeated turn event or a resume adds no phantom moves).
         self._last_ply: int = 0
         
-        # Countdown thread
+        # Countdown thread and the stop event belonging to it. The service is the
+        # sole owner of this thread: liveness is read from the thread object, NOT
+        # from the observable ChessClockState._is_running flag, which other code
+        # writes. Each run gets its OWN event (never a cleared and reused one) so
+        # a start can never revive a thread a previous stop failed to join.
         self._countdown_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
     
@@ -215,23 +227,28 @@ class ChessClockService:
         """Configure the clock for a new game from a time control.
 
         Seeds each side's initial time (supporting asymmetric controls), stores
-        the control for increment/delay/stage handling, and clears the per-side
-        move counters and applied-ply cursor so a new game starts fresh.
+        the control for increment/delay/stage handling, and baselines the
+        per-side move counters and applied-ply cursor to the position on the
+        board so a new game starts fresh.
+
+        A control can be configured onto a *live* clock: the board's in-place
+        new game does exactly that (set_time_control_spec then reset_clock).
+        The countdown thread is therefore stopped first. Merely clearing the
+        running flag, as this used to do, orphaned a thread that stop() could
+        then never reap, and the next start() spawned a second one alongside it
+        -- two threads decrementing the same clock, so it burned two seconds per
+        real second and stepped down in twos on the display.
 
         Args:
             time_control: Resolved time control (see state/time_control.py).
 
         Note: Player names are managed by PlayersState, not the clock service.
         """
+        self.stop()
+
         with self._lock:
             self._time_control = time_control
-            self._white_moves = 0
-            self._black_moves = 0
-            # Baseline the applied-ply cursor to the position already on the
-            # board so a control configured onto an in-progress position (e.g. a
-            # resumed game) does not retroactively credit increments for moves
-            # played before the clock was configured.
-            self._last_ply = self._current_ply()
+            self._baseline_counters_to_position()
 
             white_seconds = time_control.initial_seconds("white")
             black_seconds = time_control.initial_seconds("black")
@@ -243,7 +260,6 @@ class ChessClockService:
             self._state.set_times(white_seconds, black_seconds)
             # Note: active_color comes from ChessGameState, not set here
             self._state.set_paused(False)
-            self._state.set_running(False)
 
         log.info(f"[ChessClockService] Configured: {time_control.describe()}")
 
@@ -286,6 +302,52 @@ class ChessClockService:
             return 0
         return len(game_state.move_stack)
 
+    def _baseline_counters_to_position(self) -> int:
+        """Treat every ply on the board as already applied. Caller holds the lock.
+
+        Sets the applied-ply cursor AND both per-side completed-move counts from
+        the board. The move counts matter as much as the cursor: a staged
+        control looks up the stage boundary and increment by the *mover's*
+        completed-move count, so baselining the cursor alone would leave those
+        at zero and award a resumed tournament game its stage-40 base time 40
+        moves late.
+
+        Returns:
+            The ply count baselined to.
+        """
+        ply = self._current_ply()
+        self._last_ply = ply
+        # Ply index 0 is white's first move, 1 is black's first, and so on.
+        self._white_moves = (ply + 1) // 2
+        self._black_moves = ply // 2
+        return ply
+
+    def sync_move_counters_to_position(self) -> None:
+        """Re-baseline the move counters onto the position now on the board.
+
+        For the resume path, which must call this once the stored moves have
+        been replayed onto the game state.
+
+        :meth:`configure` already baselines, but the resume flow defeats it: the
+        DisplayManager (and so this service) is configured while the board is
+        still empty, and the moves are replayed only afterwards. That leaves the
+        cursor at 0 against a board of N plies, so the single turn event fired
+        after the replay walks the whole history and credits an increment for
+        every past ply -- both clocks ending up (N / 2) * increment seconds too
+        high, repainting once per ply as they climb.
+
+        The service cannot detect this itself: a jump in the ply count looks the
+        same whether a resume replayed it or turn events were missed during
+        play. Only the resume path knows, so it says so explicitly.
+        """
+        with self._lock:
+            ply = self._baseline_counters_to_position()
+            white_moves = self._white_moves
+            black_moves = self._black_moves
+
+        log.info(f"[ChessClockService] Baselined to ply {ply} "
+                 f"(white {white_moves} moves, black {black_moves} moves)")
+
     def notify_move_completed(self) -> None:
         """Apply time-control effects for moves completed since the last call.
 
@@ -326,32 +388,80 @@ class ChessClockService:
     # Clock control methods
     # -------------------------------------------------------------------------
     
+    def _signal_countdown_thread(self) -> Optional[threading.Thread]:
+        """Tell the current countdown thread to exit and drop our reference.
+
+        Caller must hold ``self._lock``. The thread is returned rather than
+        joined here because an observer running on the countdown thread can
+        re-enter this service, so joining under the lock risks deadlock; the
+        caller joins via :meth:`_join_countdown_thread` after releasing it.
+
+        Returns:
+            The detached thread, or None if there was none.
+        """
+        thread = self._countdown_thread
+        self._countdown_thread = None
+        self._stop_event.set()
+        return thread
+
+    def _join_countdown_thread(self, thread: Optional[threading.Thread]) -> None:
+        """Wait for a detached countdown thread to exit. Call without the lock.
+
+        Skips a self-join: clock observers (notably the flag callback) run on the
+        countdown thread and can ask the service to stop, and a thread cannot
+        join itself. The stop event is already set by
+        :meth:`_signal_countdown_thread`, so such a thread exits at the top of
+        its next cycle regardless.
+        """
+        if thread is None or not thread.is_alive():
+            return
+        if thread is threading.current_thread():
+            return
+        thread.join(timeout=_THREAD_JOIN_TIMEOUT_SECONDS)
+        if thread.is_alive():
+            log.warning("[ChessClockService] Countdown thread did not exit within "
+                        f"{_THREAD_JOIN_TIMEOUT_SECONDS}s")
+
     def start(self) -> None:
         """Start the clock countdown running.
-        
+
+        Idempotent: a call while a countdown thread is already alive only clears
+        the paused flag. Liveness is read from the thread object rather than
+        ChessClockState._is_running, because that flag is shared observable
+        state other code writes -- trusting it here is what let a second thread
+        be spawned alongside a still-running one, doubling the rate at which the
+        active player's time was decremented.
+
         Note: Turn indicator (whose turn it is) is NOT managed by the clock service.
         ChessClockWidget observes ChessGameState directly for turn changes.
         This service only manages the countdown timer.
         """
         with self._lock:
             self._state.set_paused(False)
-            
-            if self._state._is_running:
-                # Already running
+
+            if self._countdown_thread is not None and self._countdown_thread.is_alive():
+                self._state.set_running(True)
                 return
-            
+
+            # No live thread: reap any exiting one, then become its sole owner.
+            stale = self._signal_countdown_thread()
             self._state.set_running(True)
-            self._stop_event.clear()
-            
+
             # Only start countdown thread in timed mode
             if self._state.timed_mode:
+                # A fresh event per run. Reusing one cleared event meant a start
+                # could un-signal a thread a previous stop had failed to join.
+                stop_event = threading.Event()
+                self._stop_event = stop_event
                 self._countdown_thread = threading.Thread(
                     target=self._countdown_loop,
-                    name="clock-service",
+                    args=(stop_event,),
+                    name=_COUNTDOWN_THREAD_NAME,
                     daemon=True
                 )
                 self._countdown_thread.start()
-        
+
+        self._join_countdown_thread(stale)
         log.info("[ChessClockService] Started")
     
     def pause(self) -> None:
@@ -383,30 +493,35 @@ class ChessClockService:
         log.info("[ChessClockService] Resumed")
     
     def stop(self) -> None:
-        """Stop the clock completely."""
+        """Stop the clock completely, reaping the countdown thread.
+
+        The thread is always detached and joined, even when
+        ChessClockState._is_running already reads False. Gating on that flag
+        made stop() a no-op for exactly the thread that most needed reaping --
+        one whose flag had been cleared out from under the service by
+        configure() -- leaving it alive to double-count against the next game.
+
+        Quiet when there was genuinely nothing to stop, so a redundant call does
+        not emit a state change (and therefore a redundant e-paper refresh).
+        """
         with self._lock:
-            if not self._state._is_running:
-                return
-            
-            self._state.set_running(False)
-            self._stop_event.set()
-            thread = self._countdown_thread
-            self._countdown_thread = None
-        
+            thread = self._signal_countdown_thread()
+            was_running = self._state._is_running
+            if was_running:
+                self._state.set_running(False)
+
         # Join outside lock
-        if thread and thread.is_alive():
-            thread.join(timeout=2.0)
-        
-        log.info("[ChessClockService] Stopped")
+        self._join_countdown_thread(thread)
+
+        if was_running or thread is not None:
+            log.info("[ChessClockService] Stopped")
     
     def reset(self) -> None:
         """Reset the clock to initial times."""
         self.stop()
 
         with self._lock:
-            self._white_moves = 0
-            self._black_moves = 0
-            self._last_ply = self._current_ply()
+            self._baseline_counters_to_position()
             # Re-prime per-move delay/usage tracking for the first mover.
             self._state.set_time_control(self._time_control)
             self._state.set_times(self._initial_white_time, self._initial_black_time)
@@ -427,8 +542,13 @@ class ChessClockService:
     # Internal methods
     # -------------------------------------------------------------------------
     
-    def _countdown_loop(self) -> None:
+    def _countdown_loop(self, stop_event: threading.Event) -> None:
         """Background thread that decrements the active player's time.
+
+        The stop event is passed in rather than read from ``self`` so this
+        thread watches the event belonging to *its own* run. A later start
+        installs a new event, which cannot un-signal (and so cannot revive) a
+        thread that has already been told to exit.
 
         Decrements are anchored to a monotonic clock rather than assuming each
         loop cycle is exactly one second. Each wake decrements by the true whole
@@ -458,7 +578,7 @@ class ChessClockService:
         """
         last_anchor = None
         last_active = None
-        while not self._stop_event.is_set():
+        while not stop_event.is_set():
             active = self._state.active_color
             # Re-anchor when not actively counting so idle/paused time is not
             # charged, and poll (interruptibly) for the clock to resume.
@@ -467,7 +587,7 @@ class ChessClockService:
                     or active is None):
                 last_anchor = None
                 last_active = None
-                if self._stop_event.wait(timeout=_IDLE_POLL_SECONDS):
+                if stop_event.wait(timeout=_IDLE_POLL_SECONDS):
                     break
                 continue
 
@@ -489,7 +609,7 @@ class ChessClockService:
             # Sleep until the next boundary, capped so a turn switch is seen soon.
             delay = _seconds_until_next_boundary(last_anchor, time.monotonic())
             wait_for = _bounded_wait(delay)
-            if wait_for > 0.0 and self._stop_event.wait(timeout=wait_for):
+            if wait_for > 0.0 and stop_event.wait(timeout=wait_for):
                 break
 
 
