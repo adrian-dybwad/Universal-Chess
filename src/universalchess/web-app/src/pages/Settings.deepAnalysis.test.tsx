@@ -4,16 +4,15 @@ import { render, screen, waitFor, cleanup, fireEvent, within } from '@testing-li
 import { MemoryRouter, Routes, Route } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
-import menuSchemaFixture from '../test/fixtures/menuSchema.json';
+import menuSchemaFixture from '../test/fixtures/menuSchema';
 
 /**
  * Guards the opt-in deep-analysis toggle.
  *
- * This is the only setting that lets the appliance reach a third party, and the
- * download is roughly 39 MB, so it must default off, state the cost before the
- * user commits, and persist server-side -- the Content-Security-Policy that
- * permits the fetch is emitted by the web process, so a browser-local
- * preference could not work.
+ * The first use downloads roughly 39 MB, so the setting must default off and
+ * state that cost before the user commits. It also has to persist server-side:
+ * the Content-Security-Policy that permits the fetch is emitted by the web
+ * process, so a browser-local preference could not work.
  *
  * How a regression manifests
  * --------------------------
@@ -147,14 +146,12 @@ describe('Settings deep analysis toggle', () => {
   });
 
   it('states the first-use download size before the user opts in', async () => {
-    // A ~39 MB download over a phone hotspot is a real cost, and the feature is
-    // the only one that leaves the LAN. Both facts must be visible at the point
-    // of decision, not discovered afterwards.
+    // A ~39 MB download over a phone hotspot is a real cost, so it has to be
+    // visible at the point of decision rather than discovered afterwards.
     mockFetch('');
     renderSettings();
     const row = await findDeepAnalysisRow();
     expect(row).toHaveTextContent(/39 MB/);
-    expect(row).toHaveTextContent(/jsDelivr/);
   });
 
   it('writes deep_analysis into the save payload when switched on', async () => {

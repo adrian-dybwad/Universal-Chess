@@ -10,8 +10,8 @@ import {
 /**
  * Guards the hash-pinned CDN loader.
  *
- * This is the only code path in the product that reaches a third party, and it
- * ends in executing whatever comes back. The Content-Security-Policy
+ * Of the product's outbound paths this is the one that ends in executing
+ * whatever comes back, rather than parsing it as data. The Content-Security-Policy
  * deliberately does NOT list the CDN under script-src, so the SHA-256 pin is the
  * single control standing between a substituted CDN response and arbitrary code
  * running in the user's browser.

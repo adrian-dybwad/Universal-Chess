@@ -3,8 +3,8 @@
  *
  * The appliance ships no chess engine to the browser. When the user turns on
  * `game.deep_analysis`, the review page fetches Stockfish 16 NNUE from jsDelivr
- * and runs it locally. This is the only code path in the product that reaches a
- * third party.
+ * and runs it locally. It is the only path that fetches executable code at
+ * runtime, which is what the pinning below exists for.
  *
  * Security model
  * --------------

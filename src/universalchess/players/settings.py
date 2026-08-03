@@ -259,10 +259,9 @@ class GameSettings:
             retuned without invalidating saved configs.
         deep_analysis: Allow the web review page to fetch a stronger engine
             (Stockfish 16 NNUE, roughly 39 MB) from jsDelivr for the position
-            being viewed. Default False, which is the only configuration that
-            contacts no third party. Must be server-side rather than a browser
-            preference: the Content-Security-Policy that permits the fetch is
-            emitted by the web process, so the two have to agree.
+            being viewed. Default False. Must be server-side rather than a
+            browser preference: the Content-Security-Policy that permits the
+            fetch is emitted by the web process, so the two have to agree.
         ponder: When True, engine players think on the opponent's time (UCI
             pondering). A             pondering engine runs in a dedicated process so its
             background search is never interrupted by analysis or the opponent;

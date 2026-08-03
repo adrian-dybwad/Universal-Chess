@@ -431,7 +431,7 @@
     },
     "analysis.deep": {
       "label": "Análisis profundo (navegador)",
-      "help": "Permite que la página web de revisión descargue un motor mucho más fuerte (Stockfish 16 NNUE, unos 39 MB la primera vez) desde la CDN jsDelivr y lo ejecute en tu navegador, para la posición que estás viendo. Es la única función que contacta con un tercero; con ella desactivada, nada de aquí sale a internet. El análisis del propio tablero no cambia en ningún caso."
+      "help": "Analiza en tu navegador la posición que estás viendo con Stockfish 16 NNUE, un motor mucho más fuerte que el del tablero. Descarga unos 39 MB la primera vez."
     },
     "coach.id": {
       "label": "Entrenador",
