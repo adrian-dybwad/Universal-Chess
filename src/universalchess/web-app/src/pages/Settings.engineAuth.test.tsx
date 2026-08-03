@@ -5,7 +5,7 @@ import { MemoryRouter, Routes, Route } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
 import type { EngineDefinition } from '../types/game';
-import menuSchemaFixture from '../test/fixtures/menuSchema.json';
+import menuSchemaFixture from '../test/fixtures/menuSchema';
 
 /**
  * The Engines tab's remaining writes must be authenticated.

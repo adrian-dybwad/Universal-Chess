@@ -6,7 +6,7 @@ import { MemoryRouter, Routes, Route } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
 import { useSettingsStore } from '../stores/settingsStore';
-import menuSchemaFixture from '../test/fixtures/menuSchema.json';
+import menuSchemaFixture from '../test/fixtures/menuSchema';
 
 /**
  * Guards the System-tab card layout after the "group settings together" cleanup:

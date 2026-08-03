@@ -7,7 +7,7 @@ import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
 // The catalog fixture is the real backend-generated /api/menu-schema payload;
 // see the comment on `menuSchema` below.
-import menuSchemaFixture from '../test/fixtures/menuSchema.json';
+import menuSchemaFixture from '../test/fixtures/menuSchema';
 
 /**
  * Guards the fix for: after entering an API key on the Agents tab, the Game tab's
@@ -23,7 +23,7 @@ import menuSchemaFixture from '../test/fixtures/menuSchema.json';
  */
 
 // The catalog is the real backend-generated fixture (see
-// src/test/fixtures/menuSchema.json) so the page renders exactly the fields the
+// src/test/fixtures/menuSchema) so the page renders exactly the fields the
 // production /api/menu-schema returns; a hand-written stub would drift from the
 // nodes the renderer asserts on (e.g. coach.provider, analysis.engine).
 const menuSchema: unknown = menuSchemaFixture;

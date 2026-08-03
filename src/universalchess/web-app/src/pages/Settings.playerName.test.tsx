@@ -4,7 +4,7 @@ import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
-import menuSchemaFixture from '../test/fixtures/menuSchema.json';
+import menuSchemaFixture from '../test/fixtures/menuSchema';
 
 /**
  * Guards the rule that a player's PGN name is collected for HUMAN players only,

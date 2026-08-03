@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { AccountsCard } from './Connectivity';
-import menuSchemaFixture from '../test/fixtures/menuSchema.json';
+import menuSchemaFixture from '../test/fixtures/menuSchema';
 
 /**
  * Guards the multi-account Accounts card: it lists saved online accounts (each

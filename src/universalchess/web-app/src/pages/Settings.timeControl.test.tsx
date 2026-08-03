@@ -4,7 +4,7 @@ import { render, screen, waitFor, cleanup, fireEvent, within } from '@testing-li
 import { MemoryRouter, Routes, Route } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
-import menuSchemaFixture from '../test/fixtures/menuSchema.json';
+import menuSchemaFixture from '../test/fixtures/menuSchema';
 
 /**
  * Guards the enhanced-clock configuration in the web Settings UI (the "on both

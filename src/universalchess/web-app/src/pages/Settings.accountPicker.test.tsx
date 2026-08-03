@@ -4,7 +4,7 @@ import { render, screen, waitFor, cleanup, within } from '@testing-library/react
 import { MemoryRouter, Routes, Route } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
-import menuSchemaFixture from '../test/fixtures/menuSchema.json';
+import menuSchemaFixture from '../test/fixtures/menuSchema';
 
 /**
  * Guards the Settings account picker: an online player type (Lichess) exposes a
