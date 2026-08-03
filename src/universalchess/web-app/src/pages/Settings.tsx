@@ -17,6 +17,7 @@ import { fieldById } from '../types/menuCatalog';
 import { apiFetch, buildApiUrl, getStoredCredentials, encodeBasicAuth, storeCredentials, isCrossOriginApi } from '../utils/api';
 import { formatDateTime } from '../utils/datetime';
 import { externalLinkHref } from '../utils/externalLink';
+import { parseConfigBool } from '../utils/configBool';
 import { useSettingsStore } from '../stores/settingsStore';
 import './Settings.css';
 
@@ -295,24 +296,6 @@ const defaultFormSettings: FormSettings = {
   sound: { enabled: true, key_press: true, game_events: true, piece_events: true, errors: true },
   system: { database_uri: '', inactivity_timeout: '900', timezone: 'UTC', ui_language: 'en' },
 };
-
-/**
- * Coerce a config string into a boolean, tolerant of every representation the
- * board can persist. The board writes Python-capitalised booleans (`True`/
- * `False`) for the `game`/`system` sections via configparser, but `on`/`off`
- * for the `sound` section, and configparser's getboolean also accepts
- * `1`/`0`/`yes`/`no`. Matching only one spelling (e.g. lowercase `'false'`)
- * silently shows the wrong value, so normalise before comparing.
- *
- * Falls back to `defaultValue` when the key is absent or unrecognised.
- */
-function parseConfigBool(value: string | undefined, defaultValue: boolean): boolean {
-  if (value === undefined || value === null || value === '') return defaultValue;
-  const normalized = String(value).trim().toLowerCase();
-  if (['false', 'off', '0', 'no'].includes(normalized)) return false;
-  if (['true', 'on', '1', 'yes'].includes(normalized)) return true;
-  return defaultValue;
-}
 
 // Bounds for the per-move engine think time (seconds). Kept in sync with the
 // backend PlayerSettings.think_time default; the UI clamps to a practical range.

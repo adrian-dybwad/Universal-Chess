@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSettingsStore } from '../stores/settingsStore';
 import { getStockfishService, destroyStockfishService } from '../services/stockfish';
 import { MATE_SCORE_CP } from '../types/game';
+import { parseConfigBool } from '../utils/configBool';
 
 /** Search depth for the viewed position. */
 const DEEP_ANALYSIS_DEPTH = 18;
@@ -34,19 +35,14 @@ export function toWhitePerspective(
   return blackToMove ? -score : score;
 }
 
-function isDeepAnalysisEnabled(value: string | undefined): boolean {
-  return value?.toLowerCase() === 'true';
-}
-
 /**
  * Evaluate the position the user is viewing with the opt-in CDN engine.
  *
  * Returns `null` whenever the board's own evaluation should stand: the setting
- * is off (the default, and the only configuration that contacts nobody), no
- * position is selected, the search has not finished, or the engine failed to
- * load. That last case is not an error to surface -- a LAN-only board or a CDN
- * outage simply leaves the caller with the board's number, which is correct,
- * just shallower.
+ * is off (the default), no position is selected, the search has not finished,
+ * or the engine failed to load. That last case is not an error to surface -- a
+ * LAN-only board or a CDN outage simply leaves the caller with the board's
+ * number, which is correct, just shallower.
  *
  * Results are keyed by the FEN they describe and kept for the lifetime of the
  * hook, so stepping back and forth through a game re-searches nothing and no
@@ -57,7 +53,7 @@ function isDeepAnalysisEnabled(value: string | undefined): boolean {
 export function useDeepAnalysis(fen: string | null): DeepAnalysisResult | null {
   const load = useSettingsStore((s) => s.load);
   const settingValue = useSettingsStore((s) => s.raw?.game?.deep_analysis);
-  const enabled = isDeepAnalysisEnabled(settingValue);
+  const enabled = parseConfigBool(settingValue, false);
 
   const [results, setResults] =
     useState<ReadonlyMap<string, DeepAnalysisResult>>(new Map());

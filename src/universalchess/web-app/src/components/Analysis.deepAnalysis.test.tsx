@@ -8,14 +8,14 @@ import '@testing-library/jest-dom/vitest';
  *
  * The board's evaluation is what every install gets; the CDN engine is an
  * override for the one position the user is looking at. Two properties matter:
- * it must not run at all unless the user opted in (it is the only thing that
- * reaches a third party, and it costs a 39 MB download), and when it does run,
- * a failure must leave the board's evaluation on screen rather than blanking it.
+ * it must not run at all unless the user opted in (it costs a 39 MB download
+ * from a CDN), and when it does run, a failure must leave the board's
+ * evaluation on screen rather than blanking it.
  *
  * How a regression manifests
  * --------------------------
- * Loading the engine regardless of the setting silently contacts a CDN from an
- * appliance the user believes is offline. Replacing the board's value with
+ * Loading the engine regardless of the setting spends 39 MB of a metered or
+ * absent connection that the user never agreed to. Replacing the board's value with
  * null on a failed load blanks the eval bar and the best-move arrow for users
  * on a LAN with no internet -- the exact configuration this product targets.
  */
@@ -98,6 +98,40 @@ describe('Analysis deep analysis override', () => {
     expect(await screen.findByText('+2.5')).toBeInTheDocument();
     expect(analyzeMock.mock.calls[0][0]).toBe(AFTER_E4);
   });
+
+  it.each(['True', 'true', 'yes', 'on', '1'])(
+    'treats the persisted value %s as opted in',
+    async (persisted) => {
+      // configparser.getboolean accepts all of these, so the board and the
+      // Settings page both read them as on. A reader matching only "true"
+      // diverges: the server widens the CSP and the toggle shows enabled while
+      // the review page silently never runs the engine, which looks like the
+      // download failing rather than a parse disagreement.
+      rawSettings = { game: { deep_analysis: persisted } };
+      analyzeMock.mockResolvedValue({
+        fen: AFTER_E4, score: -250, mate: null, bestMove: 'g8f6', depth: 20,
+      });
+
+      render(<Analysis positions={POSITIONS} mode="static" />);
+
+      expect(await screen.findByText('+2.5')).toBeInTheDocument();
+    },
+  );
+
+  it.each(['False', 'false', 'no', 'off', '0', ''])(
+    'treats the persisted value "%s" as opted out',
+    async (persisted) => {
+      // The mirror of the above: an unrecognised-as-false value must not start
+      // a 39 MB download. Regression shows up as an engine load on an install
+      // whose Settings page reads "off".
+      rawSettings = { game: { deep_analysis: persisted } };
+
+      render(<Analysis positions={POSITIONS} mode="static" />);
+
+      await screen.findByText('+1.2');
+      expect(analyzeMock).not.toHaveBeenCalled();
+    },
+  );
 
   it('keeps the board evaluation when the engine fails to load', async () => {
     // LAN-only installs, an offline board, or a CDN outage all land here. The
