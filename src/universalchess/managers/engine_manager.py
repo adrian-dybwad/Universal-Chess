@@ -1265,7 +1265,7 @@ ENGINES = {
         name="maia",
         display_name="Maia",
         summary="Human-like play",
-        description="Neural network engine with two weight options: Maia (human-like play at ELO 1100-1900) and Leela (maximum strength). Uses lc0 backend. Pre-built binary available, or build takes 45-60 minutes on Pi.",
+        description="Neural network engine with two weight options: Maia (human-like play at ELO 1100-1900) and Leela (maximum strength). Uses lc0 backend. Build takes 45-60 minutes on Pi.",
         repo_url=None,  # Using custom build script instead of git clone
         build_commands=[
             # Use the standalone build script that handles:

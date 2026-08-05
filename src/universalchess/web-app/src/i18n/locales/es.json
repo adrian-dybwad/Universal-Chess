@@ -416,7 +416,6 @@
       "badgeNotSupported": "No compatible",
       "badgeNotInstalled": "No instalado",
       "estimatedInstall": "Tiempo estimado de instalación: ~{{minutes}} min",
-      "prebuiltAvailable": " (precompilado disponible)",
       "installedRelease": "Versión instalada:",
       "install": "Instalar",
       "uninstall": "Desinstalar",

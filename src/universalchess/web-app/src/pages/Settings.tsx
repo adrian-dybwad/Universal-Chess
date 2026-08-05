@@ -2830,11 +2830,15 @@ function EngineCard({
       )}
       {/* Only for an install that is actually ahead of the user and takes time: a
           system package and an already-installed engine have nothing to wait for,
-          and a bundled engine reports 0 minutes (its install writes a shim). */}
+          and a bundled engine reports 0 minutes (its install writes a shim).
+
+          The estimate is the source-build time and is quoted unqualified: no
+          release currently ships an engines-<arch>.tar.gz, so the installer's
+          prebuilt probe always falls through to building. Noting a prebuilt here
+          would present the estimate as an avoidable worst case. */}
       {!isSystem && !engine.installed && engine.estimated_install_minutes > 0 && (
         <p className="engine-install-time">
           {t('settingsPage.enginesUi.estimatedInstall', { minutes: engine.estimated_install_minutes })}
-          {engine.has_prebuilt && t('settingsPage.enginesUi.prebuiltAvailable')}
         </p>
       )}
       {/* Show which release is installed so the device's actual version is known

@@ -147,20 +147,25 @@ describe('Engine card estimated install time', () => {
     const card = await findEngineCard('Koivisto');
 
     expect(within(card).getByText(new RegExp(ESTIMATE_TEXT))).toBeInTheDocument();
-    // Without a prebuilt binary the source build is the only path, so the
-    // "pre-built available" reassurance must not appear.
     expect(within(card).queryByText(new RegExp(PREBUILT_TEXT, 'i'))).not.toBeInTheDocument();
   });
 
-  it('notes when a pre-built binary can be downloaded instead of built', async () => {
-    // A prebuilt engine usually installs far faster than the estimate, which is the
-    // build time; the note is what tells the user the long estimate is a worst case.
+  it('promises no pre-built binary even for an engine the catalog flags as having one', async () => {
+    // No release currently carries an engines-<arch>.tar.gz asset, so every
+    // install falls through to a source build. The catalog still flags thirteen
+    // engines as prebuilt-capable and the installer still probes for the
+    // archive, which is what makes prebuilds resume with no code change -- but
+    // the card must not promise the user something no release provides.
+    //
+    // Regression: re-adding the note tells the user the 45-60 minute estimate
+    // is a worst case that a download will avoid, and then they wait the full
+    // build anyway with no explanation.
     mockFetch([engine({ name: 'berserk', display_name: 'Berserk', has_prebuilt: true })]);
     renderEnginesTab();
     const card = await findEngineCard('Berserk');
 
     const estimate = within(card).getByText(new RegExp(ESTIMATE_TEXT));
-    expect(estimate.textContent).toContain(PREBUILT_TEXT);
+    expect(estimate.textContent).not.toContain(PREBUILT_TEXT);
   });
 
   it('shows no estimate for an engine whose install is instant', async () => {
