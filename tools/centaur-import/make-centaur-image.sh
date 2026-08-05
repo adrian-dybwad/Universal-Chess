@@ -55,6 +55,11 @@ done
 
 OS="$(uname -s)"
 
+# `lsblk` and `diskutil list` both display devices as /dev paths, so accept a
+# pasted "/dev/sdb" for --disk: the discovery backends build "/dev/${disk}"
+# themselves and would otherwise look for /dev//dev/sdb.
+TARGET_DISK="${TARGET_DISK#/dev/}"
+
 # sha256 helper differs by platform.
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -89,21 +94,14 @@ discover_macos() {
 
 discover_linux() {
   local disk="$1"
-  # lsblk JSON: list partitions of the target disk whose fstype is ext*.
-  lsblk -b -J -o NAME,SIZE,FSTYPE,TYPE "/dev/${disk}" 2>/dev/null | python3 - "$disk" <<'PY'
-import json, sys
-disk = sys.argv[1]
-data = json.load(sys.stdin)
-rows = []
-def walk(nodes):
-    for n in nodes:
-        if n.get("type") == "part" and (n.get("fstype") or "").startswith("ext"):
-            rows.append((f"/dev/{n['name']}", int(n["size"]), n["name"]))
-        walk(n.get("children", []))
-walk(data.get("blockdevices", []))
-for dev, size, name in sorted(rows, key=lambda r: r[1], reverse=True):
-    print(dev, size, name)
-PY
+  # `lsblk --list` prints one flat row per device with no tree glyphs, and
+  # --paths prefixes /dev, so awk reads fixed columns: NAME SIZE FSTYPE TYPE.
+  # Devices with no filesystem yield an empty FSTYPE and therefore only three
+  # fields; requiring TYPE=="part" in $4 skips those rows (and the whole-disk
+  # row, which must never be imaged) without a false ext match.
+  lsblk -b -l -n -p -o NAME,SIZE,FSTYPE,TYPE "/dev/${disk}" 2>/dev/null |
+    awk '$4 == "part" && $3 ~ /^ext/ { name = $1; sub(/^\/dev\//, "", name); print $1, $2, name }' |
+    sort -k2 -nr
 }
 
 # Auto-detect the SD whole-disk if not given.
@@ -142,13 +140,22 @@ fi
 
 note "Target disk: ${TARGET_DISK}"
 
+# `|| true` keeps a failing probe (absent or mistyped disk) on the friendly
+# "no Linux/ext partition found" path instead of aborting via pipefail/errexit.
 if [ "$OS" = "Darwin" ]; then
-  parts="$(discover_macos "$TARGET_DISK")"
+  parts="$(discover_macos "$TARGET_DISK" || true)"
 else
-  parts="$(discover_linux "$TARGET_DISK")"
+  parts="$(discover_linux "$TARGET_DISK" || true)"
 fi
 
-[ -n "$parts" ] || die "no Linux/ext partition found on ${TARGET_DISK}."
+if [ -z "$parts" ]; then
+  # lsblk takes FSTYPE from udev and otherwise probes the device itself, which
+  # needs read access. With neither available every partition lists with an
+  # empty FSTYPE, so a card that does hold ext4 looks like it has none.
+  hint=""
+  [ "$OS" = "Darwin" ] || hint=" If the card does have one, re-run with sudo so lsblk can read the filesystem types."
+  die "no Linux/ext partition found on ${TARGET_DISK}.${hint}"
+fi
 
 if [ "$ALL_LINUX" = "1" ]; then
   selected="$parts"
