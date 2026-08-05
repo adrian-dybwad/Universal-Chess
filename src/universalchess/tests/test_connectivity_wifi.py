@@ -13,9 +13,15 @@ tested here once. Why these matter:
     a retry after a wrong password fails with "key-mgmt: property is missing"
     (the original "it just went back" symptom).
   * A wrong PSK must be reported as a password error, not a vague system error.
+  * The WPA2-PSK fallback's privileged argv must carry an SSID sourced from
+    NetworkManager's AP list and must never carry the passphrase (CodeQL alerts
+    #200/#201, "uncontrolled command line"); see TestFallbackCommandLine.
 """
 
+import os
+import stat
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from universalchess.connectivity import wifi
@@ -27,6 +33,45 @@ def _proc(returncode=0, stdout="", stderr=""):
     p.stdout = stdout
     p.stderr = stderr
     return p
+
+
+def _sequenced_run(procs, captured_passwd_files=None):
+    """Return a ``subprocess.run`` stub yielding ``procs`` in call order.
+
+    When an argv carries ``passwd-file``, that file's path, contents and mode are
+    snapshotted at call time into ``captured_passwd_files``. The snapshot has to
+    happen here because the fallback unlinks the file as soon as nmcli returns,
+    so this is the only moment its contents can be observed -- which is exactly
+    the lifetime the tests need to assert.
+    """
+    queue = list(procs)
+
+    def run(args, **kwargs):
+        if captured_passwd_files is not None and "passwd-file" in args:
+            path = args[args.index("passwd-file") + 1]
+            captured_passwd_files.append({
+                "path": path,
+                "content": Path(path).read_text(encoding="utf-8"),
+                "mode": stat.S_IMODE(os.stat(path).st_mode),
+            })
+        return queue.pop(0)
+
+    return run
+
+
+def _argvs(mock_run):
+    return [c.args[0] for c in mock_run.call_args_list]
+
+
+def _only_argv(mock_run, prefix):
+    """Return the single argv beginning with ``prefix``, asserting there is exactly one.
+
+    Asserting uniqueness catches a duplicated privileged call (e.g. a retry loop
+    issuing two `connection add`s), which a "find the first match" helper hides.
+    """
+    matches = [a for a in _argvs(mock_run) if a[: len(prefix)] == prefix]
+    assert len(matches) == 1, f"expected exactly one {prefix}, got {len(matches)}"
+    return matches[0]
 
 
 CONNECTION_LISTING_UUID = (
@@ -41,6 +86,17 @@ CONNECTION_LISTING_NAME = (
     "HomeNet:802-11-wireless\n"
     "docker0:bridge\n"
 )
+
+# nmcli's terse AP list (`-t -f SSID device wifi list`): one SSID per line, with
+# ":" escaped as "\\:". The blank line is a hidden AP, which nmcli reports with an
+# empty SSID and which therefore cannot be resolved.
+AP_LIST_OUTPUT = "STARLINK_5G\nSTARLINK\n\nHome\\:Net\n4\n"
+
+SECRETS_ERROR = "Error: Secrets were required, but not provided."
+PSK = "1234567890"
+
+ADD_PREFIX = ["sudo", "nmcli", "connection", "add"]
+UP_PREFIX = ["sudo", "nmcli", "connection", "up"]
 
 IWLIST_OUTPUT = """
           Cell 01 - Address: AA:BB:CC:DD:EE:01
@@ -208,29 +264,32 @@ class TestConnectNetwork(unittest.TestCase):
         (wpa-psk) is ever issued -- so this asserts both the "Connected" result
         AND that the retry used key-mgmt=wpa-psk followed by an explicit up.
         """
-        mock_run.side_effect = [
+        captured = []
+        mock_run.side_effect = _sequenced_run([
             _proc(stdout=CONNECTION_LISTING_UUID),  # pre-connect remove: listing (no STARLINK_5G)
-            _proc(returncode=4, stderr="Error: Secrets were required, but not provided."),  # auto (SAE) fails
+            _proc(returncode=4, stderr=SECRETS_ERROR),  # auto (SAE) fails
             _proc(stdout=CONNECTION_LISTING_UUID),  # post-fail remove: listing
+            _proc(stdout=AP_LIST_OUTPUT),           # fallback: resolve ssid from AP list
             _proc(returncode=0),                    # fallback: connection add (wpa-psk)
             _proc(returncode=0),                    # fallback: connection up -> success
-        ]
+        ], captured)
 
-        ok, message = wifi.connect_network("STARLINK_5G", password="1234567890", log=MagicMock())
+        ok, message = wifi.connect_network("STARLINK_5G", password=PSK, log=MagicMock())
 
         assert ok is True
         assert message == "Connected"
-        add_calls = [c.args[0] for c in mock_run.call_args_list
-                     if c.args[0][:4] == ["sudo", "nmcli", "connection", "add"]]
-        assert len(add_calls) == 1
-        add_argv = add_calls[0]
+        add_argv = _only_argv(mock_run, ADD_PREFIX)
         assert add_argv[add_argv.index("wifi-sec.key-mgmt") + 1] == "wpa-psk"
-        # PSK is a keyword value (not an option), preserving the shell=False injection invariant.
-        assert add_argv[add_argv.index("wifi-sec.psk") + 1] == "1234567890"
-        up_calls = [c.args[0] for c in mock_run.call_args_list
-                    if c.args[0][:4] == ["sudo", "nmcli", "connection", "up"]]
-        assert len(up_calls) == 1
-        assert up_calls[0] == ["sudo", "nmcli", "connection", "up", "STARLINK_5G"]
+        assert add_argv[add_argv.index("con-name") + 1] == "STARLINK_5G"
+        assert add_argv[add_argv.index("ssid") + 1] == "STARLINK_5G"
+        # psk-flags 0 (system-owned) asks NetworkManager to persist the secret it
+        # receives at activation, so auto-reconnect survives a reboot even though
+        # the passphrase is no longer written into the profile at add time.
+        assert add_argv[add_argv.index("wifi-sec.psk-flags") + 1] == "0"
+        up_argv = _only_argv(mock_run, UP_PREFIX)
+        assert up_argv[:6] == UP_PREFIX + ["id", "STARLINK_5G"]
+        assert up_argv[6] == "passwd-file"
+        assert len(captured) == 1
 
     @patch("universalchess.connectivity.wifi.subprocess.run")
     def test_wrong_password_reported_after_psk_fallback_also_fails(self, mock_run):
@@ -246,14 +305,15 @@ class TestConnectNetwork(unittest.TestCase):
         profile. Asserts the "Wrong password" text after the full auto->fallback
         path.
         """
-        mock_run.side_effect = [
+        mock_run.side_effect = _sequenced_run([
             _proc(stdout=CONNECTION_LISTING_UUID),  # pre-connect remove: listing
-            _proc(returncode=4, stderr="Error: Secrets were required, but not provided."),  # auto (SAE) fails
+            _proc(returncode=4, stderr=SECRETS_ERROR),  # auto (SAE) fails
             _proc(stdout=CONNECTION_LISTING_UUID),  # post-fail remove: listing
+            _proc(stdout=AP_LIST_OUTPUT),           # fallback: resolve ssid from AP list
             _proc(returncode=0),                    # fallback: connection add
-            _proc(returncode=4, stderr="Error: Secrets were required, but not provided."),  # fallback up fails
+            _proc(returncode=4, stderr=SECRETS_ERROR),  # fallback up fails
             _proc(stdout=CONNECTION_LISTING_UUID),  # fallback-failure remove: listing
-        ]
+        ])
 
         ok, message = wifi.connect_network("STARLINK_5G", password="wrongpw", log=MagicMock())
 
@@ -300,7 +360,7 @@ class TestConnectNetwork(unittest.TestCase):
         """
         mock_run.side_effect = [
             _proc(stdout=CONNECTION_LISTING_UUID),  # pre-connect remove: listing
-            _proc(returncode=4, stderr="Error: Secrets were required, but not provided."),  # auto fails
+            _proc(returncode=4, stderr=SECRETS_ERROR),  # auto fails
             _proc(stdout=CONNECTION_LISTING_UUID),  # post-fail remove: listing
         ]
 
@@ -323,6 +383,223 @@ class TestConnectNetwork(unittest.TestCase):
         assert wifi.format_connect_error("Some other failure", True) == "Connection failed"
         # Without a password a "secrets" message is not a user password error.
         assert wifi.format_connect_error("secrets", False) == "Connection failed"
+
+
+def _fallback_procs(ap_list=AP_LIST_OUTPUT, add_rc=0, up_rc=0, up_stderr=""):
+    """Responses for the full connect_network -> WPA2-PSK fallback path.
+
+    Ordered: pre-connect profile listing, the primary (SAE) connect failing with
+    a secrets error, the post-failure listing, the AP-list resolution, then the
+    fallback's add and up.
+    """
+    return [
+        _proc(stdout=CONNECTION_LISTING_UUID),
+        _proc(returncode=4, stderr=SECRETS_ERROR),
+        _proc(stdout=CONNECTION_LISTING_UUID),
+        _proc(stdout=ap_list),
+        _proc(returncode=add_rc),
+        _proc(returncode=up_rc, stderr=up_stderr),
+        _proc(stdout=CONNECTION_LISTING_UUID),  # cleanup listing, only used on failure
+    ]
+
+
+class TestFallbackCommandLine(unittest.TestCase):
+    """Guards CodeQL alerts #200/#201 ("uncontrolled command line") on the
+    WPA2-PSK fallback's two privileged nmcli calls.
+
+    Both calls run with ``shell=False`` and a list argv, so no shell ever parses
+    these values. What these tests pin down are the two defects that structure
+    alone did not prevent:
+
+      * the passphrase appeared in the process argv, where any local user could
+        read it out of ``ps``/``/proc/<pid>/cmdline`` (CWE-214), and
+      * ``nmcli connection up <ID>`` resolves ``ID`` against connection *names*,
+        *UUIDs* and *D-Bus paths* alike (nmcli(1): "If ID is ambiguous, a keyword
+        id, uuid or path can be used"), so an SSID that is a bare number or
+        another profile's UUID could activate the wrong connection.
+    """
+
+    @patch("universalchess.connectivity.wifi.subprocess.run")
+    def test_passphrase_never_appears_in_any_argv(self, mock_run):
+        """The PSK reaches nmcli via passwd-file, never as a command-line token.
+
+        Guards alert #200. The passphrase is request-derived and has no trusted
+        set to be re-sourced from, so the only way to keep it off the privileged
+        command line is nmcli's passwd-file mechanism.
+
+        How a regression manifests: reverting to ``wifi-sec.psk <password>`` on
+        the `connection add` argv puts the secret back in ``ps`` output for the
+        duration of the call. Every token of both fallback argvs is scanned, so a
+        concatenated form such as "psk=<pw>" is caught too.
+
+        Scope: the primary `device wifi connect` argv is deliberately excluded.
+        It still carries the passphrase, because nmcli offers no passwd-file for
+        that subcommand -- the KNOWN GAP recorded in connect_network. Asserting
+        over it would fail for a gap this change did not set out to close.
+        """
+        mock_run.side_effect = _sequenced_run(_fallback_procs(), [])
+
+        ok, _ = wifi.connect_network("STARLINK_5G", password=PSK, log=MagicMock())
+
+        assert ok is True
+        fallback_argvs = [
+            _only_argv(mock_run, ADD_PREFIX),
+            _only_argv(mock_run, UP_PREFIX),
+        ]
+        for argv in fallback_argvs:
+            for token in argv:
+                assert PSK not in token, f"passphrase in {argv}, token {token!r}"
+
+    @patch("universalchess.connectivity.wifi.subprocess.run")
+    def test_passwd_file_carries_the_psk_privately_and_is_deleted(self, mock_run):
+        """The passwd-file holds the PSK, is owner-only, and does not outlive the call.
+
+        Guards the mechanism introduced for alert #200: the file is the one place
+        the secret exists outside NetworkManager's own storage, so its contents,
+        its mode and its removal are all part of the fix rather than incidental.
+
+        How a regression manifests: a wrong property name silently breaks the
+        WPA2-PSK retry (nmcli activates with no secret and the AP rejects it,
+        reproducing the "Wrong password" misdiagnosis the fallback exists to
+        prevent); a mode other than 0600 exposes the passphrase to other local
+        users; a missing unlink leaves the passphrase on the device indefinitely.
+        """
+        captured = []
+        mock_run.side_effect = _sequenced_run(_fallback_procs(), captured)
+
+        ok, _ = wifi.connect_network("STARLINK_5G", password=PSK, log=MagicMock())
+
+        assert ok is True
+        assert len(captured) == 1
+        snapshot = captured[0]
+        assert snapshot["content"].strip() == f"802-11-wireless-security.psk:{PSK}"
+        assert snapshot["mode"] == 0o600
+        assert not Path(snapshot["path"]).exists(), "passwd-file outlived the nmcli call"
+
+    @patch("universalchess.connectivity.wifi.subprocess.run")
+    def test_passwd_file_is_deleted_when_activation_fails(self, mock_run):
+        """A failed activation still removes the passwd-file.
+
+        Guards the cleanup path: the failure branch is the one a wrong password
+        takes, so it is the branch that runs most often in practice.
+
+        How a regression manifests: an unlink placed only on the success path
+        leaves one file holding a cleartext passphrase per failed attempt.
+        """
+        captured = []
+        mock_run.side_effect = _sequenced_run(
+            _fallback_procs(up_rc=4, up_stderr=SECRETS_ERROR), captured
+        )
+
+        ok, message = wifi.connect_network("STARLINK_5G", password="wrongpw", log=MagicMock())
+
+        assert ok is False
+        assert message == "Wrong password"
+        assert len(captured) == 1
+        assert not Path(captured[0]["path"]).exists()
+
+    @patch("universalchess.connectivity.wifi.subprocess.run")
+    def test_ssid_in_argv_is_sourced_from_the_nmcli_ap_list(self, mock_run):
+        """The SSID on the privileged argv comes from nmcli's AP list, not the caller.
+
+        Guards alert #201 using the same barrier the project applied to alert
+        #195 in timezone_service: forward the value found in a trusted listing
+        rather than the request-derived string, so what reaches the command line
+        does not originate from untrusted input. A membership test alone leaves
+        the same tainted string in play.
+
+        The escaped ``Home\\:Net`` entry makes the barrier observable: nmcli's
+        terse output escapes the colon, so an argv reading ``Home\\:Net`` proves
+        the value was passed through verbatim from the caller instead of being
+        decoded from the listing, while ``Home:Net`` proves it came from there.
+        """
+        mock_run.side_effect = _sequenced_run(_fallback_procs())
+
+        ok, _ = wifi.connect_network("Home:Net", password=PSK, log=MagicMock())
+
+        assert ok is True
+        add_argv = _only_argv(mock_run, ADD_PREFIX)
+        assert add_argv[add_argv.index("ssid") + 1] == "Home:Net"
+        assert _only_argv(mock_run, UP_PREFIX)[:6] == UP_PREFIX + ["id", "Home:Net"]
+
+    @patch("universalchess.connectivity.wifi.subprocess.run")
+    def test_activation_disambiguates_an_ssid_that_looks_like_a_dbus_path(self, mock_run):
+        """A numeric SSID is activated by name via the explicit ``id`` selector.
+
+        Guards alert #201's second defect. nmcli accepts a D-Bus path as "just
+        num", so a bare ``nmcli connection up 4`` for an AP legitimately named
+        "4" is ambiguous with connection path 4 and can activate an unrelated
+        profile.
+
+        How a regression manifests: dropping the ``id`` keyword restores the
+        ambiguity, and this asserts the selector precedes the SSID.
+        """
+        mock_run.side_effect = _sequenced_run(_fallback_procs())
+
+        ok, _ = wifi.connect_network("4", password=PSK, log=MagicMock())
+
+        assert ok is True
+        assert _only_argv(mock_run, UP_PREFIX)[:6] == UP_PREFIX + ["id", "4"]
+
+    @patch("universalchess.connectivity.wifi.subprocess.run")
+    def test_no_profile_is_created_when_the_ssid_is_not_in_the_ap_list(self, mock_run):
+        """An SSID absent from the AP list gets no fallback and no profile.
+
+        Guards the barrier's closed side: if the value cannot be sourced from the
+        trusted listing there is nothing safe to put on the argv, so the fallback
+        must decline rather than fall back to the caller's string. The pre-fallback
+        verdict is returned instead.
+
+        How a regression manifests: passing the unresolved SSID through would
+        create a profile named from unvalidated input; this asserts neither add
+        nor up was issued.
+        """
+        mock_run.side_effect = _sequenced_run(_fallback_procs(ap_list="OtherNet\n"))
+
+        ok, message = wifi.connect_network("STARLINK_5G", password=PSK, log=MagicMock())
+
+        assert ok is False
+        assert message == "Wrong password"
+        assert [a for a in _argvs(mock_run) if a[: len(ADD_PREFIX)] == ADD_PREFIX] == []
+        assert [a for a in _argvs(mock_run) if a[: len(UP_PREFIX)] == UP_PREFIX] == []
+
+    @patch("universalchess.connectivity.wifi.subprocess.run")
+    def test_empty_ssid_is_rejected_before_any_subprocess(self, mock_run):
+        """An empty SSID reaches no subprocess at all.
+
+        This guards pre-existing behaviour (connect_network's own empty check)
+        rather than the alert fix, and it passes with or without the barrier. It
+        is kept because it is the outer half of the pair below: together they
+        show an empty SSID can neither reach nmcli directly nor be resolved into
+        a profile name.
+
+        How a regression manifests: removing the empty guard sends nmcli an empty
+        connect target; this asserts no call was made at all.
+        """
+        mock_run.side_effect = _sequenced_run(_fallback_procs())
+
+        ok, message = wifi.connect_network("", password=PSK, log=MagicMock())
+
+        assert ok is False
+        assert message == "No network specified"
+        assert mock_run.call_args_list == []
+
+    @patch("universalchess.connectivity.wifi.subprocess.run")
+    def test_resolver_never_matches_a_hidden_ap_blank_ssid(self, mock_run):
+        """The AP-list resolver skips the blank SSID a hidden AP reports.
+
+        Tested against the resolver directly, not through connect_network, because
+        the empty-SSID guard above returns first and makes this unreachable from
+        the public entry point. The behaviour still needs pinning: the resolver is
+        defence in depth for the barrier, and a "first line that compares equal"
+        implementation fed an empty candidate would match the hidden AP's blank
+        line and hand nmcli an empty profile name.
+
+        How a regression manifests: a returned value instead of None.
+        """
+        mock_run.return_value = _proc(stdout=AP_LIST_OUTPUT)
+
+        assert wifi._resolve_visible_ssid("", MagicMock()) is None
 
 
 if __name__ == "__main__":
