@@ -12,12 +12,10 @@
 #   The transfer is non-destructive (no --delete): remote-only files are left
 #   untouched.
 #
-#   After a real sync it also provisions the build-memory sudo grant (the
-#   /etc/sudoers.d drop-in the .deb postinst would create) so the synced code
-#   can reserve swap for engine/BlueZ builds. Without it, source installs now
-#   fail loudly ("could not reserve the extra memory ..."), so a runtime-only
-#   deploy must establish the grant itself. Idempotent; skipped for
-#   --dry-run/--check.
+#   Provisioning (sudoers grants, the event log, swap units) is the .deb
+#   postinst's job and is not repeated here: it installs to the same
+#   /opt/universalchess prefix, so its path-literal grants already cover the
+#   files this script syncs.
 #
 # Usage:
 #   ./scripts/deploy-to-pi.sh [options]
@@ -77,7 +75,10 @@ EXCLUDES=(
 	--exclude='tests'
 )
 
-usage() { sed -n '2,45p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+# Print the header block as help, ending at the closing banner rule rather than
+# at a fixed line number: the previous fixed range silently truncated --help the
+# moment the header changed length.
+usage() { awk 'NR>4 && /^# ={10,}/ {exit} NR>4 {sub(/^# ?/, ""); print}' "${BASH_SOURCE[0]}"; }
 
 # Build the React web app and stage it into web/react-app so the deploy ships a
 # current bundle. The repo tracks no built artifact (web/react-app is gitignored
@@ -116,76 +117,6 @@ build_react() {
 		fi
 		echo "Stamped sw.js CACHE_VERSION=${build_ts}"
 	fi
-}
-
-# Provision runtime state the .deb postinst would create but a runtime-only
-# rsync deploy does not: the build-memory sudo grant and the persistent
-# event-log file. Idempotent and safe to re-run.
-#
-# Build-memory grant: a runtime deploy ships uc-build-memory but not the sudoers
-# drop-in that lets the service user run it; source builds now fail loudly
-# without that grant. Grants to the UID-1000 user (same target postinst picks),
-# references the exact remote helper path (the sudoers command match is
-# path-literal), and validates with visudo before leaving it in place -- a
-# malformed drop-in can lock out sudo.
-#
-# Event log: pre-create it owned by the service user so the app can append +
-# rotate and the root self-heal can append.
-#
-# Non-fatal: a warning here should not abort an otherwise good code deploy.
-provision_runtime_state() {
-	local helper_path sudoers_file
-	helper_path="${REMOTE_PATH%/}/scripts/uc-build-memory"
-	sudoers_file="/etc/sudoers.d/universal-chess-build-memory"
-	echo "Provisioning build-memory sudo grant on ${HOST} ..."
-	# Unquoted heredoc: helper_path/sudoers_file expand locally; \$-escaped vars
-	# defer to the remote shell. Fed to `sudo bash -s` over SSH.
-	$SSH_OPTS "$HOST" "sudo bash -s" <<REMOTE || echo "WARNING: build-memory grant not established (see message above)"
-set -euo pipefail
-HELPER='${helper_path}'
-SUDOERS='${sudoers_file}'
-PRIMARY_USER=\$(getent passwd 1000 | cut -d: -f1)
-if [ -z "\$PRIMARY_USER" ]; then echo 'WARNING: no UID-1000 user; skipping grant'; exit 0; fi
-if [ ! -f "\$HELPER" ]; then echo "WARNING: helper missing at \$HELPER; skipping grant"; exit 0; fi
-chmod +x "\$HELPER"
-echo "\$PRIMARY_USER ALL=(root) NOPASSWD: \$HELPER" > "\$SUDOERS"
-chmod 440 "\$SUDOERS"
-if ! visudo -cf "\$SUDOERS" >/dev/null 2>&1; then
-	echo 'WARNING: build-memory sudoers entry invalid; removing'
-	rm -f "\$SUDOERS"
-	exit 1
-fi
-echo "Granted \$PRIMARY_USER NOPASSWD -> \$HELPER"
-# Timezone grant: the timezone selector applies the OS zone via the pinned
-# uc-set-timezone helper under sudo. A runtime deploy ships the helper but not
-# the sudoers drop-in the .deb postinst would create, so without this grant the
-# selector saves the choice but cannot set the clock. Same pinned-helper +
-# visudo-validated pattern as build-memory above.
-TZ_HELPER="${REMOTE_PATH%/}/scripts/uc-set-timezone"
-TZ_SUDOERS='/etc/sudoers.d/universal-chess-timezone'
-if [ -f "\$TZ_HELPER" ]; then
-	chmod +x "\$TZ_HELPER"
-	echo "\$PRIMARY_USER ALL=(root) NOPASSWD: \$TZ_HELPER" > "\$TZ_SUDOERS"
-	chmod 440 "\$TZ_SUDOERS"
-	if ! visudo -cf "\$TZ_SUDOERS" >/dev/null 2>&1; then
-		echo 'WARNING: timezone sudoers entry invalid; removing'
-		rm -f "\$TZ_SUDOERS"
-	else
-		echo "Granted \$PRIMARY_USER NOPASSWD -> \$TZ_HELPER"
-	fi
-else
-	echo "WARNING: timezone helper missing at \$TZ_HELPER; skipping grant"
-fi
-# Pre-create the persistent event-log dir+file owned by the service user (see
-# postinst): lets the app append+rotate it and the root self-heal append to it.
-EVENT_LOG_DIR='/var/lib/universalchess/logs'
-mkdir -p "\$EVENT_LOG_DIR"
-touch "\$EVENT_LOG_DIR/events.jsonl"
-chown "\$PRIMARY_USER":"\$PRIMARY_USER" "\$EVENT_LOG_DIR" "\$EVENT_LOG_DIR/events.jsonl" 2>/dev/null \
-	|| chown "\$PRIMARY_USER" "\$EVENT_LOG_DIR" "\$EVENT_LOG_DIR/events.jsonl" 2>/dev/null || true
-chmod 664 "\$EVENT_LOG_DIR/events.jsonl"
-echo "Event log ready at \$EVENT_LOG_DIR/events.jsonl (owner \$PRIMARY_USER)"
-REMOTE
 }
 
 while [[ $# -gt 0 ]]; do
@@ -255,11 +186,6 @@ if [[ $DRY_RUN -eq 1 ]]; then
 	echo "Dry-run complete; nothing transferred, service not restarted."
 	exit 0
 fi
-
-# Establish runtime state (build-memory grant + event log) for the freshly-synced
-# code before the service uses it. Runs on every real sync (including
-# --no-restart) since it is provisioning, not a restart concern.
-provision_runtime_state
 
 if [[ $RESTART -eq 0 ]]; then
 	echo "Sync complete; --no-restart given, leaving service as-is."
