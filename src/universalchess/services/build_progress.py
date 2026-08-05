@@ -405,6 +405,11 @@ def _read_one_process(pid: int) -> ProcessInfo | None:
     )
 
 
+def _resolve_against(path: Path, base: Path) -> Path:
+    """``path`` made absolute against ``base``, or unchanged if already absolute."""
+    return path if path.is_absolute() else base / path
+
+
 def _read_cwd(pid: int) -> str | None:
     """Resolve ``pid``'s working directory, or None if it cannot be read.
 
@@ -532,8 +537,16 @@ class BuildProgressTracker:
             if not sources:
                 continue
             self._observed = True
+            # Resolved here, while the process that named these paths is in hand.
+            # A compiler names its inputs relative to its own working directory,
+            # which is commonly not the one the build was launched from: Smallbrain
+            # runs "cd src && make", so its bare "unit.cpp" belongs to <root>/src.
+            # Resolving later against the launch directory looked in the clone root,
+            # found no sources, and left the unit total equal to the number already
+            # seen -- the "module 1 of 1, module 2 of 2" the board displayed.
+            base = Path(process.cwd) if process.cwd is not None else self._source_root
             for source in sources:
-                self._source_dirs.add(str(Path(source).parent))
+                self._source_dirs.add(str(_resolve_against(Path(source).parent, base)))
                 if process.cwd is not None:
                     self._unit_bases.setdefault(source, process.cwd)
             if process.comm in _COMPILER_DRIVERS and len(sources) > 1:
@@ -643,17 +656,20 @@ class BuildProgressTracker:
         return finished
 
     def _total_units(self) -> int:
-        """Return the unit denominator, never below what has already been seen."""
+        """Return the unit denominator, never below what has already been seen.
+
+        Where no command line declared the whole unit set, the count comes from the
+        source directories observed being compiled. Those were resolved when they
+        were recorded, against the working directory of the process that named
+        them, so nothing here needs a base to guess at.
+        """
         if self._declared_units:
             return max(len(self._declared_units), len(self._seen_units))
         counted = 0
         for directory in self._source_dirs:
-            base = Path(directory)
-            if not base.is_absolute():
-                base = self._source_root / base
             try:
                 counted += sum(
-                    1 for entry in base.iterdir()
+                    1 for entry in Path(directory).iterdir()
                     if entry.is_file() and _is_source_path(entry.name)
                 )
             except OSError:  # noqa: S112  # nosec B112  # an unlistable source dir is expected (a generated or out-of-tree layout); it contributes nothing and the seen-unit floor below keeps the total usable, so logging per poll would flood the log for no decision
@@ -688,10 +704,11 @@ class BuildProgressTracker:
         unreadable path costs accuracy rather than the whole reading.
         """
         if unit not in self._sizes:
-            path = Path(unit)
-            if not path.is_absolute():
-                base = self._unit_bases.get(unit)
-                path = (Path(base) if base is not None else self._source_root) / path
+            base = self._unit_bases.get(unit)
+            path = _resolve_against(
+                Path(unit),
+                Path(base) if base is not None else self._source_root,
+            )
             try:
                 self._sizes[unit] = path.stat().st_size
             except OSError:

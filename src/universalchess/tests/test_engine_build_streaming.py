@@ -181,3 +181,46 @@ def test_progress_updater_throttles_and_prefixes(monkeypatch, manager):
     msg, stage = calls[0]
     assert msg == "Building Zahak: compiling pkg a"
     assert stage == InstallStage.BUILDING
+
+
+@pytest.mark.parametrize("total_is_exact,expected_total", [
+    (True, "of 33"),
+    (False, "of ~16"),
+])
+def test_observed_message_marks_a_total_it_had_to_infer(
+    monkeypatch, manager, total_is_exact, expected_total
+):
+    """A counted total is shown as approximate; a declared one is shown plainly.
+
+    Why this test exists: where no command line declares the unit set, the total is
+    counted from the source directories seen so far, so it rises when a build
+    reaches a directory it had not touched yet. Presenting that as a firm number
+    makes the rise look like the "module 1 of 1, module 2 of 2" fault it replaced.
+    A build whose driver names every input has a genuinely exact total and must not
+    be hedged.
+
+    How a regression manifests: dropping the marker makes an inferred total that
+    grows read as a bug, and applying it unconditionally hedges Rodent IV's exact
+    33-unit count for no reason.
+    """
+    from universalchess.services.build_progress import BuildProgress
+    from universalchess.services.engine_install_state import InstallStage
+
+    calls = []
+    monkeypatch.setattr(
+        "universalchess.managers.engine_manager.time.monotonic", lambda: 1000.0
+    )
+    on_progress = manager._make_observed_progress_updater(
+        "Smallbrain", lambda msg, *a, **k: calls.append(msg)
+    )
+
+    on_progress(BuildProgress(
+        observed=True, fraction=0.25, units_finished=3,
+        units_total=33 if total_is_exact else 16,
+        total_is_exact=total_is_exact, current_unit="src/search.cpp",
+        eta_seconds=120, current_unit_seconds=5.0,
+    ))
+
+    assert len(calls) == 1
+    assert expected_total in calls[0]
+    assert ("~" in calls[0]) is not total_is_exact

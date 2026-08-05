@@ -2772,7 +2772,14 @@ class EngineManager:
             message = f"Building {display_name}"
             if progress.current_unit:
                 unit = os.path.basename(progress.current_unit)
-                total = progress.units_total or "?"
+                # A total counted from the source directories seen so far grows
+                # when the build reaches one it had not touched yet, so it is
+                # marked as approximate. Without the mark that rise reads as the
+                # "module 1 of 1, module 2 of 2" fault it replaced.
+                total = (
+                    f"{progress.units_total}" if progress.total_is_exact
+                    else f"~{progress.units_total}"
+                ) if progress.units_total else "?"
                 # Elapsed on this module rather than a percentage of it: a compiler
                 # exposes no progress within a translation unit, so any percentage
                 # here would be modelled, not measured. A percent of the overall

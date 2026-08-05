@@ -384,6 +384,86 @@ class TestBuildReportReader:
         assert reader.progress().fraction == 1.0
 
 
+class TestTotalForOneFileAtATimeBuilds:
+    """The denominator for a make that compiles each file in its own invocation.
+
+    Why this class exists: Smallbrain (``cd src && make EXE=smallbrain``) reported
+    "module 1 of 1", then "module 2 of 2", and so on -- a total that was only ever
+    the count of units already seen, so the bar sat at 100% of an unknown build and
+    the user could not tell how much was left.
+    """
+
+    def test_total_counts_the_sources_in_the_directory_being_compiled(self, tmp_path):
+        """The denominator is the real file count, not the number seen so far.
+
+        Why this test exists: no single command line declares the unit set in a
+        one-file-per-invocation build, so the total has to come from the source
+        directory. That directory is named relative to the compiler's own working
+        directory, which is not where the build was launched -- Smallbrain's make
+        runs from ``src`` while the installer launched it from the clone root.
+
+        How a regression manifests: resolving against the launch directory finds no
+        sources there, the count falls back to the units already seen, and the
+        display reads "1 of 1" then "2 of 2" as it did on the board.
+        """
+        _write_sources(tmp_path, {f"src/unit{index}.cpp": 100 for index in range(6)})
+        tracker = _tracker(tmp_path)
+
+        # One backend, compiling a bare filename from inside src -- exactly what
+        # `cd src && make` produces.
+        tracker.record(
+            _table(_backend("unit0.cpp", ppid=_BUILD_PID, cwd=str(tmp_path / "src"))), now=1.0,
+        )
+
+        assert tracker.progress(now=1.0).units_total == 6
+
+    def test_the_total_holds_steady_as_further_units_appear(self, tmp_path):
+        """Seeing more units does not inflate a total that is already known.
+
+        Why this test exists: the reported symptom was the total tracking the count
+        of seen units. Pinning the second and third samples is what distinguishes a
+        real denominator from one that merely happens to match at the first sample.
+
+        How a regression manifests: the total climbs with each new unit and every
+        reading shows "N of N".
+        """
+        _write_sources(tmp_path, {f"src/unit{index}.cpp": 100 for index in range(6)})
+        tracker = _tracker(tmp_path)
+        source_dir = str(tmp_path / "src")
+
+        totals = []
+        for index in range(3):
+            tracker.record(
+                _table(_backend(f"unit{index}.cpp", ppid=_BUILD_PID, cwd=source_dir)), now=float(index),
+            )
+            totals.append(tracker.progress(now=float(index)).units_total)
+
+        assert totals == [6, 6, 6]
+
+    def test_seen_units_still_floor_the_total_when_the_directory_is_unreadable(
+        self, tmp_path
+    ):
+        """An uncountable source directory degrades rather than reporting nonsense.
+
+        Why this test exists: generated sources and out-of-tree layouts do exist,
+        and the count must never drop below what has already been observed -- a
+        total of zero would divide by nothing, and one below the seen count would
+        report more units finished than exist.
+
+        How a regression manifests: returning the directory count unconditionally
+        yields 0 here, and the fraction calculation has no usable denominator.
+        """
+        tracker = _tracker(tmp_path)
+
+        tracker.record(
+            _table(_backend("unit0.cpp", ppid=_BUILD_PID,
+                     cwd=str(tmp_path / "does-not-exist"))),
+            now=1.0,
+        )
+
+        assert tracker.progress(now=1.0).units_total == 1
+
+
 class TestReportedEta:
     """Projecting the time left for a build that publishes its own unit counts.
 
