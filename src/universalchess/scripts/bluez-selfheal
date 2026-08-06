@@ -163,6 +163,27 @@ bluez_version() { dpkg-query -W -f='${Version}' "$PKG_NAME" 2>/dev/null || echo 
 arch()          { dpkg --print-architecture 2>/dev/null || uname -m; }
 kernel_release(){ uname -r; }
 
+# Kernel-populated Bluetooth class directory. Must stay in step with
+# board/wireless_capability.SYSFS_BLUETOOTH, which answers the same question for
+# the menus, the web payload and the board's startup (a test asserts both carry
+# this literal). Overridable so the gate below is testable without a controller.
+SYSFS_BLUETOOTH="${UC_SYSFS_BLUETOOTH:-/sys/class/bluetooth}"
+
+has_bluetooth_adapter() {
+    # 0 when the kernel has registered at least one Bluetooth controller.
+    #
+    # This is a HARDWARE question, not a "is it switched on" question: the class
+    # entry is created by the kernel driver independently of bluetoothd, and an
+    # rfkill-blocked adapter still appears. A board with no controller (a plain
+    # Raspberry Pi Zero -- no "W", no wireless die) has an empty directory, so the
+    # glob stays unexpanded and the -e test fails.
+    local hci
+    for hci in "$SYSFS_BLUETOOTH"/hci*; do
+        [ -e "$hci" ] && return 0
+    done
+    return 1
+}
+
 # ---------------------------------------------------------------------------
 # Marker (the source of truth the board reads; see managers/bluez_patch_status)
 # ---------------------------------------------------------------------------
@@ -266,9 +287,26 @@ restart_board() {
 }
 
 probe() {
-    # 0 if advertising registers, non-zero otherwise.
+    # 0 if advertising registers, 1 if BlueZ rejected it, 2 if it could not run.
     [ -x "$PROBE" ] || { log "probe helper missing at $PROBE"; return 2; }
     python3 "$PROBE"
+}
+
+probe_verdict() {
+    # probe_verdict <exit-code> -> pass | fail | error
+    #
+    # Exit 2 (and anything unexpected) means the measurement could NOT BE MADE --
+    # no D-Bus, bluetoothd not up yet, helper unusable. That is not evidence that
+    # stock BlueZ is broken, so it must never authorize the rebuild: the daemon
+    # build costs up to 45 minutes on a Pi Zero, and the run that follows an
+    # inconclusive probe would have nothing to verify against. Collapsing error
+    # into fail (the previous behaviour, a bare `if probe`) is exactly how a board
+    # with no controller ended up compiling bluetoothd on every boot.
+    case "$1" in
+        0) echo pass ;;
+        1) echo fail ;;
+        *) echo error ;;
+    esac
 }
 
 is_diverted() {
@@ -439,6 +477,19 @@ build_patched() {
 # ---------------------------------------------------------------------------
 
 main() {
+    # Nothing to heal on a board with no Bluetooth controller: no bluetoothd, stock
+    # or patched, can advertise without hardware. Checked FIRST -- ahead of the
+    # state dir, the lock, and every systemctl call -- so an unequipped board pays
+    # nothing and cannot fail on any of them. Deliberately writes no marker: the
+    # marker describes which bluetoothd is active, and there is no decision to
+    # record here. Exits 0 so systemd does not flag the unit on a board that is
+    # simply not equipped; attach a USB dongle and the next run heals normally.
+    if ! has_bluetooth_adapter; then
+        clear_progress
+        log "no Bluetooth controller present (e.g. a Raspberry Pi Zero without wireless) -- nothing to heal"
+        exit 0
+    fi
+
     mkdir -p "$STATE_DIR"
     # Serialize against concurrent apt-triggered runs; wait up to 10 min.
     exec 9>"$LOCK"
@@ -485,12 +536,27 @@ main() {
     write_progress probing-stock
     retire_patch "$bd"
     restart_bluetooth
-    if probe; then
-        log "stock bluetoothd advertises correctly -- no patch needed"
-        write_marker stock true "$ver"
-        restart_board
-        exit 0
-    fi
+    probe
+    local probe_rc=$?
+    local verdict
+    verdict="$(probe_verdict "$probe_rc")"
+    case "$verdict" in
+        pass)
+            log "stock bluetoothd advertises correctly -- no patch needed"
+            write_marker stock true "$ver"
+            restart_board
+            exit 0
+            ;;
+        error)
+            # Inconclusive, not broken. Record the decision as NOT healthy so the
+            # next run (boot or apt) re-evaluates instead of fast-skipping, but do
+            # not build: there is no measurement to justify substituting a binary.
+            log "ERROR: could not probe advertising (no bus / bluetoothd unavailable) -- not patching"
+            write_marker stock false "$ver"
+            restart_board
+            exit 1
+            ;;
+    esac
     log "stock bluetoothd FAILS to advertise on this kernel -- patching"
 
     local patched
@@ -548,11 +614,13 @@ boot() {
 }
 
 case "${1:-run}" in
-    run)         main ;;
-    boot)        boot ;;                                    # boot-time safety net (gated)
-    probe-only)  probe ;;                                  # diagnostics
-    build-jobs)  build_jobs ;;                             # diagnostics: computed compile parallelism
-    retire)      retire_patch "$(detect_bluetoothd)"; restart_bluetooth; restart_board; write_marker stock false ;;
-    status)      cat "$MARKER" 2>/dev/null || echo "{}" ;;
-    *)           echo "usage: bluez-selfheal {run|boot|probe-only|build-jobs|retire|status}" >&2; exit 2 ;;
+    run)           main ;;
+    boot)          boot ;;                                  # boot-time safety net (gated)
+    probe-only)    probe ;;                                 # diagnostics
+    probe-verdict) probe_verdict "${2:-}" ;;                # diagnostics: exit code -> decision
+    has-adapter)   has_bluetooth_adapter ;;                 # diagnostics: is a controller fitted
+    build-jobs)    build_jobs ;;                            # diagnostics: computed compile parallelism
+    retire)        retire_patch "$(detect_bluetoothd)"; restart_bluetooth; restart_board; write_marker stock false ;;
+    status)        cat "$MARKER" 2>/dev/null || echo "{}" ;;
+    *)             echo "usage: bluez-selfheal {run|boot|probe-only|probe-verdict <rc>|has-adapter|build-jobs|retire|status}" >&2; exit 2 ;;
 esac

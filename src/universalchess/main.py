@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 # Initialize display FIRST, before board module is imported
 # This allows showing a splash screen while the board initializes
 from universalchess.board.logging import log
+from universalchess.board.wireless_capability import get_wireless_capability
 from universalchess.i18n import t
 from universalchess.epaper import Manager, SplashScreen, IconMenuWidget, IconMenuEntry, KeyboardWidget, show_fullscreen_splash
 from universalchess.epaper.status_bar import STATUS_BAR_HEIGHT
@@ -5710,14 +5711,34 @@ def _run_chromecast_menu():
 def _build_connectivity_context():
     """Build the BoardMenuContext for the data-driven Connectivity menu.
 
-    Connectivity is a pure router: every row opens a still-imperative sub-flow
-    (WiFi, Bluetooth, Chromecast, Accounts), so there is no store -- only the four
-    actions, each forwarding any break result (e.g. a game-start/connection
-    event) up through ``_signal_from`` so the whole menu stack can unwind.
+    Connectivity is mostly a pure router: every row opens a still-imperative
+    sub-flow (WiFi, Bluetooth, Chromecast, Accounts), each forwarding any break
+    result (e.g. a game-start/connection event) up through ``_signal_from`` so the
+    whole menu stack can unwind.
+
+    The one store is the read-only ``hardware`` radio-presence gate gating the
+    WiFi and Bluetooth rows (their ``visibleWhen``): a plain Pi Zero has no
+    wireless die, so those rows would open menus whose every control is inert.
+    Chromecast and Accounts are not gated -- the board still reaches the network
+    over the USB Ethernet gadget.
     """
     from universalchess.menus.board_context import BoardMenuContext
 
+    def hardware_get(key):
+        # Re-read per render rather than caching: a USB Wi-Fi/Bluetooth dongle can
+        # be attached while the board runs, and the probe is two directory scans.
+        capability = get_wireless_capability()
+        if key == "has_wifi":
+            return capability.has_wifi
+        if key == "has_bluetooth":
+            return capability.has_bluetooth
+        raise KeyError(f"unknown hardware store key: {key!r}")
+
+    def hardware_set(key, value):
+        raise NotImplementedError(f"hardware store is read-only (key={key!r})")
+
     ctx = BoardMenuContext()
+    ctx.register_store("hardware", hardware_get, hardware_set)
     ctx.register_action("open_wifi", lambda: _signal_from(_run_wifi_settings_menu()))
     ctx.register_action("open_bluetooth", lambda: _signal_from(_run_bluetooth_settings_menu()))
     ctx.register_action("open_chromecast", lambda: _signal_from(_run_chromecast_menu()))
@@ -7387,25 +7408,38 @@ def main():
         log.error(f"[Main] Failed to start services: {e}", exc_info=True)
         # Continue anyway - services are not critical for basic operation
     
+    # Some supported boards have no Bluetooth controller at all (a plain Pi Zero
+    # has no wireless die). Bringing the stack up there is not merely useless: the
+    # RFCOMM pairing loop retries continuously against a missing adapter and
+    # BleManager's adapter calls fail, burning a single ARMv6 core and filling the
+    # log. Skip both, exactly as --no-ble/--no-rfcomm would.
+    _bluetooth_capable = get_wireless_capability().has_bluetooth
+    if not _bluetooth_capable:
+        log.info("[Main] No Bluetooth controller on this board; skipping BLE and RFCOMM")
+
     # Resolve the branded adapter alias (Universal Chess <mac tail>) once from the adapter's
     # own MAC and share it with BLE and RFCOMM so both set the same friendly
     # name. Falls back to the device name when the MAC cannot be read, so alias
     # branding never blocks Bluetooth bring-up. The alias is only the friendly
     # name a phone shows; the per-advertisement LocalNames apps discover by
-    # (MILLENNIUM CHESS / DGT PEGASUS / Chessnut Air) are unaffected.
-    from universalchess.managers.adapter_alias import resolve_adapter_alias
-    resolved_alias = resolve_adapter_alias(log=log)
-    adapter_alias = resolved_alias or args.device_name
-    # The alias derives from the adapter MAC (a device identifier), so log only
-    # how it was determined, not the value itself.
-    log.info(
-        "[Main] Adapter alias %s",
-        "resolved from adapter MAC" if resolved_alias else "using device-name fallback",
-    )
+    # (MILLENNIUM CHESS / DGT PEGASUS / Chessnut Air) are unaffected. Skipped
+    # entirely without a controller: it reads the adapter MAC, and its only
+    # consumers (BLE, RFCOMM) do not start.
+    adapter_alias = args.device_name
+    if _bluetooth_capable:
+        from universalchess.managers.adapter_alias import resolve_adapter_alias
+        resolved_alias = resolve_adapter_alias(log=log)
+        adapter_alias = resolved_alias or args.device_name
+        # The alias derives from the adapter MAC (a device identifier), so log only
+        # how it was determined, not the value itself.
+        log.info(
+            "[Main] Adapter alias %s",
+            "resolved from adapter MAC" if resolved_alias else "using device-name fallback",
+        )
 
     # Setup BLE if enabled
     global ble_manager
-    if not args.no_ble:
+    if not args.no_ble and _bluetooth_capable:
         try:
             if startup_splash:
                 startup_splash.set_message("BLE...")
@@ -7440,12 +7474,14 @@ def main():
         except Exception as e:
             log.error(f"[Main] Failed to initialize BLE: {e}", exc_info=True)
             raise
+    elif not _bluetooth_capable:
+        log.info("[Main] BLE not started: no Bluetooth controller")
     else:
         log.info("[Main] BLE disabled by command line argument")
     
     # Setup RFCOMM if enabled
     global rfcomm_server
-    if not args.no_rfcomm:
+    if not args.no_rfcomm and _bluetooth_capable:
         def _on_rfcomm_connected():
             """Handle RFCOMM client connection."""
             global app_state, _pending_ble_client_type
@@ -7516,6 +7552,8 @@ def main():
         )
         rfcomm_server.start(startup_splash)
         log.info("[RFCOMM] Server started")
+    elif not _bluetooth_capable:
+        log.info("[RFCOMM] Not started: no Bluetooth controller")
     
     # Start Bluetooth HID keyboard input. Reads paired keyboards via evdev and
     # injects events through the same key_callback the physical buttons use, so

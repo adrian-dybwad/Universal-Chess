@@ -17,11 +17,17 @@ log = logging.getLogger(__name__)
 WIFI_DISABLED = 0
 WIFI_DISCONNECTED = 1
 WIFI_CONNECTED = 2
+# No Wi-Fi radio on this board at all (a plain Pi Zero has no wireless die).
+# Distinct from WIFI_DISABLED, which means the radio exists and is switched off:
+# "disabled" invites "turn it on", and only an absent radio justifies dropping
+# the feature rather than offering it. See board.wireless_capability.
+WIFI_ABSENT = 3
 
 # Bluetooth state constants
 BT_DISABLED = 0
 BT_DISCONNECTED = 1
 BT_CONNECTED = 2
+BT_ABSENT = 3  # no Bluetooth controller on this board (see WIFI_ABSENT)
 
 
 class SystemState:
@@ -83,7 +89,7 @@ class SystemState:
     
     @property
     def wifi_state(self) -> int:
-        """WiFi state (WIFI_DISABLED, WIFI_DISCONNECTED, WIFI_CONNECTED)."""
+        """WiFi state (WIFI_DISABLED, WIFI_DISCONNECTED, WIFI_CONNECTED, WIFI_ABSENT)."""
         return self._wifi_state
     
     @property
@@ -103,8 +109,13 @@ class SystemState:
     
     @property
     def wifi_enabled(self) -> bool:
-        """Whether WiFi is enabled (not disabled)."""
-        return self._wifi_state != WIFI_DISABLED
+        """Whether a Wi-Fi radio exists and is switched on.
+
+        False for both WIFI_DISABLED and WIFI_ABSENT: a radio that is not fitted
+        is not enabled. The status-bar indicator keys its visibility off this, so
+        a board with no Wi-Fi shows no Wi-Fi glyph.
+        """
+        return self._wifi_state not in (WIFI_DISABLED, WIFI_ABSENT)
     
     # -------------------------------------------------------------------------
     # Bluetooth properties
@@ -112,7 +123,7 @@ class SystemState:
     
     @property
     def bt_state(self) -> int:
-        """Bluetooth state (BT_DISABLED, BT_DISCONNECTED, BT_CONNECTED)."""
+        """Bluetooth state (BT_DISABLED, BT_DISCONNECTED, BT_CONNECTED, BT_ABSENT)."""
         return self._bt_state
     
     @property
@@ -132,8 +143,12 @@ class SystemState:
     
     @property
     def bt_enabled(self) -> bool:
-        """Whether Bluetooth is enabled (not disabled)."""
-        return self._bt_state != BT_DISABLED
+        """Whether a Bluetooth controller exists and is switched on.
+
+        False for both BT_DISABLED and BT_ABSENT, for the same reason as
+        :attr:`wifi_enabled`.
+        """
+        return self._bt_state not in (BT_DISABLED, BT_ABSENT)
     
     # -------------------------------------------------------------------------
     # Observer management
@@ -226,7 +241,7 @@ class SystemState:
         """Update WiFi state.
         
         Args:
-            state: WIFI_DISABLED, WIFI_DISCONNECTED, or WIFI_CONNECTED.
+            state: WIFI_DISABLED, WIFI_DISCONNECTED, WIFI_CONNECTED, or WIFI_ABSENT.
             signal_strength: Signal strength 0-3.
             ssid: Connected network name, or None.
         """
@@ -244,7 +259,7 @@ class SystemState:
         """Update Bluetooth state.
         
         Args:
-            state: BT_DISABLED, BT_DISCONNECTED, or BT_CONNECTED.
+            state: BT_DISABLED, BT_DISCONNECTED, BT_CONNECTED, or BT_ABSENT.
             device_name: Connected device name, or None.
             client_type: Client type ('millennium', 'pegasus', etc.), or None.
         """

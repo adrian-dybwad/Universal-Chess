@@ -83,6 +83,9 @@ beforeEach(() => {
   };
 
   fetchMock = vi.fn(async (url: string): Promise<JsonResponseLike> => {
+    // The panel withholds the radio cards until this probe answers, so a board
+    // with both radios has to be stated for the WiFi card to render at all.
+    if (url === '/api/system/info') return jsonResponse({ has_wifi: true, has_bluetooth: true });
     if (url === '/api/connectivity/wifi/status') return jsonResponse(wifiStatus);
     if (url === '/api/connectivity/wifi/saved') return jsonResponse({ networks: [] });
     if (url === '/api/connectivity/wifi/enable') return jsonResponse({ success: true });
@@ -115,9 +118,14 @@ async function renderWifiToggle() {
     </MemoryRouter>
   );
   // The WiFi card lives under the #wifi anchor; its toggle is the only switch
-  // there, so scope to it to avoid the Bluetooth card's toggle.
-  const wifiCard = container.querySelector('#wifi') as HTMLElement;
-  const toggle = await within(wifiCard).findByRole('switch');
+  // there, so scope to it to avoid the Bluetooth card's toggle. The anchor
+  // appears only once the radio-capability probe has answered.
+  let wifiCard: HTMLElement | null = null;
+  await waitFor(() => {
+    wifiCard = container.querySelector('#wifi');
+    expect(wifiCard).not.toBeNull();
+  });
+  const toggle = await within(wifiCard as unknown as HTMLElement).findByRole('switch');
   return { toggle };
 }
 

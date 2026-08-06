@@ -3,6 +3,14 @@ System polling service.
 
 Polls battery, WiFi, and Bluetooth status and updates SystemState.
 Battery is polled every 5 seconds, WiFi and Bluetooth every 10 seconds.
+
+Radios the board does not have are never polled. A plain Raspberry Pi Zero has
+no wireless die, and ``rfkill list wifi`` prints nothing for a radio that does
+not exist -- which the enabled-check reads as "nothing blocked, so it is on",
+putting permanently-disconnected Wi-Fi and Bluetooth glyphs in the status bar.
+Such a board is reported once as WIFI_ABSENT/BT_ABSENT (which hides the glyphs)
+and the 10-second network loop is not started at all, so a single ARMv6 core is
+not woken to run four subprocesses against missing hardware.
 """
 
 import os
@@ -17,10 +25,13 @@ except ImportError:
     import logging
     log = logging.getLogger(__name__)
 
+from universalchess.board.wireless_capability import (
+    WirelessCapability, get_wireless_capability,
+)
 from universalchess.state import get_system
 from universalchess.state.system import (
-    WIFI_DISABLED, WIFI_DISCONNECTED, WIFI_CONNECTED,
-    BT_DISABLED, BT_DISCONNECTED, BT_CONNECTED
+    WIFI_ABSENT, WIFI_DISABLED, WIFI_DISCONNECTED, WIFI_CONNECTED,
+    BT_ABSENT, BT_DISABLED, BT_DISCONNECTED, BT_CONNECTED
 )
 
 
@@ -32,9 +43,15 @@ NETWORK_POLL_INTERVAL = 10
 class SystemPollingService:
     """Service that polls system status and updates SystemState."""
     
-    def __init__(self):
-        """Initialize the system polling service."""
+    def __init__(self, capability: Optional[WirelessCapability] = None):
+        """Initialize the system polling service.
+
+        Args:
+            capability: Which radios this board has. Injected for tests; read
+                from the OS when omitted.
+        """
         self._state = get_system()
+        self._capability = capability if capability is not None else get_wireless_capability()
         
         # Thread control
         self._running = False
@@ -65,12 +82,23 @@ class SystemPollingService:
         )
         self._battery_thread.start()
         
-        self._network_thread = threading.Thread(
-            target=self._network_poll_loop,
-            name="system-network-poll",
-            daemon=True
-        )
-        self._network_thread.start()
+        # A board with neither radio has nothing for the network loop to observe,
+        # so publish the absent states once (the status-bar glyphs hide on them)
+        # and skip the thread entirely rather than wake up forever doing nothing.
+        if self._capability.has_wifi or self._capability.has_bluetooth:
+            self._network_thread = threading.Thread(
+                target=self._network_poll_loop,
+                name="system-network-poll",
+                daemon=True
+            )
+            self._network_thread.start()
+        else:
+            self._publish_absent_radios()
+            log.info(
+                "[SystemPollingService] No Wi-Fi or Bluetooth hardware on this board "
+                "(%s); network polling disabled",
+                self._capability.pi_model or "model unknown",
+            )
         
         log.info("[SystemPollingService] Started polling threads")
     
@@ -186,8 +214,19 @@ class SystemPollingService:
             except Exception:  # noqa: S110  # nosec B110 - best-effort hook check; failure is non-fatal and intentionally ignored
                 pass
     
+    def _publish_absent_radios(self) -> None:
+        """Report every radio this board lacks, so its indicator hides."""
+        if not self._capability.has_wifi:
+            self._state.set_wifi(WIFI_ABSENT, 0, None)
+        if not self._capability.has_bluetooth:
+            self._state.set_bluetooth(BT_ABSENT, None, None)
+    
     def _poll_wifi(self) -> None:
-        """Poll WiFi status."""
+        """Poll WiFi status, or report the radio as absent on a board without one."""
+        if not self._capability.has_wifi:
+            self._state.set_wifi(WIFI_ABSENT, 0, None)
+            return
+        
         # Check if WiFi is enabled
         if not self._is_wifi_enabled():
             self._state.set_wifi(WIFI_DISABLED, 0, None)
@@ -267,7 +306,11 @@ class SystemPollingService:
             return (False, 0, None)
     
     def _poll_bluetooth(self) -> None:
-        """Poll Bluetooth status."""
+        """Poll Bluetooth status, or report the controller as absent on a board without one."""
+        if not self._capability.has_bluetooth:
+            self._state.set_bluetooth(BT_ABSENT, None, None)
+            return
+        
         # Check if Bluetooth is enabled
         if not self._is_bluetooth_enabled():
             self._state.set_bluetooth(BT_DISABLED, None, None)

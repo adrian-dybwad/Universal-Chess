@@ -3494,14 +3494,23 @@ def api_system_info():
     do the same without importing board/hardware modules. "Available" means a
     complete install (executable + engines/ + fonts/), not just the executable --
     a partial import is not launchable.
+
+    ``has_wifi`` / ``has_bluetooth`` report which radios the board physically has,
+    read from the same module that gates the on-board Connectivity rows, so a
+    board with no wireless die (a plain Pi Zero) hides the same features on both
+    surfaces instead of offering inert Wi-Fi and Bluetooth controls.
     """
+    from universalchess.board import wireless_capability
     from universalchess.services.centaur_import import centaur_app_installed
 
     try:
         system_user = pwd.getpwuid(os.getuid()).pw_name
+        capability = wireless_capability.get_wireless_capability()
         return jsonify({
             "centaur_available": centaur_app_installed(),
             "username": system_user,
+            "has_wifi": capability.has_wifi,
+            "has_bluetooth": capability.has_bluetooth,
         })
     except Exception as e:
         return _internal_error(e)

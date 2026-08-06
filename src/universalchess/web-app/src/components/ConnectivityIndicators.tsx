@@ -4,6 +4,7 @@ import type { TFunction } from 'i18next';
 import { Link } from 'react-router';
 import { MenuIcon } from './MenuIcon';
 import { apiFetch } from '../utils/api';
+import { useRadioCapability } from '../hooks/useRadioCapability';
 import './ConnectivityIndicators.css';
 
 // How often the navbar re-reads radio status. Matches the Connectivity cards'
@@ -45,11 +46,16 @@ interface BtStatus {
  * Status endpoints are unauthenticated reads, so a failure (board unreachable,
  * not yet booted) leaves the value `null` and the caller renders the 'unknown'
  * tier rather than a fabricated state.
+ *
+ * A `null` path disables the poll entirely: on a board with no radio there is
+ * nothing to report, so neither the browser nor the board should spend a request
+ * every interval on it.
  */
-function useConnectivityStatus<T>(path: string): T | null {
+function useConnectivityStatus<T>(path: string | null): T | null {
   const [status, setStatus] = useState<T | null>(null);
 
   useEffect(() => {
+    if (path === null) return;
     let active = true;
     const fetchStatus = async () => {
       try {
@@ -195,21 +201,33 @@ function bluetoothTitle(status: BtStatus | null, t: TFunction): string {
  * the panel scrolls into view). Placed left of the battery indicator in both the
  * desktop and mobile clusters so radio state stays visible when the main nav
  * collapses behind the burger.
+ *
+ * A radio the board does not have gets no glyph and is not polled: a permanently
+ * muted icon linking to a hidden settings card would be worse than silence. Both
+ * glyphs stay out of the cluster until the capability probe answers, so an
+ * unequipped board never flashes them.
  */
 export function ConnectivityIndicators() {
   const { t } = useTranslation();
-  const wifi = useConnectivityStatus<WifiStatus>('/api/connectivity/wifi/status');
-  const bluetooth = useConnectivityStatus<BtStatus>('/api/connectivity/bluetooth/status');
+  const { hasWifi, hasBluetooth, probed } = useRadioCapability();
+  const showWifi = probed && hasWifi;
+  const showBluetooth = probed && hasBluetooth;
+  const wifi = useConnectivityStatus<WifiStatus>(showWifi ? '/api/connectivity/wifi/status' : null);
+  const bluetooth = useConnectivityStatus<BtStatus>(
+    showBluetooth ? '/api/connectivity/bluetooth/status' : null,
+  );
 
   return (
     <>
-      <WifiIndicatorLink status={wifi} />
-      <StatusIndicatorLink
-        to="/settings/connectivity#bluetooth"
-        icon="bluetooth"
-        state={bluetoothState(bluetooth)}
-        title={bluetoothTitle(bluetooth, t)}
-      />
+      {showWifi && <WifiIndicatorLink status={wifi} />}
+      {showBluetooth && (
+        <StatusIndicatorLink
+          to="/settings/connectivity#bluetooth"
+          icon="bluetooth"
+          state={bluetoothState(bluetooth)}
+          title={bluetoothTitle(bluetooth, t)}
+        />
+      )}
     </>
   );
 }

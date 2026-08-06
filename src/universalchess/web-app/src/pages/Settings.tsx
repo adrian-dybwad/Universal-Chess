@@ -9,6 +9,7 @@ import { buildSections } from '../menu/engine';
 import { EngineProfileEditor } from '../components/EngineProfileEditor';
 import type { FieldValue } from '../components/CatalogField';
 import { useLoginRetry } from '../components/useLoginRetry';
+import { useRadioCapability } from '../hooks/useRadioCapability';
 import { MenuIcon } from '../components/MenuIcon';
 import { ConnectivityPanel } from './Connectivity';
 import type { EngineDefinition, EngineFailure, EngineRef, EngineRefsResponse } from '../types/game';
@@ -4755,6 +4756,18 @@ const EM_DASH = '\u2014';
 // only on expand. Ids match the row ids built below.
 const ALWAYS_VISIBLE_STAT_IDS = ['cpu', 'memory'];
 
+// Rows that describe wireless hardware, gated on that hardware existing. A plain
+// Pi Zero has no wireless die, so these report on nothing -- and the advertising
+// row would read "unknown", which is easily taken for "possibly broken" and sends
+// someone diagnosing a board that is simply not equipped.
+//
+// Split per radio rather than one wireless group: the combo-die and firmware rows
+// are worth reporting whenever either radio is fitted (a dongle for one of them
+// makes the wireless stack live again), while BlueZ and advertising mean nothing
+// without a controller.
+const WIRELESS_ROW_IDS = ['wifiBtChip', 'wifiFirmware'];
+const BLUETOOTH_ROW_IDS = ['bluez', 'bluezStack', 'btAdvertising'];
+
 // Render a nullable string field as itself or an em dash, never an empty cell.
 function orDash(value: string | null): string {
   return value && value.trim() ? value : EM_DASH;
@@ -4787,6 +4800,7 @@ function formatStatUptime(seconds: number): string {
 
 function SystemInfoCard() {
   const { t } = useTranslation();
+  const { hasWifi, hasBluetooth, probed } = useRadioCapability();
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [error, setError] = useState(false);
   // Collapsed by default: CPU and memory stay visible, the rest is hidden until
@@ -4918,7 +4932,22 @@ function SystemInfoCard() {
       ]
     : [];
 
-  const rows = [...telemetryRows, ...hardwareRows];
+  // Every wireless row is withheld until the probe answers, so an unequipped
+  // board never flashes them in and out. An unreadable probe keeps them (the
+  // hook's fail-open value): they are what an operator reads while diagnosing
+  // Bluetooth, and a board that cannot answer the probe is exactly the board
+  // being diagnosed.
+  const hiddenRadioRowIds = new Set(
+    probed
+      ? [
+          ...(hasWifi || hasBluetooth ? [] : WIRELESS_ROW_IDS),
+          ...(hasBluetooth ? [] : BLUETOOTH_ROW_IDS),
+        ]
+      : [...WIRELESS_ROW_IDS, ...BLUETOOTH_ROW_IDS],
+  );
+  const rows = [...telemetryRows, ...hardwareRows].filter(
+    (row) => !hiddenRadioRowIds.has(row.id),
+  );
   const visibleRows = expanded
     ? rows
     : rows.filter((row) => ALWAYS_VISIBLE_STAT_IDS.includes(row.id));

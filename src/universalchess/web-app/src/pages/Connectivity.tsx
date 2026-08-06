@@ -5,6 +5,7 @@ import { useLocation } from 'react-router';
 import { Button, Card, CardHeader, Input, Select, Toggle } from '../components/ui';
 import { MenuIcon } from '../components/MenuIcon';
 import { useAuthedAction } from '../components/useAuthedAction';
+import { useRadioCapability } from '../hooks/useRadioCapability';
 import { apiFetch } from '../utils/api';
 import { useSseEvent, type SseEventPayload } from '../utils/sseBus';
 import { CAST_STATE_KEYS, type CastDevice, type CastStateName } from '../utils/chromecast';
@@ -122,19 +123,30 @@ interface CastStatus {
  * Connectivity is a child of Settings). It carries its own heading and renders
  * the WiFi, Bluetooth, Chromecast, and Accounts cards; each card self-saves, so
  * the panel does not participate in the Settings page's bulk Save & Apply bar.
+ *
+ * The Wi-Fi and Bluetooth cards are omitted on a board with no such radio (a
+ * plain Pi Zero), mirroring the board menu's own gate, and are withheld until the
+ * capability probe answers so an unequipped board never flashes them. Chromecast
+ * and Accounts stay: the board still reaches the network over the USB Ethernet
+ * gadget.
  */
 export function ConnectivityPanel() {
   const { t } = useTranslation();
+  const { hasWifi, hasBluetooth, probed } = useRadioCapability();
+  const showWifi = probed && hasWifi;
+  const showBluetooth = probed && hasBluetooth;
   // The navbar Wi-Fi/Bluetooth glyphs deep-link here with a #wifi / #bluetooth
   // hash. React Router does not scroll to hash targets on its own, so bring the
   // referenced card into view once it has rendered. Re-runs on hash change so
-  // switching directly between the two anchors (while already on this tab) works.
+  // switching directly between the two anchors (while already on this tab) works,
+  // and on the card gates so a deep link still lands once the probe has answered
+  // and mounted the target (the first run finds no element).
   const { hash } = useLocation();
   useEffect(() => {
     if (!hash) return;
     const el = document.getElementById(hash.slice(1));
     el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, [hash]);
+  }, [hash, showWifi, showBluetooth]);
 
   return (
     <section>
@@ -143,12 +155,16 @@ export function ConnectivityPanel() {
         {t('connectivity.title')}
       </h2>
       <p className="text-muted mb-6">{t('connectivity.subtitle')}</p>
-      <div id="wifi" className="conn-anchor">
-        <WifiCard />
-      </div>
-      <div id="bluetooth" className="conn-anchor">
-        <BluetoothCard />
-      </div>
+      {showWifi && (
+        <div id="wifi" className="conn-anchor">
+          <WifiCard />
+        </div>
+      )}
+      {showBluetooth && (
+        <div id="bluetooth" className="conn-anchor">
+          <BluetoothCard />
+        </div>
+      )}
       <ChromecastCard />
       <AccountsCard />
     </section>

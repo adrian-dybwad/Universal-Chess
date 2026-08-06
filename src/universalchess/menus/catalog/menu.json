@@ -633,7 +633,8 @@
       "label": "WiFi",
       "icon": "wifi",
       "help": "Connect the board to a wireless network.",
-      "platforms": ["board", "web"]
+      "platforms": ["board", "web"],
+      "visibleWhen": { "store": "hardware", "key": "has_wifi", "equals": true }
     },
     {
       "id": "connectivity.bluetooth",
@@ -644,7 +645,8 @@
       "label": "Bluetooth",
       "icon": "bluetooth",
       "help": "Pair a Bluetooth keyboard with the board.",
-      "platforms": ["board", "web"]
+      "platforms": ["board", "web"],
+      "visibleWhen": { "store": "hardware", "key": "has_bluetooth", "equals": true }
     },
     {
       "id": "connectivity.chromecast",

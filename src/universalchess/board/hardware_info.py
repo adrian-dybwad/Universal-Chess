@@ -43,6 +43,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Optional
 
+from universalchess.board import wireless_capability
 from universalchess.managers import bluez_patch_status
 from universalchess.paths import TMP_DIR
 
@@ -431,20 +432,6 @@ def collect_hardware_info(source: HardwareInfoSource) -> HardwareInfo:
 # ---------------------------------------------------------------------------
 
 
-def _read_pi_model() -> Optional[str]:
-    """Read the board model from the device tree (rootless), or ``None``.
-
-    ``/proc/device-tree/model`` is a NUL-terminated string (e.g.
-    ``"Raspberry Pi Zero W Rev 1.1"``); absent on non-Pi/dev hosts.
-    """
-    try:
-        raw = Path("/proc/device-tree/model").read_bytes()
-    except OSError:
-        return None
-    text = raw.decode("utf-8", errors="replace").replace("\x00", "").strip()
-    return text or None
-
-
 @lru_cache(maxsize=1)
 def _read_kernel_log() -> str:
     """Return kernel-log text containing the wireless init lines, or ``""``.
@@ -543,7 +530,7 @@ def read_display_status() -> Optional[dict]:
 def default_source() -> HardwareInfoSource:
     """Build the production source backed by the OS."""
     return HardwareInfoSource(
-        pi_model=_read_pi_model,
+        pi_model=wireless_capability.read_pi_model,
         kernel_release=lambda: os.uname().release,
         kernel_log=_read_kernel_log,
         dpkg_status=_read_dpkg_status,

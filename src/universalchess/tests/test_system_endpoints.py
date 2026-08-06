@@ -153,6 +153,38 @@ def test_system_info_reports_centaur_availability(client, monkeypatch):
     assert json.loads(resp.data)["centaur_available"] is False
 
 
+@pytest.mark.parametrize(
+    "has_wifi, has_bluetooth",
+    [(True, True), (False, False), (True, False), (False, True)],
+)
+def test_system_info_reports_radio_presence(client, monkeypatch, has_wifi, has_bluetooth):
+    """/api/system/info must report which radios this board physically has.
+
+    Why this test exists: a plain Raspberry Pi Zero (no "W") has no wireless die,
+    so the web UI must not offer Wi-Fi or Bluetooth controls that can never work.
+    The web process cannot ask the board -- it reads the same capability module
+    the board menus use, so both surfaces hide the same features.
+
+    How a regression manifests: the fields go missing or invert, and the web UI
+    either shows inert Wi-Fi/Bluetooth cards on a Zero, or hides working ones on
+    a Zero 2 W (the UI defaults to hiding when the probe cannot be read).
+    """
+    from universalchess.board import wireless_capability
+
+    monkeypatch.setattr(
+        wireless_capability,
+        "get_wireless_capability",
+        lambda: wireless_capability.WirelessCapability(
+            has_wifi=has_wifi, has_bluetooth=has_bluetooth, pi_model="Raspberry Pi Zero Rev 1.3"
+        ),
+    )
+    resp = client.get("/api/system/info")
+    assert resp.status_code == 200
+    payload = json.loads(resp.data)
+    assert payload["has_wifi"] is has_wifi
+    assert payload["has_bluetooth"] is has_bluetooth
+
+
 # --- State-aware Original Centaur control (status probe + return action) ------
 
 
