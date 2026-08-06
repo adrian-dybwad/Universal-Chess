@@ -126,11 +126,44 @@ then
     sed -i "$ a #dgtcentaurmods" $CONFIG
 fi
 
-if cat $CMDLINEFILE | grep -q "console=serial0"
-then
-    echo -e "::: Disable console on ttyS0"
-        REPLY=$(sed 's/[^ ]* *//' $CMDLINEFILE)
-        echo -e "$REPLY" > $CMDLINEFILE
+# Remove every serial-console token from the cmdline file named by $1.
+#
+# The Centaur board is wired to the Pi's primary UART, so a kernel console on
+# that same port puts a login getty in contention with the board.
+#
+# Tokens are matched by name. A previous version deleted the first
+# whitespace-delimited token instead, which only worked because Raspberry Pi
+# Imager happens to write the console first: raspi-config inserts it immediately
+# before root= ("s/root=/console=serial0,115200 root=/"), and cloud-init drives
+# that path whenever user-data sets rpi.interfaces.serial. On such a card the
+# positional delete removed console=tty1 and left the serial console in place --
+# the opposite of the intent, silently and with no error.
+#
+# The two expressions split on position because the token carries a separating
+# space only on one side when it starts the line. The baud suffix is optional in
+# the kernel's console syntax, hence "anything up to whitespace" rather than a
+# required ",[0-9]+". printf replaces an earlier "echo -e", which interpreted
+# backslash escapes in kernel arguments. The temporary file keeps a power loss
+# mid-write from truncating cmdline.txt and leaving the card unbootable.
+strip_serial_console() {
+  # serial0 is the udev alias (ttyS0 on a Pi Zero / Zero 2 W); raspi-config
+  # writes ttyAMA0 when the board exposes no serial0 alias.
+  _consoles='serial0|ttyS0|ttyAMA0'
+  _cmdline_file="$1"
+  _original=$(cat "$_cmdline_file") || return 1
+  _stripped=$(printf '%s\n' "$_original" | sed -E \
+    -e "s/[[:space:]]+console=($_consoles)[^[:space:]]*//g" \
+    -e "s/^console=($_consoles)[^[:space:]]*[[:space:]]*//") || return 1
+  if [ "$_stripped" = "$_original" ]; then
+    return 0
+  fi
+  echo "::: Disabling serial console (UART is reserved for the Centaur board)"
+  printf '%s\n' "$_stripped" > "${_cmdline_file}.uc-tmp" || return 1
+  mv "${_cmdline_file}.uc-tmp" "$_cmdline_file"
+}
+
+if [ -f "$CMDLINEFILE" ]; then
+    strip_serial_console "$CMDLINEFILE"
 fi
 
     # Setting up Bluetooth configuration
