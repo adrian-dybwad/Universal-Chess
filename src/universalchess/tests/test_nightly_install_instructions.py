@@ -61,9 +61,14 @@ def install_block(template_text) -> str:
     "apt-get install" (the "Switch to Stable" snippet installs from the apt
     repository and matches that too), so adding further snippets cannot
     silently retarget these assertions at the wrong block.
+
+    The download is matched on ".deb" as well as "wget" because the notes carry
+    a second download snippet (the SD card setup tool). Matching a download
+    command alone leaves the selection ambiguous, and an ambiguous fixture
+    either aborts the suite or silently asserts against the wrong block.
     """
-    blocks = [b for b in _bash_blocks(template_text) if "wget" in b]
-    assert len(blocks) == 1, f"expected exactly one download block, found {len(blocks)}"
+    blocks = [b for b in _bash_blocks(template_text) if "wget" in b and ".deb" in b]
+    assert len(blocks) == 1, f"expected exactly one .deb download block, found {len(blocks)}"
     return blocks[0]
 
 

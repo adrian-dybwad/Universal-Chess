@@ -119,6 +119,100 @@ original card from the Centaur -- keep it safe, you may want it later.
 6. Wait for the install to complete, reboot, and the board should come up running
    Universal Chess.
 
+### No Wi-Fi? Set the board up over the USB cable
+
+Steps 3 to 5 above assume the Pi can join your Wi-Fi. If it cannot — no network
+in reach, a password that turns out to be wrong, a 5 GHz-only access point, or a
+plain Pi Zero with no radio at all — the board never appears, and with no screen
+or keyboard there is nothing to log into to fix it.
+
+So the fallback has to be in place **before** the first boot, put there from the
+same machine that imaged the card. `enable_usb_gadget.py` makes the Pi appear as
+a USB Ethernet adapter, so a single cable gives you both a login and, if you
+share the host's connection, the internet access the install needs.
+
+Download `enable_usb_gadget.py` from the
+[Releases page](https://github.com/adrian-dybwad/Universal-Chess/releases). It is
+one self-contained file and needs Python 3.9 or newer on your computer — nothing
+else to install.
+
+1. Write the card with the Pi Imager as in steps 1 and 2 above. Configure the
+   hostname, user and password, and enable SSH. Wi-Fi details are optional here.
+2. Leave the card in the reader. Do not boot it yet — these changes have to be
+   in place before the first boot.
+3. Run the tool on your computer:
+
+   ```bash
+   python3 enable_usb_gadget.py --dry-run   # show what it would change
+   python3 enable_usb_gadget.py             # make the changes
+   ```
+
+   On Windows use `py enable_usb_gadget.py`. If Python is missing, install it
+   from [python.org](https://www.python.org/downloads/) or the Microsoft Store.
+
+   The card is found automatically — `/Volumes/bootfs` on macOS,
+   `/media/<user>/bootfs` on Linux, a drive letter on Windows. If detection
+   fails, or more than one card is mounted, pass `--boot` with the path to the
+   boot partition. The tool describes the card it found and asks you to confirm
+   it before writing anything.
+
+4. Eject the card, put it in the Pi, and connect the USB cable. On a Pi Zero use
+   the **middle** micro-USB port, the one next to the mini-HDMI — the port
+   marked `PWR IN` supplies power only and will not enumerate.
+5. Leave the tool running. It waits for the board to appear and then checks that
+   name resolution works over the new link. A Pi Zero's first boot runs cloud-init
+   on slow hardware; the tool waits 300 seconds before giving up, which
+   `--wait-timeout SECONDS` extends.
+
+For the Pi to reach the internet — which it needs for `apt` in step 4 of the
+main procedure — the host has to share its own connection over that USB
+interface:
+
+| Host | Where to turn it on |
+| --- | --- |
+| **macOS** | System Settings > General > Sharing > Internet Sharing, sharing to the RNDIS/Ethernet Gadget |
+| **Windows** | Network Connections > right-click your internet adapter > Properties > Sharing tab > allow sharing to the gadget adapter |
+| **Linux** | NetworkManager: set the `usb0` connection's IPv4 method to *Shared to other computers* |
+
+Windows also needs a one-time RNDIS driver, from
+[rpi-usb-gadget releases](https://github.com/raspberrypi/rpi-usb-gadget/releases).
+macOS and Linux need no driver.
+
+Then continue from step 4 of the main procedure, connecting with the hostname
+you set in the Imager:
+
+```bash
+ssh <your-user>@<your-hostname>.local
+```
+
+The Pi takes its address by DHCP from the host, so it has no fixed IP and the
+address changes between boots. Prefer the hostname. If `.local` does not resolve,
+find the address your host leased it:
+
+| Host | Command |
+| --- | --- |
+| **macOS** | `arp -an \| grep bridge`, or read `/var/db/dhcpd_leases` |
+| **Windows** | `arp -a` |
+| **Linux** | `ip neigh show dev usb0` |
+
+If the board answers by IP but names do not resolve, the usual cause is a
+resolver on your computer that started before the USB interface existed and
+never bound to it. The board says so at login, and the same tool diagnoses and
+offers to fix it:
+
+```bash
+python3 enable_usb_gadget.py --check-dns --fix
+```
+
+Two caveats. Enabling USB gadget mode **disables the Pi's USB host port**, so no
+USB peripherals while it is on; nothing in Universal Chess uses that port. And on
+a Centaur the Pi is powered from the board, so connecting it to a computer can
+backfeed the board's 5 V rail — worth checking on your own hardware before
+leaving it plugged in.
+
+Full documentation, including troubleshooting for each stage, is in
+[`tools/sd-card-setup/README.md`](tools/sd-card-setup/README.md).
+
 ## Local development setup (configs and database)
 
 - Active config is read from `/opt/universalchess/config/centaur.ini`. A default template is tracked at `packaging/deb-root/opt/universalchess/defaults/config/centaur.ini`.

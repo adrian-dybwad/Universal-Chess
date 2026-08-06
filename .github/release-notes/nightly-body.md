@@ -27,6 +27,41 @@ Or download the `.deb` file from the Assets section below and transfer it to you
 When the install finishes, reboot the Pi and it should come up running
 Universal Chess.
 
+### No Wi-Fi? Install over the USB cable
+
+If the Pi cannot join your Wi-Fi it never appears on the network, and with no
+screen or keyboard there is nothing to log into to fix it. `enable_usb_gadget.py`
+in the Assets below prepares the card **before its first boot** so the Pi appears
+as a USB Ethernet adapter, and one cable gives you a login plus internet access.
+
+Run it on the computer that imaged the card — not on the Pi — with the card
+still in the reader. It is one self-contained file and needs only Python 3.9 or
+newer.
+
+On macOS and Linux:
+
+```bash
+curl -LO https://github.com/__REPOSITORY__/releases/download/__TAG_NAME__/enable_usb_gadget.py
+python3 enable_usb_gadget.py
+```
+
+On Windows, download `enable_usb_gadget.py` from the Assets section below, then
+run `py enable_usb_gadget.py` in PowerShell.
+
+The card is detected automatically; the tool describes it and asks before
+writing. Then move the card to the Pi, connect the cable — the **middle**
+micro-USB port on a Pi Zero, not `PWR IN` — and the tool waits for the board and
+checks name resolution over the new link.
+
+For the Pi to reach the internet, share your computer's connection over that USB
+interface: Internet Sharing on macOS, the Sharing tab on Windows (which also
+needs a one-time [RNDIS driver](https://github.com/raspberrypi/rpi-usb-gadget/releases)),
+or *Shared to other computers* on the `usb0` connection on Linux. Then continue
+above, connecting as `<your-user>@<your-hostname>.local`.
+
+Full instructions, including per-platform troubleshooting, are in the
+[install procedure](https://github.com/adrian-dybwad/Universal-Chess#no-wi-fi-set-the-board-up-over-the-usb-cable).
+
 ## Confirm which build is installed
 
 Every nightly carries the package version `__NIGHTLY_VERSION__`, so `dpkg -l`
