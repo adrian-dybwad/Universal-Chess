@@ -34,9 +34,18 @@ screen or keyboard there is nothing to log into to fix it. `enable_usb_gadget.py
 in the Assets below prepares the card **before its first boot** so the Pi appears
 as a USB Ethernet adapter, and one cable gives you a login plus internet access.
 
-Run it on the computer that imaged the card — not on the Pi — with the card
-still in the reader. It is one self-contained file and needs only Python 3.9 or
-newer.
+> **IMPORTANT: take the Pi out of the Centaur before you plug it into a
+> computer.** In the Centaur the Pi is powered by the board, and it may not like
+> being powered by the board and by USB at the same time. It may well be fine —
+> but connect both at your own risk, as with all modding of this game.
+
+Image the card with Raspberry Pi OS **Trixie** Lite, 32-bit — that is the
+combination this was tested on; 64-bit may work too. Then run the tool on the
+computer that imaged the card, not on the Pi. It is one self-contained file and
+needs only Python 3.9 or newer.
+
+The Imager ejects the card when it finishes, so take it out of the reader and
+put it back before running the tool, otherwise the computer cannot see it.
 
 On macOS and Linux:
 
@@ -49,15 +58,23 @@ On Windows, download `enable_usb_gadget.py` from the Assets section below, then
 run `py enable_usb_gadget.py` in PowerShell.
 
 The card is detected automatically; the tool describes it and asks before
-writing. Then move the card to the Pi, connect the cable — the **middle**
-micro-USB port on a Pi Zero, not `PWR IN` — and the tool waits for the board and
-checks name resolution over the new link.
+writing.
 
-For the Pi to reach the internet, share your computer's connection over that USB
-interface: Internet Sharing on macOS, the Sharing tab on Windows (which also
-needs a one-time [RNDIS driver](https://github.com/raspberrypi/rpi-usb-gadget/releases)),
-or *Shared to other computers* on the `usb0` connection on Linux. Then continue
-above, connecting as `<your-user>@<your-hostname>.local`.
+Next, turn on internet connection sharing — Internet Sharing on macOS, the
+Sharing tab on Windows (which also needs a one-time
+[RNDIS driver](https://github.com/raspberrypi/rpi-usb-gadget/releases)), or
+*Shared to other computers* on the `usb0` connection on Linux. Do this before
+connecting the Pi: without it the Pi has a login but no route out, and `apt`
+fails.
+
+Then move the card to the Pi and connect the cable — the **middle** micro-USB
+port on a Pi Zero, not `PWR IN`. The tool waits for the board and checks name
+resolution over the new link.
+
+Finally SSH in as `<your-user>@<your-hostname>.local`, run
+`sudo apt update && sudo apt upgrade -y`, and follow the install commands above.
+Once it is running, open `http://<your-hostname>.local/` to add any engines you
+want, then shut the Pi down and refit it in the Centaur.
 
 Full instructions, including per-platform troubleshooting, are in the
 [install procedure](https://github.com/adrian-dybwad/Universal-Chess#no-wi-fi-set-the-board-up-over-the-usb-cable).

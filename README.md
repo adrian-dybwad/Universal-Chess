@@ -121,26 +121,40 @@ original card from the Centaur -- keep it safe, you may want it later.
 
 ### No Wi-Fi? Set the board up over the USB cable
 
-Steps 3 to 5 above assume the Pi can join your Wi-Fi. If it cannot — no network
-in reach, a password that turns out to be wrong, a 5 GHz-only access point, or a
-plain Pi Zero with no radio at all — the board never appears, and with no screen
-or keyboard there is nothing to log into to fix it.
+The procedure above assumes the Pi can join your Wi-Fi. If it cannot — no
+network in reach, a password that turns out to be wrong, a 5 GHz-only access
+point, or a plain Pi Zero with no radio at all — the board never appears, and
+with no screen or keyboard there is nothing to log into to fix it.
 
 So the fallback has to be in place **before** the first boot, put there from the
 same machine that imaged the card. `enable_usb_gadget.py` makes the Pi appear as
-a USB Ethernet adapter, so a single cable gives you both a login and, if you
+a USB Ethernet adapter, so a single cable carries both the login and, once you
 share the host's connection, the internet access the install needs.
+
+The steps below replace the procedure above end to end — you never need Wi-Fi.
+
+> **IMPORTANT: take the Pi out of the Centaur before you plug it into a
+> computer.** In the Centaur the Pi is powered by the board, and it may not like
+> being powered by the board and by USB at the same time. It may well be fine —
+> but connect both at your own risk, as with all modding of this game. Do the
+> whole procedure below with the Pi on your desk, and refit it at the end.
 
 Download `enable_usb_gadget.py` from the
 [Releases page](https://github.com/adrian-dybwad/Universal-Chess/releases). It is
 one self-contained file and needs Python 3.9 or newer on your computer — nothing
 else to install.
 
-1. Write the card with the Pi Imager as in steps 1 and 2 above. Configure the
-   hostname, user and password, and enable SSH. Wi-Fi details are optional here.
-2. Leave the card in the reader. Do not boot it yet — these changes have to be
-   in place before the first boot.
-3. Run the tool on your computer:
+1. Image the card with the Pi Imager, choosing Raspberry Pi OS **Trixie** Lite.
+   Use the **32-bit** image: that is the combination this route was tested on.
+   The 64-bit image may work too, and supports more engines, but has not been
+   tested over USB. In the Imager's advanced settings set the hostname, a user
+   and password, and enable SSH. Wi-Fi credentials are optional here — the point
+   of this route is that you do not need them.
+2. When the Imager finishes it ejects the card, so your computer can no longer
+   see it. **Take the card out of the reader and put it straight back in** to
+   remount the boot partition. Do not boot it in the Pi yet; these changes have
+   to be on the card before its first boot.
+3. Run the tool on your computer — not on the Pi:
 
    ```bash
    python3 enable_usb_gadget.py --dry-run   # show what it would change
@@ -156,34 +170,56 @@ else to install.
    boot partition. The tool describes the card it found and asks you to confirm
    it before writing anything.
 
-4. Eject the card, put it in the Pi, and connect the USB cable. On a Pi Zero use
-   the **middle** micro-USB port, the one next to the mini-HDMI — the port
-   marked `PWR IN` supplies power only and will not enumerate.
-5. Leave the tool running. It waits for the board to appear and then checks that
-   name resolution works over the new link. A Pi Zero's first boot runs cloud-init
-   on slow hardware; the tool waits 300 seconds before giving up, which
-   `--wait-timeout SECONDS` extends.
+   Once the card is written the tool pauses and asks whether to wait for the
+   board. Do steps 4 and 5 before answering it.
 
-For the Pi to reach the internet — which it needs for `apt` in step 4 of the
-main procedure — the host has to share its own connection over that USB
-interface:
+4. Turn on internet connection sharing, before you connect the Pi. Without it
+   the Pi gets a login but no route out, and the `apt` steps below fail:
 
-| Host | Where to turn it on |
-| --- | --- |
-| **macOS** | System Settings > General > Sharing > Internet Sharing, sharing to the RNDIS/Ethernet Gadget |
-| **Windows** | Network Connections > right-click your internet adapter > Properties > Sharing tab > allow sharing to the gadget adapter |
-| **Linux** | NetworkManager: set the `usb0` connection's IPv4 method to *Shared to other computers* |
+   | Host | Where to turn it on |
+   | --- | --- |
+   | **macOS** | System Settings > General > Sharing > Internet Sharing, sharing to the RNDIS/Ethernet Gadget |
+   | **Windows** | Network Connections > right-click your internet adapter > Properties > Sharing tab > allow sharing to the gadget adapter |
+   | **Linux** | NetworkManager: set the `usb0` connection's IPv4 method to *Shared to other computers* |
 
-Windows also needs a one-time RNDIS driver, from
-[rpi-usb-gadget releases](https://github.com/raspberrypi/rpi-usb-gadget/releases).
-macOS and Linux need no driver.
+   Windows also needs a one-time RNDIS driver, from
+   [rpi-usb-gadget releases](https://github.com/raspberrypi/rpi-usb-gadget/releases).
+   macOS and Linux need no driver.
 
-Then continue from step 4 of the main procedure, connecting with the hostname
-you set in the Imager:
+5. Eject the card, put it in the Pi, and connect the USB cable to your computer.
+   On a Pi Zero use the **middle** micro-USB port, the one next to the
+   mini-HDMI — the port marked `PWR IN` supplies power only and will not
+   enumerate.
 
-```bash
-ssh <your-user>@<your-hostname>.local
-```
+   Leave the tool running. It waits for the board to appear and then checks that
+   name resolution works over the new link. A Pi Zero's first boot runs
+   cloud-init on slow hardware; the tool waits 300 seconds before giving up,
+   which `--wait-timeout SECONDS` extends.
+
+   On macOS the tool watches for the `bridge` interface that Internet Sharing
+   creates, which is why step 4 comes first — with sharing off it waits the full
+   300 seconds and reports that the link never appeared. On Windows it cannot
+   enumerate the gadget interface at all and will always report that, whether or
+   not the board came up; pass `--no-wait` there and go straight to the next
+   step once the Pi has had a minute or two to boot.
+
+6. SSH into the Pi with the hostname you set in the Imager, and update the base
+   system:
+
+   ```bash
+   ssh <your-user>@<your-hostname>.local
+   sudo apt update && sudo apt upgrade -y
+   ```
+
+7. Run the Universal Chess install commands from the Installation section of the
+   latest nightly on the
+   [Releases page](https://github.com/adrian-dybwad/Universal-Chess/releases),
+   then reboot.
+8. Open the Pi's web interface in a browser on the same computer, at
+   `http://<your-hostname>.local/`. This is a good moment to install any UCI
+   engines you want, including the original Centaur engine.
+9. Shut the Pi down cleanly with `sudo poweroff`, unplug the USB cable, and
+   refit the board in the Centaur.
 
 The Pi takes its address by DHCP from the host, so it has no fixed IP and the
 address changes between boots. Prefer the hostname. If `.local` does not resolve,
@@ -204,11 +240,9 @@ offers to fix it:
 python3 enable_usb_gadget.py --check-dns --fix
 ```
 
-Two caveats. Enabling USB gadget mode **disables the Pi's USB host port**, so no
-USB peripherals while it is on; nothing in Universal Chess uses that port. And on
-a Centaur the Pi is powered from the board, so connecting it to a computer can
-backfeed the board's 5 V rail — worth checking on your own hardware before
-leaving it plugged in.
+One further consequence: enabling USB gadget mode **disables the Pi's USB host
+port**, so no USB peripherals while it is on. Nothing in Universal Chess uses
+that port.
 
 Full documentation, including troubleshooting for each stage, is in
 [`tools/sd-card-setup/README.md`](tools/sd-card-setup/README.md).

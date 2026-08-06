@@ -682,7 +682,10 @@ def guided_host_check(
     support = hostcheck.PLATFORMS[key]
 
     emit()
-    emit("Now eject the card, put it in the Pi, and connect the USB cable.")
+    emit("Turn on internet connection sharing for the USB interface first: the")
+    emit("Pi needs a route out, and on macOS the interface watched for below is")
+    emit("the bridge that Internet Sharing creates.")
+    emit("Then eject the card, put it in the Pi, and connect the USB cable.")
     if not (assume_yes or confirm_default_yes("Wait for the board and check DNS?")):
         emit(f"Skipped. Run {FIX_DNS_COMMAND} later if names do not resolve.")
         return 0

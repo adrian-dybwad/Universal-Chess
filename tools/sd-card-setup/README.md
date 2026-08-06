@@ -45,7 +45,10 @@ no second tool to find, and nothing to remember to run afterwards.
 ```
 Done. Originals saved alongside as *.uc-orig.
 ...
-Now eject the card, put it in the Pi, and connect the USB cable.
+Turn on internet connection sharing for the USB interface first: the
+Pi needs a route out, and on macOS the interface watched for below is
+the bridge that Internet Sharing creates.
+Then eject the card, put it in the Pi, and connect the USB cable.
 Wait for the board and check DNS? [Y/n]
 
 Waiting up to 300s for the macOS end of the link to appear. A Pi Zero's
@@ -575,9 +578,11 @@ Enabling peripheral mode **disables the Pi's USB host port**. Nothing in
 Universal Chess uses it, but you cannot attach USB peripherals to a Zero while
 gadget mode is on.
 
-The Pi's OTG port can also source power. On a Centaur the Pi is powered from the
-board, so connecting to a PC may backfeed the board's 5V rail. Worth checking on
-your own hardware before leaving it plugged in.
+**Take the Pi out of the Centaur before plugging it into a computer.** The Pi's
+OTG port can also source power, and in the Centaur the Pi is powered from the
+board, so connecting to a PC may backfeed the board's 5V rail. It may well be
+fine — but connect both at your own risk, as with all modding of this game. Do
+the whole setup with the Pi on the desk and refit it at the end.
 
 ## Tests
 
