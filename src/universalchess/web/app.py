@@ -41,6 +41,7 @@ from sqlalchemy import create_engine, MetaData
 from sqlalchemy.sql import func
 from sqlalchemy import select
 from sqlalchemy import delete
+from typing import Callable, Optional
 import os
 import re
 import time
@@ -3456,31 +3457,63 @@ def api_game_analyze(game_id):
 # These mirror the board's System and Power menus. Each privileged action is
 # routed to the main process over the board-command channel so it runs the exact
 # same board-side code path as the on-board menu (e.g. shutdown shows the board's
-# splash and cleans up hardware via cleanup_and_exit). The web process never
-# performs the shutdown/reboot itself, which avoids the historical divergence
-# where /shutdownboard powered off without the board's cleanup. Shutdown, reboot
-# and Original Centaur make the web UI unavailable; the UI confirms first.
+# splash and cleans up hardware via cleanup_and_exit). While the board is running
+# the web process never powers the Pi off itself, which avoids the historical
+# divergence where /shutdownboard powered off without the board's cleanup; the
+# power actions fall back to doing it here only when the board did not accept the
+# command (see _system_board_action). Shutdown, reboot and Original Centaur make
+# the web UI unavailable; the UI confirms first.
 
 
-def _system_board_action(command: str, success_message: str):
+def _system_board_action(command: str, success_message: str,
+                         local_fallback: Optional[Callable[[], object]] = None):
     """Forward a system action to the board and shape the JSON response.
 
-    Returns success when the board accepted the command, 503 when the board is
-    not running (so the UI can say the board is offline rather than report a
-    false success), and 500 on unexpected errors.
+    Returns success when the board accepted the command and 500 on unexpected
+    errors. When the board did not accept it -- the main process is not listening
+    -- the outcome depends on whether the action can be completed without it:
+
+    - Without a ``local_fallback`` (reset, Original Centaur), 503, so the UI says
+      the board is offline instead of reporting a false success. Only the main
+      process owns the live settings and the board hardware those actions need.
+    - With one (shutdown, reboot), the fallback runs here. These act on the Pi,
+      not on the board controller, and the web service runs independently of the
+      board service and as the same user, so a board that is stopped or
+      crash-looping must not leave the Pi with no way to be powered off short of
+      pulling the plug. The controller is still put to sleep on the way down by
+      universal-chess-stop-controller.service, which exists for exactly this
+      case; that is why the fallback must never run while the board is up, where
+      it would race the board's own cleanup and sleep command.
+
+    Args:
+        command: Board command name (e.g. ``shutdown``).
+        success_message: Human-readable outcome, echoed to the caller and logged.
+        local_fallback: Performs the action in this process when the board did
+            not accept the command. Injected so the route keeps the policy and
+            this helper stays free of any power-specific knowledge.
     """
     try:
         from universalchess.services.game_broadcast import send_board_command
+        from universalchess.services.event_log import log_event
 
         sent = send_board_command(command)
         if sent:
             # Record operator-initiated lifecycle actions (reboot/shutdown/reset/
             # run-centaur) in the persistent event log. Only when accepted, so a
             # board-offline 503 is not logged as if it happened.
-            from universalchess.services.event_log import log_event
             log_event("system", success_message, level="info")
             return jsonify({"success": True, "message": success_message})
-        return jsonify({"success": False, "error": "Board not running"}), 503
+
+        if local_fallback is None:
+            return jsonify({"success": False, "error": "Board not running"}), 503
+
+        # Log before acting: the fallback powers the Pi down, so anything after
+        # it may never run. Warning level because the board service being absent
+        # is itself worth seeing in the log next to this action.
+        log_event("system", f"{success_message} (board offline, run from the web service)",
+                  level="warning")
+        local_fallback()
+        return jsonify({"success": True, "message": success_message})
     except Exception as e:
         return _internal_error(e)
 
@@ -3913,8 +3946,15 @@ def api_system_shutdown():
 
     Routes to the board's shutdown path (splash + hardware cleanup); the web UI
     becomes unavailable. The UI confirms before calling this.
+
+    Falls back to powering the Pi off from this process when the board is not
+    listening, so a stopped or crash-looping board service does not leave the
+    only remaining interface unable to switch the board off.
     """
-    return _system_board_action("shutdown", "Shutting down")
+    from universalchess.platform.system_power import request_poweroff
+
+    return _system_board_action("shutdown", "Shutting down",
+                                local_fallback=request_poweroff)
 
 
 @app.route("/api/system/reboot", methods=["POST"])
@@ -3924,8 +3964,15 @@ def api_system_reboot():
 
     Routes to the board's reboot path (LED sweep + shutdown). The web UI becomes
     unavailable until the board comes back. The UI confirms before calling this.
+
+    Falls back to rebooting from this process when the board is not listening,
+    for the same reason as shutdown -- and with less at stake, since the reboot
+    path never sleeps the controller (the board is coming straight back up).
     """
-    return _system_board_action("reboot", "Rebooting")
+    from universalchess.platform.system_power import request_reboot
+
+    return _system_board_action("reboot", "Rebooting",
+                                local_fallback=request_reboot)
 
 
 @app.route("/api/system/run-centaur", methods=["POST"])

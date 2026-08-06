@@ -3,8 +3,9 @@
 Settings -> System exposes Reset, Power (Shutdown/Reboot) and Original Centaur.
 Each privileged action forwards a single board command over IPC so the board runs
 the same code path as its on-board menu. These tests verify the exact command
-forwarded, the board-offline (503) signal, auth gating, and the read-only
-capability probe (/api/system/info) used to show/hide the Centaur action.
+forwarded, the board-offline behaviour (503 for board-only actions, a local
+poweroff/reboot for the power actions), auth gating, and the read-only capability
+probe (/api/system/info) used to show/hide the Centaur action.
 """
 
 import importlib
@@ -70,6 +71,37 @@ _ACTIONS = [
     ("run-centaur", "run_centaur"),
 ]
 
+# Actions only the board process can carry out: a settings reset must be applied
+# by the process that owns the live settings, and the Centaur handoff needs the
+# board's display/serial. With the board offline these have no fallback and must
+# report offline rather than pretend to have acted.
+_BOARD_ONLY_ACTIONS = [("reset", "reset_settings"), ("run-centaur", "run_centaur")]
+
+# Power actions and the system_power function that must run in this process when
+# the board is offline. These act on the Pi, not on the board controller, so the
+# web process can complete them alone.
+_POWER_ACTIONS = [("shutdown", "request_poweroff"), ("reboot", "request_reboot")]
+
+_SYSTEM_POWER_FUNCTIONS = ("request_poweroff", "request_reboot")
+
+
+@pytest.fixture
+def capture_system_power(monkeypatch):
+    """Record local poweroff/reboot calls instead of powering off the test host.
+
+    Patches the ``system_power`` module attributes, which the endpoints resolve
+    at call time, so both the "fallback ran" and "fallback must not run" cases
+    are observable from one recorder.
+    """
+    from universalchess.platform import system_power
+
+    called = []
+    for name in _SYSTEM_POWER_FUNCTIONS:
+        monkeypatch.setattr(
+            system_power, name, lambda _name=name: called.append(_name) or 0
+        )
+    return called
+
 
 @pytest.mark.parametrize("endpoint,command", _ACTIONS)
 def test_system_action_forwards_expected_command(client, capture_commands, endpoint, command):
@@ -89,16 +121,18 @@ def test_system_action_forwards_expected_command(client, capture_commands, endpo
     assert capture_commands == [(command, None)]
 
 
-@pytest.mark.parametrize("endpoint,command", _ACTIONS)
-def test_system_action_reports_board_not_running(client, monkeypatch, endpoint, command):
-    """When the board is not listening, the action must report 503, not success.
+@pytest.mark.parametrize("endpoint,command", _BOARD_ONLY_ACTIONS)
+def test_board_only_action_reports_board_not_running(client, monkeypatch, endpoint, command):
+    """With the board offline, a board-only action must report 503, not success.
 
     Why this test exists: send_board_command returns False if the main process is
-    down; the UI must show a distinct "board offline" failure rather than a false
+    down. Reset and the Centaur handoff can only be performed by that process, so
+    the UI must show a distinct "board offline" failure rather than a false
     success that implies the board acted.
 
     How a regression manifests: the endpoint returns 200/success even though the
-    command was never delivered.
+    command was never delivered -- e.g. if the power actions' local fallback were
+    wired to every action instead of only the two that act on the Pi.
     """
     monkeypatch.setattr(
         "universalchess.services.game_broadcast.send_board_command",
@@ -108,6 +142,62 @@ def test_system_action_reports_board_not_running(client, monkeypatch, endpoint, 
     resp = client.post(f"/api/system/{endpoint}")
     assert resp.status_code == 503
     assert json.loads(resp.data)["success"] is False
+
+
+@pytest.mark.parametrize("endpoint,power_function", _POWER_ACTIONS)
+def test_power_action_runs_locally_when_board_offline(
+    client, monkeypatch, capture_system_power, endpoint, power_function
+):
+    """With the board offline, Shutdown/Reboot must still power the Pi off/reboot.
+
+    Why this test exists: the power actions used to return 503 whenever the main
+    process was not listening, which left a board whose service is stopped or
+    crash-looping with no way to be switched off from the web -- the user had to
+    pull the power. The web service runs independently and as the same user, so
+    it completes the action itself; the controller is still put to sleep by
+    universal-chess-stop-controller.service, which exists for exactly the case
+    where the main service is not running.
+
+    How a regression manifests: the endpoint 503s again (the Pi stays powered on),
+    or it reports success without calling system_power (a silent no-op, which is
+    worse -- the user walks away believing the board is off).
+    """
+    monkeypatch.setattr(
+        "universalchess.services.game_broadcast.send_board_command",
+        lambda command, params=None: False,
+    )
+
+    resp = client.post(f"/api/system/{endpoint}")
+
+    assert resp.status_code == 200
+    assert json.loads(resp.data)["success"] is True
+    assert capture_system_power == [power_function]
+
+
+@pytest.mark.parametrize("endpoint", [a[0] for a in _POWER_ACTIONS])
+def test_power_action_leaves_power_to_the_board_when_it_is_running(
+    client, capture_commands, capture_system_power, endpoint
+):
+    """When the board accepts the command, the web process must not also power off.
+
+    Why this test exists: the board's own shutdown path shows the splash, runs the
+    LED cascade and -- critically -- sends the sleep command to the controller
+    before powering off. A web-side poweroff racing that path would cut the Pi
+    while the board is mid-cleanup and can leave the controller awake, draining
+    the battery. The fallback must therefore be reached only when the command was
+    not delivered.
+
+    How a regression manifests: system_power is called even though the board
+    accepted the command (e.g. if the fallback ran unconditionally rather than
+    only on a failed send).
+    """
+    resp = client.post(f"/api/system/{endpoint}")
+
+    assert resp.status_code == 200
+    assert json.loads(resp.data)["success"] is True
+    # The shutdown/reboot endpoints and their board commands share a name.
+    assert capture_commands == [(endpoint, None)]
+    assert capture_system_power == []
 
 
 @pytest.mark.parametrize("endpoint", [a[0] for a in _ACTIONS])
