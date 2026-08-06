@@ -70,6 +70,7 @@ check-typed-exception = true
 [tool.bandit]
 exclude_dirs = [
     "src/universalchess/tests",
+    "tools/sd-card-setup/tests",
     ".venv",
     ".cache",
     "web-app",

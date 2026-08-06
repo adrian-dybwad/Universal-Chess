@@ -29,8 +29,9 @@ repos:
     hooks:
       - id: bandit
         args: ["-c", "pyproject.toml"]
-        # Skip the test tree (matches pyproject exclude_dirs).
-        exclude: ^src/universalchess/tests/
+        # Skip the test trees (matches pyproject exclude_dirs). Tests use assert
+        # by design, which bandit reports as B101 on every line.
+        exclude: ^(src/universalchess|tools/sd-card-setup)/tests/
 
   - repo: local
     hooks:
