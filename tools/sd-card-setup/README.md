@@ -175,6 +175,16 @@ is the only path and host sharing is not optional.
 
 ## Troubleshooting
 
+> **Before anything else: be patient on the first boot.** It takes several
+> minutes for the board to become reachable over the USB link, and longer on a
+> plain Pi Zero — cloud-init is doing first-boot work on slow hardware, and the
+> interface goes up, down and up again while `rpi-usb-gadget` configures it. A
+> device that is missing, a link that flaps, a ping that fails and an SSH that
+> hangs are all normal in that window, and none of them mean the setup failed.
+> The tool waits 300 seconds for exactly this reason. Give it that long before
+> you start working down the list below, or you will be diagnosing a board that
+> was only still booting.
+
 Work down these in order. Each step assumes the ones above it passed, and each
 failure has a different cause — skipping ahead usually means fixing the wrong
 thing. The example values come from a real Pi Zero on a macOS host.

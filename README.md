@@ -221,6 +221,16 @@ else to install.
 9. Shut the Pi down cleanly with `sudo poweroff`, unplug the USB cable, and
    refit the board in the Centaur.
 
+If something does not work, start here.
+
+**Be patient on the first boot.** It takes several minutes for the board to
+become reachable over the USB link, and longer on a plain Pi Zero. A device that
+has not appeared yet, a link that flaps, a ping that fails and an SSH that hangs
+are all normal in that window and do not mean the setup failed — cloud-init is
+still doing first-boot work, and the interface is reconfigured as it goes. Give
+it the full 300 seconds the tool waits before you start diagnosing, or you will
+be chasing a fault in a board that was only still booting.
+
 The Pi takes its address by DHCP from the host, so it has no fixed IP and the
 address changes between boots. Prefer the hostname. If `.local` does not resolve,
 find the address your host leased it:

@@ -71,6 +71,10 @@ Then move the card to the Pi and connect the cable — the **middle** micro-USB
 port on a Pi Zero, not `PWR IN`. The tool waits for the board and checks name
 resolution over the new link.
 
+**Be patient here.** It takes several minutes for the board to become reachable,
+and longer on a plain Pi Zero. A missing device, a flapping link and a hanging
+SSH are all normal while cloud-init does its first-boot work.
+
 Finally SSH in as `<your-user>@<your-hostname>.local`, run
 `sudo apt update && sudo apt upgrade -y`, and follow the install commands above.
 Once it is running, open `http://<your-hostname>.local/` to add any engines you
