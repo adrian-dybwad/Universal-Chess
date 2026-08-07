@@ -52,11 +52,14 @@ type Status =
 /**
  * Shows the AI coach's remark for the currently-viewed move.
  *
- * A stored statement is shown instantly; an unstored one is generated after the
- * move settles (debounced) via GET /api/coach/statement/<gameId>/<ply>, then
- * cached in memory so revisiting a move never refetches. When no coach provider
- * is configured the panel hides itself entirely (learned from the endpoint's
- * ``not_configured`` response) so it never nags a board without a coach set up.
+ * Statements are produced by the board as it plays; this panel only displays what
+ * the board stored. It reads GET /api/coach/statement/<gameId>/<ply> (debounced
+ * until the move settles) and caches the text in memory so revisiting a move never
+ * refetches. The endpoint never generates, so a move the board has not coached yet
+ * reports ``not_generated`` and shows as pending rather than triggering a billed
+ * AI call from the browser. When no coach provider is configured the panel hides
+ * itself entirely (via ``not_configured``) so it never nags a board without a
+ * coach set up.
  */
 export function CoachPanel({ gameId, ply, moveKey, variant = 'box' }: CoachPanelProps) {
   const { t } = useTranslation();
@@ -101,7 +104,7 @@ export function CoachPanel({ gameId, ply, moveKey, variant = 'box' }: CoachPanel
         if (data.statement) {
           cacheRef.current.set(key, data.statement);
           setStatus({ kind: 'ready', text: data.statement });
-        } else if (data.error === 'out_of_range') {
+        } else if (data.error === 'not_generated') {
           setStatus({ kind: 'pending' });
         } else {
           // A quota/auth failure is permanent until the user acts, so surface the

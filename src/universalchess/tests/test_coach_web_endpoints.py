@@ -1,351 +1,241 @@
 """Tests for the web AI-coach endpoints.
 
-The live-board and analysis views read GET /api/coach/statement/<gameid>/<ply> to
-show (or generate) a played move's coach statement, and POST /api/coach/tip to
-coach a hinted move. These tests pin: stored statements are returned without a
-second AI call, absent statements are generated + persisted, the not-configured
-and out-of-range guards, and the tip request/response shape. A regression would
-re-bill the AI for an already-coached move, 500 on unknown plies, or leak that
-the coach is misconfigured as a generic error.
+Root cause these guard
+----------------------
+The web coach endpoints were unauthenticated *and* able to trigger billed AI
+generation. ``GET /api/coach/statement`` generated-on-miss and ``POST
+/api/coach/tip`` generated on every call, so any device on the LAN could drain the
+owner's AI provider quota by walking plies or posting positions -- no credentials
+needed.
+
+The web surface is now strictly a **reader**: it displays coach statements the
+board produced and stored, and never initiates generation. The tip endpoint is
+gone (it existed only to generate; the board's hint flow still uses
+``coach_tips.get_tip_statement`` directly). ``/api/coach/models`` contacts the
+configured provider to enumerate models, so it now requires authentication.
+
+These tests pin that no request path can reach a generator, because the failure
+mode is financial and silent: a regression would restore generation and only show
+up on the owner's provider bill.
 """
 
-import importlib
 import json
-import sys
 
 import pytest
+
+from universalchess.tests.webapp_fixture import load_webapp, make_test_client
 
 pytest.importorskip("flask")
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("chess")
 
-from PIL import Image
 
-import universalchess.db.uri as _uri  # noqa: E402
+webapp = load_webapp()
 
-_uri.get_database_uri = lambda: "sqlite:///:memory:"
-_orig_image_open = Image.open
-Image.open = lambda *a, **k: Image.new("RGBA", (8, 8))
-try:
-    if "universalchess.web.app" in sys.modules:
-        webapp = importlib.reload(sys.modules["universalchess.web.app"])
-    else:
-        import universalchess.web.app as webapp  # noqa: E402
-finally:
-    Image.open = _orig_image_open
-
-from universalchess.managers.game import coach_persistence, coach_tips  # noqa: E402
+from universalchess.managers.game import coach_persistence  # noqa: E402
 from universalchess.services import coach as coach_service  # noqa: E402
-from universalchess.services.coach import CoachConfig, CoachError  # noqa: E402
+from universalchess.services.coach import CoachConfig  # noqa: E402
 
 STARTPOS = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
 
 @pytest.fixture
 def client(monkeypatch):
-    webapp.app.config.update(TESTING=True)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (True, "tester"))
-    return webapp.app.test_client()
+    return make_test_client(webapp)
+
+
+@pytest.fixture
+def no_generation(monkeypatch):
+    """Make any attempt to generate a coach statement fail the test loudly.
+
+    Installed on every statement test rather than only the "absent" case: the
+    whole point of the read-only contract is that NO path reaches a generator, so
+    an accidental generation anywhere must surface as a failure, not as a passing
+    test that quietly bills the provider.
+    """
+
+    def fail(*args, **kwargs):
+        raise AssertionError("the web coach must never generate; it only reads stored text")
+
+    monkeypatch.setattr(coach_service, "generate_coach_statement", fail)
+    return fail
 
 
 def _configured(monkeypatch):
-    """Point the endpoint's config reader at a configured provider.
+    """Point the endpoint's config reader at a fully configured provider.
 
-    Also pins the notation reader to a deterministic value so tests that let the
-    real request builder run don't depend on the on-disk centaur.ini.
+    Used to prove the endpoint still refuses to generate even when it *could*
+    (a key is present) -- otherwise a test could pass merely because no provider
+    was set up.
     """
     monkeypatch.setattr(
         webapp,
         "_read_coach_config",
         lambda: CoachConfig(provider="openai", api_key="k", model="gpt-4o-mini"),
     )
-    monkeypatch.setattr(webapp, "_read_notation", lambda: "san")
-    # The statement endpoint reads the game's variant flag at the persistence
-    # boundary; mock it (like the other coach_persistence helpers) so tests do not
-    # depend on a populated Game table. Standard-chess default keeps these cases
-    # unchanged; the 960 path is covered by a dedicated test.
-    monkeypatch.setattr(coach_persistence, "get_game_chess960", lambda g: False)
 
 
-def test_statement_returns_stored_without_generating(client, monkeypatch):
-    # A stored statement must be returned as cached and must NOT trigger a second
-    # (billed) AI call -- the "fetch once, reuse forever" contract for the web.
-    monkeypatch.setattr(coach_persistence, "get_coach_statement", lambda g, p: "Stored.")
+class TestStatementIsReadOnly:
+    """GET /api/coach/statement returns stored text and never generates."""
 
-    def fail_generate(*a, **k):
-        raise AssertionError("generate must not run when a statement is stored")
+    def test_returns_stored_statement(self, client, monkeypatch, no_generation):
+        """A statement the board stored must be returned and marked cached.
 
-    monkeypatch.setattr(coach_service, "generate_coach_statement", fail_generate)
+        How the regression manifests: if the read path breaks, the panel shows
+        "pending" forever even for moves the board already coached.
+        """
+        monkeypatch.setattr(coach_persistence, "get_coach_statement", lambda g, p: "Stored.")
 
-    resp = client.get("/api/coach/statement/7/3")
-    assert resp.status_code == 200
-    assert json.loads(resp.data) == {"statement": "Stored.", "cached": True, "error": None}
+        resp = client.get("/api/coach/statement/7/3")
 
+        assert resp.status_code == 200
+        assert json.loads(resp.data) == {"statement": "Stored.", "cached": True, "error": None}
 
-def test_statement_generates_persists_when_absent(client, monkeypatch):
-    # With no stored statement, the endpoint must reconstruct the move context,
-    # generate, persist, and return it (cached=false). Regression: skipping the
-    # save would re-generate (re-bill) on every view of that move.
-    saved = {}
-    _configured(monkeypatch)
-    monkeypatch.setattr(coach_persistence, "get_coach_statement", lambda g, p: None)
-    monkeypatch.setattr(coach_persistence, "get_move_context", lambda g, p: (STARTPOS, "e2e4"))
-    monkeypatch.setattr(coach_persistence, "get_move_evals", lambda g, p: (20, 35))
-    monkeypatch.setattr(
-        coach_persistence,
-        "save_coach_statement_if_absent",
-        lambda g, p, s: saved.update({"g": g, "p": p, "s": s}) or s,
-    )
+    def test_absent_statement_does_not_generate(self, client, monkeypatch, no_generation):
+        """A missing statement must report not_generated, not produce one.
 
-    captured = {}
+        This is the core quota-drain fix. How the regression manifests: restoring
+        generate-on-miss makes the ``no_generation`` fixture raise, because the
+        endpoint reached the provider for a move the board never coached.
+        """
+        _configured(monkeypatch)
+        monkeypatch.setattr(coach_persistence, "get_coach_statement", lambda g, p: None)
 
-    def fake_generate(config, req):
-        captured["san"] = req.move_text
-        captured["eval_before"] = req.eval_before_cp
-        captured["eval_after"] = req.eval_after_cp
-        captured["language"] = req.language
-        return "Grabs the center."
+        resp = client.get("/api/coach/statement/7/1")
 
-    monkeypatch.setattr(coach_service, "generate_coach_statement", fake_generate)
+        assert resp.status_code == 200
+        assert json.loads(resp.data) == {
+            "statement": None,
+            "cached": False,
+            "error": "not_generated",
+        }
 
-    resp = client.get("/api/coach/statement/7/1")
-    assert resp.status_code == 200
-    assert json.loads(resp.data) == {
-        "statement": "Grabs the center.",
-        "cached": False,
-        "error": None,
-    }
-    # Persisted against the requested game/ply with the generated text.
-    assert saved == {"g": 7, "p": 1, "s": "Grabs the center."}
-    # The reconstructed prompt used the real SAN, the eval swing from the DB, and
-    # the default response language (English adds no directive downstream). A
-    # regression dropping language plumbing would omit this key.
-    assert captured == {
-        "san": "e4",
-        "eval_before": 20,
-        "eval_after": 35,
-        "language": "English",
-    }
+    def test_absent_statement_does_not_persist_anything(self, client, monkeypatch, no_generation):
+        """A read miss must not write to the database.
 
+        How the regression manifests: a reader that still calls the save helper
+        would write empty/placeholder rows, poisoning the stored-statement cache
+        so the board's later real statement is never adopted.
+        """
+        _configured(monkeypatch)
+        monkeypatch.setattr(coach_persistence, "get_coach_statement", lambda g, p: None)
 
-def test_statement_returns_canonical_when_another_writer_won(client, monkeypatch):
-    # Race: the initial read misses, we generate, but by save time another writer
-    # (e.g. the board) has committed a different statement. save-if-absent returns
-    # that canonical text and the endpoint must return IT, not our generation -- so
-    # web and board converge. Regression: returning our own text would show the same
-    # move coached differently on the two surfaces.
-    _configured(monkeypatch)
-    monkeypatch.setattr(coach_persistence, "get_coach_statement", lambda g, p: None)
-    monkeypatch.setattr(coach_persistence, "get_move_context", lambda g, p: (STARTPOS, "e2e4"))
-    monkeypatch.setattr(coach_persistence, "get_move_evals", lambda g, p: (None, None))
-    monkeypatch.setattr(
-        coach_service, "generate_coach_statement", lambda c, r: "Our late generation."
-    )
-    monkeypatch.setattr(
-        coach_persistence,
-        "save_coach_statement_if_absent",
-        lambda g, p, s: "Board committed first.",
-    )
+        def fail_save(*args, **kwargs):
+            raise AssertionError("a read-only endpoint must not persist")
 
-    resp = client.get("/api/coach/statement/7/1")
-    assert resp.status_code == 200
-    assert json.loads(resp.data) == {
-        "statement": "Board committed first.",
-        "cached": False,
-        "error": None,
-    }
+        monkeypatch.setattr(coach_persistence, "save_coach_statement_if_absent", fail_save)
 
+        assert client.get("/api/coach/statement/7/1").status_code == 200
 
-def test_statement_not_configured_is_reported(client, monkeypatch):
-    # When no provider/key is set the endpoint must say so explicitly (so the UI
-    # hides the panel) rather than attempting a generation or 500-ing.
-    monkeypatch.setattr(coach_persistence, "get_coach_statement", lambda g, p: None)
-    monkeypatch.setattr(webapp, "_read_coach_config", lambda: CoachConfig(provider="none"))
+    def test_unknown_ply_is_not_an_error(self, client, monkeypatch, no_generation):
+        """An out-of-range ply reads as simply "not generated".
 
-    resp = client.get("/api/coach/statement/7/1")
-    assert resp.status_code == 200
-    assert json.loads(resp.data)["error"] == "not_configured"
+        A pure reader cannot tell an unplayed ply from an uncoached one, and the UI
+        renders both the same ("pending"). How the regression manifests: 500ing or
+        404ing here would break the live board, which polls the newest ply before
+        the board has coached it.
+        """
+        _configured(monkeypatch)
+        monkeypatch.setattr(coach_persistence, "get_coach_statement", lambda g, p: None)
 
+        resp = client.get("/api/coach/statement/7/9999")
 
-def test_statement_out_of_range_returns_404(client, monkeypatch):
-    # An unknown ply (no move context) must be a clean 404 out_of_range, not a
-    # crash from indexing past the move list.
-    _configured(monkeypatch)
-    monkeypatch.setattr(coach_persistence, "get_coach_statement", lambda g, p: None)
-    monkeypatch.setattr(coach_persistence, "get_move_context", lambda g, p: None)
+        assert resp.status_code == 200
+        assert json.loads(resp.data)["error"] == "not_generated"
 
-    resp = client.get("/api/coach/statement/7/99")
-    assert resp.status_code == 404
-    assert json.loads(resp.data)["error"] == "out_of_range"
+    def test_not_configured_is_reported(self, client, monkeypatch, no_generation):
+        """With no provider set the endpoint must say not_configured.
+
+        The panel hides itself on this token, so a board with no coach never nags.
+        How the regression manifests: returning not_generated instead would leave
+        an permanently-empty coach panel visible on every board without a coach.
+        """
+        monkeypatch.setattr(coach_persistence, "get_coach_statement", lambda g, p: None)
+        monkeypatch.setattr(webapp, "_read_coach_config", lambda: CoachConfig(provider="none"))
+
+        resp = client.get("/api/coach/statement/7/1")
+
+        assert resp.status_code == 200
+        assert json.loads(resp.data)["error"] == "not_configured"
+
+    def test_stored_statement_shown_even_when_unconfigured(self, client, monkeypatch, no_generation):
+        """Text the board already stored must still display after the key is removed.
+
+        Statements are historical records, not live provider calls. How the
+        regression manifests: checking configuration before the stored read would
+        blank the coach commentary on every past game once the user rotates or
+        clears their API key.
+        """
+        monkeypatch.setattr(coach_persistence, "get_coach_statement", lambda g, p: "Old remark.")
+        monkeypatch.setattr(webapp, "_read_coach_config", lambda: CoachConfig(provider="none"))
+
+        resp = client.get("/api/coach/statement/7/3")
+
+        assert json.loads(resp.data) == {
+            "statement": "Old remark.",
+            "cached": True,
+            "error": None,
+        }
 
 
-def test_statement_generation_failure_returns_502(client, monkeypatch):
-    # A provider failure must surface as 502 with a FIXED error token (UI shows
-    # retry) and must NOT leak the underlying exception text (paths, URLs, internals)
-    # to the client. It must also not persist anything so a later retry can succeed.
-    _configured(monkeypatch)
-    monkeypatch.setattr(coach_persistence, "get_coach_statement", lambda g, p: None)
-    monkeypatch.setattr(coach_persistence, "get_move_context", lambda g, p: (STARTPOS, "e2e4"))
-    monkeypatch.setattr(coach_persistence, "get_move_evals", lambda g, p: (None, None))
+class TestTipEndpointRemoved:
+    """POST /api/coach/tip must no longer exist."""
 
-    def boom(*a, **k):
-        raise CoachError("provider down: https://secret.internal/path leaked")
+    def test_tip_endpoint_is_gone(self, client):
+        """The generating tip endpoint must not be routable.
 
-    monkeypatch.setattr(coach_service, "generate_coach_statement", boom)
+        It was the only unauthenticated state-changing route in the app and its
+        sole purpose was billed generation; the web UI never called it. How the
+        regression manifests: reinstating it returns 200/400 instead of
+        404/405, restoring an anonymous quota-drain vector.
+        """
+        resp = client.post("/api/coach/tip", json={"fen": STARTPOS, "move": "e2e4"})
 
-    def fail_save(*a, **k):
-        raise AssertionError("must not persist a failed generation")
+        assert resp.status_code in (404, 405)
 
-    monkeypatch.setattr(coach_persistence, "save_coach_statement_if_absent", fail_save)
+    def test_no_route_mentions_coach_tip(self):
+        """No URL rule may expose a coach tip path under any method.
 
-    resp = client.get("/api/coach/statement/7/1")
-    assert resp.status_code == 502
-    body = json.loads(resp.data)
-    assert body["error"] == "unavailable"
-    # Regression: the raw exception text must never appear in the response.
-    assert "secret.internal" not in resp.get_data(as_text=True)
+        Guards against the endpoint returning under a different method or alias,
+        which a status-code-only check could miss.
+        """
+        rules = [str(rule) for rule in webapp.app.url_map.iter_rules()]
 
-
-def test_statement_chess960_castle_uses_variant_board(client, monkeypatch):
-    # For a Chess960 game the endpoint must build the move's board 960-aware so a
-    # king-onto-rook castle (f1h1) formats as "O-O" and carries chess960=True to the
-    # generator. Regression: reading the variant flag as standard makes f1h1 illegal
-    # on the board, blanking the SAN to raw UCI and dropping the castle grounding for
-    # every reviewed 960 castle.
-    c960_fen = "4k3/8/8/8/8/8/8/5K1R w K - 0 1"
-    _configured(monkeypatch)
-    monkeypatch.setattr(coach_persistence, "get_coach_statement", lambda g, p: None)
-    monkeypatch.setattr(coach_persistence, "get_move_context", lambda g, p: (c960_fen, "f1h1"))
-    monkeypatch.setattr(coach_persistence, "get_move_evals", lambda g, p: (None, None))
-    monkeypatch.setattr(coach_persistence, "get_game_chess960", lambda g: True)
-    monkeypatch.setattr(coach_persistence, "save_coach_statement_if_absent", lambda g, p, s: s)
-
-    captured = {}
-
-    def fake_generate(config, req):
-        captured["move_text"] = req.move_text
-        captured["chess960"] = req.chess960
-        captured["facts"] = req.facts
-        return "A safe king tuck."
-
-    monkeypatch.setattr(coach_service, "generate_coach_statement", fake_generate)
-
-    resp = client.get("/api/coach/statement/7/1")
-    assert resp.status_code == 200
-    assert captured["move_text"] == "O-O"
-    assert captured["chess960"] is True
-    assert "Castles kingside." in captured["facts"]
+        assert not [rule for rule in rules if "coach/tip" in rule]
 
 
-def test_tip_returns_statement(client, monkeypatch):
-    # The tip endpoint must pass the posted fen/move to the cached generator and
-    # return its statement, so a hint gets an accompanying coaching remark.
-    _configured(monkeypatch)
-    seen = {}
+class TestCoachModelsRequiresAuth:
+    """GET /api/coach/models contacts the provider, so it must be authenticated."""
 
-    def fake_tip(
-        config,
-        fen,
-        move,
-        *,
-        notation=None,
-        persona=None,
-        persona_key="",
-        language=None,
-        chess960=False,
-    ):
-        seen["fen"] = fen
-        seen["move"] = move
-        seen["notation"] = notation
-        seen["persona"] = persona
-        seen["persona_key"] = persona_key
-        seen["language"] = language
-        seen["chess960"] = chess960
-        return "Develops toward the center."
+    def test_requires_authentication(self, monkeypatch):
+        """An unauthenticated model listing must be rejected.
 
-    monkeypatch.setattr(coach_tips, "get_tip_statement", fake_tip)
+        The endpoint calls the configured AI provider with the owner's key. How the
+        regression manifests: dropping the decorator lets any LAN client probe the
+        provider (and confirm a valid key) without credentials.
+        """
+        monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
+        unauthed = make_test_client(webapp)
 
-    resp = client.post(
-        "/api/coach/tip",
-        json={"fen": STARTPOS, "move": "e2e4"},
-    )
-    assert resp.status_code == 200
-    assert json.loads(resp.data) == {
-        "statement": "Develops toward the center.",
-        "error": None,
-    }
-    assert seen["fen"] == STARTPOS
-    assert seen["move"] == "e2e4"
-    assert seen["notation"] == "san"
-    # A standard-chess tip (no chess960 in the body) must default the flag off so
-    # the tip builder stays standard; a regression defaulting it on would misread
-    # every standard hint as a 960 game.
-    assert seen["chess960"] is False
-    # A coach must be resolved for the tip, so a persona (player-move voice) and a
-    # non-empty coach cache token are passed through; a regression that dropped
-    # persona plumbing would leave these unset.
-    assert seen["persona"]
-    assert seen["persona_key"]
-    # The configured coach language must be plumbed through so the tip is written
-    # in the chosen language; a regression dropping it would leave this unset.
-    assert seen["language"] == "English"
+        assert unauthed.get("/api/coach/models").status_code == 401
 
 
-def test_coaches_lists_roster_and_resolved(client):
-    # The coach card needs the full roster (for the dropdown), the persisted
-    # selection, and the coach that selection resolves to. A regression would leave
-    # the selector empty or hide which coach Auto picked.
-    resp = client.get("/api/coaches")
-    assert resp.status_code == 200
-    body = json.loads(resp.data)
-    ids = [c["id"] for c in body["coaches"]]
-    assert ids == ["dave", "myron", "sofia", "viktor"]  # weakest-first
-    # Default selection is Auto, which must resolve to a concrete coach with info.
-    assert body["selected"] == "auto"
-    assert body["resolved"] is not None
-    assert body["resolved"]["id"] in ids
+class TestCoachRoster:
+    """GET /api/coaches stays open: it lists local personas and calls no provider."""
 
+    def test_lists_roster_and_resolved(self, client):
+        """The coach card needs the roster, the selection, and what Auto resolved to.
 
-def test_tip_forwards_chess960_flag_from_body(client, monkeypatch):
-    # A 960 game's live board posts chess960=true so a hinted king-onto-rook castle
-    # is coached correctly. The endpoint must forward that flag to the tip generator.
-    # Regression: ignoring the body flag would coach a 960 hint as standard chess,
-    # mis-formatting a castling hint.
-    _configured(monkeypatch)
-    seen = {}
+        Kept unauthenticated because it reads only local catalog data. A regression
+        would leave the selector empty or hide which coach Auto picked.
+        """
+        resp = client.get("/api/coaches")
 
-    def fake_tip(config, fen, move, *, chess960=False, **kwargs):
-        seen["chess960"] = chess960
-        return "Castle to safety."
-
-    monkeypatch.setattr(coach_tips, "get_tip_statement", fake_tip)
-
-    resp = client.post(
-        "/api/coach/tip",
-        json={"fen": "4k3/8/8/8/8/8/8/5K1R w K - 0 1", "move": "f1h1", "chess960": True},
-    )
-    assert resp.status_code == 200
-    assert seen["chess960"] is True
-
-
-def test_tip_not_configured(client, monkeypatch):
-    # With no provider/key the tip must report not_configured up front, without
-    # calling the generator.
-    monkeypatch.setattr(webapp, "_read_coach_config", lambda: CoachConfig(provider="none"))
-
-    def fail_tip(*a, **k):
-        raise AssertionError("generator must not run when unconfigured")
-
-    monkeypatch.setattr(coach_tips, "get_tip_statement", fail_tip)
-
-    resp = client.post("/api/coach/tip", json={"fen": STARTPOS, "move": "e2e4"})
-    assert resp.status_code == 200
-    assert json.loads(resp.data)["error"] == "not_configured"
-
-
-def test_tip_missing_body_is_bad_request(client):
-    # A tip with no fen/move is a client error (400), guarding the generator
-    # against empty input.
-    resp = client.post("/api/coach/tip", json={"fen": "", "move": ""})
-    assert resp.status_code == 400
-    assert json.loads(resp.data)["error"] == "missing_fen_or_move"
+        assert resp.status_code == 200
+        body = json.loads(resp.data)
+        ids = [c["id"] for c in body["coaches"]]
+        assert ids == ["dave", "myron", "sofia", "viktor"]  # weakest-first
+        assert body["selected"] == "auto"
+        assert body["resolved"] is not None
+        assert body["resolved"]["id"] in ids

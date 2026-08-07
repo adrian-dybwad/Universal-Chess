@@ -243,7 +243,6 @@ interface FormSettings {
     coach_multipv: number;
   };
   lichess: {
-    api_token: string;
     range: string;
     // Cached account username (populated on the last successful authentication;
     // never edited here). Used as the default human-player name placeholder so a
@@ -297,7 +296,7 @@ const defaultFormSettings: FormSettings = {
     coach_id: 'off',
     coach_multipv: 1,
   },
-  lichess: { api_token: '', range: '', username: '' },
+  lichess: { range: '', username: '' },
   sound: { enabled: true, key_press: true, game_events: true, piece_events: true, errors: true },
   system: { database_uri: '', inactivity_timeout: '900', timezone: 'UTC', ui_language: 'en' },
 };
@@ -422,7 +421,6 @@ function parseRawSettings(data: SettingsData): FormSettings {
       coach_multipv: parseCoachMultipv(data.game?.coach_multipv),
     },
     lichess: {
-      api_token: data.lichess?.api_token || '',
       range: data.lichess?.range || '',
       username: data.lichess?.username || '',
     },
@@ -857,7 +855,12 @@ export function Settings() {
           .filter((a) => a.supports_model_listing && a.api_key_set)
           .map(async (agent) => {
             try {
-              const res = await apiFetch(`/api/coach/models?agent=${encodeURIComponent(agent.id)}`);
+              // Authenticated: listing models calls the provider with the stored
+              // API key, so the endpoint requires credentials.
+              const res = await apiFetch(
+                `/api/coach/models?agent=${encodeURIComponent(agent.id)}`,
+                { requiresAuth: true }
+              );
               const data = await res.json();
               if (Array.isArray(data.models)) {
                 results[agent.id] = data.models.map(String);
@@ -1091,7 +1094,11 @@ export function Settings() {
         // username is a read-only cached field (populated by the board on
         // authentication); never write it back, so a fresher board-resolved name
         // is not clobbered by this page's stale copy.
-        lichess: { api_token: formSettings.lichess.api_token, range: formSettings.lichess.range },
+        // api_token is deliberately not written back: this page has no field for
+        // it (the token is owned by the Accounts flow and the board), and the
+        // unauthenticated GET redacts it to "". Echoing that blank back would ask
+        // the server to erase a token the user never touched.
+        lichess: { range: formSettings.lichess.range },
         sound: {
           sound: formSettings.sound.enabled ? 'on' : 'off',
           key_press: formSettings.sound.key_press ? 'on' : 'off',

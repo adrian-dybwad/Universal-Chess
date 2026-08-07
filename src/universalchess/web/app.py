@@ -57,6 +57,7 @@ import chess.pgn
 import json
 import urllib.parse
 import base64
+import hmac
 import pwd
 import subprocess  # nosec B404 - subprocess is only ever invoked with fixed argv lists, never shell=True
 from xml.sax.saxutils import escape  # nosec B406  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml  # saxutils.escape performs output encoding (escaping), not XML parsing
@@ -78,6 +79,51 @@ try:
     HAS_SPWD = True
 except ImportError:
     HAS_SPWD = False
+
+# Password-hash values that are not hashes at all and must never be compared
+# against a user-supplied password: '*' and '!' mark a locked/disabled account,
+# and 'x' is the sentinel meaning the real hash lives in /etc/shadow. Treating any
+# of them as a comparable hash risks authenticating a disabled account.
+_UNUSABLE_PASSWORD_HASHES = frozenset({"*", "!", "x"})
+
+
+def _crypt_hash_matches(password, stored_hash, *, crypt_fn=None):
+    """Constant-time check of ``password`` against a crypt(3) ``stored_hash``.
+
+    Uses :func:`hmac.compare_digest` rather than ``==``: a plain string comparison
+    short-circuits at the first differing byte, which leaks a timing signal about
+    the stored hash.
+
+    ``crypt_fn`` is injected (defaulting to :func:`crypt.crypt`) because the stdlib
+    ``crypt`` module was removed in Python 3.13, which is the Python the board
+    actually runs. Injection keeps this logic testable there instead of only on
+    interpreters that still ship the module.
+
+    The salt is the whole hash for modern ``$``-prefixed formats, and the first two
+    characters for legacy DES hashes that older Pi images may still carry.
+
+    Returns False -- never raises -- for an absent, locked or unparseable hash, and
+    when no crypt implementation is available at all.
+    """
+    if not stored_hash or stored_hash in _UNUSABLE_PASSWORD_HASHES:
+        return False
+
+    if crypt_fn is None:
+        if not HAS_CRYPT:
+            return False
+        crypt_fn = crypt.crypt
+
+    salt = stored_hash if stored_hash.startswith("$") else stored_hash[:2]
+    try:
+        computed = crypt_fn(password, salt)
+    except (ValueError, TypeError, OSError):
+        # A malformed or unsupported salt must deny, not surface as a 500 on the
+        # authentication path.
+        return False
+
+    if not computed:
+        return False
+    return hmac.compare_digest(computed, stored_hash)
 
 # Preferred password-auth backend: the PyPI "python-pam" module, whose
 # pam.pam().authenticate(username, password) API is what verify_webdav_authentication
@@ -475,21 +521,12 @@ def verify_webdav_authentication():
                 if not hashed_password or hashed_password == '*':  # noqa: S105  # nosec B105 - shadow-file sentinel '*' (account disabled), not a credential
                     return (False, None)
             
-            # Use crypt module if available (and hashed_password is not None)
+            # Use crypt module if available (and hashed_password is not None).
+            # Salt handling and the constant-time comparison live in
+            # _crypt_hash_matches, which denies rather than raising.
             if HAS_CRYPT and hashed_password is not None:
-                try:
-                    if hashed_password.startswith('$'):
-                        # Modern crypt format (SHA-256, SHA-512, etc.)
-                        computed = crypt.crypt(password, hashed_password)
-                        if computed == hashed_password:
-                            password_valid = True
-                    else:
-                        # Traditional DES crypt (deprecated but still used)
-                        computed = crypt.crypt(password, hashed_password[:2])
-                        if computed == hashed_password:
-                            password_valid = True
-                except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
-                    pass
+                if _crypt_hash_matches(password, hashed_password):
+                    password_valid = True
         
         except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
             pass
@@ -1332,23 +1369,11 @@ def handle_preflight():
             with open(full_path, "wb") as f:
                 f.write(request.data)  # nosemgrep: python.django.security.injection.request-data-write.request-data-write  # WebDAV PUT body into path already contained by safe_under_base
             
-            # If this file was called /777.txt then run chmod 777 on any path in it
-            if sanitized_path == "/777.txt":
-                try:
-                    with open(WEBDAV_BASE_PATH + "/777.txt", "r") as f:
-                        lines = f.readlines()
-                        for x in lines:
-                            try:
-                                # Validate path in file before chmod
-                                path_line = x.strip()
-                                is_valid_chmod_path, chmod_path = sanitize_path(path_line)
-                                chmod_target = safe_under_base(WEBDAV_BASE_PATH, chmod_path)
-                                if is_valid_chmod_path and chmod_path != "/" and chmod_target is not None:
-                                    os.chmod(chmod_target, 0o0777)  # noqa: S103  # nosec B103  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions  # DGT Centaur WebDAV '777.txt' feature; target already contained by safe_under_base
-                            except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
-                                pass
-                except Exception:  # noqa: S110  # nosec B110 - best-effort; failure here is non-fatal and intentionally ignored
-                    pass
+            # NOTE: a DGT Centaur legacy feature used to interpret an uploaded
+            # "777.txt" as a list of paths to chmod 0o777. It was removed: nothing
+            # in Universal-Chess needs it, and its only effect was to make files
+            # world-writable, which hands anyone with brief write access a
+            # persistence foothold. A PUT now just stores the file like any other.
         except Exception:
             return Response('', mimetype='application/xml', status=500)
         
@@ -2318,12 +2343,45 @@ def get_all_settings():
         game.setdefault("coach_provider", "none")
         for key in list(game.keys()):
             if _is_coach_api_key(key):
-                game[f"{key}_set"] = bool(game.get(key))
-                game[key] = ""
+                _redact_secret_key(game, key)
 
+    _redact_legacy_lichess_token(result)
     _redact_account_sections(result)
 
     return result
+
+
+def _redact_secret_key(values, key):
+    """Blank ``values[key]`` and record its presence in a ``<key>_set`` companion.
+
+    The single convention every secret in this payload follows: the value never
+    leaves the server, but the UI still needs to know whether one is stored so it
+    can show "token set" instead of an empty field that looks unconfigured.
+    Mutates ``values`` in place.
+    """
+    values[f"{key}_set"] = bool(values.get(key))
+    values[key] = ""
+
+
+def _redact_legacy_lichess_token(result):
+    """Blank the legacy ``[lichess] api_token`` in a settings dict.
+
+    /api/settings is an unauthenticated read, so every section it copies out of
+    centaur.ini must be checked for secrets. The legacy single-token section
+    predates ``account:<type>:<id>`` and is still live: the board reads it, the web
+    save path writes it, and ``account_store.migrate_legacy_lichess`` deliberately
+    does nothing when the Lichess identity cannot be resolved (offline board with
+    no cached username), so the token can persist here indefinitely. Without this,
+    any LAN client could read the owner's Lichess token and take over the account.
+
+    Only the token is touched; ``range`` and the cached ``username`` are not
+    secrets and the UI needs them.
+    """
+    if "lichess" not in result:
+        return
+    if "api_token" not in result["lichess"]:
+        return
+    _redact_secret_key(result["lichess"], "api_token")
 
 
 def _redact_account_sections(result):
@@ -2350,8 +2408,7 @@ def _redact_account_sections(result):
         secret_keys = {f["key"] for f in catalog.account_type(type_id)["fields"] if f.get("secret")}
         for key in list(result[section].keys()):
             if key in secret_keys:
-                result[section][f"{key}_set"] = bool(result[section].get(key))
-                result[section][key] = ""
+                _redact_secret_key(result[section], key)
 
 
 def _is_coach_api_key(key: str) -> bool:
@@ -2364,6 +2421,31 @@ def _is_coach_api_key(key: str) -> bool:
     if key.endswith("_set"):
         return False
     return key == "coach_api_key" or key.startswith("coach_api_key_")
+
+
+def _drop_redacted_lichess_token(values):
+    """Drop a blank ``api_token`` and the UI-only ``api_token_set`` companion.
+
+    GET /api/settings redacts the stored token to an empty string, and the Settings
+    page posts every field of the section back on save. Writing that blank through
+    would erase the user's token on any unrelated save (changing the rating range,
+    toggling sound), so a blank token means "leave unchanged" -- the same rule the
+    coach API keys use. An explicit non-empty token still overwrites, so a user can
+    set and rotate the token normally.
+
+    ``api_token_set`` is a presence flag invented by the GET; persisting it would
+    add a bogus settings key that later merges into reads as if it were real config.
+
+    Must run before :func:`_drop_stale_lichess_username`, which compares the
+    incoming token against the stored one: a blank left in place would look like a
+    token change and wrongly clear the cached username.
+
+    Returns a new mapping; the input is not mutated.
+    """
+    result = {key: value for key, value in values.items() if key != "api_token_set"}
+    if "api_token" in result and not (result["api_token"] or "").strip():
+        del result["api_token"]
+    return result
 
 
 def _drop_stale_lichess_username(config, values):
@@ -2435,6 +2517,7 @@ def save_all_settings(settings_dict, *, broadcast: bool = True):
         if not config.has_section(section):
             config.add_section(section)
         if section == "lichess":
+            values = _drop_redacted_lichess_token(values)
             values = _drop_stale_lichess_username(config, values)
         if section == "game":
             # The UI edits a single effective coach key/model/base_url; route those
@@ -2937,6 +3020,7 @@ def api_coaches():
 
 
 @app.route("/api/coach/models", methods=["GET"])
+@requires_auth
 def api_coach_models():
     """List available AI models for an agent (query ``agent``) or the active one.
 
@@ -2984,149 +3068,34 @@ def api_coach_models():
 
 @app.route("/api/coach/statement/<int:gameid>/<int:ply>", methods=["GET"])
 def api_coach_statement(gameid, ply):
-    """Return the AI coach statement for a played ply, generating it if absent.
+    """Return the coach statement the board already stored for a played ply.
 
-    Mirrors the board's per-ply coach flow for the web live-board and analysis
-    views: a stored statement is returned instantly (and marked ``cached``);
-    otherwise the move's coaching prompt is reconstructed from the stored rows
-    (position before + move + eval swing), generated via the configured provider,
-    persisted onto the ply, and returned so the same move is never billed twice.
+    Read-only by design. This endpoint is unauthenticated (the live-board and
+    analysis views read it before any login), so it must not be able to spend the
+    owner's AI provider quota: it never generates and never writes. Statements are
+    produced by the board as it plays and persisted onto the ply; the web simply
+    displays them.
 
     Response: ``{"statement": str | null, "cached": bool, "error": str | null}``.
-    ``error`` is ``"not_configured"`` when no provider/key is set (the UI then
-    hides the panel), ``"out_of_range"`` for an unknown ply, or ``"unavailable"``
-    on a generation failure. A generation failure also carries ``reason`` (a safe
-    category: ``quota``/``auth``/``rate_limited``/``unavailable``) and a user-facing
-    ``message``, so the UI can explain a billing/key problem instead of offering a
-    futile retry. The raw provider error is logged server-side, never returned.
+    ``error`` is ``"not_configured"`` when no provider/key is set at all (the UI
+    hides the panel entirely), or ``"not_generated"`` when the board has not
+    coached this ply yet -- which also covers an unplayed/unknown ply, since a
+    pure reader cannot distinguish the two and the UI renders both as "pending".
+
+    A stored statement is returned even when no provider is currently configured:
+    it is a historical record, so clearing or rotating an API key must not blank
+    the commentary on past games.
     """
-    from universalchess.managers.game.coach_persistence import (
-        get_coach_statement,
-        get_game_chess960,
-        get_move_context,
-        get_move_evals,
-        save_coach_statement_if_absent,
-    )
-    from universalchess.managers.game.coach_generation import generate_validated_statement
-    from universalchess.managers.game.coach_request_builder import build_coach_request
-    from universalchess.services.coach import (
-        CoachError,
-        error_category,
-        error_message,
-    )
+    from universalchess.managers.game.coach_persistence import get_coach_statement
 
     stored = get_coach_statement(gameid, ply)
     if stored:
         return jsonify({"statement": stored, "cached": True, "error": None})
 
-    config = _read_coach_config()
-    if not config.is_configured():
+    if not _read_coach_config().is_configured():
         return jsonify({"statement": None, "cached": False, "error": "not_configured"})
 
-    context = get_move_context(gameid, ply)
-    if context is None:
-        return jsonify({"statement": None, "cached": False, "error": "out_of_range"}), 404
-
-    fen_before, move_uci = context
-    eval_before_cp, eval_after_cp = get_move_evals(gameid, ply)
-    chess960 = get_game_chess960(gameid)
-    import chess
-
-    side_to_move = "white" if chess.Board(fen_before).turn == chess.WHITE else "black"
-    coach_request = build_coach_request(
-        fen_before,
-        move_uci,
-        notation=_read_notation(),
-        eval_before_cp=eval_before_cp,
-        eval_after_cp=eval_after_cp,
-        is_opponent_move=_read_move_is_opponent(side_to_move),
-        persona=_read_coach_persona(side_to_move, is_potential_move=False),
-        language=_read_coach_language(),
-        chess960=chess960,
-    )
-    if coach_request is None:
-        return jsonify({"statement": None, "cached": False, "error": "bad_move"}), 422
-
-    try:
-        statement = generate_validated_statement(config, coach_request)
-    except CoachError as exc:
-        # Log the full detail server-side. To the client, return the failure
-        # *category* and a safe, user-facing sentence (never the raw provider text):
-        # a quota/billing or key problem is permanent, so the UI must explain it
-        # rather than offer a futile retry. ``error`` stays "unavailable" for
-        # backward compatibility; ``reason``/``message`` carry the specifics.
-        app.logger.info(f"Coach statement failed for game {gameid} ply {ply}: {exc}")
-        # error_category returns a value from a closed set (quota/auth/rate_limited/
-        # unavailable) and error_message returns a fixed sentence from a constant
-        # table keyed by that category. Neither includes the exception's text (only
-        # logged above), so this is not stack-trace exposure; suppress the taint
-        # heuristic that assumes any exc-derived value returned is a leak.
-        return jsonify({  # nosemgrep: semgrep.flask-stack-trace-exposure,semgrep.exception-text-returned
-            "statement": None,
-            "cached": False,
-            "error": "unavailable",
-            "reason": error_category(exc),
-            "message": error_message(exc),
-        }), 502
-
-    # First-writer-wins: if the board (or a concurrent request) already stored a
-    # statement for this move, adopt it so board and web show identical text rather
-    # than two independent generations. Fall back to ours if nothing was stored.
-    canonical = save_coach_statement_if_absent(gameid, ply, statement)
-    return jsonify(
-        {"statement": canonical or statement, "cached": False, "error": None}
-    )
-
-
-@app.route("/api/coach/tip", methods=["POST"])
-def api_coach_tip():
-    """Return a coaching remark for a *hinted* move (a tip), cached in memory.
-
-    Body: ``{"fen": str, "move": str}`` where ``move`` is the recommended move in
-    UCI. Repeating the same tip (same position + move) returns the in-memory
-    statement without re-billing the AI; a new tip is generated. Tips are not
-    persisted (the recommendation is not a stored ply).
-
-    Response: ``{"statement": str | null, "error": str | null}``. ``error`` is
-    ``"not_configured"`` when no provider/key is set, or ``"unavailable"`` when
-    the move can't be coached or the AI call failed.
-    """
-    from universalchess.managers.game import coach_tips
-
-    body = request.get_json(silent=True) or {}
-    fen = (body.get("fen") or "").strip()
-    move_uci = (body.get("move") or "").strip()
-    chess960 = bool(body.get("chess960", False))
-    if not fen or not move_uci:
-        return jsonify({"statement": None, "error": "missing_fen_or_move"}), 400
-
-    config = _read_coach_config()
-    if not config.is_configured():
-        return jsonify({"statement": None, "error": "not_configured"})
-
-    # A tip is a move the player is considering, so it uses the player-move persona.
-    # side_to_move is irrelevant for a hint but resolves cleanly from the FEN.
-    import chess
-
-    try:
-        side_to_move = "white" if chess.Board(fen).turn == chess.WHITE else "black"
-    except ValueError:
-        return jsonify({"statement": None, "error": "unavailable"})
-    persona = _read_coach_persona(side_to_move, is_potential_move=True)
-
-    statement = coach_tips.get_tip_statement(
-        config,
-        fen,
-        move_uci,
-        notation=_read_notation(),
-        persona=persona,
-        persona_key=_resolved_coach_id(),
-        language=_read_coach_language(),
-        chess960=chess960,
-    )
-    if statement is None:
-        return jsonify({"statement": None, "error": "unavailable"})
-    return jsonify({"statement": statement, "error": None})
+    return jsonify({"statement": None, "cached": False, "error": "not_generated"})
 
 
 @app.route("/api/sprites", methods=["GET"])
@@ -6736,7 +6705,12 @@ def ca_download():
 # Password change endpoint
 # -----------------------------------------------------------------------------
 
-_MIN_PASSWORD_LENGTH = 4
+# This is the Linux account password: it grants SSH access and, via the
+# /etc/sudoers.d/universal-chess-* drop-ins, passwordless sudo to the root helper
+# scripts. It is only ever set through the web UI (the board's on-screen keyboard
+# is used for WiFi passwords and account tokens, never this), so a longer minimum
+# costs no board-side typing convenience.
+_MIN_PASSWORD_LENGTH = 6
 # Characters that act as record/field separators in chpasswd(8) stdin. Any of
 # these in the username or password could inject an additional "user:password"
 # record, so they are rejected before the value is passed to chpasswd.
