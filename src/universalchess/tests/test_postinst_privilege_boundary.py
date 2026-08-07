@@ -382,3 +382,31 @@ def test_update_state_file_is_granted_to_the_service_user(postinst_text):
         f"postinst declares {declared}"
     )
     assert 'for relative_path in "${RUNTIME_WRITABLE_FILES[@]}"' in postinst_text
+
+
+def test_postinst_does_not_upgrade_pip_from_the_network_as_root(postinst_text):
+    """The install must not fetch and run an unpinned pip/wheel upgrade as root.
+
+    Why this test exists: the postinst ran ``pip install --upgrade pip wheel``
+    before installing requirements. That is an unpinned download of whatever PyPI
+    serves at that moment, executed with root's privileges, on every install and
+    upgrade -- the same exposure the signed-update work removes from the package
+    itself. It also gains nothing: the venv already ships pip, and installing a
+    prebuilt wheel needs neither a newer pip nor the ``wheel`` package.
+
+    How a regression manifests: silently, because it succeeds. The board keeps
+    working while every install re-opens a root-privileged path to arbitrary
+    freshly published code, and an install on an offline board fails at this line
+    rather than at something diagnosable.
+    """
+    offenders = [
+        line.strip()
+        for line in postinst_text.splitlines()
+        if "pip" in line
+        and "--upgrade" in line
+        and not line.strip().startswith("#")
+    ]
+    assert offenders == [], (
+        "postinst must not run an unpinned pip upgrade as root during install: "
+        f"{offenders}"
+    )

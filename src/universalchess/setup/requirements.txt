@@ -1,12 +1,20 @@
 # pip-installed, inside the app's private venv
+#
+# List only what the application imports. Everything here is fetched from PyPI
+# and installed by the postinst as root, so an unused entry is code downloaded
+# and run with root's privileges for nothing. Restating another package's
+# declared dependency has the same cost: ndjson (declared by berserk) and
+# casttube (declared by pychromecast) were listed here and are not, now. bleak
+# was too, though only tools/dev-tools/sniffers/pegasus_ble.py ever used it --
+# it says to install it by hand -- and it pulls dbus-fast, which has no armv6
+# wheel and so was compiled from source on every Pi Zero install. Bluetooth on
+# the board does not use bleak; managers/ble.py talks to BlueZ over D-Bus.
+# test_dependency_manifest.py enforces this.
 berserk
-bleak
 # Reads Bluetooth HID keyboard events from /dev/input/event* for the
 # keyboard-control feature (see managers/bt_keyboard.py).
 evdev
 cairosvg
-casttube
-ndjson
 # Generates the SVG QR code on the CA-install page (web/app.py /ca.pem?qr=1).
 # Without it the import fails, the endpoint returns 500, and the page shows a
 # broken/missing QR image.

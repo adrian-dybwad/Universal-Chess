@@ -137,6 +137,30 @@ def test_depends_provides_fuser_for_the_dpkg_lock_wait():
     )
 
 
+def test_depends_omits_the_incompatible_debian_pam_binding():
+    """``Depends`` must not pull in ``python3-pam``.
+
+    Why this test exists: Debian's ``python3-pam`` is the PyPAM C extension, which
+    installs a module named ``PAM`` and has an API unrelated to the one this code
+    calls. The web UI authenticates through ``pam.pam().authenticate(...)``, which
+    is the PyPI ``python-pam`` distribution installed into the venv, and nothing
+    in the tree imports ``PAM`` at all. Declaring it therefore installs an unused
+    C extension on every board -- and names, in the dependency list, the very
+    package the requirements file warns must not be confused for the real one.
+
+    How a regression manifests: no immediate failure, which is the hazard. The
+    risk it leaves behind is that a system-visible distribution claiming the same
+    name would let pip consider the requirement already satisfied and skip the
+    module that actually works, turning every login into an authentication
+    failure that looks like a wrong password.
+    """
+    assert "python3-pam" not in _declared_depends(), (
+        "Depends must not include python3-pam: it provides the incompatible "
+        "PyPAM `PAM` module, which nothing imports. Web auth uses the PyPI "
+        "python-pam distribution (module `pam`) installed into the venv."
+    )
+
+
 def test_depends_lists_each_package_once():
     """No package may appear twice in ``Depends``.
 

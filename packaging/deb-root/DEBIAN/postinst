@@ -749,8 +749,12 @@ if [ ! -x "$VENV_DIR/bin/python" ]; then
   python3 -m venv --system-site-packages "$VENV_DIR"
 fi
 
-# Upgrade pip/wheel inside the venv
-"$VENV_DIR/bin/python" -m pip install --upgrade pip wheel
+# pip and wheel are deliberately NOT upgraded here. Doing so downloaded whatever
+# PyPI served at that moment and ran it as root on every install -- the same
+# exposure the signed-update work removes from the package -- and bought nothing:
+# the venv already provides pip, and installing a prebuilt wheel needs neither a
+# newer pip nor the wheel package. It also made an install on an offline board
+# fail at this line instead of somewhere diagnosable.
 
 # Install your extra packages into the venv
 if [ -f "$REQ_VENV" ]; then
