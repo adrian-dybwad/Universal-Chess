@@ -240,6 +240,10 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   of source and compiled it.
   - Three dependencies nothing imports were removed, one of which was compiled
     from source on every Pi Zero install for a library the product never calls.
+  - Pinning those versions also froze them, so security fixes no longer arrive by
+    themselves. Vulnerability alerting now covers the pinned set, and a workflow
+    re-resolves the whole closure on a schedule or on demand, verifying offline
+    that the result still installs before proposing it.
 - **The Lichess API token is no longer disclosed**: the settings endpoint
   returned it in clear text without authentication. It is now redacted, and
   saving settings without it leaves the stored token unchanged rather than
