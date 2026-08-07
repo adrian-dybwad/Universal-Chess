@@ -14,6 +14,8 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+from universalchess.tests.webapp_fixture import make_test_client
+
 pytest.importorskip("flask")
 pytest.importorskip("sqlalchemy")
 
@@ -35,25 +37,44 @@ finally:
 
 @pytest.fixture
 def client():
-    webapp.app.config.update(TESTING=True)
-    return webapp.app.test_client()
+    return make_test_client(webapp)
+
+
+# Shared dummy credentials. Named rather than repeated inline so the assertions
+# below reference the same values as the requests that produce them: a test that
+# hardcoded "testuser:newpassword" in an assertion would keep passing if the
+# helper's defaults changed, asserting against a stale expectation.
+TEST_USERNAME = "testuser"
+CURRENT_PASSWORD = "oldpass"
+NEW_PASSWORD = "newpassword"
 
 
 @pytest.fixture
 def authed(monkeypatch):
     """Force verify_webdav_authentication to succeed."""
-    monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (True, "testuser"))
+    monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (True, TEST_USERNAME))
 
 
-def _auth_header(username="testuser", password="oldpass"):
+def _auth_header(username, password):
+    """Build a Basic auth header. Credentials are required, never defaulted.
+
+    Taking them explicitly keeps each test's identity visible at the call site,
+    so a test asserting on the username cannot silently diverge from the one the
+    request actually sent.
+    """
     encoded = base64.b64encode(f"{username}:{password}".encode()).decode()
     return {"Authorization": f"Basic {encoded}"}
 
 
-def _change_password_request(client, current_password="oldpass", new_password="newpassword",
-                             extra_headers=None):
+def _default_auth_header():
+    """The Basic auth header for the standard test account."""
+    return _auth_header(TEST_USERNAME, CURRENT_PASSWORD)
+
+
+def _change_password_request(client, current_password=CURRENT_PASSWORD,
+                             new_password=NEW_PASSWORD, extra_headers=None):
     headers = {
-        **_auth_header(),
+        **_default_auth_header(),
         "X-Forwarded-Proto": "https",
         "Content-Type": "application/json",
     }
@@ -75,8 +96,8 @@ class TestHttpsEnforcement:
         """
         resp = client.post(
             "/api/system/change-password",
-            json={"current_password": "old", "new_password": "newpassword"},
-            headers={**_auth_header(), "X-Forwarded-Proto": "http"},
+            json={"current_password": CURRENT_PASSWORD, "new_password": NEW_PASSWORD},
+            headers={**_default_auth_header(), "X-Forwarded-Proto": "http"},
         )
         assert resp.status_code == 403
         assert b"HTTPS" in resp.data
@@ -87,8 +108,8 @@ class TestHttpsEnforcement:
         """
         resp = client.post(
             "/api/system/change-password",
-            json={"current_password": "old", "new_password": "newpassword"},
-            headers=_auth_header(),
+            json={"current_password": CURRENT_PASSWORD, "new_password": NEW_PASSWORD},
+            headers=_default_auth_header(),
         )
         assert resp.status_code == 403
 
@@ -102,7 +123,7 @@ class TestAuthentication:
         """
         resp = client.post(
             "/api/system/change-password",
-            json={"current_password": "old", "new_password": "newpassword"},
+            json={"current_password": CURRENT_PASSWORD, "new_password": NEW_PASSWORD},
             headers={"X-Forwarded-Proto": "https"},
         )
         assert resp.status_code == 401
@@ -142,9 +163,9 @@ class TestChpasswdRecordInjection:
     @pytest.mark.parametrize(
         "payload",
         [
-            "newpassword\nroot:pwned",   # newline = chpasswd record separator
-            "newpassword\rroot:pwned",   # CR is also treated as a line break
-            "newpassword\x00root:pwned",  # NUL can truncate/confuse parsing
+            f"{NEW_PASSWORD}\nroot:pwned",    # newline = chpasswd record separator
+            f"{NEW_PASSWORD}\rroot:pwned",    # CR is also treated as a line break
+            f"{NEW_PASSWORD}\x00root:pwned",  # NUL can truncate/confuse parsing
         ],
     )
     def test_rejects_record_separator_in_new_password(self, client, authed, payload):
@@ -172,7 +193,9 @@ class TestChpasswdRecordInjection:
         How a regression shows: without the guard chpasswd is invoked with a
         two-line payload and the endpoint returns 200 instead of 401.
         """
-        crafted = base64.b64encode(b"testuser\nroot:oldpass").decode()
+        crafted = base64.b64encode(
+            f"{TEST_USERNAME}\nroot:{CURRENT_PASSWORD}".encode()
+        ).decode()
         headers = {
             "Authorization": f"Basic {crafted}",
             "X-Forwarded-Proto": "https",
@@ -181,7 +204,7 @@ class TestChpasswdRecordInjection:
         with patch("universalchess.web.app.subprocess.run") as mock_run:
             resp = client.post(
                 "/api/system/change-password",
-                json={"current_password": "oldpass", "new_password": "newpassword"},
+                json={"current_password": CURRENT_PASSWORD, "new_password": NEW_PASSWORD},
                 headers=headers,
             )
             assert resp.status_code == 401
@@ -207,7 +230,7 @@ class TestPasswordChange:
 
             mock_run.assert_called_once()
             call_kwargs = mock_run.call_args
-            assert call_kwargs[1]["input"] == "testuser:newpassword"
+            assert call_kwargs[1]["input"] == f"{TEST_USERNAME}:{NEW_PASSWORD}"
             assert "chpasswd" in call_kwargs[0][0]
 
     def test_returns_500_on_chpasswd_failure(self, client, authed):
