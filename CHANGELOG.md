@@ -198,7 +198,57 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Security
 
-- No security issues addressed in this release
+- **The install directory is no longer writable by the service user**: everything
+  under `/opt/universalchess` was owned by the account the board and web app run
+  as. That included `scripts/`, whose helpers each have a passwordless sudo
+  grant -- so anything able to write a file as that user could replace a helper
+  and have root run it. Code, scripts and the virtualenv are now root-owned, and
+  only the directories the product genuinely writes (`config`, `db`, `engines`,
+  `tmp`, `web/static`, `pending-updates`) belong to the service user. The upgrade
+  resets ownership, so boards that were already exposed are corrected rather than
+  left as they were.
+  - TLS material stays root-owned, so the certificate authority and server
+    private keys can no longer be read or replaced by the web process. The
+    certificate download and iOS profile still work, as those read only the
+    public certificate.
+  - Python bytecode is now compiled during installation. It was previously
+    written on first import, which a root-owned tree no longer permits, and
+    without precompilation every startup would re-parse every module.
+- **Updates must be signed to install**: the updater downloads into a directory
+  the service user can write, and the root helper installs whatever is there, so
+  a checksum from that same directory proved nothing. Releases now carry a
+  detached signature over `SHA256SUMS.txt`, and the root helper verifies it
+  against a keyring shipped inside the package before the package is allowed to
+  run any code. A missing keyring, manifest or signature refuses the install
+  rather than skipping the check.
+  - The helper also refuses a version older than the one installed, so a genuine
+    but outdated release cannot be used to reintroduce a fixed issue. Deliberate
+    stable/nightly switches remain possible.
+  - The build refuses to produce a package without the signing keyring, since
+    such a package would install and then be unable to verify any later update.
+- **Downloads are verified before they are staged**: `.deb` downloads are checked
+  against the release's published checksums and discarded on any mismatch,
+  missing entry or unfetchable manifest. Previously the file was downloaded and
+  installed as root with no integrity check at all.
+- **The Lichess API token is no longer disclosed**: the settings endpoint
+  returned it in clear text without authentication. It is now redacted, and
+  saving settings without it leaves the stored token unchanged rather than
+  erasing it.
+- **Web coach endpoints no longer generate on request**: unauthenticated callers
+  could trigger model calls. The statement endpoint now only returns what the
+  board already produced, the tip endpoint is removed, and the model list
+  requires authentication.
+- **Engine option probing is cached**: an unauthenticated request could start an
+  engine process per call. Results are cached per engine binary and shared
+  between concurrent callers, and the cache is cleared when an engine is
+  installed.
+- **Removed the WebDAV path that made arbitrary files world-writable**: a request
+  could set mode 0777 on any path listed in a file at the share root.
+- **Password handling hardened**: WebDAV password hashes are compared in constant
+  time, and the minimum password length is raised from 4 to 6.
+- **Supply chain**: all GitHub Actions are pinned to immutable commit SHAs rather
+  than mutable tags, and a high-severity `js-yaml` advisory reached through a
+  development dependency is resolved.
 
 ### Notes
 
