@@ -34,6 +34,7 @@ from universalchess.services.background_activity import (
     activity_snapshot,
     build_activities,
 )
+from universalchess.tests.webapp_fixture import make_test_client
 
 
 def _engine_status(active=True, display_name="Koivisto",
@@ -274,8 +275,7 @@ def test_activity_endpoint_wires_both_sources(webapp, monkeypatch):
     # progress and return the aggregated snapshot. Faking both live sources to a
     # running state proves the wiring -- a regression that read only one source
     # would drop the other row.
-    webapp.app.config.update(TESTING=True)
-    client = webapp.app.test_client()
+    client = make_test_client(webapp)
 
     class _FakeStore:
         def status_dict(self):
@@ -303,8 +303,7 @@ def test_activity_endpoint_idle_returns_empty(webapp, monkeypatch):
     # The idle path the frontend uses to hide the banner: no install, no heal ->
     # active False, empty list. Guards against the endpoint emitting a phantom
     # activity when nothing is running.
-    webapp.app.config.update(TESTING=True)
-    client = webapp.app.test_client()
+    client = make_test_client(webapp)
 
     class _IdleStore:
         def status_dict(self):

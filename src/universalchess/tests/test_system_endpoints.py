@@ -15,6 +15,8 @@ import types
 
 import pytest
 
+from universalchess.tests.webapp_fixture import configure_for_testing
+
 pytest.importorskip("flask")
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("chess")
@@ -39,7 +41,7 @@ finally:
 
 @pytest.fixture
 def client(monkeypatch):
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     # Bypass HTTP Basic Auth so the protected endpoints are reachable in tests.
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (True, "tester"))
     return webapp.app.test_client()
@@ -315,7 +317,7 @@ def test_system_action_requires_auth(monkeypatch, endpoint):
     How a regression manifests: the endpoint acts without credentials (status is
     not 401).
     """
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     unauth = webapp.app.test_client()
 
@@ -455,7 +457,7 @@ def test_return_to_universal_requires_auth(monkeypatch):
     How a regression manifests: the endpoint runs the kill/restart without
     credentials (status is not 401).
     """
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     calls = []
     monkeypatch.setattr("subprocess.run", _recording_run(calls))

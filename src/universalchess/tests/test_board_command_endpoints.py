@@ -12,6 +12,8 @@ import sys
 
 import pytest
 
+from universalchess.tests.webapp_fixture import configure_for_testing
+
 pytest.importorskip("flask")
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("chess")
@@ -36,7 +38,7 @@ finally:
 
 @pytest.fixture
 def client(monkeypatch):
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     # Bypass HTTP Basic Auth so the protected endpoints are reachable in tests.
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (True, "tester"))
     return webapp.app.test_client()
@@ -124,7 +126,7 @@ def test_setup_position_requires_auth(monkeypatch):
     The endpoint changes the live game, so it is auth-gated like settings apply.
     A fresh client without the auth bypass must get 401.
     """
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     unauth = webapp.app.test_client()
     resp = unauth.post(
@@ -185,7 +187,7 @@ def test_new_game_requires_auth(monkeypatch):
     auth-gated like the other board-control endpoints. A fresh client without the
     auth bypass must get 401.
     """
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     unauth = webapp.app.test_client()
     resp = unauth.post("/api/board/new-game")
@@ -239,7 +241,7 @@ def test_resume_game_requires_auth(monkeypatch):
     auth-gated like the other board-control endpoints. A fresh client without the
     auth bypass must get 401.
     """
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     unauth = webapp.app.test_client()
     resp = unauth.post("/api/games/42/resume")
@@ -347,7 +349,7 @@ def test_board_key_requires_auth(monkeypatch):
     The endpoint drives the board's menu/game, so it is auth-gated like the other
     board-control endpoints. A fresh client without the auth bypass must get 401.
     """
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     unauth = webapp.app.test_client()
     resp = unauth.post(
@@ -484,7 +486,7 @@ def test_board_move_requires_auth(monkeypatch):
     The endpoint mutates the live game, so it is auth-gated like the other
     board-control endpoints. A fresh client without the auth bypass must get 401.
     """
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     unauth = webapp.app.test_client()
     resp = unauth.post(

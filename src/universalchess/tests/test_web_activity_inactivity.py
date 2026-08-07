@@ -28,6 +28,8 @@ import sys
 
 import pytest
 
+from universalchess.tests.webapp_fixture import configure_for_testing
+
 
 # ---------------------------------------------------------------------------
 # Boundary 1: board.signal_web_activity() sets the event
@@ -89,7 +91,7 @@ finally:
 
 @pytest.fixture
 def client(monkeypatch):
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (True, "tester"))
     return webapp.app.test_client()
 

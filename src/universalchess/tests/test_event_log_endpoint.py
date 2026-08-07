@@ -11,6 +11,8 @@ import sys
 
 import pytest
 
+from universalchess.tests.webapp_fixture import configure_for_testing
+
 pytest.importorskip("flask")
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("chess")
@@ -43,7 +45,7 @@ def log_path(tmp_path, monkeypatch):
 
 @pytest.fixture
 def client(monkeypatch):
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (True, "tester"))
     return webapp.app.test_client()
 
@@ -52,7 +54,7 @@ def test_event_log_requires_auth(monkeypatch, log_path):
     # The viewer endpoint is auth-gated like the debug-log download because
     # event messages can name engines/versions/failures. Manifestation if the
     # decorator is dropped: an unauthenticated GET returns 200 with event data.
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     unauth = webapp.app.test_client()
     assert unauth.get("/api/system/event-log").status_code == 401

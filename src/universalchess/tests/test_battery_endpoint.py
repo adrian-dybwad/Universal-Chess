@@ -16,6 +16,8 @@ import sys
 
 import pytest
 
+from universalchess.tests.webapp_fixture import configure_for_testing, make_test_client
+
 pytest.importorskip("flask")
 pytest.importorskip("sqlalchemy")
 
@@ -53,8 +55,7 @@ class _FakeSubscriber:
 
 @pytest.fixture
 def client():
-    webapp.app.config.update(TESTING=True)
-    return webapp.app.test_client()
+    return make_test_client(webapp)
 
 
 def test_battery_returns_cached_normalized_contract(client, monkeypatch):
@@ -115,7 +116,7 @@ def test_battery_requires_no_auth(monkeypatch):
     Regression manifestation: accidentally decorating it with @requires_auth would
     return 401 and the navbar indicator would be empty for unauthenticated users.
     """
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     m = _broadcast_module()
     monkeypatch.setattr(m, "get_subscriber", lambda: _FakeSubscriber(None))

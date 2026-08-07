@@ -17,6 +17,8 @@ import sys
 
 import pytest
 
+from universalchess.tests.webapp_fixture import make_test_client
+
 pytest.importorskip("flask")
 pytest.importorskip("sqlalchemy")
 
@@ -42,8 +44,7 @@ finally:
 
 @pytest.fixture
 def client():
-    webapp.app.config.update(TESTING=True)
-    return webapp.app.test_client()
+    return make_test_client(webapp)
 
 
 @pytest.fixture

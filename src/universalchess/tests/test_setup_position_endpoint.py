@@ -11,6 +11,8 @@ import sys
 
 import pytest
 
+from universalchess.tests.webapp_fixture import make_test_client
+
 pytest.importorskip("flask")
 pytest.importorskip("chess")
 
@@ -51,8 +53,7 @@ def client(monkeypatch):
 
     monkeypatch.setattr(game_broadcast, "send_board_command", fake_send)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (True, "tester"))
-    webapp.app.config.update(TESTING=True)
-    yield webapp.app.test_client(), captured
+    yield make_test_client(webapp), captured
 
 
 def test_record_flag_forwarded_when_requested(client):

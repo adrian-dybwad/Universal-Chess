@@ -13,6 +13,8 @@ import sys
 
 import pytest
 
+from universalchess.tests.webapp_fixture import configure_for_testing
+
 pytest.importorskip("flask")
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("chess")
@@ -37,7 +39,7 @@ finally:
 
 @pytest.fixture
 def client(monkeypatch):
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     # Bypass HTTP Basic Auth so the protected endpoints are reachable in tests.
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (True, "tester"))
     return webapp.app.test_client()
@@ -120,7 +122,7 @@ def test_set_debug_serial_requires_auth(monkeypatch):
     How a regression manifests: the endpoint writes the setting without
     credentials (status is not 401).
     """
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     unauth = webapp.app.test_client()
 
@@ -220,7 +222,7 @@ def test_download_debug_log_requires_auth(monkeypatch):
     How a regression manifests: the log is served without credentials (status is
     not 401).
     """
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     unauth = webapp.app.test_client()
 
@@ -422,7 +424,7 @@ def test_set_display_tuning_requires_auth(monkeypatch):
     How a regression manifests: the endpoint writes the setting without
     credentials (status is not 401).
     """
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     unauth = webapp.app.test_client()
 

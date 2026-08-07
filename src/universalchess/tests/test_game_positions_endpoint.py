@@ -20,6 +20,8 @@ import sys
 
 import pytest
 
+from universalchess.tests.webapp_fixture import configure_for_testing
+
 pytest.importorskip("flask")
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("chess")
@@ -72,7 +74,7 @@ def seeded(monkeypatch):
     # The endpoint calls get_db_session(); hand it a session on our engine.
     monkeypatch.setattr(webapp, "get_db_session", lambda: Session())
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (True, "tester"))
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
 
     def persist_game(*, chess960: bool, start_fen: str, move_ucis):
         session = Session()

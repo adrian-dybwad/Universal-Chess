@@ -28,6 +28,8 @@ import threading
 
 import pytest
 
+from universalchess.tests.webapp_fixture import configure_for_testing
+
 pytest.importorskip("flask")
 pytest.importorskip("sqlalchemy")
 
@@ -79,7 +81,7 @@ class _SyncThread:
 
 @pytest.fixture
 def client(monkeypatch):
-    webapp.app.config.update(TESTING=True)  # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
+    configure_for_testing(webapp)
     # install/uninstall are @requires_auth (they mutate the system via apt/source
     # builds); bypass HTTP Basic Auth so the contract tests reach the handlers.
     # Dedicated *_requires_auth tests below pin the 401 path separately.
@@ -137,7 +139,7 @@ def test_install_requires_auth(monkeypatch):
     Manifestation if the @requires_auth decorator is dropped: an unauthenticated
     POST starts a system-mutating install and returns 200 instead of 401.
     """
-    webapp.app.config.update(TESTING=True)  # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     unauth = webapp.app.test_client()
 
@@ -157,7 +159,7 @@ def test_uninstall_requires_auth(monkeypatch):
     gated. Manifestation if the decorator is dropped: an unauthenticated POST
     removes the engine and returns 200 instead of 401.
     """
-    webapp.app.config.update(TESTING=True)  # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     unauth = webapp.app.test_client()
 
@@ -389,7 +391,7 @@ def test_repair_requires_auth(monkeypatch):
     dir, so it is as privileged as install. Manifestation if @requires_auth is
     dropped: an unauthenticated POST starts a system-mutating repair.
     """
-    webapp.app.config.update(TESTING=True)  # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     unauth = webapp.app.test_client()
 

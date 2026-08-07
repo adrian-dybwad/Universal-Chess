@@ -13,6 +13,8 @@ import tempfile
 
 import pytest
 
+from universalchess.tests.webapp_fixture import make_test_client
+
 pytest.importorskip("flask")
 pytest.importorskip("chess")
 
@@ -47,8 +49,7 @@ def client(monkeypatch):
     overlay = pathlib.Path(tmp.name) / "positions.custom.ini"
     monkeypatch.setattr(positions, "CUSTOM_OVERLAY_PATH", overlay)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (True, "tester"))
-    webapp.app.config.update(TESTING=True)
-    yield webapp.app.test_client(), overlay
+    yield make_test_client(webapp), overlay
     tmp.cleanup()
 
 

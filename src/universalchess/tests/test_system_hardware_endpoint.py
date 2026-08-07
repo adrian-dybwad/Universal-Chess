@@ -14,6 +14,8 @@ import sys
 
 import pytest
 
+from universalchess.tests.webapp_fixture import configure_for_testing
+
 pytest.importorskip("flask")
 pytest.importorskip("sqlalchemy")
 
@@ -61,7 +63,7 @@ _SAMPLE_INFO = HardwareInfo(
 
 @pytest.fixture
 def client(monkeypatch):
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     # The endpoint imports get_hardware_info at call time; patch it on its own
     # module so the same object the endpoint resolves is replaced.
     import universalchess.board.hardware_info as hardware_info
@@ -86,7 +88,7 @@ def test_hardware_requires_no_auth(monkeypatch):
     Regression manifestation: an accidental @requires_auth would 401 here and
     the new card rows would never populate for unauthenticated users.
     """
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     import universalchess.board.hardware_info as hardware_info
     monkeypatch.setattr(hardware_info, "get_hardware_info", lambda *a, **k: _SAMPLE_INFO)

@@ -21,6 +21,8 @@ import sys
 
 import pytest
 
+from universalchess.tests.webapp_fixture import configure_for_testing
+
 pytest.importorskip("flask")
 pytest.importorskip("sqlalchemy")
 
@@ -69,7 +71,7 @@ def _post_rules() -> list:
 @pytest.fixture
 def unauthenticated_client(monkeypatch):
     """A test client whose every request fails authentication."""
-    webapp.app.config.update(TESTING=True)  # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     return webapp.app.test_client()
 

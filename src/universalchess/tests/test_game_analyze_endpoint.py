@@ -21,6 +21,8 @@ import sys
 
 import pytest
 
+from universalchess.tests.webapp_fixture import configure_for_testing
+
 pytest.importorskip("flask")
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("chess")
@@ -66,7 +68,7 @@ def seeded(monkeypatch):
     monkeypatch.setattr(mp, "_get_models", lambda: models)
     monkeypatch.setattr(webapp, "get_db_session", lambda: Session())
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (True, "tester"))
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
 
     # Every request also pings the board with reset_inactivity (a before_request
     # hook, unrelated to analysis), so only analyze_game commands are recorded.

@@ -26,6 +26,8 @@ import threading
 
 import pytest
 
+from universalchess.tests.webapp_fixture import configure_for_testing
+
 pytest.importorskip("flask")
 pytest.importorskip("sqlalchemy")
 
@@ -73,7 +75,7 @@ class _SyncThread:
 
 @pytest.fixture
 def client(monkeypatch):
-    webapp.app.config.update(TESTING=True)  # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (True, "tester"))
     return webapp.app.test_client()
 
@@ -156,7 +158,7 @@ def test_upload_requires_auth(monkeypatch):
     as privileged as install. Manifestation if the decorator is dropped: an
     anonymous POST writes an executable and returns 200.
     """
-    webapp.app.config.update(TESTING=True)  # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     unauth = webapp.app.test_client()
     resp = unauth.post(
@@ -243,7 +245,7 @@ def test_upload_missing_file_returns_400(client):
 
 def test_install_url_requires_auth(monkeypatch):
     """Installing from a URL must require auth (401 when unauthenticated)."""
-    webapp.app.config.update(TESTING=True)  # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     unauth = webapp.app.test_client()
     resp = unauth.post(

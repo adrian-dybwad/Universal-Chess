@@ -14,6 +14,8 @@ import sys
 
 import pytest
 
+from universalchess.tests.webapp_fixture import configure_for_testing
+
 pytest.importorskip("flask")
 pytest.importorskip("sqlalchemy")
 
@@ -53,7 +55,7 @@ _SAMPLE_INFO = SystemInfo(
 
 @pytest.fixture
 def client(monkeypatch):
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     # The endpoint does `from universalchess.board.system_info import get_system_info`
     # at call time; patch it on that module so the same object the endpoint imports
     # is replaced, independent of test ordering.
@@ -79,7 +81,7 @@ def test_stats_requires_no_auth(monkeypatch):
     Regression manifestation: accidentally decorating it with @requires_auth
     would return 401 here and the card would be empty for unauthenticated users.
     """
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     import universalchess.board.system_info as system_info
     monkeypatch.setattr(system_info, "get_system_info", lambda *a, **k: _SAMPLE_INFO)

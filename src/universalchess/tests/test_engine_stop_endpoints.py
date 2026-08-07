@@ -25,6 +25,8 @@ import threading
 
 import pytest
 
+from universalchess.tests.webapp_fixture import configure_for_testing
+
 pytest.importorskip("flask")
 pytest.importorskip("sqlalchemy")
 
@@ -89,7 +91,7 @@ class _FakeManager:
 
 @pytest.fixture
 def client(monkeypatch):
-    webapp.app.config.update(TESTING=True)  # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
+    configure_for_testing(webapp)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (True, "tester"))
     return webapp.app.test_client()
 
@@ -187,7 +189,7 @@ class TestStop:
         How a regression manifests: 200 instead of 401, and any device on the
         network can cancel installs.
         """
-        webapp.app.config.update(TESTING=True)  # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
+        configure_for_testing(webapp)
         monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
         install_store.start(ENGINE, "Reckless", estimated_seconds=3600.0)
 
@@ -341,7 +343,7 @@ class TestResume:
         How a regression manifests: 200 instead of 401, and an anonymous caller can
         make the board start rebuilding any paused engine.
         """
-        webapp.app.config.update(TESTING=True)  # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
+        configure_for_testing(webapp)
         monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
         _pause(resume_store, ENGINE, ENGINE_REF)
 

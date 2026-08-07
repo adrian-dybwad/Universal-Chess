@@ -12,6 +12,8 @@ import sys
 
 import pytest
 
+from universalchess.tests.webapp_fixture import configure_for_testing
+
 pytest.importorskip("flask")
 pytest.importorskip("sqlalchemy")
 
@@ -45,7 +47,7 @@ def client(monkeypatch):
     models.Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(webapp, "get_db_session", lambda: Session())
-    webapp.app.config.update(TESTING=True)
+    configure_for_testing(webapp)
 
     def add_game(*, white, black, result, source="test", created_at=None):
         session = Session()
