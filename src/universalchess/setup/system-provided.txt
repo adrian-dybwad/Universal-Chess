@@ -1,0 +1,38 @@
+# Python distributions supplied by Debian packages, not by a vendored wheel.
+#
+# Format: <pypi-distribution> <debian-binary-package>
+#
+# The venv is created with --system-site-packages, so anything installed by these
+# Debian packages is already importable and pip treats the requirement as
+# satisfied without looking for a wheel. Each Debian package here MUST appear in
+# the .deb's Depends field; test_vendored_wheelhouse.py asserts that, because a
+# name listed here is a name deliberately left out of the wheelhouse, and getting
+# it wrong produces an install that cannot resolve offline.
+#
+# Two reasons a distribution belongs here rather than in the wheelhouse:
+#
+#   1. It is a compiled extension. Vendoring it would mean shipping wheels per
+#      architecture (armv6 for a Pi Zero, arm64 elsewhere) and per Python minor
+#      version (3.11 on bookworm, 3.13 on trixie). Debian already solves that.
+#   2. It is already pulled in for another reason, so vendoring a second copy
+#      would shadow the system one with a different version.
+#
+# Their own transitive dependencies are handled by the Debian packages and so are
+# not listed: python3-requests pulls python3-charset-normalizer, python3-cffi
+# pulls python3-pycparser, and so on.
+
+# Compiled extensions.
+numpy python3-numpy
+spidev python3-spidev
+evdev python3-evdev
+pillow python3-pil
+cffi python3-cffi
+
+# Pure Python, but already depended on directly by the package.
+pyserial python3-serial
+requests python3-requests
+urllib3 python3-urllib3
+idna python3-idna
+certifi python3-certifi
+typing-extensions python3-typing-extensions
+wrapt python3-wrapt

@@ -36,7 +36,10 @@ spidev
 # system-wide as python3-numpy by the .deb; listed here so the dev/test venv
 # matches the device and does not need to mock numpy.
 numpy
-python-chess
+# The distribution is "chess"; "python-chess" is a 1.999 shim that contains no
+# code and exists only to depend on it. Naming it directly installs one package
+# instead of two, and matches the module the code imports.
+chess
 # Web-UI password auth backend. The code calls pam.pam().authenticate(user, pw)
 # from the PyPI "python-pam" module (NOT Debian's "PAM"/PyPAM C extension, whose
 # API is incompatible). Required on Python 3.13+ where the stdlib crypt/spwd

@@ -756,15 +756,27 @@ fi
 # newer pip nor the wheel package. It also made an install on an offline board
 # fail at this line instead of somewhere diagnosable.
 
-# Install your extra packages into the venv
+# Install the venv's packages from the wheels carried inside this package.
+#
+# --no-index with no fallback is deliberate. The alternative -- reaching PyPI
+# when the wheelhouse looks absent -- would run whatever the index served, as
+# root, at install time, and would do it silently on exactly the boards where
+# something is already wrong. scripts/build.sh refuses to produce a package
+# without a wheelhouse, so getting here without one means the package is
+# damaged, and failing loudly is the only useful response.
+#
+# Requirements that Debian supplies (see setup/system-provided.txt) are already
+# importable through --system-site-packages, so pip treats them as satisfied and
+# never looks for a wheel; the wheelhouse holds only the rest.
 if [ -f "$REQ_VENV" ]; then
-  if [ -d "$WHEELS_DIR" ]; then
-    # fully offline / reproducible
-    "$VENV_DIR/bin/pip" install --no-index --find-links "$WHEELS_DIR" -r "$REQ_VENV"
-  else
-    # will hit the network; avoid if possible
-    "$VENV_DIR/bin/pip" install -r "$REQ_VENV"
+  if [ ! -d "$WHEELS_DIR" ]; then
+    echo -e "::: ERROR: vendored wheelhouse missing at $WHEELS_DIR"
+    echo -e "::: This package cannot install its Python dependencies. Reinstall"
+    echo -e "::: from a complete .deb; the install is deliberately not falling"
+    echo -e "::: back to downloading them as root."
+    exit 1
   fi
+  "$VENV_DIR/bin/pip" install --no-index --find-links "$WHEELS_DIR" -r "$REQ_VENV"
 fi
 
 # Build the Centaur display "translate" shim now if Centaur is already installed.

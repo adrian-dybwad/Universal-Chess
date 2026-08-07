@@ -99,6 +99,74 @@ function requireSigningKeyring {
     fi
 }
 
+# Collect the Python wheels the postinst installs the venv from.
+#
+# The board installs with --no-index, so these must travel inside the package:
+# root then never runs code fetched at install time, and the wheels inherit the
+# release signature instead of needing a second integrity mechanism.
+#
+# --require-hashes makes an index that served a different artifact for a pinned
+# version fail the build rather than reach a board. --no-deps keeps the set to
+# exactly what the lock names; the lock is already the full closure, minus what
+# Debian supplies (see src/universalchess/setup/system-provided.txt).
+function collectVendoredWheels {
+    local lock="${REPO_ROOT}/src/universalchess/setup/wheels.lock"
+    local wheelhouse="${STAGE_DIR}${INSTALLDIR}/wheels"
+
+    if [ ! -s "${lock}" ]; then
+        echo "::: ERROR: wheel lock missing or empty: ${lock}" >&2
+        exit 1
+    fi
+
+    echo "::: Collecting vendored wheels"
+    mkdir -p "${wheelhouse}"
+    if ! python3 -m pip wheel \
+            --require-hashes \
+            --no-deps \
+            --requirement "${lock}" \
+            --wheel-dir "${wheelhouse}"; then
+        echo "::: ERROR: could not build the vendored wheelhouse from ${lock}" >&2
+        exit 1
+    fi
+}
+
+# Refuse to build a package whose postinst could not install the venv.
+#
+# The postinst installs with --no-index and fails when the wheelhouse is absent,
+# so a package without one cannot install at all. Catching that here keeps the
+# failure in the build rather than on every board that takes the release.
+#
+# The architecture check matters just as much: the package declares
+# Architecture: all, which is only honest while every wheel is pure Python. A
+# lock entry that started resolving to a compiled artifact would produce a
+# package that installs on the builder's architecture and fails on the boards.
+function requireVendoredWheels {
+    local wheelhouse="${STAGE_DIR}${INSTALLDIR}/wheels"
+    local count
+    count="$(find "${wheelhouse}" -maxdepth 1 -name '*.whl' 2>/dev/null | wc -l | tr -d ' ')"
+
+    if [ "${count}" -eq 0 ]; then
+        echo "::: ERROR: no wheels were collected into ${wheelhouse}" >&2
+        echo "::: The postinst installs with --no-index, so this package could" >&2
+        echo "::: not install its Python dependencies on any board." >&2
+        exit 1
+    fi
+
+    local impure
+    impure="$(find "${wheelhouse}" -maxdepth 1 -name '*.whl' \
+        ! -name '*-py3-none-any.whl' ! -name '*-py2.py3-none-any.whl' 2>/dev/null || true)"
+    if [ -n "${impure}" ]; then
+        echo "::: ERROR: the wheelhouse contains non-universal wheels:" >&2
+        echo "${impure}" >&2
+        echo "::: The package is Architecture: all, so every wheel must be pure" >&2
+        echo "::: Python. Move this dependency to system-provided.txt so Debian" >&2
+        echo "::: supplies it instead." >&2
+        exit 1
+    fi
+
+    echo "::: Vendored wheelhouse holds ${count} universal wheels"
+}
+
 function stage {
     requireSigningKeyring
 
@@ -133,6 +201,9 @@ function stage {
       cp "${REPO_ROOT}/tools/centaur-import/"*.sh "${STAGE_DIR}${INSTALLDIR}/tools/centaur-import/" 2>/dev/null || true
       cp "${REPO_ROOT}/tools/centaur-import/"*.ps1 "${STAGE_DIR}${INSTALLDIR}/tools/centaur-import/" 2>/dev/null || true
     fi
+
+    collectVendoredWheels
+    requireVendoredWheels
 
     # Set Architecture to 'all' for multi-arch package
     python3 - <<PY

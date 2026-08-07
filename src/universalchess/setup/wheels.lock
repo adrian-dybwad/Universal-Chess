@@ -1,0 +1,42 @@
+# Python wheels vendored into the .deb. GENERATED -- do not edit by hand.
+#
+# Regenerate with ./scripts/update-wheels-lock.py after changing requirements.txt
+# or system-provided.txt.
+#
+# The postinst installs the venv from these with --no-index, so root never runs
+# code fetched at install time; the wheels travel inside the signed package
+# instead. CI builds the wheelhouse with `pip wheel --require-hashes`, so an
+# index that served a different artifact for the same version would fail the
+# build rather than reach a board.
+#
+# This is the closure of requirements.txt minus the distributions in
+# system-provided.txt, which Debian supplies through the package's Depends.
+
+berserk==0.14.0 \
+    --hash=sha256:d4f4fe51f13e6b57ac017160af7b62483408006fa5dcf455cd2bccf6432948e0
+cairocffi==1.7.1 \
+    --hash=sha256:9803a0e11f6c962f3b0ae2ec8ba6ae45e957a146a004697a1ac1bbf16b073b3f
+cairosvg==2.9.0 \
+    --hash=sha256:4b82d07d145377dffdfc19d9791bd5fb65539bb4da0adecf0bdbd9cd4ffd7c68
+chess==1.11.2 \
+    --hash=sha256:a8b43e5678fdb3000695bdaa573117ad683761e5ca38e591c4826eba6d25bb39
+cssselect2==0.9.0 \
+    --hash=sha256:6a99e5f91f9a016a304dd929b0966ca464bcfda15177b6fb4a118fc0fb5d9563
+defusedxml==0.7.1 \
+    --hash=sha256:a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61
+deprecated==1.3.1 \
+    --hash=sha256:597bfef186b6f60181535a29fbe44865ce137a5079f295b479886c82729d5f3f
+ndjson==0.3.1 \
+    --hash=sha256:839c22275e6baa3040077b83c005ac24199b94973309a8a1809be962c753a410
+python-dateutil==2.9.0.post0 \
+    --hash=sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427
+python-pam==2.0.2 \
+    --hash=sha256:4ac51dd8953ac59aa45505882b565eef6a22e0423dcf25d63369902080416c20
+segno==1.6.6 \
+    --hash=sha256:28c7d081ed0cf935e0411293a465efd4d500704072cdb039778a2ab8736190c7
+six==1.17.0 \
+    --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274
+tinycss2==1.5.1 \
+    --hash=sha256:3415ba0f5839c062696996998176c4a3751d18b7edaaeeb658c9ce21ec150661
+webencodings==0.5.1 \
+    --hash=sha256:a0af1213f3c2226497a97e2b3aa01a7e4bee4f403f95be16fc9acd2947514a78

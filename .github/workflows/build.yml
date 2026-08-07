@@ -50,6 +50,16 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
       
+      - name: Verify vendored wheels resolve offline
+        run: |
+          # The postinst installs the venv with --no-index, so the package must
+          # carry every wheel that requirements.txt reaches. The unit tests can
+          # only compare the lock against the requirements the package names
+          # directly; a missing *transitive* is absent from both and would first
+          # appear as a failed install on a board, with no index to fall back to.
+          # Building the wheelhouse and resolving against it is what catches that.
+          python3 scripts/update-wheels-lock.py --verify
+
       - name: Build .deb package
         run: |
           chmod +x scripts/build.sh
@@ -89,3 +99,16 @@ jobs:
             exit 1
           fi
           echo "React app present in package."
+
+      - name: Verify vendored wheels are packaged
+        run: |
+          # Without these the postinst cannot install the venv at all: it uses
+          # --no-index and deliberately has no PyPI fallback. build.sh refuses to
+          # produce such a package, so this guards against the package being
+          # assembled some other way.
+          if ! dpkg-deb --contents *.deb | grep -q 'opt/universalchess/wheels/.*\.whl'; then
+            echo "ERROR: no vendored wheels in package; postinst could not install" >&2
+            exit 1
+          fi
+          echo "Vendored wheels present in package:"
+          dpkg-deb --contents *.deb | grep 'opt/universalchess/wheels/.*\.whl'

@@ -230,6 +230,16 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   against the release's published checksums and discarded on any mismatch,
   missing entry or unfetchable manifest. Previously the file was downloaded and
   installed as root with no integrity check at all.
+- **Python dependencies now ship inside the package**: installing fetched them
+  from PyPI and ran them as root, so the code a board ended up with was whatever
+  the index served that day -- the package was verified end to end and then
+  pulled unverified code into itself. The wheels now travel inside the signed
+  `.deb`, pinned to exact versions and hashes, and the install no longer contacts
+  an index at all. Installs are faster on the slowest hardware as a result: the
+  chess library had no published wheel, so every board downloaded six megabytes
+  of source and compiled it.
+  - Three dependencies nothing imports were removed, one of which was compiled
+    from source on every Pi Zero install for a library the product never calls.
 - **The Lichess API token is no longer disclosed**: the settings endpoint
   returned it in clear text without authentication. It is now redacted, and
   saving settings without it leaves the stored token unchanged rather than

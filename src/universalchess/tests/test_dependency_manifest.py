@@ -24,7 +24,6 @@ REQUIREMENTS = PACKAGE_ROOT / "setup" / "requirements.txt"
 # that differ need an entry.
 DIST_TO_MODULE = {
     "pyserial": "serial",
-    "python-chess": "chess",
     "python-pam": "pam",
 }
 
