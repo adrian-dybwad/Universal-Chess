@@ -3390,12 +3390,12 @@ class EngineManager:
             log.info(f"[EngineManager] _install_from_source: Copying {len(engine.extra_files)} extra files/directories")
             self._copy_extra_files(repo_dir, engine.extra_files)
         
-        # Set ownership
-        log.debug(f"[EngineManager] _install_from_source: Setting ownership to pi:pi on {self.engines_dir}")
-        result = subprocess.run(["sudo", "chown", "-R", "pi:pi", str(self.engines_dir)], capture_output=True, timeout=30)  # noqa: S603, S607  # nosec B603 B607
-        if result.returncode != 0:
-            log.warning(f"[EngineManager] _install_from_source: chown failed ({result.returncode})")
-        
+        # No ownership fixup: the build runs as the service user, which the
+        # postinst already grants ownership of engines/, so the files land owned
+        # correctly. The previous `sudo chown -R pi:pi` had no sudoers grant (it
+        # always failed), hardcoded the wrong user on non-pi installs, and could
+        # not be granted safely -- passwordless root chown would let the service
+        # user take ownership of any path on the system.
         update_progress(f"{engine.display_name} installed successfully", InstallStage.INSTALLING_FILES)
         log.info(f"[EngineManager] _install_from_source: Successfully installed '{engine.name}'")
         return True

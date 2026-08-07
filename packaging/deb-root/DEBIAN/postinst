@@ -79,6 +79,52 @@ REQ_VENV="$DGTCM_PATH/setup/requirements.txt"
 WHEELS_DIR="$DGTCM_PATH/wheels"   # ship this in the .deb (optional but recommended)
 LEGACY_RC_LOCAL="/etc/rc.local"
 LEGACY_RC_LOCAL_MARKER="Starting DGT Centaur menu"
+
+# Directories the running product creates, updates or deletes files inside, and
+# which therefore must be writable by the service user. Everything else under
+# ${DGTCM_PATH} stays root-owned.
+#
+# Why the tree is not simply handed to the service user: scripts/ holds the
+# helpers that each have a passwordless sudo grant (install-update, bt-admin,
+# uc-set-timezone, centaur-import-mount, uc-engine-deps, uc-build-memory,
+# centaur-armhf-setup). Write access to a file root will execute on request is
+# equivalent to root, so a compromised web process could rewrite a helper and run
+# its own code as root through the existing grant. The Python sources the
+# root-run units execute and .venv/ carry the same exposure.
+#
+# config/ is listed whole because centaur.ini is rewritten via a temp file
+# created in that directory, and engine .uci profiles are added and removed
+# there. config/ssl is reclaimed by root afterwards (see setPermissions).
+RUNTIME_WRITABLE_DIRS=(
+    config
+    db
+    engines
+    tmp
+    web/static
+    pending-updates
+)
+
+# Runtime-written files that sit at the install root rather than inside one of the
+# directories above, so a directory-only grant would miss them.
+RUNTIME_WRITABLE_FILES=(
+    update-state.json
+)
+
+# Grant the service user exactly the runtime data paths, leaving the rest of the
+# install tree root-owned. Safe to call more than once.
+function grantRuntimeDataOwnership {
+    local relative_path
+    for relative_path in "${RUNTIME_WRITABLE_DIRS[@]}"; do
+        mkdir -p "${DGTCM_PATH}/${relative_path}"
+        chown -R "$PRIMARY_USER:$PRIMARY_USER" "${DGTCM_PATH}/${relative_path}" 2>/dev/null || true
+    done
+    for relative_path in "${RUNTIME_WRITABLE_FILES[@]}"; do
+        # Created here rather than left to first write: the tree-wide root reset
+        # would otherwise leave an existing file root-owned and unwritable.
+        touch "${DGTCM_PATH}/${relative_path}"
+        chown "$PRIMARY_USER:$PRIMARY_USER" "${DGTCM_PATH}/${relative_path}" 2>/dev/null || true
+    done
+}
 ################################
 
 if ! cat $CONFIG | grep -q "#dgtcentaurmods"
@@ -650,7 +696,7 @@ echo -e "::: Creating required directories"
 mkdir -p "${DGTCM_PATH}/tmp"
 mkdir -p "${DGTCM_PATH}/db"
 mkdir -p "${DGTCM_PATH}/config"
-chown -R "$PRIMARY_USER:$PRIMARY_USER" "${DGTCM_PATH}" 2>/dev/null || true
+grantRuntimeDataOwnership
 
 # This ensures we get the correct architecture binary automatically
 echo -e "::: Setting up Stockfish engine"
@@ -745,7 +791,29 @@ fi
 
 # Setting final permissions
 function setPermissions {
-    chown -R "$PRIMARY_USER:$PRIMARY_USER" ${DGTCM_PATH}
+    # Reset the whole tree to root first. dpkg already unpacks as root, but an
+    # upgrade from a version that ran the old blanket `chown -R $PRIMARY_USER`
+    # arrives with a service-user-owned tree -- without this reset the escalation
+    # would survive precisely on the boards that were already exposed.
+    chown -R root:root "${DGTCM_PATH}"
+
+    grantRuntimeDataOwnership
+
+    # Reclaim the TLS material. This must run *after* the config grant above,
+    # because that grant is recursive and would otherwise leave the CA and server
+    # private keys owned by the service user -- enough to mint certificates the
+    # device trusts. Generation and renewal happen in the root-run
+    # universal-chess-tls.service, so the service user needs no write access here.
+    #
+    # Ownership only, no chmod: the web app runs as the service user and reads
+    # rootCA.pem to serve the CA download and the iOS mobileconfig profile, so
+    # locking the directory to root-only would break those endpoints. The private
+    # keys are already 0600 (set by universalchess.tls), so root ownership alone
+    # puts them out of the service user's reach.
+    if [[ -d "${DGTCM_PATH}/config/ssl" ]]; then
+        chown -R root:root "${DGTCM_PATH}/config/ssl"
+    fi
+
     if [[ -d "${CENTAUR}" ]]; then
         chown -R "$PRIMARY_USER:root" ${CENTAUR}
         # Ensure centaur executable has execute permissions (Trixie compatibility)
@@ -829,6 +897,22 @@ case $1 in
     fi
 
     removeLegacyRcLocal
+
+    # Precompile the package to bytecode while still root. The install tree is
+    # root-owned, so the service user cannot write __pycache__ at import time the
+    # way it could when the tree was user-owned -- without this, every boot
+    # re-parses every module from source.
+    #
+    # .venv is excluded because pip byte-compiles what it installs; recompiling it
+    # would walk roughly fourteen times more modules than the application itself
+    # and add that to every update, on the hardware where it costs most.
+    #
+    # `|| true` because bytecode is an optimisation: under `set -e` a single
+    # unparseable file would otherwise abort the whole install, turning a
+    # startup-speed concern into a failed package.
+    echo -e "::: Precompiling Python bytecode"
+    "$VENV_DIR/bin/python" -m compileall -q -x '(^|/)\.venv/' "${DGTCM_PATH}" > /dev/null 2>&1 || true
+
     setPermissions
     
     # Kick the BlueZ advertising self-heal (start --no-block returns immediately;

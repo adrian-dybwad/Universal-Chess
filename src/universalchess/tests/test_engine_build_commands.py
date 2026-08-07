@@ -612,6 +612,37 @@ class TestZahakBuildCommand:
         assert ENGINES["zahak"].binary_path == "bin/zahak"
 
 
+class TestSourceInstallOwnership:
+    """Guards that installing an engine from source needs no privileged chown."""
+
+    def test_source_install_does_not_shell_out_to_sudo_chown(self):
+        """The source-install path must not run ``sudo chown`` on the engines dir.
+
+        Why this test exists: it used to run ``sudo chown -R pi:pi <engines_dir>``
+        after building. That call was wrong three ways at once. There is no
+        sudoers grant for chown, so it always failed and merely logged a warning;
+        the user was hardcoded to ``pi``, so it named the wrong account on an
+        install whose primary user is not pi; and it was unnecessary, because the
+        build already runs as the service user and the postinst grants that user
+        ownership of engines/ explicitly. Adding a grant to make it "work" would
+        be worse still -- passwordless ``chown`` as root is a privilege
+        escalation, since it can change ownership of any path on the system.
+
+        How the regression manifests: no visible failure, just a warning on every
+        source build plus a standing temptation to "fix" it by granting sudo
+        chown, which would hand the service user a route to root.
+        """
+        source = Path(engine_manager_module.__file__).read_text()
+        offenders = [
+            line.strip()
+            for line in source.splitlines()
+            if "chown" in line and not line.strip().startswith("#")
+        ]
+        assert offenders == [], (
+            f"engine install must not change ownership via sudo: {offenders}"
+        )
+
+
 class TestMaiaBuildCommand:
     """Guards Maia's build-script path against the dev-vs-installed layout bug.
 
