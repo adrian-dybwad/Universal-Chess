@@ -23,7 +23,7 @@ import universalchess
 PACKAGE_ROOT = Path(universalchess.__file__).resolve().parent
 REPO_ROOT = PACKAGE_ROOT.parent.parent
 REQUIREMENTS = PACKAGE_ROOT / "setup" / "requirements.txt"
-WHEELS_LOCK = PACKAGE_ROOT / "setup" / "wheels.lock"
+PINNED_REQUIREMENTS = PACKAGE_ROOT / "setup" / "pinned" / "requirements.txt"
 SYSTEM_PROVIDED = PACKAGE_ROOT / "setup" / "system-provided.txt"
 BUILD_SH = REPO_ROOT / "scripts" / "build.sh"
 DEBIAN_DIR = REPO_ROOT / "packaging" / "deb-root" / "DEBIAN"
@@ -66,15 +66,16 @@ def _declared_requirements() -> list:
 
 
 def _lock_entries() -> dict:
-    """Map normalized distribution name -> (version, [hashes]) from wheels.lock.
+    """Map normalized distribution name -> (version, [hashes]) from the lock.
 
     Parses pip's requirements syntax: backslash-continued lines, ``#`` comments
     and ``--hash=`` options.
     """
-    assert WHEELS_LOCK.exists(), (
-        f"{WHEELS_LOCK} is missing; the package would ship no wheels to install from"
+    assert PINNED_REQUIREMENTS.exists(), (
+        f"{PINNED_REQUIREMENTS} is missing; the package would ship no wheels to "
+        "install from"
     )
-    text = WHEELS_LOCK.read_text()
+    text = PINNED_REQUIREMENTS.read_text()
     text = re.sub(r"\\\s*\n", " ", text)
 
     entries = {}
@@ -154,8 +155,9 @@ def test_wheels_lock_covers_every_requirement_not_supplied_by_debian():
         if _normalize(dist) not in locked and _normalize(dist) not in provided
     ]
     assert not unresolvable, (
-        "these requirements are neither vendored in wheels.lock nor listed in "
-        f"DEBIAN_PROVIDED, so an offline install cannot resolve them: {unresolvable}"
+        "these requirements are neither vendored in the pinned lock nor listed in "
+        f"system-provided.txt, so an offline install cannot resolve them: "
+        f"{unresolvable}"
     )
 
 
@@ -180,7 +182,7 @@ def test_every_wheels_lock_entry_is_pinned_to_a_version_and_a_hash():
             unpinned.append(f"{name}=={version}: no --hash")
         elif not all(h.startswith("sha256:") for h in hashes):
             unpinned.append(f"{name}=={version}: non-sha256 hash {hashes}")
-    assert not unpinned, f"wheels.lock entries are not fully pinned: {unpinned}"
+    assert not unpinned, f"pinned lock entries are not fully pinned: {unpinned}"
 
 
 def test_build_refuses_to_produce_a_package_without_a_wheelhouse():

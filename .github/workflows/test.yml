@@ -41,7 +41,11 @@ jobs:
           # bleak, casttube and ndjson are deliberately absent: nothing imports
           # bleak, and the other two are transitives of berserk/pychromecast.
           # See setup/requirements.txt and test_dependency_manifest.py.
-          pip install berserk pyserial python-chess
+          pip install berserk pyserial chess
+          # PyYAML is a test-only dependency: the packaging tests read
+          # dependabot.yml and the workflows to check that the pinned Python
+          # closure stays covered by alerting and by the refresh job.
+          pip install pyyaml
           # Web-app deps so the Flask web-security tests run (otherwise they
           # importorskip and the regressions they guard go unchecked in CI).
           pip install flask werkzeug sqlalchemy Pillow

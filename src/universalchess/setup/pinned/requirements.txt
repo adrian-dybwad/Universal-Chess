@@ -1,7 +1,14 @@
 # Python wheels vendored into the .deb. GENERATED -- do not edit by hand.
 #
 # Regenerate with ./scripts/update-wheels-lock.py after changing requirements.txt
-# or system-provided.txt.
+# or system-provided.txt. Editing a single pin here by hand, or letting a bot do
+# it, leaves that distribution's transitives at their old versions and hashes,
+# which fails a --require-hashes install; only a full re-resolve is coherent.
+#
+# The name and location are load-bearing. GitHub's dependency graph matches pip
+# manifests by the exact filename "requirements.txt" and skips directories named
+# like vendored code, so renaming or moving this file switches off Dependabot
+# alerts for every pin below without breaking anything visible.
 #
 # The postinst installs the venv from these with --no-index, so root never runs
 # code fetched at install time; the wheels travel inside the signed package

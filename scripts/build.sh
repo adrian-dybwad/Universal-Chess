@@ -110,7 +110,7 @@ function requireSigningKeyring {
 # exactly what the lock names; the lock is already the full closure, minus what
 # Debian supplies (see src/universalchess/setup/system-provided.txt).
 function collectVendoredWheels {
-    local lock="${REPO_ROOT}/src/universalchess/setup/wheels.lock"
+    local lock="${REPO_ROOT}/src/universalchess/setup/pinned/requirements.txt"
     local wheelhouse="${STAGE_DIR}${INSTALLDIR}/wheels"
 
     if [ ! -s "${lock}" ]; then

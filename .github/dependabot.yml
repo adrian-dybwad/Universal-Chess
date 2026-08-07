@@ -25,11 +25,24 @@ updates:
           - "*"
 
   # Python dependencies. pyproject.toml declares no [project] deps (ruff/bandit
-  # config only), so the two requirements.txt files are the update targets.
+  # config only), so the requirements.txt files are the update targets.
+  #
+  # setup/pinned holds the hash-pinned closure vendored into the .deb. Listing it
+  # is what puts those versions in the dependency graph, which is where
+  # vulnerability alerts come from -- without it the pins age unwatched, since
+  # setup/requirements.txt names distributions without versions and so can never
+  # be reported as vulnerable.
+  #
+  # Expect Dependabot's own pull requests against setup/pinned to fail CI when a
+  # bump changes the transitive closure: it re-pins and re-hashes the targeted
+  # distribution alone, which breaks the --require-hashes install the postinst
+  # performs. Treat those as notifications and run the refresh workflow, which
+  # re-resolves the whole closure coherently.
   - package-ecosystem: pip
     directories:
       - /
       - /src/universalchess/setup
+      - /src/universalchess/setup/pinned
     schedule:
       interval: weekly
     groups:

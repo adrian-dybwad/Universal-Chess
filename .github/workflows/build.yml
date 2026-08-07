@@ -50,6 +50,14 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
       
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          # Must match RESOLUTION_PYTHON in the resolver, which refuses to run
+          # under anything else. Verifying under a newer interpreter would pass
+          # while resolving a different closure than a bookworm board gets.
+          python-version: '3.11'
+
       - name: Verify vendored wheels resolve offline
         run: |
           # The postinst installs the venv with --no-index, so the package must
@@ -58,7 +66,7 @@ jobs:
           # directly; a missing *transitive* is absent from both and would first
           # appear as a failed install on a board, with no index to fall back to.
           # Building the wheelhouse and resolving against it is what catches that.
-          python3 scripts/update-wheels-lock.py --verify
+          python scripts/update-wheels-lock.py --verify
 
       - name: Build .deb package
         run: |

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate ``src/universalchess/setup/wheels.lock``.
+"""Regenerate ``src/universalchess/setup/pinned/requirements.txt``.
 
 The lock names every Python distribution the package must carry so the postinst
 can install the venv offline, pinned to an exact version and sha256. CI builds
@@ -15,9 +15,16 @@ Run after changing requirements.txt or system-provided.txt::
 
     ./scripts/update-wheels-lock.py
 
-Requires network access. Resolution targets the oldest supported interpreter
-(Python 3.11, on bookworm) so environment markers cannot select a distribution
-that a bookworm board would not receive.
+Requires network access, and must run under Python 3.11 -- the interpreter
+bookworm ships, and the oldest the package supports. Markers are evaluated
+against the running interpreter, so this is checked at startup rather than left
+to whoever invokes it; see ``RESOLUTION_PYTHON``.
+
+Known limitation: resolving under the oldest interpreter catches backports that
+bookworm needs and trixie does not, since carrying an unnecessary pure-Python
+wheel is harmless. It would not catch a distribution required *only* under
+trixie's 3.13. No current requirement has such a marker, and the build
+workflow's offline resolution would fail if one appeared.
 """
 
 import argparse
@@ -31,17 +38,35 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+# Bookworm, the oldest board OS the package supports, ships Python 3.11. pip
+# evaluates environment markers against the interpreter doing the resolving, so
+# resolving under a newer one silently drops any distribution gated on an older
+# version. The result installs fine on trixie and fails only on bookworm, with
+# --no-index leaving no way to recover on the device, so this is enforced rather
+# than documented.
+RESOLUTION_PYTHON = (3, 11)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SETUP_DIR = REPO_ROOT / "src" / "universalchess" / "setup"
 REQUIREMENTS = SETUP_DIR / "requirements.txt"
 SYSTEM_PROVIDED = SETUP_DIR / "system-provided.txt"
-WHEELS_LOCK = SETUP_DIR / "wheels.lock"
+# Named requirements.txt, in its own directory, so GitHub's dependency graph
+# parses it: that parsing is what produces vulnerability alerts for these pins,
+# and it matches by exact filename rather than by pattern.
+WHEELS_LOCK = SETUP_DIR / "pinned" / "requirements.txt"
 
 HEADER = """\
 # Python wheels vendored into the .deb. GENERATED -- do not edit by hand.
 #
 # Regenerate with ./scripts/update-wheels-lock.py after changing requirements.txt
-# or system-provided.txt.
+# or system-provided.txt. Editing a single pin here by hand, or letting a bot do
+# it, leaves that distribution's transitives at their old versions and hashes,
+# which fails a --require-hashes install; only a full re-resolve is coherent.
+#
+# The name and location are load-bearing. GitHub's dependency graph matches pip
+# manifests by the exact filename "requirements.txt" and skips directories named
+# like vendored code, so renaming or moving this file switches off Dependabot
+# alerts for every pin below without breaking anything visible.
 #
 # The postinst installs the venv from these with --no-index, so root never runs
 # code fetched at install time; the wheels travel inside the signed package
@@ -249,6 +274,25 @@ def main():
     )
     args = parser.parse_args()
 
+    if sys.version_info[:2] != RESOLUTION_PYTHON:
+        wanted = ".".join(str(part) for part in RESOLUTION_PYTHON)
+        running = ".".join(str(part) for part in sys.version_info[:2])
+        print(
+            f"::: ERROR: this must run under Python {wanted}, not {running}.\n"
+            ":::\n"
+            f"::: Environment markers resolve against the running interpreter, so\n"
+            f"::: a closure resolved under {running} can omit a distribution that a\n"
+            f"::: bookworm board needs, and the omission only ever shows up as a\n"
+            "::: failed install there.\n"
+            ":::\n"
+            ":::   gh workflow run refresh-pinned-requirements.yml\n"
+            ":::\n"
+            f"::: regenerates it under {wanted} and opens a pull request. Locally,\n"
+            f"::: run this script with a Python {wanted} interpreter.",
+            file=sys.stderr,
+        )
+        return 1
+
     provided = read_system_provided(SYSTEM_PROVIDED)
     provided_normalized = {normalize(name) for name in provided}
     roots = [
@@ -275,10 +319,10 @@ def main():
     if args.check:
         current = WHEELS_LOCK.read_text() if WHEELS_LOCK.exists() else ""
         if current != content:
-            print("::: ERROR: wheels.lock is out of date; run "
+            print(f"::: ERROR: {WHEELS_LOCK} is out of date; run "
                   "./scripts/update-wheels-lock.py", file=sys.stderr)
             return 1
-        print("::: wheels.lock is up to date")
+        print(f"::: {WHEELS_LOCK} is up to date")
         return 0
 
     WHEELS_LOCK.write_text(content)
