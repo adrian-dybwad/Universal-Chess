@@ -36,7 +36,6 @@ import sys
 import logging
 import signal
 import time
-import subprocess
 import os
 import dbus
 import dbus.service
@@ -945,8 +944,8 @@ Examples:
     # Parse move history if provided
     if args.moves:
         if not chess:
-            logger.error("ERROR: python-chess is required for --moves option")
-            logger.info("Install with: pip install python-chess")
+            logger.error("ERROR: the chess library is required for --moves option")
+            logger.info("Install with: pip install chess")
             sys.exit(1)
         
         # Parse moves (space or comma separated)
