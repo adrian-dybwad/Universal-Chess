@@ -31,6 +31,7 @@ import os
 import pathlib
 import re
 import tempfile
+import threading
 from typing import Callable, Dict, List, Optional, Tuple
 
 from universalchess.board.logging import log
@@ -348,7 +349,7 @@ def build_groups(
     return tuple(groups)
 
 
-def probe_options(engine_path: str) -> List[object]:
+def _launch_and_read_options(engine_path: str) -> List[object]:
     """Launch the engine and return its advertised UCI options.
 
     Uses the shared registry so the probe reuses an already-loaded instance when
@@ -382,6 +383,77 @@ def probe_options(engine_path: str) -> List[object]:
         if handle is not None:
             registry.release(handle)
         registry.evict_if_unused(engine_path)
+
+
+# Cached probe results, keyed by binary identity (see _binary_identity). Guarded by
+# _probe_lock, which is also held across the launch itself so a burst of concurrent
+# cold requests performs one launch rather than one per request: an unauthenticated
+# endpoint reaches this code, so the bound on concurrent engine processes is the
+# security-relevant property, not just the cache hit rate.
+_probe_cache: Dict[Tuple[str, int, int], List[object]] = {}
+_probe_lock = threading.Lock()
+
+
+def _binary_identity(engine_path: str) -> Optional[Tuple[str, int, int]]:
+    """Return a cache key identifying the binary's current contents, or None.
+
+    Keyed on (path, size, mtime_ns) rather than a time-to-live: the advertised
+    options change only when the binary changes, so this re-probes a rebuilt or
+    reinstalled engine immediately instead of serving stale options until a timer
+    expires -- and never re-probes an unchanged one.
+
+    Returns None when the path cannot be stat'd, which keeps unstattable paths out
+    of the cache so the launcher still runs and produces the proper
+    "binary missing" classification.
+    """
+    try:
+        stat = os.stat(engine_path)
+    except OSError:
+        return None
+    return (engine_path, stat.st_size, stat.st_mtime_ns)
+
+
+def clear_probe_cache() -> None:
+    """Drop all cached probe results.
+
+    Call after an install, repair or removal replaces engine binaries. Binary
+    identity already covers an in-place rebuild; this exists for callers that
+    would rather not depend on that, and for tests.
+    """
+    with _probe_lock:
+        _probe_cache.clear()
+
+
+def probe_options(engine_path: str) -> List[object]:
+    """Return the engine's advertised UCI options, launching it only if needed.
+
+    A successful probe is cached against the binary's identity, so repeated reads
+    of the profile editor do not relaunch the engine. Failures are never cached: a
+    transient startup problem must not become permanent, and it must keep raising
+    so callers classify it rather than seeing an empty option set.
+
+    Only the raw options are cached, never the groups built from them:
+    :func:`build_groups` enumerates selectable net files from disk, so caching its
+    output would hide nets added by a later repair or top-up.
+
+    Raises:
+        EngineProbeError: The engine could not be launched, carrying the
+            classified reason and a path-free detail token.
+    """
+    identity = _binary_identity(engine_path)
+    if identity is None:
+        # Unstattable (e.g. missing) binary: let the launcher raise the properly
+        # classified error instead of inventing a cached result for it.
+        return _launch_and_read_options(engine_path)
+
+    with _probe_lock:
+        cached = _probe_cache.get(identity)
+        if cached is not None:
+            return list(cached)
+
+        options = _launch_and_read_options(engine_path)
+        _probe_cache[identity] = list(options)
+        return list(options)
 
 
 def get_schema(

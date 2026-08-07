@@ -2110,7 +2110,12 @@ class EngineManager:
                 # create-if-absent on first use -- but it is recorded and logged,
                 # because an engine that installs and then will not start is
                 # otherwise indistinguishable from a healthy one in the UI.
-                from universalchess.services import engine_bootstrap
+                from universalchess.services import engine_bootstrap, uci_schema
+                # The binary was just replaced, so any cached UCI probe for it
+                # describes the previous build. Dropping the cache here means a
+                # reinstall that adds or removes options is reflected immediately
+                # instead of relying on the binary's mtime having changed.
+                uci_schema.clear_probe_cache()
                 engine_bootstrap.initialize_profiles(
                     engine_name, display_name=engine.display_name,
                 )
