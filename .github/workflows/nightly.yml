@@ -24,7 +24,7 @@ jobs:
       should_build: ${{ steps.decide.outputs.should_build }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
         with:
           # Need history and all nightly tags to compare HEAD against the last
           # published nightly.
@@ -71,14 +71,14 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
         with:
           # Full history and tags are required so the release-notes step can diff
           # against the previous nightly tag with `git log`.
           fetch-depth: 0
       
       - name: Set up Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5
         with:
           node-version: '22'
           cache: 'npm'
@@ -136,7 +136,32 @@ jobs:
         run: |
           cd scripts/releases
           sha256sum *.deb enable_usb_gadget.py > SHA256SUMS.txt
-      
+
+      # Boards verify this signature against the keyring shipped in the package
+      # before installing an update. Nightly is the channel most boards track, so
+      # an unsigned build here would stall updates for them; fail the build rather
+      # than publish something no board will install.
+      - name: Sign checksums
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          RELEASE_SIGNING_PASSPHRASE: ${{ secrets.RELEASE_SIGNING_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_SIGNING_KEY}" ]; then
+            echo "::error::RELEASE_SIGNING_KEY secret is not configured. Boards" \
+                 "verify SHA256SUMS.txt against the keyring in the package and" \
+                 "will refuse an unsigned release. See" \
+                 "packaging/deb-root/opt/universalchess/keys/README.md"
+            exit 1
+          fi
+          printf '%s' "${RELEASE_SIGNING_KEY}" | gpg --batch --quiet --import
+          cd scripts/releases
+          gpg --batch --yes --armor --detach-sign \
+              --pinentry-mode loopback \
+              --passphrase "${RELEASE_SIGNING_PASSPHRASE}" \
+              --output SHA256SUMS.txt.asc SHA256SUMS.txt
+          gpg --batch --verify SHA256SUMS.txt.asc SHA256SUMS.txt
+
       - name: Generate release notes
         env:
           DATE_TAG: ${{ steps.version.outputs.date_tag }}
@@ -185,7 +210,7 @@ jobs:
           } > release_notes.md
       
       - name: Delete existing releases for today
-        uses: dev-drprasad/delete-older-releases@v0.3.4
+        uses: dev-drprasad/delete-older-releases@dfbe6be2a006e9475dfcbe5b8d201f1824c2a9fe  # v0.3.4
         with:
           keep_latest: 0
           # Match the date portion of the timestamped tag (nightly-YYYY-MM-DD-...)
@@ -196,7 +221,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Create dated nightly release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
           tag_name: ${{ steps.version.outputs.tag_name }}
           name: "Nightly Build - ${{ steps.version.outputs.date_tag }}"
@@ -205,10 +230,11 @@ jobs:
             scripts/releases/*.deb
             scripts/releases/enable_usb_gadget.py
             scripts/releases/SHA256SUMS.txt
+            scripts/releases/SHA256SUMS.txt.asc
           body_path: release_notes.md
       
       - name: Delete old nightly releases
-        uses: dev-drprasad/delete-older-releases@v0.3.4
+        uses: dev-drprasad/delete-older-releases@dfbe6be2a006e9475dfcbe5b8d201f1824c2a9fe  # v0.3.4
         with:
           keep_latest: 7
           delete_tag_pattern: nightly-

@@ -15,7 +15,10 @@ The update state is stored in /opt/universalchess/update-state.json and includes
 - current_version: currently installed version
 """
 
+import hashlib
+import hmac
 import json
+import os
 import subprocess  # nosec B404 - only runs fixed, trusted argv lists (dpkg-query/curl/wget/systemctl and the pinned install helper); no shell, no user input
 import threading
 import time
@@ -42,6 +45,16 @@ GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/rel
 STATE_FILE = Path("/opt/universalchess/update-state.json")
 PENDING_DEB_DIR = Path("/opt/universalchess/pending-updates")
 VERSION_FILE = Path("/opt/universalchess/VERSION")
+
+# Release asset holding the SHA-256 digests of the other assets, published by
+# .github/workflows/{release,nightly}.yml. A downloaded .deb is installed as root,
+# so it is verified against this manifest before it is staged; a release without it
+# cannot be verified and is refused.
+CHECKSUMS_ASSET_NAME = "SHA256SUMS.txt"
+# Detached signature over the manifest. The root install helper verifies it with a
+# keyring shipped in the package, so the manifest can be trusted even though it is
+# downloaded into a directory the service user can write.
+CHECKSUMS_SIGNATURE_ASSET_NAME = f"{CHECKSUMS_ASSET_NAME}.asc"
 
 # Name of the transient systemd unit used to run the install. Running dpkg
 # inside a transient unit (its own cgroup, managed by PID 1) is the only way
@@ -94,6 +107,63 @@ class ReleaseInfo:
     download_url: Optional[str]
     download_size: int
     body: str = ""
+    # The .deb asset's published name. SHA256SUMS.txt lists assets under these
+    # names, while the local copy is renamed to universal-chess_<version>_all.deb,
+    # so the checksum lookup must use this rather than the local filename.
+    download_name: Optional[str] = None
+    # URL of the release's SHA256SUMS.txt asset. Without it the download cannot be
+    # verified and is refused.
+    checksums_url: Optional[str] = None
+    # URL of the detached signature over SHA256SUMS.txt. The root install helper
+    # verifies this against the keyring shipped in the package, which is what lets
+    # it trust a manifest that was downloaded into a service-user-writable
+    # directory. Without it the helper refuses to install.
+    signature_url: Optional[str] = None
+
+
+def parse_sha256sums(text: str, filename: str) -> Optional[str]:
+    """Return the SHA-256 hex digest listed for ``filename``, or None.
+
+    Parses the format ``sha256sum`` emits: ``<64 hex chars><space><space or '*'
+    for binary mode><name>``. Names are compared by basename so a listing that
+    carries a path prefix (``./name``) still matches.
+
+    Returns None -- never raises -- for empty, malformed, or non-matching input, so
+    a corrupt checksum file becomes a clean verification failure rather than a
+    crash in the update thread.
+    """
+    if not text:
+        return None
+
+    target = os.path.basename(filename)
+    for line in text.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        digest, name = parts
+        digest = digest.lower()
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            continue
+        # Binary-mode listings prefix the name with '*'.
+        if os.path.basename(name.lstrip("*").strip()) == target:
+            return digest
+    return None
+
+
+def sha256_of_file(path) -> Optional[str]:
+    """Return the SHA-256 hex digest of a file, or None if it cannot be read.
+
+    Reads in chunks so a large .deb is not loaded into memory on a Pi Zero.
+    """
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError as exc:
+        log.error(f"[UpdateService] Could not hash {path}: {exc}")
+        return None
+    return digest.hexdigest()
 
 
 @dataclass
@@ -367,12 +437,22 @@ class UpdateService:
             
             releases = []
             for item in data[:20]:  # Check last 20 releases
-                # Find .deb asset
+                # Find the .deb asset, the checksum manifest that verifies it, and
+                # the detached signature that makes the manifest trustworthy.
+                # Matched independently rather than in an if/elif chain: the
+                # signature's name also fails the .deb test, so chaining them makes
+                # which asset wins depend on the order GitHub returns them.
                 deb_asset = None
+                checksums_asset = None
+                signature_asset = None
                 for asset in item.get("assets", []):
-                    if asset.get("name", "").endswith(".deb"):
+                    name = asset.get("name", "")
+                    if deb_asset is None and name.endswith(".deb"):
                         deb_asset = asset
-                        break
+                    if name == CHECKSUMS_ASSET_NAME:
+                        checksums_asset = asset
+                    if name == CHECKSUMS_SIGNATURE_ASSET_NAME:
+                        signature_asset = asset
                 
                 tag = item.get("tag_name", "")
                 is_nightly = "nightly" in tag.lower()
@@ -394,6 +474,17 @@ class UpdateService:
                     download_url=deb_asset.get("browser_download_url") if deb_asset else None,
                     download_size=deb_asset.get("size", 0) if deb_asset else 0,
                     body=item.get("body", "")[:500],
+                    download_name=deb_asset.get("name") if deb_asset else None,
+                    checksums_url=(
+                        checksums_asset.get("browser_download_url")
+                        if checksums_asset
+                        else None
+                    ),
+                    signature_url=(
+                        signature_asset.get("browser_download_url")
+                        if signature_asset
+                        else None
+                    ),
                 ))
             
             log.debug(f"[UpdateService] Fetched {len(releases)} releases")
@@ -522,8 +613,11 @@ class UpdateService:
             for f in PENDING_DEB_DIR.glob("*.deb"):
                 f.unlink()
             
-            # Download
-            deb_filename = f"universal-chess_{release.version}_all.deb"
+            # Stage under the published asset name. The signed manifest lists assets
+            # under those names, and the root install helper looks up the local
+            # file's basename in it -- renaming the file locally would make that
+            # lookup miss and every install be refused.
+            deb_filename = release.download_name or f"universal-chess_{release.version}_all.deb"
             deb_path = PENDING_DEB_DIR / deb_filename
             
             log.info(f"[UpdateService] Downloading {release.download_url}")
@@ -537,7 +631,32 @@ class UpdateService:
                 log.error(f"[UpdateService] Download failed: {result.stderr}")
                 self._notify(UpdateEvent.DOWNLOAD_FAILED, "Download failed")
                 return None
-            
+
+            # Verify before staging. This .deb is installed as root by the pinned
+            # helper, so an unverified package is arbitrary root code. Fail closed:
+            # a missing manifest, a missing entry, or a mismatch all abort and
+            # delete the file, and pending state is only recorded after it passes.
+            if not self._verify_download(deb_path, release):
+                deb_path.unlink(missing_ok=True)
+                self._notify(
+                    UpdateEvent.DOWNLOAD_FAILED,
+                    "Update rejected: could not verify the download",
+                )
+                return None
+
+            # Stage the signed manifest alongside the .deb so the root helper can
+            # repeat the verification against its own keyring. This check passing
+            # is not sufficient on its own: it happens in the service user's own
+            # process, so it protects against a corrupted or substituted download,
+            # not against that user deliberately installing something else.
+            if not self._stage_verification_material(release):
+                deb_path.unlink(missing_ok=True)
+                self._notify(
+                    UpdateEvent.DOWNLOAD_FAILED,
+                    "Update rejected: release is not signed",
+                )
+                return None
+
             # Update state
             self._state.pending_deb = str(deb_path)
             self._save_state()
@@ -555,6 +674,109 @@ class UpdateService:
             with self._lock:
                 self._downloading = False
     
+    def _stage_verification_material(self, release: ReleaseInfo) -> bool:
+        """Place the signed manifest and its signature next to the staged .deb.
+
+        The root install helper re-verifies the package against its own keyring
+        before handing it to apt, and reads both files from the pending-updates
+        directory. Staging them here keeps the download in one place; the helper
+        does not trust these files, it verifies the signature over them.
+
+        Returns False when the release publishes no signature, in which case the
+        caller discards the download: shipping it would stage a package the helper
+        will refuse anyway, leaving the board reporting an update it cannot install.
+        """
+        if not release.signature_url:
+            log.error(
+                f"[UpdateService] Release {release.tag} publishes no "
+                f"{CHECKSUMS_SIGNATURE_ASSET_NAME}; the install helper would refuse it"
+            )
+            return False
+
+        manifest = self._fetch_checksums(release.checksums_url)
+        if manifest is None:
+            return False
+
+        signature = self._fetch_checksums(release.signature_url)
+        if signature is None:
+            log.error("[UpdateService] Could not fetch the manifest signature")
+            return False
+
+        try:
+            (PENDING_DEB_DIR / CHECKSUMS_ASSET_NAME).write_text(manifest)
+            (PENDING_DEB_DIR / CHECKSUMS_SIGNATURE_ASSET_NAME).write_text(signature)
+        except OSError as e:
+            log.error(f"[UpdateService] Could not stage verification material: {e}")
+            return False
+
+        return True
+
+    def _fetch_checksums(self, url: str) -> Optional[str]:
+        """Fetch the SHA256SUMS.txt body, or None if it cannot be retrieved.
+
+        ``-L`` follows the redirect GitHub issues for release asset downloads;
+        without it the body is the redirect page and no digest parses.
+        """
+        try:
+            result = subprocess.run(  # noqa: S603, S607  # nosec B603 B607 - fixed argv; URL comes from the release metadata this service fetched, no shell
+                ["curl", "-sSL", url],  # noqa: S607
+                capture_output=True, text=True, timeout=60
+            )
+        except (subprocess.SubprocessError, OSError) as exc:
+            log.error(f"[UpdateService] Checksum fetch failed: {exc}")
+            return None
+
+        if result.returncode != 0:
+            log.error(f"[UpdateService] Checksum fetch failed: {result.stderr}")
+            return None
+        return result.stdout
+
+    def _verify_download(self, deb_path, release: ReleaseInfo) -> bool:
+        """Whether ``deb_path`` matches the digest published for this release.
+
+        Fails closed on every uncertain outcome (no manifest URL, unfetchable
+        manifest, asset not listed, unreadable file, digest mismatch): the
+        alternative is installing an unverified package as root.
+
+        The lookup uses the release asset's published name, not the local filename,
+        because the local copy is renamed to ``universal-chess_<version>_all.deb``
+        while the manifest lists the names as published.
+        """
+        if not release.checksums_url:
+            log.error(
+                f"[UpdateService] Release {release.tag} publishes no "
+                f"{CHECKSUMS_ASSET_NAME}; refusing to install an unverified package"
+            )
+            return False
+
+        manifest = self._fetch_checksums(release.checksums_url)
+        if manifest is None:
+            log.error("[UpdateService] Could not fetch checksums; refusing the update")
+            return False
+
+        asset_name = release.download_name or os.path.basename(release.download_url or "")
+        expected = parse_sha256sums(manifest, asset_name)
+        if not expected:
+            log.error(
+                f"[UpdateService] {asset_name} is not listed in "
+                f"{CHECKSUMS_ASSET_NAME}; refusing the update"
+            )
+            return False
+
+        actual = sha256_of_file(deb_path)
+        if actual is None:
+            return False
+
+        if not hmac.compare_digest(actual, expected):
+            log.error(
+                f"[UpdateService] Checksum mismatch for {asset_name}: "
+                f"expected {expected}, got {actual}"
+            )
+            return False
+
+        log.info(f"[UpdateService] Verified {asset_name} against {CHECKSUMS_ASSET_NAME}")
+        return True
+
     # =========================================================================
     # Installation
     # =========================================================================
@@ -659,6 +881,20 @@ class UpdateService:
         log_event("update", f"Installing software update ({deb_path.name})", level="info")
         return self._launch_install(deb_path)
 
+    def _is_channel_switch(self) -> bool:
+        """Whether the selected channel differs from the installed version's.
+
+        Derived by comparing the selected channel with the installed version
+        string rather than tracking a flag when the channel is changed: the change
+        and the install are separate user actions, potentially separated by a
+        restart, so a flag would have to be persisted and could go stale. The
+        installed version is the ground truth for which channel the board is
+        actually on.
+        """
+        installed_is_nightly = "nightly" in (self.get_current_version() or "").lower()
+        selected_is_nightly = self._state.channel == UpdateChannel.NIGHTLY.value
+        return installed_is_nightly != selected_is_nightly
+
     def _launch_install(self, deb_path: Path) -> bool:
         """Launch the install via the pinned root helper.
 
@@ -675,10 +911,20 @@ class UpdateService:
         Returns True if the helper launched the unit, False otherwise (for
         example, the sudo grant is missing or an install is already active).
         """
+        argv = ["sudo", "-n", INSTALL_HELPER]
+        if self._is_channel_switch():
+            # The helper refuses a version older than the installed one, so that a
+            # genuine but outdated release cannot be used to reintroduce a fixed
+            # issue. Leaving the nightly channel is legitimately such a downgrade
+            # (2.0.0 sorts before 2.0.0-nightly), so the intent has to be declared
+            # or the user could never switch back to stable.
+            argv.append("--allow-channel-switch")
+        argv.append(str(deb_path))
+
         try:
             log.info(f"[UpdateService] Launching install helper for {deb_path}")
             result = subprocess.run(  # noqa: S603, S607  # nosec B603 B607 - fixed argv to a pinned helper path under a locked-down sudo grant, no shell
-                ["sudo", "-n", INSTALL_HELPER, str(deb_path)],  # noqa: S607
+                argv,
                 capture_output=True, text=True, timeout=30,
             )
 

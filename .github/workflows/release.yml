@@ -17,10 +17,10 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
       
       - name: Set up Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5
         with:
           node-version: '22'
           cache: 'npm'
@@ -49,15 +49,43 @@ jobs:
         run: |
           cd scripts/releases
           sha256sum *.deb enable_usb_gadget.py > SHA256SUMS.txt
-      
+
+      # Boards verify this signature against the keyring shipped in the package
+      # before installing an update, so an unsigned release cannot be installed.
+      # Fail loudly when the key is absent: publishing unsigned would leave every
+      # board refusing the update, recoverable only by installing a .deb by hand.
+      - name: Sign checksums
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          RELEASE_SIGNING_PASSPHRASE: ${{ secrets.RELEASE_SIGNING_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_SIGNING_KEY}" ]; then
+            echo "::error::RELEASE_SIGNING_KEY secret is not configured. Boards" \
+                 "verify SHA256SUMS.txt against the keyring in the package and" \
+                 "will refuse an unsigned release. See" \
+                 "packaging/deb-root/opt/universalchess/keys/README.md"
+            exit 1
+          fi
+          printf '%s' "${RELEASE_SIGNING_KEY}" | gpg --batch --quiet --import
+          cd scripts/releases
+          gpg --batch --yes --armor --detach-sign \
+              --pinentry-mode loopback \
+              --passphrase "${RELEASE_SIGNING_PASSPHRASE}" \
+              --output SHA256SUMS.txt.asc SHA256SUMS.txt
+          # Verify what was produced, so a broken signature fails the build here
+          # rather than on every board that tries to update.
+          gpg --batch --verify SHA256SUMS.txt.asc SHA256SUMS.txt
+
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: release-artifacts
           path: |
             scripts/releases/*.deb
             scripts/releases/enable_usb_gadget.py
             scripts/releases/SHA256SUMS.txt
+            scripts/releases/SHA256SUMS.txt.asc
 
   release:
     name: Create Release
@@ -68,10 +96,10 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
       
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           name: release-artifacts
           path: ./artifacts
@@ -116,7 +144,7 @@ jobs:
           } > release_notes.md
       
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
           name: Universal Chess v${{ needs.build.outputs.version }}
           generate_release_notes: false
@@ -124,5 +152,6 @@ jobs:
             artifacts/*.deb
             artifacts/enable_usb_gadget.py
             artifacts/SHA256SUMS.txt
+            artifacts/SHA256SUMS.txt.asc
           body_path: release_notes.md
 

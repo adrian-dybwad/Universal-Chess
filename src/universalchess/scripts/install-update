@@ -28,19 +28,52 @@ STATE_FILE="/opt/universalchess/update-state.json"
 LOG="/var/log/universal-chess-update.log"
 UNIT="universal-chess-update"
 SELF="/opt/universalchess/scripts/install-update"
+PACKAGE="universal-chess"
 
-# Parse mode. "--run" means we have already been re-exec'd inside the transient
-# unit (as root, by systemd) and should perform the actual install.
-if [ "${1:-}" = "--run" ]; then
-    MODE="run"
-    DEB="${2:-}"
-else
-    MODE="launch"
-    DEB="${1:-}"
+# Integrity inputs. PENDING_DIR is writable by the service user by design (the
+# updater downloads into it), so nothing in there is trusted on its own: the
+# MANIFEST and SIGNATURE are attacker-controllable, and only the KEYRING -- which
+# lives in the root-owned install tree and ships in the package -- is not. The
+# signature is what makes the manifest trustworthy, and the manifest is what makes
+# the .deb's checksum meaningful. Verifying a checksum supplied by the same party
+# that supplied the .deb would prove nothing.
+KEYRING="/opt/universalchess/keys/release-signing.gpg"
+MANIFEST="${PENDING_DIR}/SHA256SUMS.txt"
+SIGNATURE="${MANIFEST}.asc"
+
+# Parse arguments. "--run" means we have already been re-exec'd inside the
+# transient unit (as root, by systemd) and should perform the actual install.
+# "--allow-channel-switch" permits installing an older version, which a
+# stable<->nightly switch legitimately requires.
+MODE="launch"
+ALLOW_CHANNEL_SWITCH=0
+DEB=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --run) MODE="run" ;;
+        --allow-channel-switch) ALLOW_CHANNEL_SWITCH=1 ;;
+        --) shift; break ;;
+        -*)
+            echo "unknown option: $1" >&2
+            exit 2
+            ;;
+        *)
+            if [ -n "$DEB" ]; then
+                echo "unexpected argument: $1" >&2
+                exit 2
+            fi
+            DEB="$1"
+            ;;
+    esac
+    shift
+done
+# Anything after `--` is the deb path, if not already given.
+if [ -z "$DEB" ] && [ $# -gt 0 ]; then
+    DEB="$1"
 fi
 
 if [ -z "$DEB" ]; then
-    echo "usage: install-update [--run] <deb-path>" >&2
+    echo "usage: install-update [--run] [--allow-channel-switch] <deb-path>" >&2
     exit 2
 fi
 
@@ -63,6 +96,12 @@ fi
 if [ "$MODE" = "launch" ]; then
     # Re-exec inside a transient unit so the install survives the service
     # restart performed by the postinst. Already root here, so no nested sudo.
+    # The channel-switch decision is forwarded rather than re-derived, so the
+    # re-exec installs under exactly the policy the caller was granted.
+    if [ "$ALLOW_CHANNEL_SWITCH" -eq 1 ]; then
+        exec systemd-run --collect --unit="$UNIT" \
+            "$SELF" --run --allow-channel-switch "$REAL_DEB"
+    fi
     exec systemd-run --collect --unit="$UNIT" "$SELF" --run "$REAL_DEB"
 fi
 
@@ -70,6 +109,89 @@ fi
 exec >>"$LOG" 2>&1
 export DEBIAN_FRONTEND=noninteractive
 echo "$(date): [update] install start: $REAL_DEB"
+
+# --- Integrity gate: must pass before the package is allowed to run any code ---
+#
+# Ordering is the whole point. A .deb's maintainer scripts execute as root during
+# installation, so verification that happens afterwards protects nothing.
+#
+# Every input except the keyring is service-user writable, so each absence is a
+# refusal rather than a reason to skip the check: an attacker who could turn
+# verification off by deleting the signature would face no verification at all.
+for required in "$KEYRING" "$MANIFEST" "$SIGNATURE"; do
+    if [ ! -f "$required" ]; then
+        echo "$(date): [update] REFUSED: missing verification input: $required"
+        exit 1
+    fi
+done
+
+# Verify with whichever single-purpose verifier the system has. Which one is
+# guaranteed depends on the Debian release: bookworm's apt depends on gpgv, while
+# trixie's apt is built against Sequoia and depends on sqv instead, so gpgv can be
+# absent there. Using either means the tool is already installed on both and the
+# update needs no network to verify itself.
+#
+# Both are used rather than gpg because they verify against a fixed keyring,
+# never mutate it and need no GNUPGHOME -- the same job apt does. A forged
+# manifest fails here because the service user cannot produce a valid signature.
+#
+# The keyring must be a plain OpenPGP certificate stream (what `gpg --export`
+# writes), not a GnuPG keybox: sqv cannot parse the keybox format.
+verify_manifest_signature() {
+    if command -v sqv > /dev/null 2>&1; then
+        if sqv --keyring="$KEYRING" --signature-file="$SIGNATURE" "$MANIFEST" > /dev/null 2>&1; then
+            return 0
+        fi
+        return 1
+    fi
+    if command -v gpgv > /dev/null 2>&1; then
+        if gpgv --keyring "$KEYRING" "$SIGNATURE" "$MANIFEST" > /dev/null 2>&1; then
+            return 0
+        fi
+        return 1
+    fi
+    # No verifier at all must refuse, never fall through to an unverified install:
+    # otherwise removing the binary would be enough to disable the check.
+    echo "$(date): [update] REFUSED: no OpenPGP verifier (sqv or gpgv) installed"
+    return 1
+}
+
+if ! verify_manifest_signature; then
+    echo "$(date): [update] REFUSED: manifest signature is not valid"
+    exit 1
+fi
+echo "$(date): [update] manifest signature verified"
+
+# With the manifest now trusted, the .deb must match the checksum it publishes for
+# that exact filename.
+DEB_NAME="$(basename "$REAL_DEB")"
+EXPECTED_SHA="$(awk -v name="$DEB_NAME" '$2 == name || $2 == "*" name {print $1; exit}' "$MANIFEST")"
+if [ -z "$EXPECTED_SHA" ]; then
+    echo "$(date): [update] REFUSED: $DEB_NAME is not listed in the signed manifest"
+    exit 1
+fi
+ACTUAL_SHA="$(sha256sum "$REAL_DEB" | awk '{print $1}')"
+if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
+    echo "$(date): [update] REFUSED: checksum mismatch for $DEB_NAME"
+    echo "$(date): [update]   expected $EXPECTED_SHA"
+    echo "$(date): [update]   actual   $ACTUAL_SHA"
+    exit 1
+fi
+echo "$(date): [update] package checksum verified"
+
+# Rollback guard. A signature proves the package is genuine, not that it is
+# current -- a genuine older release would reintroduce whatever it was that the
+# newer one fixed, and every check above would still pass. Skipped for a declared
+# channel switch, where moving to a lower version is the intent.
+CANDIDATE_VERSION="$(dpkg-deb -f "$REAL_DEB" Version 2>/dev/null || true)"
+INSTALLED_VERSION="$(dpkg-query -W -f='${Version}' "$PACKAGE" 2>/dev/null || true)"
+if [ "$ALLOW_CHANNEL_SWITCH" -eq 0 ] && [ -n "$CANDIDATE_VERSION" ] && [ -n "$INSTALLED_VERSION" ]; then
+    if dpkg --compare-versions "$CANDIDATE_VERSION" lt "$INSTALLED_VERSION"; then
+        echo "$(date): [update] REFUSED: $CANDIDATE_VERSION is older than installed $INSTALLED_VERSION"
+        echo "$(date): [update]   pass --allow-channel-switch for a deliberate channel change"
+        exit 1
+    fi
+fi
 
 # Refresh package lists so a newly added dependency can be resolved from the
 # repos. Tolerate failure (e.g. offline) and fall back to cached lists.

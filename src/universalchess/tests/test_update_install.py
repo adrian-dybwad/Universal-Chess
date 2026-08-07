@@ -25,6 +25,7 @@ in a setsid child, via bare dpkg, or with a broad sudo grant.
 """
 
 import json
+import subprocess  # nosec B404 - runs awk to exercise the shipped helper's own lookup
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -86,6 +87,12 @@ class TestInstallLaunchesViaHelper:
         password prompt.
         """
         deb = _make_deb(tmp_path)
+        # The fixture board runs a nightly build, so select the nightly channel:
+        # this test is about the escalation path for an ordinary same-channel
+        # update. A channel switch legitimately adds an argument (covered by
+        # TestChannelSwitchIsDeclaredToTheHelper), which would defeat the exact
+        # argv comparison this test relies on.
+        service.set_channel(us.UpdateChannel.NIGHTLY)
 
         with patch.object(us.subprocess, "run") as mock_run:
             # is_installing() check (systemctl is-active) -> not active,
@@ -101,6 +108,176 @@ class TestInstallLaunchesViaHelper:
         assert launch_argv == ["sudo", "-n", INSTALL_HELPER, str(deb)]
 
 
+class TestChannelSwitchIsDeclaredToTheHelper:
+    """A deliberate channel change must be distinguishable from a rollback.
+
+    The root helper refuses a version older than the installed one, so that a
+    genuine but outdated release cannot be used to reintroduce a fixed issue. A
+    nightly->stable switch is legitimately a downgrade in Debian version terms
+    (``2.0.0`` sorts before ``2.0.0-nightly``, because an absent revision sorts
+    before ``nightly``), so the service has to tell the helper when the downgrade
+    is the user's intent. If it does not, switching off the nightly channel
+    silently stops working while every other update path keeps functioning.
+    """
+
+    CHANNEL_SWITCH_FLAG = "--allow-channel-switch"
+
+    def _install_argv(self, service, tmp_path):
+        """Return the argv the service passes to the pinned root helper."""
+        deb = tmp_path / "pending-updates" / "universal-chess_2.0.0_all.deb"
+        deb.parent.mkdir(parents=True, exist_ok=True)
+        deb.write_bytes(b"deb")
+
+        with patch.object(us.subprocess, "run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            service.install_update(deb)
+        return mock_run.call_args_list[-1][0][0]
+
+    def test_switching_from_nightly_to_stable_declares_the_switch(self, service, tmp_path):
+        """Leaving the nightly channel must pass the channel-switch flag.
+
+        Why this test exists: this is the one path the rollback guard would
+        otherwise block. The board is on 2.0.0-nightly and the stable release is
+        2.0.0, which dpkg considers older, so without the flag the helper refuses
+        and the user cannot get off the nightly channel at all.
+
+        How a regression manifests: the flag stops being passed and switching to
+        stable fails with "is older than installed", while nightly-to-nightly and
+        stable-to-nightly updates keep working -- so the breakage looks like a
+        stable-channel problem rather than a missing flag.
+        """
+        service.set_channel(us.UpdateChannel.STABLE)
+
+        argv = self._install_argv(service, tmp_path)
+
+        assert argv[:3] == ["sudo", "-n", INSTALL_HELPER]
+        assert self.CHANNEL_SWITCH_FLAG in argv
+
+    def test_ordinary_nightly_update_keeps_rollback_protection(self, service, tmp_path):
+        """A same-channel update must NOT declare a channel switch.
+
+        Why this test exists: the flag disables the rollback guard, so passing it
+        unconditionally would be the same as not having the guard. Staying on the
+        nightly channel is the common case and must retain protection.
+
+        How a regression manifests: the flag is passed always (an easy way to make
+        the switch test pass), and a compromised service user can then have root
+        install any genuine older release.
+        """
+        service.set_channel(us.UpdateChannel.NIGHTLY)
+
+        argv = self._install_argv(service, tmp_path)
+
+        assert self.CHANNEL_SWITCH_FLAG not in argv
+
+    def test_stable_board_staying_on_stable_keeps_rollback_protection(
+        self, service, tmp_path, monkeypatch
+    ):
+        """A stable board updating within stable must not declare a switch.
+
+        Why this test exists: the switch is derived by comparing the selected
+        channel with the installed version, so it must be correct in both
+        directions. A naive check (e.g. "channel is stable") would wrongly treat
+        every stable update as a switch and disable rollback protection for the
+        entire stable channel.
+
+        How a regression manifests: rollback protection silently off for all
+        stable boards, with no visible symptom.
+        """
+        monkeypatch.setattr(service, "get_current_version", lambda: "2.0.0")
+        service.set_channel(us.UpdateChannel.STABLE)
+
+        argv = self._install_argv(service, tmp_path)
+
+        assert self.CHANNEL_SWITCH_FLAG not in argv
+
+
+class TestBuildRefusesUnsignablePackage:
+    """The build must not produce a package that could never verify an update.
+
+    The install helper verifies each update against a keyring shipped inside the
+    package. A build missing that keyring installs fine and then refuses every
+    subsequent OTA, so the board can only be recovered by installing a .deb by
+    hand. build.sh therefore fails when the keyring is absent, keeping that outcome
+    in CI rather than in the field.
+    """
+
+    BUILD_SCRIPT = Path(us.__file__).resolve().parent.parent.parent.parent / "scripts" / "build.sh"
+
+    def _run_guard(self, tmp_path, keyring_bytes):
+        """Execute build.sh's real guard function against a synthetic DEB_ROOT.
+
+        The function is extracted from the shipped script rather than reimplemented
+        so the test cannot pass against a guard that no longer matches the one that
+        runs during a build.
+        """
+        script = self.BUILD_SCRIPT.read_text()
+        marker = "function requireSigningKeyring {"
+        assert marker in script, "build.sh has no signing-keyring guard"
+        start = script.index(marker)
+        end = script.index("\n}", start) + len("\n}")
+        function_source = script[start:end]
+
+        if keyring_bytes is not None:
+            keyring = tmp_path / "opt" / "universalchess" / "keys" / "release-signing.gpg"
+            keyring.parent.mkdir(parents=True, exist_ok=True)
+            keyring.write_bytes(keyring_bytes)
+
+        harness = f'DEB_ROOT="{tmp_path}"\n{function_source}\nrequireSigningKeyring\n'
+        # noqa/nosec: the script text comes from this repo's own build.sh and the
+        # only interpolation is a pytest tmp_path, so there is no untrusted input.
+        # Running it in bash is the point -- a reimplementation in Python would not
+        # test the guard that actually executes during a build.
+        return subprocess.run(  # noqa: S603, S607  # nosec B603 B607
+            ["bash", "-c", harness], capture_output=True, text=True, check=False  # noqa: S607
+        )
+
+    def test_build_fails_when_the_keyring_is_missing(self, tmp_path):
+        """A missing keyring must abort the build with an actionable message.
+
+        Why this test exists: this is the guard that prevents shipping a board that
+        cannot update itself. How a regression manifests: the build succeeds, the
+        package installs, and every later update is refused with "missing
+        verification input" -- discovered only in the field.
+        """
+        result = self._run_guard(tmp_path, keyring_bytes=None)
+
+        assert result.returncode == 1
+        assert "release signing keyring missing" in result.stderr
+        # The message must point at the setup instructions, not just fail.
+        assert "README" in result.stderr
+
+    def test_build_fails_when_the_keyring_is_empty(self, tmp_path):
+        """A zero-byte keyring must be rejected, not treated as present.
+
+        Why this test exists: an empty file is the likely result of a failed or
+        mis-piped ``gpg --export`` (e.g. exporting a key id that does not exist,
+        which still creates the file). An existence-only check would accept it and
+        gpgv would then fail on every board. Uses ``-s`` rather than ``-f`` for
+        exactly this case.
+
+        How a regression manifests: switching the test to ``-f`` lets an empty
+        keyring ship, reproducing the very failure the guard exists to prevent.
+        """
+        result = self._run_guard(tmp_path, keyring_bytes=b"")
+
+        assert result.returncode == 1
+        assert "release signing keyring missing" in result.stderr
+
+    def test_build_proceeds_when_a_keyring_is_present(self, tmp_path):
+        """A non-empty keyring must satisfy the guard.
+
+        Why this test exists: a guard that always fails would block every build.
+        This pins that the check passes in the intended configuration, so the two
+        failure tests above are demonstrating a real discrimination rather than a
+        uniformly broken condition.
+        """
+        result = self._run_guard(tmp_path, keyring_bytes=b"\x99not-a-real-key")
+
+        assert result.returncode == 0, result.stderr
+        assert result.stderr == ""
+
+
 class TestHelperScriptContract:
     """The shipped helper script carries the privileged install logic. These
     read the actual file so the invariants cannot silently drift from the
@@ -113,6 +290,245 @@ class TestHelperScriptContract:
         """
         assert HELPER_SCRIPT.exists(), f"helper script missing: {HELPER_SCRIPT}"
         return HELPER_SCRIPT.read_text()
+
+    def test_verifies_manifest_signature_with_a_root_owned_keyring(self, helper_text):
+        """The helper must verify SHA256SUMS.txt against a shipped public keyring.
+
+        Why this test exists: pending-updates/ is service-user writable by design
+        (the updater downloads into it), and the sudo grant lets that user ask root
+        to install whatever is there. Checking a checksum the same user supplied
+        proves nothing, so root needs a trust anchor the service user cannot touch:
+        a public keyring inside the root-owned install tree. gpgv is used rather
+        than full gpg because it verifies against a fixed keyring with no keyring
+        mutation and no GNUPGHOME, which is what apt itself does.
+
+        How a regression manifests: dropping verification silently restores the
+        ability for a compromised web process to have root install an attacker's
+        .deb -- with no visible symptom until it is exploited.
+        """
+        assert "--keyring" in helper_text
+        # The keyring must live in the root-owned tree, not beside the download.
+        assert "/opt/universalchess/pending-updates" not in helper_text.split("--keyring", 1)[1].split("\n", 1)[0]
+
+    def test_supports_the_verifier_present_on_each_debian_release(self, helper_text):
+        """The helper must accept either sqv or gpgv.
+
+        Why this test exists: which OpenPGP verifier exists depends on the Debian
+        release. bookworm's apt depends on gpgv; trixie's apt is built against
+        Sequoia and depends on sqv instead, so gpgv can be missing there. Using
+        whichever is installed keeps verification working on both without pulling
+        an extra package during the update -- which would fail on a board with no
+        network, exactly when a failed update is most awkward.
+
+        The same keyring file serves both, because ``gpg --export`` writes a plain
+        OpenPGP certificate stream. It must not be a GnuPG keybox: sqv cannot parse
+        that format.
+
+        How a regression manifests: supporting only gpgv makes every trixie board
+        refuse updates once it is the verifier in use, with "missing verification
+        input" or a command-not-found in the update log.
+        """
+        assert "sqv" in helper_text, "trixie boards may have no gpgv"
+        assert "gpgv" in helper_text, "bookworm boards may have no sqv"
+        # Both must be probed for presence rather than assumed.
+        assert helper_text.count("command -v") >= 2
+
+    @pytest.mark.parametrize(
+        ("available", "verifier_exit", "expected_exit", "expected_used"),
+        [
+            # sqv present and happy: used, install proceeds. (trixie)
+            (["sqv"], 0, 0, "sqv"),
+            # sqv present and rejects: must fail, and must NOT retry with gpgv.
+            (["sqv", "gpgv"], 1, 1, "sqv"),
+            # Only gpgv present: used, install proceeds. (bookworm)
+            (["gpgv"], 0, 0, "gpgv"),
+            (["gpgv"], 1, 1, "gpgv"),
+            # Neither present: refuse.
+            ([], 0, 1, None),
+        ],
+    )
+    def test_verifier_selection_behaviour(
+        self, tmp_path, available, verifier_exit, expected_exit, expected_used
+    ):
+        """Run the shipped selection logic against synthetic verifiers.
+
+        Why this test exists: a fallback chain is where a security control quietly
+        degrades. The cases that matter are not "does it call a verifier" but: a
+        rejection must stay a rejection rather than being retried against the other
+        tool until one accepts, and no verifier at all must refuse rather than fall
+        through. Content assertions cannot show either.
+
+        The function is extracted from the shipped helper, so this exercises the
+        real branching rather than a restatement of it.
+
+        How a regression manifests: reordering the branches so a failed sqv falls
+        through to gpgv would make the "sqv rejects" case pass with exit 0 -- an
+        attacker only needs a signature that one implementation accepts.
+        """
+        text = HELPER_SCRIPT.read_text()
+        marker = "verify_manifest_signature() {"
+        assert marker in text, "verifier selection function not found in helper"
+        start = text.index(marker)
+        function_source = text[start : text.index("\n}", start) + len("\n}")]
+
+        # Synthetic verifiers on an isolated PATH, each recording that it ran.
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        marker_file = tmp_path / "used"
+        for name in available:
+            tool = bin_dir / name
+            tool.write_text(f'#!/bin/sh\necho {name} > "{marker_file}"\nexit {verifier_exit}\n')
+            tool.chmod(0o755)
+
+        harness = (
+            f'PATH="{bin_dir}"\n'
+            f'KEYRING="{tmp_path}/keyring"\n'
+            f'MANIFEST="{tmp_path}/SHA256SUMS.txt"\n'
+            f'SIGNATURE="{tmp_path}/SHA256SUMS.txt.asc"\n'
+            'date() { echo TIMESTAMP; }\n'
+            f"{function_source}\n"
+            "verify_manifest_signature\n"
+        )
+        result = subprocess.run(  # noqa: S603, S607  # nosec B603 B607
+            ["/bin/sh", "-c", harness], capture_output=True, text=True, check=False
+        )
+
+        assert result.returncode == expected_exit, result.stdout + result.stderr
+        used = marker_file.read_text().strip() if marker_file.exists() else None
+        assert used == expected_used
+        if expected_used is None:
+            assert "no OpenPGP verifier" in result.stdout
+
+    def test_refuses_when_no_openpgp_verifier_is_installed(self, helper_text):
+        """With neither verifier present the install must be refused.
+
+        Why this test exists: the fallback chain must end in a refusal, not in an
+        unverified install. If a missing verifier silently skipped the check, an
+        attacker able to remove or shadow the binary would disable the control
+        entirely.
+
+        How a regression manifests: the last branch falls through to the apt step
+        and updates install unverified on any board lacking both tools.
+        """
+        assert "no OpenPGP verifier" in helper_text
+
+    def test_verification_runs_before_the_package_is_installed(self, helper_text):
+        """Signature and checksum checks must precede apt-get install.
+
+        Why this test exists: verification that runs after installation is
+        decorative -- the untrusted code has already executed as root via the
+        package's own maintainer scripts. Ordering is the entire value.
+
+        How a regression manifests: a refactor moves the checks below the install
+        (or into the success branch) and the helper still looks correct, still
+        logs "verified", but no longer protects anything.
+        """
+        assert helper_text.index("gpgv") < helper_text.index("apt-get install")
+        assert helper_text.index("sha256sum") < helper_text.index("apt-get install")
+
+    def test_refuses_to_install_when_verification_material_is_absent(self, helper_text):
+        """A missing keyring, manifest or signature must abort the install.
+
+        Why this test exists: the tempting failure mode is to skip verification
+        when the signature is missing "so updates keep working". That converts the
+        control into a no-op an attacker can trigger simply by deleting the
+        signature file, which they can do -- pending-updates/ is writable by them.
+        Failing closed is what makes the check meaningful.
+
+        How a regression manifests: an `if [ -f ... ]` guard wraps verification, so
+        boards keep updating and the protection is silently absent.
+        """
+        # Each verification input must be checked for existence with a failing
+        # exit, not used to gate whether verification happens at all.
+        assert "exit" in helper_text
+        for marker in ("SIGNATURE", "MANIFEST", "KEYRING"):
+            assert marker in helper_text, (
+                f"{marker} must be an explicit, validated input to the helper"
+            )
+
+    def test_refuses_to_install_an_older_version_than_the_installed_one(self, helper_text):
+        """The helper must reject downgrades unless a channel switch is explicit.
+
+        Why this test exists: a signature proves a package is genuine, not that it
+        is current. Without a version check a compromised service user can install
+        a genuine *older* release to reintroduce an already-fixed vulnerability,
+        and every signature check still passes. The channel-switch escape must stay
+        available because stable/nightly switching legitimately moves to a lower
+        version and relies on --allow-downgrades.
+
+        How a regression manifests: rollback protection disappears while all
+        signature tests keep passing, so the gap is invisible in CI.
+        """
+        assert "dpkg-query" in helper_text or "dpkg -s" in helper_text
+        assert "--allow-channel-switch" in helper_text
+
+    @pytest.mark.parametrize(
+        ("deb_name", "expected_sha"),
+        [
+            # Exact match: the ordinary case.
+            ("universal-chess_2.0.0_all.deb", "aaa111"),
+            # sha256sum's binary-mode output prefixes the name with '*'.
+            ("binary-mode.deb", "ccc333"),
+            # A name that is a substring of a listed entry must NOT match: the
+            # lookup has to be equality, not a search. Empty means "refuse".
+            ("chess_2.0.0_all.deb", ""),
+            # A name that has a listed entry as its prefix must not match either.
+            ("universal-chess_2.0.0_all.deb.evil", ""),
+            # Absent from the manifest entirely.
+            ("evil.deb", ""),
+        ],
+    )
+    def test_manifest_lookup_matches_filenames_exactly(self, tmp_path, deb_name, expected_sha):
+        """The checksum lookup must match the .deb filename by equality.
+
+        Why this test exists: the natural way to write this lookup is ``grep
+        "$DEB_NAME" SHA256SUMS.txt``, which matches substrings. An attacker who
+        can name the file they drop into pending-updates/ (they can -- it is their
+        directory) could then have ``chess_2.0.0_all.deb`` pick up the checksum
+        line of ``universal-chess_2.0.0_all.deb``, or append a suffix, and the
+        comparison would be against the wrong entry. Empty means refuse, so the
+        failure mode is closed.
+
+        This runs the awk expression extracted from the shipped helper rather than
+        a copy of it, so the test cannot pass against logic that is not the logic
+        actually installed on the board.
+
+        How a regression manifests: switching to a substring match makes the two
+        "must not match" cases return a checksum, so a renamed file is validated
+        against another asset's entry.
+        """
+        awk_expression = self._extracted_awk_expression()
+        manifest = tmp_path / "SHA256SUMS.txt"
+        manifest.write_text(
+            "aaa111  universal-chess_2.0.0_all.deb\n"
+            "bbb222  enable_usb_gadget.py\n"
+            "ccc333  *binary-mode.deb\n"
+        )
+
+        # noqa/nosec: fixed argv with no shell. The awk program is read from the
+        # shipped helper and the filename is a test parameter, so nothing untrusted
+        # reaches the process.
+        result = subprocess.run(  # noqa: S603, S607  # nosec B603 B607
+            ["awk", "-v", f"name={deb_name}", awk_expression, str(manifest)],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == expected_sha
+
+    @staticmethod
+    def _extracted_awk_expression() -> str:
+        """Return the awk program the shipped helper uses for the checksum lookup.
+
+        Extracted from the script so the test exercises the real expression; a
+        hand-copied duplicate would keep passing after the helper changed.
+        """
+        text = HELPER_SCRIPT.read_text()
+        marker = "EXPECTED_SHA=\"$(awk -v name=\"$DEB_NAME\" '"
+        assert marker in text, "checksum lookup not found in helper"
+        start = text.index(marker) + len(marker)
+        return text[start : text.index("'", start)]
 
     def test_runs_in_transient_unit(self, helper_text):
         """The helper must launch the install in a transient systemd unit with

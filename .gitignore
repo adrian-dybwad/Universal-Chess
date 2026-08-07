@@ -40,3 +40,15 @@ __pycache__
 # Built bundle staged for deploy/packaging (produced by scripts/build.sh and
 # deploy-to-pi.sh; never committed - it is generated from web-app/).
 src/universalchess/web/react-app/
+
+# Release signing private keys. The PUBLIC keyring
+# (packaging/deb-root/opt/universalchess/keys/release-signing.gpg) is deliberately
+# tracked and ships in the package. The private half is exported to configure the
+# RELEASE_SIGNING_KEY CI secret, and committing it would let anyone sign an update
+# that every board accepts as genuine. These patterns cover the names that export
+# produces; they do not replace reviewing what is staged.
+*secret-key*.asc
+*secret-keys*.asc
+*private-key*.asc
+*private*.gpg
+secring.*

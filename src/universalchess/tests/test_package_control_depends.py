@@ -66,6 +66,29 @@ def _depends_occurrences() -> list:
     return names
 
 
+def test_depends_provides_an_openpgp_verifier_on_both_debian_releases():
+    """``Depends`` must offer both ``sqv`` and ``gpgv`` as alternatives.
+
+    Why this test exists: the install helper verifies each update's signed
+    manifest, and which verifier is guaranteed present depends on the Debian
+    release. On bookworm ``apt`` depends on ``gpgv``; on trixie ``apt`` is built
+    against Sequoia and depends on ``sqv (>= 1.3.0)`` instead, so ``gpgv`` may be
+    absent there. Declaring them as alternatives means the dependency is already
+    satisfied on both -- nothing is downloaded, and an update still installs on a
+    board with no network.
+
+    How a regression manifests: narrowing this to ``gpgv`` alone makes every
+    trixie update pull an extra package mid-install, and fail outright when the
+    board is offline or the archive is unreachable.
+    """
+    declared = _declared_depends()
+
+    assert {"sqv", "gpgv"} <= declared, (
+        "Depends must list both sqv and gpgv as alternatives so the signature "
+        f"verifier is already installed on bookworm and trixie alike; got {declared}"
+    )
+
+
 def test_depends_provides_a_native_compiler_for_the_display_shim():
     """``Depends`` must provide a native C compiler.
 

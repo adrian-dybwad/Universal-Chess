@@ -78,7 +78,30 @@ function detectVersion {
     fi
 }
 
+# Refuse to build a package that could never verify an update.
+#
+# The root install helper verifies each update's signed checksum manifest against
+# this keyring. A package shipped without it installs fine and then refuses every
+# subsequent OTA, leaving a board that cannot update itself and needs a .deb
+# installed by hand to recover. Failing here keeps that outcome in the build
+# instead of in the field.
+function requireSigningKeyring {
+    local keyring="${DEB_ROOT}/opt/universalchess/keys/release-signing.gpg"
+    if [ ! -s "${keyring}" ]; then
+        echo "::: ERROR: release signing keyring missing or empty:" >&2
+        echo ":::        ${keyring}" >&2
+        echo ":::" >&2
+        echo "::: The update helper verifies releases against this keyring, so a" >&2
+        echo "::: package built without it could not install any future update." >&2
+        echo "::: See packaging/deb-root/opt/universalchess/keys/README.md for how" >&2
+        echo "::: to generate the key and export the public keyring." >&2
+        exit 1
+    fi
+}
+
 function stage {
+    requireSigningKeyring
+
     # Multi-arch package - use 'all' architecture for a pure-Python payload.
     STAGE_ARCH="all"
     STAGE="${DEB_PACKAGE_NAME}_${VERSION}_${STAGE_ARCH}"
