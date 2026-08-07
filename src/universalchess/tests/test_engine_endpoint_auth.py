@@ -42,13 +42,14 @@ finally:
 
 # Endpoints that deliberately answer an unauthenticated POST, with the reason.
 # Keep this as small as it can be: each entry is a hole in the policy above.
-UNAUTHENTICATED_BY_DESIGN = {
-    # Resumes an install a user already authenticated to start, and only while
-    # the persisted state says "interrupted". The engine name comes from that
-    # state, never from the request, so the caller cannot choose what is built;
-    # the authorization was given when the install was launched.
-    "/api/engines/resume",
-}
+#
+# Currently empty, and that is the goal state. The one entry it held,
+# /api/engines/resume, was excused because the engine name came from the persisted
+# install state rather than the request, so a caller could not choose what got
+# built. Resume is now engine-scoped -- several installs can be paused at once, so
+# the request has to say which one -- and that argument no longer holds, so the
+# exemption was removed with it rather than reworded.
+UNAUTHENTICATED_BY_DESIGN = set()
 
 
 def _post_rules() -> list:
@@ -121,8 +122,10 @@ def test_documented_auth_exceptions_still_exist():
     would also silently start excusing a *different* endpoint if a future route
     reused the path.
 
-    How a regression manifests: renaming or deleting /api/engines/resume leaves a
-    stale entry, and this fails naming it.
+    How a regression manifests: adding an exemption for a route that does not
+    exist, or leaving one behind after renaming its endpoint, fails here naming
+    the stale path. Vacuously true while the exemption set is empty, which is the
+    state to keep it in.
     """
     known = {rule for rule, _ in _post_rules()}
     stale = UNAUTHENTICATED_BY_DESIGN - known

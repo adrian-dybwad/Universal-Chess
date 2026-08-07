@@ -61,7 +61,7 @@ def _stub_workers(manager, monkeypatch):
         calls["prebuilt"] = True
         return True
 
-    def fake_source(engine, update_progress, ref_label=None):
+    def fake_source(engine, update_progress, ref_label=None, reuse_tree_at_ref=None):
         calls["source_ref_label"] = ref_label
         return True
 

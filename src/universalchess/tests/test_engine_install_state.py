@@ -237,18 +237,42 @@ class TestInstallStateStore:
         assert status["percent"] == 65
         assert status["eta_seconds"] == 420
 
-    # Why: a build update that carries no observation must not erase a fraction
+    # Why: a build update that carries no observation must not erase a reading
     # already recorded, or the bar would oscillate between the observed value and
-    # the time-based creep as chatty output arrives between process samples.
+    # the time-based creep as chatty output arrives between process samples, and
+    # the remaining time would blink out on every line the build prints.
     # Regression: unconditionally assigning None makes the second percent fall
     # back to the creep (35 at zero elapsed) instead of holding 65.
     def test_build_fraction_survives_an_update_without_one(self, tmp_path):
         store = self._store(tmp_path)
         store.start("rodentIV", "Rodent IV", estimated_seconds=480.0)
-        store.update(InstallStage.BUILDING, "Building...", build_fraction=0.5)
+        store.update(InstallStage.BUILDING, "Building...", build_fraction=0.5,
+                     build_eta_seconds=420)
         store.update(InstallStage.BUILDING, "Building Rodent IV: eval.cpp")
 
-        assert store.status_dict()["percent"] == 65
+        status = store.status_dict()
+        assert status["percent"] == 65
+        assert status["eta_seconds"] == 420
+
+    # Why: a withdrawn projection has to actually leave the screen. The tracker
+    # stops publishing a remaining time once the unit in flight has outlasted it --
+    # Reckless's final crate runs for tens of minutes against a projection of one --
+    # and it publishes that absence alongside a fresh fraction. Treating the absent
+    # number as "no news" leaves the superseded one on display for the whole of that
+    # unit, which is the wrong estimate this withdrawal exists to remove.
+    # Regression: eta_seconds stays at 43 while the build reports its last module.
+    def test_a_reading_without_an_eta_clears_the_one_it_supersedes(self, tmp_path):
+        store = self._store(tmp_path)
+        store.start("reckless", "Reckless", estimated_seconds=3600.0)
+        store.update(InstallStage.BUILDING, "Building Reckless: module 35 of ~36",
+                     build_fraction=0.97, build_eta_seconds=43)
+        store.update(InstallStage.BUILDING, "Building Reckless: module 36 of ~36",
+                     build_fraction=0.97, build_eta_seconds=None)
+
+        status = store.status_dict()
+        assert status["eta_seconds"] is None
+        # The bar still holds the observed position; only the projection is gone.
+        assert status["percent"] == 93
 
     # Why: a successful finish must report 100, mark inactive, and record the
     # result so the UI can show success and re-enable actions. Regression: leaving
@@ -408,3 +432,202 @@ class TestInstallStateStore:
         # The UI reads eta_seconds unconditionally; omitting the key on a clean
         # board would make it render "undefined" instead of nothing.
         assert status["eta_seconds"] is None
+
+
+class TestStoppedInstalls:
+    """A user-stopped install: a distinct terminal state carrying its ref.
+
+    An install can now be stopped on purpose, which is neither a failure nor a
+    restart. The store has to say so, because the two existing terminal states
+    both mislead: FAILED shows the user an error for something they chose, and
+    INTERRUPTED claims the board restarted.
+
+    The resolved ref is recorded alongside it because resuming has to rebuild the
+    same version the preserved tree holds. The requested ref is often None (meaning
+    "whatever the catalog pins"), so the resolution has to be captured while the
+    install is dispatched rather than re-derived later, when the catalog pin may
+    have moved under it.
+    """
+
+    def _store(self, tmp_path):
+        return InstallStateStore(tmp_path / "engine_install_state.json")
+
+    def test_the_resolved_ref_is_persisted_with_the_install(self, tmp_path):
+        """The ref survives a reload from disk.
+
+        Why: a stop writes a resume point naming the ref its tree was built at, and
+        after a restart that ref can only come from the persisted state. How a
+        regression manifests: the ref is None after reload, so the resumed install
+        cannot claim a matching tree and re-clones from scratch.
+        """
+        store = self._store(tmp_path)
+        store.start("arasan", "Arasan", estimated_seconds=900.0, ref="v25.4")
+
+        assert self._store(tmp_path).load().ref == "v25.4"
+
+    def test_state_written_before_refs_existed_still_loads(self, tmp_path):
+        """A state file lacking the ref field loads with ref None.
+
+        Why: an install can be in flight across an upgrade that adds the field, and
+        the loader rejects any file it cannot construct a state from -- a missing
+        key would silently discard the record and lose the running install from the
+        UI. This is the edge case the field's default exists for.
+
+        How a regression manifests: adding ref without a default makes the load
+        raise TypeError, which the loader turns into "no state", so an upgrade
+        during an install makes it disappear rather than resume.
+        """
+        store = self._store(tmp_path)
+        store.start("arasan", "Arasan", estimated_seconds=900.0, ref="v25.4")
+        path = tmp_path / "engine_install_state.json"
+        legacy = json.loads(path.read_text())
+        del legacy["ref"]
+        path.write_text(json.dumps(legacy))
+
+        reloaded = self._store(tmp_path).load()
+        assert reloaded is not None, "a pre-upgrade state file must still load"
+        assert reloaded.ref is None
+
+    def test_stopping_freezes_the_bar_where_it_stood(self, tmp_path):
+        """A stopped install holds its percent instead of resetting.
+
+        Why: the frozen percent is what the paused card reports ("stopped at 65%"),
+        and it is the only record of how much work the preserved tree represents.
+        How a regression manifests: the percent recomputes against an idle clock
+        and the card claims the build had barely started.
+        """
+        store = self._store(tmp_path)
+        store.start("rodentIV", "Rodent IV", estimated_seconds=480.0)
+        store.update(InstallStage.BUILDING, "Building...", build_fraction=0.5)
+
+        store.stopped()
+
+        assert store.status_dict()["percent"] == 65
+
+    def test_a_stopped_install_is_not_reported_as_failed(self, tmp_path):
+        """Stopping produces CANCELLED, with no error result.
+
+        Why: the UI renders `result.error` as an install failure notice. A stop the
+        user asked for must not raise one, and must be distinguishable from the
+        restart case so the card offers Resume for a reason it can state.
+
+        How a regression manifests: reusing finish(success=False) sets stage FAILED
+        and an error string, so pressing Stop reports "Installation failed".
+        """
+        store = self._store(tmp_path)
+        store.start("rodentIV", "Rodent IV", estimated_seconds=480.0)
+        store.update(InstallStage.BUILDING, "Building...")
+
+        store.stopped()
+
+        status = store.status_dict()
+        assert status["stage"] == InstallStage.CANCELLED.value
+        assert status["active"] is False
+        assert status["stopped"] is True
+        assert status["interrupted"] is False
+        assert status["result"] is None
+
+    def test_stopping_when_nothing_is_tracked_is_a_no_op(self, tmp_path):
+        """A stop against an empty store does nothing.
+
+        Why: the endpoint validates before calling, but the install thread and the
+        HTTP handler can both reach this as an install ends. How a regression
+        manifests: an AttributeError on None state turns a lost race into a 500.
+        """
+        store = self._store(tmp_path)
+
+        store.stopped()
+
+        assert store.status_dict()["engine"] is None
+
+    def test_an_interrupted_install_keeps_its_ref(self, tmp_path):
+        """Reconciling a restart-killed install preserves the ref.
+
+        Why: startup turns an orphaned active install into a resume point, and that
+        point needs the ref for the same reason a stop does. reconcile_interrupted
+        rewrites several fields, so the ref has to survive that rewrite.
+
+        How a regression manifests: the reconciled state carries ref None and the
+        recovered install re-clones instead of reusing its tree.
+        """
+        store = self._store(tmp_path)
+        store.start("arasan", "Arasan", estimated_seconds=900.0, ref="v25.4")
+        store.update(InstallStage.BUILDING, "Building Arasan...")
+
+        recovered = self._store(tmp_path).reconcile_interrupted()
+
+        assert recovered is not None
+        assert recovered.stage == InstallStage.INTERRUPTED
+        assert recovered.ref == "v25.4"
+
+
+class TestReadingStateAnotherProcessWrites:
+    """The board's view of an install the web process is running.
+
+    The web owns installs and this file; the board renders progress from it. Its
+    ordinary read path caches, which is right for the writer -- it has the state in
+    memory and the file is an export. A reader that cached would show whatever was
+    happening the first time it looked, for as long as the board stays up.
+    """
+
+    def test_an_observed_read_sees_what_the_writer_has_since_written(self, tmp_path):
+        """Each observed read reflects the current file.
+
+        Why: this is the board's entire progress display. A cached first read
+        would freeze the percent at whatever the install had reached when the
+        screen opened, which on a fresh install is 2%.
+
+        How a regression manifests: the board's progress bar never moves, and an
+        install that finished still shows as running.
+        """
+        path = tmp_path / "engine_install_state.json"
+        writer = InstallStateStore(path)
+        reader = InstallStateStore(path)
+
+        writer.start("rodentIV", "Rodent IV", estimated_seconds=480.0)
+        first = reader.observed_status_dict()
+        writer.update(InstallStage.BUILDING, "Building...", build_fraction=0.5)
+        second = reader.observed_status_dict()
+
+        assert first["stage"] == InstallStage.STARTING.value
+        # BUILDING spans [35, 95]; half of that band is 65.
+        assert (second["stage"], second["percent"]) == (InstallStage.BUILDING.value, 65)
+
+    def test_an_observed_read_with_no_file_reports_nothing_running(self, tmp_path):
+        """A board that has never installed anything sees an idle state.
+
+        Why: the null case, and the common one -- the file does not exist until
+        the first install. Anything other than a clean "nothing running" here
+        would put a progress screen or a status icon on an idle board.
+
+        How a regression manifests: the reader raises on a missing file, taking
+        out the status bar on a fresh device.
+        """
+        reader = InstallStateStore(tmp_path / "never_written.json")
+
+        status = reader.observed_status_dict()
+
+        assert status["active"] is False
+        assert status["engine"] is None
+
+    def test_an_observed_read_notices_the_install_ending(self, tmp_path):
+        """A finished install stops reporting as active.
+
+        Why: the board's poll loop exits on this flag. Missing the transition
+        leaves the progress screen watching forever, with BACK the only way out
+        and no completion message.
+
+        How a regression manifests: the screen never reports success and the user
+        cannot tell a finished install from a stalled one.
+        """
+        path = tmp_path / "engine_install_state.json"
+        writer = InstallStateStore(path)
+        reader = InstallStateStore(path)
+
+        writer.start("rodentIV", "Rodent IV", estimated_seconds=480.0)
+        assert reader.observed_status_dict()["active"] is True
+        writer.finish(success=True)
+
+        status = reader.observed_status_dict()
+        assert status["active"] is False
+        assert status["result"] == {"success": True, "error": None}

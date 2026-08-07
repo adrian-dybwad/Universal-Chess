@@ -178,7 +178,7 @@ def test_install_starts_with_engine_in_json_body(client, monkeypatch):
     would stay empty / the status singleton would not flip to installing.
     """
     dispatched = []
-    monkeypatch.setattr(webapp, "_run_engine_install", lambda name, ref=None: dispatched.append(name))
+    monkeypatch.setattr(webapp, "_run_engine_install", lambda name, ref=None, reuse_tree_at_ref=None: dispatched.append(name))
     # Run the dispatched worker inline so the assertion does not race a thread.
     monkeypatch.setattr(threading, "Thread", _SyncThread)
 
@@ -213,7 +213,7 @@ def test_install_forwards_chosen_ref_to_worker(client, monkeypatch):
     captured = {}
     monkeypatch.setattr(
         webapp, "_run_engine_install",
-        lambda name, ref=None: captured.update(name=name, ref=ref),
+        lambda name, ref=None, reuse_tree_at_ref=None: captured.update(name=name, ref=ref),
     )
     monkeypatch.setattr(threading, "Thread", _SyncThread)
 
@@ -240,7 +240,7 @@ def test_install_rejects_malformed_ref(client, monkeypatch):
     captured = {}
     monkeypatch.setattr(
         webapp, "_run_engine_install",
-        lambda name, ref=None: captured.update(name=name, ref=ref),
+        lambda name, ref=None, reuse_tree_at_ref=None: captured.update(name=name, ref=ref),
     )
     monkeypatch.setattr(threading, "Thread", _SyncThread)
 
@@ -307,7 +307,7 @@ def test_install_path_style_url_does_not_start_install(client, monkeypatch):
     two Werkzeug returns. The key guarantee is no dispatch / no state change.
     """
     dispatched = []
-    monkeypatch.setattr(webapp, "_run_engine_install", lambda name, ref=None: dispatched.append(name))
+    monkeypatch.setattr(webapp, "_run_engine_install", lambda name, ref=None, reuse_tree_at_ref=None: dispatched.append(name))
     monkeypatch.setattr(threading, "Thread", _SyncThread)
 
     resp = client.post(f"/api/engines/install/{INSTALLABLE_ENGINE}")
@@ -355,7 +355,7 @@ def test_install_while_installing_returns_409(client, monkeypatch):
     staying empty confirms no second worker was started.
     """
     dispatched = []
-    monkeypatch.setattr(webapp, "_run_engine_install", lambda name, ref=None: dispatched.append(name))
+    monkeypatch.setattr(webapp, "_run_engine_install", lambda name, ref=None, reuse_tree_at_ref=None: dispatched.append(name))
     monkeypatch.setattr(threading, "Thread", _SyncThread)
     webapp._engine_install_store.start(SYSTEM_ENGINE, "Stockfish", estimated_seconds=0)
 
@@ -651,59 +651,9 @@ def _seed_interrupted(store, engine=INSTALLABLE_ENGINE):
     store.reconcile_interrupted()
 
 
-def test_resume_relaunches_interrupted_install(install_store, client, monkeypatch):
-    """POST /api/engines/resume relaunches the interrupted engine's install.
-
-    Guards manual resume: after a restart the UI offers Resume; pressing it must
-    re-dispatch the install for the interrupted engine and flip state back to
-    active. If resume regressed, ``dispatched`` would stay empty and the banner
-    would never recover.
-    """
-    _seed_interrupted(install_store)
-    dispatched = []
-    monkeypatch.setattr(webapp, "_run_engine_install", lambda name, ref=None: dispatched.append(name))
-    monkeypatch.setattr(threading, "Thread", _SyncThread)
-
-    resp = client.post("/api/engines/resume")
-
-    assert resp.status_code == 200
-    assert json.loads(resp.data)["success"] is True
-    assert dispatched == [INSTALLABLE_ENGINE]
-    assert webapp._engine_install_store.status_dict()["active"] is True
-
-
-def test_resume_without_interrupted_returns_400(install_store, client, monkeypatch):
-    """Resume is rejected with 400 when nothing was interrupted.
-
-    Without an interrupted state there is no engine to resume; a regression that
-    dropped the guard would dispatch an install for engine=None.
-    """
-    dispatched = []
-    monkeypatch.setattr(webapp, "_run_engine_install", lambda name, ref=None: dispatched.append(name))
-    monkeypatch.setattr(threading, "Thread", _SyncThread)
-
-    resp = client.post("/api/engines/resume")
-
-    assert resp.status_code == 400
-    assert json.loads(resp.data)["success"] is False
-    assert dispatched == []
-
-
-def test_resume_while_active_returns_409(install_store, client, monkeypatch):
-    """Resume is rejected with 409 while an install is already running.
-
-    Prevents a second install racing the shared build directory if resume is
-    pressed during an active install.
-    """
-    install_store.start(INSTALLABLE_ENGINE, "Berserk", estimated_seconds=900)
-    dispatched = []
-    monkeypatch.setattr(webapp, "_run_engine_install", lambda name, ref=None: dispatched.append(name))
-    monkeypatch.setattr(threading, "Thread", _SyncThread)
-
-    resp = client.post("/api/engines/resume")
-
-    assert resp.status_code == 409
-    assert dispatched == []
+# Resume is engine-scoped and driven by per-engine resume points now that several
+# installs can be paused at once; its contract lives in
+# test_engine_stop_endpoints.py alongside stop and discard.
 
 
 def test_cancel_clears_interrupted_state(install_store, client):

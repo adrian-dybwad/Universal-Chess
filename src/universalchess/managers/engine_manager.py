@@ -58,7 +58,10 @@ except ImportError:
     import logging
     log = logging.getLogger(__name__)
 
-from universalchess.services.engine_install_state import InstallStage
+from universalchess.services.engine_install_state import (
+    InstallStage,
+    STORE as INSTALL_STATE_STORE,
+)
 from universalchess.services.engine_install_record import (
     DEFAULT_REF,
     STORE as INSTALL_RECORD_STORE,
@@ -95,6 +98,18 @@ BUILD_TMP = "/opt/universalchess/tmp/engine_build"
 # Trailing build-output lines retained for the failure message (stdout+stderr are
 # merged, so the real error is in the tail regardless of which stream it used).
 _BUILD_TAIL_LINES = 40
+
+
+class InstallCancelled(Exception):
+    """Raised when a running install is stopped at the user's request.
+
+    Deliberately not a ``TimeoutExpired`` or a plain failure. A stop and a timeout
+    both end a build early, but they mean opposite things to every layer above: a
+    timeout is a failure whose partial tree is reclaimed and reported as an error,
+    while a stop is a pause whose tree is preserved so the work can be resumed.
+    Sharing an exception type would make them indistinguishable, and a stopped
+    install would be reported to the user as a stalled build.
+    """
 # Minimum seconds between build-progress message updates. Throttled because each
 # update persists install state to the SD-card-backed store and build output can
 # be chatty on a slow board.
@@ -1583,7 +1598,13 @@ class EngineManager:
         self._install_progress: str = ""
         self._install_error: Optional[str] = None
         self._installing_engine: Optional[str] = None
-        
+        # Cooperative cancellation for the install in flight. An Event rather than
+        # a bool because it is set from the web/menu thread and read from the build
+        # loop. ``_was_stopped`` outlives the request so the caller can still tell,
+        # after install_engine returns, that False meant "paused" and not "failed".
+        self._stop_requested = threading.Event()
+        self._was_stopped = False
+
         # Install queue
         self._queue: List[QueuedEngine] = []
         self._queue_lock = threading.Lock()
@@ -1594,7 +1615,27 @@ class EngineManager:
         log.info(f"[EngineManager] Initialized with engines_dir={engines_dir}")
         log.debug(f"[EngineManager] Build temp directory: {BUILD_TMP}")
         log.debug(f"[EngineManager] Available engines: {list(ENGINES.keys())}")
-    
+
+    def request_stop(self) -> None:
+        """Ask the install in flight to stop at its next check.
+
+        Safe to call when nothing is running: the flag is cleared at the start of
+        every install, so a request that misses its target cannot cancel the next
+        one. Must be called on the manager instance actually running the build --
+        a fresh instance's flag is one nothing is watching.
+        """
+        log.info("[EngineManager] Stop requested for the running install")
+        self._stop_requested.set()
+
+    def was_stopped(self) -> bool:
+        """Whether the last install ended because a stop was requested.
+
+        ``install_engine`` returns False for a stop and for a failure. The caller
+        needs to tell them apart: one is a resumable pause with a preserved build
+        tree, the other is an error to report.
+        """
+        return self._was_stopped
+
     def is_installed(self, engine_name: str) -> bool:
         """Check if an engine is installed.
         
@@ -1925,6 +1966,7 @@ class EngineManager:
         progress_callback: Optional[Callable[[str], None]] = None,
         stage_callback: Optional[Callable[[InstallStage, str, Optional[float]], None]] = None,
         ref: Optional[str] = None,
+        reuse_tree_at_ref: Optional[str] = None,
     ) -> bool:
         """Install an engine.
         
@@ -1946,9 +1988,15 @@ class EngineManager:
                 behavior. A non-canonical ref forces a source build because the
                 prebuilt archive only carries the canonical build. Ignored for
                 system packages.
-            
+            reuse_tree_at_ref: The ref a preserved build tree is known to hold,
+                when resuming a stopped install. The tree is reused only if this
+                matches the ref being built; see ``_install_from_source``. None
+                (the default) means an ordinary install, which always starts from
+                a clean checkout.
+
         Returns:
-            True if installation succeeded
+            True if installation succeeded. False covers both a failure and a
+            user-requested stop; call :meth:`was_stopped` to tell them apart.
         """
         log.info(f"[EngineManager] install_engine: Starting installation of '{engine_name}'")
         
@@ -1961,6 +2009,11 @@ class EngineManager:
         
         self._installing_engine = engine_name
         self._install_error = None
+        # Clear any stop left over from a previous install. Without this a stopped
+        # install would poison the next one, which would die at its first monitored
+        # command for no reason the user could see.
+        self._stop_requested.clear()
+        self._was_stopped = False
         
         log.info(f"[EngineManager] install_engine: Engine details - display_name='{engine.display_name}', "
                  f"is_system_package={engine.is_system_package}, repo_url={engine.repo_url}")
@@ -2037,7 +2090,10 @@ class EngineManager:
                         )
                         success = False
                     else:
-                        success = self._install_from_source(engine, update_progress, ref_label=resolved_ref)
+                        success = self._install_from_source(
+                            engine, update_progress, ref_label=resolved_ref,
+                            reuse_tree_at_ref=reuse_tree_at_ref,
+                        )
 
             # Record the installed ref on success for source-built engines so the
             # UI can show what is installed and mark refs that have ever built
@@ -2062,6 +2118,14 @@ class EngineManager:
                 log.error(f"[EngineManager] install_engine: Failed to install '{engine_name}' - error: {self._install_error}")
             
             return success
+        except InstallCancelled:
+            # A deliberate stop, not an error. Caught ahead of the generic handlers
+            # below so it cannot be reported as a subprocess or dependency failure,
+            # which is what the user would otherwise be told for pressing Stop.
+            self._was_stopped = True
+            self._install_error = f"{engine.display_name} install stopped"
+            log.info(f"[EngineManager] install_engine: '{engine_name}' stopped at the user's request")
+            return False
         except subprocess.TimeoutExpired as e:
             self._install_error = f"Command timed out: {e.cmd}"
             log.error(f"[EngineManager] install_engine: Timeout during installation of '{engine_name}': {e}")
@@ -2082,11 +2146,16 @@ class EngineManager:
             return False
         finally:
             self._installing_engine = None
-            # Always reclaim the source clone/build tree, whether the build
-            # succeeded (binary already copied out) or failed (a partial tree is
-            # useless and only wastes space). Bundled/system-package installs
-            # never create one, so this is a no-op for them.
-            self._cleanup_build_dir(engine_name)
+            # Reclaim the source clone/build tree on every exit EXCEPT a stop.
+            # Success has already copied the binary out, and a failure leaves a
+            # partial tree that is useless and only wastes space -- both were the
+            # reason for this cleanup (stale trees were found consuming hundreds of
+            # MB on a constrained board). A stop is the one case where the tree is
+            # the point: it holds the compile work that Resume exists to continue,
+            # and its resume marker lives inside it, so reclaiming it here would
+            # make Resume a synonym for Install.
+            if not self._was_stopped:
+                self._cleanup_build_dir(engine_name)
             # One persistent, timed record per install attempt (success or
             # failure), so the Settings event-log viewer can show what was
             # installed and how long it took. Ref is meaningful only for
@@ -2572,6 +2641,14 @@ class EngineManager:
 
         while True:
             now = time.monotonic()
+            # Checked before the deadlines, and on every turn rather than only on
+            # the once-a-second sample, so a stop takes effect within one poll
+            # slice instead of waiting on a build that may be healthy enough to
+            # refresh its liveness signal forever. Killing the group (not just the
+            # shell) is what stops the compiler underneath it.
+            if self._stop_requested.is_set():
+                self._kill_process_group(proc)
+                raise InstallCancelled()
             if now >= ceiling.deadline():
                 self._kill_process_group(proc)
                 raise subprocess.TimeoutExpired(
@@ -3001,6 +3078,7 @@ class EngineManager:
         engine: EngineDefinition,
         update_progress: Callable[..., None],
         ref_label: Optional[str] = None,
+        reuse_tree_at_ref: Optional[str] = None,
     ) -> bool:
         """Install engine by building from source.
         
@@ -3012,6 +3090,9 @@ class EngineManager:
                 back to the catalog ``git_ref`` (the legacy behavior). The
                 :data:`DEFAULT_REF` sentinel maps to an unpinned clone even for a
                 pinned engine, so the latest code can be tried from the UI.
+            reuse_tree_at_ref: Ref that an existing, preserved build tree is known
+                to hold. Only when it equals ``ref_label`` is that tree kept and
+                built on; see the clean-clone rule below.
             
         Returns:
             True if installation succeeded
@@ -3116,7 +3197,29 @@ class EngineManager:
         # tag cleanly. So start from a clean clone whenever a specific ref is targeted
         # (a catalog pin, or any ref the user picked -- including explicitly choosing
         # the default branch after a previous tagged install).
-        must_clean_clone = ref_label is not None or effective_git_ref is not None
+        #
+        # Resuming a stopped install is the one exemption. Its tree was left behind
+        # deliberately and its ref was recorded at the time, so when that recorded
+        # ref is the ref now being built the tree is known to be the right one and
+        # is kept -- which is the entire value of resuming, since the object files
+        # and cargo target dir are what make the second attempt short. Every
+        # catalog install resolves to some ref, so without this exemption a resume
+        # would always re-clone and discard the work it exists to continue. The
+        # match is required rather than assumed: building v25.5 on a preserved
+        # v25.4 checkout would produce a binary of the wrong version while the UI
+        # reported the requested one, a failure nothing downstream could detect.
+        resuming_same_ref = (
+            reuse_tree_at_ref is not None and reuse_tree_at_ref == ref_label
+        )
+        must_clean_clone = (
+            not resuming_same_ref
+            and (ref_label is not None or effective_git_ref is not None)
+        )
+        if resuming_same_ref:
+            log.info(
+                f"[EngineManager] _install_from_source: Resuming at {ref_label!r}; "
+                f"reusing the preserved build tree {repo_dir}"
+            )
         if must_clean_clone and engine.repo_url is not None and repo_dir.exists():
             log.info(f"[EngineManager] _install_from_source: Targeting ref {effective_git_ref or 'default branch'}; removing stale checkout {repo_dir}")
             shutil.rmtree(repo_dir, ignore_errors=True)
@@ -3410,51 +3513,6 @@ class EngineManager:
         log_event("engine_uninstall", f"Uninstalled {engine.display_name}", level="info")
         return True
     
-    def install_async(
-        self,
-        engine_name: str,
-        progress_callback: Optional[Callable[[str], None]] = None,
-        completion_callback: Optional[Callable[[bool], None]] = None
-    ) -> None:
-        """Install an engine asynchronously.
-        
-        Args:
-            engine_name: Name of the engine to install
-            progress_callback: Called with progress messages
-            completion_callback: Called with success status when done
-        """
-        log.info(f"[EngineManager] install_async: Starting async installation of '{engine_name}'")
-        
-        if self.is_installing():
-            log.warning(f"[EngineManager] install_async: Another installation is already in progress "
-                       f"(installing: {self._installing_engine})")
-            if completion_callback:
-                completion_callback(False)
-            return
-        
-        def _install_thread():
-            log.debug(f"[EngineManager] install_async: Install thread started for '{engine_name}'")
-            try:
-                success = self.install_engine(engine_name, progress_callback)
-                log.info(f"[EngineManager] install_async: Install thread completed for '{engine_name}', success={success}")
-                if completion_callback:
-                    completion_callback(success)
-            except Exception as e:
-                log.error(f"[EngineManager] install_async: Install thread crashed for '{engine_name}': {type(e).__name__}: {e}")
-                import traceback
-                log.error(f"[EngineManager] install_async: Traceback:\n{traceback.format_exc()}")
-                self._install_error = str(e)
-                if completion_callback:
-                    completion_callback(False)
-        
-        self._install_thread = threading.Thread(
-            target=_install_thread,
-            name=f"install-{engine_name}",
-            daemon=True
-        )
-        self._install_thread.start()
-        log.debug(f"[EngineManager] install_async: Install thread spawned for '{engine_name}'")
-    
     def is_installing(self) -> bool:
         """Check if an installation is in progress."""
         is_running = self._install_thread is not None and self._install_thread.is_alive()
@@ -3501,6 +3559,40 @@ class EngineManager:
                 callback(engine_name, status, message)
             except Exception as e:
                 log.error(f"[EngineManager] Progress callback error: {e}")
+
+    def notify_install_activity(self, engine_name: str, status: str, message: str) -> None:
+        """Report install activity observed elsewhere to this process's listeners.
+
+        Engine installs run in the web process, so nothing in the board process
+        emits progress events for them. The board's settings-socket handler calls
+        this when an ``engine_install_status`` command arrives, which lets the
+        status-bar indicator consume web installs through the listener interface
+        it already implements instead of a second parallel path.
+
+        Note this reports on an install this manager is not running: is_installing
+        stays False. See :meth:`active_install_engine` for the question a widget
+        should ask about what is running anywhere.
+        """
+        self._notify_progress(engine_name, status, message)
+
+    def active_install_engine(self) -> Optional[str]:
+        """Name the engine being installed anywhere on this device, or None.
+
+        Covers an install this process is running and one the web process is
+        running, the latter read from the shared persisted state. Both are needed
+        by the board's status bar, which is rebuilt from scratch on every screen
+        change: a widget created mid-install has no event to learn from, and the
+        events it missed went to the widget it replaced.
+
+        Read from disk on every call because this process is not the writer. A
+        cached answer would describe whatever was happening the first time the
+        board looked.
+        """
+        local = self.get_installing_engine()
+        if local is not None:
+            return local
+        status = INSTALL_STATE_STORE.observed_status_dict()
+        return status["engine"] if status["active"] else None
     
     def queue_engine(self, engine_name: str) -> bool:
         """Add an engine to the install queue.

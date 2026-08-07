@@ -99,6 +99,7 @@ const berserk: EngineDefinition = {
   source_installable: true,
   recommended_ref: null,
   installed_ref: null,
+  resume_point: null,
 };
 
 class MockEventSource {

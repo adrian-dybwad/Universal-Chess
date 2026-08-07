@@ -13,7 +13,7 @@ per translation unit which names the file it is working on. Sampling the build's
 process tree therefore yields an exact denominator and a real numerator for a
 build that prints nothing.
 
-Three things measured on the board shaped this design:
+Five things measured on the board shaped this design:
 
 1. Units are missed by sampling. Claudia's 14-unit build finished in 83s and only
    six units were ever caught in a sample. Because a driver processes inputs in
@@ -28,6 +28,18 @@ Three things measured on the board shaped this design:
    consumed CPU and moved bytes as well as units and output, which keeps a build
    inside one four-minute unit -- or blocked on slow SD-card I/O -- from being
    mistaken for a wedged one.
+4. Units the build has not reached yet still have to be paid for. Where the unit
+   set is discovered by watching rather than declared on a command line, the only
+   units with a known cost are those already sampled -- and every one of those
+   except the unit in flight is finished. Dividing by them alone reports (n-1)/n
+   whatever remains: Reckless read 94% and "less than a minute remaining" at its
+   17th module of roughly 120. The denominator is therefore every unit the build
+   has, with the unreached ones costed at the mean of the known ones.
+5. A unit is not always a file. ``rustc`` compiles a whole crate per invocation
+   and is handed only that crate's root, so the modules beside that root are never
+   units and the crate count -- not the file count -- is the denominator. Reckless
+   v0.9.0 resolves 36 packages in a tree whose crate directories hold hundreds of
+   ``.rs`` files.
 
 Structure: everything here is pure and takes an injected process table, so it is
 testable without ``/proc`` or a live compiler. Reading ``/proc`` is isolated in
@@ -52,6 +64,21 @@ _COMPILER_DRIVERS = frozenset({"gcc", "g++", "cc", "c++", "clang", "clang++", "c
 # Per-unit backends. These name exactly the file being compiled, which is what
 # makes the current unit observable. ``compile`` is Go's; ``rustc`` is Rust's.
 _COMPILER_BACKENDS = frozenset({"cc1", "cc1plus", "rustc", "compile"})
+
+# Rust is the one toolchain here whose unit is not a file. ``rustc`` compiles a
+# whole crate per invocation and is handed only that crate's root, so the modules
+# beside that root are never units of their own and the crate name -- not the root
+# file, which is ``lib.rs`` or ``main.rs`` in every crate ever written -- is what
+# identifies what is compiling.
+_RUST_BACKEND = "rustc"
+_CRATE_NAME_OPTION = "--crate-name"
+
+# Cargo's resolved package list, and the line that opens one entry in it. Counting
+# those entries is the only count of a cargo build's units available before the
+# build reaches them: cargo prints no total, and nothing on a rustc command line
+# describes the crates still to come.
+_CARGO_LOCK_NAME = "Cargo.lock"
+_CARGO_LOCK_PACKAGE_HEADER = "[[package]]"
 
 # Extensions treated as translation units.
 _SOURCE_SUFFIXES = (".c", ".cc", ".cpp", ".cxx", ".c++", ".cu", ".rs", ".go", ".S", ".s")
@@ -79,11 +106,12 @@ _OPTIONS_TAKING_A_VALUE = frozenset({
 _MAX_OBSERVED_FRACTION = 0.99
 
 # Completed share required before a remaining-time projection is published. Below
-# this, elapsed time is dominated by fixed startup costs rather than by compiling,
-# so the extrapolation is wildly high: measured on the board, a Rodent IV build that
-# took about 11 minutes projected 5689s remaining when 0.5% done, then 2054s, before
-# settling near 650s. Withholding the number until there is something to extrapolate
-# from is more useful than showing one that immediately contradicts itself.
+# this, the measured time is dominated by the first unit's warm-up rather than by a
+# representative pace, so the extrapolation is wildly high: measured on the board, a
+# Rodent IV build that took about 11 minutes projected 5689s remaining when 0.5%
+# done, then 2054s, before settling near 650s. Withholding the number until there is
+# something to extrapolate from is more useful than showing one that immediately
+# contradicts itself.
 _MIN_FRACTION_FOR_ETA = 0.05
 
 # Indices into /proc/<pid>/stat, counted after the comm field (which is skipped
@@ -330,6 +358,44 @@ def _source_arguments(args: Sequence[str]) -> list[str]:
     return sources
 
 
+def _crate_name(args: Sequence[str]) -> str | None:
+    """The crate ``rustc`` was told to compile, or None if it was not named.
+
+    ``--crate-name`` is always present when cargo drives the build; a hand-rolled
+    ``rustc`` invocation may omit it, in which case the caller falls back to the
+    crate root path so the unit still has an identity.
+    """
+    for index, arg in enumerate(args):
+        if arg == _CRATE_NAME_OPTION and index + 1 < len(args):
+            return args[index + 1]
+    return None
+
+
+def _count_locked_packages(source_root: Path) -> int:
+    """Packages Cargo.lock resolved for the build, or 0 where it cannot be read.
+
+    Approximate in both directions, deliberately. The lock file is the resolved
+    dependency graph rather than the build plan: it omits the build scripts cargo
+    compiles as units of their own, and it includes packages for other platforms
+    that are never built here (10 of Reckless v0.9.0's 36 entries are Windows
+    targets). It is nonetheless the right order of magnitude, where counting the
+    ``.rs`` files beside each crate root is not -- that counted Reckless as ~120
+    units and rising against roughly 36 real ones.
+    """
+    counted = 0
+    try:
+        # Streamed rather than read whole: a custom engine is built from a clone of
+        # a URL the user supplied, so the size of anything in it is not this
+        # module's to assume, and this board has 426 MB of RAM.
+        with (source_root / _CARGO_LOCK_NAME).open(encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if line.strip() == _CARGO_LOCK_PACKAGE_HEADER:
+                    counted += 1
+    except OSError:
+        return 0
+    return counted
+
+
 def _descendants(root_pid: int, table: Mapping[int, ProcessInfo]) -> list[ProcessInfo]:
     """Every process descended from ``root_pid``, excluding the root itself.
 
@@ -499,8 +565,21 @@ class BuildProgressTracker:
         self._seen_units: set[str] = set()
         self._active_units: set[str] = set()
         self._source_dirs: set[str] = set()
+        # Units that are whole crates rather than files, and the resolved package
+        # count they are measured against (None until Cargo.lock has been read).
+        self._crate_units: set[str] = set()
+        self._locked_packages: int | None = None
+        # Display name per unit, where the path that identifies a unit is not what
+        # should be shown for it. Only crates have one: every crate root in every
+        # cargo build is called lib.rs or main.rs.
+        self._unit_labels: dict[str, str] = {}
         self._current_unit: str | None = None
         self._current_unit_since: float | None = None
+        # When the first unit was seen, which is when compiling began. The command
+        # that runs a build does more than compile -- Reckless bootstraps a rustup
+        # toolchain and lets cargo fetch its registry first -- so this, not the
+        # command's own start, is the origin the compile rate is measured from.
+        self._first_unit_at: float | None = None
         self._max_ordinal = 0
         self._observed = False
         self._max_fraction = 0.0
@@ -537,28 +616,17 @@ class BuildProgressTracker:
             if not sources:
                 continue
             self._observed = True
-            # Resolved here, while the process that named these paths is in hand.
-            # A compiler names its inputs relative to its own working directory,
-            # which is commonly not the one the build was launched from: Smallbrain
-            # runs "cd src && make", so its bare "unit.cpp" belongs to <root>/src.
-            # Resolving later against the launch directory looked in the clone root,
-            # found no sources, and left the unit total equal to the number already
-            # seen -- the "module 1 of 1, module 2 of 2" the board displayed.
-            base = Path(process.cwd) if process.cwd is not None else self._source_root
-            for source in sources:
-                self._source_dirs.add(str(_resolve_against(Path(source).parent, base)))
-                if process.cwd is not None:
-                    self._unit_bases.setdefault(source, process.cwd)
-            if process.comm in _COMPILER_DRIVERS and len(sources) > 1:
-                self._declare_units(sources)
-            if process.comm in _COMPILER_BACKENDS:
-                active.update(sources)
-                current = sources[0]
+            in_flight, unit = self._note_compilation(process, sources)
+            active.update(in_flight)
+            if unit is not None:
+                current = unit
 
         self._cpu.retire_absent(live_pids)
         self._io.retire_absent(live_pids)
         self._seen_units.update(active)
         self._active_units = active
+        if self._seen_units and self._first_unit_at is None:
+            self._first_unit_at = now
         if current is not None:
             if current != self._current_unit:
                 # Timed from the first sample naming this unit, not from every
@@ -567,6 +635,65 @@ class BuildProgressTracker:
             self._current_unit = current
             self._advance_ordinal(current)
         self._update_activity(now)
+
+    def _note_compilation(
+        self, process: ProcessInfo, sources: Sequence[str],
+    ) -> tuple[set[str], str | None]:
+        """Fold one compiler process in, returning the units it has in flight.
+
+        The second element is the unit to display as current, which only a backend
+        has: a driver names every input it was given but compiles none of them
+        itself.
+        """
+        if process.comm == _RUST_BACKEND:
+            return self._note_crate(process, sources)
+        self._note_source_locations(process, sources)
+        if process.comm in _COMPILER_DRIVERS and len(sources) > 1:
+            self._declare_units(sources)
+        if process.comm in _COMPILER_BACKENDS:
+            return set(sources), sources[0]
+        return set(), None
+
+    def _note_crate(
+        self, process: ProcessInfo, sources: Sequence[str],
+    ) -> tuple[set[str], str | None]:
+        """Record the crate a ``rustc`` process is compiling as a single unit.
+
+        Identified by the crate root, which is unique, and labelled with the crate
+        name, which is not: cargo compiles every package's build script under the
+        name ``build_script_build``, so keying on the name would merge several
+        separate compilations into one unit and show a finished one running again.
+
+        The crate's directory is deliberately not recorded as a source directory.
+        The modules beside a crate root compile as part of the crate and never on
+        their own, so counting them counts work that does not exist -- that is what
+        made a 36-crate Reckless build report ~120 units and rising.
+        """
+        unit = sources[0]
+        self._crate_units.add(unit)
+        crate = _crate_name(process.args)
+        if crate is not None:
+            self._unit_labels.setdefault(unit, crate)
+        return {unit}, unit
+
+    def _note_source_locations(
+        self, process: ProcessInfo, sources: Sequence[str],
+    ) -> None:
+        """Resolve a process's inputs against the directory it is running in.
+
+        Done while the process that named these paths is in hand. A compiler names
+        its inputs relative to its own working directory, which is commonly not the
+        one the build was launched from: Smallbrain runs ``cd src && make``, so its
+        bare ``unit.cpp`` belongs to ``<root>/src``. Resolving later against the
+        launch directory looked in the clone root, found no sources, and left the
+        unit total equal to the number already seen -- the "module 1 of 1, module 2
+        of 2" the board displayed.
+        """
+        base = Path(process.cwd) if process.cwd is not None else self._source_root
+        for source in sources:
+            self._source_dirs.add(str(_resolve_against(Path(source).parent, base)))
+            if process.cwd is not None:
+                self._unit_bases.setdefault(source, process.cwd)
 
     def _declare_units(self, sources: Sequence[str]) -> None:
         """Adopt a driver's input list as the exact, ordered unit set."""
@@ -620,11 +747,10 @@ class BuildProgressTracker:
         # module cannot watch per unit: Maia's ninja+clang build declares no unit set
         # and forks no named backend, so it would sit frozen for 45-60 minutes.
         fraction = self._fraction(finished, total_units) if self._seen_units else None
-        eta_seconds = None
-        if fraction is not None and fraction >= _MIN_FRACTION_FOR_ETA:
-            elapsed = max(0.0, now - self._started_at)
-            if elapsed > 0.0:
-                eta_seconds = int(elapsed / fraction - elapsed)
+        current_unit_seconds = (
+            None if self._current_unit_since is None
+            else max(0.0, now - self._current_unit_since)
+        )
 
         return BuildProgress(
             observed=True,
@@ -635,13 +761,51 @@ class BuildProgressTracker:
                 self._total_is_exact
                 and len(self._declared_units) >= len(self._seen_units)
             ),
-            current_unit=self._current_unit,
-            eta_seconds=eta_seconds,
-            current_unit_seconds=(
-                None if self._current_unit_since is None
-                else max(0.0, now - self._current_unit_since)
-            ),
+            current_unit=self._describe_unit(self._current_unit),
+            eta_seconds=self._eta_seconds(fraction, now, current_unit_seconds),
+            current_unit_seconds=current_unit_seconds,
         )
+
+    def _eta_seconds(
+        self,
+        fraction: float | None,
+        now: float,
+        current_unit_seconds: float | None,
+    ) -> int | None:
+        """Seconds of work left at the pace measured so far, or None when unknown.
+
+        The pace is timed from the first unit rather than from the command's start,
+        so it describes compiling and nothing else. A build command does more than
+        compile -- Reckless bootstraps a pinned rustup toolchain and lets cargo
+        fetch and unpack its registry first, minutes of network on this board --
+        and that happens once, so billing it to every unit still to come inflates
+        the whole projection by it.
+
+        The projection is withdrawn once the unit in flight has run longer than it
+        says the entire build has left. The pace was measured over other units, and
+        a unit that has already outlasted the time allowed for everything remaining
+        has shown that pace not to describe it. Every build here ends with such a
+        unit: Reckless's last crate compiles the engine with fat LTO across all 35
+        crates before it, so their pace projects about a minute for a unit that
+        runs for tens of them. Publishing nothing leaves the unit's own elapsed
+        time -- which is measured, and displayed beside it -- as the reading, where
+        republishing a minute that has already been disproved does not.
+        """
+        if fraction is None or fraction < _MIN_FRACTION_FOR_ETA:
+            return None
+        if self._first_unit_at is None:
+            return None
+        compiling_seconds = max(0.0, now - self._first_unit_at)
+        if compiling_seconds <= 0.0:
+            return None
+        remaining = compiling_seconds / fraction - compiling_seconds
+        if current_unit_seconds is not None and current_unit_seconds > remaining:
+            return None
+        return int(remaining)
+
+    def _describe_unit(self, unit: str | None) -> str | None:
+        """The name to show for ``unit``: a crate's own name, else the path given."""
+        return None if unit is None else self._unit_labels.get(unit, unit)
 
     def _finished_units(self) -> set[str]:
         """Units known complete: those observed finishing, plus those overtaken.
@@ -661,10 +825,15 @@ class BuildProgressTracker:
         Where no command line declared the whole unit set, the count comes from the
         source directories observed being compiled. Those were resolved when they
         were recorded, against the working directory of the process that named
-        them, so nothing here needs a base to guess at.
+        them, so nothing here needs a base to guess at. A Rust build is counted in
+        crates instead, because that is what its units are.
         """
         if self._declared_units:
             return max(len(self._declared_units), len(self._seen_units))
+        if self._crate_units:
+            if self._locked_packages is None:
+                self._locked_packages = _count_locked_packages(self._source_root)
+            return max(self._locked_packages, len(self._seen_units))
         counted = 0
         for directory in self._source_dirs:
             try:
@@ -679,6 +848,18 @@ class BuildProgressTracker:
     def _fraction(self, finished: set[str], total_units: int) -> float | None:
         """Completed share of the work, weighted by source size where readable.
 
+        The denominator is every unit the build has, not only the units already
+        named. Where the unit set is discovered by watching -- any build that
+        invokes the compiler once per file, and every cargo build -- the units with
+        a known cost are exactly those already sampled, and all but the one in
+        flight are finished. Dividing by them alone therefore reports (n-1)/n
+        whatever remains: on the board a Reckless build read 94% and "less than a
+        minute remaining" at its 17th module of roughly 120.
+
+        Units not yet reached have no name and so no readable size; each is costed
+        at the mean of the units whose size is known, which is the same rule an
+        unreadable source path already follows.
+
         Monotonic and capped below 1.0: samples are noisy (a poll can land between
         units), and a bar that retreats or completes early reads as a fault.
         """
@@ -686,9 +867,11 @@ class BuildProgressTracker:
             return None
         units = self._declared_units or sorted(self._seen_units)
         weights = {unit: self._weight(unit) for unit in units}
-        total_weight = sum(weights.values())
-        if total_weight <= 0:
+        known_weight = sum(weights.values())
+        if known_weight <= 0:
             return None
+        unreached = max(0, total_units - len(weights))
+        total_weight = known_weight + unreached * known_weight / len(weights)
         done_weight = sum(weights.get(unit, 0.0) for unit in finished)
         fraction = min(done_weight / total_weight, _MAX_OBSERVED_FRACTION)
         self._max_fraction = max(self._max_fraction, fraction)
@@ -704,17 +887,31 @@ class BuildProgressTracker:
         unreadable path costs accuracy rather than the whole reading.
         """
         if unit not in self._sizes:
-            base = self._unit_bases.get(unit)
-            path = _resolve_against(
-                Path(unit),
-                Path(base) if base is not None else self._source_root,
-            )
-            try:
-                self._sizes[unit] = path.stat().st_size
-            except OSError:
-                self._sizes[unit] = None
+            self._sizes[unit] = self._source_bytes(unit)
         size = self._sizes[unit]
         if size is not None:
             return float(size)
         known = [value for value in self._sizes.values() if value is not None]
         return float(sum(known) / len(known)) if known else 1.0
+
+    def _source_bytes(self, unit: str) -> int | None:
+        """Size of ``unit``'s source, or None where no size describes the unit.
+
+        A crate has no such size. It compiles as one ``rustc`` invocation covering
+        every module in it, while the only file named is the crate root -- commonly
+        a short list of ``mod`` declarations whatever the crate holds. Reading it
+        would rank crates by a number unrelated to their cost; reporting no size
+        instead costs each crate the mean weight, which asserts nothing false about
+        how they compare.
+        """
+        if unit in self._crate_units:
+            return None
+        base = self._unit_bases.get(unit)
+        path = _resolve_against(
+            Path(unit),
+            Path(base) if base is not None else self._source_root,
+        )
+        try:
+            return path.stat().st_size
+        except OSError:
+            return None

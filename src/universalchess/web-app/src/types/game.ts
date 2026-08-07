@@ -148,6 +148,32 @@ export interface EngineFailure {
 }
 
 /**
+ * A paused engine install whose half-built source tree is still on disk.
+ *
+ * Recorded when the user stops an install, or when the board restarts under a
+ * running one. Travels with the engine rather than in the install-status poll,
+ * because that poll describes the single install happening now and several
+ * engines can be paused at once.
+ */
+export interface InstallResumePoint {
+  /**
+   * Resolved git ref the preserved tree was built at. The rebuild targets this
+   * ref, which is what allows the tree to be reused instead of re-cloned.
+   */
+  ref: string | null;
+  /** InstallStage the install had reached, as its wire string. */
+  stage: string;
+  /** Last progress message shown before it stopped. */
+  message: string;
+  /** Percent frozen where it stopped: how much preserved work is at stake. */
+  percent: number;
+  /** Unix time it stopped. */
+  stopped_at: number;
+  /** Why it stopped: the user asked, or the board restarted under it. */
+  reason: 'stopped' | 'interrupted';
+}
+
+/**
  * Engine definition from backend.
  */
 export interface EngineDefinition {
@@ -195,6 +221,12 @@ export interface EngineDefinition {
    * the system event log.
    */
   last_failure: EngineFailure | null;
+  /**
+   * A stopped or restart-killed install whose build tree is still on disk, or
+   * null when there is none. Drives the card's Resume/Discard controls; until
+   * one of those is used, the tree stays on disk holding the compile work.
+   */
+  resume_point: InstallResumePoint | null;
   /**
    * Whether this engine is installed but missing required companion files (a
    * net-backed engine like Maia whose weight download failed): the binary is

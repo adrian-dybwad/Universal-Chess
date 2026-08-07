@@ -174,6 +174,110 @@ def test_power_action_runs_locally_when_board_offline(
     assert capture_system_power == [power_function]
 
 
+INSTALLING_ENGINE = "reckless"
+
+
+class _InstallStore:
+    """A stand-in for the persisted engine-install state."""
+
+    def __init__(self, engine):
+        self.engine = engine
+        self.active = engine is not None
+
+    def status_dict(self, now=None):
+        return {"active": self.active,
+                "engine": self.engine if self.active else None}
+
+    def observed_status_dict(self, now=None):
+        return self.status_dict()
+
+
+class _InstallManager:
+    """Stops by clearing the state, as a real build does as it unwinds."""
+
+    def __init__(self, store):
+        self.store = store
+        self.stops = 0
+
+    def request_stop(self):
+        self.stops += 1
+        self.store.active = False
+
+
+@pytest.fixture
+def running_install(monkeypatch):
+    """Put an engine install in progress in this web process."""
+    store = _InstallStore(INSTALLING_ENGINE)
+    manager = _InstallManager(store)
+    monkeypatch.setattr(webapp, "_engine_install_store", store)
+    monkeypatch.setattr(webapp, "_active_install_manager", manager)
+    return manager
+
+
+@pytest.mark.parametrize("endpoint,power_function", _POWER_ACTIONS)
+def test_power_action_stops_a_running_install_before_acting(
+    client, monkeypatch, running_install, endpoint, power_function
+):
+    """Powering the Pi off from the web must stop an install on the way down.
+
+    Why this test exists: a source build can run for the better part of an hour
+    in this process, and cutting the power mid-compile leaves a part-written tree
+    that comes back only as an "interrupted" install. Stopping first records a
+    real resume point, so the work is picked up rather than reconstructed. This
+    is the fallback path, where the board is not there to do it.
+
+    The recorder captures whether an install was still active at the moment
+    system_power was called, which is what makes this an ordering assertion
+    rather than merely "both things happened": powering off first and stopping
+    afterwards would satisfy the counts but lose the build.
+
+    How a regression manifests: the install is still active when the poweroff
+    runs (the stop moved after it, or never happens), so the build is killed
+    mid-write exactly as before.
+    """
+    monkeypatch.setattr(
+        "universalchess.services.game_broadcast.send_board_command",
+        lambda command, params=None: False,
+    )
+    from universalchess.platform import system_power
+
+    active_when_powered_off = []
+    for name in _SYSTEM_POWER_FUNCTIONS:
+        monkeypatch.setattr(
+            system_power, name,
+            lambda: active_when_powered_off.append(
+                webapp._engine_install_store.status_dict()["active"]) or 0,
+        )
+
+    resp = client.post(f"/api/system/{endpoint}")
+
+    assert resp.status_code == 200
+    assert running_install.stops == 1
+    assert active_when_powered_off == [False]
+
+
+def test_web_leaves_the_install_alone_when_the_board_takes_the_shutdown(
+    client, capture_commands, running_install
+):
+    """With the board up, the web must not stop the install itself.
+
+    Why this test exists: the board owns the shutdown whenever it is running --
+    splash, LED cascade, sleeping the controller -- and its own power-off path
+    asks for the install to stop. Doing it here as well would terminate the build
+    from two directions, and would do it before the board has even begun its
+    cleanup, so the screen would still say nothing while the build died.
+
+    How a regression manifests: the stop is applied unconditionally rather than
+    only in the fallback, and a shutdown the board accepted also kills the
+    install from the web.
+    """
+    resp = client.post("/api/system/shutdown")
+
+    assert resp.status_code == 200
+    assert capture_commands == [("shutdown", None)]
+    assert running_install.stops == 0
+
+
 @pytest.mark.parametrize("endpoint", [a[0] for a in _POWER_ACTIONS])
 def test_power_action_leaves_power_to_the_board_when_it_is_running(
     client, capture_commands, capture_system_power, endpoint

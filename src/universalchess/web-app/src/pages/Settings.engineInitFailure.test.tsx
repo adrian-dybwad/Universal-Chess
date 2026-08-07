@@ -86,6 +86,7 @@ function engine(overrides: Partial<EngineDefinition>): EngineDefinition {
     source_installable: true,
     recommended_ref: null,
     installed_ref: null,
+    resume_point: null,
     ...overrides,
   };
 }

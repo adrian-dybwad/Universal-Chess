@@ -26,6 +26,7 @@
 # Bullseye). Matches the convention used across the rest of the package.
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass
 from flask import Flask, render_template, Response, request, redirect, send_file, send_from_directory, abort, stream_with_context, url_for, jsonify
 from werkzeug.exceptions import NotFound
 from werkzeug.utils import secure_filename
@@ -3939,6 +3940,30 @@ def api_system_reset():
     return _system_board_action("reset_settings", "Settings reset to defaults")
 
 
+def _after_stopping_any_install(power_action):
+    """Wrap a local power action so a running engine install is stopped first.
+
+    A source build runs in this process and can have an hour of work in it.
+    Powering the Pi off around it leaves a part-written tree that returns only as
+    an interrupted install, where stopping first records a resume point.
+
+    Only the board-offline fallback is wrapped. When the board accepts the
+    shutdown it stops the install from its own power-off path, and doing it here
+    too would terminate the build from two directions, before the board had shown
+    anything on screen.
+    """
+    def stop_install_then_act():
+        from universalchess.services.install_quiesce import stop_install_for_power_off
+
+        stop_install_for_power_off(
+            read_status=lambda: _engine_install_store.status_dict(),
+            request_stop=_stop_action,
+        )
+        return power_action()
+
+    return stop_install_then_act
+
+
 @app.route("/api/system/shutdown", methods=["POST"])
 @requires_auth
 def api_system_shutdown():
@@ -3953,8 +3978,9 @@ def api_system_shutdown():
     """
     from universalchess.platform.system_power import request_poweroff
 
-    return _system_board_action("shutdown", "Shutting down",
-                                local_fallback=request_poweroff)
+    return _system_board_action(
+        "shutdown", "Shutting down",
+        local_fallback=_after_stopping_any_install(request_poweroff))
 
 
 @app.route("/api/system/reboot", methods=["POST"])
@@ -3971,8 +3997,9 @@ def api_system_reboot():
     """
     from universalchess.platform.system_power import request_reboot
 
-    return _system_board_action("reboot", "Rebooting",
-                                local_fallback=request_reboot)
+    return _system_board_action(
+        "reboot", "Rebooting",
+        local_fallback=_after_stopping_any_install(request_reboot))
 
 
 @app.route("/api/system/run-centaur", methods=["POST"])
@@ -5262,6 +5289,9 @@ def api_get_all_engines():
         # CPUs that do not.
         arch = get_current_arch()
         has_neon = host_has_neon()
+        # One directory scan for every paused install, rather than a lookup per
+        # catalog engine: this endpoint renders the whole catalog at once.
+        resume_points = _engine_resume_store.list_all()
         engines_list = []
 
         for name, engine_def in ENGINES.items():
@@ -5284,8 +5314,15 @@ def api_get_all_engines():
             # can decide whether to fetch/show the picker without a per-engine
             # network round-trip (tags come from the dedicated /refs endpoint).
             source_installable = not engine_def.is_system_package and engine_def.repo_url is not None
+            # A stopped or restart-killed install whose build tree is still on
+            # disk. Travels with the engine rather than in the install-status poll
+            # because that poll describes one install and several can be paused at
+            # once; keying the card's Resume/Discard off the poll is what limited
+            # the page to a single recoverable install.
+            resume_point = resume_points.get(name)
             engines_list.append({
                 "name": name,
+                "resume_point": None if resume_point is None else asdict(resume_point),
                 "display_name": engine_def.display_name,
                 "summary": engine_def.summary,
                 "description": engine_def.description,
@@ -5405,7 +5442,50 @@ def api_get_all_engines():
 # install.
 from universalchess.services import engine_install_state
 _engine_install_store = engine_install_state.STORE
-_engine_install_store.reconcile_interrupted()
+
+# Paused installs, one record per engine, each stored inside that engine's own
+# preserved build tree (see services/install_resume). Separate from the store
+# above because that one describes the single install happening now and is
+# overwritten whenever another begins -- which is exactly how a paused engine's
+# record used to be lost when a different engine was installed.
+from universalchess.managers.engine_manager import BUILD_TMP as _ENGINE_BUILD_TMP
+from universalchess.services import install_resume
+_engine_resume_store = install_resume.ResumePointStore(build_root=_ENGINE_BUILD_TMP)
+
+# The EngineManager running the install in flight, so a stop request reaches the
+# instance actually doing the work. A handler that built its own EngineManager
+# would set a cancellation flag nothing is watching.
+_active_install_manager = None
+
+
+def _record_resume_point(state, reason: str) -> None:
+    """Persist a paused install so it can be resumed or discarded later.
+
+    Called for both ways an install can end while its tree is still worth keeping:
+    the user stopped it, or the board restarted under it. The percent is taken from
+    the state's frozen snapshot rather than recomputed, so it reflects where the
+    install actually stopped instead of an idle clock.
+    """
+    if state is None:
+        return
+    _engine_resume_store.write(install_resume.ResumePoint(
+        engine=state.engine,
+        ref=state.ref,
+        stage=state.stage.value,
+        message=state.message,
+        percent=engine_install_state.compute_percent(state, state.updated_at),
+        stopped_at=state.updated_at,
+        reason=reason,
+    ))
+
+
+# An install that was running when the process stopped was killed by a restart.
+# Reconciling it to `interrupted` stops the UI polling a dead install, and
+# recording a resume point for it means its half-built tree is offered back to the
+# user rather than silently reclaimed by the next install attempt.
+_record_resume_point(
+    _engine_install_store.reconcile_interrupted(), install_resume.REASON_INTERRUPTED
+)
 
 # Centaur SD-import progress is owned by centaur_import.import_state.STORE, the
 # same pattern as engine installs: the import runs on a background thread after
@@ -5619,14 +5699,47 @@ def _seed_uci_after_install(engine_name: str, display_name: Optional[str] = None
     )
 
 
-def _run_engine_install(engine_name: str, ref: Optional[str] = None):
+def _tell_board_install_status(engine_name: str, status: str, message: str) -> None:
+    """Tell the board process an install started or ended, for its status bar.
+
+    The board shows a status-bar indicator while an install runs, which is the
+    only sign of a backgrounded build once the user leaves the progress screen.
+    Nothing in that process emits install events -- the install is here -- so the
+    fact has to be sent.
+
+    Best-effort in both directions: the board may not be running at all on a
+    headless setup, and a status icon is never worth failing an install for. Sent
+    only at the start and the end, because the board reads the persisted state for
+    everything in between.
+    """
+    from universalchess.services.game_broadcast import send_board_command
+
+    try:
+        send_board_command("engine_install_status", {
+            "engine": engine_name, "status": status, "message": message,
+        })
+    except OSError as e:
+        # A stale or unwritable socket path. The board simply does not learn about
+        # this install; the state file it also reads keeps it eventually right.
+        app.logger.debug("Could not tell the board about %s: %s", engine_name, e)
+
+
+def _run_engine_install(engine_name: str, ref: Optional[str] = None,
+                        reuse_tree_at_ref: Optional[str] = None):
     """Background thread to install an engine, persisting structured progress.
 
     The stage_callback writes each update to the store so a concurrent
     GET /api/engines/status (and any fresh page load) sees the live stage and
     percent. ``ref`` is the optional git ref the user chose in the tag picker
-    (None for the canonical ref).
+    (None for the canonical ref); ``reuse_tree_at_ref`` is set when resuming, and
+    names the ref the preserved build tree holds.
+
+    A stop is not a failure. It ends with the tree preserved and a resume point
+    recorded, so the engine's card can offer to continue; reporting it through
+    ``finish(success=False)`` would show the user an install error for something
+    they asked for.
     """
+    global _active_install_manager
     from universalchess.managers.engine_manager import EngineManager
 
     def on_stage(stage, message, fraction, **measurements):
@@ -5635,30 +5748,71 @@ def _run_engine_install(engine_name: str, ref: Optional[str] = None):
         # produces, and missing one raised a TypeError that killed the install.
         _engine_install_store.update(stage, message, fraction, **measurements)
 
+    engine_manager = EngineManager()
+    _active_install_manager = engine_manager
     try:
-        engine_manager = EngineManager()
-        success = engine_manager.install_engine(engine_name, stage_callback=on_stage, ref=ref)
+        success = engine_manager.install_engine(
+            engine_name, stage_callback=on_stage, ref=ref,
+            reuse_tree_at_ref=reuse_tree_at_ref,
+        )
+        if not success and engine_manager.was_stopped():
+            _record_resume_point(
+                _engine_install_store.stopped(), install_resume.REASON_STOPPED
+            )
+            _tell_board_install_status(engine_name, "cancelled", "Installation stopped")
+            return
         error = None if success else (engine_manager.get_install_error() or "Installation failed")
         _engine_install_store.finish(success=success, error=error)
+        _tell_board_install_status(
+            engine_name,
+            "completed" if success else "failed",
+            "Installation complete" if success else error,
+        )
     except Exception as e:
         app.logger.exception("Engine install failed: %s", e)
         _engine_install_store.finish(success=False, error="Installation failed")
+        _tell_board_install_status(engine_name, "failed", "Installation failed")
+    finally:
+        _active_install_manager = None
 
 
-def _start_engine_install(engine_name: str, ref: Optional[str] = None):
+def _start_engine_install(engine_name: str, ref: Optional[str] = None,
+                          reuse_tree_at_ref: Optional[str] = None):
     """Initialize the persisted state and spawn the install thread.
 
     Caller is responsible for validating the engine name, the ref, and that no
     install is already active.
+
+    The ref is resolved here, once, and recorded with the state. A stop or a
+    restart turns that state into a resume point, and the preserved tree may only
+    be reused for the ref it actually holds -- re-deriving it later would read a
+    catalog pin that may have moved during a long install.
+
+    Starting an install also retires that engine's resume point, because an engine
+    that is building is not paused. Left in place it made the card show
+    "Stopped at N%" beside the running progress bar until the install ended, and
+    for a fresh (non-resume) install it outlived the tree it described: that build
+    re-clones, so the recorded ref no longer matches what is on disk. Only this
+    engine's record is touched -- every other paused install is left alone, which
+    is the whole point of keeping them per engine.
     """
-    from universalchess.managers.engine_manager import ENGINES
+    from universalchess.managers.engine_manager import ENGINES, resolve_requested_ref
     engine = ENGINES[engine_name]
+    _engine_resume_store.clear(engine_name)
     _engine_install_store.start(
         engine_name,
         engine.display_name,
         estimated_seconds=engine.estimated_install_minutes * 60,
+        ref=resolve_requested_ref(engine, ref),
     )
-    thread = threading.Thread(target=_run_engine_install, args=(engine_name, ref), daemon=True)
+    _tell_board_install_status(
+        engine_name, "installing", f"Installing {engine.display_name}"
+    )
+    thread = threading.Thread(
+        target=_run_engine_install,
+        args=(engine_name, ref, reuse_tree_at_ref),
+        daemon=True,
+    )
     thread.start()
 
 
@@ -5752,31 +5906,8 @@ def api_install_engine():
     delengine, board/system control).
     """
     try:
-        data = request.get_json()
-        engine_name = data.get("engine") if data else None
-        ref = data.get("ref") if data else None
-
-        if not engine_name:
-            return jsonify({"success": False, "error": "No engine specified"}), 400
-
-        from universalchess.managers.engine_manager import ENGINES, is_valid_ref
-        if engine_name not in ENGINES:
-            return jsonify({"success": False, "error": f"Unknown engine: {engine_name}"}), 400
-
-        # An empty/omitted ref means "canonical" (the prior behavior). A provided
-        # ref must be syntactically valid before it reaches `git clone --branch`.
-        if ref is not None and ref != "" and not is_valid_ref(ref):
-            return jsonify({"success": False, "error": f"Invalid ref: {ref}"}), 400
-        ref = ref or None
-
-        if _engine_install_store.status_dict()["active"]:
-            return jsonify({
-                "success": False,
-                "error": f"Already installing {_engine_install_store.status_dict()['engine']}"
-            }), 409
-
-        _start_engine_install(engine_name, ref=ref)
-        return jsonify({"success": True, "message": f"Installing {engine_name}"})
+        data = request.get_json(silent=True) or {}
+        return _install_action_response(_install_action(data.get("engine"), data.get("ref")))
     except Exception as e:
         return _internal_error(e)
 
@@ -6015,38 +6146,229 @@ def api_system_activity():
     ))
 
 
-@app.route("/api/engines/resume", methods=["POST"])
-def api_resume_engine_install():
-    """Resume an install that was interrupted by a process/board restart.
+@app.route("/api/engines/stop", methods=["POST"])
+@requires_auth
+def api_stop_engine_install():
+    """Stop the install that is currently running, keeping its build tree.
 
-    Valid only when the persisted state is `interrupted`. Relaunches the install
-    for that engine; the cached git clone is reused (git pull), so engine source
-    is not re-downloaded. True mid-build continuation is not possible -- "resume"
-    re-runs the install operation, which is idempotent.
+    A source build can run for an hour on this hardware and previously had no
+    exit but a reboot, which also destroyed every minute of compilation. Stopping
+    kills the build's process group and leaves the tree in place with a resume
+    point, so the work can be continued later.
 
-    Deliberately not ``@requires_auth``, unlike every other engine mutation: it
-    can only re-run an install a user already authenticated to start, and the
-    engine name comes from the persisted state rather than the request, so a
-    caller cannot choose what gets built. Any other precondition (no interrupted
-    install, one already active) is rejected below. The exception is pinned in
-    tests/test_engine_endpoint_auth.py; do not add endpoints to that list without
-    an equivalent argument.
+    Cooperative, not immediate: the request is delivered to the EngineManager
+    running the install, whose build loop acts on it at its next poll (well under
+    a second). The install thread is what records the resume point and the
+    terminal state, so this returns as soon as the request is delivered.
     """
     try:
-        status = _engine_install_store.status_dict()
-        if status["active"]:
-            return jsonify({"success": False, "error": f"Already installing {status['engine']}"}), 409
-        if not status["interrupted"]:
-            return jsonify({"success": False, "error": "No interrupted install to resume"}), 400
+        return _install_action_response(_stop_action())
+    except Exception as e:
+        return _internal_error(e)
 
-        engine_name = status["engine"]
-        from universalchess.managers.engine_manager import ENGINES
-        if engine_name not in ENGINES:
-            _engine_install_store.clear()
-            return jsonify({"success": False, "error": f"Unknown engine: {engine_name}"}), 400
 
-        _start_engine_install(engine_name)
-        return jsonify({"success": True, "message": f"Resuming {engine_name}"})
+def _paused_install(engine_name):
+    """Return (resume_point, refusal) for an engine named in a request.
+
+    Validates the name against the catalog before it reaches the filesystem and
+    requires an existing resume point. That point is the authorization record: it
+    exists only because an authenticated user started that install, so refusing
+    without one keeps these actions from starting or deleting anything the user
+    did not already ask for.
+    """
+    from universalchess.managers.engine_manager import ENGINES
+    if not engine_name or engine_name not in ENGINES:
+        return None, InstallAction.refused(f"Unknown engine: {engine_name}")
+    point = _engine_resume_store.read(engine_name)
+    if point is None:
+        return None, InstallAction.refused("No paused install for that engine")
+    return point, None
+
+
+@dataclass(frozen=True)
+class InstallAction:
+    """Outcome of an install control action, for either of its two callers.
+
+    Install, stop, resume and discard are reachable over HTTP from the web UI and
+    over the game socket from the board. The rules they enforce -- one install at
+    a time, a catalog name before any filesystem path, a resume point as the
+    record that authorizes touching a tree, no discard of a tree still being
+    written to -- are not ones to implement twice, so each action is a plain
+    function returning this and the two entry points only differ in how they
+    report it.
+    """
+
+    accepted: bool
+    message: str
+    status_code: int
+
+    @classmethod
+    def taken(cls, message: str) -> "InstallAction":
+        return cls(True, message, 200)
+
+    @classmethod
+    def refused(cls, message: str, status_code: int = 400) -> "InstallAction":
+        return cls(False, message, status_code)
+
+
+def _install_action_response(action: InstallAction):
+    """Render an action outcome as the JSON contract the web UI expects."""
+    if action.accepted:
+        return jsonify({"success": True, "message": action.message}), action.status_code
+    return jsonify({"success": False, "error": action.message}), action.status_code
+
+
+def _already_installing() -> Optional[InstallAction]:
+    """Refuse when an install is in flight, naming the engine holding the slot."""
+    status = _engine_install_store.status_dict()
+    if status["active"]:
+        return InstallAction.refused(f"Already installing {status['engine']}", 409)
+    return None
+
+
+def _install_action(engine_name: Optional[str], ref: Optional[str] = None) -> InstallAction:
+    """Start installing a catalog engine, optionally at a chosen git ref."""
+    from universalchess.managers.engine_manager import ENGINES, is_valid_ref
+
+    if not engine_name:
+        return InstallAction.refused("No engine specified")
+    if engine_name not in ENGINES:
+        return InstallAction.refused(f"Unknown engine: {engine_name}")
+    # An empty/omitted ref means "canonical" (the prior behavior). A provided
+    # ref must be syntactically valid before it reaches `git clone --branch`.
+    if ref is not None and ref != "" and not is_valid_ref(ref):
+        return InstallAction.refused(f"Invalid ref: {ref}")
+
+    busy = _already_installing()
+    if busy is not None:
+        return busy
+
+    _start_engine_install(engine_name, ref=ref or None)
+    return InstallAction.taken(f"Installing {engine_name}")
+
+
+def _stop_action() -> InstallAction:
+    """Ask the running install to stop, leaving its build tree in place."""
+    status = _engine_install_store.status_dict()
+    manager = _active_install_manager
+    if not status["active"] or manager is None:
+        # No install, or it finished between the status read and here. Either way
+        # there is nothing to stop and no error to report.
+        return InstallAction.refused("No install is running")
+    manager.request_stop()
+    return InstallAction.taken(f"Stopping {status['engine']}")
+
+
+def _resume_action(engine_name: Optional[str]) -> InstallAction:
+    """Continue one paused install from the tree and ref it preserved."""
+    busy = _already_installing()
+    if busy is not None:
+        return busy
+
+    point, refusal = _paused_install(engine_name)
+    if refusal is not None:
+        return refusal
+
+    _start_engine_install(engine_name, ref=point.ref, reuse_tree_at_ref=point.ref)
+    return InstallAction.taken(f"Resuming {engine_name}")
+
+
+def _discard_action(engine_name: Optional[str]) -> InstallAction:
+    """Throw away one paused install: its resume point and its build tree."""
+    _point, refusal = _paused_install(engine_name)
+    if refusal is not None:
+        return refusal
+
+    status = _engine_install_store.status_dict()
+    if status["active"] and status["engine"] == engine_name:
+        return InstallAction.refused(
+            f"Stop the {engine_name} install before discarding it", 409
+        )
+
+    _engine_resume_store.discard(engine_name)
+    return InstallAction.taken(f"Discarded {engine_name}")
+
+
+# Board requests, dispatched through the same functions as the routes above. The
+# board runs no installs of its own: it asks this process and reads the result
+# from the persisted install state, which is what keeps one record of what is
+# installing rather than one per process.
+_BOARD_INSTALL_ACTIONS = {
+    "install": lambda params: _install_action(params.get("engine"), params.get("ref")),
+    "stop": lambda _params: _stop_action(),
+    "resume": lambda params: _resume_action(params.get("engine")),
+    "discard": lambda params: _discard_action(params.get("engine")),
+}
+
+
+def _on_engine_install_request(parsed: dict) -> None:
+    """Handle an ``engine_install_request`` from the board and answer it.
+
+    The board blocks on the reply, so every request gets one -- including a
+    request naming an action this version does not know, which is what a version
+    skew between the two processes looks like. Silence there would show up as an
+    unexplained freeze on the board rather than a message.
+    """
+    action = parsed.get("action")
+    handler = _BOARD_INSTALL_ACTIONS.get(action)
+    if handler is None:
+        result = InstallAction.refused(f"Unknown install action: {action}")
+    else:
+        try:
+            result = handler(parsed)
+        except Exception as e:
+            app.logger.exception("Board install request %r failed: %s", action, e)
+            result = InstallAction.refused("Internal server error", 500)
+
+    from universalchess.services.game_broadcast import send_board_command
+    send_board_command("engine_install_reply", {
+        "request_id": parsed.get("request_id"),
+        "accepted": result.accepted,
+        "message": result.message,
+    })
+
+
+@app.route("/api/engines/resume", methods=["POST"])
+@requires_auth
+def api_resume_engine_install():
+    """Resume one paused install, named in the body as ``{"engine": name}``.
+
+    Picks up an install that was stopped by the user or killed by a restart. The
+    engine is named because several can be paused at once; the ref comes from the
+    engine's own resume point, not the request, so the rebuild targets the version
+    its preserved tree actually holds and that tree can be reused rather than
+    re-cloned.
+
+    True mid-build continuation is not possible -- resume re-runs the install,
+    which is idempotent -- but the build system's own object cache means the
+    compile picks up roughly where it left off.
+
+    Authenticated like every other engine mutation. This endpoint was once exempt
+    on the grounds that the engine came from persisted state and the caller could
+    not choose what was built; naming the engine in the request removes that
+    argument, so the exemption went with it.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        return _install_action_response(_resume_action(data.get("engine")))
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/engines/discard", methods=["POST"])
+@requires_auth
+def api_discard_engine_install():
+    """Throw away one paused install: its resume point and its build tree.
+
+    The only way to reclaim a preserved tree, which can be hundreds of MB. Refused
+    while that same engine is installing, because deleting the tree out from under
+    a running compiler produces a confusing build failure instead of a clean stop;
+    a different engine's install is no obstacle, so paused work can be tidied up
+    without waiting for an unrelated build to finish.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        return _install_action_response(_discard_action(data.get("engine")))
     except Exception as e:
         return _internal_error(e)
 
@@ -6544,6 +6866,10 @@ def _on_raw_message(parsed: dict) -> None:
     Game state events are handled by _on_game_state_update.
     """
     event_type = parsed.get("type")
+    if event_type == "engine_install_request":
+        # A request for this process to act, not news for the browsers.
+        _on_engine_install_request(parsed)
+        return
     if event_type and event_type != "game_state":
         # Forward generic events (like settings_changed) to SSE clients
         message = json.dumps(parsed)

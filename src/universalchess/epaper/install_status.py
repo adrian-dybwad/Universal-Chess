@@ -45,14 +45,31 @@ class InstallStatusWidget(Widget):
         self._register_listener()
     
     def _register_listener(self) -> None:
-        """Register as a progress listener with the engine manager."""
+        """Subscribe to progress events and adopt whatever is already running."""
         try:
             from universalchess.managers.engine_manager import get_engine_manager
             self._engine_manager = get_engine_manager()
             self._engine_manager.add_progress_listener(self._on_progress)
+            self._adopt_running_install()
             log.debug("[InstallStatusWidget] Registered with engine manager")
         except Exception as e:
             log.warning(f"[InstallStatusWidget] Could not register with engine manager: {e}")
+
+    def _adopt_running_install(self) -> None:
+        """Show the icon if an install is already in flight when this widget is built.
+
+        The status bar is rebuilt on every screen change, which is exactly what
+        backgrounding an install does, so the widget that saw the install start is
+        gone by the time the indicator matters most. Waiting for the next event
+        would leave the icon dark for the rest of a build that emits no further
+        start.
+        """
+        engine = self._engine_manager.active_install_engine()
+        if engine is None:
+            return
+        self._installing = True
+        self._current_engine = engine
+        self.visible = True
     
     def _on_progress(self, engine_name: str, status: str, message: str) -> None:
         """Handle progress events from engine manager.

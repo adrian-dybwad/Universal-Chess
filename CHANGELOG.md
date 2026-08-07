@@ -15,6 +15,51 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **Stoppable, resumable engine installs**: A source build can run for an hour,
+  and until now the only way out was to let it finish or reboot the board, which
+  threw the work away. An install can now be stopped and picked up later.
+  - Stop from the Settings page, or from the options menu the board's progress
+    screen opens with TICK. The build stops at the next command boundary; its
+    process group is terminated so no compiler is left running.
+  - BACK on the board's progress screen leaves the install running rather than
+    stopping it, so the board can be used for something else while an engine
+    builds. A status-bar indicator shows the build is still going, and the
+    engine's own screen offers the way back to it.
+  - Stopping keeps the build tree, so resuming continues from the objects already
+    compiled instead of starting the build over. A resume point records the git
+    ref that was building, and the tree is only reused when the ref still
+    matches, so resuming cannot silently produce a binary from a different
+    version.
+  - Several engines can be paused at once, and starting a different engine's
+    install no longer deletes them: each resume point is a marker file inside its
+    own engine's build directory rather than a single global slot. An install
+    interrupted by a restart or crash is recorded the same way at startup.
+  - Starting an install retires that engine's own resume point, since an engine
+    that is building is not paused. A card otherwise showed "Stopped at N%" and a
+    dead Resume button beside the live progress bar for the whole rebuild, and a
+    fresh (non-resume) install left behind a record of a tree it had re-cloned at
+    a different ref. Every other engine's paused state is untouched.
+  - Discard removes a paused install's tree and resume point to free the space.
+    It is destructive and cannot be undone, so it asks for confirmation on both
+    the web page and the board. The board offers it at the moment an install
+    stops, which is when the user knows whether they want the work back, with
+    "keep" as the focused option.
+  - Install, stop, resume and discard now do the same thing from either surface,
+    because there is only one of each. Engine installs run in the web process
+    alone -- it already owned the persisted install state, the resume points, and
+    the catalog, repair and custom-engine flows -- and the board asks it to act
+    over the sockets that already connect the two, then renders the shared state.
+    Previously each process installed on its own manager, so a build stopped on
+    the board left a tree the web could neither resume nor reclaim, and both could
+    start an install at the same time. The board's own install path is gone rather
+    than bridged.
+  - New endpoints `POST /api/engines/{stop,resume,discard}`; resume and discard
+    name their engine in the body and require authentication, as does stop. Each
+    is a single function shared by the HTTP route and the board's request, so the
+    rules they enforce are not implemented twice.
+  - Engine management on the board requires the web service to be running. It
+    says so plainly when it is not, rather than appearing to work.
+
 - **Reckless engine**: Added the Reckless UCI engine (Rust, embedded NNUE,
   AGPL-3.0) to the installable engine catalog. It is the project's first Rust
   engine; because Debian's apt Rust (1.63) is too old for its edition-2024
@@ -93,6 +138,33 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- Powering the Pi off killed a running engine install outright, leaving a
+  part-written build tree that came back only as an "interrupted" install. A
+  source build can hold the better part of an hour, and the idle timeout can fire
+  in the middle of one. Shutdown and reboot now ask the install to stop first and
+  wait for it to wind down, so it records a real resume point and is picked up
+  where it left off. The wait watches the persisted state rather than the reply
+  to the request, because an accepted stop only sets the cancel flag -- the build
+  still has to reach a command boundary and write the resume point. It is bounded
+  at twenty seconds and the power-off proceeds regardless: a shutdown that hangs
+  on a build that will not unwind is worse than one that gives up, and startup
+  reconciliation still recovers what was reached. The board asks the web, which
+  owns installs, over the socket that already connects them; the web stops the
+  install itself only when the board is not running to do it.
+- A board that could not read its battery powered itself off after fifteen idle
+  minutes, ending any engine install that was running. The idle power-off exists
+  to save the battery, and the power source is known only from the baseboard's
+  five-second `DGT_SEND_BATTERY_INFO` poll: when that request times out -- no
+  baseboard attached, or a dead serial link -- the poll records nothing, and the
+  charger flag it never wrote was a plain `False`, which reads as "on battery".
+  A mains-fed Raspberry Pi with no battery at all was therefore given a
+  battery-saving shutdown. The power source is now a three-way state, so a board
+  that has never reported one does not power off, for the same reason
+  `WIFI_ABSENT` is not `WIFI_DISABLED`: not having been told is not a reading.
+  Silence *after* a reading keeps the last known source, because a board that
+  reported "on battery" and then lost its link may really be on a battery and
+  must still power off. The charger flag the status bar and web payload read is
+  unchanged, so no indicator behaves differently.
 - Changing a player's engine (or other player-defining setting) from the web did
   not take effect in the next game: a board-reset new game restarts play in place
   and reused the player objects built when the game first started, so the old
@@ -106,6 +178,19 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   correct contract, polls `/api/engines/status`, surfaces failures, shows
   `Installing <name>...` on the button with the "may take several minutes" notice
   beside it, and restores the in-progress state after a page reload
+- Source-build progress reported far too much done and far too little time left:
+  a Reckless install showed 94% and "less than a minute remaining" at its 17th
+  module of ~120, with most of an hour still to run. Three causes, each fixed:
+  the completed fraction divided by the units already sampled rather than by all
+  of them, and since every sampled unit but the one compiling is finished, that
+  ratio was near 1 from the third unit onwards; a Rust build's units were counted
+  as `.rs` files when `rustc` compiles a whole crate per invocation, inflating a
+  36-crate build to ~120 units and naming every crate `lib.rs`; and the compile
+  rate was measured from the start of the build command, charging Reckless's
+  rustup bootstrap and cargo registry fetch to every unit still to come. The
+  remaining time is also withdrawn, rather than repeated, once the module in
+  flight has run longer than the whole projection allows -- the case of a final
+  fat-LTO crate that outlasts the 35 before it
 - Engine timeout issues on Raspberry Pi (removed default timeouts)
 - Multiple engine instance conflicts (via EngineRegistry)
 - dpkg lock conflicts during installation

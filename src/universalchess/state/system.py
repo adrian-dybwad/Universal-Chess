@@ -29,6 +29,19 @@ BT_DISCONNECTED = 1
 BT_CONNECTED = 2
 BT_ABSENT = 3  # no Bluetooth controller on this board (see WIFI_ABSENT)
 
+# Power source constants. Known only from the baseboard's battery telemetry, so
+# POWER_UNKNOWN is the state of a board that has never answered a battery
+# request -- no baseboard attached, or a dead serial link. It is distinct from
+# POWER_BATTERY for the same reason WIFI_ABSENT is distinct from WIFI_DISABLED:
+# treating "we have not been told" as "running on battery" invents a reading
+# that looks exactly like a real one. That invention powered off mains-fed
+# boards with no battery after fifteen idle minutes, taking running engine
+# installs with them, because the only motive for the idle power-off is saving a
+# battery that such a board does not have.
+POWER_UNKNOWN = 0
+POWER_BATTERY = 1
+POWER_CHARGER = 2
+
 
 class SystemState:
     """Observable system status.
@@ -46,6 +59,10 @@ class SystemState:
         # Battery state
         self._battery_level: Optional[int] = None  # 0-20 scale, None = unknown
         self._charger_connected: bool = False
+        # Where the power comes from, as far as anything has been able to tell.
+        # Stays POWER_UNKNOWN until the baseboard answers a battery request; see
+        # the constants above for why that is not the same as POWER_BATTERY.
+        self._power_source: int = POWER_UNKNOWN
         
         # WiFi state
         self._wifi_state: int = WIFI_DISCONNECTED  # WIFI_DISABLED, WIFI_DISCONNECTED, WIFI_CONNECTED
@@ -73,8 +90,25 @@ class SystemState:
     
     @property
     def charger_connected(self) -> bool:
-        """Whether the charger is connected."""
+        """Whether the charger is connected.
+
+        False while the power source is unknown, which is what display code
+        wants: no charging bolt is drawn for a board that has reported nothing.
+        Decisions that turn on the difference between "on battery" and "nothing
+        reported" must read :attr:`power_source` instead.
+        """
         return self._charger_connected
+
+    @property
+    def power_source(self) -> int:
+        """POWER_UNKNOWN, POWER_BATTERY or POWER_CHARGER.
+
+        Sticky once known: silence from the baseboard leaves the last reported
+        source in place, because a board that reported "on battery" and then lost
+        its link really might be on a battery and must still power itself off.
+        Only a board that has never reported is unknown.
+        """
+        return self._power_source
     
     @property
     def battery_percent(self) -> Optional[int]:
@@ -229,10 +263,15 @@ class SystemState:
             level: Battery level (0-20 scale), or None if unknown.
             charger_connected: Whether charger is connected.
         """
+        power_source = POWER_CHARGER if charger_connected else POWER_BATTERY
         changed = (level != self._battery_level or 
-                   charger_connected != self._charger_connected)
+                   charger_connected != self._charger_connected or
+                   power_source != self._power_source)
         self._battery_level = level
         self._charger_connected = charger_connected
+        # Reaching here at all means the baseboard answered, which is what
+        # resolves the source. Callers only reach this method on a real reading.
+        self._power_source = power_source
         if changed:
             self._notify_battery()
     

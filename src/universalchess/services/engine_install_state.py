@@ -124,6 +124,14 @@ class InstallState:
     build_eta_seconds: Optional[int] = None
     # How far apt has got through the dependency step, as apt itself reports it.
     deps_fraction: Optional[float] = None
+    # Resolved git ref being installed (a tag/branch), or None for an engine with
+    # no ref concept. Recorded at dispatch rather than derived later: the request
+    # usually names no ref at all, meaning "whatever the catalog pins", and the pin
+    # can move under a long install. A stopped install's preserved build tree may
+    # only be reused for the ref it actually holds, so this is what makes resuming
+    # safe. Defaulted so a state file written before the field existed still loads
+    # -- an install in flight across an upgrade must not vanish from the UI.
+    ref: Optional[str] = None
 
 
 # Stages whose position inside their band comes from a measurement rather than
@@ -195,8 +203,13 @@ class InstallStateStore:
         self._state: Optional[InstallState] = None
 
     # -- mutation -----------------------------------------------------------
-    def start(self, engine: str, display_name: str, estimated_seconds: float) -> InstallState:
-        """Begin tracking a new install (active, stage STARTING) and persist it."""
+    def start(self, engine: str, display_name: str, estimated_seconds: float,
+              ref: Optional[str] = None) -> InstallState:
+        """Begin tracking a new install (active, stage STARTING) and persist it.
+
+        ``ref`` is the resolved git ref being built, recorded so a stop or a
+        restart can produce a resume point that rebuilds the same version.
+        """
         now = time.time()
         with self._lock:
             self._state = InstallState(
@@ -214,6 +227,7 @@ class InstallStateStore:
                 percent_snapshot=None,
                 build_fraction=None,
                 build_eta_seconds=None,
+                ref=ref,
             )
             self._save_locked()
             return self._state
@@ -234,6 +248,11 @@ class InstallStateStore:
         between real progress and its band floor on every ordinary line a build or a
         downloader prints. A change of stage clears both, so a later phase cannot
         inherit a stale reading from an earlier one.
+
+        The build ETA is the exception: it belongs to the build fraction it arrived
+        with and is adopted with it, absent or not. It is a projection the producer
+        can withdraw while still measuring a fraction, and a withdrawal that left the
+        superseded number on screen would not be one.
         """
         now = time.time()
         with self._lock:
@@ -254,7 +273,13 @@ class InstallStateStore:
                 self._state.deps_fraction = deps_fraction
             if build_fraction is not None:
                 self._state.build_fraction = build_fraction
-            if build_eta_seconds is not None:
+                # Taken with the fraction it arrived with, absent or not. A build
+                # reading carries both, and the projection is withdrawn while the
+                # fraction stands -- the tracker stops projecting once the unit in
+                # flight has outlasted its own estimate. Keeping the previous
+                # number in that case would pair a live fraction with a projection
+                # already known to be wrong, and Reckless's final crate would
+                # advertise "less than a minute" for the tens it actually runs.
                 self._state.build_eta_seconds = build_eta_seconds
             self._state.updated_at = now
             self._save_locked()
@@ -278,6 +303,33 @@ class InstallStateStore:
             self._state.result = {"success": success, "error": None if success else (error or "Installation failed")}
             self._state.updated_at = now
             self._save_locked()
+
+    def stopped(self) -> Optional[InstallState]:
+        """Mark the install stopped on purpose, freezing the percent it reached.
+
+        A third terminal outcome, distinct from both existing ones because both
+        would mislead. FAILED shows the user an error for something they chose and
+        surfaces whatever ``get_install_error`` last held; INTERRUPTED claims the
+        board restarted. A stop is neither -- it is a pause with a preserved build
+        tree, and no error result at all.
+
+        The frozen percent is the only record of how much work that tree
+        represents, so it is snapshotted here rather than recomputed later against
+        an idle clock. Returns the stopped state, or None if nothing was tracked
+        (the endpoint and the install thread can both reach this as an install
+        ends).
+        """
+        now = time.time()
+        with self._lock:
+            if self._state is None:
+                return None
+            self._state.percent_snapshot = compute_percent(self._state, now)
+            self._state.stage = InstallStage.CANCELLED
+            self._state.active = False
+            self._state.message = f"{self._state.display_name} install stopped"
+            self._state.updated_at = now
+            self._save_locked()
+            return self._state
 
     def reconcile_interrupted(self) -> Optional[InstallState]:
         """Load persisted state and flag an orphaned active install.
@@ -330,6 +382,17 @@ class InstallStateStore:
             self._state = self._load_locked()
             return self._state
 
+    def observed_status_dict(self, now: Optional[float] = None) -> dict:
+        """Return the status as it stands on disk, for a process that is not the writer.
+
+        The board renders install progress from this file while the web process
+        writes it. :meth:`status_dict` reports the in-memory copy, which is right
+        for the owner and wrong for an observer: it would pin the reader to
+        whatever the file said the first time it looked.
+        """
+        self.load()
+        return self.status_dict(now)
+
     def status_dict(self, now: Optional[float] = None) -> dict:
         """Return the JSON-serializable status for the HTTP endpoint.
 
@@ -350,6 +413,8 @@ class InstallStateStore:
                     "message": "",
                     "percent": 0,
                     "interrupted": False,
+                    "stopped": False,
+                    "ref": None,
                     "estimated_seconds": 0,
                     "eta_seconds": None,
                     "started_at": None,
@@ -365,6 +430,11 @@ class InstallStateStore:
                 "message": state.message,
                 "percent": compute_percent(state, now),
                 "interrupted": state.stage == InstallStage.INTERRUPTED,
+                # Stopped on purpose, as opposed to failed or restart-killed. The
+                # UI renders a paused install differently from a broken one, and
+                # the two are indistinguishable from `active: false` alone.
+                "stopped": state.stage == InstallStage.CANCELLED,
+                "ref": state.ref,
                 "estimated_seconds": state.estimated_seconds,
                 # Projected from observed work, so it is only meaningful while the
                 # install is running; a finished install must not advertise one.

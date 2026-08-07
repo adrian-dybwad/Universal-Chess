@@ -45,6 +45,10 @@ finally:
     Image.open = _orig_image_open
 
 
+# A documentation-range address that no SSRF rule treats as private.
+_PUBLIC_TEST_ADDRESS = "93.184.216.34"
+
+
 def _elf(arch: str = "arm64") -> bytes:
     """Minimal little-endian ARM ELF header (see test_custom_engines for detail)."""
     machine = {"arm64": 183, "armhf": 40}[arch]
@@ -69,7 +73,7 @@ class _SyncThread:
 
 @pytest.fixture
 def client(monkeypatch):
-    webapp.app.config.update(TESTING=True)
+    webapp.app.config.update(TESTING=True)  # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (True, "tester"))
     return webapp.app.test_client()
 
@@ -104,6 +108,42 @@ def custom_env(tmp_path, monkeypatch):
     return store, engines_dir
 
 
+@pytest.fixture(autouse=True)
+def offline_dns(monkeypatch):
+    """Resolve named hosts to a fixed public address so the SSRF guard is offline.
+
+    The URL-install route runs the guard before dispatching, and the guard
+    resolves the host through ``socket.getaddrinfo``. Without this stub the
+    routing tests depend on the host's resolver: a machine whose DNS or
+    /etc/hosts maps example.com to 127.0.0.1 makes the guard reject the URL and
+    the route answer 400, so tests about dispatch and 409 serialization fail for
+    a reason unrelated to what they assert.
+
+    Literal IP hosts resolve to themselves, exactly as a real resolver does, so
+    the private/loopback rejection cases still exercise the guard's decision.
+    Only the real guard's resolver is replaced, through the injection point
+    validate_download_url already exposes for this purpose.
+    """
+    import ipaddress
+    import socket
+
+    from universalchess.services import custom_engines
+
+    def offline_resolver(host, port, *a, **k):
+        try:
+            address = str(ipaddress.ip_address(host))
+        except ValueError:
+            address = _PUBLIC_TEST_ADDRESS
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, port or 0))]
+
+    real_validate = custom_engines.validate_download_url
+    monkeypatch.setattr(
+        custom_engines,
+        "validate_download_url",
+        lambda url: real_validate(url, resolver=offline_resolver),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Upload
 # ---------------------------------------------------------------------------
@@ -116,7 +156,7 @@ def test_upload_requires_auth(monkeypatch):
     as privileged as install. Manifestation if the decorator is dropped: an
     anonymous POST writes an executable and returns 200.
     """
-    webapp.app.config.update(TESTING=True)
+    webapp.app.config.update(TESTING=True)  # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     unauth = webapp.app.test_client()
     resp = unauth.post(
@@ -203,7 +243,7 @@ def test_upload_missing_file_returns_400(client):
 
 def test_install_url_requires_auth(monkeypatch):
     """Installing from a URL must require auth (401 when unauthenticated)."""
-    webapp.app.config.update(TESTING=True)
+    webapp.app.config.update(TESTING=True)  # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (False, None))
     unauth = webapp.app.test_client()
     resp = unauth.post(

@@ -75,7 +75,7 @@ def set_inactivity_timeout(seconds: int) -> None:
     Settings.write('system', 'inactivity_timeout', str(seconds))
 
 
-def effective_inactivity_timeout(charger_connected: bool,
+def effective_inactivity_timeout(power_source: int,
                                  configured_timeout: int) -> tuple[int, bool]:
     """Resolve the auto power-off timeout for the current power source.
 
@@ -86,7 +86,8 @@ def effective_inactivity_timeout(charger_connected: bool,
     while charging (which meant a charging board never powered off).
 
     Args:
-        charger_connected: True when the charger is attached (mains power).
+        power_source: ``POWER_UNKNOWN``, ``POWER_BATTERY`` or ``POWER_CHARGER``
+            from :class:`SystemState`.
         configured_timeout: The battery ``system.inactivity_timeout`` in seconds
             (0 = disabled/infinite).
 
@@ -97,9 +98,17 @@ def effective_inactivity_timeout(charger_connected: bool,
         plugged-in board, not the battery opt-out. On battery a 0 setting yields
         ``(DISABLED_TIMEOUT_SENTINEL, True)`` so the countdown UI is suppressed
         and no auto power-off occurs.
+
+        An unknown source powers off at all, whatever the battery setting says.
+        The idle power-off exists only to save a battery, and a board that has
+        never reported one may not have one: a mains-fed Pi with no baseboard
+        attached used to take the battery branch and power itself off after
+        fifteen idle minutes, killing any engine install that was running.
     """
-    if charger_connected:
+    if power_source == POWER_CHARGER:
         return (CHARGER_CONNECTED_TIMEOUT, False)
+    if power_source == POWER_UNKNOWN:
+        return (DISABLED_TIMEOUT_SENTINEL, True)
     if configured_timeout == 0:
         return (DISABLED_TIMEOUT_SENTINEL, True)
     return (configured_timeout, False)
@@ -115,6 +124,7 @@ def signal_web_activity() -> None:
     _web_activity_event.set()
 
 from universalchess.state import get_system as _get_system_state
+from universalchess.state.system import POWER_CHARGER, POWER_UNKNOWN
 
 # Board meta properties (extracted from DGT_SEND_TRADEMARK response)
 board_meta_properties: Optional[dict] = None
@@ -806,10 +816,11 @@ def eventsThread(keycallback, fieldcallback, tout):
     # Get system state for charger status
     system_state = _get_system_state()
     
-    # Tracks whether the current deadline is the charging (24h) deadline, so a
-    # power-source change is detected as an edge and the deadline is set once
-    # rather than pushed forward every loop.
-    charger_deadline_active = False
+    # The power source the current deadline was chosen for, so a change of
+    # source is detected as an edge and the deadline is set once rather than
+    # pushed forward every loop. Seeded below from the source in force when the
+    # first deadline is computed.
+    deadline_power_source = system_state.power_source
     events_paused = False
     inactivity_countdown_shown = False  # Track if we're showing the countdown
     inactivity_countdown_splash = None
@@ -821,10 +832,11 @@ def eventsThread(keycallback, fieldcallback, tout):
 
         Returns a tuple of ``(effective_timeout, is_disabled)``. While charging,
         the fixed 24h charger timeout applies; on battery the configured setting
-        applies (0 = disabled, returned as an effectively-infinite value).
+        applies (0 = disabled, returned as an effectively-infinite value); an
+        unknown source never powers off.
         """
         return effective_inactivity_timeout(
-            system_state.charger_connected, get_inactivity_timeout())
+            system_state.power_source, get_inactivity_timeout())
     
     # Get initial timeout from settings (ignore passed parameter, always read from settings)
     tout, timeout_disabled = get_current_timeout()
@@ -840,20 +852,21 @@ def eventsThread(keycallback, fieldcallback, tout):
         if eventsrunning == 1:
             # Switch the deadline when the power source changes. On connect the
             # board adopts the fixed 24h charger timeout; on disconnect it
-            # restores the battery timeout. Setting the deadline once per
-            # transition (rather than every loop) lets it count down, so a
-            # charging board powers off after 24h idle instead of never. Piece,
-            # key, and web activity below still reset the deadline via
-            # get_current_timeout() to the charging value while plugged in.
-            if system_state.charger_connected != charger_deadline_active:
-                charger_deadline_active = system_state.charger_connected
+            # restores the battery timeout; when the baseboard first answers, an
+            # unknown source becomes a real one and the board starts counting
+            # down at all. Setting the deadline once per transition (rather than
+            # every loop) lets it count down, so a charging board powers off
+            # after 24h idle instead of never. Piece, key, and web activity below
+            # still reset the deadline via get_current_timeout().
+            if system_state.power_source != deadline_power_source:
+                deadline_power_source = system_state.power_source
                 tout, timeout_disabled = get_current_timeout()
                 to = time.monotonic() + tout
                 # A power-source change moves the deadline well past the warning
                 # window, so any visible countdown is now stale - remove it.
                 if inactivity_countdown_shown and inactivity_countdown_splash is not None:
                     log.info('[board.events] Inactivity countdown cancelled by power-source change '
-                             f'(charger_connected={system_state.charger_connected})')
+                             f'(power_source={system_state.power_source})')
                     try:
                         future = display_manager.remove_widget(inactivity_countdown_splash)
                         if future:

@@ -120,6 +120,10 @@ interface EngineInstallStatus {
   message: string;
   percent: number;
   interrupted: boolean;
+  // True when the install was stopped on purpose, as opposed to failing or being
+  // killed by a restart. All three are inactive, so `active: false` alone cannot
+  // tell them apart, and only this one must not be reported as an error.
+  stopped: boolean;
   // Remaining seconds projected from work the server actually observed (compiled
   // translation units, downloaded bytes), not from a fixed per-engine estimate.
   // Null before there is completed work to project from, and once the install ends.
@@ -1260,38 +1264,108 @@ export function Settings() {
     };
   }, [refreshEngines, t]);
 
-  // Resume an install that was interrupted by a process/board restart. The
-  // backend relaunches the install (reusing the cached git clone); the UI
-  // switches back to the in-progress state and resumes polling.
-  const resumeInstall = useCallback(async () => {
-    if (!installStatus?.engine) return;
-    const engineName = installStatus.engine;
+  // Stop the running install. The build's process group is killed and its tree
+  // is preserved, so the engine's card switches to offering Resume. The status
+  // watcher owns the transition; nothing optimistic is set here because the
+  // stop is cooperative and the install may take a moment to wind down.
+  const stopInstall = useCallback(async () => {
+    const engineName = installStatus?.engine;
+    if (!engineName) return;
     setEngineError(null);
-    try {
-      const response = await apiFetch('/api/engines/resume', { method: 'POST' });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || data.success === false) {
-        setEngineError({ engine: engineName, message: data.error || t('settingsPage.enginesUi.failResume', { name: engineName }) });
-        return;
+    const submit = async (): Promise<void> => {
+      try {
+        const response = await apiFetch('/api/engines/stop', { method: 'POST', requiresAuth: true });
+        if (requireLogin(response, submit)) return;
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.success === false) {
+          setEngineError({ engine: engineName, message: data.error || t('settingsPage.enginesUi.failStop', { name: engineName }) });
+        }
+      } catch (e) {
+        console.error('Failed to stop engine install:', e);
+        setEngineError({ engine: engineName, message: t('settingsPage.enginesUi.failStop', { name: engineName }) });
       }
-      // Track this engine so the status watcher owns the in-progress UI and the
-      // completion handling; show an immediate optimistic state until it polls.
-      installTrackRef.current = engineName;
-      setInstallingEngine(engineName);
-      setInstallStatus({
-        ...installStatus,
-        active: true,
-        installing: true,
-        interrupted: false,
-        stage: 'starting',
-        message: t('settingsPage.enginesUi.statusResuming'),
-        percent: 0,
-      });
-    } catch (e) {
-      console.error('Failed to resume engine install:', e);
-      setEngineError({ engine: engineName, message: t('settingsPage.enginesUi.failResumeRetry', { name: engineName }) });
-    }
-  }, [installStatus, t]);
+    };
+    await submit();
+  }, [installStatus, requireLogin, t]);
+
+  // Resume one paused install. The engine is named because several can be paused
+  // at once; the backend takes the ref from that engine's own resume point, so
+  // the rebuild reuses the preserved tree instead of re-cloning.
+  const resumeInstall = useCallback(async (engineName: string) => {
+    setEngineError(null);
+    const submit = async (): Promise<void> => {
+      try {
+        const response = await apiFetch('/api/engines/resume', {
+          method: 'POST',
+          requiresAuth: true,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ engine: engineName }),
+        });
+        if (requireLogin(response, submit)) return;
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.success === false) {
+          setEngineError({ engine: engineName, message: data.error || t('settingsPage.enginesUi.failResume', { name: engineName }) });
+          return;
+        }
+        // The board retires the engine's resume point when the build restarts, and
+        // the paused controls are rendered from the engine list, so the list has to
+        // be refetched for them to go away -- the same reason discard refetches.
+        void refreshEngines();
+        // Track this engine so the status watcher owns the in-progress UI and the
+        // completion handling; show an immediate optimistic state until it polls.
+        installTrackRef.current = engineName;
+        setInstallingEngine(engineName);
+        setInstallStatus({
+          active: true,
+          installing: true,
+          engine: engineName,
+          display_name: null,
+          stage: 'starting',
+          message: t('settingsPage.enginesUi.statusResuming'),
+          percent: 0,
+          interrupted: false,
+          stopped: false,
+          eta_seconds: null,
+          result: null,
+        });
+      } catch (e) {
+        console.error('Failed to resume engine install:', e);
+        setEngineError({ engine: engineName, message: t('settingsPage.enginesUi.failResumeRetry', { name: engineName }) });
+      }
+    };
+    await submit();
+  }, [refreshEngines, requireLogin, t]);
+
+  // Throw away a paused install: its build tree and its resume point. Confirmed
+  // first because the tree can represent an hour of compiling, the deletion
+  // cannot be undone, and this button sits beside Resume.
+  const discardInstall = useCallback(async (engineName: string, displayName: string) => {
+    if (!window.confirm(t('settingsPage.enginesUi.confirmDiscard', { name: displayName }))) return;
+    setEngineError(null);
+    const submit = async (): Promise<void> => {
+      try {
+        const response = await apiFetch('/api/engines/discard', {
+          method: 'POST',
+          requiresAuth: true,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ engine: engineName }),
+        });
+        if (requireLogin(response, submit)) return;
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.success === false) {
+          setEngineError({ engine: engineName, message: data.error || t('settingsPage.enginesUi.failDiscard', { name: displayName }) });
+          return;
+        }
+        // The card's paused controls come from the engine list, so it has to be
+        // refetched for them to disappear.
+        void refreshEngines();
+      } catch (e) {
+        console.error('Failed to discard engine install:', e);
+        setEngineError({ engine: engineName, message: t('settingsPage.enginesUi.failDiscard', { name: displayName }) });
+      }
+    };
+    await submit();
+  }, [refreshEngines, requireLogin, t]);
 
   // Dismiss an interrupted install: clears the persisted state so the banner
   // does not reappear on the next poll or reload.
@@ -1379,6 +1453,7 @@ export function Settings() {
             percent: 0,
             eta_seconds: null,
             interrupted: false,
+            stopped: false,
             result: null,
           });
         } else {
@@ -1443,6 +1518,7 @@ export function Settings() {
           percent: 0,
           eta_seconds: null,
           interrupted: false,
+          stopped: false,
           result: null,
         });
       } catch (e) {
@@ -1583,6 +1659,7 @@ export function Settings() {
         percent: 0,
         eta_seconds: null,
         interrupted: false,
+        stopped: false,
         result: null,
       });
       return true;
@@ -2249,7 +2326,9 @@ export function Settings() {
                   engineError={engineError}
                   onToggle={toggleEngine}
                   onRepair={repairEngine}
+                  onStop={stopInstall}
                   onResume={resumeInstall}
+                  onDiscard={discardInstall}
                   onCancel={cancelInstall}
                   onConfigureProfiles={setProfileEngine}
                   onResetProfiles={resetEngineProfiles}
@@ -2498,7 +2577,9 @@ function EnginesList({
   engineError,
   onToggle,
   onRepair,
+  onStop,
   onResume,
+  onDiscard,
   onCancel,
   onConfigureProfiles,
   onResetProfiles,
@@ -2510,7 +2591,9 @@ function EnginesList({
   engineError: { engine: string; message: string } | null;
   onToggle: (name: string, install: boolean, ref?: string) => void;
   onRepair: (name: string) => void;
-  onResume: () => void;
+  onStop: () => void;
+  onResume: (name: string) => void;
+  onDiscard: (name: string, displayName: string) => void;
   onCancel: () => void;
   onConfigureProfiles: (engine: EngineDefinition) => void;
   onResetProfiles: (engineName: string, displayName: string) => void;
@@ -2557,8 +2640,14 @@ function EnginesList({
                   error={engineError?.engine === engine.name ? engineError.message : null}
                   onToggle={onToggle}
                   onRepair={onRepair}
+                  onStop={onStop}
                   onResume={onResume}
+                  onDiscard={onDiscard}
                   onCancel={onCancel}
+                  // Only one engine may build at a time (the backend answers 409),
+                  // so a paused engine's Resume is offered but inert while another
+                  // install runs, rather than being a control that cannot work.
+                  anyInstallActive={installStatus?.active === true}
                   onConfigureProfiles={onConfigureProfiles}
                   onResetProfiles={onResetProfiles}
                   onDismissFailure={onDismissFailure}
@@ -2680,8 +2769,11 @@ function EngineCard({
   error,
   onToggle,
   onRepair,
+  onStop,
   onResume,
+  onDiscard,
   onCancel,
+  anyInstallActive,
   onConfigureProfiles,
   onResetProfiles,
   onDismissFailure,
@@ -2700,8 +2792,13 @@ function EngineCard({
   error: string | null;
   onToggle: (name: string, install: boolean, ref?: string) => void;
   onRepair: (name: string) => void;
-  onResume: () => void;
+  onStop: () => void;
+  onResume: (name: string) => void;
+  onDiscard: (name: string, displayName: string) => void;
   onCancel: () => void;
+  // True while any engine on the page is building. Gates this card's Resume,
+  // which the backend would answer with 409 during another install.
+  anyInstallActive: boolean;
   onConfigureProfiles: (engine: EngineDefinition) => void;
   onResetProfiles: (engineName: string, displayName: string) => void;
   onDismissFailure: (engineName: string) => void;
@@ -2710,7 +2807,18 @@ function EngineCard({
   const isSystem = engine.name === 'stockfish'; // Stockfish is a system package
   const infoHref = externalLinkHref(engine.info_url);
   const isActiveInstall = status?.active === true;
-  const isInterrupted = status?.interrupted === true;
+  // A paused install with a preserved build tree. Read from the engine's own
+  // record rather than the install-status poll: that poll describes one install,
+  // and several engines can be paused simultaneously.
+  //
+  // An engine that is building is not paused, whatever the engine record still
+  // says. The two sources refresh independently -- status is polled every few
+  // seconds, the list only on an action or a completed install -- so a client
+  // that has not refetched since the install resumed holds a stale resume point.
+  // Preferring the live status resolves that without depending on the order the
+  // two fetches happen to land in.
+  const pausedInstall = isActiveInstall ? null : engine.resume_point;
+  const isInterrupted = status?.interrupted === true && pausedInstall === null;
 
   // An unacknowledged failure to bring the engine up after a successful install.
   // Withholds the profile editor, which cannot load for such an engine -- the
@@ -2855,13 +2963,36 @@ function EngineCard({
           it reaches this block solely for the "Configure profiles" button. */}
       {(!isSystem || (engine.has_profiles && engine.installed)) && (
         <div className="engine-card-actions">
-          {/* Install / uninstall / resume controls apply only to source-built
-              and prebuilt engines. A system package has none of these. */}
-          {!isSystem && (isInterrupted ? (
+          {/* Install / uninstall / stop / resume controls apply only to
+              source-built and prebuilt engines. A system package has none. */}
+          {!isSystem && isActiveInstall && (
+            <Button variant="secondary" size="sm" onClick={onStop}>
+              {t('settingsPage.enginesUi.stopInstall')}
+            </Button>
+          )}
+          {!isSystem && (pausedInstall !== null ? (
             <>
-              <Button variant="primary" size="sm" onClick={onResume}>
-                {t('settingsPage.enginesUi.resumeInstall')}
+              {/* Resume, not Install: starting fresh would discard the preserved
+                  tree, which is what the explicit Discard is for. */}
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={anyInstallActive}
+                onClick={() => onResume(engine.name)}
+              >
+                {t('settingsPage.enginesUi.resumeInstallAt', { percent: pausedInstall.percent })}
               </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={anyInstallActive}
+                onClick={() => onDiscard(engine.name, engine.display_name)}
+              >
+                {t('settingsPage.enginesUi.discardInstall')}
+              </Button>
+            </>
+          ) : isInterrupted ? (
+            <>
               <Button variant="secondary" size="sm" onClick={onCancel}>
                 {t('settingsPage.enginesUi.cancel')}
               </Button>
@@ -2996,6 +3127,16 @@ function EngineCard({
       {!isSystem && isInterrupted && (
         <p className="engine-install-note engine-install-note--interrupted">
           {t('settingsPage.enginesUi.interruptedNote')}
+        </p>
+      )}
+      {/* Says what resuming will and will not do. The preserved tree is the
+          reason Resume is worth pressing rather than Install, and the reason
+          Discard exists at all, so the card states how much work is held. */}
+      {!isSystem && pausedInstall !== null && (
+        <p className="engine-install-note engine-install-note--interrupted">
+          {pausedInstall.reason === 'interrupted'
+            ? t('settingsPage.enginesUi.pausedByRestartNote', { percent: pausedInstall.percent })
+            : t('settingsPage.enginesUi.pausedNote', { percent: pausedInstall.percent })}
         </p>
       )}
       {error && (

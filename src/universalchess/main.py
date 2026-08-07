@@ -3105,6 +3105,25 @@ def _on_board_command(parsed: dict) -> None:
     if command == "reset_inactivity":
         board.signal_web_activity()
         return
+    # Answer to an install request the board made. Handled here, not deferred: the
+    # menu thread is blocked waiting for it, and the main loop it would be
+    # deferred to is that same thread, so deferring would guarantee the timeout it
+    # exists to avoid.
+    if command == "engine_install_reply":
+        from universalchess.services.install_control import get_install_control
+        get_install_control().deliver_reply(parsed)
+        return
+    # An install started or ended in the web process. Fanned out to the progress
+    # listeners so the status-bar indicator shows a build this process is not
+    # running -- which, since the web owns every install, is all of them.
+    if command == "engine_install_status":
+        from universalchess.managers.engine_manager import get_engine_manager
+        get_engine_manager().notify_install_activity(
+            parsed.get("engine") or "",
+            parsed.get("status") or "",
+            parsed.get("message") or "",
+        )
+        return
     # Web remote button press (interactive board control). Enqueuing onto the
     # board's key queue is thread-safe and does no display/game work, so it is
     # handled here off the main loop; board.eventsThread then dispatches it on
@@ -4549,14 +4568,7 @@ def _run_engine_manager_menu():
             menu_manager=_menu_manager,
             board=board,
             log=log,
-            show_install_progress=lambda em, en, dn, mins: show_engine_install_progress(
-                engine_manager=em,
-                engine_name=en,
-                display_name=dn,
-                estimated_minutes=mins,
-                board=board,
-                log=log,
-            ),
+            show_install_progress=show_engine_install_progress,
         ),
     )
 
@@ -6568,6 +6580,20 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
         # and final shutdown stages replace this with their own splashes.
         if system_shutdown:
             _show_shutdown_splash("Rebooting" if reboot else "Shutting down", timeout=10.0)
+
+        # Stop an engine install before the Pi goes down, so an hour of build
+        # survives as a resume point instead of a part-written tree. Done here,
+        # before any teardown, because asking the web needs the sockets that the
+        # cleanup below closes. Never allowed to prevent the power-off: the
+        # request is best-effort and the machine is on its way down regardless.
+        if system_shutdown:
+            try:
+                from universalchess.services.install_quiesce import (
+                    stop_install_for_board_power_off,
+                )
+                stop_install_for_board_power_off()
+            except Exception as e:
+                log.error(f"[Cleanup] Error stopping engine install: {e}", exc_info=True)
         
         # Stop RFCOMM server (handles pairing manager, sockets, and threads)
         log.info("[Cleanup] Stopping RFCOMM server...")

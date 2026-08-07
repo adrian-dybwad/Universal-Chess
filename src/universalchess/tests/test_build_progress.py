@@ -72,6 +72,15 @@ _BUILD_PID = 1000
 _DRIVER_PID = 1001
 _BACKEND_PID = 1002
 
+# Cargo drives one ``rustc`` per crate, and that invocation names only the crate
+# root (``lib.rs`` / ``main.rs``) -- never the modules the crate is made of. The
+# crate source directories those invocations point at hold far more ``.rs`` files
+# than there are crates: Reckless v0.9.0 resolves 36 locked packages, and the board
+# displayed "module 17 of ~120" while compiling them.
+_RECKLESS_LOCKED_PACKAGES = 36
+# Files in one dependency's src/ directory, none of which is a unit of its own.
+_CRATE_MODULE_FILES = 12
+
 # Verbatim command lines captured from a Rodent IV build on the Pi Zero W (GCC 14,
 # arm-linux-gnueabihf). Used instead of invented ones because a hand-written
 # approximation missed the internal dump flags below and double-counted every unit:
@@ -134,6 +143,36 @@ def _backend(unit, **fields) -> ProcessInfo:
         args=(f"/usr/libexec/gcc/{comm}", "-quiet", unit, "-o", "-"),
         **{**defaults, **fields},
     )
+
+
+def _rustc(crate_name, crate_root, **fields) -> ProcessInfo:
+    """A ``rustc`` process shaped as cargo invokes it: one crate, one root file.
+
+    The argument order and the option spellings are cargo's own, including the
+    ``-L dependency=...`` and ``--out-dir`` pairs whose values must not be read as
+    inputs, so the parse under test sees a real command line.
+    """
+    defaults = {"pid": _BACKEND_PID, "ppid": _BUILD_PID, "cpu_ticks": 1}
+    return ProcessInfo(
+        comm="rustc",
+        args=(
+            "rustc", "--crate-name", crate_name, "--edition=2024", crate_root,
+            "--error-format=json", "--crate-type", "lib",
+            "--emit=dep-info,metadata,link", "-C", "opt-level=3",
+            "--out-dir", "/build/target/release/deps",
+            "-L", "dependency=/build/target/release/deps",
+        ),
+        **{**defaults, **fields},
+    )
+
+
+def _write_cargo_lock(root: Path, package_count: int) -> None:
+    """Write a Cargo.lock naming ``package_count`` resolved packages."""
+    entries = "\n".join(
+        f'[[package]]\nname = "crate{index}"\nversion = "1.0.0"\n'
+        for index in range(package_count)
+    )
+    (root / "Cargo.lock").write_text(f'version = 4\n\n{entries}', encoding="utf-8")
 
 
 def _table(*processes) -> dict:
@@ -462,6 +501,177 @@ class TestTotalForOneFileAtATimeBuilds:
         )
 
         assert tracker.progress(now=1.0).units_total == 1
+
+
+class TestRustCrateUnits:
+    """A cargo build's unit is a crate, not a file.
+
+    Why this class exists: Reckless is the catalog's only Rust engine, and every
+    other toolchain here compiles one file per invocation. ``rustc`` compiles a
+    whole crate per invocation and is handed only that crate's root file, so
+    counting the ``.rs`` files sitting beside that root counts modules that are
+    never units of their own. On the board that inflated a ~36-crate build to
+    "~120" and rising, and it named every one of those crates "lib.rs".
+    """
+
+    def _record_crates(self, tracker, crates, *, root, at=1.0):
+        """Sample one rustc process per crate, one crate per second."""
+        for offset, (crate_name, crate_root) in enumerate(crates):
+            tracker.record(
+                _table(_rustc(crate_name, crate_root, cwd=str(root))),
+                now=at + offset,
+            )
+
+    def test_the_denominator_is_the_locked_crate_count_not_the_module_count(
+        self, tmp_path
+    ):
+        """The total counts crates to compile, not files in a crate's directory.
+
+        Why this test exists: the denominator drives both the bar and the
+        remaining-time projection, and for a Rust build it was reading the wrong
+        kind of thing entirely -- every module file beside a crate root was counted
+        as a unit that would never be compiled on its own. Cargo.lock names the
+        resolved packages, which is the set of crates the build actually has to
+        get through.
+
+        How a regression manifests: the total becomes the number of ``.rs`` files
+        in the sampled crate directories (24 here, and climbing with every new
+        dependency), so the projected time left is several times the truth.
+        """
+        _write_cargo_lock(tmp_path, _RECKLESS_LOCKED_PACKAGES)
+        for crate in ("bindgen", "syn"):
+            _write_sources(tmp_path, {
+                f"registry/{crate}/src/module{index}.rs": 500
+                for index in range(_CRATE_MODULE_FILES)
+            })
+        tracker = _tracker(tmp_path)
+
+        self._record_crates(tracker, [
+            ("bindgen", str(tmp_path / "registry/bindgen/src/lib.rs")),
+            ("syn", str(tmp_path / "registry/syn/src/lib.rs")),
+        ], root=tmp_path)
+
+        assert tracker.progress(now=3.0).units_total == _RECKLESS_LOCKED_PACKAGES
+
+    def test_crates_seen_still_floor_the_total_when_the_lockfile_understates_it(
+        self, tmp_path
+    ):
+        """The total never drops below the crates already compiled.
+
+        Why this test exists: Cargo.lock is the resolved graph, not the build
+        plan. It omits the build scripts cargo compiles as units of their own, so
+        the real invocation count can exceed it; it also lists packages for other
+        platforms that are never built. The count is therefore approximate in both
+        directions, and the one thing it must never do is claim fewer crates than
+        have already been observed finishing.
+
+        How a regression manifests: with three crates seen against a two-package
+        lockfile the total reads 2, so more units are reported finished than exist
+        and the fraction exceeds 1.
+        """
+        _write_cargo_lock(tmp_path, 2)
+        tracker = _tracker(tmp_path)
+
+        self._record_crates(tracker, [
+            ("libc", "/registry/libc/src/lib.rs"),
+            ("cc", "/registry/cc/src/lib.rs"),
+            ("reckless", "src/main.rs"),
+        ], root=tmp_path)
+
+        progress = tracker.progress(now=4.0)
+        assert progress.units_total == 3
+        assert progress.units_finished <= progress.units_total
+
+    def test_a_crate_is_named_by_its_crate_name_not_its_root_file(self, tmp_path):
+        """The module in flight is identified by something that distinguishes it.
+
+        Why this test exists: every crate root in a cargo build is called
+        ``lib.rs`` or ``main.rs``, so the install banner read "module 17 of ~120 -
+        lib.rs" and then "module 18 of ~120 - lib.rs". The crate name is on the
+        same command line and is the only part of it that says what is compiling.
+
+        How a regression manifests: the current unit is the root file's path, so
+        the banner names the same file for every crate in the build.
+        """
+        _write_cargo_lock(tmp_path, _RECKLESS_LOCKED_PACKAGES)
+        tracker = _tracker(tmp_path)
+
+        self._record_crates(
+            tracker, [("regex_automata", "/registry/regex-automata/src/lib.rs")],
+            root=tmp_path,
+        )
+
+        assert tracker.progress(now=2.0).current_unit == "regex_automata"
+
+    def test_each_packages_build_script_is_counted_as_its_own_crate(self, tmp_path):
+        """Crates that share a name are still separate units.
+
+        Why this test exists: cargo compiles every package's build script under
+        the crate name ``build_script_build``, and several packages in Reckless's
+        graph have one. Identifying a unit by the crate name alone merges those
+        into a single unit, which under-counts the work finished and makes a unit
+        that already completed go active again later in the build. The crate root
+        path is unique where the name is not.
+
+        How a regression manifests: the two build scripts collapse into one unit,
+        so only one unit is reported finished where two have compiled.
+        """
+        _write_cargo_lock(tmp_path, 4)
+        tracker = _tracker(tmp_path)
+
+        self._record_crates(tracker, [
+            ("build_script_build", "/registry/libc/build.rs"),
+            ("build_script_build", "/registry/clang-sys/build.rs"),
+            ("libc", "/registry/libc/src/lib.rs"),
+        ], root=tmp_path)
+
+        assert tracker.progress(now=4.0).units_finished == 2
+
+    def test_crates_are_weighted_equally_rather_than_by_their_root_file(self, tmp_path):
+        """A crate's cost is not described by the size of its root file.
+
+        Why this test exists: units are weighted by source size because a C
+        translation unit's cost tracks its file size. A crate root does not: it is
+        usually a short list of ``mod`` declarations for a crate of any size, so
+        weighting by it would rank crates by an unrelated number. Here the second
+        crate's root is 100x the first's while both are single crates.
+
+        How a regression manifests: sizes leak back into crate weighting and the
+        fraction after one of two crates is 0.01 or 0.99 instead of one half.
+        """
+        _write_cargo_lock(tmp_path, 2)
+        _write_sources(tmp_path, {"tiny/src/lib.rs": 100, "huge/src/lib.rs": 10_000})
+        tracker = _tracker(tmp_path)
+
+        self._record_crates(tracker, [
+            ("tiny", str(tmp_path / "tiny/src/lib.rs")),
+            ("huge", str(tmp_path / "huge/src/lib.rs")),
+        ], root=tmp_path)
+
+        assert tracker.progress(now=3.0).fraction == pytest.approx(0.5)
+
+    def test_a_rust_build_without_a_lockfile_falls_back_to_the_crates_seen(
+        self, tmp_path
+    ):
+        """An unreadable lockfile costs the denominator, not the whole reading.
+
+        Why this test exists: ``rustc`` can be driven without cargo, and a clone
+        can be laid out so the lockfile is not where the build was launched. The
+        reading must degrade to what has been observed rather than dividing by a
+        count of files that are not units.
+
+        How a regression manifests: a missing Cargo.lock makes the total zero, so
+        there is no usable denominator and the fraction disappears for the build.
+        """
+        tracker = _tracker(tmp_path)
+
+        self._record_crates(
+            tracker, [("libc", "/registry/libc/src/lib.rs")], root=tmp_path,
+        )
+
+        progress = tracker.progress(now=2.0)
+        assert progress.units_total == 1
+        assert progress.fraction is not None
 
 
 class TestReportedEta:
@@ -825,6 +1035,39 @@ class TestUnitDiscovery:
 class TestFraction:
     """Turning observed units into a fraction the progress bar can use."""
 
+    def test_units_not_yet_reached_are_counted_in_the_denominator(self, tmp_path):
+        """The fraction is finished work over all the work, not over what was seen.
+
+        Why this test exists: a build that invokes the compiler once per file
+        declares no unit set, so the only units with a known cost are the ones
+        already sampled -- and every one of those except the unit in flight is
+        finished. Dividing by them alone therefore reports (n-1)/n, which is above
+        90% from the eleventh unit onwards no matter how many remain. Measured on
+        the board: a Reckless build showed 94% and "less than a minute remaining"
+        while compiling its 17th module of roughly 120, with most of an hour left.
+
+        How a regression manifests: the fraction here jumps to 1/2 -- one of the
+        two units seen -- instead of 1/6, and the ETA derived from it collapses
+        towards zero for the whole build.
+        """
+        _write_sources(tmp_path, {f"src/unit{index}.c": 100 for index in range(6)})
+        source_dir = str(tmp_path / "src")
+        tracker = _tracker(tmp_path)
+
+        tracker.record(
+            _table(_backend("unit0.c", comm="cc1", ppid=_BUILD_PID, cwd=source_dir)),
+            now=10.0,
+        )
+        tracker.record(
+            _table(_backend("unit1.c", comm="cc1", ppid=_BUILD_PID, cwd=source_dir)),
+            now=20.0,
+        )
+
+        progress = tracker.progress(now=20.0)
+        assert progress.units_finished == 1
+        assert progress.units_total == 6
+        assert progress.fraction == pytest.approx(1 / 6)
+
     def test_units_already_passed_are_counted_when_the_sampler_missed_them(self, tmp_path):
         """Progress is inferred from position in the input list, not just sightings.
 
@@ -992,10 +1235,68 @@ class TestEta:
         """
         units = [f"src/f{index}.c" for index in range(10)]
         tracker = _tracker(tmp_path)
+        # The first unit starts immediately, so compiling and the command begin
+        # together and the measured rate spans the whole run.
+        tracker.record(_table(_driver(units), _backend(units[0], comm="cc1")), now=0.0)
         # Half the units done after 100s implies about 100s remaining.
         tracker.record(_table(_driver(units), _backend(units[5], comm="cc1")), now=100.0)
 
         assert tracker.progress(now=100.0).eta_seconds == pytest.approx(100, abs=1)
+
+    def test_eta_excludes_the_setup_that_ran_before_the_first_unit(self, tmp_path):
+        """The rate is measured over compiling, not over everything the command did.
+
+        Why this test exists: a build command is more than a compile. Reckless's
+        bootstraps a pinned rustup toolchain over the network and lets cargo fetch
+        and unpack its registry before ``rustc`` runs once, which on this board is
+        minutes of the elapsed time. Charging that to the compile rate makes every
+        unit look far more expensive than it is, and the error grows with how slow
+        the board's network was.
+
+        How a regression manifests: dividing total elapsed time by the completed
+        fraction bills the 300s of setup here to five units, so the projection is
+        400s where the compiling that has actually happened implies 100s.
+        """
+        units = [f"src/f{index}.c" for index in range(10)]
+        tracker = _tracker(tmp_path)
+        # Five minutes of the command with nothing compiling: no unit is visible.
+        tracker.record(_table(), now=299.0)
+        tracker.record(_table(_driver(units), _backend(units[0], comm="cc1")), now=300.0)
+        tracker.record(_table(_driver(units), _backend(units[5], comm="cc1")), now=400.0)
+
+        assert tracker.progress(now=400.0).eta_seconds == pytest.approx(100, abs=2)
+
+    def test_the_eta_is_dropped_once_the_module_in_flight_outlasts_it(self, tmp_path):
+        """A projection observation has already overtaken is withdrawn, not repeated.
+
+        Why this test exists: a rate measured over the modules already compiled
+        says nothing about a module unlike them, and every build here ends with
+        one. Reckless's last crate compiles the engine with fat LTO across all 35
+        crates before it, so at 35 of 36 done the measured pace projects about a
+        minute for a module that runs for tens of them -- the "less than a minute
+        remaining" that stood for the rest of the build. Once the module has run
+        longer than the projection allows for the whole remainder, the projection
+        is known to be wrong, and the module's own elapsed time (shown beside it)
+        is the honest reading.
+
+        How a regression manifests: the stale projection keeps being published, so
+        the install advertises a minute left for as long as the final module runs.
+        """
+        units = [f"src/f{index:02d}.c" for index in range(20)]
+        tracker = _tracker(tmp_path)
+        tracker.record(_table(_driver(units), _backend(units[0], comm="cc1")), now=0.0)
+        # 19 of 20 done in 100s; the last module has only just started, so the
+        # measured pace is not yet contradicted by anything.
+        tracker.record(_table(_driver(units), _backend(units[19], comm="cc1")), now=100.0)
+        assert tracker.progress(now=100.0).eta_seconds == pytest.approx(5, abs=1)
+
+        # 100s later that module is still running, having outlasted the ~5s the
+        # projection allowed for everything that was left.
+        tracker.record(_table(_driver(units), _backend(units[19], comm="cc1")), now=200.0)
+
+        progress = tracker.progress(now=200.0)
+        assert progress.current_unit_seconds == pytest.approx(100.0)
+        assert progress.eta_seconds is None
 
     def test_no_eta_while_too_little_work_has_finished_to_extrapolate_from(self, tmp_path):
         """An ETA is withheld until enough work is done for the projection to mean anything.
