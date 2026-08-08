@@ -352,7 +352,29 @@
       "title": "Ajustes del sistema",
       "description": "Estado del dispositivo, actualizaciones de software y configuración del sistema",
       "deviceTitle": "Dispositivo",
-      "deviceDescription": "Preferencias de suspensión, zona horaria e idioma de este tablero."
+      "deviceDescription": "Preferencias de suspensión, reloj e idioma de este tablero."
+    },
+    "deviceClock": {
+      "title": "Reloj del dispositivo",
+      "description": "El tablero no tiene un reloj con batería. Toma la hora de internet cuando puede conectarse; si no, su hora se desvía y puedes ajustarla desde aquí.",
+      "unavailable": "No se pudo leer el reloj del tablero.",
+      "boardTime": "Hora del tablero al consultarla",
+      "difference": "Diferencia",
+      "networkTime": "Hora de red",
+      "offsetBehind": "{{amount}} por detrás de este navegador",
+      "offsetAhead": "{{amount}} por delante de este navegador",
+      "offsetInStep": "Coincide con este navegador",
+      "sync": {
+        "synchronised": "Sincronizada",
+        "notSynchronised": "Activada, pero sin sincronizar",
+        "disabled": "Desactivada",
+        "unknown": "Desconocida"
+      },
+      "setFromBrowser": "Ajustar desde este navegador",
+      "setHelp": "Ajusta el reloj del tablero a la hora del dispositivo que estás usando ahora.",
+      "setBlockedHelp": "Desactiva Hora de red arriba para ajustar el reloj a mano.",
+      "syncOwnsClock": "El tablero está tomando la hora de internet. Desactiva primero Hora de red.",
+      "setFailed": "No se pudo ajustar el reloj del tablero."
     },
     "player1Title": "Jugador 1 (Blancas por defecto)",
     "player2Title": "Jugador 2 (Negras por defecto)",

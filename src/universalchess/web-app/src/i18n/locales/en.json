@@ -352,7 +352,29 @@
       "title": "System Settings",
       "description": "Device status, software updates, and system configuration",
       "deviceTitle": "Device",
-      "deviceDescription": "Sleep, timezone, and language preferences for this board."
+      "deviceDescription": "Sleep, clock, and language preferences for this board."
+    },
+    "deviceClock": {
+      "title": "Device Clock",
+      "description": "The board has no battery-backed clock. It keeps time from the internet when it can reach it; otherwise its time drifts and you can set it from here.",
+      "unavailable": "The board's clock could not be read.",
+      "boardTime": "Board time when read",
+      "difference": "Difference",
+      "networkTime": "Network time",
+      "offsetBehind": "{{amount}} behind this browser",
+      "offsetAhead": "{{amount}} ahead of this browser",
+      "offsetInStep": "In step with this browser",
+      "sync": {
+        "synchronised": "Synchronised",
+        "notSynchronised": "On, but not synchronised",
+        "disabled": "Off",
+        "unknown": "Unknown"
+      },
+      "setFromBrowser": "Set from this browser",
+      "setHelp": "Sets the board's clock to the time on the device you are using now.",
+      "setBlockedHelp": "Turn Network Time off above to set the clock by hand.",
+      "syncOwnsClock": "The board is keeping time from the internet. Turn Network Time off first.",
+      "setFailed": "The board's clock could not be set."
     },
     "player1Title": "Player 1 (White by default)",
     "player2Title": "Player 2 (Black by default)",

@@ -11,6 +11,7 @@ import type { FieldValue } from '../components/CatalogField';
 import { useLoginRetry } from '../components/useLoginRetry';
 import { useRadioCapability } from '../hooks/useRadioCapability';
 import { MenuIcon } from '../components/MenuIcon';
+import { DeviceClockCard } from '../components/DeviceClockCard';
 import { ConnectivityPanel } from './Connectivity';
 import type { EngineDefinition, EngineFailure, EngineRef, EngineRefsResponse } from '../types/game';
 import type { MenuCatalog, MenuOption } from '../types/menuCatalog';
@@ -261,6 +262,7 @@ interface FormSettings {
     inactivity_timeout: string;
     timezone: string;
     ui_language: string;
+    ntp_enabled: boolean;
   };
 }
 
@@ -298,7 +300,10 @@ const defaultFormSettings: FormSettings = {
   },
   lichess: { range: '', username: '' },
   sound: { enabled: true, key_press: true, game_events: true, piece_events: true, errors: true },
-  system: { database_uri: '', inactivity_timeout: '900', timezone: 'UTC', ui_language: 'en' },
+  system: {
+    database_uri: '', inactivity_timeout: '900', timezone: 'UTC', ui_language: 'en',
+    ntp_enabled: false,
+  },
 };
 
 // Bounds for the per-move engine think time (seconds). Kept in sync with the
@@ -446,6 +451,12 @@ function parseRawSettings(data: SettingsData): FormSettings {
       // the board to re-render), never the generic settings save. Defaults to the
       // English source locale when unset.
       ui_language: data.system?.ui_language || 'en',
+      // Whether the device keeps time from the internet. Owned by systemd, not
+      // centaur.ini, and changed only through the dedicated /api/system/ntp
+      // endpoint. The key is absent when the board could not read the state; the
+      // toggle then sits off while the Device Clock card reports it as unknown,
+      // and moving the toggle sends an explicit value either way.
+      ntp_enabled: parseConfigBool(data.system?.ntp_enabled, false),
     },
   };
 }
@@ -1185,6 +1196,28 @@ export function Settings() {
     }
   };
 
+  // Turn internet time sync on or off through the dedicated /api/system/ntp
+  // endpoint (auth-gated), which runs the privileged helper and notifies the
+  // board. Nothing about this lives in centaur.ini, so the generic settings save
+  // must not carry it. The form is updated optimistically so the toggle responds
+  // at once; the Device Clock card re-reads the real state on the settings_changed
+  // refresh that follows, which is also what re-enables its "set from browser"
+  // button when sync is switched off.
+  const saveNtp = async (enabled: boolean) => {
+    updateFormSettings('system', { ntp_enabled: enabled });
+    try {
+      const response = await apiFetch('/api/system/ntp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+        requiresAuth: true,
+      });
+      requireLogin(response, () => saveNtp(enabled));
+    } catch (e) {
+      console.error('Failed to set network time sync:', e);
+    }
+  };
+
   // Keep the auto-save's refs pointing at the latest closures/state. Synced in an
   // effect (never mutated during render) so the debounced save and per-agent Save,
   // which run outside render, always see the current form and coach requirement.
@@ -1887,16 +1920,17 @@ export function Settings() {
       updateFormSettings('sound', { [key]: value } as Partial<FormSettings['sound']>),
   );
 
-  // System tab device preferences (Sleep Timer, Timezone, Language), rendered from
-  // the catalog's web-only `group.system.device`, which lists the *shared*
-  // system.* nodes the board also renders -- so there is one node set, not a web
-  // copy. The `system` store maps each shared bind key onto this page's form/APIs:
-  // Sleep Timer's `sleep_seconds` is the form's `inactivity_timeout` (applied live
-  // on Save), while Timezone and Language each apply through their dedicated device
-  // endpoint (saveTimezone/saveLanguage) rather than the generic settings save, so
-  // the setter routes those two keys there. The `timezones` provider backs the
-  // node's `webProvider` override with the full runtime list the board injects
-  // (the board itself uses its curated `timezones_common`).
+  // System tab device preferences (Sleep Timer, Timezone, Network Time, Language),
+  // rendered from the catalog's web-only `group.system.device`, which lists the
+  // *shared* system.* nodes the board also renders -- so there is one node set, not
+  // a web copy. The `system` store maps each shared bind key onto this page's
+  // form/APIs: Sleep Timer's `sleep_seconds` is the form's `inactivity_timeout`
+  // (applied live on Save), while Timezone, Network Time, and Language each apply
+  // through their dedicated device endpoint (saveTimezone/saveNtp/saveLanguage)
+  // rather than the generic settings save, so the setter routes those three keys
+  // there. The `timezones` provider backs the node's `webProvider` override with
+  // the full runtime list the board injects (the board itself uses its curated
+  // `timezones_common`).
   const systemMenuCtx = new WebMenuContext(optionSet);
   systemMenuCtx.registerStore(
     'system',
@@ -1907,6 +1941,7 @@ export function Settings() {
     (key, value) => {
       if (key === 'timezone') saveTimezone(String(value));
       else if (key === 'ui_language') saveLanguage(String(value));
+      else if (key === 'ntp_enabled') saveNtp(Boolean(value));
       else if (key === 'sleep_seconds')
         updateFormSettings('system', { inactivity_timeout: String(value) });
       else
@@ -2364,11 +2399,12 @@ export function Settings() {
 
             <SystemInfoCard />
 
-            {/* Device card: Sleep Timer, Timezone, and Language. These are the
-                shared catalog's web-only `group.system.device` nodes -- the same
-                system.* nodes the board's System menu renders. systemMenuCtx maps
-                each bind: Sleep Timer -> [system] inactivity_timeout (applied live
-                on Save & Apply); Timezone/Language -> their dedicated device
+            {/* Device card: Sleep Timer, Timezone, Network Time, and Language.
+                These are the shared catalog's web-only `group.system.device`
+                nodes -- the same system.* nodes the board's System menu renders.
+                systemMenuCtx maps each bind: Sleep Timer -> [system]
+                inactivity_timeout (applied live on Save & Apply);
+                Timezone/Network Time/Language -> their dedicated device
                 endpoints. The timezone list is the full runtime set (the node's
                 webProvider override); the board uses its curated list.
 
@@ -2384,6 +2420,12 @@ export function Settings() {
                 section.rows.map((node) => renderCatalogRow(node, systemMenuCtx)),
               )}
             </Card>
+
+            {/* Sits directly under the Network Time toggle it reports on: the
+                toggle sets the policy, this card shows what the board's clock
+                actually reads and offers the manual correction for when sync is
+                off (the case that produced a board hours behind the browser). */}
+            <DeviceClockCard />
 
             <Card className="mb-6">
               <CardHeader title={t('settingsPage.updates.cardTitle')} />
