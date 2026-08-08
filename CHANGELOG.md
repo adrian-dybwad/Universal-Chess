@@ -138,6 +138,40 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- Loading the saved game settings took half a minute on a Pi Zero, stalling
+  startup with the splash screen already showing. Reading one setting parsed the
+  configuration file twice over and the packaged defaults once more, and a read
+  of an absent key rewrote the live configuration to insert it -- so a read was
+  not even a read. Settings are fetched a key at a time, which multiplied that
+  cost by every key in a section. Reads no longer write, the packaged defaults
+  are parsed once and kept, and a whole section is now read in a single parse.
+  Loading the game settings went from 32.8 seconds to 0.7 seconds.
+
+- The board spent five seconds of every startup rediscovering which display it
+  has. A V1 panel wires its BUSY line the opposite way round, so the driver the
+  board tries first can never succeed on one, and waits out its full timeout
+  before falling back to the driver that does work. The answer was already being
+  written to disk at the end of every startup and then ignored by the next one.
+  Startup now tries the controller that last drove the panel first, which takes
+  display initialization on a V1 board from 5.6 seconds to 0.5 seconds. The
+  fallback is kept in both directions and needs no configuration, so swapping
+  the panel -- or restoring a configuration taken from a different board --
+  corrects itself on the next startup instead of leaving the screen blank.
+
+- `deploy-to-pi.sh` could report a completed deploy having transferred nothing.
+  The install tree is deliberately root-owned (see Security), the transfer ran
+  without elevation, and its output was piped through a filter that discarded
+  the permission errors while forcing a successful exit status. The service was
+  then restarted against unchanged code and reported healthy, so a board could
+  run stale code for an entire debugging session. The transfer now runs with the
+  elevation a root-owned tree requires, and a failure stops the deploy with the
+  transfer's own exit status rather than restarting anything. Ownership is no
+  longer taken from the sending machine either: the previous flags told a root
+  receiver to stamp the developer's own numeric user and group onto every file,
+  which silently undid the root ownership the passwordless-sudo grants rely on.
+  The runtime data directories are handed back to the service account after each
+  transfer, matching what installing the package does.
+
 - An engine player could stop moving for the rest of the session after a restart
   on a busy board, leaving the board waiting for a move that never came. Two
   faults combined. Where two consumers want the same engine, the second waits for
