@@ -33,6 +33,13 @@ class Settings:
     configfile = '/opt/universalchess/config/centaur.ini'
     defconfigfile = '/opt/universalchess/defaults/config/centaur.ini'
 
+    # Parsed defaults keyed by source path. The defaults file is shipped,
+    # read-only data that cannot change while the process runs, so parsing it
+    # once is safe -- unlike the live config, which the web process also writes
+    # and which is therefore always re-read. Keyed by path (rather than a single
+    # slot) so a caller that repoints defconfigfile gets its own entry.
+    _defaults_cache = {}
+
     @staticmethod
     def read(section, key, default = ''):
         """
@@ -40,25 +47,83 @@ class Settings:
         
         Falls back to default config file, then to provided default if config
         directory is missing or key doesn't exist.
+
+        Reading never writes. An earlier version called ensure_key_exists() here
+        to materialize the key with its default, which made every first-touch
+        read perform an fsync'd atomic write and cost a second full parse of the
+        file. That call could not change the value returned -- the fallback chain
+        below already resolves it -- so it was pure cost. Use ensure_key_exists()
+        explicitly if a key genuinely needs to be persisted.
         """
-        Settings.ensure_key_exists(section, key, default)
         config = Settings._safe_read()
-        
+        return Settings._resolve(config, section, key, default)
+
+    @staticmethod
+    def read_section(section, defaults):
+        """Read many keys from one section with a single parse of the config.
+
+        The per-key :meth:`read` re-parses the whole file for every key, so
+        loading a settings dataclass cost one parse per field (roughly 250 for
+        the app's settings, on a file under 2 KB). Callers that want a whole
+        section should use this instead: it parses once and resolves each key
+        through the same live -> defaults-file -> caller-default chain, so the
+        values are identical to calling read() per key.
+
+        Args:
+            section: Section name in the config file.
+            defaults: Mapping of key -> fallback value used when the key is
+                absent from both the live config and the defaults file. Its keys
+                determine which settings are read.
+
+        Returns:
+            Dict with the same keys as ``defaults`` and the resolved raw string
+            values. Type coercion is the caller's concern.
+        """
+        config = Settings._safe_read()
+        return {
+            key: Settings._resolve(config, section, key, default)
+            for key, default in defaults.items()
+        }
+
+    @staticmethod
+    def _resolve(config, section, key, default):
+        """Resolve one key against an already-parsed live config.
+
+        The resolution order is live config, then the bundled defaults file,
+        then the caller's default. Shared by read() and read_section() so the
+        two can never disagree about what a setting resolves to. The defaults
+        file is only consulted on a miss, so a fully-configured board never
+        touches it.
+        """
         if config.has_section(section) and config.has_option(section, key):
             return config[section][key]
-        
-        # Config file missing or incomplete - try defaults file
-        defconfig = configparser.ConfigParser()
-        defconfig.read(Settings.defconfigfile)
+
+        defconfig = Settings._read_defaults()
         if defconfig.has_section(section) and defconfig.has_option(section, key):
             return defconfig[section][key]
-        
+
         return default
+
+    @staticmethod
+    def _read_defaults():
+        """Return the parsed defaults file, parsing it at most once per path."""
+        path = Settings.defconfigfile
+        cached = Settings._defaults_cache.get(path)
+        if cached is None:
+            cached = configparser.ConfigParser()
+            try:
+                cached.read(path)
+            except configparser.Error as exc:
+                # Unparseable defaults are not recoverable from anywhere, so
+                # keep the empty parser: every lookup then falls through to the
+                # caller's default rather than raising out of a read.
+                logging.error(f"Corrupt defaults {path} ({exc}); ignoring")
+            Settings._defaults_cache[path] = cached
+        return cached
 
     @staticmethod
     def write(section, key, value, default = ''):
         """ Write a value to the key in the section """
-        Settings.ensure_key_exists(section, key, default)
         config = Settings._safe_read()
         # If config directory is missing, ensure_key_exists() can't persist the section.
         # Do not raise here; log and attempt a best-effort write.
@@ -69,7 +134,6 @@ class Settings:
 
     @staticmethod
     def delete(section, key):
-        Settings.ensure_key_exists(section, key, '')
         config = Settings._safe_read()
         if not config.has_section(section):
             # Nothing persisted, so nothing to delete. Keep behavior non-fatal.
@@ -79,7 +143,14 @@ class Settings:
 
     @staticmethod
     def ensure_key_exists(section, key, default = ''):
-        """ Ensures that the key exists in config.ini """
+        """Materialize a key into the live config, writing it if absent.
+
+        An explicit migration/repair step, deliberately NOT called by read() or
+        write(): both resolve or set the key themselves, so calling this from
+        them only added a parse and (on first touch) an fsync'd write to every
+        operation. Call it directly when a key must be present on disk, e.g.
+        rebuilding a section after the live config was restored from defaults.
+        """
         config = Settings._safe_read()
         # First make sure the section is there
         if not config.has_section(section):
@@ -208,7 +279,15 @@ class Settings:
         except OSError as exc:
             logging.error(
                 f"Atomic write to {Settings.configfile} failed: {exc}")
+            # The partial temp file must not be left behind: it sits in the
+            # config directory under a random name, so every failed write would
+            # add another invisible file nothing later cleans up. A failure to
+            # remove it is reported rather than swallowed, naming the path so it
+            # can be removed by hand -- the write has already failed, so there
+            # is no further recovery to attempt here.
             try:
                 os.unlink(tmp_path)
-            except OSError:
-                pass
+            except OSError as cleanup_exc:
+                logging.warning(
+                    f"Could not remove temporary file {tmp_path} after a failed "
+                    f"write: {cleanup_exc}")

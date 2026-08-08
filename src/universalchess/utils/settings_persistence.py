@@ -66,6 +66,36 @@ def load_int(section: str, key: str, default: int = 0) -> int:
         return default
 
 
+def _raw_default(default: Any) -> str:
+    """Render a typed default as the raw string the config layer falls back to.
+
+    bool is tested before int because ``isinstance(True, int)`` is True in
+    Python; reversing the order would render False as "0" and, on the way back,
+    coerce it through int() instead of the boolean word list.
+    """
+    if isinstance(default, bool):
+        return "true" if default else "false"
+    if isinstance(default, int):
+        return str(default)
+    return str(default) if default is not None else ""
+
+
+def _coerce(raw: str, default: Any) -> Any:
+    """Coerce a raw config string to the type of its default.
+
+    Mirrors load_bool/load_int/load_str so a section read resolves values
+    identically to reading each key on its own.
+    """
+    if isinstance(default, bool):
+        return raw.lower() not in ("false", "0", "")
+    if isinstance(default, int):
+        try:
+            return int(raw)
+        except ValueError:
+            return default
+    return raw
+
+
 def load_section(section: str, defaults: Dict[str, Any]) -> Dict[str, Any]:
     """Load all settings from a section using defaults for type inference and missing values.
 
@@ -74,6 +104,10 @@ def load_section(section: str, defaults: Dict[str, Any]) -> Dict[str, Any]:
     - int default -> load_int
     - str default -> load_str
 
+    Reads the section in a single parse rather than one parse per key. The
+    per-key form made loading the app's settings cost hundreds of parses of the
+    same small file, which dominated startup on the slowest supported board.
+
     Args:
         section: Section name in config file
         defaults: Dict of key -> default_value pairs
@@ -81,15 +115,10 @@ def load_section(section: str, defaults: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Dict with loaded values (same keys as defaults)
     """
-    result = {}
-    for key, default in defaults.items():
-        if isinstance(default, bool):
-            result[key] = load_bool(section, key, default)
-        elif isinstance(default, int):
-            result[key] = load_int(section, key, default)
-        else:
-            result[key] = load_str(section, key, str(default) if default is not None else "")
-    return result
+    Settings = _get_settings_module()
+    raw = Settings.read_section(
+        section, {key: _raw_default(default) for key, default in defaults.items()})
+    return {key: _coerce(raw[key], default) for key, default in defaults.items()}
 
 
 def save_setting(section: str, key: str, value: Any, *, broadcast: bool = True) -> bool:
