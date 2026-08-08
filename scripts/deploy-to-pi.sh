@@ -25,6 +25,9 @@
 #   -c, --check        Content-only diff (rsync --checksum) preview, then exit.
 #                      Use to answer "is everything already deployed?".
 #       --no-restart   Sync only; do not restart the service.
+#       --no-elevate   Do not run the remote rsync under sudo. Only for targets
+#                      whose tree is owned by the SSH user; the .deb install
+#                      tree is root-owned and needs the default elevation.
 #   -H, --host HOST    SSH target            (default: pi@dgt.local)
 #       --path PATH    Remote source dir     (default: /opt/universalchess/)
 #       --service NAME board systemd unit    (default: universal-chess)
@@ -59,7 +62,34 @@ DRY_RUN=0
 CHECK_ONLY=0
 RESTART=1
 BUILD_WEB=0
+ELEVATE=1
 SSH_OPTS="ssh -o ConnectTimeout=10"
+
+# postinst runs `chown -R root:root ${DGTCM_PATH}` deliberately: the passwordless
+# sudo grants are path literals under /opt/universalchess/scripts/, so a service
+# user able to rewrite those files could escalate to root. Writing into that tree
+# therefore requires root on the receiving side. Without this the transfer is
+# denied for every file -- the failure this script previously reported as
+# "Deploy complete".
+REMOTE_RSYNC="sudo rsync"
+
+# -a without -o -g. A root-side receiver honours -o/-g by applying the *sender's*
+# numeric uid/gid, which on macOS is 501:staff -- silently destroying the
+# root:root ownership the sudoers path grants depend on. -rlptD keeps recursion,
+# symlinks, modes (the exec bit on scripts/) and mtimes (so unchanged files are
+# not re-sent) while leaving ownership to the receiving process.
+RSYNC_ARCHIVE=(-rlptD)
+
+# Directories the running product writes to that the sync also ships files into.
+# An elevated rsync creates NEW files as root, so without a regrant a deploy that
+# adds a file here leaves it unwritable by the service -- surfacing later at
+# runtime, far from the deploy that caused it.
+#
+# This is the subset of postinst's RUNTIME_WRITABLE_DIRS that exists in the
+# source tree (config, engines, tmp and pending-updates are runtime-only, so the
+# sync never touches them). postinst remains the source of truth; deliberately
+# NOT widened to the install root, which must stay root-owned.
+RUNTIME_WRITABLE_DIRS=(db web/static)
 
 # Source dir resolved relative to this script, so it works from any CWD.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -79,6 +109,29 @@ EXCLUDES=(
 # at a fixed line number: the previous fixed range silently truncated --help the
 # moment the header changed length.
 usage() { awk 'NR>4 && /^# ={10,}/ {exit} NR>4 {sub(/^# ?/, ""); print}' "${BASH_SOURCE[0]}"; }
+
+# Run rsync, filter its stdout for readability, and abort the deploy on failure.
+#
+# The filter is applied to stdout only: merging stderr into it (the previous
+# `2>&1 | grep -vE ...`) fed rsync's diagnostics through a pattern that discards
+# them, so permission failures left no trace. PIPESTATUS[0] is read rather than
+# relying on pipefail because grep legitimately exits 1 when it filters every
+# line, which must not be mistaken for a transfer failure. `set +e` around the
+# pipeline keeps errexit from aborting before that status can be inspected.
+#
+# Exiting with rsync's own status (not a generic 1) preserves the distinction
+# between e.g. a partial transfer (23) and a protocol error for any caller.
+run_rsync() {
+	local rc=0
+	set +e
+	rsync "$@" | grep -vE '^\.d|/$'
+	rc=${PIPESTATUS[0]}
+	set -e
+	if [[ $rc -ne 0 ]]; then
+		echo "rsync failed (exit ${rc}); aborting without restarting the service." >&2
+		exit "$rc"
+	fi
+}
 
 # Build the React web app and stage it into web/react-app so the deploy ships a
 # current bundle. The repo tracks no built artifact (web/react-app is gitignored
@@ -124,6 +177,7 @@ while [[ $# -gt 0 ]]; do
 		-n|--dry-run) DRY_RUN=1; shift ;;
 		-c|--check) CHECK_ONLY=1; shift ;;
 		--no-restart) RESTART=0; shift ;;
+		--no-elevate) ELEVATE=0; shift ;;
 		-H|--host) HOST="$2"; shift 2 ;;
 		--path) REMOTE_PATH="$2"; shift 2 ;;
 		--service) SERVICE="$2"; shift 2 ;;
@@ -149,10 +203,26 @@ if [[ $BUILD_WEB -eq 1 && $CHECK_ONLY -eq 0 ]]; then
 fi
 
 # Content-only diff preview (ignores mtime): empty output means fully in sync.
+# Deliberately unelevated -- it only reads a world-readable tree, and requesting
+# sudo would make a pure diagnostic fail on boards without a NOPASSWD grant. The
+# same attribute set as the real transfer is compared, so the preview cannot
+# report ownership diffs the deploy would never apply.
 if [[ $CHECK_ONLY -eq 1 ]]; then
 	echo "Content diffs (checksum) vs ${HOST}:${REMOTE_PATH} ..."
-	diffs="$(rsync -an --checksum --itemize-changes "${EXCLUDES[@]}" \
-		-e "$SSH_OPTS" "$SRC_DIR" "${HOST}:${REMOTE_PATH}" 2>&1 | grep -E '^<f.*[cs]' || true)"
+	# The probe's own status is checked before its output is interpreted: an
+	# unreachable board also produces no diff lines, and reporting that as "All
+	# content in sync" is the same false reassurance this script is being fixed
+	# to stop giving.
+	set +e
+	diffs="$(rsync -n --checksum --itemize-changes "${RSYNC_ARCHIVE[@]}" \
+		"${EXCLUDES[@]}" -e "$SSH_OPTS" "$SRC_DIR" "${HOST}:${REMOTE_PATH}")"
+	probe_rc=$?
+	set -e
+	if [[ $probe_rc -ne 0 ]]; then
+		echo "rsync probe failed (exit ${probe_rc}); sync state unknown." >&2
+		exit "$probe_rc"
+	fi
+	diffs="$(printf '%s\n' "$diffs" | grep -E '^<f.*[cs]' || true)"
 	if [[ -z "$diffs" ]]; then
 		echo "All content in sync."
 	else
@@ -165,26 +235,41 @@ fi
 # compatible"); the Pi runs rsync 3.4.1. Their zlib/compression handshake is
 # incompatible and silently writes 0-byte files for newly-created paths. Plain
 # -a transfers correctly over the (fast, local) network without that risk.
-RSYNC_FLAGS=(-a --itemize-changes "${EXCLUDES[@]}")
-[[ $DRY_RUN -eq 1 ]] && RSYNC_FLAGS+=(-n)
+RSYNC_FLAGS=("${RSYNC_ARCHIVE[@]}" --itemize-changes "${EXCLUDES[@]}")
+if [[ $ELEVATE -eq 1 ]]; then
+	RSYNC_FLAGS+=(--rsync-path="$REMOTE_RSYNC")
+fi
+if [[ $DRY_RUN -eq 1 ]]; then
+	RSYNC_FLAGS+=(-n)
+fi
 
 echo "Syncing ${SRC_DIR} -> ${HOST}:${REMOTE_PATH}$([[ $DRY_RUN -eq 1 ]] && echo '  (dry-run)')"
-# Filter directory-only and unchanged-dir lines for a readable file-level summary.
-rsync "${RSYNC_FLAGS[@]}" -e "$SSH_OPTS" "$SRC_DIR" "${HOST}:${REMOTE_PATH}" 2>&1 \
-	| grep -vE '^\.d|/$' || true
+run_rsync "${RSYNC_FLAGS[@]}" -e "$SSH_OPTS" "$SRC_DIR" "${HOST}:${REMOTE_PATH}"
 
 # Mirror the freshly built bundle with --delete so the remote bundle dir exactly
 # matches the local stage -- removing the previous build's orphaned hashed assets.
 if [[ $BUILD_WEB -eq 1 ]]; then
 	echo "Mirroring web/react-app (with --delete) -> ${HOST}:${REMOTE_PATH}web/react-app/"
-	rsync "${RSYNC_FLAGS[@]}" --delete -e "$SSH_OPTS" \
-		"${SRC_DIR}web/react-app/" "${HOST}:${REMOTE_PATH}web/react-app/" 2>&1 \
-		| grep -vE '^\.d|/$' || true
+	run_rsync "${RSYNC_FLAGS[@]}" --delete -e "$SSH_OPTS" \
+		"${SRC_DIR}web/react-app/" "${HOST}:${REMOTE_PATH}web/react-app/"
 fi
 
 if [[ $DRY_RUN -eq 1 ]]; then
 	echo "Dry-run complete; nothing transferred, service not restarted."
 	exit 0
+fi
+
+# Hand the runtime data directories back to the service user, mirroring
+# postinst's grantRuntimeDataOwnership. Only needed after an elevated sync,
+# which is the only way root-owned files appear there.
+if [[ $ELEVATE -eq 1 ]]; then
+	SERVICE_USER="${HOST%%@*}"
+	echo "Restoring ${SERVICE_USER} ownership of runtime data dirs ..."
+	regrant=""
+	for dir in "${RUNTIME_WRITABLE_DIRS[@]}"; do
+		regrant+="sudo chown -R ${SERVICE_USER}:${SERVICE_USER} '${REMOTE_PATH%/}/${dir}'; "
+	done
+	$SSH_OPTS "$HOST" "$regrant true"
 fi
 
 if [[ $RESTART -eq 0 ]]; then
