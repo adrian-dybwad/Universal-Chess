@@ -144,7 +144,7 @@ jobs:
       - name: Sign checksums
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
-          RELEASE_SIGNING_PASSPHRASE: ${{ secrets.RELEASE_SIGNING_PASSPHRASE }}
+          KEYRING: packaging/deb-root/opt/universalchess/keys/release-signing.gpg
         run: |
           set -euo pipefail
           if [ -z "${RELEASE_SIGNING_KEY}" ]; then
@@ -154,24 +154,31 @@ jobs:
                  "packaging/deb-root/opt/universalchess/keys/README.md"
             exit 1
           fi
-          if [ -z "${RELEASE_SIGNING_PASSPHRASE}" ]; then
-            echo "::error::RELEASE_SIGNING_PASSPHRASE secret is not configured." \
-                 "The signing key is passphrase-protected, so gpg would fail" \
-                 "here saying it cannot unlock the key, which points at the key" \
-                 "rather than at the missing repository secret."
+          # The key carries no passphrase. Encrypting it would mean storing the
+          # passphrase in the same secret store, which protects against nothing
+          # and has already cost two releases.
+          printf '%s' "${RELEASE_SIGNING_KEY}" | gpg --batch --quiet --import
+
+          # Boards accept only the key in the keyring inside the package. Were
+          # the secret ever to hold a different one, signing would succeed, the
+          # release would publish, and every board would refuse it while CI
+          # stayed green. Nothing downstream compares the two, so compare here.
+          expected="$(gpg --batch --with-colons --show-keys "${KEYRING}" \
+                      | awk -F: '/^fpr:/{print $10; exit}')"
+          imported="$(gpg --batch --with-colons --list-secret-keys \
+                      | awk -F: '/^fpr:/{print $10; exit}')"
+          if [ "${imported}" != "${expected}" ]; then
+            echo "::error::RELEASE_SIGNING_KEY is not the key boards trust." \
+                 "Imported ${imported:-<none>}, but ${KEYRING} carries" \
+                 "${expected:-<none>}. Signing with it would publish a release" \
+                 "every board refuses. See that file's README to rotate keys."
             exit 1
           fi
-          printf '%s' "${RELEASE_SIGNING_KEY}" | gpg --batch --quiet --import
+          echo "Signing with ${imported}, which matches the shipped keyring."
+
           cd scripts/releases
-          # The passphrase goes in on a descriptor, never in argv: gpg parses an
-          # argument beginning with a hyphen as an option and exits with
-          # "invalid option", naming a value the log has already masked. Keeping
-          # it out of argv also keeps it out of the runner's process list.
-          printf '%s' "${RELEASE_SIGNING_PASSPHRASE}" \
-            | gpg --batch --yes --armor --detach-sign \
-                  --pinentry-mode loopback \
-                  --passphrase-fd 0 \
-                  --output SHA256SUMS.txt.asc SHA256SUMS.txt
+          gpg --batch --yes --armor --detach-sign \
+              --output SHA256SUMS.txt.asc SHA256SUMS.txt
           gpg --batch --verify SHA256SUMS.txt.asc SHA256SUMS.txt
 
       - name: Generate release notes

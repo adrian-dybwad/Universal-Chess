@@ -33,8 +33,16 @@ The private key is **not** in this repository and must never be committed.
 1. Generate a signing key (once), on a machine you control:
 
    ```sh
-   gpg --quick-generate-key "Universal Chess Release Signing" ed25519 sign never
+   gpg --batch --pinentry-mode loopback --passphrase '' \
+     --quick-generate-key "Universal Chess Release Signing" ed25519 sign never
    ```
+
+   The key deliberately has **no passphrase**. Encrypting it would mean storing
+   the passphrase in GitHub Actions secrets beside the key it unlocks, so anyone
+   who could read one could read the other — no protection gained, and a signing
+   step that fails in ways the log cannot explain, because every value in it is
+   masked. What does protect the key is that it is used for nothing else, signs
+   only release manifests, and can be rotated by shipping a new keyring.
 
 2. Export the public certificate into this directory:
 
@@ -56,16 +64,28 @@ The private key is **not** in this repository and must never be committed.
    ```
 
 3. Export the private key and store it as the GitHub Actions secret
-   `RELEASE_SIGNING_KEY`, with its passphrase (if any) as
-   `RELEASE_SIGNING_PASSPHRASE`:
+   `RELEASE_SIGNING_KEY`. There is no passphrase secret:
 
    ```sh
-   gpg --armor --export-secret-keys "Universal Chess Release Signing"
+   gpg --armor --export-secret-keys "Universal Chess Release Signing" \
+     | gh secret set RELEASE_SIGNING_KEY --repo <owner>/<repo>
    ```
 
 4. Keep an offline backup of the private key. Losing it means boards running a
    release signed by it can no longer verify newer releases, and recovering
    requires a manually installed `.deb` to replace the keyring.
+
+## The fingerprint check in CI
+
+The signing step compares the fingerprint of the imported key against the one in
+this keyring and refuses to sign on a mismatch. Nothing later in the pipeline
+relates the two: signing with the wrong key succeeds, publishes, and leaves every
+board refusing the update while CI reports success. The mismatch would surface
+only as boards quietly ceasing to update, and a corrective release signed by the
+same key would be refused in turn.
+
+So if the secret is replaced, step 2 must be repeated in the same change. The two
+are a pair.
 
 ## Why the build fails without it
 
