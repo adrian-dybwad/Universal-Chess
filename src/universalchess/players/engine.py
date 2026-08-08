@@ -25,6 +25,18 @@ from universalchess.services.engine_registry import get_engine_registry, EngineH
 from .base import Player, PlayerConfig, PlayerState, PlayerType
 
 
+# How many times a failed engine load is retried before the player stays in
+# error. The budget covers one episode of failure and is restored by a
+# successful load, so a board that recovers from a busy moment at startup can
+# still recover from an unrelated failure hours later.
+#
+# It is bounded rather than open-ended because the same path serves failures
+# that no amount of retrying fixes -- a deleted binary, one built for another
+# architecture. Retries are driven by move requests, so an unbounded budget
+# would launch a process per request on the hardware least able to afford it.
+MAX_ENGINE_LOAD_RETRIES = 3
+
+
 @dataclass
 class EnginePlayerConfig(PlayerConfig):
     """Configuration for UCI engine player.
@@ -89,6 +101,10 @@ class EnginePlayer(Player):
         
         # Engine handle from registry (shared, serialized access)
         self._engine_handle: Optional[EngineHandle] = None
+        
+        # Load attempts spent on the current episode of failure; reset whenever
+        # an engine becomes ready. See MAX_ENGINE_LOAD_RETRIES.
+        self._load_retries = 0
         
         # Threading
         self._init_thread: Optional[threading.Thread] = None
@@ -171,6 +187,7 @@ class EnginePlayer(Player):
             
             with self._lock:
                 self._engine_handle = handle
+                self._load_retries = 0
             
             color_name = 'White' if self._color == chess.WHITE else 'Black' if self._color == chess.BLACK else ''
             log.info(f"[EnginePlayer] {color_name} engine ready: {self.engine_name} @ {self.elo_section}")
@@ -214,6 +231,42 @@ class EnginePlayer(Player):
         )
         
         return True
+    
+    def _recover_from_error(self) -> bool:
+        """Retry a failed engine load so a transient failure is not permanent.
+
+        An engine load fails for reasons that have nothing to do with the engine
+        -- the registry gives up on a load another thread is still running, the
+        machine is too busy to complete a handshake in time. Without a retry the
+        first such failure ends the player for the session: the error state is
+        never left, so every later move request is refused and the board waits
+        for a move that cannot come.
+        """
+        # The counter is shared with the load thread, which resets it on success,
+        # so claim the attempt under the lock. The lock is released before
+        # start(): the load can complete synchronously, and both the ready
+        # callback and the state change it triggers take this same lock.
+        with self._lock:
+            attempt = self._load_retries + 1
+            if attempt > MAX_ENGINE_LOAD_RETRIES:
+                attempt = None
+            else:
+                self._load_retries = attempt
+        
+        if attempt is None:
+            log.warning(
+                f"[EnginePlayer] Not retrying {self.engine_name}: "
+                f"{MAX_ENGINE_LOAD_RETRIES} load attempts already failed"
+            )
+            return False
+        
+        log.warning(
+            f"[EnginePlayer] Retrying failed engine load for {self.engine_name} "
+            f"(attempt {attempt} of {MAX_ENGINE_LOAD_RETRIES})"
+        )
+        # start() refuses to run from any state but uninitialized or stopped.
+        self._set_state(PlayerState.UNINITIALIZED)
+        return self.start()
     
     def stop(self) -> None:
         """Stop the engine and release resources."""

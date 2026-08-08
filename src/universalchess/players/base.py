@@ -380,6 +380,18 @@ class Player(ABC):
             self._pending_board = board.copy()
             return
         
+        # A failed startup is not necessarily permanent: an engine load can fail
+        # because the machine was momentarily too busy, not because the engine is
+        # unusable. Queue the request before attempting recovery, so a subclass
+        # that can come back serves this move on its transition to ready instead
+        # of dropping it -- recovering the state alone would leave the board
+        # waiting on a player that is idle and healthy.
+        if self._state == PlayerState.ERROR:
+            self._pending_board = board.copy()
+            if self._recover_from_error():
+                return
+            self._pending_board = None
+        
         if self._state != PlayerState.READY:
             from universalchess.board.logging import log
             log.warning(f"[Player] {self.name} request_move called but state is {self._state}")
@@ -390,6 +402,19 @@ class Player(ABC):
         
         # Call subclass implementation
         self._do_request_move(board)
+    
+    def _recover_from_error(self) -> bool:
+        """Attempt to leave ERROR and become usable again.
+
+        Called when a move is requested of a player whose startup failed.
+        Returns True once recovery is under way, meaning the queued request will
+        be served on the transition to ready; False when the player cannot
+        recover, leaving the request to be refused as before.
+
+        The base player owns no external resource whose failure could be
+        transient, so it has nothing to retry.
+        """
+        return False
     
     def _do_request_move(self, board: chess.Board) -> None:
         """Subclass-specific move request handling.

@@ -50,6 +50,22 @@ LOAD_FAILURE_REASONS = frozenset({
     LOAD_FAILURE_UNKNOWN,
 })
 
+# How long a thread waits for another thread's in-flight load of the same engine.
+#
+# This is a ceiling on a hang, not an estimate of how long a load takes: the
+# loading thread sets its event in a `finally`, on the failure path as well as
+# the success path, so in every case except a wedged engine the waiter is
+# released the moment the load resolves. The ceiling exists only because
+# popen_uci is called without a timeout of its own, so an engine that never
+# answers `uci` would otherwise block the waiter forever.
+#
+# Sized for the worst real case rather than the typical one. On a single-core Pi
+# Zero still finishing an update, loading Stockfish has taken 67 seconds; the
+# previous 60-second cap expired 5.6 seconds before that load completed, and the
+# waiter reported it as a failed load. That left the board's engine player in a
+# terminal error state with a perfectly good engine sitting in the pool.
+ENGINE_LOAD_WAIT_SECONDS = 300.0
+
 # A publishable detail token: a leading letter, then letters, digits, spaces and
 # underscores only, bounded in length. Deliberately excludes '/', '.', ':' and
 # quotes, so no filesystem path, URL or exception message can satisfy it.
@@ -519,7 +535,7 @@ class EngineRegistry:
         
         # If another thread is loading, wait for it
         if wait_event is not None:
-            wait_event.wait(timeout=60.0)  # Wait up to 60 seconds
+            signalled = wait_event.wait(timeout=ENGINE_LOAD_WAIT_SECONDS)
             # Now check if it succeeded
             with self._lock:
                 handle = self._engines.get(resolved)
@@ -529,11 +545,29 @@ class EngineRegistry:
                     if on_ready:
                         on_ready(handle)
                     return handle
-                else:
-                    log.error(f"[EngineRegistry] Other thread failed to load {resolved}")
-                    raise EngineLoadError(
-                        f"engine load failed in another thread: {resolved}"
-                    )
+                still_loading = resolved in self._loading
+
+            # An unsuccessful wait has two opposite causes and they must not be
+            # reported the same way. The loading thread clears its registration
+            # and sets the event together in a `finally`, so an event that was
+            # never set while the registration is still present means the load is
+            # running -- transient, and worth retrying. Only a set event (or a
+            # vanished registration) means the loader finished and produced
+            # nothing, which is a real failure. Conflating the two is what made a
+            # slow load on a busy board look like a broken engine.
+            if not signalled and still_loading:
+                log.error(
+                    f"[EngineRegistry] Gave up after {ENGINE_LOAD_WAIT_SECONDS}s waiting "
+                    f"for another thread to load {resolved}; that load is still running"
+                )
+                raise EngineLoadError(
+                    f"engine is still loading in another thread: {resolved}"
+                )
+
+            log.error(f"[EngineRegistry] Other thread failed to load {resolved}")
+            raise EngineLoadError(
+                f"engine load failed in another thread: {resolved}"
+            )
         
         # We're responsible for loading
         log.info(f"[EngineRegistry] Loading engine: {resolved}")

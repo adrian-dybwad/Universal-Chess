@@ -138,6 +138,18 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- An engine player could stop moving for the rest of the session after a restart
+  on a busy board, leaving the board waiting for a move that never came. Two
+  faults combined. Where two consumers want the same engine, the second waits for
+  the first one's load instead of starting a duplicate, but that wait gave up
+  after 60 seconds and could not tell a load still running from one that had
+  failed -- on a single-core board still finishing an update, loading Stockfish
+  took 67 seconds, so it reported a failure that never happened. The waiter now
+  distinguishes the two, and waits long enough to cover a load that slow. The
+  player then treated the reported failure as final, so an engine that finished
+  loading moments later was never picked up; a failed load is now retried, up to
+  a bounded number of attempts, when a move is next requested.
+
 - After updating, a board could come back with the chess board undetected and
   the main service restarting every thirteen seconds. Making the install tree
   root-owned (see Security) collided with the service still running from that
