@@ -807,6 +807,14 @@ fi
 
 # Setting final permissions
 function setPermissions {
+    # Drop lgpio's notification FIFOs before the ownership reset rather than
+    # after. Versions that ran the board service with its working directory
+    # inside the install tree left these here as the service user; the reset
+    # below would otherwise chown them to root and freeze a runtime artifact
+    # into a tree meant to hold only packaged files. The service now works from
+    # /run/universalchess, so nothing recreates them.
+    find "${DGTCM_PATH}" -maxdepth 1 -name '.lgd-nfy*' -delete 2>/dev/null || true
+
     # Reset the whole tree to root first. dpkg already unpacks as root, but an
     # upgrade from a version that ran the old blanket `chown -R $PRIMARY_USER`
     # arrives with a service-user-owned tree -- without this reset the escalation

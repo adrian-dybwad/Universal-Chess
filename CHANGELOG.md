@@ -138,6 +138,23 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- After updating, a board could come back with the chess board undetected and
+  the main service restarting every thirteen seconds. Making the install tree
+  root-owned (see Security) collided with the service still running from that
+  directory: lgpio creates a notification FIFO in the process working directory
+  the moment `RPi.GPIO` is imported, and the account the board runs as can no
+  longer write there. The import failed, so the process died before it ever
+  opened the serial port -- the board was not detected because nothing was left
+  running to look for it. The service now works from `/run/universalchess`,
+  which is created for that account on every boot, so no stale FIFO survives a
+  restart either. Widening the tree's permissions would have undone the
+  privilege boundary, so the working directory is what moved.
+- The two service logs were overwritten from the beginning on every restart
+  instead of being appended to, which left each file carrying a fresh timestamp
+  over hours-old contents. Reading the end of a log showed history rather than
+  what had just happened, which is exactly backwards during an incident. Both
+  are now appended to and rotated, so they stay readable without growing without
+  bound on the SD card.
 - Powering the Pi off killed a running engine install outright, leaving a
   part-written build tree that came back only as an "interrupted" install. A
   source build can hold the better part of an hour, and the idle timeout can fire

@@ -1,0 +1,25 @@
+# Rotation for the two service logs that bypass the journal.
+#
+# universal-chess.service and universal-chess-web.service redirect their output
+# straight at these files with StandardOutput=append:, so nothing bounds their
+# size but this config. Boards run for weeks on an SD card with a small /var.
+#
+# copytruncate is required, not a preference: systemd opens the redirect target
+# once and holds that descriptor for the lifetime of the service. Renaming the
+# file -- what logrotate does by default -- would leave the running service
+# writing into the rotated file while the new one stayed empty, so logging would
+# silently stop until the next restart. Truncating keeps the inode, and because
+# the descriptor is opened O_APPEND the next write resumes at offset zero.
+
+/var/log/modmenuoutput.log
+/var/log/universal-chess-web.log
+{
+    daily
+    rotate 3
+    maxsize 10M
+    copytruncate
+    compress
+    delaycompress
+    missingok
+    notifempty
+}

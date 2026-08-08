@@ -9,9 +9,18 @@ Environment=DGTCM_PATH=/opt
 Environment=PYTHONPATH=/opt
 ExecStartPre=/bin/sleep 4
 ExecStart=/opt/universalchess/.venv/bin/python -m universalchess.main
-WorkingDirectory=/opt/universalchess
-StandardOutput=file:/var/log/modmenuoutput.log
-StandardError=file:/var/log/modmenuoutput.log
+# Not the install tree: that is root-owned so the service user cannot rewrite the
+# sudo-granted helpers in scripts/, and lgpio creates its .lgd-nfy notification
+# FIFO in the working directory the moment RPi.GPIO is imported. /run/universalchess
+# is created for the service user by tmpfiles.d and emptied on every boot, so no
+# stale FIFO survives. Deliberately not RuntimeDirectory=, which systemd would
+# delete on every stop, taking the IPC sockets the web process needs with it.
+WorkingDirectory=/run/universalchess
+# append:, not file:. systemd opens a file: target at offset zero without
+# truncating, so a restarting service overwrites the head of its own log while
+# older content survives underneath -- a current mtime over a stale tail.
+StandardOutput=append:/var/log/modmenuoutput.log
+StandardError=append:/var/log/modmenuoutput.log
 Restart=on-failure
 RestartSec=3
 User=pi

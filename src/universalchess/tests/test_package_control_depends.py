@@ -137,6 +137,25 @@ def test_depends_provides_fuser_for_the_dpkg_lock_wait():
     )
 
 
+def test_depends_provides_logrotate_for_the_service_logs():
+    """``Depends`` must guarantee ``logrotate`` is present.
+
+    Why this test exists: the two service units append their output to files in
+    /var/log rather than the journal, so nothing bounds those files but the
+    logrotate config the package ships. Raspberry Pi OS installs logrotate, which
+    is exactly why relying on it silently is a trap -- the config is inert on any
+    image that does not, and the failure is a board that fills its SD card.
+
+    How a regression manifests: no error at install or at runtime. Months later
+    a long-running board runs out of space in /var and fails at whatever writes
+    next, with nothing pointing back at logging.
+    """
+    assert "logrotate" in _declared_depends(), (
+        "Depends must include logrotate; the service units append to /var/log and "
+        "the shipped rotation config is the only thing bounding those files"
+    )
+
+
 def test_depends_omits_the_incompatible_debian_pam_binding():
     """``Depends`` must not pull in ``python3-pam``.
 
