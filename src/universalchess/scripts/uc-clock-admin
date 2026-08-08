@@ -1,0 +1,120 @@
+#!/bin/bash
+# uc-clock-admin -- the device clock operations the service cannot do unprivileged.
+#
+# WHY THIS EXISTS
+#   The web/board Settings can turn network time sync on or off and, when it is
+#   off, set the clock from the browser. Both go through `timedatectl`, which is
+#   root-only. The service runs unprivileged, so -- as with bt-admin and
+#   uc-set-timezone -- passwordless sudo is granted to exactly this one pinned
+#   helper (see package postinst / deploy provisioning):
+#     <service-user> ALL=(root) NOPASSWD: /opt/universalchess/scripts/uc-clock-admin
+#
+#   Setting the clock by hand is not a convenience: the board is an RTC-less Pi,
+#   and reached only over a USB gadget link it has no time source at all, so
+#   without this its clock stays wherever it landed at boot.
+#
+# SECURITY BOUNDARY
+#   The `case` below is the boundary for the grant -- it accepts two verbs and
+#   refuses everything else. Do not add a passthrough or escape branch. Each
+#   verb's argument is validated to a fixed shape before use and passed as a
+#   single argv element, never through a shell, so the grant cannot become an
+#   arbitrary-command or arbitrary-string primitive.
+#
+#   The epoch bounds are part of that boundary rather than mere hygiene. The
+#   device issues its own TLS certificates and orders its event log by wall
+#   time, so a clock stepped far outside the software's own lifetime breaks
+#   both. Anything before 2024 or after 2100 is refused.
+#
+#   Callers use `sudo -n` so a missing grant fails fast ("a password is
+#   required") and is logged, rather than hanging on a password prompt.
+#
+# TEST SEAMS (exercise validation + the intended action without root)
+#   UC_CLOCK_ADMIN_DRY_RUN=1   print the intended `timedatectl` invocation to
+#                              $UC_CLOCK_ADMIN_ACTION_LOG instead of running it
+#   UC_CLOCK_ADMIN_ACTION_LOG  file to append dry-run actions to
+set -u
+
+DRY_RUN="${UC_CLOCK_ADMIN_DRY_RUN:-0}"
+ACTION_LOG="${UC_CLOCK_ADMIN_ACTION_LOG:-}"
+LOG_TAG="uc-clock-admin"
+
+# 2024-01-01T00:00:00Z and 2100-01-01T00:00:00Z. Both bounds are inclusive.
+EPOCH_MIN=1704067200
+EPOCH_MAX=4102444800
+
+log() { logger -t "$LOG_TAG" -- "$*" 2>/dev/null || true; echo "[$LOG_TAG] $*" >&2; }
+
+usage() {
+    echo "usage: uc-clock-admin {ntp on|ntp off|set-epoch <seconds>}" >&2
+    exit 2
+}
+
+run_priv() {
+    if [ "$DRY_RUN" = "1" ]; then
+        if [ -n "$ACTION_LOG" ]; then echo "$*" >> "$ACTION_LOG"; fi
+        return 0
+    fi
+    "$@"
+}
+
+# Digits only, and short enough that the numeric comparisons below cannot
+# overflow the shell's 64-bit arithmetic. Rejects signs, decimal points, hex,
+# whitespace, and every shell metacharacter in one check.
+is_plain_integer() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "${#1}" -le 12 ]
+}
+
+set_ntp() {
+    local enabled
+    case "$1" in
+        on)  enabled=true ;;
+        off) enabled=false ;;
+        *)
+            log "ERROR: rejected ntp state (expected on|off): $1"
+            exit 2
+            ;;
+    esac
+    if run_priv timedatectl set-ntp "$enabled"; then
+        log "network time sync set to $enabled"
+        exit 0
+    fi
+    log "ERROR: timedatectl set-ntp $enabled failed"
+    exit 1
+}
+
+set_epoch() {
+    local epoch="$1"
+    if ! is_plain_integer "$epoch"; then
+        log "ERROR: rejected epoch (not a plain integer): $epoch"
+        exit 2
+    fi
+    if [ "$epoch" -lt "$EPOCH_MIN" ] || [ "$epoch" -gt "$EPOCH_MAX" ]; then
+        log "ERROR: rejected epoch outside [$EPOCH_MIN, $EPOCH_MAX]: $epoch"
+        exit 3
+    fi
+    # The '@' prefix is what makes systemd read this as seconds since the epoch;
+    # without it the argument would be parsed as a local-time string and the
+    # applied time would depend on the device timezone.
+    if run_priv timedatectl set-time "@${epoch}"; then
+        log "clock set to @${epoch}"
+        exit 0
+    fi
+    # The usual cause is NTP still being enabled, which timedatectl refuses to
+    # override. The caller checks for that first and reports it precisely.
+    log "ERROR: timedatectl set-time @${epoch} failed"
+    exit 1
+}
+
+main() {
+    [ "$#" -eq 2 ] || usage
+    case "$1" in
+        ntp)       set_ntp "$2" ;;
+        set-epoch) set_epoch "$2" ;;
+        *)         usage ;;
+    esac
+}
+
+main "$@"

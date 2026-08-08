@@ -2332,6 +2332,17 @@ def get_all_settings():
     from universalchess.services.language_service import get_language
     result.setdefault("system", {})["ui_language"] = get_language()
 
+    # Network time sync is owned by systemd; nothing about it is persisted in
+    # centaur.ini, so the live state is the only state there is. The key is left
+    # out entirely when it could not be read: this payload is stringly-typed with
+    # no null, and reporting "False" for "could not tell" would put a definite
+    # position on the Settings toggle that the device never reported. The Device
+    # Clock card reads /api/system/time directly and says "Unknown" for that case.
+    from universalchess.services.system_time_service import get_status as get_time_status
+    ntp_enabled = get_time_status().ntp_enabled
+    if ntp_enabled is not None:
+        result.setdefault("system", {})["ntp_enabled"] = str(ntp_enabled)
+
     # Coach settings: expose the non-secret selection (coach_id/coach_provider) and
     # the per-agent model/base_url (namespaced keys pass through from the ini), but
     # never the stored API keys. Each coach API key is redacted to a boolean
@@ -6544,6 +6555,91 @@ def api_timezone_set():
         from universalchess.services.game_broadcast import notify_main_process_settings_changed
         notify_main_process_settings_changed()
         return jsonify({"success": True, "timezone": tz, "applied": applied})
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/time", methods=["GET"])
+def api_system_time_get():
+    """Return the device clock reading, its timezone, and its network sync state.
+
+    ``ntp_enabled`` (is the sync client switched on) and ``ntp_synchronised``
+    (has it actually reached a server) are reported separately: a board with no
+    route to the internet answers yes/no, and conflating them would tell its
+    owner the clock is fine. Either is null when the state could not be
+    determined, which the UI shows as unknown rather than guessing.
+    """
+    try:
+        from universalchess.services.system_time_service import get_status
+        from universalchess.services.timezone_service import get_timezone
+        status = get_status()
+        return jsonify({
+            "epoch_seconds": status.epoch_seconds,
+            "timezone": get_timezone(),
+            "ntp_enabled": status.ntp_enabled,
+            "ntp_synchronised": status.ntp_synchronised,
+        })
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/ntp", methods=["POST"])
+@requires_auth
+def api_system_ntp_set():
+    """Turn network time sync on or off.
+
+    Body: {"enabled": true | false}
+
+    Only a JSON boolean is accepted -- "false" and 0 are plausible client bugs
+    that truthiness would read as the opposite of what was sent. If the
+    privileged apply fails (e.g. missing sudo grant) the response marks
+    ``applied: false`` rather than erroring, mirroring the timezone contract.
+    The main process is notified so the board's own toggle re-reads.
+    """
+    try:
+        from universalchess.services.system_time_service import set_ntp_enabled
+        data = request.get_json(force=True, silent=True) or {}
+        enabled = data.get("enabled")
+        if not isinstance(enabled, bool):
+            return jsonify({"error": "enabled must be true or false"}), 400
+        applied = set_ntp_enabled(enabled)
+        from universalchess.services.game_broadcast import notify_main_process_settings_changed
+        notify_main_process_settings_changed()
+        return jsonify({"success": True, "ntp_enabled": enabled, "applied": applied})
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/time", methods=["POST"])
+@requires_auth
+def api_system_time_set():
+    """Step the device clock to a caller-supplied epoch.
+
+    Body: {"epoch_seconds": <number>}
+
+    This exists because the board is an RTC-less Pi: reached only over a USB
+    gadget link it has no time source, so the browser's own clock is the only
+    one available. ``timedatectl`` refuses to step a clock that NTP is
+    synchronising, so that case is a 409 -- distinct from a 400 for a malformed
+    or out-of-range epoch -- letting the UI say which of the two happened.
+    """
+    try:
+        from universalchess.services.system_time_service import (
+            NetworkTimeSyncEnabledError, get_status, set_clock,
+        )
+        data = request.get_json(force=True, silent=True) or {}
+        epoch_seconds = data.get("epoch_seconds")
+        # bool is a subclass of int, so it has to be excluded explicitly or True
+        # would be accepted and step the clock to 1970.
+        if isinstance(epoch_seconds, bool) or not isinstance(epoch_seconds, (int, float)):
+            return jsonify({"error": "epoch_seconds must be a number"}), 400
+        try:
+            applied = set_clock(epoch_seconds, ntp_enabled=get_status().ntp_enabled)
+        except NetworkTimeSyncEnabledError:
+            return jsonify({"error": "Network time sync must be turned off first."}), 409
+        except ValueError:
+            return jsonify({"error": "epoch_seconds is outside the supported range"}), 400
+        return jsonify({"success": True, "applied": applied})
     except Exception as e:
         return _internal_error(e)
 

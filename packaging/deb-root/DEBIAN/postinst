@@ -483,6 +483,33 @@ else
     echo -e "::: Warning: timezone helper not found at $SET_TZ_HELPER"
 fi
 
+# Allow the service user to manage the device clock from the web/board Settings:
+# turning network time sync on or off, and -- when it is off -- stepping the
+# clock to a time supplied by the browser. Both are `timedatectl` operations and
+# root-only. As with the timezone helper, grant passwordless sudo to exactly one
+# pinned helper; its verb `case` and per-verb argument validation are the
+# boundary, so the grant cannot become an arbitrary-command primitive. Without it
+# the toggle and the clock-set action report "not applied".
+#
+# This matters most on a board reached only over the USB gadget link, which has
+# no time source at all: without a way to set the clock by hand its wall time
+# stays wherever it landed at boot.
+echo -e "::: Configuring sudoers for the device clock"
+CLOCK_ADMIN_HELPER="${DGTCM_PATH}/scripts/uc-clock-admin"
+if [ -f "$CLOCK_ADMIN_HELPER" ]; then
+    chmod +x "$CLOCK_ADMIN_HELPER"
+    CLOCK_ADMIN_SUDOERS_FILE="/etc/sudoers.d/universal-chess-clock"
+    echo "$PRIMARY_USER ALL=(root) NOPASSWD: $CLOCK_ADMIN_HELPER" > "$CLOCK_ADMIN_SUDOERS_FILE"
+    chmod 440 "$CLOCK_ADMIN_SUDOERS_FILE"
+    # Validate before it can take effect; a malformed drop-in can lock out sudo.
+    if ! visudo -cf "$CLOCK_ADMIN_SUDOERS_FILE" >/dev/null 2>&1; then
+        echo -e "::: Warning: device clock sudoers entry invalid; removing"
+        rm -f "$CLOCK_ADMIN_SUDOERS_FILE"
+    fi
+else
+    echo -e "::: Warning: device clock helper not found at $CLOCK_ADMIN_HELPER"
+fi
+
 # Allow the service user to loop-mount an uploaded Centaur SD image read-only
 # during import. `mount` is a general primitive (any device/target/options), so
 # granting it directly would let the service mount arbitrary filesystems
