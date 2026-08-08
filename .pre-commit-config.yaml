@@ -7,42 +7,38 @@
 # Run against everything on demand:
 #   .venv/bin/pre-commit run --all-files
 #
-# These hooks block a commit on SECURITY findings only (matching the CI gate):
-#   - ruff --select S   security lint subset
-#   - bandit            dedicated security linter
-#   - semgrep           path-injection + security (run offline/local for speed;
-#                       CI runs the full registry packs)
+# The Python gate blocks a commit on SECURITY findings only: ruff --select S,
+# bandit, and semgrep (local path-injection rules plus the registry packs).
 #
-# The full ruff ALL ruleset (mostly style) is intentionally NOT a commit gate;
-# run it on demand with `./scripts/analyze.sh ruff-all`.
+# It runs `scripts/analyze.sh`, which is the same command the Static Analysis
+# workflow runs, scoped the same way, with tool versions pinned in
+# requirements-dev.txt that CI installs. That is deliberate and enforced by
+# test_static_analysis_parity.py: this hook exists to tell you whether CI will
+# pass, and it can only do that by running what CI runs. It previously ran
+# semgrep with SEMGREP_OFFLINE=1 for speed, which cut the rule set from 405 to
+# the 3 local ones, so commits passed here and failed on push.
+#
+# It therefore needs network access the first time, to fetch the registry packs;
+# they are cached under .cache/semgrep afterwards. To commit without a network,
+# run `SEMGREP_OFFLINE=1 git commit`, understanding that CI still applies the
+# full set and may reject what passed.
+#
+# The report-only tool in the runner (`ruff-all`, the full mostly-stylistic
+# ruleset over the whole tree) is left out here. It cannot change the outcome --
+# CI never fails on it -- and it prints tens of thousands of findings. Run it on
+# demand with `./scripts/analyze.sh ruff-all`.
 
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.17
-    hooks:
-      - id: ruff
-        name: ruff (security subset)
-        args: [--select, S]
-
-  - repo: https://github.com/PyCQA/bandit
-    rev: 1.9.4
-    hooks:
-      - id: bandit
-        args: ["-c", "pyproject.toml"]
-        # Skip the test trees (matches pyproject exclude_dirs). Tests use assert
-        # by design, which bandit reports as B101 on every line.
-        exclude: ^(src/universalchess|tools/sd-card-setup)/tests/
-
   - repo: local
     hooks:
-      - id: semgrep-path-injection
-        name: semgrep (path-injection + security, local rules)
-        # language: system runs the entry as argv (so /usr/bin/env applies the
-        # offline flag and execs analyze.sh). language: script would instead try
-        # to execute the first token ("env") as a repo-relative file and fail.
-        entry: env SEMGREP_OFFLINE=1 scripts/analyze.sh semgrep
+      - id: static-analysis
+        name: ruff + bandit + semgrep (same as CI)
+        # bash -c ... -- puts the committed filenames in "$@", which ANALYZE_FILES
+        # takes as the scan scope, mirroring how the workflow passes the files
+        # changed in the push. Without the trailing --, the first filename would
+        # be consumed as $0 and silently excluded from the scan.
+        entry: bash -c 'ANALYZE_FILES="$*" scripts/analyze.sh ruff-sec bandit semgrep' --
         language: system
-        pass_filenames: false
         types: [python]
 
       # Frontend security gate: only the XSS rules (no-unsanitized +

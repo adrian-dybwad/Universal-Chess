@@ -7,18 +7,26 @@
 #   ./scripts/analyze.sh
 #
 # These tools are NOT needed at runtime on the board; they are development-only.
+#
+# The three linters are pinned exactly, not to a range. CI installs this file on
+# every run and so would take the newest version in a range, while a developer's
+# venv keeps whatever it installed months ago. Linters disagree across versions
+# about what is a finding, so a range means the commit hook and CI can reach
+# different verdicts with both configured correctly -- the failure this file's
+# pins, and test_static_analysis_parity.py, exist to prevent. Dependabot watches
+# this file and will propose the upgrades.
 
 # Fast, broad linter (pyflakes, pycodestyle, bugbear, flake8-bandit, imports,
 # comprehensions, and many more). Configured in pyproject.toml [tool.ruff].
-ruff>=0.15,<1.0
+ruff==0.15.17
 
 # Dedicated Python security linter. Configured in pyproject.toml [tool.bandit].
-bandit>=1.9,<2.0
+bandit==1.9.4
 
 # Taint-aware static analysis. Provides the path-injection ("Uncontrolled data
 # used in a path expression") detection plus broad security rule packs. Rules
 # live in .semgrep/ and the registry packs referenced by scripts/analyze.sh.
-semgrep>=1.166,<2.0
+semgrep==1.166.0
 
 # Optional: run the tools as git hooks (see .pre-commit-config.yaml).
 pre-commit>=3.5
