@@ -315,7 +315,7 @@
       "help": "Time control and live position analysis.",
       "section": "game",
       "epaper": { "font_size": 12, "height_ratio": 0.8 },
-      "children": ["group.game.clock", "group.game.variant", "group.game.analysis", "group.game.pondering", "group.game.coach", "group.game.history"]
+      "children": ["group.game.clock", "group.game.variant", "group.game.alerts", "group.game.analysis", "group.game.pondering", "group.game.coach", "group.game.history"]
     },
     {
       "id": "group.game.clock",
@@ -330,6 +330,13 @@
       "label": "Variant",
       "section": "game",
       "children": ["settings.chess960"]
+    },
+    {
+      "id": "group.game.alerts",
+      "type": "group",
+      "label": "In-Game Alerts",
+      "section": "game",
+      "children": ["alerts.queen_threat"]
     },
     {
       "id": "group.game.analysis",
@@ -394,6 +401,19 @@
       "help": "Start each new game from a random Chess960 (Fischer Random) position. The target position is shown on the display; set up the pieces to match.",
       "section": "game",
       "bind": { "store": "game", "key": "chess960" },
+      "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
+      "platforms": ["board", "web"],
+      "epaper": { "font_size": 12, "height_ratio": 0.8 }
+    },
+    {
+      "id": "alerts.queen_threat",
+      "key": "QueenAlert",
+      "type": "toggle",
+      "label": "Your Queen Warning",
+      "boardLabel": "Your Queen",
+      "help": "Warn you when your own queen is under attack: YOUR QUEEN on the display, an LED flash from the attacker to your queen, and a warning on the web board. Check is always shown and cannot be turned off.",
+      "section": "game",
+      "bind": { "store": "game", "key": "alert_queen_threat" },
       "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
       "platforms": ["board", "web"],
       "epaper": { "font_size": 12, "height_ratio": 0.8 }

@@ -263,6 +263,39 @@ def test_load_reads_stored_chess960(monkeypatch):
     assert settings.to_dict()["chess960"] is True
 
 
+def test_alert_queen_threat_defaults_to_on():
+    # The YOUR QUEEN warning must stay on for a fresh install and for every
+    # existing config that predates the setting: it is the behavior the board has
+    # always had, and the toggle only exists to opt out. A missing field or a
+    # False default would silently remove the warning for everyone.
+    settings = GameSettings(section="game")
+    assert settings.to_dict()["alert_queen_threat"] is True
+
+
+def test_to_dict_includes_alert_queen_threat():
+    # Guards the to_dict() round-trip the board menu and the web Game tab read the
+    # toggle's current position through. Without the field this raises TypeError on
+    # construction; a broken to_dict() KeyErrors here.
+    settings = GameSettings(section="game", alert_queen_threat=False)
+    assert settings.to_dict()["alert_queen_threat"] is False
+
+
+def test_load_reads_stored_alert_queen_threat(monkeypatch):
+    # load() must surface a persisted opt-out; otherwise the toggle appears to save
+    # (the web echoes it back) but the board re-reads True on the next boot and
+    # keeps warning. The fake omits the key from the caller defaults to prove
+    # load() seeds the read default itself, so load_section actually reads it.
+    def fake_load_section(section, defaults):
+        data = dict(defaults)
+        data["alert_queen_threat"] = False
+        return data
+
+    monkeypatch.setattr(settings_mod, "load_section", fake_load_section)
+    settings = GameSettings.load("game", {})
+    assert settings.alert_queen_threat is False
+    assert settings.to_dict()["alert_queen_threat"] is False
+
+
 def _faithful_load_section(stored: dict):
     """Build a load_section fake that honors its real contract.
 
@@ -304,6 +337,11 @@ def _faithful_load_section(stored: dict):
         ("led_brightness", "10", 10),
         ("pegasus_override_brightness", "False", False),
         ("notation", "uci", "uci"),
+        # A stored opt-out from the YOUR QUEEN warning must be read back with the
+        # same guarantee: read through a load_section that honors its real contract
+        # (only keys present in the defaults are read), so the field has to be in
+        # the derived read set. Otherwise the board boots warning again.
+        ("alert_queen_threat", "False", False),
     ],
 )
 def test_load_reads_stored_value_when_caller_omits_default(monkeypatch, key, stored, expected):

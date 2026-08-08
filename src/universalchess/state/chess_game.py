@@ -7,13 +7,14 @@ Widgets observe this state to display the current position and game status.
 The chess.Board is owned here - GameManager and other components mutate it
 through this state object's methods, which trigger observer notifications.
 
-This module has minimal dependencies (just python-chess and typing) to keep
-imports fast for widgets.
+This module has minimal dependencies (python-chess, typing, and the pure
+state.alerts policy) to keep imports fast for widgets.
 """
 
 import chess
 from typing import Optional, Callable, List
 
+from universalchess.state import alerts
 from universalchess.utils.observers import notify_observers
 
 
@@ -28,8 +29,10 @@ class ChessGameState:
     - Position changes (moves, takeback, new position)
     - Game over (checkmate, stalemate, resignation, flag, draw)
     - Check (when the side-to-move's king is in check after a move)
-    - Queen threat (when the side-to-move's own queen is under attack)
-    - Alert clear (when no check or threat exists)
+    - Queen threat (when the side-to-move's own queen is under attack, unless the
+      player disabled that warning -- see set_alert_preferences)
+    - Alert clear (when no check or threat exists, or the only applicable warning
+      is disabled)
     
     Thread safety: This class is NOT thread-safe. Callers must ensure
     mutations happen from a single thread or use external synchronization.
@@ -42,6 +45,10 @@ class ChessGameState:
         self._board = chess.Board()
         self._result: Optional[str] = None  # '1-0', '0-1', '1/2-1/2'
         self._termination: Optional[str] = None  # 'checkmate', 'stalemate', 'resignation', etc.
+        # Which warnings to raise. Defaults to all enabled so a state built before
+        # settings are loaded behaves as the board always has; main.py applies the
+        # persisted preferences on settings load and on hot reload.
+        self._alert_preferences = alerts.AlertPreferences()
         
         # Observer callbacks
         self._on_position_change: List[Callable[[], None]] = []
@@ -216,59 +223,77 @@ class ChessGameState:
     
     def get_check_info(self) -> Optional[tuple]:
         """Get information about check state.
-        
+
+        Raw position query: reports the check regardless of alert preferences
+        (check is never suppressible). Use current_alert() for the warning the
+        display should actually show.
+
         Returns:
             Tuple of (is_black_in_check, attacker_square, king_square) if in check,
             None if not in check.
         """
-        if not self._board.is_check():
+        check = alerts.find_check(self._board)
+        if check is None:
             return None
-        
-        side_in_check = self._board.turn
-        king_square = self._board.king(side_in_check)
-        checkers = self._board.checkers()
-        
-        if checkers and king_square is not None:
-            attacker_square = list(checkers)[0]
-            is_black_in_check = (side_in_check == chess.BLACK)
-            return (is_black_in_check, attacker_square, king_square)
-        return None
-    
+        return (check.is_black_threatened, check.attacker_square, check.target_square)
+
     def get_queen_threat_info(self) -> Optional[tuple]:
         """Get information about queen threat state.
 
-        Checks whether the SIDE-TO-MOVE's own queen is under attack by the
-        opponent -- the actionable "your queen is hanging, deal with it this
-        move" warning. This deliberately parallels get_check_info (which flags
-        the side-to-move's own king): both warn the player on move about their
-        own royalty being attacked, so the CHECK and YOUR QUEEN alerts read
-        consistently.
-
-        A prior implementation flagged the OPPONENT's queen that the side to
-        move could capture. That is an "opportunity" indicator, not a warning:
-        with two queens simultaneously en prise it highlighted the enemy queen
-        the mover could grab rather than the mover's own queen in danger, so the
-        alert pointed at the wrong queen while it was "the wrong colour's" turn.
+        Raw position query: reports an attacked own queen even when the player has
+        switched the YOUR QUEEN warning off. Use current_alert() for the warning
+        the display should actually show; see state/alerts.find_queen_threat for
+        the rule and why it flags the side-to-move's own queen.
 
         Returns:
             Tuple of (is_black_queen_threatened, attacker_square, queen_square)
             if the side-to-move's queen is attacked, None otherwise.
         """
-        side_to_move = self._board.turn
-        opponent_color = not side_to_move
-
-        queens = self._board.pieces(chess.QUEEN, side_to_move)
-        if not queens:
+        threat = alerts.find_queen_threat(self._board)
+        if threat is None:
             return None
+        return (threat.is_black_threatened, threat.attacker_square, threat.target_square)
 
-        queen_square = list(queens)[0]
-        attackers = self._board.attackers(opponent_color, queen_square)
+    # -------------------------------------------------------------------------
+    # Alert policy (what the surfaces should warn about)
+    # -------------------------------------------------------------------------
 
-        if attackers:
-            attacker_square = list(attackers)[0]
-            is_black_queen_threatened = (side_to_move == chess.BLACK)
-            return (is_black_queen_threatened, attacker_square, queen_square)
-        return None
+    @property
+    def alert_preferences(self) -> alerts.AlertPreferences:
+        """Which in-play warnings are enabled for this game.
+
+        Read by surfaces that derive a warning from the position they are drawing
+        rather than from the observers (the three-color red highlight), so they
+        honor the same preferences as the alert text.
+        """
+        return self._alert_preferences
+
+    def set_alert_preferences(self, preferences: alerts.AlertPreferences) -> None:
+        """Adopt new alert preferences (from the persisted game settings).
+
+        Deliberately does NOT re-emit the alert: a settings change arrives on the
+        settings-subscriber thread, while the observing widgets may only be touched
+        from the main thread. The main loop calls refresh_alerts() when it rebuilds
+        the display, which re-derives the alert under the new preferences and takes
+        down a warning that has just been switched off.
+
+        Args:
+            preferences: The preferences to apply from now on.
+        """
+        self._alert_preferences = preferences
+
+    def current_alert(self) -> Optional[alerts.Alert]:
+        """The warning this position raises under the active preferences.
+
+        The single source every surface reads, so the e-paper text, the LED flash,
+        the red highlight, and the web banner cannot disagree about one position.
+
+        Returns:
+            The alert to show, or None for a quiet position (or one whose only
+            applicable warning the player has disabled).
+        """
+        return alerts.resolve_alert(self._board, self._alert_preferences)
+
     
     # -------------------------------------------------------------------------
     # Board state comparison utilities
@@ -427,35 +452,30 @@ class ChessGameState:
         self._notify_check_and_threats()
 
     def _notify_check_and_threats(self) -> None:
-        """Detect and notify check/queen threat after a move.
-        
-        Priority: Check > Queen threat (only one alert at a time).
-        If neither, notifies alert clear.
+        """Notify observers of the warning this position raises, or of none.
+
+        The alert itself (priority, and whether a warning is enabled at all) is
+        resolved by current_alert(); this only routes it to the matching observer
+        list. A disabled warning therefore arrives here as "no alert" and clears,
+        so a warning switched off mid-game does not stay on the display.
         """
-        # Check for check first (higher priority)
-        check_info = self.get_check_info()
-        if check_info:
-            is_black_in_check, attacker_square, king_square = check_info
-            notify_observers(
-                self._on_check,
-                is_black_in_check, attacker_square, king_square,
-                context="on_check",
-            )
+        alert = self.current_alert()
+        if alert is None:
+            notify_observers(self._on_alert_clear, context="on_alert_clear")
             return
-        
-        # Check for queen threat
-        queen_info = self.get_queen_threat_info()
-        if queen_info:
-            is_black_threatened, attacker_square, queen_square = queen_info
-            notify_observers(
-                self._on_queen_threat,
-                is_black_threatened, attacker_square, queen_square,
-                context="on_queen_threat",
-            )
-            return
-        
-        # No check or threat - clear alerts
-        notify_observers(self._on_alert_clear, context="on_alert_clear")
+
+        # Keyed lookup rather than an if/else fallthrough: a new alert kind added
+        # to state/alerts without an observer list here raises a KeyError instead
+        # of being silently delivered as the wrong kind of warning.
+        observers, context = {
+            alerts.CHECK: (self._on_check, "on_check"),
+            alerts.QUEEN_THREAT: (self._on_queen_threat, "on_queen_threat"),
+        }[alert.kind]
+        notify_observers(
+            observers,
+            alert.is_black_threatened, alert.attacker_square, alert.target_square,
+            context=context,
+        )
     
     # -------------------------------------------------------------------------
     # State mutations (trigger observer notifications)

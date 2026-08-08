@@ -272,6 +272,12 @@ class GameSettings:
             board only senses occupancy, which is identical to standard chess for
             every 960 start, so the target position is shown on the display and
             the physical setup is trusted. Default False.
+        alert_queen_threat: Show the YOUR QUEEN warning (e-paper text, LED flash,
+            red highlight, and web banner) when the side to move's own queen is
+            attacked. Default True -- the board's long-standing behavior -- so the
+            toggle only ever opts out. The CHECK warning has no equivalent setting:
+            an unanswered check makes every other move illegal, so hiding it would
+            let the player build an impossible position on the physical board.
         show_board: Show chess board widget
         show_clock: Show clock/turn indicator widget
         show_analysis: Show analysis widget
@@ -334,6 +340,7 @@ class GameSettings:
     deep_analysis: bool = False
     ponder: bool = False
     chess960: bool = False
+    alert_queen_threat: bool = True
     show_board: bool = True
     show_clock: bool = True
     show_analysis: bool = True
@@ -436,6 +443,7 @@ class GameSettings:
             "deep_analysis": self.deep_analysis,
             "ponder": self.ponder,
             "chess960": self.chess960,
+            "alert_queen_threat": self.alert_queen_threat,
             "show_board": self.show_board,
             "show_clock": self.show_clock,
             "show_analysis": self.show_analysis,
@@ -517,6 +525,7 @@ class GameSettings:
             deep_analysis=data["deep_analysis"],
             ponder=data["ponder"],
             chess960=data["chess960"],
+            alert_queen_threat=data["alert_queen_threat"],
             show_board=data["show_board"],
             show_clock=data["show_clock"],
             show_analysis=data["show_analysis"],

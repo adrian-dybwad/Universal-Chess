@@ -33,6 +33,7 @@ def _game_ctx(
     chess960=False,
     coach_provider="none",
     coach_id="auto",
+    alert_queen_threat=True,
     analysis_time_preset="quick",
     agent_edit_id="",
     agent_model_kind="model",
@@ -81,6 +82,10 @@ def _game_ctx(
         "chess960": chess960,
         "coach_provider": coach_provider,
         "coach_id": coach_id,
+        # The In-Game Alerts group renders a checkbox row whose icon is chosen from
+        # the bound value, so the fake store must back it or icon resolution
+        # KeyErrors.
+        "alert_queen_threat": alert_queen_threat,
         # Backs the Analysis Time select (game store); its boardLabel renders the
         # current value, so the fake store must supply it or label resolution
         # KeyErrors.
@@ -213,18 +218,18 @@ def test_game_menu_rows_and_engine_visibility():
     """Game flattens its groups into one ordered row list, gating analysis rows.
 
     Why this test exists: the unified Game menu is now built from ``group`` nodes
-    (Chess Clock, Variant, Analysis, Pondering, Coach, Move History) that the
-    board inlines transparently, in declared order. With no preset the clock group
-    shows the master Preset row, the base-minutes row, and Engine Move Delay; the
-    Analysis Engine and Analysis Time rows appear only when Live Analysis is on
-    (via ``visibleWhen``); Pondering, Coach persona, Agent, Candidate lines, and
-    Notation always render. How a regression manifests: a group stops flattening
-    (its rows vanish), the order drifts, or the analysis rows show while off (dead
-    rows) / never show while on.
+    (Chess Clock, Variant, In-Game Alerts, Analysis, Pondering, Coach, Move
+    History) that the board inlines transparently, in declared order. With no
+    preset the clock group shows the master Preset row, the base-minutes row, and
+    Engine Move Delay; the Analysis Engine and Analysis Time rows appear only when
+    Live Analysis is on (via ``visibleWhen``); the Your Queen warning, Pondering,
+    Coach persona, Agent, Candidate lines, and Notation always render. How a
+    regression manifests: a group stops flattening (its rows vanish), the order
+    drifts, or the analysis rows show while off (dead rows) / never show while on.
     """
     _, off_rows = _rows(mode=False)
     assert [r.key for r in off_rows] == [
-        "Preset", "TimeControl", "EngineMoveDelay", "Chess960", "enabled",
+        "Preset", "TimeControl", "EngineMoveDelay", "Chess960", "QueenAlert", "enabled",
         "ponder", "coach_id", "coach_provider", "coach_multipv", "Notation",
     ]
 
@@ -232,7 +237,7 @@ def test_game_menu_rows_and_engine_visibility():
     # gated by the same visibleWhen), between the analysis toggle and Pondering.
     _, on_rows = _rows(mode=True)
     assert [r.key for r in on_rows] == [
-        "Preset", "TimeControl", "EngineMoveDelay", "Chess960", "enabled",
+        "Preset", "TimeControl", "EngineMoveDelay", "Chess960", "QueenAlert", "enabled",
         "engine", "time", "ponder", "coach_id", "coach_provider", "coach_multipv", "Notation",
     ]
 
@@ -494,6 +499,31 @@ def test_enabled_toggle_icon_and_persistence():
 
     dispatch(node, off_ctx)
     assert off_ctx._state["mode"] is True
+
+
+def test_queen_alert_toggle_icon_and_persistence():
+    """The Your Queen warning toggle shows checkbox on/off and toggling persists it.
+
+    Why this test exists: the warning is on by default, so the board row exists
+    purely to opt out; it must render the current state and write
+    game.alert_queen_threat through the store. How a regression manifests: the icon
+    desyncs from the stored flag (the row claims the warning is on while it is off),
+    or selecting the row does not persist, so the board keeps warning.
+    """
+    catalog = load_catalog()
+    node = catalog.get_node("alerts.queen_threat")
+
+    on_ctx = _game_ctx(alert_queen_threat=True)
+    assert resolve_icon(node, on_ctx) == "checkbox_checked"
+
+    off_ctx = _game_ctx(alert_queen_threat=False)
+    assert resolve_icon(node, off_ctx) == "checkbox_empty"
+
+    # Selecting the row while enabled must switch the warning off (and back on).
+    dispatch(node, on_ctx)
+    assert on_ctx._state["alert_queen_threat"] is False
+    dispatch(node, on_ctx)
+    assert on_ctx._state["alert_queen_threat"] is True
 
 
 def test_engine_row_label_shows_current_engine():

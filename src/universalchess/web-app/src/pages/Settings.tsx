@@ -230,6 +230,10 @@ interface FormSettings {
     deep_analysis: boolean;
     ponder: boolean;
     chess960: boolean;
+    // Show the YOUR QUEEN warning when the side to move's own queen is attacked.
+    // On by default; the CHECK warning has no equivalent flag because it cannot be
+    // turned off (see GameSettings.alert_queen_threat).
+    alert_queen_threat: boolean;
     show_board: boolean;
     show_clock: boolean;
     show_analysis: boolean;
@@ -285,6 +289,7 @@ const defaultFormSettings: FormSettings = {
     deep_analysis: false,
     ponder: false,
     chess960: false,
+    alert_queen_threat: true,
     show_board: true,
     show_clock: true,
     show_analysis: true,
@@ -412,6 +417,7 @@ function parseRawSettings(data: SettingsData): FormSettings {
       deep_analysis: parseConfigBool(data.game?.deep_analysis, false),
       ponder: parseConfigBool(data.game?.ponder, false),
       chess960: parseConfigBool(data.game?.chess960, false),
+      alert_queen_threat: parseConfigBool(data.game?.alert_queen_threat, true),
       show_board: parseConfigBool(data.game?.show_board, true),
       show_clock: parseConfigBool(data.game?.show_clock, true),
       show_analysis: parseConfigBool(data.game?.show_analysis, true),

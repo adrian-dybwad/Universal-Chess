@@ -141,6 +141,24 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
     by hand without the grant is told the change did not take, rather than
     failing silently.
 
+- **Your Queen warning can be switched off**: The board warns the player on move
+  that their own queen is attacked -- YOUR QUEEN on the display, an LED flash from
+  the attacker to the queen, the queen and its attackers in red on a three-colour
+  screen, and a banner on the web board. That is help some players do not want,
+  and there was no way to decline it. Settings -> Game -> In-Game Alerts now
+  carries a "Your Queen Warning" checkbox, on by default, on both the web page and
+  the board's own Game menu.
+  - Turning it off silences all four surfaces at once. Each of them used to
+    re-derive the rule from the position itself, so a partial change would have
+    left the LEDs flashing at a red queen with nothing on screen saying why. The
+    rule now lives in one pure module (`state/alerts.py`) that every surface
+    resolves through, with the preference as an argument.
+  - Check has deliberately no such setting. An unanswered check makes every other
+    move illegal, so hiding it would let the player build a position the board
+    cannot accept, which is a different thing from withholding advice.
+  - The change applies to a game in progress, from either surface, without a
+    restart: a warning already on screen comes down at the next display refresh.
+
 ### Changed
 
 - **Project Structure**: Complete reorganization

@@ -1238,6 +1238,24 @@ def _load_game_settings():
     _settings.log_summary()
 
 
+def _apply_alert_preferences():
+    """Push the persisted in-play alert preferences onto the live game state.
+
+    The alert rule (state/alerts) is a pure function of position + preferences, so
+    the running state has to be handed the current settings: once at startup and
+    again after every hot reload, since a warning can be switched off from the web
+    mid-game. Re-showing/hiding an already-visible alert is not done here -- the
+    main loop's widget rebuild calls ChessGameState.refresh_alerts(), which must
+    run on the main thread.
+    """
+    from universalchess.state import get_chess_game
+    from universalchess.state.alerts import AlertPreferences
+
+    preferences = AlertPreferences.from_game_settings(_get_settings().game)
+    get_chess_game().set_alert_preferences(preferences)
+    log.info(f"[Settings] Alert preferences applied: {preferences}")
+
+
 def _save_player1_setting(key: str, value):
     """Save a Player 1 setting to centaur.ini."""
     _get_settings().player1.set(key, value)
@@ -1249,8 +1267,16 @@ def _save_player2_setting(key: str, value):
 
 
 def _save_game_setting(key: str, value):
-    """Save a general game setting to centaur.ini."""
+    """Save a general game setting to centaur.ini.
+
+    An ``alert_*`` write also re-pushes the alert preferences: they are handed to
+    the game state as a value rather than re-read per alert, so a board-menu
+    toggle would otherwise not take effect until the next restart. The web path
+    re-pushes via _on_settings_changed instead.
+    """
     _get_settings().game.set(key, value)
+    if key.startswith("alert_"):
+        _apply_alert_preferences()
 
 
 # Dict accessors for compatibility with menu functions that expect dicts
@@ -7221,6 +7247,7 @@ def main():
     try:
         log.info("[Main] Loading game settings...")
         _load_game_settings()
+        _apply_alert_preferences()
         log.info("[Main] Game settings loaded")
     except Exception as e:
         log.error(f"[Main] Failed to load game settings: {e}", exc_info=True)
@@ -7275,6 +7302,10 @@ def main():
         from universalchess.services import system_time_service
         system_time_service.invalidate_status_cache()
         _load_game_settings()
+        # A warning may have been switched on/off; the live state must resolve
+        # alerts under the new preferences from the next move (and from the widget
+        # rebuild below, which re-derives the currently shown alert).
+        _apply_alert_preferences()
         # The UI language may have changed via the web; re-read it so the cached
         # localized catalog and the i18n string bundles switch locale before the
         # menu below re-renders. Harmless when the language is unchanged.

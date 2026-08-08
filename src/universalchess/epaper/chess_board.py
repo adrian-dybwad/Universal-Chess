@@ -10,6 +10,7 @@ from enum import Enum
 from PIL import Image, ImageDraw, ImageChops, ImageFilter
 from .framework.widget import Widget, DITHER_PATTERNS
 from typing import Optional, TYPE_CHECKING
+from universalchess.state.alerts import resolve_alert
 
 if TYPE_CHECKING:
     from universalchess.state.chess_game import ChessGameState
@@ -662,37 +663,26 @@ class ChessBoardWidget(Widget):
         """Squares to highlight red for the position currently being drawn.
 
         Derived from ``self.fen`` (the exact rendered position) so the highlight
-        cannot disagree with the board image due to state-mutation timing. Mirrors
-        ChessGameState.get_queen_threat_info / get_check_info -- check outranks
-        queen-threat, one alert at a time, and both flag the SIDE-TO-MOVE's own
-        royalty (not the opponent's):
-          - in check: the side-to-move's king and every checking piece;
-          - else if the side-to-move's own queen is attacked by the opponent:
-            that queen and every attacker of it.
-        Returns an empty set for a quiet position (no red).
+        cannot disagree with the board image due to state-mutation timing, but the
+        rule itself comes from state.alerts under the game's alert preferences --
+        the same resolution that drives the alert text and the LEDs. Deriving the
+        rule locally is what let a queen the player had asked not to be warned
+        about keep glowing red with nothing on screen explaining it.
+
+        The highlight marks the threatened piece and every attacker of it: the
+        checked king and its checkers, or the side-to-move's own attacked queen
+        and its attackers. Returns an empty set for a quiet position, and for one
+        whose only applicable warning is disabled.
         """
         try:
             board = chess.Board(self.fen)
         except (ValueError, AttributeError):
             return set()
 
-        squares = set()
-        if board.is_check():
-            king_square = board.king(board.turn)
-            if king_square is not None:
-                squares.add(king_square)
-            squares.update(board.checkers())
-            return squares
-
-        side_to_move = board.turn
-        queens = board.pieces(chess.QUEEN, side_to_move)
-        if queens:
-            queen_square = next(iter(queens))
-            attackers = board.attackers(not side_to_move, queen_square)
-            if attackers:
-                squares.add(queen_square)
-                squares.update(attackers)
-        return squares
+        alert = resolve_alert(board, self._game_state.alert_preferences)
+        if alert is None:
+            return set()
+        return {alert.target_square, *alert.attacker_squares}
 
     def render_red(self, sprite: Image.Image) -> None:
         """Render the RED overlay: outline highlighted squares and redden pieces.
