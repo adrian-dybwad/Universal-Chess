@@ -40,6 +40,18 @@ _TIMEDATECTL = "timedatectl"
 _READ_TIMEOUT_SECONDS = 10
 _APPLY_TIMEOUT_SECONDS = 30
 
+# How long a sync-flag reading is reused before the OS is consulted again.
+#
+# Reading the flags costs a fork and a DBus round trip, which is the most
+# expensive thing either caller does: GET /api/settings reads them on every
+# Settings page load and is unauthenticated, and the board reads them on every
+# rebuild of its System menu. Five seconds collapses the burst a single page load
+# produces while staying short enough that a state changed outside the UI -- by
+# `timedatectl` at a shell, or by timesyncd flipping NTPSynchronized on its own
+# once it reaches a server -- shows up promptly. Changes made through this module
+# do not wait for it: they drop the cache outright.
+STATUS_CACHE_TTL_SECONDS = 5.0
+
 # 2024-01-01T00:00:00Z and 2100-01-01T00:00:00Z, both inclusive. The device
 # issues its own TLS certificates and orders its event log by wall time, so a
 # clock stepped outside the software's own lifetime breaks both. The
@@ -136,13 +148,57 @@ def _read_ntp_properties(run: CommandRunner) -> tuple[Optional[bool], Optional[b
     )
 
 
+# The last flag reading: (monotonic timestamp, enabled, synchronised), or None
+# before the first read. Guarded by nothing: the value is replaced by a single
+# tuple assignment, so a concurrent reader sees either the old reading or the new
+# one, and the worst a race costs is a duplicate timedatectl call.
+_cached_flags: Optional[tuple[float, Optional[bool], Optional[bool]]] = None
+
+
+def invalidate_status_cache() -> None:
+    """Discard the memoised sync flags so the next read consults the OS."""
+    global _cached_flags
+    _cached_flags = None
+
+
+def _ntp_properties(
+    run: CommandRunner, monotonic: Callable[[], float], use_cache: bool
+) -> tuple[Optional[bool], Optional[bool]]:
+    """Return the sync flags, from the cache when one is current.
+
+    An unknown result is cached like any other: a host without ``timedatectl``
+    fails every read, and that is precisely where retrying per call spends a
+    doomed fork each time.
+
+    The window is measured on the monotonic clock because this module steps the
+    wall clock. Timed on ``time.time``, a clock stepped forward would expire the
+    cache instantly and one stepped back would freeze it until the wall clock
+    caught up -- decades, for a board set from 1970.
+    """
+    global _cached_flags
+    if use_cache and _cached_flags is not None:
+        read_at, enabled, synchronised = _cached_flags
+        if monotonic() - read_at < STATUS_CACHE_TTL_SECONDS:
+            return enabled, synchronised
+    enabled, synchronised = _read_ntp_properties(run)
+    _cached_flags = (monotonic(), enabled, synchronised)
+    return enabled, synchronised
+
+
 def get_status(
     *,
     run: CommandRunner = _default_runner,
     now: Callable[[], float] = time.time,
+    monotonic: Callable[[], float] = time.monotonic,
+    use_cache: bool = True,
 ) -> TimeStatus:
-    """Return the device's clock reading and network time sync state."""
-    enabled, synchronised = _read_ntp_properties(run)
+    """Return the device's clock reading and network time sync state.
+
+    The clock reading is always taken now. Only the sync flags are cached, for
+    ``STATUS_CACHE_TTL_SECONDS``; pass ``use_cache=False`` where acting on a
+    stale flag would be unsafe, as :func:`set_clock`'s caller must.
+    """
+    enabled, synchronised = _ntp_properties(run, monotonic, use_cache)
     return TimeStatus(epoch_seconds=now(), ntp_enabled=enabled, ntp_synchronised=synchronised)
 
 
@@ -194,6 +250,13 @@ def set_clock(
 
 
 def _run_helper(run: CommandRunner, helper_args: Sequence[str]) -> bool:
+    # Every privileged clock operation passes through here, so this is the one
+    # place that has to drop the cached flags -- and it does so whatever the
+    # outcome. A helper that exits non-zero may still have changed the state
+    # (it can fail after timedatectl succeeded), so believing the failure and
+    # keeping the reading would report a state the device no longer has. The
+    # cost is one extra subprocess on a path the user just triggered by hand.
+    invalidate_status_cache()
     args = ["sudo", "-n", *helper_args]
     try:
         proc = run(args, _APPLY_TIMEOUT_SECONDS)

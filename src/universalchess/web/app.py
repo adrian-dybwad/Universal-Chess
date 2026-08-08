@@ -6634,7 +6634,13 @@ def api_system_time_set():
         if isinstance(epoch_seconds, bool) or not isinstance(epoch_seconds, (int, float)):
             return jsonify({"error": "epoch_seconds must be a number"}), 400
         try:
-            applied = set_clock(epoch_seconds, ntp_enabled=get_status().ntp_enabled)
+            # Deliberately uncached: the service memoises the sync flags for a
+            # few seconds to keep the unauthenticated settings read cheap, but
+            # this flag decides whether stepping the clock is permissible and
+            # sync may have been switched on inside that window.
+            applied = set_clock(
+                epoch_seconds, ntp_enabled=get_status(use_cache=False).ntp_enabled
+            )
         except NetworkTimeSyncEnabledError:
             return jsonify({"error": "Network time sync must be turned off first."}), 409
         except ValueError:

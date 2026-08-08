@@ -217,6 +217,52 @@ def test_post_ntp_apply_failure_reports_not_applied(client, authed, monkeypatch)
     assert json.loads(resp.data)["applied"] is False
 
 
+def test_post_time_reads_the_sync_state_fresh_rather_than_from_the_cache(
+    client, authed, monkeypatch
+):
+    """The clock-set gate re-reads the OS instead of trusting a cached flag.
+
+    Why: the service memoises the sync flags for a few seconds to keep the
+    unauthenticated settings read from forking a subprocess per request. That is
+    fine for display, but this route uses the flag to decide whether stepping the
+    clock is permissible, and sync could have been switched on inside the window.
+    How a regression manifests: use_cache is absent or true below, meaning the
+    refusal is being decided from a reading up to STATUS_CACHE_TTL_SECONDS old.
+    """
+    seen = {}
+    monkeypatch.setattr(
+        "universalchess.services.system_time_service.get_status",
+        lambda **kwargs: seen.update(kwargs)
+        or TimeStatus(epoch_seconds=_EPOCH_IN_RANGE, ntp_enabled=False, ntp_synchronised=False),
+    )
+    monkeypatch.setattr(
+        "universalchess.services.system_time_service.set_clock",
+        lambda epoch, **kwargs: True,
+    )
+    resp = client.post("/api/system/time", json={"epoch_seconds": _EPOCH_IN_RANGE})
+    assert resp.status_code == 200
+    assert seen.get("use_cache") is False
+
+
+def test_get_settings_reads_the_sync_state_from_the_cache(client, monkeypatch):
+    """The settings overlay accepts a memoised reading.
+
+    Why: this endpoint is unauthenticated and read on every Settings page load,
+    so it is the one that must not fork a timedatectl per request; a few seconds
+    of staleness only affects where a toggle sits. How a regression manifests:
+    use_cache is passed as False here, restoring the per-request subprocess this
+    cache exists to remove.
+    """
+    seen = {}
+    monkeypatch.setattr(
+        "universalchess.services.system_time_service.get_status",
+        lambda **kwargs: seen.update(kwargs)
+        or TimeStatus(epoch_seconds=_EPOCH_IN_RANGE, ntp_enabled=True, ntp_synchronised=True),
+    )
+    assert client.get("/api/settings").status_code == 200
+    assert seen.get("use_cache") is not False
+
+
 def test_post_time_sets_the_clock_from_the_supplied_epoch(client, authed, monkeypatch):
     """With sync off, the epoch is handed to the service and applied.
 

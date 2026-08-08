@@ -7268,6 +7268,12 @@ def main():
         # new zone without a restart. Harmless when the zone is unchanged.
         if hasattr(time, "tzset"):
             time.tzset()
+        # Network time sync may have been toggled from the web. That process
+        # dropped its own memoised reading, but this one caches separately, so
+        # without this the System menu below could redraw the switch in its old
+        # position and hold it there until the next rebuild after the window.
+        from universalchess.services import system_time_service
+        system_time_service.invalidate_status_cache()
         _load_game_settings()
         # The UI language may have changed via the web; re-read it so the cached
         # localized catalog and the i18n string bundles switch locale before the
