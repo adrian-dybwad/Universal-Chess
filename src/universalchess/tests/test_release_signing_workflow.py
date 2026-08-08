@@ -74,6 +74,32 @@ def test_signing_never_passes_the_passphrase_as_a_command_line_argument():
     )
 
 
+def test_signing_reports_which_secret_is_missing():
+    """Both signing secrets must be checked before gpg is invoked.
+
+    Why this test exists: an absent key already produces a message naming the
+    secret and pointing at the keyring documentation. An absent passphrase did
+    not, and the key is passphrase-protected, so gpg would fail with a message
+    about being unable to unlock it -- true, but it identifies neither the
+    missing secret nor the fix, in a step whose failures are already hard to read
+    because every value is masked.
+
+    How a regression manifests: a cleared or mistyped passphrase secret stops
+    every release with an error that sends whoever investigates towards the key
+    material rather than towards repository settings.
+    """
+    unguarded = []
+    for workflow in _signing_workflows():
+        body = workflow.read_text()
+        for secret in ("RELEASE_SIGNING_KEY", "RELEASE_SIGNING_PASSPHRASE"):
+            if f'-z "${{{secret}}}"' not in body:
+                unguarded.append(f"{workflow.name}: {secret}")
+    assert not unguarded, (
+        "signing must check each secret is present and say which one is not, "
+        f"rather than letting gpg fail on an empty value: {unguarded}"
+    )
+
+
 def test_signing_feeds_the_passphrase_on_a_descriptor():
     """Each signing workflow must actually use the descriptor form.
 

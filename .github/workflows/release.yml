@@ -67,6 +67,13 @@ jobs:
                  "packaging/deb-root/opt/universalchess/keys/README.md"
             exit 1
           fi
+          if [ -z "${RELEASE_SIGNING_PASSPHRASE}" ]; then
+            echo "::error::RELEASE_SIGNING_PASSPHRASE secret is not configured." \
+                 "The signing key is passphrase-protected, so gpg would fail" \
+                 "here saying it cannot unlock the key, which points at the key" \
+                 "rather than at the missing repository secret."
+            exit 1
+          fi
           printf '%s' "${RELEASE_SIGNING_KEY}" | gpg --batch --quiet --import
           cd scripts/releases
           # The passphrase goes in on a descriptor, never in argv: gpg parses an
