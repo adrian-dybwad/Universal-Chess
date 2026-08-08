@@ -361,19 +361,47 @@ def _attempt_display_init(epd, batch_updates: bool = True):
         )
 
 
+def _build_epd(controller: str, key: str, high_contrast: bool, three_color: bool):
+    """Construct the driver for ``controller``, resolving its waveform profile.
+
+    The driver module is imported here rather than at function entry so a board
+    only pays the import cost of the controller it actually probes. The stored
+    ``waveform_profile`` key is resolved against the controller's own profile
+    family, so each driver gets a profile it understands (falling back to its
+    verified table when the key belongs to the other controller).
+    """
+    from universalchess.board import display_selection as ds
+    from universalchess.epaper.framework.waveshare import waveform_profiles as wp
+
+    if controller == ds.CONTROLLER_SSD1680:
+        from universalchess.epaper.framework.waveshare.epd2in9_ssd1680 import EPD
+        profile = wp.get_profile(key, wp.CONTROLLER_SSD16XX)
+    else:
+        from universalchess.epaper.framework.waveshare.epd2in9d import EPD
+        profile = wp.get_profile(key, wp.CONTROLLER_UC8151D)
+    return EPD(
+        profile=profile,
+        high_contrast=high_contrast,
+        three_color=three_color,
+    ), profile
+
+
 def _init_display_early():
     """Initialize display and show splash screen before board initialization.
 
-    Tries the UC8151D (V2) driver first. If it trips the BUSY timeout -- the
-    signature of an inverted-polarity V1 panel -- it automatically retries with
-    the SSD1680 (V1-family) driver; no opt-in is required for that fallback. The
-    [display] waveform_profile / high_contrast settings select how each driver
-    drives the panel: the stored key is resolved against each controller's own
-    profile family, so the UC8151D driver gets a UC8151D profile and the SSD1680
-    fallback gets an SSD16xx one (each defaulting to its verified table when the
-    key belongs to the other controller). The resolved outcome (controller +
-    busy_timeout) is published to the cross-process status file for the web
-    System card.
+    Probes the controller that drove the panel on the previous boot first, read
+    back from the status file this function itself writes. A V1 panel can never
+    satisfy the UC8151D probe, so without the hint every boot pays the full BUSY
+    timeout (5.1 s measured on a Pi Zero) to re-derive a fact already on disk.
+    A board with no usable history keeps the shipped UC8151D-first order.
+
+    The fallback to the other controller is preserved in both directions and
+    requires no opt-in, so a stale hint (panel swap, restored config) always
+    self-corrects rather than leaving the panel blank. The [display]
+    waveform_profile / high_contrast settings do not affect which controller is
+    chosen, only how the chosen driver drives the panel. The resolved outcome
+    (controller + busy_timeout) is published to the cross-process status file
+    for the web System card, and is what seeds the next boot's hint.
 
     Display operations are queued and monitored in background threads, allowing
     the main thread to continue with other startup tasks while the e-paper
@@ -382,39 +410,41 @@ def _init_display_early():
     global _early_display_manager, _startup_splash
     from universalchess.board import hardware_info
     from universalchess.board import display_selection as ds
-    from universalchess.epaper.framework.waveshare.epd2in9d import EPD as PrimaryEPD
-    from universalchess.epaper.framework.waveshare import waveform_profiles as wp
 
     key, high_contrast = _read_display_selection()
     three_color = _read_display_flag('three_color')
     batch_updates = _read_display_flag('batch_updates', default=True)
-    primary_profile = wp.get_profile(key, wp.CONTROLLER_UC8151D)
 
-    manager, primary = _attempt_display_init(PrimaryEPD(
-        profile=primary_profile,
-        high_contrast=high_contrast,
-        three_color=three_color,
-    ), batch_updates=batch_updates)
+    prior = hardware_info.read_display_status()
+    hint = ds.hint_from_status(prior)
+    order = ds.controller_order(hint)
+    # Carried forward only when the hint skips the UC8151D probe: that driver is
+    # the only one that can observe the V1 BUSY-timeout signature, and the flag
+    # gates the web UI's display-tuning card.
+    prior_busy_timeout = bool(prior.get('busy_timeout')) if prior else False
+    first, second = order
+    hinted = first != ds.CONTROLLER_UC8151D
+    if hint:
+        log.info(f"Display: probing {hint} first (drove the panel last boot)")
+
+    epd, _ = _build_epd(first, key, high_contrast, three_color)
+    manager, primary = _attempt_display_init(epd, batch_updates=batch_updates)
     alt = None
-    if ds.should_attempt_alt(primary):
-        # UC8151D never saw idle -> automatically try the SSD1680 (V1) driver.
-        from universalchess.epaper.framework.waveshare.epd2in9_ssd1680 import (
-            EPD as AltEPD,
-        )
-        alt_profile = wp.get_profile(key, wp.CONTROLLER_SSD16XX)
+    if ds.should_attempt_alt(primary, hinted=hinted):
+        alt_epd, alt_profile = _build_epd(second, key, high_contrast, three_color)
         log.warning(
-            "UC8151D BUSY timeout at startup; trying SSD1680 fallback "
+            f"{first} init failed at startup; trying {second} fallback "
             f"(profile={alt_profile.key}, high_contrast={high_contrast})"
         )
-        alt_manager, alt = _attempt_display_init(AltEPD(
-            profile=alt_profile,
-            high_contrast=high_contrast,
-            three_color=three_color,
-        ), batch_updates=batch_updates)
+        alt_manager, alt = _attempt_display_init(
+            alt_epd, batch_updates=batch_updates
+        )
         if alt.ok:
             manager = alt_manager
 
-    outcome = ds.resolve_outcome(primary, alt)
+    outcome = ds.resolve_outcome(
+        primary, alt, order=order, prior_busy_timeout=prior_busy_timeout
+    )
 
     if outcome.initialized:
         _early_display_manager = manager
