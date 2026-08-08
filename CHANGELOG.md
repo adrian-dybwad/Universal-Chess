@@ -112,6 +112,35 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   - `scripts/bump-version.sh` for semantic versioning
   - Proper version comparison for updates
 
+- **Device clock control**: The board keeps no time of its own. It is an
+  RTC-less Pi, so at every power-on its clock restarts from whenever it was last
+  written and only the network corrects it -- and a board reached over the USB
+  link to a laptop has no time source at all. Nothing showed this, so a board
+  minutes or hours out was indistinguishable from a correct one until the wrong
+  time surfaced somewhere else. Settings now shows what the board's clock reads,
+  how far that is from the browser's, and whether network time is switched on
+  and actually reaching a server -- "on" and "synchronised" are reported apart,
+  because a board that cannot reach a time server reports the first without the
+  second.
+  - Network Time can be turned on or off from the web Settings page and from the
+    board's own System menu, from one shared definition, so both surfaces show
+    the same control in the same place.
+  - With it off, "Set from this browser" writes the browser's current time to the
+    board. This is offered only when sync is known to be off: `timedatectl`
+    refuses to step a clock it is synchronising, and a state that could not be
+    read is not evidence that it is not. Should sync be switched on between the
+    reading and the click, the board's refusal is reported as such rather than as
+    a generic failure.
+  - A time to be written must fall between 2024-01-01 and 2100-01-01. A clock set
+    far outside that range invalidates TLS certificates and reorders the game
+    log; the bound is enforced by the privileged helper and again before it is
+    called.
+  - Both operations are root-only. They run through a single pinned helper
+    granted passwordless sudo, which accepts two verbs and validates the argument
+    of each, so the grant cannot be used to run anything else. A board installed
+    by hand without the grant is told the change did not take, rather than
+    failing silently.
+
 ### Changed
 
 - **Project Structure**: Complete reorganization
@@ -137,6 +166,21 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 - **Obsolete Tests**: Removed outdated promotion hardware tests
 
 ### Fixed
+
+- The clock in the browser read minutes away from the board's own screen, but
+  only for the player on move: a ten-minute clock showed five, then snapped back
+  to the correct time the instant that player moved, with the error passing to
+  the opponent. The board pushes a clock snapshot roughly once a second and the
+  browser ages the running side between pushes so the countdown looks smooth.
+  That aging subtracted the timestamp the board stamped on the snapshot from the
+  browser's own clock -- two unsynchronised machines. The board is an RTC-less
+  Pi, and over a USB link to a laptop it has no time source at all, so its clock
+  sat several minutes off and the whole gap landed on whichever side was
+  ticking. (A board running fast produced the opposite symptom: the active clock
+  simply stopped moving.) The browser now measures the gap against its own
+  monotonic timer, so the countdown is correct however far the board's clock has
+  drifted. The board's screen was never affected -- it reads the clock directly
+  and does no interpolation.
 
 - The board showed nothing for the first two minutes after power-on, most of it
   spent waiting for something it does not use. The service was ordered after the
