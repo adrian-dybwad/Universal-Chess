@@ -385,6 +385,11 @@
       "boardLabel": "Zona horaria\n{value}",
       "help": "Ajusta la zona horaria del reloj del dispositivo. Los tiempos de las partidas se guardan en UTC; esto afecta a la pantalla del reloj del tablero."
     },
+    "system.ntp": {
+      "label": "Hora de red",
+      "boardLabel": "Hora de red",
+      "help": "Mantiene el reloj correcto automáticamente desde internet. El tablero no tiene un reloj con batería, así que con esto desactivado -- o sin red a la que conectarse -- su hora se desvía y hay que ajustarla a mano desde los Ajustes web."
+    },
     "system.language": {
       "label": "Idioma",
       "boardLabel": "Idioma\n{value}",

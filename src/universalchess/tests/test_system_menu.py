@@ -29,11 +29,13 @@ _DEVICE_CONTAINER = "group.system.device"
 
 # The shared nodes the web container lists, in tab order, paired with the
 # ``system``-store key each binds. Sleep Timer keeps the board's ``sleep_seconds``
-# key (the web store maps it to its form); Timezone/Language bind the keys whose
-# web setter posts to the dedicated device endpoints.
+# key (the web store maps it to its form); Timezone/Network Time/Language bind the
+# keys whose web setter posts to the dedicated device endpoints. Network Time sits
+# next to Timezone because both configure the device clock.
 _EXPECTED_FIELDS = [
     ("system.inactivity", "sleep_seconds"),
     ("system.timezone", "timezone"),
+    ("system.ntp", "ntp_enabled"),
     ("system.language", "ui_language"),
 ]
 

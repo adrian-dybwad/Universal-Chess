@@ -5135,13 +5135,18 @@ def _build_system_context():
     from universalchess.menus.catalog import loader as catalog_loader
     from universalchess.services.power import perform_shutdown, perform_reboot
 
-    from universalchess.services import language_service, timezone_service
+    from universalchess.services import language_service, system_time_service, timezone_service
 
     def system_get(key):
         if key == "sleep_seconds":
             return board.get_inactivity_timeout()
         if key == "timezone":
             return timezone_service.get_timezone()
+        if key == "ntp_enabled":
+            # None when the state could not be read; the toggle then renders
+            # without a checkbox and selecting it enables sync, which is the
+            # safe direction to move from "unknown".
+            return system_time_service.get_status().ntp_enabled
         if key == "ui_language":
             return language_service.get_language()
         raise KeyError(f"unknown system store key: {key!r}")
@@ -5160,6 +5165,14 @@ def _build_system_context():
                 log.info(f"[Settings] Timezone set to {value} (applied={applied})")
             except ValueError:
                 log.warning(f"[Settings] Rejected invalid timezone: {value!r}")
+            return
+        if key == "ntp_enabled":
+            # A failed apply is logged rather than raised (usually a missing sudo
+            # grant on a hand-installed board), matching the timezone path; the
+            # menu re-reads the real OS state on its next draw either way, so a
+            # refused change simply shows the toggle snapping back.
+            applied = system_time_service.set_ntp_enabled(bool(value))
+            log.info(f"[Settings] Network time sync set to {bool(value)} (applied={applied})")
             return
         if key == "ui_language":
             # Persist the UI locale, then refresh the cached catalog language so

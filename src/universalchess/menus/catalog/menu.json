@@ -943,6 +943,18 @@
       "platforms": ["board", "web"]
     },
     {
+      "id": "system.ntp",
+      "key": "NetworkTime",
+      "type": "toggle",
+      "label": "Network Time",
+      "boardLabel": "Network Time",
+      "help": "Keep the clock correct automatically from the internet. The board has no battery-backed clock, so with this off -- or with no network to reach -- its time drifts and must be set by hand from the web Settings.",
+      "bind": { "store": "system", "key": "ntp_enabled" },
+      "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
+      "platforms": ["board", "web"],
+      "epaper": { "font_size": 12, "height_ratio": 0.8 }
+    },
+    {
       "id": "system.language",
       "key": "Language",
       "type": "select",
@@ -1699,8 +1711,8 @@
       "id": "group.system.device",
       "type": "group",
       "label": "Device",
-      "help": "Sleep, timezone, and language preferences for this board.",
-      "children": ["system.inactivity", "system.timezone", "system.language"]
+      "help": "Sleep, clock, and language preferences for this board.",
+      "children": ["system.inactivity", "system.timezone", "system.ntp", "system.language"]
     },
     {
       "id": "field.system.database_uri",
