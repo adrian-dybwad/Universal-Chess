@@ -1,6 +1,14 @@
 [Unit]
 Description=Universal Chess
-After=network.target bluetooth.target
+# Deliberately NOT After=network.target. The board drives the e-paper panel over
+# SPI, the chess board over serial and GPIO; it needs no IP to show the splash
+# screen or find the board. network.target is only reached once NetworkManager
+# reports active, which on a Pi Zero takes ~50 s -- it runs `netplan generate`
+# four times at ~11.5 s each, re-serializing every connection profile, including
+# ones for interfaces the board does not have. That put the splash screen 65 s
+# later than it needed to be. The web unit keeps its network ordering, since
+# there is nobody to serve until the network exists.
+After=bluetooth.target
 Wants=bluetooth.target
 
 [Service]

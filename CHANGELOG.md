@@ -138,6 +138,18 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- The board showed nothing for the first two minutes after power-on, most of it
+  spent waiting for something it does not use. The service was ordered after the
+  network, which is only considered up once NetworkManager reports ready -- and
+  on a Pi Zero that takes around fifty seconds, because NetworkManager rebuilds
+  every stored network profile at each boot, including profiles for adapters the
+  board does not have. Driving the screen and the chess board needs none of
+  that: they are wired to the Pi directly. The service no longer waits, so the
+  splash screen appears while the network is still coming up rather than after.
+  Nothing about the network configuration itself is changed, so Wi-Fi boards are
+  unaffected. The web interface still waits, since there is nobody to serve
+  until the network exists.
+
 - Loading the saved game settings took half a minute on a Pi Zero, stalling
   startup with the splash screen already showing. Reading one setting parsed the
   configuration file twice over and the packaged defaults once more, and a read

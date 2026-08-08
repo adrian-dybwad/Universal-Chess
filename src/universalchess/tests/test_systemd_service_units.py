@@ -51,8 +51,8 @@ LOG_REDIRECT_DIRECTIVES = ("StandardOutput", "StandardError")
 TMPFILES_PLACEHOLDER_OWNER = "pi"
 
 
-def _service_directives(unit_name: str) -> dict:
-    """Return the ``[Service]`` directives of a shipped unit as name -> values.
+def _directives(unit_name: str, wanted_section: str) -> dict:
+    """Return one section's directives of a shipped unit as name -> values.
 
     Values are collected in a list because systemd permits a directive to be
     repeated, and a duplicate is itself worth asserting on: a second
@@ -70,11 +70,29 @@ def _service_directives(unit_name: str) -> dict:
         if line.startswith("[") and line.endswith("]"):
             section = line[1:-1]
             continue
-        if section != "Service" or "=" not in line:
+        if section != wanted_section or "=" not in line:
             continue
         name, _, value = line.partition("=")
         directives.setdefault(name.strip(), []).append(value.strip())
     return directives
+
+
+def _service_directives(unit_name: str) -> dict:
+    """Return the ``[Service]`` directives of a shipped unit as name -> values."""
+    return _directives(unit_name, "Service")
+
+
+def _unit_ordering(unit_name: str, directive: str) -> set:
+    """Return the units named by a ``[Unit]`` ordering/dependency directive.
+
+    systemd treats the directive as space-separated and additive across repeats,
+    so both are flattened here rather than only reading the first occurrence.
+    """
+    return {
+        target
+        for value in _directives(unit_name, "Unit").get(directive, [])
+        for target in value.split()
+    }
 
 
 def _sole_working_directory(unit_name: str) -> str:
@@ -194,6 +212,50 @@ def test_the_board_service_runtime_directory_is_created_for_the_service_user():
         "the postinst must rewrite the tmpfiles owner placeholder to the detected "
         "primary user, or the runtime directory is unwritable on any board whose "
         f"user is not '{TMPFILES_PLACEHOLDER_OWNER}'"
+    )
+
+
+@pytest.mark.parametrize(
+    "directive", ["After", "Requires", "Wants", "BindsTo", "Requisite"]
+)
+def test_board_service_does_not_wait_for_the_network(directive):
+    """The board service must not be ordered after, or depend on, the network.
+
+    Why this test exists: this ordering delayed the splash screen by more than a
+    minute on every boot. ``network.target`` is only reached once NetworkManager
+    reports active, and on a Pi Zero NetworkManager took 50.6 s to get there --
+    it spends that time running ``netplan generate`` four times, at roughly 11.5
+    s each, re-serializing every connection profile it holds. Two of the four on
+    the measured board were for ``eth0`` and ``wlan0``, interfaces that board
+    does not have. Measured from boot: ``network.target`` at 113.3 s, the board
+    service started at 114.2 s, splash on screen at 156 s.
+
+    None of that is a dependency the board process actually has. It drives the
+    e-paper panel over SPI, the chess board over a serial UART, and GPIO -- no
+    IP, no name resolution, no sockets beyond the local IPC ones under
+    ``/run/universalchess``. ``network.target`` does not even mean the network
+    is usable; systemd's own guidance is that it orders shutdown and that
+    services needing connectivity should use ``network-online.target``, which
+    would be slower still. So the ordering bought nothing and cost the user a
+    blank screen for the duration.
+
+    The web unit deliberately keeps its network ordering and is not covered
+    here: it serves remote clients, so there is nobody to serve until the
+    network exists, and delaying it costs nothing visible on the board itself.
+
+    How a regression manifests: no failure, no error, and every test but this
+    one still passes. The board simply goes back to showing nothing for the
+    first two minutes after power-on, which reads as "slow hardware" rather
+    than as a unit-ordering mistake -- exactly how it went unnoticed since the
+    first commit.
+    """
+    depends_on = _unit_ordering(BOARD_UNIT, directive)
+    offending = {t for t in depends_on if t.startswith("network")}
+    assert not offending, (
+        f"{BOARD_UNIT} declares {directive}={' '.join(sorted(offending))}. The "
+        "board process needs SPI, serial and GPIO, not IP; this ordering makes "
+        "the splash screen wait for NetworkManager, which takes ~50 s on a Pi "
+        "Zero."
     )
 
 
