@@ -127,7 +127,10 @@ def latest_version(dist):
         raise SystemExit(f"not a valid distribution name: {dist!r}")
     url = f"https://pypi.org/pypi/{urllib.parse.quote(dist)}/json"
     # Scheme and host are literals and the name is validated above, so the
-    # file:/ and custom-scheme cases B310 warns about cannot arise.
+    # file:/ and custom-scheme cases these rules warn about cannot arise: the
+    # only interpolated part is one path segment, and DISTRIBUTION_NAME admits
+    # no ":" or "/" with which to leave it.
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
     with urllib.request.urlopen(url, timeout=30) as response:  # noqa: S310  # nosec B310
         return json.load(response)["info"]["version"]
 

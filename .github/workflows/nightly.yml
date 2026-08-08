@@ -156,10 +156,15 @@ jobs:
           fi
           printf '%s' "${RELEASE_SIGNING_KEY}" | gpg --batch --quiet --import
           cd scripts/releases
-          gpg --batch --yes --armor --detach-sign \
-              --pinentry-mode loopback \
-              --passphrase "${RELEASE_SIGNING_PASSPHRASE}" \
-              --output SHA256SUMS.txt.asc SHA256SUMS.txt
+          # The passphrase goes in on a descriptor, never in argv: gpg parses an
+          # argument beginning with a hyphen as an option and exits with
+          # "invalid option", naming a value the log has already masked. Keeping
+          # it out of argv also keeps it out of the runner's process list.
+          printf '%s' "${RELEASE_SIGNING_PASSPHRASE}" \
+            | gpg --batch --yes --armor --detach-sign \
+                  --pinentry-mode loopback \
+                  --passphrase-fd 0 \
+                  --output SHA256SUMS.txt.asc SHA256SUMS.txt
           gpg --batch --verify SHA256SUMS.txt.asc SHA256SUMS.txt
 
       - name: Generate release notes

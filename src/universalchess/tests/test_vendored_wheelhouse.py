@@ -15,8 +15,11 @@ for every board: the compiled dependencies are exactly the ones Debian ships, an
 vendoring those would mean per-architecture and per-Python-version wheels.
 """
 
+import importlib.util
 import re
 from pathlib import Path
+
+import pytest
 
 import universalchess
 
@@ -26,9 +29,72 @@ REQUIREMENTS = PACKAGE_ROOT / "setup" / "requirements.txt"
 PINNED_REQUIREMENTS = PACKAGE_ROOT / "setup" / "pinned" / "requirements.txt"
 SYSTEM_PROVIDED = PACKAGE_ROOT / "setup" / "system-provided.txt"
 BUILD_SH = REPO_ROOT / "scripts" / "build.sh"
+LOCK_GENERATOR = REPO_ROOT / "scripts" / "update-wheels-lock.py"
 DEBIAN_DIR = REPO_ROOT / "packaging" / "deb-root" / "DEBIAN"
 POSTINST = DEBIAN_DIR / "postinst"
 CONTROL = DEBIAN_DIR / "control"
+
+
+def _load_lock_generator():
+    """Import ``scripts/update-wheels-lock.py``, whose name is not importable.
+
+    The hyphen makes it invalid as a module name, so it is loaded by path. The
+    module body is only definitions; the entry point is guarded by ``__main__``.
+    """
+    spec = importlib.util.spec_from_file_location("update_wheels_lock", LOCK_GENERATOR)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "../../../etc/passwd",
+        "foo/bar",
+        "foo:bar",
+        "https://evil.invalid/x",
+        "file:///etc/passwd",
+        "",
+        "-leading-hyphen",
+        "trailing-hyphen-",
+    ],
+)
+def test_lock_generator_refuses_distribution_names_that_could_steer_the_url(name):
+    """``latest_version`` must reject anything that is not a distribution name.
+
+    Why this test exists: the name is interpolated into a PyPI URL, and this
+    validation is the whole reason that interpolation is safe -- it is what the
+    static-analysis suppression on the urlopen call rests on. Without it, an
+    entry in system-provided.txt could escape the path segment. The check is
+    cheap to delete by accident while refactoring, and nothing else would notice.
+
+    How a regression manifests: silently. Every legitimate name still resolves,
+    so the tooling keeps working while the guarantee documented beside the
+    urlopen call is no longer true.
+    """
+    generator = _load_lock_generator()
+    with pytest.raises(SystemExit):
+        generator.latest_version(name)
+
+
+def test_lock_generator_accepts_the_names_the_project_actually_uses():
+    """Validation must not be so strict that real requirements are rejected.
+
+    Why this test exists: a pattern tightened in response to the test above could
+    start rejecting ordinary names containing dots, hyphens or underscores. That
+    failure appears only when regenerating the lock, which happens rarely, so it
+    would be found long after the change that caused it.
+
+    How a regression manifests: the resolver exits with "not a valid distribution
+    name" for a requirement that has always been valid.
+    """
+    generator = _load_lock_generator()
+    every_name = _declared_requirements() + list(_system_provided())
+    rejected = [n for n in every_name if not generator.DISTRIBUTION_NAME.match(n)]
+    assert not rejected, (
+        f"the distribution-name pattern rejects names the project declares: {rejected}"
+    )
 
 
 def _system_provided() -> dict:
