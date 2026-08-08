@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
-import type { GameState, ClockStatus } from '../types/game';
+import type { GameState, ClockSnapshot } from '../types/game';
 
 /**
  * Guards the LiveBoard end-game panel, the web counterpart to the e-paper
@@ -45,7 +45,7 @@ function makeGameState(overrides: Partial<GameState> = {}): GameState {
   };
 }
 
-function makeClock(overrides: Partial<ClockStatus> = {}): ClockStatus {
+function makeClock(overrides: Partial<ClockSnapshot> = {}): ClockSnapshot {
   return {
     white_time: 300,
     black_time: 300,
@@ -54,11 +54,12 @@ function makeClock(overrides: Partial<ClockStatus> = {}): ClockStatus {
     is_paused: false,
     timed_mode: true,
     synced_at: 1000,
+    received_at_monotonic_ms: 1000,
     ...overrides,
   };
 }
 
-function setStore(gameState: GameState | null, clock: ClockStatus | null = null) {
+function setStore(gameState: GameState | null, clock: ClockSnapshot | null = null) {
   storeState = { gameState, clock };
 }
 

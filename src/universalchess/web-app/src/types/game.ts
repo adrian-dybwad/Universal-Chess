@@ -337,10 +337,9 @@ export interface BatteryStatus {
 }
 
 /**
- * Live chess clock snapshot. Mirrors GET /api/game/clock and the board's
- * `clock_status` SSE event. The clock counts down in the main process, which
- * broadcasts on every tick and state change; the LiveBoard interpolates the
- * active side locally between events using `synced_at`. Times are null and
+ * Live chess clock snapshot as the board sends it. Mirrors GET /api/game/clock
+ * and the `clock_status` SSE event. The clock counts down in the main process,
+ * which broadcasts on every tick and state change. Times are null and
  * `timed_mode` is false until the board reports a reading (or for untimed games).
  */
 export interface ClockStatus {
@@ -357,8 +356,32 @@ export interface ClockStatus {
   /** Whether the game has a running clock (false = untimed). */
   timed_mode: boolean;
   /**
-   * Wall-clock epoch seconds when the snapshot was produced on the board, used
-   * to age the active side locally. Null when no snapshot has been received.
+   * Epoch seconds read from the *board's* wall clock when the snapshot was
+   * produced. Null when no snapshot has been received.
+   *
+   * Must not be used to age the snapshot in the browser. The board is an
+   * RTC-less Pi that often has no time source (a USB-gadget link to a laptop
+   * provides no NTP), so this value and the browser's own clock can be minutes
+   * apart; subtracting one from the other put that entire skew onto whichever
+   * side was ticking. Use `ClockSnapshot.received_at_monotonic_ms` instead.
    */
   synced_at: number | null;
+}
+
+/**
+ * A {@link ClockStatus} paired with the moment the browser received it.
+ *
+ * Countdown interpolation needs a start point for "how long ago was this
+ * true?", and both timestamps in that subtraction have to come from the same
+ * machine. The store stamps this on arrival so the answer depends only on the
+ * browser's own monotonic timer, leaving the display correct however far the
+ * board's wall clock has drifted.
+ */
+export interface ClockSnapshot extends ClockStatus {
+  /**
+   * `performance.now()` reading when the snapshot reached the browser.
+   * Monotonic, so it also survives the host stepping its own wall clock (an
+   * OS time sync mid-game) without the countdown jumping.
+   */
+  received_at_monotonic_ms: number;
 }

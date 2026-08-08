@@ -1,5 +1,12 @@
 import { create } from 'zustand';
-import type { GameState, AnalysisResult, ConnectionStatus, BatteryStatus, ClockStatus } from '../types/game';
+import type {
+  GameState,
+  AnalysisResult,
+  ConnectionStatus,
+  BatteryStatus,
+  ClockStatus,
+  ClockSnapshot,
+} from '../types/game';
 
 // Persist the board hostname so the browser tab title is device-prefixed on the
 // very first paint of every load after the first, instead of flashing the bare
@@ -33,7 +40,7 @@ interface GameStoreState {
   stateVersion: number;
   connectionStatus: ConnectionStatus;
   battery: BatteryStatus | null;
-  clock: ClockStatus | null;
+  clock: ClockSnapshot | null;
   // The board's hostname (e.g. "dgt"), used to prefix the browser tab title so
   // multiple boards open in separate tabs are distinguishable. Null until read
   // from /api/system/stats.
@@ -46,6 +53,14 @@ interface GameStoreState {
   setGameState: (state: GameState) => void;
   setConnectionStatus: (status: ConnectionStatus) => void;
   setBattery: (battery: BatteryStatus) => void;
+  /**
+   * Store a clock snapshot, stamping the browser's monotonic receipt time.
+   *
+   * Stamping here rather than at the call sites is what keeps the two snapshot
+   * paths -- the `clock_status` SSE event and the mount-time GET
+   * /api/game/clock seed -- in step; the countdown cannot be interpolated
+   * without it.
+   */
   setClock: (clock: ClockStatus) => void;
   setDeviceName: (deviceName: string) => void;
   setAnalysis: (analysis: AnalysisResult) => void;
@@ -71,7 +86,7 @@ export const useGameStore = create<GameStoreState>((set) => ({
   setGameState: (gameState) => set((state) => ({ gameState, stateVersion: state.stateVersion + 1 })),
   setConnectionStatus: (connectionStatus) => set({ connectionStatus }),
   setBattery: (battery) => set({ battery }),
-  setClock: (clock) => set({ clock }),
+  setClock: (clock) => set({ clock: { ...clock, received_at_monotonic_ms: performance.now() } }),
   setDeviceName: (deviceName) => {
     localStorage.setItem(DEVICE_NAME_KEY, deviceName);
     set({ deviceName });

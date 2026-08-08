@@ -39,7 +39,7 @@ export function ClockDisplay() {
   const { t } = useTranslation();
   const clock = useGameStore((state) => state.clock);
   const setClock = useGameStore((state) => state.setClock);
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [nowMs, setNowMs] = useState(() => performance.now());
 
   useEffect(() => {
     let active = true;
@@ -60,11 +60,13 @@ export function ClockDisplay() {
 
   // Drive local interpolation. A sub-second interval keeps the visible second
   // boundary close to real time without a full re-render every frame; it only
-  // needs to run while a timed clock is actually counting down.
+  // needs to run while a timed clock is actually counting down. The reading
+  // must come from performance.now(), the same monotonic timer the store used
+  // to stamp the snapshot -- see interpolateClock.
   const running = Boolean(clock?.timed_mode && clock?.is_running);
   useEffect(() => {
     if (!running) return;
-    const id = setInterval(() => setNowMs(Date.now()), 250);
+    const id = setInterval(() => setNowMs(performance.now()), 250);
     return () => clearInterval(id);
   }, [running]);
 
