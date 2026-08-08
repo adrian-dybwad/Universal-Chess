@@ -5,7 +5,7 @@ Main display manager coordinating widgets and refresh scheduling.
 import functools
 import threading
 import time
-from typing import List
+from typing import List, Optional
 from concurrent.futures import Future
 from PIL import Image
 from .waveshare.epd2in9d import EPD
@@ -62,7 +62,7 @@ class Manager:
         self._flush_scheduled = False  # a coalesced flush is already queued
         log.debug(f"Manager.__init__() completed - Manager id: {id(self)}, EPD id: {id(self._epd)}")
     
-    def initialize(self) -> Future:
+    def initialize(self) -> None:
         """Initialize the display hardware.
         
         Initializes the e-paper hardware and scheduler. Does not set any background -
@@ -71,6 +71,9 @@ class Manager:
         
         The status bar is not added by default during initialization.
         The caller is responsible for adding it when appropriate (e.g., when showing a menu).
+        
+        Nothing is painted: the panel is left untouched until the first caller adds a
+        widget, so boot shows the splash as its first frame rather than a blank screen.
         """
         if self._initialized:
             return
@@ -84,12 +87,10 @@ class Manager:
             time.sleep(0.1)
             
             self._initialized = True
-            return self.clear_widgets(addStatusBar=False)
+            self.clear_widgets(addStatusBar=False)
 
         except Exception as e:
             raise RuntimeError(f"Failed to initialize display: {e}") from e
-
-        return None
     
     @property
     def epd(self):
@@ -156,26 +157,57 @@ class Manager:
         self._scheduler.set_batch_updates(enabled)
 
     def add_widget(self, widget: Widget) -> Future:
-        """Add a widget to the display.
+        """Add a widget on top of the display stack and paint the result.
         
         If the widget has is_modal=True, it takes over the display and all other
         widgets are ignored until this widget is removed.
-        
-        If adding a modal widget when another modal is already present, the previous
-        modal is automatically removed and a warning is logged.
         
         The widget should call request_update() when it's ready to be displayed.
         
         Args:
             widget: The widget to add
-            index: Optional position in the widget stack. If None, widget is added
-                   at the end (top of z-order). Use 0 to add at bottom.
+        
+        Returns:
+            Future that completes when the display is updated
         """
-        # If adding a modal widget, check for and remove any existing modal
+        self._attach_widget(widget)
+        return self.update(full=False)
+    
+    def add_widget_at(self, widget: Widget, index: int) -> Future:
+        """Add a widget at a specific position in the z-order stack and paint.
+        
+        Widgets are rendered in order, so index 0 is at the bottom (rendered first,
+        may be obscured by others) and higher indices are on top.
+        
+        Args:
+            widget: The widget to add
+            index: Position in the stack. Clamped to valid range.
+        
+        Returns:
+            Future that completes when the display is updated
+        """
+        self._attach_widget(widget, index=index)
+        return self.update(full=False)
+    
+    def _attach_widget(self, widget: Widget, index: Optional[int] = None) -> None:
+        """Register a widget in the stack WITHOUT painting the panel.
+        
+        Split out from add_widget so a screen transition can compose its entire
+        widget stack before any frame reaches the panel -- see clear_widgets, which
+        must not paint the half-built screen it leaves behind.
+        
+        If adding a modal widget when another modal is already present, the previous
+        modal is stopped and removed, since only one can be shown.
+        
+        Args:
+            widget: The widget to register
+            index: Position in the z-order stack (0 = bottom). Clamped to the valid
+                   range. None appends the widget on top.
+        """
         if widget.is_modal:
             for existing in self._widgets:
                 if existing.is_modal:
-                    log.warning(f"Manager.add_widget() replacing existing modal {existing.__class__.__name__} with {widget.__class__.__name__}")
+                    log.warning(f"Manager._attach_widget() replacing existing modal {existing.__class__.__name__} with {widget.__class__.__name__}")
                     try:
                         existing.stop()
                     except Exception as e:
@@ -190,51 +222,13 @@ class Manager:
         widget.set_scheduler(self._scheduler)
         widget.set_update_callback(functools.partial(self._widget_update, widget))
         
-        self._widgets.append(widget)
+        if index is None:
+            self._widgets.append(widget)
+        else:
+            self._widgets.insert(max(0, min(index, len(self._widgets))), widget)
         
         if widget.is_modal:
-            log.debug(f"Manager.add_widget() added modal widget {widget.__class__.__name__}")
-
-        return self.update(full=False)
-    
-    def add_widget_at(self, widget: Widget, index: int) -> Future:
-        """Add a widget at a specific position in the z-order stack.
-        
-        Widgets are rendered in order, so index 0 is at the bottom (rendered first,
-        may be obscured by others) and higher indices are on top.
-        
-        Args:
-            widget: The widget to add
-            index: Position in the stack. Clamped to valid range.
-        
-        Returns:
-            Future that completes when the display is updated
-        """
-        # If adding a modal widget, check for and remove any existing modal
-        if widget.is_modal:
-            for existing in self._widgets:
-                if existing.is_modal:
-                    log.warning(f"Manager.add_widget_at() replacing existing modal {existing.__class__.__name__} with {widget.__class__.__name__}")
-                    try:
-                        existing.stop()
-                    except Exception as e:
-                        log.debug(f"Error stopping replaced modal widget: {e}")
-                    self._widgets.remove(existing)
-                    break
-        
-        # Pass scheduler and update callback to widget (see add_widget for why the
-        # callback is wrapped per widget).
-        widget.set_scheduler(self._scheduler)
-        widget.set_update_callback(functools.partial(self._widget_update, widget))
-        
-        # Clamp index to valid range and insert
-        index = max(0, min(index, len(self._widgets)))
-        self._widgets.insert(index, widget)
-        
-        if widget.is_modal:
-            log.debug(f"Manager.add_widget_at() added modal widget {widget.__class__.__name__} at index {index}")
-
-        return self.update(full=False)
+            log.debug(f"Manager._attach_widget() added modal widget {widget.__class__.__name__} at index {self._widgets.index(widget)}")
     
     def set_background(self, shade: int = 0) -> None:
         """Set the background shade level using dithering.
@@ -283,20 +277,26 @@ class Manager:
             log.debug(f"Manager.remove_widget() widget {widget.__class__.__name__} not found")
             return None
     
-    def clear_widgets(self, addStatusBar: bool = True) -> Future:
-        """Clear all widgets and background from the display.
+    def clear_widgets(self, addStatusBar: bool = True) -> None:
+        """Clear all widgets and background from the display, WITHOUT painting.
         
-        Stops all widget background threads, clears the widget list, clears
-        the background, and resets partial mode to trigger display re-initialization
-        on the next update.
+        Stops all widget background threads, drops refresh requests queued by those
+        widgets, clears the widget list and the background, and optionally seeds the
+        fresh screen with a status bar.
         
-        When transitioning between screens, resetting partial mode causes the scheduler
-        to call init() and Clear() on the next partial update, which clears any ghosting
-        from dithered backgrounds (like splash screens) without the jarring full refresh flash.
+        Deliberately paints nothing. This is the first half of a screen transition
+        ("clear the old widgets, add the new ones") and the screen it leaves behind
+        is empty by construction -- no caller ever wants that state shown. Painting
+        it (which adding the status bar through add_widget used to do) submitted a
+        frame containing nothing but the 16px status bar just before the frame with
+        the real content. The scheduler only coalesces frames queued together, and
+        building the next screen's widgets takes long enough that the empty frame is
+        usually drawn first: on the device the screen visibly blanked between the
+        boot splash and the main menu, which reads as a fault. The caller's following
+        add_widget paints one frame that already contains the new content.
         
         Callers that want a dithered background should call set_background() after this.
         """
-        had_widgets = len(self._widgets) > 0
         log.debug(f"Manager.clear_widgets() called, clearing {len(self._widgets)} widgets")
         
         # Clear pending refresh requests first to prevent stale updates
@@ -315,12 +315,8 @@ class Manager:
         # Clear background to revert to plain white
         self._background = None
         
-        # Create and add status bar widget
         if addStatusBar:
-            status_bar_widget = StatusBarWidget(0, 0, self.update)
-            return self.add_widget(status_bar_widget)
-
-        return None
+            self._attach_widget(StatusBarWidget(0, 0, self.update))
     
     def update(self, full: bool = False, immediate: bool = False,
                priority: bool = True) -> Future:
