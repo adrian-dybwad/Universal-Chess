@@ -1848,12 +1848,17 @@ def _get_piece_images() -> dict[str, Image.Image]:
 
 
 logo = Image.open(str(pathlib.Path(__file__).parent.resolve()) + "/../web/static/logo_mods_web.png")
+
+# Classic-Chromecast snapshot cache, populated lazily by
+# _render_classic_cast_frame. Deliberately NOT primed here: the board rewrites
+# EPAPER_STATIC_JPG in place on every panel refresh, so decoding it at import
+# could observe a half-written file and raise UnidentifiedImageError -- which at
+# module scope kills the web process before it binds its port (seen on a board,
+# recovered only by systemd's Restart=always). The renderer already reloads on an
+# mtime change or a None cache and handles a failed decode, so priming added a
+# startup crash vector and nothing else. Guarded by test_web_app_import_safety.
 moddate = -1
 sc = None
-epaper_path = EPAPER_STATIC_JPG
-if os.path.isfile(epaper_path):
-    sc = Image.open(epaper_path)
-    moddate = os.stat(epaper_path)[8]
 
 # /video frame production is change-driven, not clock-driven. A 1920x1080 JPEG
 # render takes longer than a frame interval on the board's single ARMv6 core, so
