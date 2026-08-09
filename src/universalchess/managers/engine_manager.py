@@ -671,6 +671,32 @@ class EngineDefinition:
         return "specialty"
 
 
+def catalog_engines_by_strength() -> List[Tuple[str, "EngineDefinition"]]:
+    """Return ``(name, definition)`` pairs in the order the engine list shows them.
+
+    Strongest first, with the unrated engines last and ties broken by name so the
+    order is stable across calls.
+
+    The order is part of what the list tells the reader -- it is read to answer
+    "which engine should I install?" -- so it is decided here rather than left to
+    the order the definitions happen to occupy in this file. That order groups by
+    build cost and provenance as much as by strength, which put Reckless, rated
+    above every other engine, below four weaker ones in its own group.
+
+    Because tiers are rating bands, sorting the whole catalog by rating also
+    orders each tier correctly; a caller that groups afterwards keeps this order
+    within every group.
+    """
+    return sorted(
+        ENGINES.items(),
+        key=lambda item: (
+            item[1].elo is None,       # unrated last
+            -(item[1].elo or 0),       # then strongest first
+            item[1].display_name,      # stable tie-break
+        ),
+    )
+
+
 # Clone-URL suffix that must come off before a repository URL can be opened as a
 # page: GitHub serves ".../project.git" as a git endpoint, not a project page.
 _GIT_URL_SUFFIX = ".git"

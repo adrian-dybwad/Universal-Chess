@@ -200,6 +200,21 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Changed
 
+- **Engine list groups and orders itself by rating**: The Settings engine list
+  puts each engine in a strength group and, within it, lists the strongest
+  first. Both now follow the engine's published rating, recorded once in the
+  engine catalog and sent to the page with the rest of its details.
+  - Reckless, the strongest engine in the catalog, was listed under Specialty
+    alongside the deliberately weak engines, because the page decided the groups
+    from lists of engine names written into the page itself and anything absent
+    from them fell through to Specialty. It now leads the Top Tier group.
+  - Group membership is a rating band (3300+ for Top Tier, 2900+ for Strong),
+    so adding an engine to the catalog files it correctly without touching the
+    page, and the two can no longer disagree about where an engine belongs.
+  - The page also stopped recognising the engine that ships with the system by
+    name, and asks whether it is a system package instead, which is what the
+    "System" badge and the absent Uninstall button actually depend on.
+
 - **Project Structure**: Complete reorganization
   - Source code moved to `src/universalchess/`
   - Build scripts moved to `scripts/`

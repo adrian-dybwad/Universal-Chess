@@ -775,6 +775,27 @@ def test_all_engines_carries_the_tier_the_web_groups_by(client, monkeypatch):
     assert served == {name: engine.tier for name, engine in ENGINES.items()}
 
 
+def test_all_engines_lists_the_catalog_strongest_first(client, monkeypatch):
+    """The catalog rows arrive ordered by rating, so the client need not sort.
+
+    Why this test exists: the order is part of the answer the list gives, and it
+    is decided once here for the same reason the tier is -- a client that sorts
+    for itself is a second copy of the rule. Custom engines are appended after
+    the catalog and render in their own panel, so only the catalog prefix is
+    ordered.
+
+    How a regression manifests: rows fall back to the order the definitions sit
+    in the source file, which groups by build cost and provenance, putting the
+    strongest engine below weaker ones in its own group.
+    """
+    from universalchess.managers.engine_manager import catalog_engines_by_strength
+
+    data = json.loads(client.get("/api/engines/all").data)
+    expected = [name for name, _ in catalog_engines_by_strength()]
+    assert [e["name"] for e in data][: len(expected)] == expected
+    assert data[0]["name"] == "reckless"
+
+
 def test_all_engines_carries_the_documentation_link_for_each_engine(client, monkeypatch):
     """GET /api/engines/all resolves each engine's "learn more" link for the UI.
 

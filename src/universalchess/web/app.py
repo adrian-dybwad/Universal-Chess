@@ -5316,8 +5316,9 @@ def api_get_all_engines():
     """Get full details of all engines for management UI."""
     try:
         from universalchess.managers.engine_manager import (
-            EngineManager, ENGINES, arch_unsupported_reason, get_current_arch,
-            canonical_ref, documentation_url, host_has_neon,
+            EngineManager, arch_unsupported_reason, get_current_arch,
+            canonical_ref, catalog_engines_by_strength, documentation_url,
+            host_has_neon,
         )
 
         engine_manager = EngineManager()
@@ -5332,7 +5333,10 @@ def api_get_all_engines():
         resume_points = _engine_resume_store.list_all()
         engines_list = []
 
-        for name, engine_def in ENGINES.items():
+        # Strongest first, decided with the tier and for the same reason: the
+        # order answers part of what the list is read for, so leaving it to the
+        # client would be a second copy of the rule.
+        for name, engine_def in catalog_engines_by_strength():
             # "Installed" for the management list means present enough to show as
             # installed rather than offer a fresh Install: a system package is
             # always present; any other engine counts once its binary exists. A

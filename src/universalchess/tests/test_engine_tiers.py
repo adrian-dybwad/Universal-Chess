@@ -27,6 +27,7 @@ from universalchess.managers.engine_manager import (
     ENGINES,
     STRONG_TIER_MIN_ELO,
     TOP_TIER_MIN_ELO,
+    catalog_engines_by_strength,
 )
 
 TIERS = ("top", "strong", "specialty")
@@ -145,6 +146,46 @@ def test_the_strongest_engine_is_not_filed_under_specialty():
     assert reckless.elo is not None and reckless.elo >= TOP_TIER_MIN_ELO
     assert reckless.tier == "top"
     assert reckless.elo == max(e.elo for e in ENGINES.values() if e.elo is not None)
+
+
+def test_engines_are_presented_strongest_first():
+    """The catalog is ordered by rating, descending, with the unrated last.
+
+    Why this test exists: the list is read to answer "which engine should I
+    install?", so the order is part of the answer. It used to follow the order
+    the definitions happen to sit in the source file, which is grouped by build
+    cost and provenance as much as by strength -- so within Top Tier the
+    strongest engine appeared last.
+
+    How a regression manifests: the ordering falls back to dictionary order, and
+    the strongest engine in a group sits at the bottom of it.
+    """
+    ordered = catalog_engines_by_strength()
+
+    # Ordering must not lose or duplicate an engine, which a sort key that
+    # collides (or a filter slipped into it) would do silently.
+    assert sorted(name for name, _ in ordered) == sorted(ENGINES)
+
+    rated = [engine.elo for _, engine in ordered if engine.elo is not None]
+    unrated_positions = [i for i, (_, e) in enumerate(ordered) if e.elo is None]
+    assert rated == sorted(rated, reverse=True), "rated engines are not descending"
+    # Every unrated engine sits after every rated one.
+    assert min(unrated_positions) == len(rated)
+
+
+def test_the_strongest_engine_is_listed_first():
+    """Reckless leads the list, above Stockfish.
+
+    Why this test exists: this is the visible point of ordering by rating.
+    Stockfish is the famous name and sat at the top of the source file, so it led
+    the list while an engine rated 100 points above it sat further down.
+
+    How a regression manifests: a familiar name is hoisted back to the top by
+    hand, and the ordering silently stops meaning "strongest first".
+    """
+    first_name, first_engine = catalog_engines_by_strength()[0]
+    assert first_name == "reckless"
+    assert first_engine.elo > ENGINES["stockfish"].elo
 
 
 def test_declared_rating_matches_the_rating_shown_to_the_user():

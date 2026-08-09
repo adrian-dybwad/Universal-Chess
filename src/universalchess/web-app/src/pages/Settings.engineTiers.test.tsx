@@ -136,6 +136,26 @@ describe('Engine list grouping', () => {
     expect(within(strong).getByText('Brand New')).toBeInTheDocument();
   });
 
+  it('renders a group in the order the payload lists it', async () => {
+    // The server orders the catalog strongest first, which only reaches the user
+    // if the client preserves the order it receives. That was already true, and
+    // incidental until the ordering moved server-side; it is load-bearing now, so
+    // it is pinned rather than left to chance. Failure manifests as a group
+    // re-sorted client-side, putting the strongest engine below weaker ones.
+    mockFetch([
+      makeEngine({ name: 'reckless', display_name: 'Reckless', tier: 'top' }),
+      makeEngine({ name: 'stockfish', display_name: 'Stockfish', tier: 'top', is_system_package: true, installed: true }),
+      makeEngine({ name: 'berserk', display_name: 'Berserk', tier: 'top' }),
+    ]);
+    renderEnginesTab();
+
+    const top = await findTierGroup(TIER_TOP);
+    const rendered = within(top)
+      .getAllByText(/^(Reckless|Stockfish|Berserk)$/)
+      .map((node) => node.textContent);
+    expect(rendered).toEqual(['Reckless', 'Stockfish', 'Berserk']);
+  });
+
   it('keeps each engine in its own group when several tiers are present', async () => {
     // Asserting all three together catches a grouping that puts everything in one
     // bucket, which a single-engine test would pass.
