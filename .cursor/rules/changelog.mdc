@@ -18,8 +18,12 @@ endpoint, or a developer-facing tool's contract (`deploy-to-pi.sh` has entries).
 When in doubt, write one.
 
 **No entry needed** for changes with no observable effect: tests, fixtures,
-comments, type annotations, and pure refactors. State the exemption in the commit
-body so the omission is visible as a decision.
+comments, type annotations, pure refactors, and developer process tooling. Say so
+with a trailer, so the omission reads as a decision and the audit can see it:
+
+```
+Changelog: none -- developer tooling, no user-visible change
+```
 
 ## Two accepted commit shapes
 
@@ -38,7 +42,9 @@ neither.
 **Undescribed** means no changelog commit follows it, so an entry is owed unless
 the change is genuinely unobservable. **Possibly described** means one does
 follow -- read it and confirm it covers the change, which no script can judge.
-Aim to leave nothing Undescribed before pushing.
+**Declared exempt** lists the `Changelog: none` commits, which are shown rather
+than hidden so a wrong call can still be caught. Leave nothing Undescribed before
+pushing: either write the entry or declare the exemption.
 
 ## Style
 

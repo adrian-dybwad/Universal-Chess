@@ -49,7 +49,12 @@ _CHANGELOG = "CHANGELOG.md"
 # cannot tell those two apart.
 _UNDESCRIBED_HEADER = "Undescribed"
 _POSSIBLY_DESCRIBED_HEADER = "Possibly described"
+_DECLARED_EXEMPT_HEADER = "Declared exempt"
 _CHANGELOG_COMMITS_HEADER = "Changelog commits in the range"
+
+# Trailer a commit uses to state that no entry is owed, making a judgement the
+# rule already requires in prose readable by the audit as well.
+_EXEMPT_TRAILER = "Changelog: none"
 
 
 def _candidate_section(stdout):
@@ -57,14 +62,26 @@ def _candidate_section(stdout):
     return stdout.split(_CHANGELOG_COMMITS_HEADER)[0]
 
 
+def _section(stdout, header, *following_headers):
+    """Return the text under ``header``, stopping at any of the later headers."""
+    if header not in stdout:
+        return ""
+    body = stdout.split(header, 1)[1]
+    for boundary in (*following_headers, _CHANGELOG_COMMITS_HEADER):
+        body = body.split(boundary)[0]
+    return body
+
+
 def _undescribed_section(stdout):
     """Return only the candidates with no changelog commit after them."""
-    if _UNDESCRIBED_HEADER not in stdout:
-        return ""
-    after_header = stdout.split(_UNDESCRIBED_HEADER, 1)[1]
-    return after_header.split(_POSSIBLY_DESCRIBED_HEADER)[0].split(
-        _CHANGELOG_COMMITS_HEADER
-    )[0]
+    return _section(
+        stdout, _UNDESCRIBED_HEADER, _POSSIBLY_DESCRIBED_HEADER, _DECLARED_EXEMPT_HEADER
+    )
+
+
+def _declared_exempt_section(stdout):
+    """Return only the commits that declared no entry is owed."""
+    return _section(stdout, _DECLARED_EXEMPT_HEADER)
 
 
 class Repo:
@@ -85,15 +102,22 @@ class Repo:
             cwd=str(self.path), capture_output=True, text=True, check=check,
         )
 
-    def commit(self, subject, files):
-        """Create a commit touching every path in ``files``."""
+    def commit(self, subject, files, body=None):
+        """Create a commit touching every path in ``files``.
+
+        ``body`` is passed as a second paragraph, which is where a trailer block
+        has to live to be parsed as one.
+        """
         for relative in files:
             target = self.path / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             with target.open("a") as handle:
                 handle.write(f"{subject}\n")
             self.git("add", relative)
-        self.git("commit", "-m", subject)
+        message = ["-m", subject]
+        if body is not None:
+            message += ["-m", body]
+        self.git("commit", *message)
         return self.git("rev-parse", "HEAD").stdout.strip()
 
     def audit(self, *args):
@@ -277,3 +301,109 @@ class TestCandidatesAreSplitByWhetherAnEntryCanExist:
         repo.commit("Change how a game is scored.", [_SOURCE_FILE])
         repo.commit("Note the scoring change in the changelog.", [_CHANGELOG])
         assert repo.audit("--strict", base).returncode == 0, repo.audit(base).stdout
+
+
+def test_runs_under_the_system_bash(repo):
+    """The audit must run on a stock macOS shell, where /bin/bash is 3.2.
+
+    The other tests invoke `bash` from PATH, which here is 5.3, so a bash 4-only
+    construct would pass them and then fail for anyone without a newer bash
+    installed. A negative array index did exactly that before this test existed.
+    The consequence is not subtle -- the script refuses to start -- but a developer
+    whose audit does not run stops auditing, which is the omission being fixed.
+
+    Coverage is machine-dependent by nature: this is a real 3.2 check on macOS and
+    a redundant re-run on a Linux box where /bin/bash is modern.
+    """
+    system_bash = Path("/bin/bash")
+    if not system_bash.exists():
+        pytest.skip("no /bin/bash to check against")
+    base = repo.git("rev-parse", "HEAD").stdout.strip()
+    repo.commit("Change how a game is scored.", [_SOURCE_FILE])
+    result = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        [str(system_bash), str(_SCRIPT), base],
+        cwd=str(repo.path), capture_output=True, text=True,
+        stdin=subprocess.DEVNULL, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Change how a game is scored." in _undescribed_section(result.stdout), (
+        result.stdout or result.stderr
+    )
+
+
+class TestACommitCanDeclareThatNoEntryIsOwed:
+    """`Changelog: none` makes a judgement the audit can read.
+
+    Some changes genuinely owe no entry -- developer process tooling, for one:
+    "Make the commit hook run the same analysis as CI" has none, and the changelog
+    never mentions the commit hook. The rule already requires that call to be
+    justified in the commit body, but prose is only readable by a person, so
+    --strict could not be wired to a hook without tripping over legitimate work.
+    The trailer records the same decision mechanically.
+
+    It is reported, not suppressed. An exemption nobody sees is how a wrong call
+    survives, so declaring one moves a commit out of the gate's way while keeping
+    it on the page.
+    """
+
+    _EXEMPT_BODY = f"Developer tooling only.\n\n{_EXEMPT_TRAILER} -- no user-visible change"
+
+    def test_declared_commit_is_not_reported_as_undescribed(self, repo):
+        # Regression: a commit that states no entry is owed is still demanded one,
+        # so the gate cannot be trusted and gets switched off.
+        base = repo.git("rev-parse", "HEAD").stdout.strip()
+        repo.commit("Change the audit's own output.", [_SOURCE_FILE], body=self._EXEMPT_BODY)
+        result = repo.audit(base)
+        assert "Change the audit's own output." not in _undescribed_section(result.stdout), (
+            result.stdout
+        )
+
+    def test_declared_commit_is_still_listed(self, repo):
+        # The exemption must stay visible: a silent skip is indistinguishable from
+        # the audit not looking. Regression: the commit vanishes from the report and
+        # a wrong judgement can never be caught by review.
+        base = repo.git("rev-parse", "HEAD").stdout.strip()
+        repo.commit("Change the audit's own output.", [_SOURCE_FILE], body=self._EXEMPT_BODY)
+        result = repo.audit(base)
+        assert "Change the audit's own output." in _declared_exempt_section(result.stdout), (
+            result.stdout
+        )
+
+    def test_declared_reason_is_shown(self, repo):
+        # The trailer may carry a reason, which is the part a reviewer judges.
+        # Regression: only the key is recognised and the reason is dropped, leaving
+        # a bare exemption to be taken on trust.
+        base = repo.git("rev-parse", "HEAD").stdout.strip()
+        repo.commit("Change the audit's own output.", [_SOURCE_FILE], body=self._EXEMPT_BODY)
+        result = repo.audit(base)
+        assert "no user-visible change" in _declared_exempt_section(result.stdout), (
+            result.stdout
+        )
+
+    def test_strict_passes_when_every_finding_is_declared(self, repo):
+        # The point of the trailer: --strict becomes wirable to a hook.
+        # Regression: strict still fails and the gate remains unusable.
+        base = repo.git("rev-parse", "HEAD").stdout.strip()
+        repo.commit("Change the audit's own output.", [_SOURCE_FILE], body=self._EXEMPT_BODY)
+        strict = repo.audit("--strict", base)
+        assert strict.returncode == 0, strict.stdout
+
+    def test_prose_mention_does_not_exempt(self, repo):
+        # The declaration must be a real git trailer, not any line that resembles
+        # one. A body discussing the changelog -- as a commit explaining an omission
+        # naturally does -- must not exempt itself by accident. The phrase sits
+        # mid-body with a paragraph after it, so it falls outside the trailer block.
+        # Regression: the audit greps instead of parsing, and any commit that talks
+        # about the changelog silently escapes the gate.
+        base = repo.git("rev-parse", "HEAD").stdout.strip()
+        body = (
+            f"Considered whether {_EXEMPT_TRAILER} applied here.\n\n"
+            "It does not: this changes what a user sees.\n\n"
+            "Co-authored-by: Someone <someone@example.invalid>"
+        )
+        repo.commit("Change how a game is scored.", [_SOURCE_FILE], body=body)
+        result = repo.audit(base)
+        assert "Change how a game is scored." in _undescribed_section(result.stdout), (
+            result.stdout
+        )
+        assert repo.audit("--strict", base).returncode != 0

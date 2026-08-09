@@ -20,6 +20,20 @@
 #     Undescribed        No changelog commit follows. An entry is owed, unless the
 #                        change turns out not to be observable.
 #     Possibly described A changelog commit follows. Read it and confirm.
+#     Declared exempt    The commit carries a `Changelog: none` trailer, stating
+#                        that no entry is owed. Listed, never hidden.
+#
+#   A commit that genuinely owes no entry says so with a trailer, optionally with
+#   a reason:
+#
+#     Changelog: none -- developer tooling, no user-visible change
+#
+#   That is the same judgement the changelog rule already requires in the commit
+#   body, written where the audit can read it too, so --strict can gate on real
+#   omissions without blocking legitimate work. It is parsed as a git trailer, not
+#   grepped: a commit explaining why it owes no entry discusses the changelog in
+#   its body, and a grep would let that prose exempt the commit from the very gate
+#   it is arguing about.
 #
 #   Advisory by default, on purpose. A check that usually fails gets bypassed, and
 #   a bypassed check is worse than none. --strict is provided for wiring it into
@@ -110,6 +124,27 @@ commit_touches_changelog() {
 	git diff-tree --no-commit-id --name-only -r "$1" | grep -qxF "$CHANGELOG_PATH"
 }
 
+# The value of a `Changelog:` trailer, or empty. Parsed with interpret-trailers
+# rather than grepped: a commit explaining why it owes no entry naturally
+# discusses the changelog in its body, and a grep would let that prose exempt the
+# commit from the gate it is arguing about.
+changelog_trailer_value() {
+	git log -1 --format=%B "$1" \
+		| git interpret-trailers --parse \
+		| sed -n 's/^[Cc]hangelog:[[:space:]]*//p' \
+		| head -1
+}
+
+# Whether the commit states no entry is owed. Any value beginning with "none" is
+# accepted so a reason can follow, which is the part a reviewer judges.
+declares_no_entry_needed() {
+	local value lowered
+	value="$(changelog_trailer_value "$1")"
+	[[ -n $value ]] || return 1
+	lowered="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+	[[ $lowered == none* ]]
+}
+
 candidates=()
 changelog_commits=()
 
@@ -130,16 +165,23 @@ done < <(git rev-list --reverse --no-merges "$RANGE")
 # trains the reader to skim it, which defeats the whole exercise.
 undescribed=()
 possibly_described=()
+declared_exempt=()
 last_changelog_commit=""
 if ((${#changelog_commits[@]} > 0)); then
-	last_changelog_commit="${changelog_commits[-1]}"
+	# Indexed from the length rather than with [-1], which needs bash 4.3; macOS
+	# still ships 3.2 as /bin/bash.
+	last_changelog_commit="${changelog_commits[$((${#changelog_commits[@]} - 1))]}"
 fi
 for sha in "${candidates[@]:-}"; do
 	[[ -n $sha ]] || continue
+	# An explicit declaration outranks both inferences: it is the author saying
+	# what the other two groups can only guess at.
+	if declares_no_entry_needed "$sha"; then
+		declared_exempt+=("$sha")
 	# --is-ancestor answers "does a changelog commit come after this one?" over the
 	# actual history rather than by comparing positions in a list, so it stays
 	# correct on a non-linear range.
-	if [[ -n $last_changelog_commit ]] \
+	elif [[ -n $last_changelog_commit ]] \
 		&& git merge-base --is-ancestor "$sha" "$last_changelog_commit"; then
 		possibly_described+=("$sha")
 	else
@@ -174,6 +216,17 @@ if ((${#possibly_described[@]} > 0)); then
 		"them (${#possibly_described[@]}):"
 	echo
 	print_commits "${possibly_described[@]}"
+fi
+
+# Reported rather than skipped. An exemption nobody sees is indistinguishable from
+# the audit not looking, and a wrong call could then never be caught in review.
+if ((${#declared_exempt[@]} > 0)); then
+	echo "Declared exempt -- the commit states no entry is owed (${#declared_exempt[@]}):"
+	echo
+	for sha in "${declared_exempt[@]}"; do
+		printf '  %s %s\n' "$(git rev-parse --short "$sha")" "$(git log -1 --format=%s "$sha")"
+		printf '      Changelog: %s\n\n' "$(changelog_trailer_value "$sha")"
+	done
 fi
 
 if ((${#changelog_commits[@]} > 0)); then

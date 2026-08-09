@@ -38,6 +38,17 @@ confirm it covers the change. Advisory by default, because whether a candidate
 really needs an entry is a judgement call and a check that usually fails gets
 bypassed. `--strict` gates on the Undescribed group alone.
 
+A commit that genuinely owes no entry — developer process tooling, tests, a pure
+refactor — says so with a git trailer, optionally with a reason:
+
+```
+Changelog: none -- developer tooling, no user-visible change
+```
+
+Those appear under **Declared exempt** rather than being hidden, since an
+exemption nobody sees is indistinguishable from the audit not looking. The trailer
+is what makes `--strict` wirable to a hook without blocking legitimate work.
+
 **Creating a release:**
 ```bash
 ./release.sh           # Interactive mode
