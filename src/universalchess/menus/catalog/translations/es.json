@@ -395,6 +395,11 @@
       "boardLabel": "Idioma\n{value}",
       "help": "Idioma de los menús del tablero, la pantalla y la app web. Las observaciones del entrenador de IA usan el ajuste independiente Idioma del entrenador."
     },
+    "system.updates": {
+      "label": "Actualizaciones",
+      "boardLabel": "Actualiz.\n{fn:updates_status}",
+      "help": "Busca e instala actualizaciones de software."
+    },
     "system.reset": {
       "label": "Restablecer\najustes",
       "help": "Restaura todos los ajustes a sus valores predeterminados."
@@ -517,18 +522,13 @@
 
     "about": {
       "label": "Acerca de",
-      "help": "Versión, estado de actualización y telemetría del sistema en vivo."
+      "help": "Versión y telemetría del sistema en vivo."
     },
     "about.version": {
       "label": "Versión",
       "boardLabel": "Versión\n{value}",
       "valueDefault": "Desconocida",
       "help": "Versión de software instalada."
-    },
-    "about.updates": {
-      "label": "Actualizaciones",
-      "boardLabel": "Actualiz.\n{fn:updates_status}",
-      "help": "Busca e instala actualizaciones de software."
     },
     "about.telemetry": {
       "help": "Telemetría del sistema en vivo (CPU, memoria, almacenamiento, tiempo activo)."

@@ -4602,7 +4602,7 @@ def _handle_sound_menu():
 # ============================================================================
 # System Menu (data-driven)
 # ----------------------------------------------------------------------------
-# The System subtree (engines, sleep timer, reset, about, power) and its nested
+# The System subtree (engines, sleep timer, updates, reset, about, power) and its nested
 # Power and Reset-confirm menus are defined by the shared catalog (``system`` /
 # ``power`` / ``system.reset.confirm`` containers) and run through the engine.
 # main.py supplies only the board glue: a ``system`` store backing the Sleep
@@ -4983,18 +4983,17 @@ def _system_telemetry_rows():
 def _build_about_context():
     """Build the BoardMenuContext for the data-driven About menu.
 
-    The read-only ``about`` store exposes the Version text and the Updates
-    icon-state; the ``updates_status`` compute supplies the Updates summary label;
-    the ``system_telemetry`` provider yields the live (non-selectable) readouts;
-    and ``open_updates`` opens the Updates menu.
+    The read-only ``about`` store exposes the Version text and the
+    ``system_telemetry`` provider yields the live (non-selectable) readouts. The
+    screen is entirely a readout: the Updates row it used to carry now sits in
+    the System menu, where the web also places it, so the update wiring lives in
+    ``_build_system_context``.
     """
     from universalchess.menus.board_context import BoardMenuContext
 
     def about_get(key):
         if key == "version":
             return _get_installed_version()
-        if key == "update_state":
-            return _update_status_state_and_label()[0]
         raise KeyError(f"unknown about store key: {key!r}")
 
     def about_set(key, value):
@@ -5002,9 +5001,7 @@ def _build_about_context():
 
     ctx = BoardMenuContext()
     ctx.register_store("about", about_get, about_set)
-    ctx.register_value("updates_status", lambda node: _update_status_state_and_label()[1])
     ctx.register_provider("system_telemetry", _system_telemetry_rows)
-    ctx.register_action("open_updates", lambda: _signal_from(_run_update_menu()))
     return ctx
 
 
@@ -5152,9 +5149,14 @@ def _build_system_context():
     The ``system`` store backs the data-driven Sleep Timer select: ``sleep_seconds``
     reads the current inactivity timeout (for the row's label/icon and the marked
     option) and writes the chosen seconds back through the board. The remaining
-    System rows open a dynamic sub-menu (engine manager, about) or perform an
-    effect (reset, shutdown, reboot, cancel) via actions. (Live Analysis moved to
-    the Game submenu, matching the web.)
+    System rows open a dynamic sub-menu (engine manager, updates, about) or
+    perform an effect (reset, shutdown, reboot, cancel) via actions. (Live
+    Analysis moved to the Game submenu, matching the web.)
+
+    The Updates row needs three things beyond its action: ``update_state`` from
+    the store for its icon and the ``updates_status`` compute for its summary
+    label. They live here rather than in the About context because the row sits
+    in this menu, where the web also places it.
     """
     from universalchess import i18n
     from universalchess.menus.board_context import BoardMenuContext
@@ -5175,6 +5177,8 @@ def _build_system_context():
             return system_time_service.get_status().ntp_enabled
         if key == "ui_language":
             return language_service.get_language()
+        if key == "update_state":
+            return _update_status_state_and_label()[0]
         raise KeyError(f"unknown system store key: {key!r}")
 
     def system_set(key, value):
@@ -5230,7 +5234,9 @@ def _build_system_context():
 
     ctx = BoardMenuContext()
     ctx.register_store("system", system_get, system_set)
+    ctx.register_value("updates_status", lambda node: _update_status_state_and_label()[1])
     ctx.register_action("engine_manager", lambda: _signal_from(_run_engine_manager_menu()))
+    ctx.register_action("open_updates", lambda: _signal_from(_run_update_menu()))
     ctx.register_action("about", lambda: _signal_from(_run_about_menu()))
     ctx.register_action("reset_confirm", _reset_settings_confirmed)
     ctx.register_action("cancel", lambda: "BACK")
@@ -5240,7 +5246,7 @@ def _build_system_context():
 
 
 def _handle_system_menu():
-    """Handle the System submenu (engines, sleep timer, reset, about, power).
+    """Handle the System submenu (engines, sleep timer, updates, reset, about, power).
 
     Driven by the shared menu engine: structure, labels, icons, the Power and
     Reset-confirm subtrees, and the dynamic Sleep Timer label/Analysis icon all

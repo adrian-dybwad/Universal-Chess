@@ -21,13 +21,13 @@ from universalchess.board.system_info import (
 
 
 def build_system_info_entries(system_info: Optional[SystemInfo]) -> List[MenuRow]:
-    """Build the read-only telemetry rows shown beneath Version/Updates.
+    """Build the read-only telemetry rows shown beneath Version.
 
     Returns engine ``MenuRow``s (the menu engine's row type, consumed directly by
     the ``system_telemetry`` provider). Returns an empty list when ``system_info``
     is ``None`` (telemetry could not be read, e.g. psutil missing on a dev host),
-    so the About screen still shows Version and Updates rather than failing. All
-    rows are non-selectable: they are informational, mirroring the Version row.
+    so the About screen still shows Version rather than failing. All rows are
+    non-selectable: they are informational, mirroring the Version row.
     """
     if system_info is None:
         return []

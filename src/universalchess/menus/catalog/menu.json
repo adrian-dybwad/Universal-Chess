@@ -924,7 +924,20 @@
       "type": "menu",
       "label": "System",
       "platforms": ["board"],
-      "children": ["system.engines", "group.system.device", "system.reset", "system.about", "system.power"]
+      "children": ["system.engines", "group.system.device", "system.updates", "system.reset", "system.about", "system.power"]
+    },
+    {
+      "id": "system.updates",
+      "key": "Updates",
+      "type": "action",
+      "action": "open_updates",
+      "restore_target": "updates",
+      "label": "Updates",
+      "boardLabel": "Updates\n{fn:updates_status}",
+      "bind": { "store": "system", "key": "update_state" },
+      "icon": { "ready": "update", "available": "update", "auto": "checkbox_checked", "manual": "checkbox_empty" },
+      "help": "Check for and install software updates.",
+      "platforms": ["board"]
     },
     {
       "id": "system.engines",
@@ -1283,9 +1296,9 @@
       "id": "about",
       "type": "menu",
       "label": "About",
-      "help": "Version, update status, and live system telemetry.",
+      "help": "Version and live system telemetry.",
       "platforms": ["board"],
-      "children": ["about.version", "about.updates", "about.telemetry"]
+      "children": ["about.version", "about.telemetry"]
     },
     {
       "id": "about.version",
@@ -1299,19 +1312,6 @@
       "help": "Installed software version.",
       "platforms": ["board"],
       "epaper": { "selectable": false }
-    },
-    {
-      "id": "about.updates",
-      "key": "Updates",
-      "type": "action",
-      "action": "open_updates",
-      "restore_target": "updates",
-      "label": "Updates",
-      "boardLabel": "Updates\n{fn:updates_status}",
-      "bind": { "store": "about", "key": "update_state" },
-      "icon": { "ready": "update", "available": "update", "auto": "checkbox_checked", "manual": "checkbox_empty" },
-      "help": "Check for and install software updates.",
-      "platforms": ["board"]
     },
     {
       "id": "about.telemetry",
