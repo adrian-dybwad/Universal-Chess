@@ -41,11 +41,13 @@ def test_settings_full_entry_order():
 
     Why this test exists: the dispatch loop keys off these entry keys in this
     order (Players, Game, Agents, the Display/Sound appearance pair, Positions,
-    then Connectivity/System); Time Control and Live Analysis live inside Game and
-    the AI coach/agent settings inside Agents (not at top level), Chromecast moved
-    into Connectivity and About into System, so none appear here. How a regression
-    manifests: an item is dropped/reordered, or TimeControl/Chromecast/About
-    reappears, changing this exact list.
+    then Connectivity/Engines/System); Time Control and Live Analysis live inside
+    Game and the AI coach/agent settings inside Agents (not at top level),
+    Chromecast moved into Connectivity and About into System, so none appear here.
+    Engines is a top-level row rather than a System child because that is where
+    the web puts its tab. How a regression manifests: an item is dropped or
+    reordered, TimeControl/Chromecast/About reappears, or Engines sinks back into
+    System, changing this exact list.
     """
     keys = [r.key for r in _rows()]
     assert keys == [
@@ -56,6 +58,7 @@ def test_settings_full_entry_order():
         SOUND_KEY,
         "Positions",
         "Connectivity",
+        "Engines",
         "System",
     ]
 

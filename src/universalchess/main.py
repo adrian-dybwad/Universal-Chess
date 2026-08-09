@@ -3545,7 +3545,14 @@ def _handle_settings(initial_selection: str = None):
                 ctx.clear()
                 app_state = AppState.MENU
                 return connectivity_result
-        
+
+        elif result == "Engines":
+            engines_result = _run_engine_manager_menu()
+            if is_break_result(engines_result):
+                ctx.clear()
+                app_state = AppState.MENU
+                return engines_result
+
         elif result == "System":
             system_result = _handle_system_menu()
             if is_break_result(system_result):
@@ -4408,7 +4415,7 @@ def _build_settings_context():
 
     Supplies the one computed label the list shows: the Players summary
     (P1 vs P2) on the Players row. The other rows (Game, Display, Sound,
-    Positions, Connectivity, System) are static submenu labels. Rendering only --
+    Positions, Connectivity, Engines, System) are static labels. Rendering only --
     the surrounding loop owns dispatch/app-state -- so no actions are registered.
     """
     from universalchess.menus.board_context import BoardMenuContext
@@ -4602,7 +4609,7 @@ def _handle_sound_menu():
 # ============================================================================
 # System Menu (data-driven)
 # ----------------------------------------------------------------------------
-# The System subtree (engines, sleep timer, updates, reset, about, power) and its nested
+# The System subtree (sleep timer, updates, reset, about, power) and its nested
 # Power and Reset-confirm menus are defined by the shared catalog (``system`` /
 # ``power`` / ``system.reset.confirm`` containers) and run through the engine.
 # main.py supplies only the board glue: a ``system`` store backing the Sleep
@@ -5149,8 +5156,8 @@ def _build_system_context():
     The ``system`` store backs the data-driven Sleep Timer select: ``sleep_seconds``
     reads the current inactivity timeout (for the row's label/icon and the marked
     option) and writes the chosen seconds back through the board. The remaining
-    System rows open a dynamic sub-menu (engine manager, updates, about) or
-    perform an effect (reset, shutdown, reboot, cancel) via actions. (Live
+    System rows open a dynamic sub-menu (updates, about) or perform an effect
+    (reset, shutdown, reboot, cancel) via actions. (Live
     Analysis moved to the Game submenu, matching the web.)
 
     The Updates row needs three things beyond its action: ``update_state`` from
@@ -5235,7 +5242,6 @@ def _build_system_context():
     ctx = BoardMenuContext()
     ctx.register_store("system", system_get, system_set)
     ctx.register_value("updates_status", lambda node: _update_status_state_and_label()[1])
-    ctx.register_action("engine_manager", lambda: _signal_from(_run_engine_manager_menu()))
     ctx.register_action("open_updates", lambda: _signal_from(_run_update_menu()))
     ctx.register_action("about", lambda: _signal_from(_run_about_menu()))
     ctx.register_action("reset_confirm", _reset_settings_confirmed)
@@ -5246,7 +5252,7 @@ def _build_system_context():
 
 
 def _handle_system_menu():
-    """Handle the System submenu (engines, sleep timer, updates, reset, about, power).
+    """Handle the System submenu (sleep timer, updates, reset, about, power).
 
     Driven by the shared menu engine: structure, labels, icons, the Power and
     Reset-confirm subtrees, and the dynamic Sleep Timer label/Analysis icon all

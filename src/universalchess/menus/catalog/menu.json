@@ -240,7 +240,7 @@
       "id": "settings",
       "type": "menu",
       "label": "Settings",
-      "children": ["settings.players", "settings.game", "settings.agents", "settings.display", "settings.sound", "settings.positions", "settings.connectivity", "settings.system"]
+      "children": ["settings.players", "settings.game", "settings.agents", "settings.display", "settings.sound", "settings.positions", "settings.connectivity", "settings.engines", "settings.system"]
     },
     {
       "id": "settings.players",
@@ -626,12 +626,24 @@
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },
     {
+      "id": "settings.engines",
+      "key": "Engines",
+      "type": "action",
+      "action": "engine_manager",
+      "label": "Engines",
+      "icon": "engine",
+      "help": "Install and manage chess engines for play and analysis.",
+      "section": "engines",
+      "platforms": ["board", "web"],
+      "epaper": { "font_size": 12, "height_ratio": 0.8 }
+    },
+    {
       "id": "settings.system",
       "key": "System",
       "type": "submenu",
       "label": "System",
       "icon": "system",
-      "help": "Engines, maintenance, software updates, and power.",
+      "help": "Maintenance, software updates, and power.",
       "target": "system",
       "section": "system",
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
@@ -924,7 +936,7 @@
       "type": "menu",
       "label": "System",
       "platforms": ["board"],
-      "children": ["system.engines", "group.system.device", "system.updates", "system.reset", "system.about", "system.power"]
+      "children": ["group.system.device", "system.updates", "system.reset", "system.about", "system.power"]
     },
     {
       "id": "system.updates",
@@ -938,17 +950,6 @@
       "icon": { "ready": "update", "available": "update", "auto": "checkbox_checked", "manual": "checkbox_empty" },
       "help": "Check for and install software updates.",
       "platforms": ["board"]
-    },
-    {
-      "id": "system.engines",
-      "key": "Engines",
-      "type": "action",
-      "action": "engine_manager",
-      "label": "Engine\nManager",
-      "icon": "engine",
-      "help": "Install and manage chess engines for play and analysis.",
-      "section": "engines",
-      "platforms": ["board", "web"]
     },
     {
       "id": "system.inactivity",

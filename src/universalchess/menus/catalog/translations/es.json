@@ -260,9 +260,13 @@
       "label": "Conectividad",
       "help": "Red, periféricos, duplicación de pantalla y conexiones de cuentas."
     },
+    "settings.engines": {
+      "label": "Motores",
+      "help": "Instala y gestiona motores de ajedrez para jugar y analizar."
+    },
     "settings.system": {
       "label": "Sistema",
-      "help": "Motores, mantenimiento, actualizaciones de software y energía."
+      "help": "Mantenimiento, actualizaciones de software y energía."
     },
 
     "connectivity": { "label": "Conectividad" },
@@ -370,10 +374,6 @@
     "group.system.device": {
       "label": "Dispositivo",
       "help": "Preferencias de suspensión, zona horaria e idioma de este tablero."
-    },
-    "system.engines": {
-      "label": "Gestor de\nmotores",
-      "help": "Instala y gestiona motores de ajedrez para jugar y analizar."
     },
     "system.inactivity": {
       "label": "Temporizador de suspensión",

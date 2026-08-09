@@ -97,10 +97,18 @@ def test_settings_order_matches_board_layout():
 
     The board renders settings in this order; a reordering here would reorder
     the physical menu. Pinning the order makes such a change deliberate.
+
+    The order tracks the web's Settings tabs, so the two interfaces present the
+    same things in the same sequence: Engines sits between Connectivity and
+    System because that is where its tab sits on the web. Positions is board-only
+    and has no tab to align with.
     """
     catalog = load_catalog()
     keys = [c["key"] for c in catalog.children("settings")]
-    assert keys == ["Players", "Game", "Agents", "Display", "Sound", "Positions", "Connectivity", "System"]
+    assert keys == [
+        "Players", "Game", "Agents", "Display", "Sound", "Positions",
+        "Connectivity", "Engines", "System",
+    ]
 
 
 def test_display_and_sound_are_separate_settings_nodes():
@@ -185,7 +193,7 @@ def test_web_implemented_submenus_are_enabled_for_web():
         "connectivity.bluetooth",
         "connectivity.chromecast",
         "connectivity.accounts",
-        "system.engines",
+        "settings.engines",
         "system.about",
         # System/power actions now have web controls (Settings -> System).
         "system.inactivity",
