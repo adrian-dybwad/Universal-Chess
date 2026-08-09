@@ -64,16 +64,20 @@ def test_live_pgn_carries_elapsed_move_times(live):
     """Each move in the live PGN is annotated with the time it took.
 
     Why: this is the flagged gap -- the live export dropped comments entirely.
+    The fractional think times also confirm the live path keeps the sub-second
+    resolution rather than rounding to whole seconds on its way out.
+
     How a regression manifests: an exporter built with comments=False yields
-    movetext with no braces at all, so every reparsed emt is None.
+    movetext with no braces at all, so every reparsed emt is None; rounding to
+    whole seconds turns 4.3 and 8.7 into 4 and 9.
     """
     service, state, clock = live
 
-    _play(state, clock, [("e2e4", 4.0), ("e7e5", 9.0), ("g1f3", 12.0)])
+    _play(state, clock, [("e2e4", 4.3), ("e7e5", 8.7), ("g1f3", 12.0)])
 
     reparsed = chess.pgn.read_game(io.StringIO(service.get_pgn()))
 
-    assert [node.emt() for node in _nodes(reparsed)] == [4, 9, 12]
+    assert [node.emt() for node in _nodes(reparsed)] == [4.3, 8.7, 12]
 
 
 def test_live_pgn_durations_match_the_state_measurement(live):
@@ -86,10 +90,10 @@ def test_live_pgn_durations_match_the_state_measurement(live):
     """
     service, state, clock = live
 
-    _play(state, clock, [("e2e4", 4.0), ("e7e5", 9.0)])
+    _play(state, clock, [("e2e4", 4.3), ("e7e5", 8.7)])
 
     reparsed = chess.pgn.read_game(io.StringIO(service.get_pgn()))
-    expected = [round(ms / 1000) for ms in state.move_durations_ms]
+    expected = [round(ms / 1000, 1) for ms in state.move_durations_ms]
 
     assert [node.emt() for node in _nodes(reparsed)] == expected
 

@@ -396,7 +396,8 @@ Long-lived singleton components that manage threads and resources.
 - Render a TimeControl as a storable PGN time-control value
 - Expand a stored value into header pairs, splitting a time-odds control into
   `[WhiteTimeControl]` / `[BlackTimeControl]` so `[TimeControl]` stays standard
-- Attach `[%clk]` / `[%emt]` embedded commands to a PGN move node
+- Attach `[%clk]` / `[%emt]` embedded commands to a PGN move node, `[%emt]` to
+  tenths of a second and `[%clk]` to the whole seconds the clock actually counts
 
 No threads, database, board or display -- unlike the rest of this package it is
 a pure formatting module, usable by any PGN exporter.

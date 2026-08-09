@@ -209,20 +209,33 @@ def test_zero_duration_is_recorded_rather_than_treated_as_absent():
 @pytest.mark.parametrize(
     "duration_ms, expected",
     [
-        (4400, "[%emt 0:00:04]"),
-        (4600, "[%emt 0:00:05]"),
+        # A tenth is carried rather than rounded away.
+        (4400, "[%emt 0:00:04.4]"),
+        (4600, "[%emt 0:00:04.6]"),
+        # Just below and just on the half-tenth boundary, which is where a
+        # float-based round would resolve 4.65 by its binary representation.
+        (4649, "[%emt 0:00:04.6]"),
+        (4650, "[%emt 0:00:04.7]"),
+        # A whole number of seconds carries no decimal point at all.
+        (12000, "[%emt 0:00:12]"),
+        # Below half a tenth there is nothing to report but zero.
+        (49, "[%emt 0:00:00]"),
         (3661000, "[%emt 1:01:01]"),
     ],
 )
-def test_duration_is_rounded_to_whole_seconds(duration_ms, expected):
-    """Milliseconds are rounded to whole seconds for the PGN comment.
+def test_duration_is_reported_to_tenths_of_a_second(duration_ms, expected):
+    """Milliseconds are rounded half-up to tenths for the PGN comment.
 
-    Why: the supplement specifies h:mm:ss, and whole seconds is the form every
-    consumer accepts (lichess emits whole seconds for exactly this reason). Full
-    millisecond precision is kept in the database, not in the export.
+    Why: the supplement's seconds field takes a decimal, and the duration is
+    measured to the millisecond, so rounding to whole seconds would throw away
+    up to half a second per move -- an error that accumulates the moment anything
+    sums the durations. Tenths stops short of asserting millisecond precision for
+    a span that includes a human moving a piece by hand.
 
-    How a regression manifests: passing raw seconds-as-float to python-chess
-    emits "0:00:04.4", which the strict h:mm:ss parsers in older tools reject.
+    How a regression manifests: reverting to whole seconds turns 4.4s and 4.6s
+    into an indistinguishable pair (4 and 5) that no longer sum to the game
+    length; emitting raw milliseconds writes "0:00:04.649", claiming a resolution
+    the board's move detection does not have.
     """
     assert expected in _node_comment(duration_ms=duration_ms)
 

@@ -39,12 +39,15 @@ finally:
     Image.open = _orig_image_open
 
 
-# (uci, white_clock, black_clock, duration_ms) for a short Scholar's-mate opening.
+# (uci, white_clock, black_clock, duration_ms) for a short opening. Two durations
+# carry a fractional second and one is exact, so the export covers both the
+# decimal form and the whole-second form that omits the decimal point.
 _TIMED_MOVES = [
-    ("e2e4", 296, 300, 4000),
-    ("e7e5", 296, 291, 9000),
+    ("e2e4", 296, 300, 4300),
+    ("e7e5", 296, 291, 8700),
     ("g1f3", 288, 291, 8000),
 ]
+_TIMED_MOVE_SECONDS = [4.3, 8.7, 8]
 
 
 @pytest.fixture
@@ -144,7 +147,7 @@ def test_every_measured_move_carries_its_elapsed_time(session):
 
     game = webapp.build_chess_game_from_id(session, gid)
 
-    assert [node.emt() for node in _nodes(game)] == [4, 9, 8]
+    assert [node.emt() for node in _nodes(game)] == _TIMED_MOVE_SECONDS
 
 
 def test_unmeasured_moves_carry_no_elapsed_time(session):
@@ -197,7 +200,7 @@ def test_untimed_game_emits_no_clock_annotation(session):
     exports as [%clk 0:00:00], which reads as both players out of time from
     move one.
     """
-    moves = [("e2e4", 0, 0, 4000), ("e7e5", 0, 0, 9000)]
+    moves = [("e2e4", 0, 0, 4300), ("e7e5", 0, 0, 8700)]
     gid = _seed_game(session, moves=moves, time_control=None)
 
     game = webapp.build_chess_game_from_id(session, gid)
@@ -205,7 +208,7 @@ def test_untimed_game_emits_no_clock_annotation(session):
     nodes = _nodes(game)
     assert [node.clock() for node in nodes] == [None, None]
     # The duration must still be exported -- it does not depend on a clock.
-    assert [node.emt() for node in nodes] == [4, 9]
+    assert [node.emt() for node in nodes] == [4.3, 8.7]
 
 
 # ---------------------------------------------------------------------------
@@ -229,11 +232,13 @@ def test_generated_pgn_text_is_reparseable_with_its_time_data(session):
     text = webapp.generate_pgn_string(gid)
 
     assert "[%clk 0:04:56]" in text
-    assert "[%emt 0:00:04]" in text
+    assert "[%emt 0:00:04.3]" in text
+    # A whole-second duration is written without a trailing decimal point.
+    assert "[%emt 0:00:08]" in text
 
     reparsed = chess.pgn.read_game(io.StringIO(text))
     assert reparsed.headers["TimeControl"] == "300+5"
-    assert [node.emt() for node in _nodes(reparsed)] == [4, 9, 8]
+    assert [node.emt() for node in _nodes(reparsed)] == _TIMED_MOVE_SECONDS
     assert [node.clock() for node in _nodes(reparsed)] == [296, 291, 288]
 
 

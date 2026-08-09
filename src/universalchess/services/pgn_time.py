@@ -8,6 +8,11 @@ that is what every producer of move times uses:
   the commented move.
 - ``[%emt h:mm:ss]`` -- the time that player used on the commented move.
 
+Both permit a fractional seconds field. It is used for ``[%emt]``, which is
+measured to the millisecond, and not for ``[%clk]``, which is read from a clock
+that counts whole seconds -- a decimal there would be invented rather than
+measured.
+
 The game-level control uses the standard ``[TimeControl]`` tag instead, which
 this module renders from the project's :class:`TimeControl` model.
 
@@ -36,7 +41,15 @@ from universalchess.state.time_control import Stage, TimeControl
 # stays in the database. Half-up on an integer, to avoid both float error and
 # the banker's rounding of round(), which would send 4500ms to 4s and 5500ms
 # to 6s.
-_MILLIS_PER_SECOND = 1000
+# [%emt] is emitted to tenths of a second. Whole seconds would discard up to half
+# a second of a duration the database holds to the millisecond, and that error
+# accumulates as soon as anything sums the moves. Full milliseconds would go the
+# other way and assert a precision the measurement does not have: the span
+# includes a human picking a piece up and putting it down. Tenths is also the
+# resolution the one widely-used producer of sub-second times (chess.com) emits,
+# so it is known to be consumed.
+_MILLIS_PER_DECISECOND = 100
+_DECISECONDS_PER_SECOND = 10
 
 # PGN's TimeControl value for "no time control was in use". Distinct from "?",
 # which means the control is unknown.
@@ -141,15 +154,21 @@ def annotate_node_times(
 
     Args:
         node: The game node for the move being annotated.
-        clock_seconds: Seconds remaining on the mover's clock after the move,
-            or None for an untimed game.
+        clock_seconds: Seconds remaining on the mover's clock after the move, or
+            None for an untimed game. Whole seconds because the clock itself
+            counts in whole seconds; there is no finer reading to report.
         duration_ms: Milliseconds the move took, or None if unmeasured. Rounded
-            half-up to whole seconds for the comment.
+            half-up to tenths of a second for the comment.
     """
     if clock_seconds is not None:
         node.set_clock(clock_seconds)
     if duration_ms is not None:
-        node.set_emt((duration_ms + _MILLIS_PER_SECOND // 2) // _MILLIS_PER_SECOND)
+        # Rounded with integer arithmetic so the half-up boundary is exact.
+        # Rounding the float seconds instead would resolve a value like 4.65
+        # according to its binary representation rather than the stated rule.
+        deciseconds = (
+            (duration_ms + _MILLIS_PER_DECISECOND // 2) // _MILLIS_PER_DECISECOND)
+        node.set_emt(deciseconds / _DECISECONDS_PER_SECOND)
 
 
 __all__ = [
