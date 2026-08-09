@@ -246,6 +246,33 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   The runtime data directories are handed back to the service account after each
   transfer, matching what installing the package does.
 
+- The web interface could die as it started and come back only because systemd
+  restarted it, leaving the page unreachable in the meantime. The board rewrites
+  the e-paper screenshot in place on every panel refresh, and the web process
+  decoded that file while loading, so a start that landed mid-rewrite raised on a
+  half-written image and killed the process before it began serving. Loading
+  takes around 70 seconds on the board's single core, so the window was a wide
+  one. The decode was redundant as well as fragile: the only feature that uses
+  the cached screenshot -- the Chromecast layout that shows the board's screen
+  beside the position -- already reloads it whenever the file changes and already
+  copes with a screenshot it cannot read. Reading it at startup added a way to
+  fail and nothing else.
+
+- `deploy-to-pi.sh` could report a completed deploy while the board was
+  crash-looping on the code it had just shipped; the startup crash above reached
+  a board that way. Its check waited three seconds and asked systemd whether the
+  services were running, which on this hardware happened well before the web
+  interface had finished loading, and because both services are configured to
+  restart automatically, one that crashes reports itself running again moments
+  later -- a crash loop was indistinguishable from health. The deploy now waits
+  for the web interface to actually answer a request, for up to four minutes, and
+  fails if either service restarts while it waits, so a reported success means
+  the shipped code loaded and served. A failure reports the service's own log
+  next to the journal, because the application writes to a log file rather than
+  the journal, which is why the previous check's search of the journal found
+  nothing to report. Its exit status distinguishes a service that never came up
+  from one that came up and died.
+
 - An engine player could stop moving for the rest of the session after a restart
   on a busy board, leaving the board waiting for a move that never came. Two
   faults combined. Where two consumers want the same engine, the second waits for
