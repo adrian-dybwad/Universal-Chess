@@ -174,8 +174,11 @@ export function ConnectivityPanel() {
 // Outcome of one of a card's reads. `failed` exists so an unreadable response is
 // never rendered as a successful one: without it a 502 was indistinguishable
 // from "the catalog declares no account types", from "no saved networks", and
-// from "the board streams the board-only layout".
-type LoadState = 'loading' | 'ready' | 'failed';
+// from "the board streams the board-only layout". `unauthorized` is for an
+// auth-gated list that could not be read without credentials: not an error (no
+// Retry banner on every anonymous view) and not `ready` (must not claim the
+// store is empty); the Accounts card offers Sign in instead.
+type LoadState = 'loading' | 'ready' | 'failed' | 'unauthorized';
 
 /**
  * Error line plus a Retry control for a card whose data could not be read.
@@ -1341,7 +1344,9 @@ const ADD_ERROR_KEYS: Record<string, string> = {
  * Unlike the sibling cards this one has no status poll to recover on (the
  * catalog is static per locale, so polling it would spend board CPU re-reading a
  * one-time definition), which is why the retry is explicit. A 401 on the list is
- * an outcome rather than a failure -- see `fetchAccounts`.
+ * an `unauthorized` outcome rather than a failure or an empty store: the card
+ * shows Sign in (same idea as the Players Account row) instead of claiming
+ * "No accounts yet" or forcing a login dialog on every anonymous page view.
  */
 export function AccountsCard() {
   const { t } = useTranslation();
@@ -1357,17 +1362,17 @@ export function AccountsCard() {
   const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const { dialog, onUnauthorized } = useAuthedAction();
 
-  // The account list is behind auth. On 401 at load, degrade quietly to an empty
-  // list (mirrors the WiFi saved-networks card) rather than forcing a login just
-  // to view the page; a mutation will trigger the login flow and then refresh.
-  // That is a `ready` outcome, not a failure: an unauthenticated visitor must not
-  // be met with an error banner on every page load.
+  // The account list is behind auth. On 401 at load, record `unauthorized`
+  // rather than `ready` with an empty array (that used to render "No accounts
+  // yet" and hide real accounts). The card offers Sign in so the list can be
+  // fetched after login; the dialog opens only when that control is clicked,
+  // not on every anonymous page view. Mutations still use onUnauthorized too.
   const fetchAccounts = useCallback(async () => {
     try {
       const r = await apiFetch('/api/accounts', { requiresAuth: true });
       if (r.status === 401) {
         setAccounts([]);
-        setListState('ready');
+        setListState('unauthorized');
         return;
       }
       if (!r.ok) {
@@ -1494,6 +1499,21 @@ export function AccountsCard() {
         {message && <div className={`conn-message conn-message--${message.kind}`}>{message.text}</div>}
 
         {loadFailed && <LoadFailure message={t('connectivity.accounts.loadFailed')} onRetry={reload} />}
+
+        {listState === 'unauthorized' && (
+          <div className="conn-actions" style={{ flexDirection: 'column', alignItems: 'flex-start', marginBottom: '1rem' }}>
+            <p className="text-muted" style={{ margin: 0, fontSize: '0.875rem' }}>
+              {t('connectivity.accounts.signIn')}
+            </p>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => onUnauthorized(() => fetchAccounts())}
+            >
+              {t('login.login')}
+            </Button>
+          </div>
+        )}
 
         {listState === 'ready' && accounts.length === 0 && (
           <p className="text-muted">{t('connectivity.accounts.none')}</p>

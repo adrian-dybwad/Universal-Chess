@@ -15,7 +15,16 @@ import menuSchemaFixture from '../test/fixtures/menuSchema';
  * The load-failure group guards the reported bug where a board reboot made the
  * card lose its controls permanently: the catalog fetch failed, the form that is
  * built from it silently disappeared, and only a page reload brought it back.
+ * Unauthorized list reads must offer Sign in (same idea as the Players Account
+ * row) rather than a blank list or a false "No accounts yet".
  */
+
+// Stands in for the real login form: one button that reports success, which is
+// what the queued accounts refetch hangs off after Sign in.
+vi.mock('../components/LoginDialog', () => ({
+  LoginDialog: ({ isOpen, onSuccess }: { isOpen: boolean; onSuccess: () => void }) =>
+    isOpen ? <button data-testid="login-submit" onClick={onSuccess}>login</button> : null,
+}));
 
 const menuSchema: unknown = menuSchemaFixture;
 
@@ -76,6 +85,7 @@ function mockAccounts(initial: AccountRecord[], opts?: MockOptions) {
   const accounts = [...initial];
   const calls: { url: string; method: string; body?: unknown }[] = [];
   let schemaCalls = 0;
+  let listCalls = 0;
   const fetchMock = vi.fn(async (url: string, init?: RequestInit): Promise<JsonResponseLike> => {
     const method = ((init?.method as string) ?? 'GET').toUpperCase();
     const body = init?.body ? JSON.parse(init.body as string) : undefined;
@@ -88,8 +98,11 @@ function mockAccounts(initial: AccountRecord[], opts?: MockOptions) {
       return jsonResponse(menuSchema);
     }
     if (url === '/api/accounts' && method === 'GET') {
+      listCalls += 1;
       const status = opts?.listStatus ?? 200;
-      if (status >= 300) return jsonResponse({}, status);
+      // First GET can fail (401/500); later GETs succeed so Sign in / Retry can
+      // assert the list fills in after recovery.
+      if (status >= 300 && listCalls === 1) return jsonResponse({}, status);
       return jsonResponse({ accounts });
     }
     if (url === '/api/accounts' && method === 'POST') {
@@ -264,18 +277,52 @@ describe('Accounts card load failures', () => {
     expect(screen.getByLabelText(/API Token/i)).toBeInTheDocument();
   });
 
-  it('keeps the Add Account form usable and quiet when the saved-account list is unauthorized', async () => {
-    // 401 on the list is a deliberate quiet degrade: viewing the page must not
-    // force a login, and adding an account triggers the login flow on demand. It
-    // is an outcome, not a failure, so it must not be swept into the new error
-    // path. The regression manifests as an error banner and a Retry button on
-    // every unauthenticated page load.
+  it('offers Sign in instead of claiming there are no accounts when the list is unauthorized', async () => {
+    // 401 on the list must not force a login dialog on every page load, must not
+    // show the error/Retry path, and must not claim "No accounts yet". It must
+    // offer an explicit Sign-in control (same idea as the Players Account row)
+    // so saved accounts are reachable without guessing that Add Account will
+    // prompt. The regression manifests as a blank list, an error banner, or the
+    // empty-state copy while accounts exist server-side.
     mockAccounts([lichessAccount], { listStatus: 401 });
     render(<AccountsCard />);
 
     await waitFor(() => expect(screen.getByLabelText(/API Token/i)).toBeInTheDocument());
     expect(screen.getByRole('button', { name: /add account/i })).toBeEnabled();
+    expect(screen.getByText(/sign in to see saved accounts/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^login$/i })).toBeInTheDocument();
     expect(screen.queryByText(/could not load accounts/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/no accounts yet/i)).not.toBeInTheDocument();
+  });
+
+  it('lists saved accounts after Sign in succeeds on an unauthorized list', async () => {
+    // Sign in must open LoginDialog and, on success, refetch so "Connected as"
+    // appears. A regression shows as the Sign-in row sticking around after login
+    // or the list never appearing.
+    mockAccounts([lichessAccount], { listStatus: 401 });
+    render(<AccountsCard />);
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /^login$/i })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /^login$/i }));
+    fireEvent.click(await screen.findByTestId('login-submit'));
+
+    await waitFor(() => expect(screen.getByText('MagnusC')).toBeInTheDocument());
+    expect(screen.getByText(/Connected as/i)).toBeInTheDocument();
+    expect(screen.queryByText(/sign in to see saved accounts/i)).not.toBeInTheDocument();
+  });
+
+  it('shows the empty-state copy only after an authenticated empty list load', async () => {
+    // Distinguishes a true empty store from the 401 Sign-in path above. Without
+    // this, fixing the unauthorized case by suppressing every empty message would
+    // hide the legitimate "No accounts yet" prompt for a signed-in board with
+    // none saved. The regression manifests as a blank list area or a Sign-in
+    // prompt when GET /api/accounts returns [].
+    mockAccounts([]);
+    render(<AccountsCard />);
+
+    await waitFor(() => expect(screen.getByText(/no accounts yet/i)).toBeInTheDocument());
+    expect(screen.getByLabelText(/API Token/i)).toBeInTheDocument();
+    expect(screen.queryByText(/sign in to see saved accounts/i)).not.toBeInTheDocument();
   });
 });

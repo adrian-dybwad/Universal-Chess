@@ -326,6 +326,8 @@
       "namePlaceholder2": "Player 2",
       "defaultLevel": "Default",
       "defaultAccount": "Default account",
+      "accountSignIn": "Sign in to see saved accounts.",
+      "accountLoadFailed": "Could not load accounts. Check the connection and try again.",
       "hintsWillUse": "Hints will use <1>{{engine}}</1> (configured in Game Settings → Analysis Engine)"
     },
     "game": {
@@ -953,6 +955,7 @@
       "header": "Accounts",
       "intro": "Connect online accounts for internet play. Add more than one account to switch between them per player.",
       "none": "No accounts yet. Add one below.",
+      "signIn": "Sign in to see saved accounts.",
       "saved": "Saved accounts",
       "connectedAs": "Connected as",
       "delete": "Delete",

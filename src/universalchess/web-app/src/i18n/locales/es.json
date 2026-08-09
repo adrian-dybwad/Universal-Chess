@@ -326,6 +326,8 @@
       "namePlaceholder2": "Jugador 2",
       "defaultLevel": "Predeterminado",
       "defaultAccount": "Cuenta predeterminada",
+      "accountSignIn": "Inicia sesión para ver las cuentas guardadas.",
+      "accountLoadFailed": "No se pudieron cargar las cuentas. Comprueba la conexión e inténtalo de nuevo.",
       "hintsWillUse": "Las pistas usarán <1>{{engine}}</1> (configurado en Ajustes de partida → Motor de análisis)"
     },
     "game": {
@@ -953,6 +955,7 @@
       "header": "Cuentas",
       "intro": "Conecta cuentas en línea para jugar por internet. Añade más de una cuenta para alternar entre ellas por jugador.",
       "none": "Aún no hay cuentas. Añade una abajo.",
+      "signIn": "Inicia sesión para ver las cuentas guardadas.",
       "saved": "Cuentas guardadas",
       "connectedAs": "Conectado como",
       "delete": "Eliminar",

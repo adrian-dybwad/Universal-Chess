@@ -239,6 +239,20 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- Settings → Connectivity → Accounts showed "No accounts yet" to anyone who was
+  not signed in, even when accounts were already saved on the board. The list
+  endpoint requires authentication; a 401 used to be treated as a successful
+  empty load, so the empty-state copy appeared and hid real accounts behind a
+  confident claim. An unauthorized list no longer claims emptiness: the card
+  offers Sign in (shared login dialog, then refetch) instead of forcing a login
+  dialog on every anonymous page view, and "No accounts yet" is reserved for an
+  authenticated empty list. Adding an account still prompts for login when
+  needed. The same false-empty path hit Settings → Players: an online player's
+  Account picker collapsed to "Default account" alone, with no way to sign in
+  from that row. It now distinguishes unauthorized and failed reads from an
+  empty store, offers Sign in or Retry, and only shows the Default/saved options
+  after a successful authenticated load.
+
 - The clock in the browser read minutes away from the board's own screen, but
   only for the player on move: a ten-minute clock showed five, then snapped back
   to the correct time the instant that player moved, with the error passing to

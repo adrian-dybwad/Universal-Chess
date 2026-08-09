@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, within } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, within, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
@@ -15,7 +15,20 @@ import menuSchemaFixture from '../test/fixtures/menuSchema';
  * rendered from settings.player_detail (accessible name "Account"), not a bespoke
  * control. Drives the real <Settings> against a mocked API so the
  * fetch -> render -> select path is exercised end to end.
+ *
+ * Auth on the list: GET /api/accounts requires credentials. A 401 must not look
+ * like an empty store (only "Default account") -- that hid real accounts and gave
+ * no way to sign in from Players. A true empty authenticated list still shows
+ * Default; unauthorized shows a Sign-in control that opens LoginDialog and
+ * refetches.
  */
+
+// Stands in for the real login form: one button that reports success, which is
+// what the queued accounts refetch hangs off after Sign in.
+vi.mock('../components/LoginDialog', () => ({
+  LoginDialog: ({ isOpen, onSuccess }: { isOpen: boolean; onSuccess: () => void }) =>
+    isOpen ? <button data-testid="login-submit" onClick={onSuccess}>login</button> : null,
+}));
 
 const menuSchema: unknown = menuSchemaFixture;
 
@@ -67,13 +80,26 @@ class MockEventSource {
   removeEventListener(): void {}
 }
 
-function mockFetch(p1: PlayerSeed, p2: PlayerSeed, accounts: unknown = accountsPayload) {
+function mockFetch(
+  p1: PlayerSeed,
+  p2: PlayerSeed,
+  accounts: unknown = accountsPayload,
+  opts?: { accountsStatus?: number },
+) {
+  let accountsGets = 0;
   const fetchMock = vi.fn(async (url: string, init?: RequestInit): Promise<JsonResponseLike> => {
     const method = ((init?.method as string) ?? 'GET').toUpperCase();
     if (url === '/api/menu-schema') return jsonResponse(menuSchema);
     if (url === '/api/settings' && method === 'GET') return jsonResponse(buildSettingsPayload(p1, p2));
     if (url === '/api/settings' && method === 'POST') return jsonResponse({ success: true });
-    if (url === '/api/accounts') return jsonResponse(accounts);
+    if (url === '/api/accounts') {
+      accountsGets += 1;
+      const status = opts?.accountsStatus;
+      // First GET can fail (401/500); later GETs succeed so a Sign in / Retry
+      // path can assert the picker fills in after recovery.
+      if (status && status >= 300 && accountsGets === 1) return jsonResponse({}, status);
+      return jsonResponse(accounts);
+    }
     if (url === '/api/engines/all') return jsonResponse([]);
     if (url === '/api/sprites') return jsonResponse(['default']);
     if (url === '/api/agents') return jsonResponse({ agents: [] });
@@ -84,6 +110,7 @@ function mockFetch(p1: PlayerSeed, p2: PlayerSeed, accounts: unknown = accountsP
   });
   vi.stubGlobal('fetch', fetchMock);
   vi.stubGlobal('EventSource', MockEventSource);
+  return { fetchMock };
 }
 
 afterEach(() => {
@@ -165,5 +192,76 @@ describe('Settings account picker excludes the other slot (both-sides rule)', ()
     expect(within(p1Picker).queryByRole('option', { name: 'SecondUser' })).not.toBeInTheDocument();
     expect(within(p1Picker).getByRole('option', { name: 'MagnusC' })).toBeInTheDocument();
     expect(within(p1Picker).getByRole('option', { name: /default account/i })).toBeInTheDocument();
+  });
+});
+
+describe('Settings account picker auth and load failures', () => {
+  beforeEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it('does not pretend the account list is empty when GET /api/accounts is unauthorized', async () => {
+    // Same false-empty class as Connectivity Accounts: a 401 used to leave the
+    // picker with only "Default account", which reads as "no saved accounts" for
+    // a board that holds some. Unauthorized must offer Sign in instead, and must
+    // not list Default as if the store were empty. The regression manifests as
+    // Default-only options with no Sign-in control while accounts exist server-side.
+    mockFetch({ type: 'lichess' }, { type: 'human' }, accountsPayload, { accountsStatus: 401 });
+    renderSettings();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /login/i })).toBeInTheDocument());
+    expect(screen.getByText(/sign in to see saved accounts/i)).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /default account/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'MagnusC' })).not.toBeInTheDocument();
+  });
+
+  it('loads the account picker after Sign in succeeds', async () => {
+    // Sign in must open LoginDialog and, on success, refetch accounts so the
+    // type-scoped picker appears with the saved identities. A regression shows
+    // as the Sign-in row sticking around after login, or a Default-only select
+    // with no MagnusC option.
+    mockFetch({ type: 'lichess' }, { type: 'human' }, accountsPayload, { accountsStatus: 401 });
+    renderSettings();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /login/i })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /login/i }));
+    fireEvent.click(await screen.findByTestId('login-submit'));
+
+    await waitFor(() => expect(screen.getByRole('option', { name: 'MagnusC' })).toBeInTheDocument());
+    expect(screen.getByRole('option', { name: 'SecondUser' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /default account/i })).toBeInTheDocument();
+    expect(screen.queryByText(/sign in to see saved accounts/i)).not.toBeInTheDocument();
+  });
+
+  it('still shows Default account when the authenticated list is genuinely empty', async () => {
+    // Distinguishes a true empty store from the 401 path above. Suppressing
+    // every empty picker would hide the legitimate Default-only control. The
+    // regression manifests as a Sign-in prompt (or blank Account row) when
+    // GET /api/accounts returns [].
+    mockFetch({ type: 'lichess' }, { type: 'human' }, { accounts: [] });
+    renderSettings();
+
+    const picker = await screen.findByLabelText('Account');
+    expect(within(picker).getByRole('option', { name: /default account/i })).toBeInTheDocument();
+    expect(screen.queryByText(/sign in to see saved accounts/i)).not.toBeInTheDocument();
+  });
+
+  it('does not claim Default-only when the account list fails to load', async () => {
+    // A 500 is not an empty store: showing only Default would hide real accounts
+    // the same way 401 did. Report failure with Retry; after Retry the picker
+    // must list saved accounts. The regression manifests as Default-only options
+    // (or a silent blank) with no retry control.
+    mockFetch({ type: 'lichess' }, { type: 'human' }, accountsPayload, { accountsStatus: 500 });
+    renderSettings();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument());
+    expect(screen.queryByRole('option', { name: /default account/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/sign in to see saved accounts/i)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }));
+
+    await waitFor(() => expect(screen.getByRole('option', { name: 'MagnusC' })).toBeInTheDocument());
   });
 });

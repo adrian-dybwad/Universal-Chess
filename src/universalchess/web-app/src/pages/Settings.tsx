@@ -581,8 +581,12 @@ export function Settings() {
   const [installedEngines, setInstalledEngines] = useState<EngineDefinition[]>([]);
   // Saved online accounts (GET /api/accounts), used to render the per-player
   // account picker and default an online player's name to its account username.
-  // Behind auth; a 401 at load degrades to an empty list (no picker shown).
+  // Behind auth. `accountsState` distinguishes a true empty store (`ready`) from
+  // an unauthenticated quiet degrade (`unauthorized`) and a hard read failure
+  // (`failed`) -- collapsing those into [] used to leave a Default-only picker
+  // that looked like "no accounts saved".
   const [accounts, setAccounts] = useState<AccountRecord[]>([]);
+  const [accountsState, setAccountsState] = useState<'loading' | 'ready' | 'failed' | 'unauthorized'>('loading');
   // Per-engine strength picker rows from /levels: {value,label} where value is
   // the persisted `elo` section name and label is the display text (an uncapped
   // "Default" shows as "Default (Unlimited)").
@@ -640,9 +644,11 @@ export function Settings() {
   // Retry-after-login for every auth-gated write on this page: the settings
   // save, the timezone and language applies (each has its own endpoint), engine
   // install/uninstall/repair, adding a custom engine, resetting profiles,
-  // dismissing a failure notice, and clearing a stuck install. Each queues a
-  // closure recapturing its own arguments, so they need no shared shape.
-  const { requireLogin, loginDialog } = useLoginRetry();
+  // dismissing a failure notice, and clearing a stuck install. Also used by the
+  // Players Account row's Sign-in control (`promptLogin`) when the account list
+  // is unauthorized. Each queues a closure recapturing its own arguments, so
+  // they need no shared shape.
+  const { requireLogin, promptLogin, loginDialog } = useLoginRetry();
   // Busy/error for the custom-engine add forms. URL installs hand off to the
   // shared install-status watcher; uploads complete in-request and refresh.
   const [customEngineBusy, setCustomEngineBusy] = useState(false);
@@ -691,19 +697,39 @@ export function Settings() {
     setCatalog(data as MenuCatalog);
   }, []);
 
+  // Auth-gated account list for the Players tab picker. Kept separate from
+  // fetchSettings so Sign in / Retry can refresh accounts without reloading the
+  // whole page. Outcomes mirror Connectivity's Accounts card: 401 is quiet
+  // (`unauthorized`, no empty claim), other errors are `failed`, success is
+  // `ready` even when the list is empty.
+  const fetchAccounts = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/accounts', { requiresAuth: true });
+      if (r.status === 401) {
+        setAccounts([]);
+        setAccountsState('unauthorized');
+        return;
+      }
+      if (!r.ok) {
+        setAccountsState('failed');
+        return;
+      }
+      const data = await r.json();
+      setAccounts(Array.isArray(data?.accounts) ? data.accounts : []);
+      setAccountsState('ready');
+    } catch {
+      setAccountsState('failed');
+    }
+  }, []);
+
   // Fetch the mutable settings state. Reused for the initial load and the SSE
   // refresh, so it must only fetch things that actually change at runtime
   // (settings values, engine install state, sprite sheets) -- never the catalog.
   const fetchSettings = useCallback(async () => {
-    const [settingsData, enginesData, spritesData, accountsData] = await Promise.all([
+    const [settingsData, enginesData, spritesData] = await Promise.all([
       apiFetch('/api/settings').then((r) => r.json()),
       apiFetch('/api/engines/all').then((r) => r.json()),
       apiFetch('/api/sprites').then((r) => r.json()).catch(() => ['default']),
-      // Accounts require auth; a 401 (or error) yields an empty list so the page
-      // still renders, just without the account picker.
-      apiFetch('/api/accounts', { requiresAuth: true })
-        .then((r) => (r.ok ? r.json() : { accounts: [] }))
-        .catch(() => ({ accounts: [] })),
     ]);
     setRawSettings(settingsData);
     setEngines(enginesData);
@@ -712,13 +738,13 @@ export function Settings() {
     // it is not selectable until repaired.
     setInstalledEngines(enginesData.filter((e: EngineDefinition) => e.installed && !e.needs_repair));
     setSpriteSheets(Array.isArray(spritesData) && spritesData.length > 0 ? spritesData : ['default']);
-    setAccounts(Array.isArray(accountsData?.accounts) ? accountsData.accounts : []);
+    await fetchAccounts();
 
     const parsed = parseRawSettings(settingsData);
     setFormSettings(parsed);
     setOriginalSettings(parsed);
     return { settingsData, enginesData };
-  }, []);
+  }, [fetchAccounts]);
 
   // Fetch every registered agent and seed the per-agent edit forms. The API key
   // edit starts blank (write-only); model/base URL are seeded from the stored
@@ -1997,10 +2023,13 @@ export function Settings() {
     // account the other slot resolves to is dropped, and Default withheld when it
     // would resolve to that same account) -- the web twin of the board's
     // player_accounts provider. Non-online types get no rows, so the catalog's
-    // field.player.account (visibleWhen type == lichess) renders nothing.
+    // field.player.account (visibleWhen type == lichess) renders nothing. Options
+    // are only produced when the list read succeeded (`ready`): unauthorized and
+    // failed loads are handled by a Sign-in / Retry row in renderPlayerCard so
+    // they never look like an empty authenticated store.
     ctx.registerProvider('player_accounts', () => {
       const ps = formSettings[playerKey];
-      if (!isOnlineType(ps.type)) return [];
+      if (!isOnlineType(ps.type) || accountsState !== 'ready') return [];
       const list = accountsForType(ps.type);
       const other = formSettings[playerKey === 'player1' ? 'player2' : 'player1'];
       const choices = selectableAccountsForSlot(list, other.type === ps.type, other.account);
@@ -2018,7 +2047,47 @@ export function Settings() {
   const renderPlayerCard = (playerKey: 'player1' | 'player2', title: string) => {
     const ctx = buildPlayerCtx(playerKey);
     const rows = buildSections(catalog, 'settings.player_detail', ctx.get).flatMap((section) =>
-      section.rows.map((node) => renderCatalogRow(node, ctx)),
+      section.rows.map((node) => {
+        // Account list is auth-gated. Replace the select with Sign in / Retry
+        // until a successful read; otherwise a 401/500 collapses to Default-only
+        // and looks like no accounts are saved.
+        if (node.id === 'field.player.account') {
+          if (accountsState === 'loading') return null;
+          if (accountsState === 'unauthorized') {
+            return (
+              <FormRow key={node.id} label={node.label ?? 'Account'} help={node.help}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.5rem' }}>
+                  <p className="text-muted" style={{ margin: 0, fontSize: '0.875rem' }}>
+                    {t('settingsPage.players.accountSignIn')}
+                  </p>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => promptLogin(async () => { await fetchAccounts(); })}
+                  >
+                    {t('login.login')}
+                  </Button>
+                </div>
+              </FormRow>
+            );
+          }
+          if (accountsState === 'failed') {
+            return (
+              <FormRow key={node.id} label={node.label ?? 'Account'} help={node.help}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.5rem' }}>
+                  <p className="text-muted" style={{ margin: 0, fontSize: '0.875rem' }}>
+                    {t('settingsPage.players.accountLoadFailed')}
+                  </p>
+                  <Button variant="secondary" size="sm" onClick={() => void fetchAccounts()}>
+                    {t('common.retry')}
+                  </Button>
+                </div>
+              </FormRow>
+            );
+          }
+        }
+        return renderCatalogRow(node, ctx);
+      }),
     );
     return (
       <Card className="mb-6">
