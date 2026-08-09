@@ -215,6 +215,17 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
     name, and asks whether it is a system package instead, which is what the
     "System" badge and the absent Uninstall button actually depend on.
 
+- **One Settings order for the board and the web**: The web's Settings tabs were
+  ordered by a list written into the page, while the board's Settings menu was
+  ordered by the shared menu catalog. Two lists for one decision, and they had
+  drifted: Agents appeared third on the board and seventh on the web. The web now
+  takes its tab sequence from the catalog it already fetches, so the order exists
+  in one place and a change moves both surfaces together.
+  - Agents moves on the board to sit after Engines, matching where the web had
+    it, since the web's order was the one being kept.
+  - Positions moves up beside Game. It is a board Settings entry that the web
+    renders as its own page, so no tab order governed where it sat.
+
 - **Board and web show the same engine list**: Each surface used to build its own
   list from the shared catalog, so every rule about how the list is presented was
   written twice and only some rules got written twice. They now render one

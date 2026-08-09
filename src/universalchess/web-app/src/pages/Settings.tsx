@@ -15,7 +15,7 @@ import { DeviceClockCard } from '../components/DeviceClockCard';
 import { ConnectivityPanel } from './Connectivity';
 import type { EngineDefinition, EngineFailure, EngineRef, EngineRefsResponse, EngineTier } from '../types/game';
 import type { MenuCatalog, MenuOption } from '../types/menuCatalog';
-import { fieldById } from '../types/menuCatalog';
+import { childrenOf, fieldById } from '../types/menuCatalog';
 import { apiFetch, buildApiUrl, getStoredCredentials, encodeBasicAuth, storeCredentials, isCrossOriginApi } from '../utils/api';
 import { formatDateTime } from '../utils/datetime';
 import { externalLinkHref } from '../utils/externalLink';
@@ -147,21 +147,46 @@ interface CentaurImportStatus {
   result: { success: boolean; error: string | null } | null;
 }
 
-// Section ids this page renders, in display order. Labels and icons are sourced
-// from the catalog (menu.json) at runtime; this list only declares which
-// sections belong to the Settings page and their order. Display and Sound are
-// separate sibling sections (right after Game), mirroring the board menu.
-// Connectivity sits before System, matching the board's Settings submenu order;
-// its 'accounts' subsection is rendered inside the Connectivity panel rather
-// than as its own tab. Agents sits after Engines (both configure what powers
-// play/coaching) and before System.
-const SETTINGS_TAB_IDS: SettingsTab[] = ['players', 'game', 'display', 'sound', 'connectivity', 'engines', 'agents', 'system'];
+// Every id the sub-nav accepts -- a set, deliberately not an order. Which tabs
+// appear and in what sequence comes from the catalog (see settingsTabsFromCatalog);
+// this list only says which ids are addressable, so an unrecognised URL segment
+// can be coerced and a catalog-derived id can be checked against the union.
+//
+// It used to double as the display order, which meant the same decision lived
+// here and in the catalog's `settings` children -- the board read one, the web
+// read the other, and they drifted until Agents sat third on the board and
+// seventh here.
+//
+// About and Licenses are reached from the main nav and footer respectively, not
+// as Settings tabs. 'centaur' is a web-only tab rather than a catalog section,
+// so its chrome comes from the web i18n.
+const VALID_SETTINGS_TABS: SettingsTab[] = [
+  'players', 'game', 'agents', 'display', 'sound', 'connectivity', 'engines', 'system', 'centaur',
+];
 
-// Every id the sub-nav accepts. About and Licenses are reached from the main nav
-// and footer respectively (not as Settings tabs). 'centaur' is a web-only tab
-// (not a catalog section) whose chrome comes from the web i18n, so it is listed
-// here explicitly rather than sourced from the catalog.
-const VALID_SETTINGS_TABS: SettingsTab[] = [...SETTINGS_TAB_IDS, 'centaur'];
+/** Whether a catalog-derived section id is a tab this page can render. */
+function isSettingsTab(id: string): id is SettingsTab {
+  return (VALID_SETTINGS_TABS as string[]).includes(id);
+}
+
+/**
+ * The Settings tabs, in the order the shared catalog declares them.
+ *
+ * Taken from the `settings` node's children -- the same array the board renders
+ * its Settings menu from -- so the two surfaces cannot disagree about the order.
+ * A child becomes a tab only if `sections` has an entry under the same id, which
+ * is what supplies its label and icon; that is also what excludes Positions, a
+ * board Settings entry the web renders as a standalone page instead.
+ */
+function settingsTabsFromCatalog(
+  catalog: MenuCatalog
+): { id: SettingsTab; label: string; icon?: string }[] {
+  return childrenOf(catalog, 'settings').flatMap((child) => {
+    const id = child.id.replace(/^settings\./, '');
+    const section = catalog.sections.find((s) => s.id === id);
+    return section && isSettingsTab(id) ? [{ id, label: section.label, icon: section.icon }] : [];
+  });
+}
 
 // The sub-nav tab lives in the URL path (e.g. /settings/game) so a page refresh
 // or a shared/bookmarked link restores the same section instead of falling back
@@ -1797,14 +1822,10 @@ export function Settings() {
   const isOnlineType = (type: string): boolean => accountTypes.some((t) => t.id === type);
   const accountsForType = (type: string): AccountRecord[] => accounts.filter((a) => a.type === type);
 
-  // Tabs are the catalog sections this page owns, rendered in the page's declared
-  // order. Labels and icons come from the catalog; SETTINGS_TAB_IDS only selects
-  // which sections belong here and their order.
+  // Tabs, labels, icons and order all come from the shared catalog, so the board
+  // menu and this page present the same sections in the same sequence.
   const tabs: { id: SettingsTab; label: string; icon?: string }[] = [
-    ...SETTINGS_TAB_IDS.flatMap((id) => {
-      const section = catalog.sections.find((s) => s.id === id);
-      return section ? [{ id, label: section.label, icon: section.icon }] : [];
-    }),
+    ...settingsTabsFromCatalog(catalog),
     // Original Centaur is a web-only feature tab, so its label/icon come from the
     // web i18n rather than the shared board catalog. Always shown (discoverable)
     // even before Centaur is installed, so the import flow is reachable.

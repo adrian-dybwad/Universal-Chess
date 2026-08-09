@@ -37,28 +37,31 @@ def _rows(**kwargs):
 
 
 def test_settings_full_entry_order():
-    """Settings lists setup first, then appearance, then device groups, in order.
+    """Settings lists play setup first, then appearance, then device groups.
 
-    Why this test exists: the dispatch loop keys off these entry keys in this
-    order (Players, Game, Agents, the Display/Sound appearance pair, Positions,
-    then Connectivity/Engines/System); Time Control and Live Analysis live inside
-    Game and the AI coach/agent settings inside Agents (not at top level),
-    Chromecast moved into Connectivity and About into System, so none appear here.
-    Engines is a top-level row rather than a System child because that is where
-    the web puts its tab. How a regression manifests: an item is dropped or
-    reordered, TimeControl/Chromecast/About reappears, or Engines sinks back into
-    System, changing this exact list.
+    Why this test exists: the dispatch loop keys off these entry keys, and this
+    is the order the web's Settings tabs use -- both surfaces read it from the
+    catalog now, so the board list and the web tab strip cannot diverge. Time
+    Control and Live Analysis live inside Game and the AI coach/agent settings
+    inside Agents (not at top level), Chromecast moved into Connectivity and
+    About into System, so none appear here. Engines is a top-level row rather
+    than a System child because that is where the web puts its tab.
+
+    How a regression manifests: an item is dropped or reordered,
+    TimeControl/Chromecast/About reappears, or Engines sinks back into System,
+    changing this exact list -- and because the web derives its tabs from the
+    same array, a reorder here silently moves the web tabs too.
     """
     keys = [r.key for r in _rows()]
     assert keys == [
         "Players",
         "Game",
-        "Agents",
+        "Positions",
         DISPLAY_KEY,
         SOUND_KEY,
-        "Positions",
         "Connectivity",
         "Engines",
+        "Agents",
         "System",
     ]
 

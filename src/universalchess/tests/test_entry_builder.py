@@ -86,8 +86,8 @@ def test_build_menu_entries_order_and_keys():
     entries = build_menu_entries("settings")
     keys = [e.key for e in entries]
     assert keys == [
-        "Players", "Game", "Agents", "Display", "Sound", "Positions",
-        "Connectivity", "Engines", "System",
+        "Players", "Game", "Positions", "Display", "Sound",
+        "Connectivity", "Engines", "Agents", "System",
     ]
 
 

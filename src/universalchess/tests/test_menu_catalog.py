@@ -93,21 +93,23 @@ def test_board_main_menu_keys_match_renderer_contract():
 
 
 def test_settings_order_matches_board_layout():
-    """Settings children order must match the intended board layout.
+    """This array is the Settings order for both surfaces.
 
-    The board renders settings in this order; a reordering here would reorder
-    the physical menu. Pinning the order makes such a change deliberate.
+    The board renders its Settings menu from it and the web derives its tab
+    sequence from it, so a reordering here moves both. Pinning it makes such a
+    change deliberate and reviewed rather than incidental.
 
-    The order tracks the web's Settings tabs, so the two interfaces present the
-    same things in the same sequence: Engines sits between Connectivity and
-    System because that is where its tab sits on the web. Positions is board-only
-    and has no tab to align with.
+    The web used to carry its own ordered list of tabs, which is how Agents came
+    to sit third on the board and seventh on the web. Agents now sits after
+    Engines on both, because that was the order the web had and the web's order
+    was the one being kept. Positions is a board Settings entry that the web
+    renders as a standalone page, so it appears here but not as a tab.
     """
     catalog = load_catalog()
     keys = [c["key"] for c in catalog.children("settings")]
     assert keys == [
-        "Players", "Game", "Agents", "Display", "Sound", "Positions",
-        "Connectivity", "Engines", "System",
+        "Players", "Game", "Positions", "Display", "Sound",
+        "Connectivity", "Engines", "Agents", "System",
     ]
 
 
@@ -142,29 +144,34 @@ def test_display_and_sound_are_separate_settings_nodes():
         assert catalog.get_node(sound_field)["section"] == "sound"
 
 
-def test_web_sections_present_in_expected_order():
-    """Web tabs are derived from catalog sections; order/content is pinned.
+def test_every_web_settings_tab_has_a_section_to_name_it():
+    """Each Settings child the web tabs must have a section supplying its chrome.
 
-    The React Settings sidebar renders these tabs in order. A missing or
-    reordered section would move/remove a settings tab; this guards the set.
-    Connectivity sits before System (after Sound), matching the board's Settings
-    submenu order, so that the web Connectivity tab and the board's Connectivity
-    submenu appear in the same position. 'accounts' remains its own section
-    because it is rendered as a card inside the Connectivity panel.
+    Why this test exists: the web builds a tab for each `settings` child whose id
+    matches a section, and takes the tab's label and icon from that section. A
+    child with no section is silently not a tab -- which is how Positions is
+    correctly left out, and is also how a genuine tab would vanish without any
+    error if its section were removed or renamed.
+
+    This asserts the set of sections rather than their order. The docstring here
+    used to claim the web derived its tab order from this array; it never did,
+    and the order now comes from `settings` children, so pinning the sequence of
+    this list would assert something no user can observe. 'accounts' is a section
+    without being a Settings child because it renders as a card inside the
+    Connectivity panel.
+
+    How a regression manifests: a section is renamed or dropped and its tab
+    disappears from the web with nothing else failing.
     """
     catalog = load_catalog()
-    section_ids = [s["id"] for s in catalog.sections()]
-    assert section_ids == [
-        "players",
-        "game",
-        "agents",
-        "display",
-        "sound",
-        "connectivity",
-        "accounts",
-        "engines",
-        "system",
-    ]
+    section_ids = {s["id"] for s in catalog.sections()}
+    # Positions is deliberately absent: the web renders it as its own page.
+    tabbed = {"players", "game", "display", "sound", "connectivity", "engines",
+              "agents", "system"}
+
+    assert tabbed <= section_ids, f"sections missing for tabs: {tabbed - section_ids}"
+    assert "accounts" in section_ids
+    assert "positions" not in section_ids
 
 
 def test_web_implemented_submenus_are_enabled_for_web():

@@ -240,7 +240,7 @@
       "id": "settings",
       "type": "menu",
       "label": "Settings",
-      "children": ["settings.players", "settings.game", "settings.agents", "settings.display", "settings.sound", "settings.positions", "settings.connectivity", "settings.engines", "settings.system"]
+      "children": ["settings.players", "settings.game", "settings.positions", "settings.display", "settings.sound", "settings.connectivity", "settings.engines", "settings.agents", "settings.system"]
     },
     {
       "id": "settings.players",
