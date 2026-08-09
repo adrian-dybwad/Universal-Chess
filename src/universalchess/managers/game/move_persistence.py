@@ -83,6 +83,8 @@ def persist_move_and_maybe_create_game(
     fen_after_move: str,
     white_clock: Optional[int],
     black_clock: Optional[int],
+    move_duration_ms: Optional[int] = None,
+    time_control: Optional[str] = None,
     analysis: Optional["PositionAnalysis"] = None,
     chess960: bool = False,
 ) -> Tuple[int, bool]:
@@ -99,6 +101,13 @@ def persist_move_and_maybe_create_game(
         fen_after_move: FEN recorded for the move row
         white_clock: White clock seconds (or None)
         black_clock: Black clock seconds (or None)
+        move_duration_ms: Milliseconds this move took, measured from the previous
+            move's confirmation on a monotonic clock. None means the move was not
+            timed -- a game resumed from the database or built by "play from
+            here" has no measured start -- and is stored as NULL rather than a 0,
+            which would be indistinguishable from a genuinely instant move.
+        time_control: The game's control in PGN TimeControl format, stored on the
+            game record when it is created. None for an unknown control.
         analysis: Analysis of the position after this move, when one has already
             completed. Usually None -- the search normally finishes after the
             row is written and backfills it via :func:`update_move_analysis` --
@@ -145,6 +154,7 @@ def persist_move_and_maybe_create_game(
             black=game_info.get("black", ""),
             chess960=chess960,
             start_fen=fen_before_move if non_standard_start else None,
+            time_control=time_control,
         )
         session.add(game)
         session.flush()
@@ -169,6 +179,7 @@ def persist_move_and_maybe_create_game(
             fen=fen_after_move,
             white_clock=white_clock,
             black_clock=black_clock,
+            move_duration_ms=move_duration_ms,
             eval_score=analysis.eval_score_cp if analysis is not None else None,
             best_move=analysis.best_move if analysis is not None else None,
         )

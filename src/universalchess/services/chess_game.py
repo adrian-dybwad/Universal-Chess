@@ -23,6 +23,12 @@ from universalchess.state import get_chess_game as get_game_state
 from universalchess.state import get_players_state
 from universalchess.paths import write_fen_log
 from universalchess.services.game_broadcast import broadcast_game_state
+from universalchess.services.chess_clock import get_chess_clock_service
+from universalchess.services.pgn_time import (
+    annotate_node_times,
+    pgn_time_control_headers,
+    pgn_time_control_tag,
+)
 
 
 class ChessGameService:
@@ -193,9 +199,20 @@ class ChessGameService:
                     self._pgn_game.headers["Result"] = result
             else:
                 self._pgn_game.headers["Result"] = "*"
-            
-            # Export to string
-            exporter = chess.pgn.StringExporter(headers=True, variations=False, comments=False)
+
+            # The per-move [%clk] values are meaningless without the control they
+            # count down from. Read at export time because the control can be
+            # configured after the game tree already exists.
+            try:
+                self._pgn_game.headers.update(pgn_time_control_headers(
+                    pgn_time_control_tag(get_chess_clock_service().time_control)))
+            except Exception as e:
+                log.debug(f"[ChessGameService] Error reading time control for PGN: {e}")
+
+            # comments=True: the move times are embedded as PGN comments, so
+            # excluding comments here would silently drop every annotation the
+            # tree carries and make the live PGN disagree with the exported one.
+            exporter = chess.pgn.StringExporter(headers=True, variations=False, comments=True)
             return self._pgn_game.accept(exporter)
         except Exception as e:
             log.debug(f"[ChessGameService] Error generating PGN: {e}")
@@ -205,6 +222,45 @@ class ChessGameService:
     # Internal
     # -------------------------------------------------------------------------
     
+    def _clock_seconds_for_latest_move(self) -> Optional[int]:
+        """Remaining clock of the side that just moved, or None if untimed.
+
+        The clock service reports the present, so this is only meaningful for the
+        move that was just played -- which is why it is not applied to moves
+        replayed during a tree rebuild.
+        """
+        clock = get_chess_clock_service()
+        if not clock.time_control.is_timed:
+            return None
+        white_seconds, black_seconds = clock.get_times()
+        # The mover is the side that is no longer on turn.
+        return black_seconds if self._state.turn == chess.WHITE else white_seconds
+
+    def _annotate_move_time(self, node: chess.pgn.GameNode, move_index: int) -> None:
+        """Attach [%emt] and, when available, [%clk] to a freshly added node.
+
+        The duration comes from ChessGameState, which records it at the instant
+        the move is confirmed. Reading it from there rather than measuring it
+        here is what keeps the live PGN and the stored PGN reporting the same
+        number for the same move.
+
+        Args:
+            node: The node just added for the move.
+            move_index: Index of the move in the state's move stack.
+        """
+        durations = self._state.move_durations_ms
+        duration_ms = durations[move_index] if move_index < len(durations) else None
+
+        clock_seconds = None
+        if move_index == len(self._state.move_stack) - 1:
+            try:
+                clock_seconds = self._clock_seconds_for_latest_move()
+            except Exception as e:
+                log.debug(f"[ChessGameService] Error reading clock for PGN: {e}")
+
+        annotate_node_times(
+            node, clock_seconds=clock_seconds, duration_ms=duration_ms)
+
     def _sync_pgn_tree(self) -> None:
         """Synchronize PGN game tree with current board state.
         
@@ -231,6 +287,7 @@ class ChessGameService:
             for i in range(self._last_move_count, current_move_count):
                 move = move_stack[i]
                 self._pgn_node = self._pgn_node.add_variation(move)
+                self._annotate_move_time(self._pgn_node, i)
         
         elif current_move_count < self._last_move_count:
             # Takeback - navigate back in tree AND remove the taken-back moves
@@ -264,10 +321,11 @@ class ChessGameService:
         """
         self._pgn_game = chess.pgn.Game()
         self._pgn_node = self._pgn_game
-        
-        for move in self._state.move_stack:
+
+        for index, move in enumerate(self._state.move_stack):
             self._pgn_node = self._pgn_node.add_variation(move)
-        
+            self._annotate_move_time(self._pgn_node, index)
+
         self._last_move_count = len(self._state.move_stack)
     
     def _on_position_change(self) -> None:

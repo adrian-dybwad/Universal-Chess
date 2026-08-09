@@ -218,6 +218,11 @@ class ChessClockService:
     def engine_move_delay_seconds(self) -> int:
         """Grace delay (seconds) for the engine-move clock hand-off."""
         return self._engine_move_delay_seconds
+
+    @property
+    def time_control(self) -> TimeControl:
+        """The control this clock was configured with (untimed until configured)."""
+        return self._time_control
     
     # -------------------------------------------------------------------------
     # Configuration methods

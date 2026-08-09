@@ -39,6 +39,39 @@ import pytest
 
 
 @pytest.fixture
+def private_db_session(tmp_path, monkeypatch):
+    """A database session, and a rebound ``models.engine``, private to one test.
+
+    ``db.models`` builds a process-wide engine at import time. Under the test
+    configuration that engine is an in-memory SQLite, whose pool holds one
+    connection per thread and evicts the oldest once more than a handful exist.
+    Any test that starts a thread which opens a connection can therefore evict
+    the connection holding the schema, and because an in-memory database lives
+    only as long as its connection, the tables vanish. The next test to use
+    ``models.engine`` then fails with "no such table" purely because of what ran
+    before it.
+
+    Binding to a file in ``tmp_path`` removes the dependency entirely: the
+    schema survives connection churn, and each test gets an empty database.
+    ``models.engine`` is rebound as well, since request handlers such as
+    ``generate_pgn_string`` open their own session from it.
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from universalchess.db import models
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'universalchess-test.db'}")
+    models.Base.metadata.create_all(engine)
+    monkeypatch.setattr(models, "engine", engine)
+
+    session = sessionmaker(bind=engine)()
+    yield session
+    session.close()
+    engine.dispose()
+
+
+@pytest.fixture
 def mock_controller():
     """
     Provide a mock SyncCentaur controller for tests.

@@ -54,6 +54,7 @@ import tempfile
 import datetime
 import chess
 import chess.pgn
+from universalchess.services.pgn_time import annotate_node_times, pgn_time_control_headers
 import json
 import urllib.parse
 import base64
@@ -1068,18 +1069,33 @@ def render_chess_pieces(image, curfen, piece_images, x_offset, y_offset, sqsize)
 def build_chess_game_from_id(session, game_id):
     """
     Builds a chess.pgn.Game object from a game ID in the database.
-    
+
+    The game is rooted at the stored ``start_fen`` (with the ``chess960`` flag),
+    not at the standard opening: a Chess960 or "play from here" game replayed
+    from the wrong root produces a legal-looking movetext describing a different
+    game, because ``add_variation`` does not validate moves. Each move is
+    therefore checked against the board as it is replayed, and replay stops at
+    the first move that is illegal in the position reached -- a short truthful
+    game is recoverable, a long wrong one is not.
+
+    Per-move time data is emitted as the PGN embedded commands ``[%emt]`` (from
+    the measured move duration) and ``[%clk]`` (from the stored clock
+    remainder). ``[%clk]`` is written only when the game has a known time
+    control, because an untimed game stores a literal 0 in the clock columns and
+    would otherwise export as though both players had flagged.
+
     Args:
         session: SQLAlchemy session
         game_id: Game ID to retrieve
-        
+
     Returns:
         chess.pgn.Game object or None if not found
     """
     gamedata = session.execute(
         select(models.Game.created_at, models.Game.source, models.Game.event, 
                models.Game.site, models.Game.round, models.Game.white, 
-               models.Game.black, models.Game.result).
+               models.Game.black, models.Game.result, models.Game.start_fen,
+               models.Game.chess960, models.Game.time_control).
         where(models.Game.id == game_id)
     ).first()
     
@@ -1115,10 +1131,28 @@ def build_chess_game_from_id(session, game_id):
     for key in g.headers:
         if g.headers[key] == "None":
             g.headers[key] = ""
-    
-    # Get moves ordered by time
+
+    start_fen = gamedata[8]
+    chess960 = bool(gamedata[9])
+    time_control = gamedata[10]
+
+    # Root the game at its real start. setup() writes [FEN]/[SetUp "1"], and
+    # [Variant "Chess960"] only for a 960 game, so an ordinary game played from
+    # a mid-game position is not mislabelled as a variant. A NULL start_fen is
+    # the standard opening and needs no tags at all.
+    board = chess.Board(start_fen or chess.STARTING_FEN, chess960=chess960)
+    if start_fen or chess960:
+        g.setup(board)
+
+    # The per-move [%clk] values are uninterpretable without the control they
+    # count down from, so it is emitted whenever it is known. A time-odds control
+    # expands into per-side tags (see pgn_time_control_headers).
+    g.headers.update(pgn_time_control_headers(time_control))
+
+    # Get moves in the order they were played
     moves = session.execute(
-        select(models.GameMove.move_at, models.GameMove.move, models.GameMove.fen).
+        select(models.GameMove.move, models.GameMove.white_clock,
+               models.GameMove.black_clock, models.GameMove.move_duration_ms).
         where(models.GameMove.gameid == game_id).
         order_by(models.GameMove.id)
     ).all()
@@ -1126,16 +1160,35 @@ def build_chess_game_from_id(session, game_id):
     # Add moves to game
     # First record is initial position (empty move), subsequent records are actual moves
     node = g
-    for move_data in moves:
-        move_str = move_data[1]
-        if move_str:  # Skip empty moves (initial position record)
-            try:
-                move = chess.Move.from_uci(move_str)
-                node = node.add_variation(move)
-            except ValueError:  # noqa: S110 - best-effort; failure here is non-fatal and intentionally ignored
-                # Invalid move, skip
-                pass
-    
+    for move_str, white_clock, black_clock, move_duration_ms in moves:
+        if not move_str:  # Skip empty moves (initial position record)
+            continue
+        try:
+            move = chess.Move.from_uci(move_str)
+        except ValueError:
+            # A malformed move string must not turn the whole game into a 404;
+            # skip the row and keep exporting what is readable.
+            app.logger.warning("Skipping unparseable move %r in game %s", move_str, game_id)
+            continue
+
+        if move not in board.legal_moves:
+            # Replaying past this point would compute every later SAN from a
+            # position that never occurred. Truncate instead.
+            app.logger.warning(
+                "Stopping PGN replay of game %s at illegal move %s", game_id, move_str)
+            break
+
+        # [%clk] belongs to the side that made this move, so read the remainder
+        # for the colour on turn *before* the move is pushed.
+        clock_seconds = None
+        if time_control:
+            clock_seconds = white_clock if board.turn == chess.WHITE else black_clock
+
+        node = node.add_variation(move)
+        annotate_node_times(
+            node, clock_seconds=clock_seconds, duration_ms=move_duration_ms)
+        board.push(move)
+
     return g
 
 def get_db_session():

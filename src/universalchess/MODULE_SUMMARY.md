@@ -321,6 +321,9 @@ Lightweight observable state objects with minimal dependencies.
 - Piece presence state computation
 - Check and queen threat information
 - Starting position comparison utilities
+- Per-move elapsed time on a monotonic clock (`move_durations_ms`), recorded at
+  the instant a move is confirmed so the database writer and the PGN service
+  report the same duration for the same move
 
 ### chess_clock.py (ChessClockState)
 
@@ -376,6 +379,9 @@ Long-lived singleton components that manage threads and resources.
 #### Responsibilities
 - Game state coordination
 - Move execution and validation
+- Incremental in-memory PGN tree, annotated with `[%clk]` / `[%emt]` and the
+  `[TimeControl]` header so the live PGN matches the one exported from the
+  database
 
 ### chromecast.py (ChromecastService)
 
@@ -383,6 +389,17 @@ Long-lived singleton components that manage threads and resources.
 - Chromecast device discovery
 - Image casting to Chromecast
 - Connection management
+
+### pgn_time.py (pure functions)
+
+#### Responsibilities
+- Render a TimeControl as a storable PGN time-control value
+- Expand a stored value into header pairs, splitting a time-odds control into
+  `[WhiteTimeControl]` / `[BlackTimeControl]` so `[TimeControl]` stays standard
+- Attach `[%clk]` / `[%emt]` embedded commands to a PGN move node
+
+No threads, database, board or display -- unlike the rest of this package it is
+a pure formatting module, usable by any PGN exporter.
 
 ### system.py (SystemPollingService)
 

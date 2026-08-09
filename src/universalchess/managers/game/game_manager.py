@@ -69,6 +69,7 @@ from .database import (
 )
 from .move_persistence import persist_move_and_maybe_create_game, update_move_analysis
 from universalchess.services.analysis import get_analysis_service
+from universalchess.services.pgn_time import pgn_time_control_tag
 from .post_move import handle_game_end, validate_physical_board_after_move
 from .correction_flow import handle_field_event_in_correction_mode
 from .starting_position import is_starting_position_state
@@ -294,6 +295,19 @@ class GameManager:
         if self._player_manager and not self._game_state.is_game_over:
             self._player_manager.request_move(self.chess_board)
     
+    def _pgn_time_control(self) -> Optional[str]:
+        """The active control in PGN TimeControl format, or None if unavailable.
+
+        Stored on the game record when the game is created so the exporter can
+        emit [TimeControl] and can tell an untimed game (clock columns hold 0)
+        from a game where both players flagged.
+        """
+        try:
+            return pgn_time_control_tag(self._clock_service.time_control)
+        except Exception as e:
+            log.debug(f"[GameManager._pgn_time_control] Error reading time control: {e}")
+            return None
+
     def _get_clock_times_for_db(self) -> tuple:
         """Get clock times for database storage.
 
@@ -472,7 +486,7 @@ class GameManager:
                 except Exception as e:
                     log.error(f"[GameManager._check_takeback] Error deleting last move: {e}")
             self.cached_result = None
-            
+
             self._game_state.pop_move()  # Notifies observers automatically
             board.beep(board.SOUND_GENERAL, event_type='game_event')
             
@@ -695,6 +709,12 @@ class GameManager:
         to polling commands. If the board is busy with piece detection, validation
         is skipped - which is acceptable since moves are validated logically.
         """
+        # Read here, synchronously, rather than inside execute_tasks: the queued
+        # task runs behind board validation and engine work, and a takeback or a
+        # further move can land before it does, so reading there would attach a
+        # different move's duration to this row.
+        move_duration_ms = self._game_state.last_move_duration_ms
+
         def execute_tasks():
             try:
                 # 1. Database operations
@@ -718,6 +738,8 @@ class GameManager:
                             fen_after_move=fen_after_move,
                             white_clock=white_clock,
                             black_clock=black_clock,
+                            move_duration_ms=move_duration_ms,
+                            time_control=self._pgn_time_control(),
                             analysis=analysis,
                             chess960=self._game_state.chess960,
                         )
@@ -1388,7 +1410,7 @@ class GameManager:
             # one, so reset() restores the stored 960 start (notifies observers).
             self._game_state.reset()
             self.cached_result = None  # Clear cached game result
-            
+
             # Step 5: Reset UI state
             self.is_showing_promotion = False  # Clear promotion state
             self.is_in_menu = False  # Exit menu if open

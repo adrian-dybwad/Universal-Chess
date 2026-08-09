@@ -62,6 +62,17 @@ class Game(Base):
     # king-onto-rook move encoding match how the game was played. Nullable/False
     # for standard games and pre-existing databases.
     chess960 = Column(Boolean, nullable=True, default=False)
+    # The game's time control in the PGN standard's TimeControl format ("300",
+    # "300+5", "40/5400:1800+30", "-" for untimed, "?" when the two sides differ).
+    # See universalchess.services.pgn_time.pgn_time_control_tag.
+    #
+    # Also the only signal that separates an untimed game from a flagged one:
+    # an untimed control seeds the clock to zero and never runs it, so
+    # white_clock/black_clock below are a literal 0 rather than NULL. Without
+    # this column every casual game would export as "[%clk 0:00:00]" on every
+    # move, reading as both players out of time from the first move. NULL for
+    # games recorded before this column existed.
+    time_control = Column(String(64), nullable=True)
 
     def __repr__(self):
         return "<Game(id='%s', created_at='%s', source='%s')>" % (str(self.id), str(self.created_at), self.source)
@@ -78,6 +89,21 @@ class GameMove(Base):
     # Clock times in seconds remaining after this move (nullable for existing databases)
     white_clock = Column(Integer, nullable=True)
     black_clock = Column(Integer, nullable=True)
+    # Elapsed wall time in milliseconds from the previous move's confirmation
+    # (or the start of the game, for the first move) to this move's confirmation,
+    # measured on a *monotonic* clock. Exported as the PGN [%emt] command.
+    #
+    # Not derivable from move_at: that is stamped by the ORM default when the row
+    # is inserted, which happens on the background task worker behind board
+    # validation and engine work, so the lag between confirmation and insert is
+    # unbounded and varies with load. A monotonic source is required because the
+    # device's wall clock is stepped by NTP shortly after boot, and a step of a
+    # few seconds is indistinguishable from a real think time.
+    #
+    # NULL means "not measured" -- every row written before this column existed,
+    # and games built by replaying moves rather than playing them. Distinct from
+    # 0, which is a real measurement of an effectively instant move.
+    move_duration_ms = Column(Integer, nullable=True)
     # Analysis score in centipawns from white's perspective, for the position
     # *after* this move. NULL means the position was never analysed (analysis
     # off, or the search had not finished) -- distinct from 0, which is a real
@@ -110,9 +136,11 @@ _ADDED_COLUMNS = (
     ('gameMove', 'eval_score', 'INTEGER'),
     ('gameMove', 'best_move', 'VARCHAR(10)'),
     ('gameMove', 'coach_statement', 'TEXT'),
+    ('gameMove', 'move_duration_ms', 'INTEGER'),
     ('game', 'termination', 'VARCHAR(255)'),
     ('game', 'start_fen', 'VARCHAR(255)'),
     ('game', 'chess960', 'BOOLEAN'),
+    ('game', 'time_control', 'VARCHAR(64)'),
 )
 
 
@@ -139,7 +167,15 @@ def apply_pending_migrations(target_engine) -> None:
     with target_engine.connect() as conn:
         for table, column, ddl_type in _ADDED_COLUMNS:
             if table in existing and column not in existing[table]:
-                conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {column} {ddl_type}'))
+                # The three identifiers come only from the _ADDED_COLUMNS literal
+                # above; nothing here is reachable from a request, a setting or a
+                # file. Interpolation is also the only option available: a table
+                # or column name is an identifier, not a value, and SQL bind
+                # parameters cannot carry identifiers. Keeping every entry a
+                # literal is therefore what makes this safe, so a future entry
+                # must not be built from input.
+                conn.execute(text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                    f'ALTER TABLE {table} ADD COLUMN {column} {ddl_type}'))
                 conn.commit()
 
 

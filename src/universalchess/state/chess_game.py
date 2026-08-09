@@ -11,8 +11,10 @@ This module has minimal dependencies (python-chess, typing, and the pure
 state.alerts policy) to keep imports fast for widgets.
 """
 
+import time
+
 import chess
-from typing import Optional, Callable, List
+from typing import Optional, Callable, List, Tuple
 
 from universalchess.state import alerts
 from universalchess.utils.observers import notify_observers
@@ -49,7 +51,27 @@ class ChessGameState:
         # settings are loaded behaves as the board always has; main.py applies the
         # persisted preferences on settings load and on hot reload.
         self._alert_preferences = alerts.AlertPreferences()
-        
+
+        # Per-move elapsed time, aligned one-to-one with board.move_stack: entry
+        # i holds the milliseconds move i took, or None when the move was not
+        # timed (no anchor -- a game resumed from the database or replayed from
+        # a stored history has no measured start).
+        #
+        # Recorded here, in push_move, because that is the single instant a move
+        # is confirmed, and because several consumers need the same number: the
+        # database writer persists it and the PGN service annotates the live game
+        # with it. Measuring it in each consumer instead would give two answers
+        # for one interval, and any consumer running before the measurement would
+        # read the previous move's value.
+        #
+        # Monotonic rather than wall clock: NTP steps the device's clock shortly
+        # after boot by an amount indistinguishable from a real think time. The
+        # source is injectable so tests can advance time exactly, matching
+        # ChessClockState._now_fn.
+        self._now_monotonic: Callable[[], float] = time.monotonic
+        self._move_timing_anchor: Optional[float] = None
+        self._move_durations_ms: List[Optional[int]] = []
+
         # Observer callbacks
         self._on_position_change: List[Callable[[], None]] = []
         self._on_game_over: List[Callable[[str, str], None]] = []  # (result, termination)
@@ -61,6 +83,20 @@ class ChessGameState:
     # Properties (read-only access to state)
     # -------------------------------------------------------------------------
     
+    @property
+    def move_durations_ms(self) -> Tuple[Optional[int], ...]:
+        """Elapsed milliseconds per move, aligned with ``move_stack``.
+
+        An entry is None when that move was not timed. Returned as a tuple so a
+        consumer cannot mutate the state's own list.
+        """
+        return tuple(self._move_durations_ms)
+
+    @property
+    def last_move_duration_ms(self) -> Optional[int]:
+        """Milliseconds the most recent move took, or None if untimed/no moves."""
+        return self._move_durations_ms[-1] if self._move_durations_ms else None
+
     @property
     def board(self) -> chess.Board:
         """The chess.Board instance. Use for read-only queries.
@@ -481,6 +517,38 @@ class ChessGameState:
     # State mutations (trigger observer notifications)
     # -------------------------------------------------------------------------
     
+    def start_move_timing(self) -> None:
+        """Anchor per-move timing at this instant.
+
+        Called whenever the side to move begins deliberating afresh: at the start
+        of a game and after a takeback. Without the takeback case the replayed
+        move's interval would span the retracted move's think, the correction and
+        the new think, all charged to the one move that eventually lands.
+        """
+        self._move_timing_anchor = self._now_monotonic()
+
+    def _clear_move_timing(self) -> None:
+        """Drop all recorded durations and re-anchor.
+
+        Used wherever the move stack itself is discarded (reset, or adopting a
+        new position), since the durations are indexed by move and would
+        otherwise describe moves that are no longer on the board.
+        """
+        self._move_durations_ms.clear()
+        self.start_move_timing()
+
+    def _record_move_duration(self) -> None:
+        """Append the elapsed time for the move just pushed and re-anchor.
+
+        Appends None when there is no anchor. Appending 0 there would be
+        indistinguishable from a move genuinely played in under a millisecond.
+        """
+        now = self._now_monotonic()
+        anchor = self._move_timing_anchor
+        self._move_timing_anchor = now
+        self._move_durations_ms.append(
+            None if anchor is None else int(round((now - anchor) * 1000)))
+
     def push_move(self, move: chess.Move) -> None:
         """Push a move onto the board.
         
@@ -499,8 +567,12 @@ class ChessGameState:
             raise ValueError(f"Illegal move: {move.uci()}")
         
         self._board.push(move)
+        # Recorded before observers run, so every consumer of the position-change
+        # notification (the PGN service, the database writer) sees this move's
+        # duration rather than the previous move's.
+        self._record_move_duration()
         self.notify_position_change()
-        
+
         # Detect and notify check/threats
         self._notify_check_and_threats()
         
@@ -541,6 +613,10 @@ class ChessGameState:
         self._termination = None
         
         move = self._board.pop()
+        if self._move_durations_ms:
+            self._move_durations_ms.pop()
+        # The replayed move is timed from the takeback, not from the move undone.
+        self.start_move_timing()
         self.notify_position_change()
         # Re-derive the check/queen alert for the reverted position, mirroring
         # push_move. Without this a takeback of a checking move left the CHECK
@@ -566,6 +642,9 @@ class ChessGameState:
         self._board.set_fen(fen)
         self._result = None
         self._termination = None
+        # set_fen discards the move stack, so the per-move durations it indexes
+        # must go with it.
+        self._clear_move_timing()
         self.notify_position_change()
         # Re-derive the check/queen alert for the adopted position, mirroring
         # configure_start. Without this, loading a position never updated the
@@ -596,6 +675,7 @@ class ChessGameState:
         self._board.set_fen(fen)
         self._result = None
         self._termination = None
+        self._clear_move_timing()
         self.notify_position_change()
         self._notify_check_and_threats()
 
@@ -612,6 +692,8 @@ class ChessGameState:
         self._board.set_fen(self._start_fen)
         self._result = None
         self._termination = None
+        # A new game starts now, so the first move is timed from here.
+        self._clear_move_timing()
         self.notify_position_change()
         # Clear alerts - starting position has no check or threats
         self._notify_check_and_threats()
@@ -629,6 +711,7 @@ class ChessGameState:
         self._board.reset()
         self._result = None
         self._termination = None
+        self._clear_move_timing()
         self.notify_position_change()
         self._notify_check_and_threats()
     
