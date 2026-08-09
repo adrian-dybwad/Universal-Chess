@@ -20,6 +20,23 @@ Build, development, and utility scripts for Universal-Chess.
 | `release.sh` | Interactive release workflow (see [docs/releasing.md](../docs/releasing.md)) |
 | `bump-version.sh` | Bump version in DEBIAN/control |
 | `check-updates.sh` | Check GitHub for new releases |
+| `changelog-audit.sh` | List commits that changed something observable without a `CHANGELOG.md` entry |
+
+**Auditing the changelog before a push:**
+```bash
+./scripts/changelog-audit.sh              # origin/main..HEAD
+./scripts/changelog-audit.sh v2.0.0       # since a tag
+./scripts/changelog-audit.sh --strict      # exit non-zero if anything is undescribed
+```
+
+The changelog is the release notes for the unreleased version, so a missing entry
+ships a change undescribed — which happened three times before this existed.
+Findings are split by what can be known mechanically: **Undescribed** means no
+changelog commit follows the change at all, so an entry is owed unless the change
+is unobservable; **Possibly described** means one does follow and needs a read to
+confirm it covers the change. Advisory by default, because whether a candidate
+really needs an entry is a judgement call and a check that usually fails gets
+bypassed. `--strict` gates on the Undescribed group alone.
 
 **Creating a release:**
 ```bash
