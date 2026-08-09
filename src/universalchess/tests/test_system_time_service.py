@@ -18,6 +18,7 @@ import subprocess
 import pytest
 
 from universalchess.services import system_time_service as sts
+from universalchess.tests.fake_clock import FakeMonotonic
 
 _HELPER = "/opt/universalchess/scripts/uc-clock-admin"
 _EPOCH_IN_RANGE = 1800000000  # 2027-01-15T08:00:00Z
@@ -73,18 +74,6 @@ def clear_cached_status():
     sts.invalidate_status_cache()
     yield
     sts.invalidate_status_cache()
-
-
-def _frozen_clock(start=0.0):
-    """A settable monotonic stand-in: returns `clock.value`, which tests advance."""
-
-    class Clock:
-        value = start
-
-        def __call__(self):
-            return self.value
-
-    return Clock()
 
 
 def test_status_parses_timedatectl_properties_into_booleans():
@@ -184,7 +173,7 @@ def test_repeated_reads_consult_timedatectl_once_within_the_cache_window():
     runner records two invocations, meaning every caller pays for a fork again.
     """
     run, calls = _recording_runner(_Result(stdout="NTP=yes\nNTPSynchronized=no\n"))
-    clock = _frozen_clock()
+    clock = FakeMonotonic()
 
     first = sts.get_status(run=run, monotonic=clock)
     second = sts.get_status(run=run, monotonic=clock)
@@ -205,7 +194,7 @@ def test_the_clock_reading_is_taken_live_even_when_the_flags_are_cached():
     regression manifests: both reads report an identical epoch below.
     """
     run, _ = _recording_runner(_Result(stdout="NTP=yes\n"))
-    clock = _frozen_clock()
+    clock = FakeMonotonic()
     ticks = iter([1800000000.0, 1800000001.5])
 
     first = sts.get_status(run=run, now=lambda: next(ticks), monotonic=clock)
@@ -225,10 +214,10 @@ def test_the_state_is_read_again_once_the_window_has_elapsed():
     the stale flags.
     """
     stale, calls = _recording_runner(_Result(stdout="NTP=yes\nNTPSynchronized=no\n"))
-    clock = _frozen_clock()
+    clock = FakeMonotonic()
     sts.get_status(run=stale, monotonic=clock)
 
-    clock.value += sts.STATUS_CACHE_TTL_SECONDS
+    clock.advance(sts.STATUS_CACHE_TTL_SECONDS)
     fresh, _ = _recording_runner(_Result(stdout="NTP=yes\nNTPSynchronized=yes\n"))
     reread = sts.get_status(run=fresh, monotonic=clock)
 
@@ -247,7 +236,7 @@ def test_the_window_is_measured_on_the_monotonic_clock():
     for the window elapsing.
     """
     run, calls = _recording_runner(_Result(stdout="NTP=yes\n"))
-    clock = _frozen_clock()
+    clock = FakeMonotonic()
     a_year = 365 * 24 * 60 * 60
 
     sts.get_status(run=run, now=lambda: 1800000000.0, monotonic=clock)
@@ -266,7 +255,7 @@ def test_an_unreadable_state_is_cached_like_any_other():
     two attempts recorded below.
     """
     run, calls = _recording_raising_runner(FileNotFoundError("timedatectl"))
-    clock = _frozen_clock()
+    clock = FakeMonotonic()
 
     first = sts.get_status(run=run, monotonic=clock)
     second = sts.get_status(run=run, monotonic=clock)
@@ -287,7 +276,7 @@ def test_a_caller_can_demand_a_fresh_read_and_that_read_refills_the_cache():
     the superseded flags.
     """
     stale, _ = _recording_runner(_Result(stdout="NTP=no\n"))
-    clock = _frozen_clock()
+    clock = FakeMonotonic()
     sts.get_status(run=stale, monotonic=clock)
 
     fresh, fresh_calls = _recording_runner(_Result(stdout="NTP=yes\n"))
@@ -312,7 +301,7 @@ def test_turning_sync_on_or_off_drops_the_cached_state(enabled):
     the old flag despite the apply succeeding.
     """
     before, _ = _recording_runner(_Result(stdout=f"NTP={'no' if enabled else 'yes'}\n"))
-    clock = _frozen_clock()
+    clock = FakeMonotonic()
     sts.get_status(run=before, monotonic=clock)
 
     applier, _ = _recording_runner(_Result(returncode=0))
@@ -333,7 +322,7 @@ def test_a_failed_apply_also_drops_the_cached_state():
     regression manifests: no invocation recorded on the read after the failure.
     """
     seed, _ = _recording_runner(_Result(stdout="NTP=no\n"))
-    clock = _frozen_clock()
+    clock = FakeMonotonic()
     sts.get_status(run=seed, monotonic=clock)
 
     failing, _ = _recording_runner(_Result(returncode=1, stderr="denied"))

@@ -33,21 +33,12 @@ import pytest
 from universalchess.state.chess_clock import ChessClockState, reset_chess_clock
 from universalchess.state.time_control import TimeControl
 from universalchess.players.settings import GameSettings
+from universalchess.tests.fake_clock import FakeMonotonic
 
 
 def _fake_game(turn="white", plies=0):
     """Stand-in for ChessGameState exposing turn_name and move_stack length."""
     return SimpleNamespace(turn_name=turn, move_stack=[None] * plies)
-
-
-class _Clock:
-    """Controllable monotonic time source for deterministic grace-window tests."""
-
-    def __init__(self, start=1000.0):
-        self.now = start
-
-    def __call__(self):
-        return self.now
 
 
 def _state_with_clock(turn="black"):
@@ -60,7 +51,7 @@ def _state_with_clock(turn="black"):
     state.set_game_state(_fake_game(turn))
     state.set_timed_mode(True)
     state.set_times(300, 300)
-    clock = _Clock()
+    clock = FakeMonotonic()
     state._now_fn = clock
     return state, clock
 
@@ -204,7 +195,7 @@ def test_service_begin_opponent_turn_uses_configured_delay(clock_service):
     service, state, _game = clock_service
     service.configure(TimeControl.fischer_minutes(5, 0))
     service.set_engine_move_delay_seconds(2)
-    clock = _Clock()
+    clock = FakeMonotonic()
     state._now_fn = clock
     # Engine (black) to move; human is white.
     service.begin_opponent_turn("white")
@@ -226,7 +217,7 @@ def test_service_notify_move_completed_clears_override_at_handoff(clock_service)
     """
     service, state, game = clock_service
     service.configure(TimeControl.fischer_minutes(5, 0))
-    clock = _Clock()
+    clock = FakeMonotonic()
     state._now_fn = clock
     service.begin_opponent_turn("white")
 
