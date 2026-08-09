@@ -1898,33 +1898,6 @@ class EngineManager:
             return False
         return self.needs_repair(engine_name) or bool(self.missing_nets(engine_name))
 
-    def get_engine_list(self) -> List[dict]:
-        """Get list of all engines with installation status.
-        
-        Returns:
-            List of dicts with engine info and installed status
-        """
-        log.debug("[EngineManager] get_engine_list: Building engine list")
-        result = []
-        installed_count = 0
-        for name, engine in ENGINES.items():
-            is_installed = self.is_installed(name)
-            if is_installed:
-                installed_count += 1
-            
-            result.append({
-                "name": name,
-                "display_name": engine.display_name,
-                "summary": engine.summary,
-                "description": engine.description,
-                "installed": is_installed,
-                "is_system_package": engine.is_system_package,
-                "can_uninstall": engine.can_uninstall,
-                "estimated_install_minutes": engine.estimated_install_minutes,
-            })
-        log.info(f"[EngineManager] get_engine_list: {installed_count}/{len(ENGINES)} engines installed")
-        return result
-
     @staticmethod
     def _fetch_github_tags(repo_url: Optional[str], limit: int = 30) -> tuple:
         """Best-effort fetch of a GitHub repo's tags and default branch.

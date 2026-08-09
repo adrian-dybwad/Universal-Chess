@@ -38,6 +38,7 @@ from universalchess.menus.engine_manager_menu import (
     show_engine_install_progress,
     watch_engine_install_progress,
 )
+from universalchess.services.engine_catalog_view import EngineRow
 from universalchess.services.install_control import InstallActionResult
 
 ENGINE = "reckless"
@@ -700,15 +701,29 @@ def _pause(store, engine=ENGINE, percent=61, ref=REF):
 
 
 def _engine_info():
-    return {
-        "name": ENGINE,
-        "display_name": DISPLAY_NAME,
-        "summary": "Rust engine",
-        "description": "A strong Rust engine",
-        "estimated_install_minutes": ESTIMATED_MINUTES,
-        "can_uninstall": True,
-        "installed": False,
-    }
+    """The engine as the shared catalog view describes it.
+
+    The detail screen takes the same row the list screen rendered, so the two
+    cannot describe one engine differently.
+    """
+    return EngineRow(
+        name=ENGINE,
+        display_name=DISPLAY_NAME,
+        summary="Rust engine",
+        description="A strong Rust engine",
+        tier="top",
+        elo=3600,
+        installed=False,
+        needs_repair=False,
+        supported=True,
+        unsupported_reason=None,
+        is_system_package=False,
+        can_uninstall=True,
+        estimated_install_minutes=ESTIMATED_MINUTES,
+        resume_point=None,
+        last_failure=None,
+        is_custom=False,
+    )
 
 
 @pytest.fixture

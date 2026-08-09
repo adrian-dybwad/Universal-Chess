@@ -215,6 +215,23 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
     name, and asks whether it is a system package instead, which is what the
     "System" badge and the absent Uninstall button actually depend on.
 
+- **Board and web show the same engine list**: Each surface used to build its own
+  list from the shared catalog, so every rule about how the list is presented was
+  written twice and only some rules got written twice. They now render one
+  view-model, the way both already render one menu catalog.
+  - The board groups engines by strength and lists the strongest first, instead
+    of sorting installed-first and then alphabetically. The order no longer
+    depends on what happens to be installed, so two boards show the same catalog
+    the same way.
+  - An engine this device cannot build is greyed out on the board with the reason,
+    rather than offering an Install that is refused the moment it is pressed.
+  - Engines added by the operator now appear on the board, under their own
+    heading. Previously an engine uploaded from a phone was invisible on the
+    device it was uploaded for.
+  - An installed engine missing its companion weights says "Needs repair" in the
+    list, and a stopped install shows how far it got, so neither has to be
+    discovered by opening the engine.
+
 - **Project Structure**: Complete reorganization
   - Source code moved to `src/universalchess/`
   - Build scripts moved to `scripts/`

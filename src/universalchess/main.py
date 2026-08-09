@@ -4626,8 +4626,8 @@ def _run_engine_manager_menu():
         menu_manager=_menu_manager,
         board=board,
         log=log,
-        handle_detail_menu=lambda engine_info: handle_engine_detail_menu(
-            engine_info=engine_info,
+        handle_detail_menu=lambda engine: handle_engine_detail_menu(
+            engine=engine,
             menu_manager=_menu_manager,
             board=board,
             log=log,

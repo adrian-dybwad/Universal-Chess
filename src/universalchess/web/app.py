@@ -4947,6 +4947,59 @@ def _failure_payload(engine_name):
     }
 
 
+def _custom_engine_binary_present(custom):
+    """Whether an operator-added engine's binary is present and executable.
+
+    Resolved under the engines dir through the containment guard so a path built
+    from the registry-stored id cannot escape it. Lives here rather than in the
+    shared view because that resolution is this process's concern: the view is
+    given the answer, not the directory.
+    """
+    binary = safe_under_base(_ENGINES_DIR, custom.id)
+    return binary is not None and os.path.exists(binary) and os.access(binary, os.X_OK)
+
+
+def _custom_engine_payload(row):
+    """Serialize a custom engine row, adding the fields only the web renders.
+
+    Custom engines expose no ref picker: they have no catalog entry and no repo
+    to track. They carry no documentation link either -- ``custom.url``, when
+    there is one, is where the binary was downloaded from rather than a page
+    describing the engine, and it is already in the description.
+    """
+    return {
+        "name": row.name,
+        "display_name": row.display_name,
+        "summary": row.summary,
+        "description": row.description,
+        "info_url": "",
+        "installed": row.installed,
+        # Custom engines declare no companion nets, so they are never a repair
+        # candidate; the fields keep the shape identical to catalog rows.
+        "needs_repair": row.needs_repair,
+        "can_repair": False,
+        "missing_net_count": 0,
+        "is_system_package": row.is_system_package,
+        "tier": row.tier,
+        "can_uninstall": row.can_uninstall,
+        "estimated_install_minutes": row.estimated_install_minutes,
+        "has_prebuilt": False,
+        # Custom engines are probed for their schema just like catalog engines,
+        # so they are editable whenever their binary is present.
+        "has_profiles": row.installed,
+        "profiles_ready": row.installed and uci_schema.has_seeded_profiles(
+            row.name, config_path=_config_uci_path(row.name),
+        ),
+        "last_failure": row.last_failure,
+        "supported": row.supported,
+        "unsupported_reason": row.unsupported_reason,
+        "source_installable": False,
+        "recommended_ref": None,
+        "installed_ref": None,
+        "is_custom": True,
+    }
+
+
 def _config_uci_path(engine_name):
     """Resolve the writable config ``.uci`` path for an engine.
 
@@ -5316,58 +5369,52 @@ def api_get_all_engines():
     """Get full details of all engines for management UI."""
     try:
         from universalchess.managers.engine_manager import (
-            EngineManager, arch_unsupported_reason, get_current_arch,
-            canonical_ref, catalog_engines_by_strength, documentation_url,
-            host_has_neon,
+            EngineManager, ENGINES, get_current_arch, canonical_ref,
+            documentation_url, host_has_neon,
         )
+        from universalchess.services.engine_catalog_view import build_engine_rows
 
         engine_manager = EngineManager()
-        # Resolve once: the device architecture is constant for this process, and
-        # it determines which engines can be installed here. NEON is read
-        # separately because one architecture token spans CPUs that have it and
-        # CPUs that do not.
-        arch = get_current_arch()
-        has_neon = host_has_neon()
-        # One directory scan for every paused install, rather than a lookup per
-        # catalog engine: this endpoint renders the whole catalog at once.
-        resume_points = _engine_resume_store.list_all()
+        # Which engines there are, in what order, in which group, whether this
+        # device can install them and what is wrong with them are decided by the
+        # shared view so the board renders the same list from the same rules.
+        # Everything added below is web-only: it costs a disk read or a lookup
+        # per engine that an e-paper menu should not pay for.
+        rows = build_engine_rows(
+            engine_manager=engine_manager,
+            # The device architecture is constant for this process and decides
+            # what can be installed here. NEON is read separately because one
+            # architecture token spans CPUs that have it and CPUs that do not.
+            arch=get_current_arch(),
+            has_neon=host_has_neon(),
+            resume_store=_engine_resume_store,
+            custom_store=_custom_engine_store,
+            failure_payload=_failure_payload,
+            custom_binary_installed=_custom_engine_binary_present,
+        )
         engines_list = []
 
-        # Strongest first, decided with the tier and for the same reason: the
-        # order answers part of what the list is read for, so leaving it to the
-        # client would be a second copy of the rule.
-        for name, engine_def in catalog_engines_by_strength():
-            # "Installed" for the management list means present enough to show as
-            # installed rather than offer a fresh Install: a system package is
-            # always present; any other engine counts once its binary exists. A
-            # net-backed engine whose nets are missing (a Maia whose weight
-            # download failed) is still "installed" here -- it surfaces a Repair
-            # action, not Install -- but it is NOT usable/available for play.
-            binary_present = engine_manager.is_installed(name)
-            installed = engine_def.is_system_package or binary_present
-            needs_repair = engine_manager.needs_repair(name)
-            can_repair = engine_manager.can_repair(name)
-            missing_net_count = len(engine_manager.missing_nets(name))
-            unsupported_reason = arch_unsupported_reason(
-                engine_def, arch, has_neon=has_neon
-            )
+        for row in rows:
+            if row.is_custom:
+                engines_list.append(_custom_engine_payload(row))
+                continue
+
+            name = row.name
+            engine_def = ENGINES[name]
             # Source-built engines support the ref picker; system packages and
             # bundled engines (no repo_url) do not. Reported here so the list view
             # can decide whether to fetch/show the picker without a per-engine
             # network round-trip (tags come from the dedicated /refs endpoint).
             source_installable = not engine_def.is_system_package and engine_def.repo_url is not None
-            # A stopped or restart-killed install whose build tree is still on
-            # disk. Travels with the engine rather than in the install-status poll
-            # because that poll describes one install and several can be paused at
-            # once; keying the card's Resume/Discard off the poll is what limited
-            # the page to a single recoverable install.
-            resume_point = resume_points.get(name)
+            installed = row.installed
+            needs_repair = row.needs_repair
+            resume_point = row.resume_point
             engines_list.append({
                 "name": name,
                 "resume_point": None if resume_point is None else asdict(resume_point),
-                "display_name": engine_def.display_name,
-                "summary": engine_def.summary,
-                "description": engine_def.description,
+                "display_name": row.display_name,
+                "summary": row.summary,
+                "description": row.description,
                 # Page describing the engine, for the card's "learn more" link;
                 # empty when the engine has none (the bundled novelty engines,
                 # which exist only inside this project). Resolved here so the
@@ -5379,22 +5426,22 @@ def api_get_all_engines():
                 # repair" badge; `can_repair` is True only when an in-place repair
                 # procedure exists. False for every ordinary engine.
                 "needs_repair": needs_repair,
-                "can_repair": can_repair,
+                "can_repair": engine_manager.can_repair(name),
                 # How many expected companion nets are still missing. 0 for a
                 # complete or non-net engine. Drives the quiet "download N missing
                 # weights" top-up label for a usable-but-incomplete engine (one
                 # that can_repair yet does NOT need_repair).
-                "missing_net_count": missing_net_count,
-                "is_system_package": engine_def.is_system_package,
+                "missing_net_count": len(engine_manager.missing_nets(name)),
+                "is_system_package": row.is_system_package,
                 # Which group the list presents this engine in, derived from its
                 # rating server-side. Sent rather than worked out in the client:
                 # the client used to group by hardcoded engine-name arrays, and
                 # anything missing from them fell through to "specialty" -- which
                 # is how the catalog's strongest engine came to be listed among
                 # the novelty ones.
-                "tier": engine_def.tier,
-                "can_uninstall": engine_def.can_uninstall,
-                "estimated_install_minutes": engine_def.estimated_install_minutes,
+                "tier": row.tier,
+                "can_uninstall": row.can_uninstall,
+                "estimated_install_minutes": row.estimated_install_minutes,
                 "has_prebuilt": engine_def.has_prebuilt,
                 # Every installed engine is editable now: its option schema is
                 # discovered by probing the binary, not gated by a curated list.
@@ -5414,11 +5461,11 @@ def api_get_all_engines():
                 ),
                 # The last install/initialize failure, or None. Fixed tokens only
                 # (see _failure_payload).
-                "last_failure": _failure_payload(name),
+                "last_failure": row.last_failure,
                 # Architecture support for THIS device. `supported` drives the UI's
                 # install button state; `unsupported_reason` explains why when False.
-                "supported": unsupported_reason is None,
-                "unsupported_reason": unsupported_reason,
+                "supported": row.supported,
+                "unsupported_reason": row.unsupported_reason,
                 # Ref tracking (local-only, no network): whether the engine supports
                 # the picker, the canonical/recommended ref, and the ref currently
                 # installed (None if unknown/not installed). The selectable tag list
@@ -5427,59 +5474,6 @@ def api_get_all_engines():
                 "recommended_ref": canonical_ref(engine_def) if source_installable else None,
                 "installed_ref": engine_manager.get_installed_ref(name) if source_installable else None,
                 "is_custom": False,
-            })
-
-        # Operator-added engines are appended after the catalog. They are
-        # "installed" when their binary exists and is executable; their source
-        # (upload vs url) drives the description. They expose no ref picker or
-        # profiles and are always uninstallable.
-        for custom in _custom_engine_store.list():
-            # Resolve under the engines dir via the containment guard so the
-            # path built from the (registry-stored) id cannot escape it.
-            binary = safe_under_base(_ENGINES_DIR, custom.id)
-            installed = binary is not None and os.path.exists(binary) and os.access(binary, os.X_OK)
-            description = (
-                "Uploaded engine binary."
-                if custom.source == "upload"
-                else f"Installed from {custom.url}"
-            )
-            engines_list.append({
-                "name": custom.id,
-                "display_name": custom.display_name,
-                "summary": "Custom engine",
-                "description": description,
-                # No documentation link: an operator-added engine has no catalog
-                # entry, and ``custom.url`` (when present) is where the binary was
-                # downloaded from -- not a page describing the engine. It is already
-                # shown in the description above.
-                "info_url": "",
-                "installed": installed,
-                # Custom engines declare no companion nets, so they are never a
-                # repair candidate; keep the field shape identical to catalog rows.
-                "needs_repair": False,
-                "can_repair": False,
-                "missing_net_count": 0,
-                "is_system_package": False,
-                # An operator-added engine carries no rating, and the UI lists
-                # custom engines in their own panel rather than in a tier. The
-                # field is still sent so every row has the same shape.
-                "tier": "specialty",
-                "can_uninstall": True,
-                "estimated_install_minutes": 0,
-                "has_prebuilt": False,
-                # Custom engines are probed for their schema just like catalog
-                # engines, so they are editable whenever their binary is present.
-                "has_profiles": installed,
-                "profiles_ready": installed and uci_schema.has_seeded_profiles(
-                    custom.id, config_path=_config_uci_path(custom.id),
-                ),
-                "last_failure": _failure_payload(custom.id),
-                "supported": True,
-                "unsupported_reason": None,
-                "source_installable": False,
-                "recommended_ref": None,
-                "installed_ref": None,
-                "is_custom": True,
             })
 
         return jsonify(engines_list)

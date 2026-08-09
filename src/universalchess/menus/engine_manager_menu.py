@@ -19,9 +19,10 @@ Discard is offered once an install has stopped, and only then: deleting a tree a
 compiler still holds open races the build instead of reclaiming finished work.
 """
 
+import os
 import time
 from concurrent.futures import TimeoutError as RenderTimeoutError
-from typing import Callable, Optional, List, Dict
+from typing import Any, Callable, Optional, List, Dict
 
 from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.epaper import SplashScreen
@@ -46,6 +47,159 @@ _SPLASH_RENDER_TIMEOUT_SECONDS = 2.0
 # Resume points for paused installs, read by the engine detail screen. Bound to
 # the real engine build directory; injectable so tests stay out of /opt.
 _RESUME_STORE = None
+
+# Heading shown above each strength group. The panel has no colour or badges to
+# carry a grouping, so the group is stated in a row of its own; without it a
+# 1900-rated novelty engine reads as a peer of the strongest engine in the
+# catalog. Keyed by the tier the shared view assigns.
+TIER_HEADINGS = {
+    "top": "Top Tier",
+    "strong": "Strong",
+    "specialty": "Specialty",
+}
+
+# Operator-added engines get their own heading rather than joining a strength
+# band: they carry no rating, so no band describes them.
+CUSTOM_HEADING = "Custom"
+
+# Teaser length for the description shown under a row.
+_TEASER_CHARS = 60
+
+
+def board_engine_rows() -> List[Any]:
+    """Read this device's engine list through the shared view.
+
+    Imports are deferred for the reason the resume store is: pulling the install
+    stack in at module import time would load it into every menu import.
+
+    The board shows the failure reason code as recorded. The web redacts it,
+    because that endpoint is reachable unauthenticated and the underlying text
+    carries absolute paths; a user standing at the board is already looking at
+    the device the path describes.
+    """
+    from universalchess.managers.engine_manager import (
+        get_current_arch,
+        get_engine_manager,
+        host_has_neon,
+    )
+    from universalchess.services.custom_engine_registry import CUSTOM_ENGINE_STORE
+    from universalchess.services.engine_catalog_view import build_engine_rows
+    from universalchess.services.engine_failure_record import STORE as FAILURE_STORE
+
+    def failure_payload(engine_name):
+        failure = FAILURE_STORE.get(engine_name)
+        if failure is None:
+            return None
+        return {"reason_code": failure.reason_code, "dismissed": failure.dismissed}
+
+    def custom_binary_installed(custom):
+        from universalchess.managers.engine_manager import ENGINES_DIR
+        from universalchess.utils.safe_path import safe_under_base
+
+        binary = safe_under_base(ENGINES_DIR, custom.id)
+        return binary is not None and os.path.exists(binary) and os.access(binary, os.X_OK)
+
+    return build_engine_rows(
+        engine_manager=get_engine_manager(),
+        arch=get_current_arch(),
+        has_neon=host_has_neon(),
+        resume_store=_resume_store(),
+        custom_store=CUSTOM_ENGINE_STORE,
+        failure_payload=failure_payload,
+        custom_binary_installed=custom_binary_installed,
+    )
+
+
+def build_engine_list_entries(rows) -> List[IconMenuEntry]:
+    """Render the shared engine rows as board menu entries.
+
+    Order and grouping are not decided here -- the rows arrive in the order both
+    surfaces present them, and each states its own group. This function only
+    turns a row into what appears on the panel, so the board and the web cannot
+    disagree about which engines exist or how they rank.
+
+    A heading is emitted whenever the group changes rather than once per tier, so
+    a group with nothing in it produces no heading at all.
+
+    Args:
+        rows: Engine rows from :mod:`engine_catalog_view`, already ordered.
+
+    Returns:
+        Heading and engine entries, ready for the menu loop.
+    """
+    entries: List[IconMenuEntry] = []
+    current_group = None
+
+    for row in rows:
+        group = CUSTOM_HEADING if row.is_custom else TIER_HEADINGS[row.tier]
+        if group != current_group:
+            current_group = group
+            entries.append(
+                IconMenuEntry(
+                    key=f"heading:{group}",
+                    label=group,
+                    icon_name="engine",
+                    enabled=True,
+                    selectable=False,
+                    height_ratio=0.8,
+                    layout="horizontal",
+                    font_size=12,
+                    bold=True,
+                )
+            )
+        entries.append(_engine_entry(row))
+
+    return entries
+
+
+def _engine_entry(row) -> IconMenuEntry:
+    """Render one engine row.
+
+    An engine this device cannot build is shown disabled rather than hidden, so
+    the catalog reads the same everywhere and the reason is answerable. It was
+    previously offered as a normal Install row; the install is refused up front,
+    so pressing it destroyed nothing, but the refusal was the only way to find
+    out.
+    """
+    description = row.description or ""
+    teaser = description[:_TEASER_CHARS] + "..." if len(description) > _TEASER_CHARS else description
+
+    return IconMenuEntry(
+        key=row.name,
+        label=f"{row.display_name}{_status_suffix(row)}\n{_status_line(row)}",
+        icon_name="checkbox_checked" if row.installed else "checkbox_empty",
+        enabled=row.supported,
+        selectable=True,
+        height_ratio=2.0,
+        layout="horizontal",
+        font_size=11,
+        description=teaser,
+        description_font_size=10,
+    )
+
+
+def _status_suffix(row) -> str:
+    """Build time, shown only when there is a build left to do."""
+    if row.installed or not row.supported:
+        return ""
+    return f" (~{row.estimated_install_minutes}m)"
+
+
+def _status_line(row) -> str:
+    """The second line: whatever the user most needs to know about this engine.
+
+    Ordered by how much it changes what they would do. A row this device cannot
+    build says so first, since nothing else about it is actionable. A broken
+    install outranks a paused one because it affects an engine already in use.
+    Otherwise the engine's own summary, which is what the line normally carries.
+    """
+    if not row.supported:
+        return row.unsupported_reason or "Not supported on this device"
+    if row.needs_repair:
+        return "Needs repair"
+    if row.resume_point is not None:
+        return f"Paused at {row.resume_point.percent}%"
+    return row.summary or ""
 
 
 def _wait_for_splash(promise, log, what: str) -> None:
@@ -361,7 +515,7 @@ def confirm_discard_install(menu_manager, display_name: str = "") -> bool:
 
 
 def handle_engine_detail_menu(
-    engine_info: dict,
+    engine,
     menu_manager,
     board,
     log,
@@ -378,7 +532,8 @@ def handle_engine_detail_menu(
     way back to its progress screen.
 
     Args:
-        engine_info: Dict with engine info from get_engine_list()
+        engine: The engine's row from the shared catalog view -- the same value
+            the list screen rendered, so the two cannot describe it differently.
         menu_manager: Menu manager instance
         board: Board module
         log: Logger instance
@@ -395,8 +550,8 @@ def handle_engine_detail_menu(
     from universalchess.managers.engine_manager import get_engine_manager
 
     engine_manager = get_engine_manager()
-    engine_name = engine_info["name"]
-    display_name = engine_info["display_name"]
+    engine_name = engine.name
+    display_name = engine.display_name
     resume_store = resume_store if resume_store is not None else _resume_store()
     control = control if control is not None else get_install_control()
     read_status = read_status if read_status is not None else read_install_status
@@ -418,8 +573,12 @@ def handle_engine_detail_menu(
 
     def build_entries():
         entries = []
-        is_installed = engine_manager.is_installed(engine_name)
-        can_uninstall = engine_info.get("can_uninstall", True)
+        # Re-read rather than trust the row: the row was built when the list was
+        # drawn, and installing or uninstalling from this very screen changes the
+        # answer before it is redrawn. A system package is installed by
+        # definition, matching the rule the shared view applies.
+        is_installed = engine.is_system_package or engine_manager.is_installed(engine_name)
+        can_uninstall = engine.can_uninstall
         installing = not is_installed and is_installing_this_engine()
         # Read on every rebuild: resuming or discarding changes it, and the screen
         # is redrawn after each.
@@ -428,7 +587,7 @@ def handle_engine_detail_menu(
         entries.append(
             IconMenuEntry(
                 key="title",
-                label=f"{engine_info['display_name']}\n{engine_info['summary']}",
+                label=f"{engine.display_name}\n{engine.summary}",
                 icon_name="engine",
                 enabled=True,
                 selectable=False,
@@ -436,12 +595,12 @@ def handle_engine_detail_menu(
                 layout="horizontal",
                 font_size=14,
                 bold=True,
-                description=engine_info["description"],
+                description=engine.description,
                 description_font_size=11,
             )
         )
 
-        est_minutes = engine_info.get("estimated_install_minutes", 5)
+        est_minutes = engine.estimated_install_minutes
 
         if is_installed:
             if can_uninstall:
@@ -533,7 +692,7 @@ def handle_engine_detail_menu(
         return entries
 
     def handle_selection(result: MenuSelection):
-        est_minutes = engine_info.get("estimated_install_minutes", 5)
+        est_minutes = engine.estimated_install_minutes
 
         if result.key == "install":
             show_install_progress(
@@ -607,71 +766,40 @@ def handle_engine_manager_menu(
     menu_manager,
     board,
     log,
-    handle_detail_menu: Callable[[dict], Optional[MenuSelection]],
+    handle_detail_menu: Callable[[Any], Optional[MenuSelection]],
+    read_rows: Optional[Callable[[], List[Any]]] = None,
 ) -> Optional[MenuSelection]:
-    """Handle engine manager submenu.
+    """Show the engine list and open whichever engine is chosen.
 
-    Shows list of available engines with installation status and summary.
+    The list is the one the web renders: same engines, same order, same strength
+    groups, same view of what this device can install. Only the drawing differs.
 
     Args:
         menu_manager: Menu manager instance
         board: Board module
         log: Logger instance
         handle_detail_menu: Callback to handle engine detail menu
+        read_rows: Source of the shared engine rows; defaults to reading this
+            device's real state. Injectable so the screen can be tested without
+            an engines directory.
 
     Returns:
         MenuSelection if break, None otherwise
     """
-    from universalchess.managers.engine_manager import get_engine_manager
-
-    engine_manager = get_engine_manager()
+    read_rows = read_rows if read_rows is not None else board_engine_rows
 
     def build_entries():
-        entries = []
-        engines = engine_manager.get_engine_list()
-        engines_sorted = sorted(engines, key=lambda e: (not e["installed"], e["display_name"]))
-
-        for engine in engines_sorted:
-            installed = engine["installed"]
-            icon = "checkbox_checked" if installed else "checkbox_empty"
-            est_minutes = engine.get("estimated_install_minutes", 5)
-            summary = engine.get("summary", "")
-            description = engine.get("description", "")
-            
-            # Create a short teaser from the full description (first ~60 chars)
-            teaser = description[:60] + "..." if len(description) > 60 else description
-
-            # Label: name (+ install time) on first line, summary on second line
-            if installed:
-                label = f"{engine['display_name']}\n{summary}"
-            else:
-                label = f"{engine['display_name']} (~{est_minutes}m)\n{summary}"
-
-            entries.append(
-                IconMenuEntry(
-                    key=engine["name"],
-                    label=label,
-                    icon_name=icon,
-                    enabled=True,
-                    selectable=True,
-                    height_ratio=2.0,
-                    layout="horizontal",
-                    font_size=11,
-                    description=teaser,
-                    description_font_size=10,
-                )
-            )
-
-        return entries
+        return build_engine_list_entries(read_rows())
 
     def handle_selection(result: MenuSelection):
-        engine_name = result.key
-        engines = engine_manager.get_engine_list()
-        engine_info = next((e for e in engines if e["name"] == engine_name), None)
-        if not engine_info:
+        # Re-read rather than close over the rows the screen was drawn from: an
+        # install running in the web process can finish while this list is open,
+        # and the detail screen must open on what is true now.
+        engine = next((r for r in read_rows() if r.name == result.key), None)
+        if engine is None:
             return None
 
-        sub_result = handle_detail_menu(engine_info)
+        sub_result = handle_detail_menu(engine)
         if is_break_result(sub_result):
             return sub_result
 
