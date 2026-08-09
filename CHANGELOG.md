@@ -159,6 +159,45 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   - The change applies to a game in progress, from either surface, without a
     restart: a warning already on screen comes down at the next display refresh.
 
+- **Move times in exported games**: An exported game carried the moves and
+  nothing about the time they took, so a game reviewed later gave no sign of
+  where the player burned their clock. Each move now carries the time it took,
+  timed games also carry the mover's remaining time, and the game carries a
+  standard time-control tag. The 1994 PGN standard has no per-move timing; the
+  Proposed Supplement adds it by embedding commands in ordinary comments, which
+  is what every other producer of move times emits, so the file stays readable
+  by anything that reads PGN.
+  - Times are reported to a tenth of a second. They are measured to the
+    millisecond, and rounding to whole seconds discarded up to half a second
+    from every move -- an error that accumulates the moment anything sums the
+    moves, and one that collapsed a 4.4 second reply and a 4.6 second one onto
+    figures with nothing to tell them apart. Remaining time stays at whole
+    seconds, because the clock holds no finer reading to report.
+  - Timing is taken from a monotonic timer at the instant a move is confirmed,
+    not from the database row's timestamp and not from the wall clock. The row is
+    written by a background worker an unbounded time later, so differencing those
+    would charge the player for the queue; and the board's wall clock is stepped
+    by network time shortly after boot, by an amount that lands squarely in the
+    range of a real think time, so a wall-clock difference would report the
+    correction as deliberation.
+  - A takeback drops the retracted move's time and re-anchors, so a player who
+    thinks for a minute, takes the move back and replays instantly is not charged
+    the whole minute against the replayed move.
+  - An engine's move is timed from when the engine starts thinking to when the
+    player finishes transcribing it onto the physical board, because the player
+    is occupied for that whole span and consecutive times have to sum to the
+    length of the game. One consequence is worth knowing: an engine move's
+    elapsed time does not reconcile against the remaining-time deltas, which stop
+    the engine's clock when it displays its move.
+  - An untimed game gets elapsed times only. Its clock reads zero for both sides,
+    so reporting remaining time there would export a casual game as though both
+    players had flagged on every move.
+  - A time-odds control has no representation in the standard tag, which is read
+    as applying to both players. The standard tag is written as "unknown" and the
+    two sides are reported separately, so nothing false is claimed and nothing is
+    lost. Writing the odds into the standard tag would either be rejected by a
+    conforming parser or understate one side's budget.
+
 ### Changed
 
 - **Project Structure**: Complete reorganization
@@ -200,6 +239,19 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   drifted. The board's screen was never affected -- it reads the clock directly
   and does no interpolation.
 
+- Every load of the Settings page made the board fork a process and make a DBus
+  round trip, just to report whether network time is switched on, and the board
+  repeated it on every rebuild of its System menu. The endpoint that does this
+  needs no authentication, so any client on the network could ask a Pi Zero to
+  fork at will. Those flags change rarely, and almost always because the board
+  itself changed them, so the reading is now held for five seconds and the
+  repeated reads collapse to one. The clock reading itself is still taken live on
+  every call -- it is the number the Device Clock card displays and the basis of
+  the drift it reports, so holding it would show the same instant twice and
+  understate the drift. Changing network time or setting the clock drops the held
+  reading immediately, whether the change succeeded or not, since a failure can
+  still have altered the state.
+
 - The board showed nothing for the first two minutes after power-on, most of it
   spent waiting for something it does not use. The service was ordered after the
   network, which is only considered up once NetworkManager reports ready -- and
@@ -231,6 +283,24 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   fallback is kept in both directions and needs no configuration, so swapping
   the panel -- or restoring a configuration taken from a different board --
   corrects itself on the next startup instead of leaving the screen blank.
+
+- The screen went blank between the boot splash and the main menu, and again on
+  entering a game, which looked like a fault rather than a transition. Every
+  screen change clears the old contents and adds the new, but clearing also drew
+  the status bar, so the transition sent the panel two images: one holding nothing
+  but the 16-pixel status bar, then the real screen. Building the next screen
+  takes long enough that the empty one was usually drawn first. Clearing now only
+  discards the old contents without drawing, so a transition paints one image that
+  already has the new screen in it.
+
+- A game exported to PGN could not be replayed from the position it declared.
+  Chess960 games and games started with "play from here" were exported from the
+  standard opening regardless of the position they actually began from, because
+  the exporter never read the stored start position or the variant. Adding moves
+  to a game does not validate them, so the result was a well-formed file holding
+  an impossible game. The board is now set up from the stored position and
+  variant, and a move that is illegal in its position ends the export there
+  rather than extending a corrupted game.
 
 - `deploy-to-pi.sh` could report a completed deploy having transferred nothing.
   The install tree is deliberately root-owned (see Security), the transfer ran
