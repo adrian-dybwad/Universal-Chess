@@ -223,8 +223,19 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   in one place and a change moves both surfaces together.
   - Agents moves on the board to sit after Engines, matching where the web had
     it, since the web's order was the one being kept.
-  - Positions moves up beside Game. It is a board Settings entry that the web
-    renders as its own page, so no tab order governed where it sat.
+
+- **Positions is a main-menu entry on the board**: Choosing a position starts a
+  game from it, but the board listed it among the device settings while the web
+  has always given it a page of its own, reached from the main navigation. The
+  board now lists Positions in its main menu, between PLAY and Original Centaur,
+  and Settings no longer offers it. Every Settings entry that remains backs a web
+  tab.
+  - Positions, Original Centaur and Settings are now the same height below PLAY,
+    which stays the largest row on the screen. The main menu allocates height by
+    weight, so Settings gave up its extra height to pay for the new row and all
+    four still fit without scrolling.
+  - Leaving a position game reopens the Positions list as before; backing out of
+    that list now returns to the main menu rather than into Settings.
 
 - **Board and web show the same engine list**: Each surface used to build its own
   list from the shared catalog, so every rule about how the list is presented was
@@ -266,6 +277,14 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 - **Obsolete Tests**: Removed outdated promotion hardware tests
 
 ### Fixed
+
+- Leaving a position game dropped the user at the category list rather than at
+  the position that had just been played. The Positions menu records the chosen
+  category and position through a list the caller supplies, and both callers built
+  that list fresh on every call, so the record was written into a value that was
+  immediately discarded and the return path found nothing to return to. The board
+  keeps one record for the life of the process, so the list reopens on the
+  position played, and both entry points share it.
 
 - Settings → Connectivity → Accounts showed "No accounts yet" to anyone who was
   not signed in, even when accounts were already saved on the board. The list

@@ -86,7 +86,7 @@ def test_build_menu_entries_order_and_keys():
     entries = build_menu_entries("settings")
     keys = [e.key for e in entries]
     assert keys == [
-        "Players", "Game", "Positions", "Display", "Sound",
+        "Players", "Game", "Display", "Sound",
         "Connectivity", "Engines", "Agents", "System",
     ]
 
@@ -100,7 +100,7 @@ def test_build_menu_entries_skip_keys_hides_entry():
     """
     entries = build_menu_entries("main", skip_keys={"Centaur"})
     keys = [e.key for e in entries]
-    assert keys == ["Universal", "Settings"]
+    assert keys == ["Universal", "Positions", "Settings"]
 
 
 def test_help_for_key_returns_catalog_help():
@@ -109,8 +109,8 @@ def test_help_for_key_returns_catalog_help():
     The board help dialog shows this text. A wrong/empty return would show no
     help for the entry. Checks a known entry's help string.
     """
-    assert help_for_key("settings", "Positions") == (
+    assert help_for_key("main", "Positions") == (
         "Set up a predefined position on the board to practice or analyze."
     )
     # Unknown key yields None rather than raising, so the dialog can fall back.
-    assert help_for_key("settings", "Nonexistent") is None
+    assert help_for_key("main", "Nonexistent") is None

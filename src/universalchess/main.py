@@ -660,9 +660,14 @@ _pending_display_profile = None
 # (PLAY) returns the full menu to that exact submenu position. None means "no
 # captured position"; it is cleared when a game truly ends (see _return_to_menu).
 _suspended_menu_restore_path = None
-_last_position_category_index = 0  # Remember last selected category in positions menu
-_last_position_index = 0  # Remember last selected position in positions menu
-_last_position_category = None  # Remember last selected category name for direct return
+# Cursor memory for the Positions menu. The menu writes the category and position
+# the user chose back through these lists, so they are held here for the life of
+# the process rather than rebuilt per call: a list rebuilt at the call site would
+# discard the write, leaving "return to the position just played" with nothing to
+# return to and sending the user back to the category list instead.
+_positions_category_index_ref: List[int] = [0]
+_positions_index_ref: List[int] = [0]
+_positions_category_ref: List[Optional[str]] = [None]
 
 # Keyboard state (for WiFi password entry etc.)
 _active_keyboard_widget = None
@@ -2567,7 +2572,7 @@ def _start_game_mode(
         log.info("[App] Position game back pressed - signaling return to positions menu")
         _cleanup_game()
         _return_to_positions_menu = True
-        app_state = AppState.SETTINGS
+        app_state = AppState.MENU
 
     def _on_takeback():
         """Handle takeback - remove last analysis score and stale coach cache.
@@ -2984,10 +2989,12 @@ def _return_to_menu(reason: str):
     _suspended_menu_restore_path = None
     
     if was_position_game:
-        # Return to positions menu, not main menu
+        # Reopen the Positions menu at the position just played rather than the
+        # bare main menu. Positions is a main-menu entry, so this is a MENU view:
+        # a restart here restores the main menu, not Settings.
         _return_to_positions_menu = True
-        app_state = AppState.SETTINGS
-        _record_session_view(VIEW_SETTINGS, game_db_id=0)
+        app_state = AppState.MENU
+        _record_session_view(VIEW_MENU, game_db_id=0)
     else:
         app_state = AppState.MENU
         # The game is fully torn down (not suspended), so clear the current-game
@@ -3371,9 +3378,8 @@ def _process_pending_board_command() -> None:
 # the navigation path) back to the Settings list entry key that reopens it, so
 # full-depth restore can re-enter the correct branch and let the engine auto-
 # descend the rest of the saved chain. The engine-backed handlers record their
-# catalog container id (e.g. "connectivity"); Positions is imperative and records
-# under its own display name. A token already equal to an entry key (or absent
-# from this map) is returned unchanged.
+# catalog container id (e.g. "connectivity"). A token already equal to an entry
+# key (or absent from this map) is returned unchanged.
 _SETTINGS_ENTRY_BY_CONTAINER = {
     "settings.players": "Players",
     "settings.display": "Display",
@@ -3382,8 +3388,12 @@ _SETTINGS_ENTRY_BY_CONTAINER = {
     "settings.agents": "Agents",
     "connectivity": "Connectivity",
     "system": "System",
-    "Positions": "Positions",
 }
+
+# The level-0 navigation token the Positions menu records. Positions is
+# imperative rather than engine-backed, so it saves its own display name where
+# the catalog-driven menus save a container id.
+POSITIONS_MENU_TOKEN = "Positions"  # noqa: S105  # nosec B105 - a menu path segment, not a credential
 
 
 def _settings_entry_for_token(token: Optional[str]) -> Optional[str]:
@@ -3391,6 +3401,54 @@ def _settings_entry_for_token(token: Optional[str]) -> Optional[str]:
     if token is None:
         return None
     return _SETTINGS_ENTRY_BY_CONTAINER.get(token, token)
+
+
+def _handle_positions_menu(*, return_to_last_position: bool = False) -> None:
+    """Open the Positions menu and act on what the user chose there.
+
+    Positions is a main-menu entry, a peer of PLAY, because choosing a position
+    starts a game from it. Its list is built from positions.ini rather than from
+    the catalog, so it records its own navigation token (POSITIONS_MENU_TOKEN)
+    where the catalog-driven menus record a container id.
+
+    The main-menu row, the startup restore, and the return after a position game
+    ends all come through here so the three react identically: a board event or
+    PLAY enters the game, a started position game leaves no menu path behind, and
+    backing out returns to the main menu.
+
+    Args:
+        return_to_last_position: Skip the category list and reopen the position
+            the last position game was started from. Used when that game ends, so
+            leaving the board lands where the position was chosen.
+    """
+    ctx = _get_menu_context()
+    ctx.enter_menu(POSITIONS_MENU_TOKEN, 0)
+    try:
+        result = handle_positions_menu(
+            load_positions_config=lambda: load_positions_config(log),
+            start_from_position=_start_from_position,
+            show_menu=_show_menu,
+            find_entry_index=find_entry_index,
+            board=board,
+            log=log,
+            last_position_category_index_ref=_positions_category_index_ref,
+            last_position_index_ref=_positions_index_ref,
+            last_position_category_ref=_positions_category_ref,
+            return_to_last_position=return_to_last_position,
+            is_game_in_progress=_has_suspended_game,
+            abort_game=_abort_current_game,
+        )
+    finally:
+        ctx.leave_menu()
+
+    if is_break_result(result):
+        # A client connected or a piece moved while the menu was open.
+        ctx.clear()
+        _enter_game()
+    elif result:
+        # A position game was started: _start_from_position has already switched
+        # to GAME, so drop the menu path the game is now playing out of.
+        ctx.clear()
 
 
 def _handle_settings(initial_selection: str = None):
@@ -3513,31 +3571,6 @@ def _handle_settings(initial_selection: str = None):
                 ctx.clear()
                 app_state = AppState.MENU
                 return agents_result
-        
-        elif result == "Positions":
-            ctx.enter_menu("Positions", 0)
-            position_result = handle_positions_menu(
-                ctx=ctx,
-                load_positions_config=lambda: load_positions_config(log),
-                start_from_position=_start_from_position,
-                show_menu=_show_menu,
-                find_entry_index=find_entry_index,
-                board=board,
-                log=log,
-                last_position_category_index_ref=[_last_position_category_index],
-                last_position_index_ref=[_last_position_index],
-                last_position_category_ref=[_last_position_category],
-                is_game_in_progress=_has_suspended_game,
-                abort_game=_abort_current_game,
-            )
-            ctx.leave_menu()  # Pop Positions, restore to Settings level
-            if is_break_result(position_result):
-                ctx.clear()
-                app_state = AppState.MENU
-                return position_result
-            if position_result:
-                ctx.clear()
-                return
         
         elif result == "Connectivity":
             connectivity_result = _handle_connectivity_menu()
@@ -7822,6 +7855,7 @@ def main():
     # Set up menu restoration for the main loop.
     restore_to_settings = False
     restore_settings_submenu = None
+    restore_to_positions = False
     if app_state == AppState.MENU and plan.restore_menu_path:
         if plan.suspend_after_resume:
             # A game was resumed then suspended: reopen the exact submenu via the
@@ -7837,6 +7871,11 @@ def main():
                 restore_settings_submenu = _settings_entry_for_token(saved_menu_path[1][0])
             log.info(f"[App] Will restore to Settings menu "
                      f"(submenu={restore_settings_submenu}, full_path={ctx.path_str()})")
+        elif saved_menu_path and saved_menu_path[0][0] == POSITIONS_MENU_TOKEN:
+            # Positions is a main-menu entry, so it is saved at level 0 rather
+            # than under Settings, and reopens from the root loop.
+            restore_to_positions = True
+            log.info(f"[App] Will restore to Positions menu (full_path={ctx.path_str()})")
     
     _startup_completed_at = time.monotonic()
 
@@ -7893,6 +7932,13 @@ def main():
                             _enter_game()
                         continue  # After settings, loop back to check state
 
+                    # Check if we need to reopen the Positions menu (on startup)
+                    if restore_to_positions:
+                        restore_to_positions = False
+                        log.info("[App] Restoring to Positions menu")
+                        _handle_positions_menu()
+                        continue  # Loop back to check state
+
                     # Restore the submenu the user was in when they suspended the
                     # game (PLAY), so the full menu reopens at its last position.
                     # One-shot: consumed here so a normal BACK out of the submenu does
@@ -7915,8 +7961,25 @@ def main():
                             if is_break_result(settings_result):
                                 _enter_game()
                             continue
-                        # A non-Settings (e.g. root) capture has nothing to restore;
-                        # fall through to show the main menu normally.
+                        if resume_path and resume_path[0][0] == POSITIONS_MENU_TOKEN:
+                            # PLAY was pressed inside Positions: reopen it, at the
+                            # position the suspended game was started from.
+                            ctx.restore_from_path(resume_path)
+                            log.info("[App] Restoring suspended menu position (Positions)")
+                            _handle_positions_menu(return_to_last_position=True)
+                            continue
+                        # A capture from elsewhere (e.g. the root) has nothing to
+                        # restore; fall through to show the main menu normally.
+
+                    # A position game has ended (BACK from the board, or the game
+                    # finished): reopen Positions at the position it was played
+                    # from, so leaving lands where the position was chosen instead
+                    # of at the top of the main menu. Backing out of it falls
+                    # through to the main menu on the next iteration.
+                    if _return_to_positions_menu:
+                        _return_to_positions_menu = False
+                        _handle_positions_menu(return_to_last_position=True)
+                        continue
 
                     # Record that the main menu is on screen so a restart comes
                     # back here. Idempotent (only writes on a view change), so it
@@ -7968,6 +8031,9 @@ def main():
                         # decides which, forwards queued piece events, and wires up an
                         # already-connected client.
                         _enter_game()
+
+                    elif result == "Positions":
+                        _handle_positions_menu()
 
                     elif result == "Settings":
                         settings_result = _handle_settings()
@@ -8072,41 +8138,8 @@ def main():
                         time.sleep(0.5)
 
                 elif app_state == AppState.SETTINGS:
-                    # Check if we need to return to positions menu (from position game back)
-                    if _return_to_positions_menu:
-                        _return_to_positions_menu = False
-                        # Return directly to the last selected position in the menu
-                        ctx = _get_menu_context()
-                        position_result = handle_positions_menu(
-                            ctx=ctx,
-                            load_positions_config=lambda: load_positions_config(log),
-                            start_from_position=_start_from_position,
-                            show_menu=_show_menu,
-                            find_entry_index=find_entry_index,
-                            board=board,
-                            log=log,
-                            last_position_category_index_ref=[_last_position_category_index],
-                            last_position_index_ref=[_last_position_index],
-                            last_position_category_ref=[_last_position_category],
-                            return_to_last_position=True,
-                            is_game_in_progress=_has_suspended_game,
-                            abort_game=_abort_current_game,
-                        )
-                        if is_break_result(position_result):
-                            # BLE client connected during positions menu
-                            _start_game_mode()
-                            if protocol_manager:
-                                protocol_manager.on_app_connected()
-                        elif not position_result:
-                            # User backed out of positions menu, show settings
-                            settings_result = _handle_settings()
-                            if is_break_result(settings_result):
-                                _start_game_mode()
-                                if protocol_manager:
-                                    protocol_manager.on_app_connected()
-                    else:
-                        # Settings handled by _handle_settings loop
-                        time.sleep(0.1)
+                    # Settings handled by _handle_settings loop
+                    time.sleep(0.1)
 
             except WebCommandInterrupt:
                 # A web board command (shutdown/reboot/reset/setup/...) was latched

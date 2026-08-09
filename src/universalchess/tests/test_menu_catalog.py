@@ -84,12 +84,12 @@ def test_children_and_targets_resolve_to_nodes():
 def test_board_main_menu_keys_match_renderer_contract():
     """The main menu's board selection keys must stay stable.
 
-    The main loop routes on these exact keys (Universal/Settings/Centaur). If a
-    catalog edit changes a key, board routing silently breaks; this pins them.
+    The main loop routes on these exact keys. If a catalog edit changes a key,
+    board routing silently breaks; this pins them.
     """
     catalog = load_catalog()
     keys = [c["key"] for c in catalog.children("main")]
-    assert keys == ["Universal", "Settings", "Centaur"]
+    assert keys == ["Universal", "Positions", "Centaur", "Settings"]
 
 
 def test_settings_order_matches_board_layout():
@@ -102,13 +102,13 @@ def test_settings_order_matches_board_layout():
     The web used to carry its own ordered list of tabs, which is how Agents came
     to sit third on the board and seventh on the web. Agents now sits after
     Engines on both, because that was the order the web had and the web's order
-    was the one being kept. Positions is a board Settings entry that the web
-    renders as a standalone page, so it appears here but not as a tab.
+    was the one being kept. Every entry here backs a web tab: Positions, which did
+    not, is a main-menu entry on both surfaces.
     """
     catalog = load_catalog()
     keys = [c["key"] for c in catalog.children("settings")]
     assert keys == [
-        "Players", "Game", "Positions", "Display", "Sound",
+        "Players", "Game", "Display", "Sound",
         "Connectivity", "Engines", "Agents", "System",
     ]
 
@@ -193,7 +193,7 @@ def test_web_implemented_submenus_are_enabled_for_web():
     }
 
     assert {
-        "settings.positions",
+        "main.positions",
         "settings.connectivity",
         "connectivity",
         "connectivity.wifi",

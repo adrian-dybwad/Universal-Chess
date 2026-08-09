@@ -148,13 +148,17 @@
       "label_in_progress": "REANUDAR",
       "help": "Inicia una nueva partida. Cuando hay una partida suspendida muestra REANUDAR y la continúa."
     },
-    "main.settings": {
-      "label": "Ajustes",
-      "help": "Configura jugadores, control de tiempo, posiciones, pantalla, conectividad y opciones del sistema."
+    "main.positions": {
+      "label": "Posiciones",
+      "help": "Coloca una posición predefinida en el tablero para practicar o analizar."
     },
     "main.centaur": {
       "label": "Centaur\noriginal",
       "help": "Vuelve al software original de DGT Centaur."
+    },
+    "main.settings": {
+      "label": "Ajustes",
+      "help": "Configura jugadores, control de tiempo, pantalla, conectividad y opciones del sistema."
     },
 
     "settings": { "label": "Ajustes" },
@@ -243,10 +247,6 @@
       "label": "Incremento de las negras",
       "boardLabel": "Inc. negras\n{value}",
       "help": "Segundos añadidos al reloj de las Negras tras cada jugada cuando se usan tiempos distintos por bando."
-    },
-    "settings.positions": {
-      "label": "Posiciones",
-      "help": "Coloca una posición predefinida en el tablero para practicar o analizar."
     },
     "settings.display": {
       "label": "Pantalla",

@@ -24,10 +24,11 @@ import menuSchemaFixture from '../test/fixtures/menuSchema';
 
 const CENTAUR_TAB = 'Original Centaur';
 
-// A settings child with no matching entry in `sections`. It is a board menu
-// entry that the web renders as its own page instead of a tab, so it must not
-// appear in the tab strip even though it is a child of `settings`.
-const BOARD_ONLY_CHILD = 'settings.positions';
+// A settings child with no matching entry in `sections`. A tab needs a section to
+// supply its label and icon, so such a child must be left out of the tab strip.
+// Positions was the shipping example until it became a main-menu entry; the case
+// is now constructed, because the rule outlives any one entry that meets it.
+const SECTIONLESS_CHILD = 'settings.boardOnly';
 
 const idleEngineStatus = {
   active: false, installing: false, engine: null, display_name: null,
@@ -172,18 +173,18 @@ describe('Settings tab order', () => {
     expect(await tabLabels()).toEqual([...catalogTabLabels(catalog), CENTAUR_TAB]);
   });
 
-  it('omits a settings entry the web renders somewhere other than a tab', async () => {
-    // Positions is a board Settings entry but a standalone page on the web, and
-    // it has no `sections` entry to supply a tab label or icon. Failure
-    // manifests as an extra unlabelled tab whose panel renders nothing.
+  it('omits a settings entry with no section to name it', async () => {
+    // A settings child the web has no section for cannot be drawn as a tab: there
+    // is no label and no icon to draw. Failure manifests as an extra unlabelled
+    // tab whose panel renders nothing.
     const catalog = menuSchemaFixture as unknown as CatalogLike;
-    const settings = catalog.nodes.find((n) => n.id === 'settings');
-    expect(settings?.children).toContain(BOARD_ONLY_CHILD);
-    mockFetch(catalog);
+    const withSectionless = withReorderedSettings(catalog, (ids) => [...ids, SECTIONLESS_CHILD]);
+    expect(withSectionless.sections.map((s) => s.id)).not.toContain('boardOnly');
+    mockFetch(withSectionless);
     renderSettings();
 
     const rendered = await tabLabels();
-    expect(rendered).not.toContain('Positions');
+    expect(rendered).toEqual([...catalogTabLabels(catalog), CENTAUR_TAB]);
     expect(rendered.filter((label) => label === '')).toEqual([]);
   });
 

@@ -57,7 +57,6 @@ def _run(results, *, in_progress, started, aborted_calls, started_calls):
         aborted_calls.append(True)
 
     return handle_positions_menu(
-        ctx=None,
         load_positions_config=lambda: POSITIONS,
         start_from_position=start_from_position,
         show_menu=show_menu,

@@ -126,7 +126,6 @@ def _confirm_end_running_game(
 
 
 def handle_positions_menu(
-    ctx,
     load_positions_config: Callable[[], Dict[str, Dict[str, Tuple[str, str]]]],
     start_from_position: Callable[[str, str, Optional[str]], bool],
     show_menu: Callable[[List[IconMenuEntry], int], str],

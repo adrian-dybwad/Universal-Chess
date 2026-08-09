@@ -199,7 +199,7 @@
       "type": "menu",
       "label": "Main Menu",
       "platforms": ["board"],
-      "children": ["main.play", "main.settings", "main.centaur"]
+      "children": ["main.play", "main.positions", "main.centaur", "main.settings"]
     },
     {
       "id": "main.play",
@@ -214,15 +214,14 @@
       "epaper": { "height_ratio": 2.0, "icon_size": 80, "layout": "vertical", "font_size": 32, "bold": true }
     },
     {
-      "id": "main.settings",
-      "key": "Settings",
+      "id": "main.positions",
+      "key": "Positions",
       "type": "submenu",
-      "label": "Settings",
-      "icon": "settings",
-      "help": "Configure players, time control, positions, display, connectivity, and system options.",
-      "target": "settings",
-      "platforms": ["board"],
-      "epaper": { "height_ratio": 1.0, "layout": "horizontal", "font_size": 16 }
+      "label": "Positions",
+      "icon": "positions",
+      "help": "Set up a predefined position on the board to practice or analyze.",
+      "platforms": ["board", "web"],
+      "epaper": { "height_ratio": 0.67, "icon_size": 28, "layout": "horizontal", "font_size": 14 }
     },
     {
       "id": "main.centaur",
@@ -235,12 +234,23 @@
       "platforms": ["board", "web"],
       "epaper": { "height_ratio": 0.67, "icon_size": 28, "layout": "horizontal", "font_size": 14 }
     },
+    {
+      "id": "main.settings",
+      "key": "Settings",
+      "type": "submenu",
+      "label": "Settings",
+      "icon": "settings",
+      "help": "Configure players, time control, display, connectivity, and system options.",
+      "target": "settings",
+      "platforms": ["board"],
+      "epaper": { "height_ratio": 0.67, "icon_size": 28, "layout": "horizontal", "font_size": 14 }
+    },
 
     {
       "id": "settings",
       "type": "menu",
       "label": "Settings",
-      "children": ["settings.players", "settings.game", "settings.positions", "settings.display", "settings.sound", "settings.connectivity", "settings.engines", "settings.agents", "settings.system"]
+      "children": ["settings.players", "settings.game", "settings.display", "settings.sound", "settings.connectivity", "settings.engines", "settings.agents", "settings.system"]
     },
     {
       "id": "settings.players",
@@ -571,16 +581,6 @@
       "selectedIcon": "timer_checked",
       "unselectedIcon": "timer",
       "visibleWhen": { "allOf": [ { "store": "game", "key": "time_control_preset", "equals": "custom" }, { "store": "game", "key": "tc_custom_asymmetric", "equals": true } ] },
-      "platforms": ["board", "web"],
-      "epaper": { "font_size": 12, "height_ratio": 0.8 }
-    },
-    {
-      "id": "settings.positions",
-      "key": "Positions",
-      "type": "submenu",
-      "label": "Positions",
-      "icon": "positions",
-      "help": "Set up a predefined position on the board to practice or analyze.",
       "platforms": ["board", "web"],
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },
