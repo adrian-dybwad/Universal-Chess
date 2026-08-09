@@ -6,6 +6,7 @@ import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
 import type { EngineDefinition } from '../types/game';
 import menuSchemaFixture from '../test/fixtures/menuSchema';
+import { makeEngine } from '../test/fixtures/engine';
 
 /**
  * Guards the estimated install time on an engine card.
@@ -56,32 +57,6 @@ class MockEventSource {
   close(): void {}
   addEventListener(): void {}
   removeEventListener(): void {}
-}
-
-function engine(overrides: Partial<EngineDefinition>): EngineDefinition {
-  return {
-    name: 'placeholder',
-    display_name: 'Placeholder',
-    description: 'desc',
-    summary: 'summary',
-    info_url: '',
-    installed: false,
-    has_prebuilt: false,
-    estimated_install_minutes: INSTALL_MINUTES,
-    has_profiles: false,
-    profiles_ready: false,
-    last_failure: null,
-    needs_repair: false,
-    can_repair: false,
-    missing_net_count: 0,
-    supported: true,
-    unsupported_reason: null,
-    source_installable: true,
-    recommended_ref: null,
-    installed_ref: null,
-    resume_point: null,
-    ...overrides,
-  };
 }
 
 function mockFetch(engines: EngineDefinition[]) {
@@ -143,7 +118,7 @@ describe('Engine card estimated install time', () => {
     // The payload's minute count must reach the card. Failure (the bug this test
     // was written for): the card reads a field the API does not send, so no
     // estimate text is rendered at all.
-    mockFetch([engine({ name: 'koivisto', display_name: 'Koivisto' })]);
+    mockFetch([makeEngine({ name: 'koivisto', display_name: 'Koivisto', estimated_install_minutes: INSTALL_MINUTES })]);
     renderEnginesTab();
     const card = await findEngineCard('Koivisto');
 
@@ -161,7 +136,7 @@ describe('Engine card estimated install time', () => {
     // Regression: re-adding the note tells the user the 45-60 minute estimate
     // is a worst case that a download will avoid, and then they wait the full
     // build anyway with no explanation.
-    mockFetch([engine({ name: 'berserk', display_name: 'Berserk', has_prebuilt: true })]);
+    mockFetch([makeEngine({ name: 'berserk', display_name: 'Berserk', has_prebuilt: true, estimated_install_minutes: INSTALL_MINUTES })]);
     renderEnginesTab();
     const card = await findEngineCard('Berserk');
 
@@ -172,7 +147,7 @@ describe('Engine card estimated install time', () => {
   it('shows no estimate for an engine whose install is instant', async () => {
     // A bundled engine's "install" writes a launcher shim, so the catalog reports 0
     // minutes. Rendering "~0 min" would be noise; the line must be omitted.
-    mockFetch([engine({ name: 'worstfish', display_name: 'Worstfish', estimated_install_minutes: 0 })]);
+    mockFetch([makeEngine({ name: 'worstfish', display_name: 'Worstfish', estimated_install_minutes: 0 })]);
     renderEnginesTab();
     const card = await findEngineCard('Worstfish');
 
@@ -182,7 +157,7 @@ describe('Engine card estimated install time', () => {
   it('shows no estimate for an engine that is already installed', async () => {
     // There is nothing left to install, so an install estimate on the card would be
     // misleading (the button offers Uninstall).
-    mockFetch([engine({ name: 'ethereal', display_name: 'Ethereal', installed: true, has_profiles: true, profiles_ready: true })]);
+    mockFetch([makeEngine({ name: 'ethereal', display_name: 'Ethereal', installed: true, has_profiles: true, profiles_ready: true, estimated_install_minutes: INSTALL_MINUTES })]);
     renderEnginesTab();
     const card = await findEngineCard('Ethereal');
 

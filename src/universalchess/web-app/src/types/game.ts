@@ -174,6 +174,16 @@ export interface InstallResumePoint {
 }
 
 /**
+ * Which group the engine list presents an engine in.
+ *
+ * Decided server-side from the engine's rating and the ELO floors the group
+ * headings publish, so the client never infers it. The union is closed: a value
+ * outside it would name a group that is never rendered, and the engine would
+ * silently vanish from the list.
+ */
+export type EngineTier = 'top' | 'strong' | 'specialty';
+
+/**
  * Engine definition from backend.
  */
 export interface EngineDefinition {
@@ -181,6 +191,14 @@ export interface EngineDefinition {
   display_name: string;
   description: string;
   summary: string;
+  /** Which group this engine is listed under. See {@link EngineTier}. */
+  tier: EngineTier;
+  /**
+   * Whether the engine is provided by an apt package. Such an engine is always
+   * present and cannot be installed or removed from this page, so it renders
+   * without install controls.
+   */
+  is_system_package: boolean;
   /**
    * Page describing the engine (usually its repository), resolved server-side
    * from the catalog and rendered as the card's "learn more" link. Empty for an

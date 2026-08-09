@@ -563,6 +563,19 @@ class RequiredNet:
     expected_files: FrozenSet[str] = frozenset()
 
 
+# Rating floors for the groups the engine list is presented in. The web publishes
+# these numbers in its group headings ("Top Tier Engines (3300+ ELO)", "Strong
+# Engines (2900-3200 ELO)"), so they are the user-facing definition of a tier, not
+# an internal convenience.
+#
+# The grouping used to be a pair of hardcoded engine-name arrays in the web app.
+# Anything absent from them fell through to Specialty, which is how Reckless --
+# the strongest engine here -- came to be listed among the novelty engines. Tier
+# is derived from these floors instead so that adding an engine cannot misfile it.
+TOP_TIER_MIN_ELO = 3300
+STRONG_TIER_MIN_ELO = 2900
+
+
 @dataclass
 class EngineDefinition:
     """Definition of a chess engine that can be installed."""
@@ -631,6 +644,31 @@ class EngineDefinition:
     # (the usual case -- see documentation_url); set it for an engine installed
     # without a git clone (a system package, a downloaded net-backed engine).
     info_url: Optional[str] = None
+    # Approximate playing strength, the same figure the engine's ``summary``
+    # quotes to the user. None for an engine chosen for how it plays rather than
+    # how well -- the human-like and novelty engines -- where a rating would mean
+    # nothing. Drives ``tier``.
+    elo: Optional[int] = None
+
+    @property
+    def tier(self) -> str:
+        """Which group the engine list presents this engine in.
+
+        Derived from ``elo`` and the published rating floors rather than assigned
+        per engine, so an engine cannot be listed under a heading its own rating
+        contradicts, and a newly added engine cannot land in a group by default.
+
+        An unrated engine is "specialty": that group is the one defined by
+        character rather than strength, so it is where an engine with no
+        meaningful rating belongs.
+        """
+        if self.elo is None:
+            return "specialty"
+        if self.elo >= TOP_TIER_MIN_ELO:
+            return "top"
+        if self.elo >= STRONG_TIER_MIN_ELO:
+            return "strong"
+        return "specialty"
 
 
 # Clone-URL suffix that must come off before a repository URL can be opened as a
@@ -926,14 +964,21 @@ class QueuedEngine:
     completed_at: Optional[float] = None
 
 
-# Engine definitions
-# Ordered roughly by strength/popularity
+# Engine definitions.
+#
+# The order and the section headings below are editorial: they group the file for
+# a reader by strength, build cost or provenance, which are different axes and
+# overlap. They do NOT decide which group an engine appears in on screen -- that
+# is `EngineDefinition.tier`, derived from `elo`. A heading and a tier can
+# therefore differ (Reckless compiles like the lightweight engines and outrates
+# every other engine here), and neither is wrong.
 ENGINES = {
-    # === TOP TIER - World class engines ===
+    # === World class engines ===
     "stockfish": EngineDefinition(
         name="stockfish",
         display_name="Stockfish",
         summary="~3500 ELO, #1 engine",
+        elo=3500,
         description="World's strongest open-source chess engine. Uses NNUE neural network evaluation. The gold standard for computer chess analysis and play. Installed from system package - always available.",
         repo_url=None,
         build_commands=[],
@@ -951,6 +996,7 @@ ENGINES = {
         name="berserk",
         display_name="Berserk",
         summary="~3400 ELO, top-3",
+        elo=3400,
         description="Top-3 ranked open-source engine. Uses NNUE neural network for evaluation. Known for very strong tactical play and aggressive style. Excellent alternative to Stockfish.",
         repo_url="https://github.com/jhonnold/berserk.git",
         build_commands=[
@@ -980,6 +1026,7 @@ ENGINES = {
         name="koivisto",
         display_name="Koivisto",
         summary="~3350 ELO, fast",
+        elo=3350,
         description="Top-10 ranked engine with NNUE support. Known for fast search speed and aggressive playing style. Good for blitz and bullet games where speed matters.",
         repo_url="https://github.com/Luecx/Koivisto.git",
         build_commands=[
@@ -1066,6 +1113,7 @@ ENGINES = {
         name="ethereal",
         display_name="Ethereal",
         summary="~3300 ELO, clean",
+        elo=3300,
         description="Top-15 engine with NNUE. Known for clean, well-documented codebase. Great for those interested in chess programming. Solid positional play.",
         repo_url="https://github.com/AndyGrant/Ethereal.git",
         build_commands=[
@@ -1092,13 +1140,14 @@ ENGINES = {
         has_prebuilt=True,
     ),
     
-    # === STRONG TIER - Tournament-level engines ===
+    # === Tournament-level engines ===
     # NOTE: Fire engine removed - uses Windows-specific <intrin.h> header, doesn't compile on ARM/Linux
     # NOTE: Laser engine removed - uses x86-specific flags (-msse3, -mpopcnt), doesn't compile on ARM
     "demolito": EngineDefinition(
         name="demolito",
         display_name="Demolito",
         summary="~2900 ELO, simple",
+        elo=2900,
         description="Simple, efficient engine with clean C code. Fast to compile and run. Good for lower-powered devices. Solid but straightforward play.",
         repo_url="https://github.com/lucasart/Demolito.git",
         build_commands=[
@@ -1126,6 +1175,7 @@ ENGINES = {
         name="weiss",
         display_name="Weiss",
         summary="~2900 ELO, educational",
+        elo=2900,
         description="Clean, educational engine great for learning chess programming. Well-commented source code. Solid playing strength despite simplicity.",
         repo_url="https://github.com/TerjeKir/weiss.git",
         build_commands=[
@@ -1150,6 +1200,7 @@ ENGINES = {
         name="arasan",
         display_name="Arasan",
         summary="~2900 ELO, veteran",
+        elo=2900,
         description="Veteran engine in development since 1994. Very stable and reliable. NNUE support added recently. Great for consistent, predictable play.",
         repo_url="https://github.com/jdart1/arasan-chess.git",
         # Pin to a tagged release. Arasan's master NEON path has regressed (the
@@ -1221,6 +1272,7 @@ ENGINES = {
         name="rodentIV",
         display_name="Rodent IV",
         summary="~2800 ELO, 50+ styles",
+        elo=2800,
         description="Personality engine with 50+ playing styles from beginner to GM level. Can emulate famous players or specific playing styles. Great for practice and entertainment.",
         repo_url="https://github.com/nescitus/rodent-iv.git",
         build_commands=[
@@ -1254,6 +1306,7 @@ ENGINES = {
         name="ct800",
         display_name="CT800",
         summary="~2300 ELO, retro",
+        elo=2300,
         description="Emulates a dedicated chess computer. Classic playing style reminiscent of 1980s chess computers. Good for casual play with a nostalgic feel.",
         repo_url="https://github.com/bcm314/CT800.git",
         build_commands=[
@@ -1359,6 +1412,7 @@ ENGINES = {
         name="zahak",
         display_name="Zahak",
         summary="~2700 ELO, Go-based",
+        elo=2700,
         description="Written in Go programming language. Clean, modern codebase under active development. Good strength with fast compilation. Interesting alternative architecture.",
         repo_url="https://github.com/amanjpro/zahak.git",
         # Zahak is a Go module whose `main` package lives in the zahak/ subdir, so
@@ -1399,6 +1453,7 @@ ENGINES = {
         name="smallbrain",
         display_name="Smallbrain",
         summary="~3000 ELO, compact",
+        elo=3000,
         description="Compact NNUE engine with small binary size. Efficient code optimized for resource-constrained devices. Surprisingly strong for its size.",
         repo_url="https://github.com/Disservin/Smallbrain.git",
         build_commands=[
@@ -1418,6 +1473,7 @@ ENGINES = {
         name="claudia",
         display_name="Claudia",
         summary="~1900 ELO, classic C",
+        elo=1900,
         description="Lightweight UCI engine written from scratch in C (0x88 board, classical hand-tuned evaluation, built-in opening book). A gentle, club-level opponent that compiles in under a minute. BSD-licensed.",
         repo_url="https://github.com/antoniogarro/Claudia.git",
         build_commands=[
@@ -1440,6 +1496,7 @@ ENGINES = {
         name="reckless",
         display_name="Reckless",
         summary="~3600 ELO, Rust",
+        elo=3600,
         description="Top-tier open-source engine written in Rust with an embedded NNUE evaluation. Consistently ranks among the strongest engines in CCC and TCEC. AGPL-3.0 licensed.",
         repo_url="https://github.com/codedeliveryservice/Reckless.git",
         # Pin a released tag: master is a moving target (currently 0.10.0-dev) whose

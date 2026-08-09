@@ -4,8 +4,8 @@ import { render, screen, waitFor, cleanup, within } from '@testing-library/react
 import { MemoryRouter, Routes, Route } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
-import type { EngineDefinition } from '../types/game';
 import menuSchemaFixture from '../test/fixtures/menuSchema';
+import { installedEngine } from '../test/fixtures/engine';
 
 /**
  * Guards the "Configure profiles" entry point on the Engines tab.
@@ -54,40 +54,14 @@ class MockEventSource {
   removeEventListener(): void {}
 }
 
-function engine(overrides: Partial<EngineDefinition>): EngineDefinition {
-  return {
-    name: 'placeholder',
-    display_name: 'Placeholder',
-    description: 'desc',
-    summary: 'summary',
-    info_url: '',
-    installed: true,
-    has_prebuilt: false,
-    estimated_install_minutes: 0,
-    has_profiles: true,
-    profiles_ready: true,
-    last_failure: null,
-    needs_repair: false,
-    can_repair: false,
-    missing_net_count: 0,
-    supported: true,
-    unsupported_reason: null,
-    source_installable: true,
-    recommended_ref: null,
-    installed_ref: null,
-    resume_point: null,
-    ...overrides,
-  };
-}
-
 // Stockfish: installed system package that is profile-capable. Berserk: a normal
 // source-built engine, used as the control that has always shown the button.
-const stockfish = engine({
+const stockfish = installedEngine({
   name: 'stockfish',
   display_name: 'Stockfish',
   source_installable: false,
 });
-const berserk = engine({
+const berserk = installedEngine({
   name: 'berserk',
   display_name: 'Berserk',
 });

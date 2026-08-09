@@ -5382,6 +5382,13 @@ def api_get_all_engines():
                 # that can_repair yet does NOT need_repair).
                 "missing_net_count": missing_net_count,
                 "is_system_package": engine_def.is_system_package,
+                # Which group the list presents this engine in, derived from its
+                # rating server-side. Sent rather than worked out in the client:
+                # the client used to group by hardcoded engine-name arrays, and
+                # anything missing from them fell through to "specialty" -- which
+                # is how the catalog's strongest engine came to be listed among
+                # the novelty ones.
+                "tier": engine_def.tier,
                 "can_uninstall": engine_def.can_uninstall,
                 "estimated_install_minutes": engine_def.estimated_install_minutes,
                 "has_prebuilt": engine_def.has_prebuilt,
@@ -5449,6 +5456,10 @@ def api_get_all_engines():
                 "can_repair": False,
                 "missing_net_count": 0,
                 "is_system_package": False,
+                # An operator-added engine carries no rating, and the UI lists
+                # custom engines in their own panel rather than in a tier. The
+                # field is still sent so every row has the same shape.
+                "tier": "specialty",
                 "can_uninstall": True,
                 "estimated_install_minutes": 0,
                 "has_prebuilt": False,

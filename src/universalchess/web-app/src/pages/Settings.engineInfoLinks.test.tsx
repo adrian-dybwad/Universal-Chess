@@ -6,6 +6,7 @@ import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
 import type { EngineDefinition } from '../types/game';
 import menuSchemaFixture from '../test/fixtures/menuSchema';
+import { makeEngine } from '../test/fixtures/engine';
 
 /**
  * Guards the per-engine "learn more" link on the Engines tab.
@@ -53,38 +54,12 @@ class MockEventSource {
   removeEventListener(): void {}
 }
 
-function engine(overrides: Partial<EngineDefinition>): EngineDefinition {
-  return {
-    name: 'placeholder',
-    display_name: 'Placeholder',
-    description: 'desc',
-    summary: 'summary',
-    info_url: '',
-    installed: false,
-    has_prebuilt: false,
-    estimated_install_minutes: 0,
-    has_profiles: false,
-    profiles_ready: false,
-    last_failure: null,
-    needs_repair: false,
-    can_repair: false,
-    missing_net_count: 0,
-    supported: true,
-    unsupported_reason: null,
-    source_installable: true,
-    recommended_ref: null,
-    installed_ref: null,
-    resume_point: null,
-    ...overrides,
-  };
-}
-
 const engines: EngineDefinition[] = [
-  engine({ name: 'stockfish', display_name: 'Stockfish', installed: true, info_url: STOCKFISH_INFO_URL }),
-  engine({ name: 'berserk', display_name: 'Berserk', info_url: BERSERK_INFO_URL }),
+  makeEngine({ name: 'stockfish', display_name: 'Stockfish', installed: true, info_url: STOCKFISH_INFO_URL }),
+  makeEngine({ name: 'berserk', display_name: 'Berserk', info_url: BERSERK_INFO_URL }),
   // A bundled novelty engine: no upstream project, so the backend sends no link.
-  engine({ name: 'worstfish', display_name: 'Worstfish', info_url: '' }),
-  engine({ name: 'sneakyfish', display_name: 'Sneakyfish', info_url: SCRIPT_URL }),
+  makeEngine({ name: 'worstfish', display_name: 'Worstfish', info_url: '' }),
+  makeEngine({ name: 'sneakyfish', display_name: 'Sneakyfish', info_url: SCRIPT_URL }),
 ];
 
 beforeEach(() => {

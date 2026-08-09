@@ -6,6 +6,7 @@ import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
 import type { EngineDefinition } from '../types/game';
 import menuSchemaFixture from '../test/fixtures/menuSchema';
+import { installedEngine } from '../test/fixtures/engine';
 
 /**
  * Guards the in-place Repair affordance on the Engines tab.
@@ -54,36 +55,10 @@ class MockEventSource {
   removeEventListener(): void {}
 }
 
-function engine(overrides: Partial<EngineDefinition>): EngineDefinition {
-  return {
-    name: 'placeholder',
-    display_name: 'Placeholder',
-    description: 'desc',
-    summary: 'summary',
-    info_url: '',
-    installed: true,
-    has_prebuilt: false,
-    estimated_install_minutes: 0,
-    has_profiles: true,
-    profiles_ready: true,
-    last_failure: null,
-    needs_repair: false,
-    can_repair: false,
-    missing_net_count: 0,
-    supported: true,
-    unsupported_reason: null,
-    source_installable: true,
-    recommended_ref: null,
-    installed_ref: null,
-    resume_point: null,
-    ...overrides,
-  };
-}
-
 // Maia installed but missing its nets: installed=true, needs_repair=true,
 // can_repair=true, has_profiles=false (the backend withholds the editor while
 // the engine is incomplete).
-const maiaNeedsRepair = engine({
+const maiaNeedsRepair = installedEngine({
   name: 'maia',
   display_name: 'Maia',
   installed: true,
@@ -98,7 +73,7 @@ const maiaNeedsRepair = engine({
 // installed, playable (has_profiles true, NOT needs_repair) yet can_repair with
 // one missing net. The card must offer a quiet "top up" rather than an alarming
 // Repair, and must not withhold the profile editor.
-const maiaTopUp = engine({
+const maiaTopUp = installedEngine({
   name: 'maia',
   display_name: 'Maia',
   installed: true,

@@ -6,6 +6,7 @@ import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
 import type { EngineDefinition } from '../types/game';
 import menuSchemaFixture from '../test/fixtures/menuSchema';
+import { installedEngine } from '../test/fixtures/engine';
 
 /**
  * The Engines tab's remaining writes must be authenticated.
@@ -72,17 +73,9 @@ const interruptedStatus: InstallStatus = {
   ...idleStatus, engine: ENGINE, display_name: DISPLAY_NAME, interrupted: true,
 };
 
-const berserk: EngineDefinition = {
+const berserk: EngineDefinition = installedEngine({
   name: ENGINE,
   display_name: DISPLAY_NAME,
-  description: 'desc',
-  summary: 'summary',
-  info_url: '',
-  installed: true,
-  has_prebuilt: false,
-  estimated_install_minutes: 0,
-  has_profiles: true,
-  profiles_ready: true,
   // Undismissed failure, so the notice and its Dismiss button render.
   last_failure: {
     phase: 'initialize',
@@ -91,16 +84,7 @@ const berserk: EngineDefinition = {
     failed_at: 1_700_000_000,
     dismissed: false,
   },
-  needs_repair: false,
-  can_repair: false,
-  missing_net_count: 0,
-  supported: true,
-  unsupported_reason: null,
-  source_installable: true,
-  recommended_ref: null,
-  installed_ref: null,
-  resume_point: null,
-};
+});
 
 class MockEventSource {
   // A plain field, not a constructor parameter property: the project builds

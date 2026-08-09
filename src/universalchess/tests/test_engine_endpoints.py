@@ -732,6 +732,7 @@ def test_all_engines_list_shape(client, monkeypatch):
         "missing_net_count",
         "supported",
         "unsupported_reason",
+        "tier",
     }
     for entry in data:
         assert required_fields.issubset(entry.keys())
@@ -752,6 +753,26 @@ def test_all_engines_list_shape(client, monkeypatch):
         assert entry["has_profiles"] == entry["installed"]
     assert by_name[SYSTEM_ENGINE]["has_profiles"] is True   # installed system engine
     assert by_name[INSTALLABLE_ENGINE]["has_profiles"] is False  # not installed
+
+
+def test_all_engines_carries_the_tier_the_web_groups_by(client, monkeypatch):
+    """Each entry states its tier, so the web never has to work it out.
+
+    Why this test exists: the web groups the list into Top / Strong / Specialty.
+    It used to decide the grouping from hardcoded engine-name arrays, which put
+    the catalog's strongest engine under Specialty because its name was missing
+    from them. Serving the tier is what removes that second, drifting copy of the
+    rule -- but only if every entry actually carries it.
+
+    How a regression manifests: the field is dropped for some engines, and those
+    cards fall into whatever group the web treats as its default -- exactly the
+    silent misfiling this replaced.
+    """
+    from universalchess.managers.engine_manager import ENGINES
+
+    data = json.loads(client.get("/api/engines/all").data)
+    served = {e["name"]: e.get("tier") for e in data}
+    assert served == {name: engine.tier for name, engine in ENGINES.items()}
 
 
 def test_all_engines_carries_the_documentation_link_for_each_engine(client, monkeypatch):

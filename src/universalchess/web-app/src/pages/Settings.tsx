@@ -13,7 +13,7 @@ import { useRadioCapability } from '../hooks/useRadioCapability';
 import { MenuIcon } from '../components/MenuIcon';
 import { DeviceClockCard } from '../components/DeviceClockCard';
 import { ConnectivityPanel } from './Connectivity';
-import type { EngineDefinition, EngineFailure, EngineRef, EngineRefsResponse } from '../types/game';
+import type { EngineDefinition, EngineFailure, EngineRef, EngineRefsResponse, EngineTier } from '../types/game';
 import type { MenuCatalog, MenuOption } from '../types/menuCatalog';
 import { fieldById } from '../types/menuCatalog';
 import { apiFetch, buildApiUrl, getStoredCredentials, encodeBasicAuth, storeCredentials, isCrossOriginApi } from '../utils/api';
@@ -2655,12 +2655,17 @@ function EnginesList({
   onDismissFailure: (engineName: string) => void;
 }) {
   const { t } = useTranslation();
-  // Group engines by tier
+  // Which group each engine belongs to is decided server-side, from its rating
+  // and the ELO floors these headings publish. It used to be decided here, from
+  // two hardcoded engine-name arrays with everything unnamed falling through to
+  // Specialty -- which is how Reckless, the strongest engine in the catalog, came
+  // to be listed among the novelty engines, and how any engine added later would
+  // have been misfiled too.
   const tiers = {
     top: { title: t('settingsPage.enginesUi.tierTop'), engines: [] as EngineDefinition[] },
     strong: { title: t('settingsPage.enginesUi.tierStrong'), engines: [] as EngineDefinition[] },
     specialty: { title: t('settingsPage.enginesUi.tierSpecialty'), engines: [] as EngineDefinition[] },
-  };
+  } satisfies Record<EngineTier, { title: string; engines: EngineDefinition[] }>;
 
   engines.forEach((engine) => {
     // Custom engines render in their own panel (CustomEnginesPanel), not in the
@@ -2668,13 +2673,7 @@ function EnginesList({
     if (engine.is_custom) {
       return;
     }
-    if (['stockfish', 'berserk', 'koivisto', 'ethereal'].includes(engine.name)) {
-      tiers.top.engines.push(engine);
-    } else if (['demolito', 'weiss', 'arasan', 'smallbrain'].includes(engine.name)) {
-      tiers.strong.engines.push(engine);
-    } else {
-      tiers.specialty.engines.push(engine);
-    }
+    tiers[engine.tier].engines.push(engine);
   });
 
   return (
@@ -2859,7 +2858,11 @@ function EngineCard({
   onDismissFailure: (engineName: string) => void;
 }) {
   const { t } = useTranslation();
-  const isSystem = engine.name === 'stockfish'; // Stockfish is a system package
+  // Whether the engine comes from an apt package, which is what makes it
+  // permanently present and un-installable from here. Read from the payload
+  // rather than matched on the name: the flag is authoritative, and the name
+  // check silently mishandled any other system-packaged engine.
+  const isSystem = engine.is_system_package;
   const infoHref = externalLinkHref(engine.info_url);
   const isActiveInstall = status?.active === true;
   // A paused install with a preserved build tree. Read from the engine's own

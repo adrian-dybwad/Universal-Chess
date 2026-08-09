@@ -6,6 +6,7 @@ import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
 import type { EngineDefinition } from '../types/game';
 import menuSchemaFixture from '../test/fixtures/menuSchema';
+import { makeEngine } from '../test/fixtures/engine';
 
 /**
  * Stopping a running install, and resuming or discarding a paused one.
@@ -80,29 +81,12 @@ const buildingStatus: InstallStatus = {
 };
 
 function engineDef(overrides: Partial<EngineDefinition> = {}): EngineDefinition {
-  return {
+  return makeEngine({
     name: ENGINE,
     display_name: DISPLAY_NAME,
-    description: 'desc',
-    summary: 'summary',
-    info_url: '',
-    installed: false,
-    has_prebuilt: false,
     estimated_install_minutes: 60,
-    has_profiles: false,
-    profiles_ready: false,
-    last_failure: null,
-    needs_repair: false,
-    can_repair: false,
-    missing_net_count: 0,
-    supported: true,
-    unsupported_reason: null,
-    source_installable: true,
-    recommended_ref: null,
-    installed_ref: null,
-    resume_point: null,
     ...overrides,
-  };
+  });
 }
 
 /** A paused install, as GET /api/engines/all reports it. */

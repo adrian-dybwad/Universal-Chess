@@ -6,6 +6,7 @@ import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
 import type { EngineDefinition } from '../types/game';
 import menuSchemaFixture from '../test/fixtures/menuSchema';
+import { installedEngine } from '../test/fixtures/engine';
 
 /**
  * Guards the engine card for a binary that installed but will not start.
@@ -65,39 +66,13 @@ class MockEventSource {
   removeEventListener(): void {}
 }
 
-function engine(overrides: Partial<EngineDefinition>): EngineDefinition {
-  return {
-    name: 'placeholder',
-    display_name: 'Placeholder',
-    description: 'desc',
-    summary: 'summary',
-    info_url: '',
-    installed: true,
-    has_prebuilt: false,
-    estimated_install_minutes: 0,
-    has_profiles: true,
-    profiles_ready: true,
-    last_failure: null,
-    needs_repair: false,
-    can_repair: false,
-    missing_net_count: 0,
-    supported: true,
-    unsupported_reason: null,
-    source_installable: true,
-    recommended_ref: null,
-    installed_ref: null,
-    resume_point: null,
-    ...overrides,
-  };
-}
-
 const FAILED_AT = 1780000000;
 
 // CT800 as reported: the binary is installed and executable (installed=true,
 // needs_repair=false, nothing missing) but the post-install probe failed, so no
 // .uci ladder was ever written and the reason was recorded as an architecture
 // mismatch.
-const ct800WontStart = engine({
+const ct800WontStart = installedEngine({
   name: 'ct800',
   display_name: 'CT800',
   installed: true,
@@ -113,7 +88,7 @@ const ct800WontStart = engine({
 
 // The same failure after the user acknowledged it. The engine is still broken,
 // so only the notice goes away.
-const ct800Dismissed = engine({
+const ct800Dismissed = installedEngine({
   name: 'ct800',
   display_name: 'CT800',
   installed: true,
@@ -129,7 +104,7 @@ const ct800Dismissed = engine({
 
 // The same engine after a working reinstall: the control case that keeps the
 // warning from being applied to every card.
-const ct800Healthy = engine({
+const ct800Healthy = installedEngine({
   name: 'ct800',
   display_name: 'CT800',
   installed: true,
@@ -139,7 +114,7 @@ const ct800Healthy = engine({
 
 // An install that failed outright: no binary at all. The card must keep offering
 // Install rather than the "installed but broken" treatment.
-const arasanInstallFailed = engine({
+const arasanInstallFailed = installedEngine({
   name: 'arasan',
   display_name: 'Arasan',
   installed: false,
