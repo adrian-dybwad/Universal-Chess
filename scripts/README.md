@@ -43,7 +43,12 @@ refactor — says so with a git trailer, optionally with a reason:
 
 ```
 Changelog: none -- developer tooling, no user-visible change
+Co-authored-by: Cursor <cursoragent@cursor.com>
 ```
+
+It has to sit in the last paragraph beside any other trailers, with no blank line
+between them, or git does not parse it as a trailer and it does not count — the
+audit says so when it spots one out of place.
 
 Those appear under **Declared exempt** rather than being hidden, since an
 exemption nobody sees is indistinguishable from the audit not looking. The trailer

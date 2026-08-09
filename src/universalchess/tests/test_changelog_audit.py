@@ -56,6 +56,9 @@ _CHANGELOG_COMMITS_HEADER = "Changelog commits in the range"
 # rule already requires in prose readable by the audit as well.
 _EXEMPT_TRAILER = "Changelog: none"
 
+# Note the audit prints when a Changelog: line exists but not as a git trailer.
+_MISPLACED_NOTE = "not in the trailer block"
+
 
 def _candidate_section(stdout):
     """Return the part of the audit output listing candidates of either kind."""
@@ -387,6 +390,24 @@ class TestACommitCanDeclareThatNoEntryIsOwed:
         repo.commit("Change the audit's own output.", [_SOURCE_FILE], body=self._EXEMPT_BODY)
         strict = repo.audit("--strict", base)
         assert strict.returncode == 0, strict.stdout
+
+    def test_misplaced_declaration_is_called_out(self, repo):
+        # A trailer separated from the trailer block by a blank line is not a
+        # trailer, so the declaration does not count. The commit adding this
+        # feature made that mistake in its own message, and the only symptom was
+        # remaining flagged with no explanation. Failing toward flagged is the safe
+        # direction, but silence sends the author looking in the wrong place.
+        # Regression: the note disappears and a misplaced trailer becomes a puzzle.
+        base = repo.git("rev-parse", "HEAD").stdout.strip()
+        body = (
+            f"Tooling only.\n\n{_EXEMPT_TRAILER}\n\n"
+            "Co-authored-by: Someone <someone@example.invalid>"
+        )
+        repo.commit("Change the audit's own output.", [_SOURCE_FILE], body=body)
+        result = repo.audit(base)
+        undescribed = _undescribed_section(result.stdout)
+        assert "Change the audit's own output." in undescribed, result.stdout
+        assert _MISPLACED_NOTE in undescribed, result.stdout
 
     def test_prose_mention_does_not_exempt(self, repo):
         # The declaration must be a real git trailer, not any line that resembles

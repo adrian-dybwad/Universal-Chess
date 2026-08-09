@@ -89,6 +89,8 @@ readonly EXEMPT_PATH_PATTERN='(^src/universalchess/tests/|(^|/)tests/|\.test\.ts
 
 readonly CHANGELOG_PATH="CHANGELOG.md"
 
+readonly MISPLACED_NOTE="not in the trailer block"
+
 # Resolve the default base only when the caller gave none, and say which was
 # chosen: an audit of a different range than the reader assumes is misleading
 # even when its output is correct.
@@ -189,11 +191,26 @@ for sha in "${candidates[@]:-}"; do
 	fi
 done
 
+# A Changelog: line separated from the trailer block by a blank line is not a
+# trailer and does not count. Detected so the audit can say so: the commit that
+# added the trailer made this mistake in its own message, and the only symptom was
+# staying flagged with no explanation. Flagged is the safe direction to fail in,
+# but silence sends the author looking in the wrong place.
+has_misplaced_declaration() {
+	git log -1 --format=%B "$1" | grep -qE '^[Cc]hangelog:[[:space:]]' \
+		&& ! declares_no_entry_needed "$1"
+}
+
 print_commits() {
 	local sha
 	for sha in "$@"; do
 		printf '  %s %s\n' "$(git rev-parse --short "$sha")" "$(git log -1 --format=%s "$sha")"
 		observable_paths "$sha" | sed 's/^/      /'
+		if has_misplaced_declaration "$sha"; then
+			echo "      note: the Changelog: line here is ${MISPLACED_NOTE}, so it does"
+			echo "      not count. Move it into the last paragraph, beside any other"
+			echo "      trailers, with no blank line between them."
+		fi
 		echo
 	done
 }

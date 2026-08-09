@@ -23,7 +23,11 @@ with a trailer, so the omission reads as a decision and the audit can see it:
 
 ```
 Changelog: none -- developer tooling, no user-visible change
+Co-authored-by: Cursor <cursoragent@cursor.com>
 ```
+
+It must sit in the **last paragraph**, beside any other trailers with no blank
+line between them, or git does not parse it as a trailer and it does not count.
 
 ## Two accepted commit shapes
 
