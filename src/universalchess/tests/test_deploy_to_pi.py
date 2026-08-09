@@ -33,6 +33,11 @@ The two external processes the script drives -- ``rsync`` and ``ssh`` -- are
 replaced with recording shims on PATH. That is the boundary between this script
 and what it does not control, so the script itself runs unmodified and every
 assertion is about its real behavior.
+
+Post-restart health verification lives in
+``scripts/lib/remote-restart-and-verify.sh`` and is covered by
+``test_remote_health_verification``; the tests here only pin that the deploy
+delivers it with the right arguments and treats its failure as fatal.
 """
 
 import os
@@ -43,6 +48,9 @@ from pathlib import Path
 import pytest
 
 _SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "deploy-to-pi.sh"
+_HEALTH_SCRIPT = (
+    Path(__file__).resolve().parents[3] / "scripts" / "lib" / "remote-restart-and-verify.sh"
+)
 
 # A host that is never contacted: every ssh/rsync invocation is intercepted by
 # the shims, so the value only has to be syntactically valid.
@@ -60,25 +68,43 @@ _RSYNC_PARTIAL_TRANSFER = 23
 _RSYNC_STDERR = "rsync: mkstemp failed: Permission denied (13)"
 
 
-def _write_shim(bin_dir: Path, name: str, exit_code: int = 0, stderr: str = "") -> Path:
-    """Install a recording shim for ``name`` that appends its argv to a log.
+def _write_shim(
+    bin_dir: Path,
+    name: str,
+    exit_code: int = 0,
+    stderr: str = "",
+    fail_pattern: str = "",
+) -> tuple[Path, Path]:
+    """Install a recording shim for ``name``; return its argv and stdin logs.
 
-    Each invocation appends one NUL-free line per argument plus a blank
-    separator line, so a test can distinguish "called once with these args" from
-    "called twice".
+    Each invocation appends one NUL-free line per argument plus a separator line,
+    so a test can distinguish "called once with these args" from "called twice".
+    Stdin is captured too, because the deploy delivers the health-verification
+    script to the board on ssh's stdin.
+
+    ``fail_pattern`` fails only the invocations whose joined argv contains it.
+    The deploy makes several ssh calls; a blanket failure would always stop at
+    the first one, making the later steps' failure handling untestable.
     """
     log = bin_dir / f"{name}.calls"
+    stdin_log = bin_dir / f"{name}.stdin"
     shim = bin_dir / name
     stderr_line = f'printf "%s\\n" {shlex.quote(stderr)} >&2' if stderr else ":"
+    selective_failure = (
+        f'if [[ "$*" == *{shlex.quote(fail_pattern)}* ]]; then exit {exit_code}; fi\nexit 0'
+        if fail_pattern
+        else f"exit {exit_code}"
+    )
     shim.write_text(
         "#!/usr/bin/env bash\n"
         f'for a in "$@"; do printf "%s\\n" "$a" >> {shlex.quote(str(log))}; done\n'
         f'printf -- "--END--\\n" >> {shlex.quote(str(log))}\n'
+        f"cat >> {shlex.quote(str(stdin_log))}\n"
         f"{stderr_line}\n"
-        f"exit {exit_code}\n"
+        f"{selective_failure}\n"
     )
     shim.chmod(0o755)
-    return log
+    return log, stdin_log
 
 
 def _calls(log: Path) -> list[list[str]]:
@@ -101,22 +127,43 @@ def deploy(tmp_path):
 
     Returns a callable taking the shims' exit codes and the script's arguments,
     yielding the completed process plus the recorded invocations of each shim.
+    ``ssh_fail_pattern`` selects which ssh invocation fails; see ``_write_shim``.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
 
-    def run(*args, rsync_exit=0, ssh_exit=0, rsync_stderr=""):
-        rsync_log = _write_shim(bin_dir, "rsync", rsync_exit, rsync_stderr)
-        ssh_log = _write_shim(bin_dir, "ssh", ssh_exit)
+    def run(*args, rsync_exit=0, ssh_exit=0, rsync_stderr="", ssh_fail_pattern=""):
+        rsync_log, _ = _write_shim(bin_dir, "rsync", rsync_exit, rsync_stderr)
+        ssh_log, _ = _write_shim(
+            bin_dir, "ssh", ssh_exit, fail_pattern=ssh_fail_pattern
+        )
         env = dict(os.environ)
         env["PATH"] = f"{bin_dir}:{env['PATH']}"
         proc = subprocess.run(  # noqa: S603 - test invokes the repo's own script
             ["bash", str(_SCRIPT), "--host", _HOST, *args],  # noqa: S607
             env=env, capture_output=True, text=True, cwd=str(tmp_path),
+            # DEVNULL so the shims' stdin capture cannot block on an inherited
+            # stdin, which would hang the suite rather than fail it.
+            stdin=subprocess.DEVNULL,
         )
         return proc, _calls(rsync_log), _calls(ssh_log)
 
     return run
+
+
+@pytest.fixture
+def ssh_stdin(tmp_path):
+    """Return a callable yielding everything the deploy piped to ssh's stdin.
+
+    Shares ``tmp_path`` with the ``deploy`` fixture, so a test that needs the
+    delivered script requests both. Kept separate rather than widening
+    ``deploy``'s return arity, which every existing test unpacks.
+    """
+    def read():
+        captured = tmp_path / "bin" / "ssh.stdin"
+        return captured.read_text() if captured.exists() else ""
+
+    return read
 
 
 class TestTransferFailureIsReported:
@@ -257,15 +304,17 @@ class TestRuntimeOwnershipIsRestored:
 class TestSuccessfulDeploy:
     """The happy path and the read-only modes must be unaffected by the fix."""
 
-    def test_successful_deploy_restarts_and_reports_completion(self, deploy):
-        # Guards against the fix over-correcting into always failing. Asserts
-        # the restart actually happened rather than counting ssh invocations,
-        # which would pin the number of remote steps instead of the behavior.
-        proc, rsync_calls, ssh_calls = deploy()
+    def test_successful_deploy_restarts_and_reports_completion(self, deploy, ssh_stdin):
+        # Guards against the fix over-correcting into always failing. Asserts the
+        # restart actually happened rather than counting ssh invocations, which
+        # would pin the number of remote steps instead of the behavior. The
+        # restart moved into the delivered verification script, so its presence
+        # on ssh's stdin is what proves the board is being restarted.
+        proc, rsync_calls, _ = deploy()
         assert proc.returncode == 0, proc.stderr
         assert "Deploy complete" in proc.stdout
         assert len(rsync_calls) == 1
-        assert any("systemctl restart" in a for c in ssh_calls for a in c), ssh_calls
+        assert "systemctl restart" in ssh_stdin()
 
     def test_successful_deploy_targets_the_requested_host(self, deploy):
         # A transfer that lands somewhere other than the named host is the same
@@ -283,15 +332,15 @@ class TestSuccessfulDeploy:
         assert "-n" in rsync_calls[0], rsync_calls[0]
         assert ssh_calls == []
 
-    def test_no_restart_flag_syncs_without_restarting(self, deploy):
+    def test_no_restart_flag_syncs_without_restarting(self, deploy, ssh_stdin):
         # Pre-existing contract, re-pinned because the failure path now also
         # skips the restart -- the two must not become indistinguishable. The
         # ownership regrant still runs (the transfer happened), so this asserts
         # no *restart* rather than no ssh at all.
-        proc, rsync_calls, ssh_calls = deploy("--no-restart")
+        proc, rsync_calls, _ = deploy("--no-restart")
         assert proc.returncode == 0, proc.stderr
         assert len(rsync_calls) == 1
-        assert not any("systemctl restart" in a for c in ssh_calls for a in c)
+        assert "systemctl restart" not in ssh_stdin()
 
     def test_check_mode_reports_failure_of_its_own_probe(self, deploy):
         # --check is read-only, but a probe that cannot even reach the board
@@ -308,3 +357,65 @@ class TestSuccessfulDeploy:
         _, rsync_calls, ssh_calls = deploy("--check")
         assert not any(a.startswith("--rsync-path=") for a in rsync_calls[0])
         assert ssh_calls == []
+
+
+class TestPostDeployVerification:
+    """The deploy must delegate health verification and honour its verdict.
+
+    The previous inline check (``sleep 3 && systemctl is-active``) reported a
+    healthy board while the web app was crash-looping on the code just shipped;
+    see test_remote_health_verification for why each part of it could not detect
+    that. These tests cover only the hand-off: that the real script is delivered
+    with the right arguments, and that its failure fails the deploy.
+    """
+
+    # ssh argv fragment identifying the verification invocation, so a selective
+    # shim failure hits that step rather than the earlier ownership regrant.
+    _VERIFY_INVOCATION = "bash"
+
+    # An exit code the verification script defines (a unit crash-looped). Chosen
+    # over a generic 1 to prove the specific status propagates.
+    _EXIT_UNIT_RESTARTED = 3
+
+    def test_verification_script_is_delivered_to_the_board(self, deploy, ssh_stdin):
+        # The script is piped on stdin so it always matches the checkout being
+        # deployed, with no install step. Regression: nothing is delivered and
+        # the board runs whatever stale copy it has, or none.
+        deploy()
+        assert ssh_stdin() == _HEALTH_SCRIPT.read_text()
+
+    def test_verification_receives_both_units_and_the_web_port(self, deploy):
+        # Positional arguments over ssh are easy to drop or reorder. The port
+        # must be the loopback port the web unit binds: probing anything else
+        # measures nginx, which answers 502 for the whole ~70s import. The
+        # timeout must exceed that import time or the check times out on every
+        # healthy deploy. Regression: an argument is lost and verification either
+        # fails on a healthy board or checks nothing.
+        _, _, ssh_calls = deploy()
+        verify = [c for c in ssh_calls if self._VERIFY_INVOCATION in c]
+        assert len(verify) == 1, ssh_calls
+        argv = verify[0]
+        assert "universal-chess" in argv and "universal-chess-web" in argv, argv
+        assert "5000" in argv, argv
+        timeout = int(argv[-1])
+        assert timeout > 70, argv
+
+    def test_failed_verification_exits_with_the_verification_status(self, deploy):
+        # Distinct codes let a caller tell "crashed after starting" (3) from
+        # "never started" (4). Regression: the status is flattened to 1 and that
+        # distinction is lost to CI and to any wrapper.
+        proc, _, _ = deploy(
+            ssh_exit=self._EXIT_UNIT_RESTARTED,
+            ssh_fail_pattern=self._VERIFY_INVOCATION,
+        )
+        assert proc.returncode == self._EXIT_UNIT_RESTARTED, proc.stdout
+
+    def test_failed_verification_does_not_claim_completion(self, deploy):
+        # The exact false reassurance being removed: a board whose web app is
+        # crash-looping on the new code reported "Deploy complete" and exit 0.
+        # Regression: the string reappears despite a failed verification.
+        proc, _, _ = deploy(
+            ssh_exit=self._EXIT_UNIT_RESTARTED,
+            ssh_fail_pattern=self._VERIFY_INVOCATION,
+        )
+        assert "Deploy complete" not in proc.stdout

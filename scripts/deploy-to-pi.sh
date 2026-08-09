@@ -4,13 +4,20 @@
 # ============================================================================
 #
 # Description:
-#   Sync the local universalchess source tree to a running Pi over SSH and
-#   restart the systemd service. Runtime-only deploy: tests, the web app, the
-#   venv, engines and caches are excluded (they are not needed by the service
-#   and the Pi manages its own venv/engines).
+#   Sync the local universalchess source tree to a running Pi over SSH, restart
+#   the systemd units, and verify the board is serving before reporting success.
+#   Runtime-only deploy: tests, the web app, the venv, engines and caches are
+#   excluded (they are not needed by the service and the Pi manages its own
+#   venv/engines).
 #
 #   The transfer is non-destructive (no --delete): remote-only files are left
 #   untouched.
+#
+#   Verification is delegated to lib/remote-restart-and-verify.sh, piped to the
+#   board on stdin. It waits for the web interface to actually answer and fails
+#   on any automatic restart in the meantime; "Deploy complete" therefore means
+#   the deployed code imported and is serving, not merely that systemd accepted
+#   a restart.
 #
 #   Provisioning (sudoers grants, the event log, swap units) is the .deb
 #   postinst's job and is not repeated here: it installs to the same
@@ -32,6 +39,11 @@
 #       --path PATH    Remote source dir     (default: /opt/universalchess/)
 #       --service NAME board systemd unit    (default: universal-chess)
 #       --web-service NAME web systemd unit   (default: universal-chess-web)
+#       --web-port PORT Loopback port the web unit binds  (default: 5000)
+#       --verify-timeout SECS How long to wait for the web interface to serve
+#                      after the restart (default: 240). The app takes ~70s to
+#                      import on the board's ARMv6 core; verification returns as
+#                      soon as it answers.
 #   -w, --web          Build the React app (tsc + vite) and stage it into
 #                      web/react-app before syncing, then mirror that dir to the
 #                      Pi with --delete. Vite emits to web-app/dist and the repo
@@ -46,7 +58,14 @@
 #   ./scripts/deploy-to-pi.sh --host pi@1.2.3.4
 #
 # Exit status:
-#   0 on success; non-zero if the sync fails or the service is not active.
+#   0  synced, restarted, and the board verified as serving
+#   rsync's own status if the transfer fails (e.g. 23, partial transfer)
+#   2  a unit is not running after the restart
+#   3  a unit auto-restarted after the deploy, i.e. it is crashing on this code
+#   4  the web interface did not serve within --verify-timeout
+#
+#   Codes 2-4 come from lib/remote-restart-and-verify.sh and are propagated
+#   unchanged, so a caller can tell "never came up" from "came up and died".
 # ============================================================================
 
 set -euo pipefail
@@ -58,6 +77,17 @@ REMOTE_PATH="/opt/universalchess/"
 # restarted, so both are restarted on every deploy.
 SERVICE="universal-chess"
 WEB_SERVICE="universal-chess-web"
+
+# Loopback port WEB_SERVICE binds (its ExecStart passes --port=5000) and nginx
+# proxies to. Health is probed there, not through nginx, which answers 502 for
+# the whole of the app's startup.
+WEB_PORT=5000
+
+# How long to wait for the web interface to serve after the restart. Importing
+# the Flask app takes roughly 70 seconds on the board's single ARMv6 core, so a
+# short window reports failure on a perfectly healthy board; verification exits
+# as soon as the app answers, so a generous default costs a fast board nothing.
+VERIFY_TIMEOUT_SECS=240
 DRY_RUN=0
 CHECK_ONLY=0
 RESTART=1
@@ -182,6 +212,8 @@ while [[ $# -gt 0 ]]; do
 		--path) REMOTE_PATH="$2"; shift 2 ;;
 		--service) SERVICE="$2"; shift 2 ;;
 		--web-service) WEB_SERVICE="$2"; shift 2 ;;
+		--web-port) WEB_PORT="$2"; shift 2 ;;
+		--verify-timeout) VERIFY_TIMEOUT_SECS="$2"; shift 2 ;;
 		-w|--web) BUILD_WEB=1; shift ;;
 		-h|--help) usage; exit 0 ;;
 		*) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -277,13 +309,21 @@ if [[ $RESTART -eq 0 ]]; then
 	exit 0
 fi
 
-echo "Restarting ${SERVICE} and ${WEB_SERVICE} on ${HOST} ..."
-$SSH_OPTS "$HOST" \
-	"sudo systemctl restart ${SERVICE} ${WEB_SERVICE} && sleep 3 \
-	&& for unit in ${SERVICE} ${WEB_SERVICE}; do \
-		printf '%s: ' \"\$unit\"; systemctl is-active \"\$unit\"; \
-	done \
-	&& (journalctl -u ${SERVICE} -u ${WEB_SERVICE} -n 20 --no-pager | grep -iE 'error|traceback|exception' \
-	&& echo 'WARNING: errors seen in recent log' || echo 'no errors in recent log')"
+# Restart and verify on the board. The verification script is piped to a remote
+# bash on stdin so it always matches this checkout and needs no install step; see
+# its header for why readiness is polled instead of slept on. errexit propagates
+# its exit status, so "Deploy complete" is only ever printed for a board that is
+# actually serving.
+HEALTH_SCRIPT="${SCRIPT_DIR}/lib/remote-restart-and-verify.sh"
+if [[ ! -f $HEALTH_SCRIPT ]]; then
+	echo "Verification script not found: ${HEALTH_SCRIPT}" >&2
+	echo "Refusing to restart without it: an unverified restart is how a" \
+		"crash-looping board previously passed as a successful deploy." >&2
+	exit 1
+fi
+
+echo "Restarting and verifying ${SERVICE} and ${WEB_SERVICE} on ${HOST} ..."
+$SSH_OPTS "$HOST" bash -s -- \
+	"$SERVICE" "$WEB_SERVICE" "$WEB_PORT" "$VERIFY_TIMEOUT_SECS" < "$HEALTH_SCRIPT"
 
 echo "Deploy complete."

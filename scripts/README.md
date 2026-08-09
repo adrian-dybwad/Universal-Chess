@@ -77,18 +77,33 @@ chmod +x rebuild.sh  # first time only
 
 ## Deploying to the Pi (dev sync)
 
-`deploy-to-pi.sh` rsyncs the local `src/universalchess/` tree to a running Pi
-and restarts the `universal-chess` and `universal-chess-web` services. It is a
-runtime-only deploy (tests, the React source in `web-app/`, the venv, and
-engines are excluded).
+`deploy-to-pi.sh` rsyncs the local `src/universalchess/` tree to a running Pi,
+restarts the `universal-chess` and `universal-chess-web` services, and verifies
+the board is serving before reporting success. It is a runtime-only deploy
+(tests, the React source in `web-app/`, the venv, and engines are excluded).
 
 ```bash
-./scripts/deploy-to-pi.sh                     # sync + restart (default host pi@dgt.local)
+./scripts/deploy-to-pi.sh                     # sync + restart + verify (default host pi@dgt.local)
 ./scripts/deploy-to-pi.sh --host pi@<ip>      # target a specific board IP
 ./scripts/deploy-to-pi.sh --web               # also build + ship the web bundle
 ./scripts/deploy-to-pi.sh --dry-run           # preview by size/time, no transfer
 ./scripts/deploy-to-pi.sh --check             # content (checksum) diff preview
 ```
+
+**Post-deploy verification:** `lib/remote-restart-and-verify.sh` is piped to the
+board on ssh's stdin (so it always matches the checkout being deployed) and
+decides whether the deploy succeeded. It polls `127.0.0.1:5000/api/system/activity`
+until the web app answers, and fails if either unit auto-restarts while it waits.
+Both checks are necessary: importing the Flask app takes roughly 70 seconds on
+the board's ARMv6 core, so a short fixed wait passes before the app has even
+finished starting, and because both units set `Restart=always`,
+`systemctl is-active` reports `active` moments after every crash — a crash loop
+is indistinguishable from health unless the restart counter is compared. A
+deploy that printed "Deploy complete" over a web app crash-looping at import is
+what prompted this. Exit codes are distinct: `2` a unit is not running, `3` a
+unit crashed on the deployed code, `4` the web interface never served within
+`--verify-timeout` (default 240s; verification returns as soon as the app
+answers, so the generous default costs a healthy board nothing).
 
 **The `--web` flag (and why it's needed):** Vite builds the React app into
 `web-app/dist/`, but Flask serves — and this script ships — the gitignored
