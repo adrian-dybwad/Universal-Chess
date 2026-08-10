@@ -13,40 +13,45 @@ interface LoginDialogProps {
 /**
  * Dialog for entering authentication credentials.
  * Uses the same credentials as WebDAV (Linux system user).
+ *
+ * A gate around the form, which holds all the state and therefore exists only
+ * while the dialog is open. Every opening then starts from the saved username,
+ * an empty password and the caller's message, without an effect to clear the
+ * last attempt out of a form that never went away.
  */
 export function LoginDialog({ isOpen, onClose, onSuccess, errorMessage }: LoginDialogProps) {
+  if (!isOpen) return null;
+  return <LoginForm onClose={onClose} onSuccess={onSuccess} errorMessage={errorMessage} />;
+}
+
+/** The username saved from a previous login, or '' when there is none to offer. */
+function savedUsername(): string {
+  const stored = getStoredCredentials();
+  if (!stored) return '';
+  try {
+    const [username] = atob(stored).split(':', 1);
+    return username || '';
+  } catch {
+    return '';
+  }
+}
+
+function LoginForm({ onClose, onSuccess, errorMessage }: Omit<LoginDialogProps, 'isOpen'>) {
   const { t } = useTranslation();
-  const [username, setUsername] = useState('');
+  const [username, setUsername] = useState(savedUsername);
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(errorMessage ?? '');
   const [systemUsername, setSystemUsername] = useState('');
 
+  // The board's own account name, offered as the placeholder. Read when the
+  // dialog opens rather than on every page load.
   useEffect(() => {
     fetch(buildApiUrl('/api/system/info'))
       .then(r => r.json())
       .then(data => { if (data.username) setSystemUsername(data.username); })
       .catch(() => {});
   }, []);
-
-  useEffect(() => {
-    if (isOpen) {
-      const stored = getStoredCredentials();
-      if (stored) {
-        try {
-          const decoded = atob(stored);
-          const [storedUsername] = decoded.split(':', 1);
-          setUsername(storedUsername || '');
-        } catch {
-          setUsername('');
-        }
-      } else {
-        setUsername('');
-      }
-      setPassword('');
-      setError(errorMessage || '');
-    }
-  }, [isOpen, errorMessage]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -76,8 +81,6 @@ export function LoginDialog({ isOpen, onClose, onSuccess, errorMessage }: LoginD
     setPassword('');
     setError('');
   };
-
-  if (!isOpen) return null;
 
   const hasStoredCredentials = !!getStoredCredentials();
 

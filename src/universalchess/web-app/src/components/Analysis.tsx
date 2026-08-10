@@ -12,6 +12,7 @@ import {
   Legend,
   Filler,
 } from 'chart.js';
+import type { ActiveElement, ChartOptions, TooltipItem } from 'chart.js';
 import type { PositionEntry } from '../types/game';
 import { MATE_SCORE_CP } from '../types/game';
 import { useDeepAnalysis } from '../hooks/useDeepAnalysis';
@@ -92,7 +93,9 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
   const [newMovesToast, setNewMovesToast] = useState(0);
 
   const chartRef = useRef<ChartJS<'line'> | null>(null);
-  const lastSignatureRef = useRef('');
+  // The positions signature the move list above was built from; '' until the
+  // first list arrives (an empty game signs as '' too, and has nothing to build).
+  const [appliedSignature, setAppliedSignature] = useState('');
 
   // Total moves in the game
   const totalMoves = moves.length > 0 ? moves.length - 1 : 0;  // moves[0] is start position
@@ -108,14 +111,17 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
   // state. It includes the evals because the board re-broadcasts as searches
   // complete: keying on FENs alone would ignore exactly those updates and the
   // newest ply's evaluation would never appear.
-  useEffect(() => {
-    const entries = Array.isArray(positions) ? positions : [];
-    const signature = entries
-      .map((p) => `${p.fen}:${p.eval ?? ''}:${p.best_move ?? ''}`)
-      .join('|');
-    if (signature === lastSignatureRef.current) return;
-    lastSignatureRef.current = signature;
+  //
+  // Applied during render rather than from an effect: this is the move list the
+  // props already describe, not a synchronisation with anything outside React.
+  // Taking it in an effect meant every arriving move was painted once with the
+  // previous list and cursor before the correction landed.
+  const entries = Array.isArray(positions) ? positions : [];
+  const signature = entries
+    .map((p) => `${p.fen}:${p.eval ?? ''}:${p.best_move ?? ''}`)
+    .join('|');
 
+  if (signature !== appliedSignature) {
     // The first entry is the start; later entries carry the post-move FEN/SAN/UCI.
     const newMoves: MoveData[] = entries.map((p, i) => ({
       fen: p.fen,
@@ -126,6 +132,7 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
     }));
 
     const prevLength = moves.length;
+    setAppliedSignature(signature);
     setMoves(newMoves);
 
     // Handle position based on mode
@@ -138,7 +145,7 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
     } else if (mode === 'static' && movePos === 0) {
       setMovePos(newMoves.length - 1);
     }
-  }, [positions, mode, t]);
+  }
 
   // Evaluation and best move for the position being viewed, read straight from
   // the board's per-ply data. Derived during render rather than held in state:
@@ -298,7 +305,7 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
     ],
   };
 
-  const chartOptions = {
+  const chartOptions: ChartOptions<'line'> = {
     responsive: true,
     maintainAspectRatio: false,
     animation: {
@@ -310,9 +317,10 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
       title: { display: false },
       tooltip: {
         callbacks: {
-          title: (items: any[]) => t('analysis.tooltipMove', { n: items[0]?.dataIndex + 1 || '' }),
-          label: (item: any) => {
-            const cp = item.raw;
+          title: (items: TooltipItem<'line'>[]) =>
+            t('analysis.tooltipMove', { n: (items[0]?.dataIndex ?? 0) + 1 || '' }),
+          label: (item: TooltipItem<'line'>) => {
+            const cp = item.raw as number | null;
             if (cp === null) return t('analysis.notAnalyzed');
             return t('analysis.pawns', { value: (cp / 100).toFixed(2) });
           },
@@ -339,7 +347,7 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
         grid: { display: false },
       },
     },
-    onClick: (_: any, elements: any[]) => {
+    onClick: (_event: unknown, elements: ActiveElement[]) => {
       if (elements.length > 0) {
         setMovePos(elements[0].index + 1);
       }
@@ -387,9 +395,9 @@ export function Analysis({ positions, mode, onPositionChange, onBestMoveChange, 
       {/* Chart */}
       <div className="analysis-chart">
         <Line
-          ref={chartRef as any}
+          ref={chartRef}
           data={chartData}
-          options={chartOptions as any}
+          options={chartOptions}
         />
       </div>
 

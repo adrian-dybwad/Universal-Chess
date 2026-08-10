@@ -13,9 +13,9 @@
  */
 
 import { Card, CardHeader } from '../components/ui';
-import { CatalogField } from '../components/CatalogField';
-import type { MenuCatalog, MenuNode } from '../types/menuCatalog';
-import { buildSections, isEnabled } from './engine';
+import type { MenuCatalog } from '../types/menuCatalog';
+import { buildSections } from './engine';
+import { renderCatalogRow } from './renderCatalogRow';
 import type { WebMenuContext } from './context';
 
 interface MenuContainerProps {
@@ -23,48 +23,6 @@ interface MenuContainerProps {
   /** Catalog id of the container to render (e.g. `settings.game`). */
   containerId: string;
   ctx: WebMenuContext;
-}
-
-/**
- * Render one catalog leaf as its web control, wiring value/options/gating through
- * the context. Exported so a page that supplies its own card shell (e.g. the
- * Players tab's per-slot cards) renders rows identically to MenuContainer instead
- * of hand-composing CatalogFields.
- */
-export function renderCatalogRow(
-  node: MenuNode,
-  ctx: WebMenuContext,
-  opts?: {
-    /**
-     * Force the control disabled regardless of the node's `enabledWhen`. Used
-     * when a page renders a row inline under a transient condition the catalog
-     * does not model (e.g. the update settings disabled while a check/install is
-     * in flight). ORed with the node's own gating, so it can only add disabling.
-     */
-    disabled?: boolean;
-  },
-) {
-  // A `dynamic` value control (e.g. the sprite picker) binds through `itemBind`
-  // -- the value written when one of its provider rows is chosen -- whereas
-  // ordinary fields bind through `bind`. Fall back accordingly so both render
-  // from one path.
-  const bind = node.bind ?? (node.type === 'dynamic' ? node.itemBind : undefined);
-  // A renderable leaf without a bind cannot read/write a value; skip it rather
-  // than render a control wired to nothing (the engine only yields renderable
-  // nodes, but a mis-authored node without a bind should fail visibly-absent
-  // rather than crash).
-  if (!bind) return null;
-  return (
-    <CatalogField
-      key={node.id}
-      node={node}
-      value={ctx.get(bind.store, bind.key) ?? ''}
-      options={ctx.optionsFor(node)}
-      placeholder={ctx.placeholderFor(node)}
-      disabled={Boolean(opts?.disabled) || !isEnabled(node, ctx.get)}
-      onChange={(value) => ctx.set(bind.store, bind.key, value)}
-    />
-  );
 }
 
 export function MenuContainer({ catalog, containerId, ctx }: MenuContainerProps) {

@@ -52,13 +52,13 @@ export function UpdateBanner() {
     return () => clearInterval(id);
   }, [fetchStatus]);
 
-  const install = useCallback(async () => {
+  const install = useCallback(async function runInstall() {
     setInstalling(true);
     setError(null);
     try {
       const res = await apiFetch('/api/updates/install', { method: 'POST', requiresAuth: true });
       if (res.status === 401) {
-        onUnauthorized(install);
+        onUnauthorized(runInstall);
         return;
       }
       if (!res.ok) {

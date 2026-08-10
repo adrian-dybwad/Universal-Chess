@@ -80,11 +80,12 @@ export function ConnectionStatus({ compact = false }: ConnectionStatusProps) {
         )}
       </button>
 
-      <ApiSettingsDialog
-        isOpen={dialogOpen}
-        onClose={() => setDialogOpen(false)}
-        onSave={handleSave}
-      />
+      {dialogOpen && (
+        <ApiSettingsDialog
+          onClose={() => setDialogOpen(false)}
+          onSave={handleSave}
+        />
+      )}
     </>
   );
 }

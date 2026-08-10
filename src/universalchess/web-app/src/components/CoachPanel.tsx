@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card, CardHeader } from './ui';
 import { apiFetch } from '../utils/api';
@@ -63,32 +63,40 @@ type Status =
  */
 export function CoachPanel({ gameId, ply, moveKey, variant = 'box' }: CoachPanelProps) {
   const { t } = useTranslation();
-  const [status, setStatus] = useState<Status>({ kind: 'prompt' });
   // undefined until the first response tells us whether a coach is configured;
   // false hides the panel for the rest of the session.
   const [configured, setConfigured] = useState<boolean | undefined>(undefined);
   const [retryToken, setRetryToken] = useState(0);
 
-  // Per-move statement cache, keyed "gameId:ply". Kept in a ref so it survives
-  // re-renders and navigation without retriggering fetches.
-  const cacheRef = useRef<Map<string, string>>(new Map());
+  // Per-move statement cache, keyed "gameId:ply:move". Held as state rather than
+  // a ref because what the panel shows is read from it while rendering: a move
+  // already coached must appear at once, without a loading line and without
+  // asking the board again.
+  const [statements, setStatements] = useState<ReadonlyMap<string, string>>(new Map());
+
+  // What the last request for a move concluded, tagged with the move it was
+  // about. Tagging is what stops one move's failure from being shown against the
+  // next one while that next one is still loading.
+  const [outcome, setOutcome] = useState<{ key: string; status: Status } | null>(null);
+
+  // The move being viewed, or null at the start position, where no move has been
+  // played for a coach to remark on.
+  const key = gameId !== null && ply >= 1 ? `${gameId}:${ply}:${moveKey ?? ''}` : null;
+
+  // Everything on screen follows from the move and what is known about it, so it
+  // is worked out here rather than pushed into state by the effect below. Until
+  // a request for this move concludes, it is loading.
+  const cached = key === null ? undefined : statements.get(key);
+  const status: Status =
+    key === null ? { kind: 'prompt' }
+    : cached !== undefined ? { kind: 'ready', text: cached }
+    : outcome?.key === key ? outcome.status
+    : { kind: 'loading' };
 
   useEffect(() => {
-    if (gameId === null || ply < 1) {
-      setStatus({ kind: 'prompt' });
-      return;
-    }
-
-    const key = `${gameId}:${ply}:${moveKey ?? ''}`;
-    const cached = cacheRef.current.get(key);
-    if (cached !== undefined) {
-      setStatus({ kind: 'ready', text: cached });
-      return;
-    }
+    if (key === null || statements.has(key)) return;
 
     let cancelled = false;
-    setStatus({ kind: 'loading' });
-
     const timer = setTimeout(async () => {
       try {
         const res = await apiFetch(`/api/coach/statement/${gameId}/${ply}`);
@@ -102,24 +110,27 @@ export function CoachPanel({ gameId, ply, moveKey, variant = 'box' }: CoachPanel
         setConfigured(true);
 
         if (data.statement) {
-          cacheRef.current.set(key, data.statement);
-          setStatus({ kind: 'ready', text: data.statement });
+          const statement = data.statement;
+          setStatements((prev) => new Map(prev).set(key, statement));
         } else if (data.error === 'not_generated') {
-          setStatus({ kind: 'pending' });
+          setOutcome({ key, status: { kind: 'pending' } });
         } else {
           // A quota/auth failure is permanent until the user acts, so surface the
           // specific reason and suppress the (futile) Retry; transient failures
           // keep the generic retryable message.
           const permanent = data.reason === 'quota' || data.reason === 'auth';
-          setStatus({
-            kind: 'error',
-            message: data.message ?? t('coach.unavailable'),
-            retryable: !permanent,
+          setOutcome({
+            key,
+            status: {
+              kind: 'error',
+              message: data.message ?? t('coach.unavailable'),
+              retryable: !permanent,
+            },
           });
         }
       } catch {
         if (!cancelled) {
-          setStatus({ kind: 'error', message: t('coach.unavailable'), retryable: true });
+          setOutcome({ key, status: { kind: 'error', message: t('coach.unavailable'), retryable: true } });
         }
       }
     }, DEBOUNCE_MS);
@@ -128,7 +139,7 @@ export function CoachPanel({ gameId, ply, moveKey, variant = 'box' }: CoachPanel
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [gameId, ply, moveKey, retryToken, t]);
+  }, [key, statements, gameId, ply, retryToken, t]);
 
   // Hidden entirely when there is no game to coach or no coach is configured.
   if (gameId === null || configured === false) {
@@ -150,7 +161,15 @@ export function CoachPanel({ gameId, ply, moveKey, variant = 'box' }: CoachPanel
           <p className="coach-panel-muted">
             {status.message}{' '}
             {status.retryable && (
-              <button className="coach-panel-retry" onClick={() => setRetryToken((n) => n + 1)}>
+              <button
+                className="coach-panel-retry"
+                onClick={() => {
+                  // Dropping the outcome puts the panel back to loading at once,
+                  // so the click is acknowledged before the debounce elapses.
+                  setOutcome(null);
+                  setRetryToken((n) => n + 1);
+                }}
+              >
                 {t('common.retry')}
               </button>
             )}

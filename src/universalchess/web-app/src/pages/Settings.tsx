@@ -4,7 +4,8 @@ import { useParams, useNavigate } from 'react-router';
 import { useTranslation, Trans } from 'react-i18next';
 import { Button, Card, CardHeader, FormRow, Input, Select, Toggle, Badge, ProgressBar } from '../components/ui';
 import { WebMenuContext } from '../menu/context';
-import { MenuContainer, renderCatalogRow } from '../menu/MenuContainer';
+import { MenuContainer } from '../menu/MenuContainer';
+import { renderCatalogRow } from '../menu/renderCatalogRow';
 import { buildSections } from '../menu/engine';
 import { EngineProfileEditor } from '../components/EngineProfileEditor';
 import type { FieldValue } from '../components/CatalogField';
@@ -20,6 +21,8 @@ import { apiFetch, buildApiUrl, getStoredCredentials, encodeBasicAuth, storeCred
 import { formatDateTime } from '../utils/datetime';
 import { externalLinkHref } from '../utils/externalLink';
 import { parseConfigBool } from '../utils/configBool';
+import type { AccountRecord } from '../types/accounts';
+import { selectableAccountsForSlot } from '../utils/accountSlots';
 import { useSettingsStore } from '../stores/settingsStore';
 import './Settings.css';
 
@@ -215,15 +218,6 @@ interface PlayerSettings {
   account: string;
 }
 
-// One saved online account as returned by GET /api/accounts (secrets redacted).
-interface AccountRecord {
-  type: string;
-  id: string;
-  identity: string;
-  values: Record<string, string>;
-  secretsSet: Record<string, boolean>;
-}
-
 interface FormSettings {
   player1: PlayerSettings;
   player2: PlayerSettings;
@@ -347,48 +341,6 @@ function parseThinkTime(value: string | undefined): number {
   const parsed = parseInt(value ?? '', 10);
   if (Number.isNaN(parsed)) return THINK_TIME_DEFAULT;
   return Math.min(THINK_TIME_MAX, Math.max(THINK_TIME_MIN, parsed));
-}
-
-/**
- * Resolve the concrete account id a player slot binds to for an online type.
- *
- * Mirror of the board's ``account_store.resolve_account_id`` so the two
- * platforms judge the same effective account: an explicit, still-existing id
- * resolves to itself; an empty id, or one whose account is gone, falls back to
- * the default (first) account. ``null`` when the type has no accounts. The web
- * account list arrives already sorted by id (like the board), so index 0 is the
- * same "default" both platforms use.
- */
-export function resolveAccountId(accountsOfType: AccountRecord[], accountId: string): string | null {
-  if (accountId && accountsOfType.some((a) => a.id === accountId)) return accountId;
-  return accountsOfType[0]?.id ?? null;
-}
-
-/** Accounts a slot may bind after excluding the account the other slot uses. */
-export interface SlotAccountChoices {
-  defaultAllowed: boolean;
-  accounts: AccountRecord[];
-}
-
-/**
- * Accounts this slot may bind, excluding the one the other slot uses -- the web
- * mirror of ``account_store.selectable_accounts_for_slot``. One online account
- * may not play both sides, so the account the other slot resolves to is removed
- * and the "Default account" option is withheld when Default would resolve to
- * that same account. ``sameType`` is whether the other slot is the same online
- * type (only then can they share an account space).
- */
-export function selectableAccountsForSlot(
-  accountsOfType: AccountRecord[],
-  sameType: boolean,
-  otherAccount: string,
-): SlotAccountChoices {
-  const taken = sameType ? resolveAccountId(accountsOfType, otherAccount) : null;
-  const defaultId = accountsOfType[0]?.id ?? null;
-  return {
-    defaultAllowed: taken === null || defaultId !== taken,
-    accounts: accountsOfType.filter((a) => a.id !== taken),
-  };
 }
 
 // Bounds for coach MultiPV (candidate lines). 1 disables alternatives.
@@ -1696,7 +1648,7 @@ export function Settings() {
   // completes in-request (no install thread), so on success the engine list is
   // refreshed immediately. On 401 the action is re-queued and re-run after login,
   // mirroring toggleEngine's flow. Returns true on success so the form can clear.
-  const uploadCustomEngine = useCallback(async (id: string, displayName: string, file: File): Promise<boolean> => {
+  const uploadCustomEngine = useCallback(async function runUploadCustomEngine(id: string, displayName: string, file: File): Promise<boolean> {
     setCustomEngineError(null);
     setCustomEngineBusy(true);
     try {
@@ -1706,7 +1658,7 @@ export function Settings() {
       // Browser sets the multipart Content-Type (with boundary); do not set it.
       form.append('file', file);
       const response = await apiFetch('/api/engines/upload', { method: 'POST', body: form, requiresAuth: true });
-      if (requireLogin(response, async () => { await uploadCustomEngine(id, displayName, file); })) return false;
+      if (requireLogin(response, async () => { await runUploadCustomEngine(id, displayName, file); })) return false;
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.success === false) {
         setCustomEngineError(data.error || t('settingsPage.customEngines.uploadFailed'));
@@ -1727,7 +1679,7 @@ export function Settings() {
   // dispatches an async download/install tracked by the shared install-status
   // watcher, so on success this hands off (optimistic status) exactly like a
   // catalog install rather than refreshing here. Returns true so the form clears.
-  const installCustomEngineFromUrl = useCallback(async (id: string, displayName: string, url: string): Promise<boolean> => {
+  const installCustomEngineFromUrl = useCallback(async function runInstallCustomEngineFromUrl(id: string, displayName: string, url: string): Promise<boolean> {
     setCustomEngineError(null);
     setCustomEngineBusy(true);
     try {
@@ -1737,7 +1689,7 @@ export function Settings() {
         body: JSON.stringify({ id, display_name: displayName, url }),
         requiresAuth: true,
       });
-      if (requireLogin(response, async () => { await installCustomEngineFromUrl(id, displayName, url); })) return false;
+      if (requireLogin(response, async () => { await runInstallCustomEngineFromUrl(id, displayName, url); })) return false;
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.success === false) {
         setCustomEngineError(data.error || t('settingsPage.customEngines.installFailed'));

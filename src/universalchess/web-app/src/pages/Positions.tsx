@@ -163,7 +163,11 @@ export function Positions() {
     }
   }, [t]);
 
+  // Load once, on mount. The rule reports any effect that calls a function able
+  // to setState, without following it past the first await; every write in the
+  // loader happens after the response, so there is no cascading render to avoid.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadPositions();
   }, [loadPositions]);
 

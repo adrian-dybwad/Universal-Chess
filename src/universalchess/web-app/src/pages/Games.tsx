@@ -32,7 +32,9 @@ export function Games() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const [games, setGames] = useState<GameRecord[]>([]);
-  const [activeMonthKey, setActiveMonthKey] = useState<string | null>(null);
+  // The month the user last picked; null until they pick one. Whether it is the
+  // month shown is decided by activeGroup below.
+  const [selectedMonthKey, setSelectedMonthKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [expandedPgn, setExpandedPgn] = useState<Record<number, string>>({});
   const [loginDialogOpen, setLoginDialogOpen] = useState(false);
@@ -40,8 +42,10 @@ export function Games() {
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
   const [pendingResumeId, setPendingResumeId] = useState<number | null>(null);
 
-  const fetchGames = useCallback(async () => {
-    setLoading(true);
+  // Read the list. Showing the spinner is the caller's decision: on mount the
+  // state already starts loading, so raising the flag here would only be a
+  // second render of the same screen.
+  const loadGames = useCallback(async () => {
     try {
       const response = await apiFetch('/api/games');
       const data = await response.json();
@@ -49,14 +53,24 @@ export function Games() {
     } catch (e) {
       console.error('Failed to fetch games:', e);
       setGames([]);
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   }, []);
 
+  // Read the list again after the user changed it, where the list on screen is
+  // now stale and the spinner says so.
+  const refreshGames = useCallback(async () => {
+    setLoading(true);
+    await loadGames();
+  }, [loadGames]);
+
+  // Load once, on mount. The rule reports any effect that calls a function able
+  // to setState, without following it past the first await; every write in the
+  // loader happens after the response, so there is no cascading render to avoid.
   useEffect(() => {
-    fetchGames();
-  }, [fetchGames]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadGames();
+  }, [loadGames]);
 
   // Group games (already newest-first from the API) into month buckets,
   // preserving encounter order so the sidebar lists the newest month first. An
@@ -80,20 +94,12 @@ export function Games() {
     return order.map((key) => byKey.get(key)!);
   }, [games, i18n.language, t]);
 
-  // Keep a valid active month: default to the newest, and re-anchor if the
-  // current selection disappears (e.g. its last game was deleted).
-  useEffect(() => {
-    if (monthGroups.length === 0) {
-      setActiveMonthKey(null);
-      return;
-    }
-    setActiveMonthKey((current) =>
-      current && monthGroups.some((g) => g.key === current) ? current : monthGroups[0].key
-    );
-  }, [monthGroups]);
-
+  // The month on screen: the one the user picked while it still has games, the
+  // newest otherwise, and none when there are no games at all. Derived rather
+  // than stored, so a month that empties (its last game deleted) re-anchors in
+  // the same render that drops it instead of one render later.
   const activeGroup =
-    monthGroups.find((g) => g.key === activeMonthKey) ?? monthGroups[0] ?? null;
+    monthGroups.find((g) => g.key === selectedMonthKey) ?? monthGroups[0] ?? null;
 
   const togglePgn = async (gameId: number) => {
     if (expandedPgn[gameId]) {
@@ -137,7 +143,7 @@ export function Games() {
         return;
       }
 
-      fetchGames();
+      void refreshGames();
     } catch (e) {
       console.error('Failed to delete game:', e);
     }
@@ -255,7 +261,7 @@ export function Games() {
                   key={group.key}
                   type="button"
                   className={`subnav-item ${activeGroup?.key === group.key ? 'active' : ''}`}
-                  onClick={() => setActiveMonthKey(group.key)}
+                  onClick={() => setSelectedMonthKey(group.key)}
                   title={group.label}
                 >
                   <span className="subnav-label">{group.label}</span>

@@ -1,10 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getApiUrl, setApiUrl, resetApiUrl, getDefaultApiUrl, sanitizeApiUrl } from '../utils/api';
 import './ApiSettingsDialog.css';
 
 interface ApiSettingsDialogProps {
-  isOpen: boolean;
   onClose: () => void;
   onSave: () => void;
 }
@@ -12,21 +11,18 @@ interface ApiSettingsDialogProps {
 /**
  * Dialog for configuring the API URL.
  * Allows users to change which chess board the PWA connects to.
+ *
+ * Mounted only while open, so each opening starts from the stored URL with no
+ * error or test result carried over from the last time. It used to stay mounted
+ * and clear itself from an effect when `isOpen` turned true, which is the same
+ * reset one render later.
  */
-export function ApiSettingsDialog({ isOpen, onClose, onSave }: ApiSettingsDialogProps) {
+export function ApiSettingsDialog({ onClose, onSave }: ApiSettingsDialogProps) {
   const { t } = useTranslation();
-  const [url, setUrl] = useState('');
+  const [url, setUrl] = useState(getApiUrl);
   const [error, setError] = useState('');
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
-
-  useEffect(() => {
-    if (isOpen) {
-      setUrl(getApiUrl());
-      setError('');
-      setTestResult(null);
-    }
-  }, [isOpen]);
 
   // Require a well-formed http(s) URL. Uses the same sanitizer as storage so a
   // value the dialog accepts is exactly a value setApiUrl will store (e.g. a
@@ -52,7 +48,7 @@ export function ApiSettingsDialog({ isOpen, onClose, onSave }: ApiSettingsDialog
       const isTestingDefault = url === defaultUrl;
       
       let fetchUrl: string;
-      let fetchOptions: RequestInit = {
+      const fetchOptions: RequestInit = {
         method: 'GET',
         signal: AbortSignal.timeout(5000),
       };
@@ -112,8 +108,6 @@ export function ApiSettingsDialog({ isOpen, onClose, onSave }: ApiSettingsDialog
     setTestResult(null);
     setError('');
   };
-
-  if (!isOpen) return null;
 
   return (
     <div className="dialog-overlay" onClick={onClose}>

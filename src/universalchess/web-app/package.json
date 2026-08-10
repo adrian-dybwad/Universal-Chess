@@ -9,8 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "eslint .",
-    "lint:security": "eslint . -c eslint.security.config.js",
+    "lint": "eslint . --max-warnings 0",
     "preview": "vite preview",
     "test": "vitest run"
   },

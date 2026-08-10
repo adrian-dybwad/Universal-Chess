@@ -16,8 +16,14 @@ convenience, and both silently narrowed what a green commit meant.
 Parity is asserted structurally: both sides must invoke ``scripts/analyze.sh``,
 which is the single definition of the toolchain, rather than each spelling out
 tools and configs that then drift apart.
+
+The frontend has the same arrangement and the same requirement. Its gate ran a
+security-only eslint config while ``npm run lint`` ran the full ruleset to a
+backlog of 44 findings, so the two sides again checked different things. There
+is now one script, ``npm run lint``, gated in both places.
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -29,7 +35,11 @@ PACKAGE_ROOT = Path(universalchess.__file__).resolve().parent
 REPO_ROOT = PACKAGE_ROOT.parent.parent
 PRE_COMMIT_CONFIG = REPO_ROOT / ".pre-commit-config.yaml"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "static-analysis.yml"
+WEB_APP = PACKAGE_ROOT / "web-app"
 ANALYZE = "scripts/analyze.sh"
+LINT_SCRIPT = "npm run lint"
+# `npm run lint`, tolerating flags npm itself takes (e.g. --silent in the hook).
+LINT_INVOCATION = re.compile(r"npm run (?:--\S+ )*lint\b(?!:)")
 
 # Third-party hook repositories that would supply their own copy of a tool the
 # runner already provides, at a version pinned separately from requirements-dev.
@@ -148,6 +158,68 @@ def test_no_hook_supplies_its_own_copy_of_a_runner_tool():
         "these hooks install their own ruff/bandit/semgrep, pinned separately "
         "from requirements-dev.txt which CI uses; route them through "
         f"{ANALYZE} instead so one set of versions applies: {offenders}"
+    )
+
+
+def _eslint_hook_entries():
+    """Pre-commit entries that run eslint, however they spell it."""
+    return [
+        hook.get("entry", "")
+        for _, hook in _hooks()
+        if "eslint" in hook.get("entry", "") or "lint" in hook.get("id", "")
+    ]
+
+
+def test_both_gates_run_the_same_frontend_lint():
+    """The hook and CI must run one eslint command, not two rulesets.
+
+    Why this test exists: the frontend repeated the Python mistake in a different
+    shape. The gate ran ``lint:security``, a config carrying only the XSS rules,
+    while ``npm run lint`` -- the full ruleset, including every react-hooks rule
+    -- was left ungated because it had a backlog. A green commit therefore said
+    nothing about the rules that reported 44 findings, and there was no moment at
+    which anyone was told.
+
+    How a regression manifests: a second lint script appears "just for the gate",
+    the two rulesets drift, and the hook stops predicting CI again.
+    """
+    hook_entries = [entry for entry in _eslint_hook_entries() if LINT_INVOCATION.search(entry)]
+    assert hook_entries, (
+        f"a pre-commit hook must run `{LINT_SCRIPT}`; a narrower script would gate "
+        "fewer rules than CI"
+    )
+    narrower = [
+        entry
+        for entry in _eslint_hook_entries()
+        if "lint:" in entry  # e.g. the retired `lint:security`
+    ]
+    assert not narrower, (
+        "these hooks run a lint script other than the full one, which is how the "
+        f"frontend gate came to check less than CI: {narrower}"
+    )
+    assert LINT_INVOCATION.search(CI_WORKFLOW.read_text()), (
+        f"the CI frontend gate must run `{LINT_SCRIPT}`, the same script the hook runs"
+    )
+
+
+def test_the_frontend_lint_fails_on_warnings():
+    """``npm run lint`` must treat a warning as a failure.
+
+    Why this test exists: eslint exits 0 on warnings, so a gate without
+    ``--max-warnings 0`` passes while reporting them. The warnings that matter
+    here are unused ``eslint-disable`` directives: three suppressions are in the
+    tree for effects that load once on mount, and each is only honest while the
+    finding it names is still reported. Without this flag a stale suppression is
+    invisible and accumulates.
+
+    How a regression manifests: disables outlive their findings, the tree looks
+    clean, and the next person reads suppressions that no longer describe
+    anything.
+    """
+    scripts = json.loads((WEB_APP / "package.json").read_text())["scripts"]
+    assert "--max-warnings 0" in scripts["lint"], (
+        "the lint script must fail on warnings, or a stale eslint-disable stays "
+        f"green forever: {scripts['lint']}"
     )
 
 

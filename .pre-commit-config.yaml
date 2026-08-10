@@ -41,12 +41,18 @@ repos:
         language: system
         types: [python]
 
-      # Frontend security gate: only the XSS rules (no-unsanitized +
-      # react/no-danger), mirroring the Python `ruff --select S` split. The full
-      # `npm run lint` (style + react-hooks) has a backlog and is not gated here.
-      - id: eslint-security
-        name: eslint (frontend security rules)
-        entry: bash -c 'cd src/universalchess/web-app && npm run --silent lint:security'
+      # Frontend gate: the whole ruleset, which includes the XSS rules
+      # (no-unsanitized + react/no-danger) that were once gated on their own
+      # while the rest ran to a backlog of 44 findings. The backlog is cleared,
+      # so there is nothing left to exempt, and `--max-warnings 0` also fails on
+      # an eslint-disable that has outlived the finding it was written for.
+      #
+      # Unscoped by design: the whole tree is a few seconds, and the react-hooks
+      # rules read a component with everything it calls, so a file-scoped run can
+      # miss a finding a full run reports.
+      - id: eslint
+        name: eslint (same as CI)
+        entry: bash -c 'cd src/universalchess/web-app && npm run --silent lint'
         language: system
         pass_filenames: false
         files: ^src/universalchess/web-app/.*\.(ts|tsx)$

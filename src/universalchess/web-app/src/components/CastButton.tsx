@@ -56,13 +56,13 @@ export function CastButton() {
     return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
 
-  const discover = useCallback(async () => {
+  const discover = useCallback(async function runDiscover() {
     setDiscovering(true);
     setMessage(null);
     try {
       const r = await apiFetch('/api/connectivity/chromecast/discover', { method: 'POST', requiresAuth: true });
       if (r.status === 401) {
-        onUnauthorized(discover);
+        onUnauthorized(runDiscover);
         return;
       }
       const data = await r.json().catch(() => ({}));
@@ -76,7 +76,7 @@ export function CastButton() {
 
   // Start adds a device to the active set without stopping the others.
   const startCast = useCallback(
-    async (device: string) => {
+    async function runStartCast(device: string) {
       setBusy(true);
       setMessage(null);
       try {
@@ -87,7 +87,7 @@ export function CastButton() {
           requiresAuth: true,
         });
         if (r.status === 401) {
-          onUnauthorized(() => startCast(device));
+          onUnauthorized(() => runStartCast(device));
           return;
         }
         const data = await r.json().catch(() => ({}));
@@ -103,7 +103,7 @@ export function CastButton() {
 
   // Stop one device, or every device when called with no argument ("Stop all").
   const stopCast = useCallback(
-    async (device?: string) => {
+    async function runStopCast(device?: string) {
       setBusy(true);
       setMessage(null);
       try {
@@ -114,7 +114,7 @@ export function CastButton() {
           requiresAuth: true,
         });
         if (r.status === 401) {
-          onUnauthorized(() => stopCast(device));
+          onUnauthorized(() => runStopCast(device));
           return;
         }
       } catch {

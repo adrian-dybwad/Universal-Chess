@@ -135,7 +135,11 @@ export function EngineProfileEditor({
     [engineName, loadField, t],
   );
 
+  // Load once, on mount. The rule reports any effect that calls a function able
+  // to setState, without following it past the first await; every write in the
+  // loader happens after the response, so there is no cascading render to avoid.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchProfiles();
   }, [fetchProfiles]);
 
@@ -189,7 +193,7 @@ export function EngineProfileEditor({
     // Editing the open profile must use its exact spelling. Remap only on
     // create/save-as (e.g. "1200 elo" -> "1200 ELO"); ambiguous twins leave
     // findExisting undefined so we do not silently overwrite the wrong section.
-    let writeName = saveAsNew
+    const writeName = saveAsNew
       ? (findExistingProfileName(name, existingNames) ?? name)
       : name;
     let renameTo: string | null = null;

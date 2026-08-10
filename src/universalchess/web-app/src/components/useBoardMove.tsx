@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ChessboardOptions } from 'react-chessboard';
 import { useLoginRetry } from './useLoginRetry';
@@ -116,9 +116,15 @@ export function useBoardMove({ fen, turn, gameOver, enabled, authoritativeVersio
   // (illegal) move the FEN is unchanged, so `fen` alone would never fire; the
   // board re-broadcasts the same position and bumps `authoritativeVersion`,
   // which rolls the piece back to its source square.
-  useEffect(() => {
+  //
+  // Dropped during render, in the same pass that first sees the new snapshot,
+  // rather than from an effect afterwards: an effect would paint one frame of
+  // the new position with the old piece still standing on its optimistic square.
+  const [renderedSnapshot, setRenderedSnapshot] = useState({ fen, authoritativeVersion });
+  if (renderedSnapshot.fen !== fen || renderedSnapshot.authoritativeVersion !== authoritativeVersion) {
+    setRenderedSnapshot({ fen, authoritativeVersion });
     setOptimisticFen(null);
-  }, [fen, authoritativeVersion]);
+  }
 
   // Whether a move can be started right now: the position is live, a game is in
   // progress, and it is not over.

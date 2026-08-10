@@ -13,7 +13,7 @@ export type TextSegment =
 
 // Match http(s) URLs and bare www. hosts. Trailing punctuation common in prose
 // is excluded from the URL and left for the following text segment.
-const URL_PATTERN = /\b((?:https?:\/\/|www\.)[^\s<>"']+?)(?=[.,;:!?)\]\}]*?(?:\s|$))/gi;
+const URL_PATTERN = /\b((?:https?:\/\/|www\.)[^\s<>"']+?)(?=[.,;:!?)\]}]*?(?:\s|$))/gi;
 
 /**
  * Parse ``text`` into alternating plain and link segments.

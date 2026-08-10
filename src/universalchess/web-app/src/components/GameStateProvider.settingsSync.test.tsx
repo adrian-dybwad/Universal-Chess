@@ -40,7 +40,12 @@ vi.mock('../stores/settingsStore', () => ({
 vi.mock('../utils/api', () => ({ buildApiUrl: (p: string) => p }));
 
 // Capture the EventSource the provider opens so the test can push messages.
+// The instance registers itself through this function rather than assigning
+// `this`, which reads as the accidental self-aliasing that hides `this` bugs.
 let lastEventSource: MockEventSource | null = null;
+function captureEventSource(source: MockEventSource): void {
+  lastEventSource = source;
+}
 class MockEventSource {
   url: string;
   onmessage: ((ev: MessageEvent) => void) | null = null;
@@ -50,7 +55,7 @@ class MockEventSource {
   static CLOSED = 2;
   constructor(url: string) {
     this.url = url;
-    lastEventSource = this;
+    captureEventSource(this);
   }
   close(): void {}
   emit(data: unknown): void {

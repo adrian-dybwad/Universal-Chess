@@ -10,6 +10,7 @@ import { apiFetch } from '../utils/api';
 import { useSseEvent, type SseEventPayload } from '../utils/sseBus';
 import { CAST_STATE_KEYS, type CastDevice, type CastStateName } from '../utils/chromecast';
 import { childrenOf, type AccountType, type MenuCatalog } from '../types/menuCatalog';
+import type { AccountRecord } from '../types/accounts';
 import { appliesToWeb } from '../menu/engine';
 import '../components/ApiSettingsDialog.css';
 import './Connectivity.css';
@@ -1330,17 +1331,6 @@ function ChromecastCard() {
       </Card>
     </>
   );
-}
-
-// One saved online account as returned by GET /api/accounts. Secrets are never
-// sent in cleartext: each secret field is reported only as a boolean in
-// `secretsSet` (e.g. `{ api_token: true }`).
-interface AccountRecord {
-  type: string;
-  id: string;
-  identity: string;
-  values: Record<string, string>;
-  secretsSet: Record<string, boolean>;
 }
 
 // i18n key for each add-account error code the API returns

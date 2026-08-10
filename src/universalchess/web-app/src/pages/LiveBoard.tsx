@@ -37,13 +37,13 @@ export function LiveBoard() {
   const [confirmNewGame, setConfirmNewGame] = useState(false);
   const [newGameBusy, setNewGameBusy] = useState(false);
 
-  const startNewGame = useCallback(async () => {
+  const startNewGame = useCallback(async function runStartNewGame() {
     setConfirmNewGame(false);
     setNewGameBusy(true);
     try {
       const response = await apiFetch('/api/board/new-game', { method: 'POST', requiresAuth: true });
       if (response.status === 401) {
-        onUnauthorized(startNewGame);
+        onUnauthorized(runStartNewGame);
         return;
       }
       // Success is reflected by the live game state over SSE; nothing to set here.

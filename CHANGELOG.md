@@ -236,6 +236,38 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
     happened to match, but nothing held them together, which is how System
     drifted. WiFi, Bluetooth, Chromecast and Accounts are unchanged.
 
+- **The whole frontend lint is a gate**: `npm run lint` reported 44 errors and
+  was allowed to, because only a security-rule subset of it blocked a commit or
+  a build. The subset was drawn when the rest had a backlog; that reasoning made
+  the backlog permanent, and a green commit said nothing about the rules that
+  were finding real defects. The backlog is cleared, the subset config is gone,
+  and the pre-commit hook and CI both run the one full ruleset, failing on
+  warnings so a suppression cannot outlive the finding it was written for. Three
+  suppressions remain, each on a load-once-on-mount effect, where the rule
+  reports a call it cannot follow past its first await.
+  - Nine callbacks that retry after a login referred to themselves through the
+    `const` they were being assigned to, a read inside the callback's own
+    initializer that would have thrown had it ever run during the assignment.
+    They also cost the compiler its analysis of the surrounding component, which
+    is what produced most of the rest of the report.
+  - The move list in Analysis, the optimistic piece in the live board and the
+    chosen month in Games were each corrected by an effect after the render that
+    got them wrong, so an arriving move was painted once against the previous
+    list, and a piece stood on its optimistic square for a frame after the board
+    had said otherwise. All three are settled during the render that first sees
+    the new data.
+  - The coach panel keeps its remarks in state rather than a ref and works out
+    what to show from the move being viewed, so a coached move appears without a
+    loading line and a failure is no longer shown against the next move while it
+    loads. Its behaviour had no test; it has seven now.
+  - The API and login dialogs stayed mounted while closed and cleared themselves
+    from an effect on reopening. They exist only while open, so each opening
+    starts fresh.
+  - The account-slot rules and the catalog row renderer moved out of the pages
+    that also export components, which restores Fast Refresh for those files,
+    and the duplicate account record type in Connectivity now comes from the one
+    definition.
+
 - **Positions is a main-menu entry on the board**: Choosing a position starts a
   game from it, but the board listed it among the device settings while the web
   has always given it a page of its own, reached from the main navigation. The

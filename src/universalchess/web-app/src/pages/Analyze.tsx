@@ -140,7 +140,7 @@ export function Analyze() {
     setViewedPly(ply);
   }, []);
 
-  const playFromHere = useCallback(async () => {
+  const playFromHere = useCallback(async function runPlayFromHere() {
     setConfirmPlay(false);
     if (!viewedFen) return;
     setPlayBusy(true);
@@ -174,7 +174,7 @@ export function Analyze() {
         requiresAuth: true,
       });
       if (response.status === 401) {
-        onUnauthorized(playFromHere);
+        onUnauthorized(runPlayFromHere);
         return;
       }
       const data = await response.json().catch(() => ({}));
@@ -203,7 +203,7 @@ export function Analyze() {
 
   // Resume the stored game by id. On 401 the login dialog opens and this same
   // action is retried after login. On success the browser goes to the live board.
-  const resumeGame = useCallback(async () => {
+  const resumeGame = useCallback(async function runResumeGame() {
     setConfirmResume(false);
     if (!gameId) return;
     setResumeBusy(true);
@@ -214,7 +214,7 @@ export function Analyze() {
         requiresAuth: true,
       });
       if (response.status === 401) {
-        onUnauthorized(resumeGame);
+        onUnauthorized(runResumeGame);
         return;
       }
       const data = await response.json().catch(() => ({}));
@@ -242,7 +242,7 @@ export function Analyze() {
   // Ask the board to analyse this game's unanalysed plies. Results are not in
   // the response: the board searches one position at a time and streams each
   // result back as a position_analysed event, handled below.
-  const analyzeGame = useCallback(async () => {
+  const analyzeGame = useCallback(async function runAnalyzeGame() {
     if (!gameId) return;
     setAnalyzeBusy(true);
     setAnalyzeError(null);
@@ -252,7 +252,7 @@ export function Analyze() {
         requiresAuth: true,
       });
       if (response.status === 401) {
-        onUnauthorized(analyzeGame);
+        onUnauthorized(runAnalyzeGame);
         return;
       }
       const data = await response.json().catch(() => ({}));

@@ -29,9 +29,20 @@ export function GameStateProvider({ children }: { children: React.ReactNode }) {
     void useSettingsStore.getState().load();
   }, []);
 
-  // Update ref when location changes. The live board now lives at /board (the
-  // root path is the welcome/home page).
-  isOnLiveBoardRef.current = location.pathname === '/board';
+  // Where the user is, for the SSE handler to read when a move arrives: it must
+  // not announce a move the user is already watching. It lives in a ref because
+  // the subscription below is deliberately not re-created on navigation, and it
+  // is written from an effect rather than during render because a render must not
+  // have side effects. The live board is /board (the root path is the welcome
+  // page).
+  //
+  // The handler reads this only from a network callback, never while rendering,
+  // so the commit-to-effect gap is not reachable from there; a move that did slip
+  // through it is caught by the effect below, which clears the banner on arrival
+  // at /board.
+  useEffect(() => {
+    isOnLiveBoardRef.current = location.pathname === '/board';
+  }, [location.pathname]);
 
   // Hide banner when navigating to live board
   useEffect(() => {
