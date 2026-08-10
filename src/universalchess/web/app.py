@@ -7042,11 +7042,13 @@ _init_game_subscriber()
 
 @app.route("/events")
 def sse_events():
-    """Server-Sent Events endpoint for real-time game state updates.
-    
-    Clients connect here to receive push updates when moves are made.
-    Each update contains the full game state (FEN, PGN, player names, etc).
-    
+    """Server-Sent Events endpoint for real-time game and status updates.
+
+    Clients connect here for push updates. On connect the handshake seeds the
+    cached game state, battery status, and clock status (or asks the board to
+    re-broadcast when a cache is empty), so a Safari PWA that reconnects after a
+    board reboot does not wait for the next change to fill the navbar indicators.
+
     Usage (JavaScript):
         const eventSource = new EventSource('/events');
         eventSource.onmessage = (event) => {
@@ -7080,6 +7082,25 @@ def sse_events():
                 # the response arrives on it below within milliseconds.
                 from universalchess.services.game_broadcast import request_game_state_broadcast
                 request_game_state_broadcast()
+
+            # Battery and clock use the same one-way board->web path as game
+            # state. Seed from the web cache on connect, or pull when empty, so a
+            # reconnecting PWA does not stay on an empty battery glyph / stalled
+            # clock until the next board-side change.
+            from universalchess.services.game_broadcast import (
+                request_battery_status_broadcast,
+                request_clock_status_broadcast,
+            )
+            last_battery = subscriber.get_last_battery_status()
+            if last_battery:
+                yield f"data: {json.dumps(last_battery)}\n\n"
+            else:
+                request_battery_status_broadcast()
+            last_clock = subscriber.get_last_clock_status()
+            if last_clock:
+                yield f"data: {json.dumps(last_clock)}\n\n"
+            else:
+                request_clock_status_broadcast()
             
             # Stream updates as they arrive
             while True:

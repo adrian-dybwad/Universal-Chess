@@ -211,15 +211,16 @@ export function GameStateProvider({ children }: { children: React.ReactNode }) {
     connect();
 
     // Reconnect promptly when the tab is refocused or the network returns,
-    // instead of waiting out the current backoff delay.
+    // instead of waiting out the current backoff delay. Always tear down and
+    // open a fresh EventSource: after a board power cycle Safari often leaves
+    // the prior source stuck in CONNECTING (or a zombie OPEN), and only
+    // reconnecting on CLOSED left the PWA dark until a manual reload. Mid-stream
+    // onerror still defers to the browser while readyState is CONNECTING.
     const handleWake = () => {
       if (disposed) return;
-      const es = eventSourceRef.current;
-      if (!es || es.readyState === EventSource.CLOSED) {
-        reconnectAttempts = 0;
-        clearReconnectTimer();
-        connect();
-      }
+      reconnectAttempts = 0;
+      clearReconnectTimer();
+      connect();
     };
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') handleWake();

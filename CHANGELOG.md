@@ -519,6 +519,14 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   reported "on battery" and then lost its link may really be on a battery and
   must still power off. The charger flag the status bar and web payload read is
   unchanged, so no indicator behaves differently.
+- After a board power cycle the Safari PWA could stay on an empty battery glyph
+  (and a stalled clock) until several manual reloads. The live `/events` stream
+  only seeded game state on connect, wake only forced a new EventSource when the
+  prior one was already `CLOSED` (Safari often left it stuck in `CONNECTING`),
+  and the battery indicator's one-shot mount fetch often landed before the board
+  had a reading. Connect now also seeds or pulls battery and clock snapshots, a
+  foreground/`online` wake always opens a fresh stream, and the battery indicator
+  re-fetches while connected and still unknown.
 - Changing a player's engine (or other player-defining setting) from the web did
   not take effect in the next game: a board-reset new game restarts play in place
   and reused the player objects built when the game first started, so the old

@@ -27,23 +27,29 @@ function fillColor(percent: number, charging: boolean): string {
   return 'var(--battery-ok, #2e8b57)';
 }
 
+/** How often to retry the REST seed while still unknown after a reconnect. */
+const UNKNOWN_RETRY_DELAY_MS = 2_000;
+/** Cap retries so a board with no battery telemetry does not poll forever. */
+const UNKNOWN_RETRY_LIMIT = 3;
+
 /**
  * Battery level/charge indicator for the navbar.
  *
  * Reads the live battery snapshot from the game store (fed by the board's
- * `battery_status` SSE event) and seeds it once on mount via GET
- * /api/system/battery, since the board -> web broadcast is one-way with no
- * replay. Battery is read from the board controller in the main process, so the
- * level is unknown until the board reports a reading; in that case the glyph
- * renders empty with an em dash rather than a fabricated value.
+ * `battery_status` SSE event) and seeds it via GET /api/system/battery on mount
+ * and again when SSE reports connected while the level is still unknown. Battery
+ * is read from the board controller in the main process, so the level is unknown
+ * until the board reports a reading; in that case the glyph renders empty with
+ * an em dash rather than a fabricated value. The reconnect re-seed covers the
+ * board-reboot case where the mount-time GET landed before the first poll.
  */
 export function BatteryIndicator({ compact = false }: BatteryIndicatorProps) {
   const { t } = useTranslation();
   const battery = useGameStore((state) => state.battery);
   const setBattery = useGameStore((state) => state.setBattery);
+  const connectionStatus = useGameStore((state) => state.connectionStatus);
 
-  // Seed the indicator on mount. Live updates then arrive over SSE (handled in
-  // GameStateProvider); this single fetch fills it immediately on page load.
+  // Mount seed: fill immediately on page load. Live updates then arrive over SSE.
   useEffect(() => {
     let active = true;
     (async () => {
@@ -53,14 +59,61 @@ export function BatteryIndicator({ compact = false }: BatteryIndicatorProps) {
         const data = (await response.json()) as BatteryStatus;
         if (active) setBattery(data);
       } catch {
-        // Best-effort: the indicator stays in the unknown state until an SSE
-        // push or a later fetch succeeds.
+        // Best-effort: stay unknown until SSE or a later fetch succeeds.
       }
     })();
     return () => {
       active = false;
     };
   }, [setBattery]);
+
+  // Reconnect re-seed: after a board reboot the mount GET often returned nulls.
+  // When SSE becomes connected and percent is still unknown, pull again (with a
+  // short capped retry) so the web process asks the board without a manual reload.
+  // Depends only on connectionStatus so a null response does not re-enter the
+  // effect and reset the retry budget.
+  useEffect(() => {
+    if (connectionStatus !== 'connected') return;
+    if ((useGameStore.getState().battery?.battery_percent ?? null) !== null) {
+      return;
+    }
+
+    let active = true;
+    let retries = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearRetry = () => {
+      if (retryTimer !== null) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
+    };
+
+    const fetchBattery = async () => {
+      try {
+        const response = await fetch(buildApiUrl('/api/system/battery'));
+        if (!response.ok) return;
+        const data = (await response.json()) as BatteryStatus;
+        if (!active) return;
+        setBattery(data);
+        if (data.battery_percent === null && retries < UNKNOWN_RETRY_LIMIT) {
+          retries += 1;
+          clearRetry();
+          retryTimer = setTimeout(() => {
+            void fetchBattery();
+          }, UNKNOWN_RETRY_DELAY_MS);
+        }
+      } catch {
+        // Best-effort; SSE may still deliver a later battery_status.
+      }
+    };
+
+    void fetchBattery();
+    return () => {
+      active = false;
+      clearRetry();
+    };
+  }, [connectionStatus, setBattery]);
 
   const percent = battery?.battery_percent ?? null;
   const charging = battery?.charger_connected ?? false;
