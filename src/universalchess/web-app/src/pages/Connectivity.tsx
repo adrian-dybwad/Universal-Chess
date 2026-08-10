@@ -9,7 +9,8 @@ import { useRadioCapability } from '../hooks/useRadioCapability';
 import { apiFetch } from '../utils/api';
 import { useSseEvent, type SseEventPayload } from '../utils/sseBus';
 import { CAST_STATE_KEYS, type CastDevice, type CastStateName } from '../utils/chromecast';
-import type { AccountType } from '../types/menuCatalog';
+import { childrenOf, type AccountType, type MenuCatalog } from '../types/menuCatalog';
+import { appliesToWeb } from '../menu/engine';
 import '../components/ApiSettingsDialog.css';
 import './Connectivity.css';
 
@@ -111,6 +112,23 @@ interface CastStatus {
   devices: CastDevice[];
 }
 
+// The card each `connectivity` child renders, and the deep-link anchor it sits
+// in. Exhaustive over the container's web children, so a node added to the
+// catalog without a component here is a type error rather than a silently
+// missing card. The board reaches these same four nodes as menu rows.
+const CONNECTIVITY_CARDS = {
+  'connectivity.wifi': { anchor: 'wifi', Card: WifiCard },
+  'connectivity.bluetooth': { anchor: 'bluetooth', Card: BluetoothCard },
+  'connectivity.chromecast': { anchor: 'chromecast', Card: ChromecastCard },
+  'connectivity.accounts': { anchor: 'accounts', Card: AccountsCard },
+} satisfies Record<string, { anchor: string; Card: () => React.JSX.Element }>;
+
+type ConnectivityNodeId = keyof typeof CONNECTIVITY_CARDS;
+
+function isConnectivityCard(id: string): id is ConnectivityNodeId {
+  return id in CONNECTIVITY_CARDS;
+}
+
 /**
  * Connectivity panel.
  *
@@ -124,13 +142,18 @@ interface CastStatus {
  * the WiFi, Bluetooth, Chromecast, and Accounts cards; each card self-saves, so
  * the panel does not participate in the Settings page's bulk Save & Apply bar.
  *
+ * Which cards appear, and in what order, comes from the shared catalog's
+ * `connectivity` container -- the same children the board flattens into its
+ * Connectivity menu -- rather than from the sequence they happen to be written in
+ * here. The two orders used to be independent and agreed only by coincidence.
+ *
  * The Wi-Fi and Bluetooth cards are omitted on a board with no such radio (a
  * plain Pi Zero), mirroring the board menu's own gate, and are withheld until the
  * capability probe answers so an unequipped board never flashes them. Chromecast
  * and Accounts stay: the board still reaches the network over the USB Ethernet
  * gadget.
  */
-export function ConnectivityPanel() {
+export function ConnectivityPanel({ catalog }: { catalog: MenuCatalog }) {
   const { t } = useTranslation();
   const { hasWifi, hasBluetooth, probed } = useRadioCapability();
   const showWifi = probed && hasWifi;
@@ -148,6 +171,13 @@ export function ConnectivityPanel() {
     el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [hash, showWifi, showBluetooth]);
 
+  const radioReady: Record<ConnectivityNodeId, boolean> = {
+    'connectivity.wifi': showWifi,
+    'connectivity.bluetooth': showBluetooth,
+    'connectivity.chromecast': true,
+    'connectivity.accounts': true,
+  };
+
   return (
     <section>
       <h2 className="page-title">
@@ -155,18 +185,19 @@ export function ConnectivityPanel() {
         {t('connectivity.title')}
       </h2>
       <p className="text-muted mb-6">{t('connectivity.subtitle')}</p>
-      {showWifi && (
-        <div id="wifi" className="conn-anchor">
-          <WifiCard />
-        </div>
-      )}
-      {showBluetooth && (
-        <div id="bluetooth" className="conn-anchor">
-          <BluetoothCard />
-        </div>
-      )}
-      <ChromecastCard />
-      <AccountsCard />
+      {childrenOf(catalog, 'connectivity')
+        .filter(appliesToWeb)
+        .map((node) => node.id)
+        .filter(isConnectivityCard)
+        .filter((id) => radioReady[id])
+        .map((id) => {
+          const { anchor, Card: CardComponent } = CONNECTIVITY_CARDS[id];
+          return (
+            <div key={id} id={anchor} className="conn-anchor">
+              <CardComponent />
+            </div>
+          );
+        })}
     </section>
   );
 }
@@ -268,13 +299,13 @@ function WifiCard() {
     return () => clearInterval(interval);
   }, [fetchStatus, fetchSaved]);
 
-  const scan = useCallback(async () => {
+  const scan = useCallback(async function runScan() {
     setScanning(true);
     setMessage(null);
     try {
       const r = await apiFetch('/api/connectivity/wifi/scan', { method: 'POST', requiresAuth: true });
       if (r.status === 401) {
-        onUnauthorized(scan);
+        onUnauthorized(runScan);
         return;
       }
       const data = await r.json().catch(() => ({}));
@@ -287,7 +318,7 @@ function WifiCard() {
   }, [onUnauthorized, t]);
 
   const connect = useCallback(
-    async (ssid: string, pw?: string) => {
+    async function runConnect(ssid: string, pw?: string) {
       setBusy(true);
       setMessage(null);
       try {
@@ -298,7 +329,7 @@ function WifiCard() {
           requiresAuth: true,
         });
         if (r.status === 401) {
-          onUnauthorized(() => connect(ssid, pw));
+          onUnauthorized(() => runConnect(ssid, pw));
           return;
         }
         const data = await r.json().catch(() => ({}));
@@ -333,7 +364,7 @@ function WifiCard() {
   };
 
   const forget = useCallback(
-    async (ssid: string, active: boolean) => {
+    async function runForget(ssid: string, active: boolean) {
       if (active && !confirm(t('connectivity.wifi.confirmForgetActive', { ssid }))) {
         return;
       }
@@ -347,7 +378,7 @@ function WifiCard() {
           requiresAuth: true,
         });
         if (r.status === 401) {
-          onUnauthorized(() => forget(ssid, active));
+          onUnauthorized(() => runForget(ssid, active));
           return;
         }
         const data = await r.json().catch(() => ({}));
@@ -683,13 +714,13 @@ function BluetoothCard() {
     }
   }, []);
 
-  const scan = useCallback(async () => {
+  const scan = useCallback(async function runScan() {
     setScanning(true);
     setMessage(null);
     try {
       const r = await apiFetch('/api/connectivity/bluetooth/scan', { method: 'POST', requiresAuth: true });
       if (r.status === 401) {
-        onUnauthorized(scan);
+        onUnauthorized(runScan);
         return;
       }
       const data = await r.json().catch(() => ({}));
@@ -703,7 +734,7 @@ function BluetoothCard() {
 
   /** POST a device action (connect/disconnect/forget/pair) and refresh status. */
   const deviceAction = useCallback(
-    async (path: string, address: string, successText: string, deviceName?: string) => {
+    async function runDeviceAction(path: string, address: string, successText: string, deviceName?: string) {
       setBusy(true);
       setMessage(null);
       try {
@@ -714,7 +745,7 @@ function BluetoothCard() {
           requiresAuth: true,
         });
         if (r.status === 401) {
-          onUnauthorized(() => deviceAction(path, address, successText, deviceName));
+          onUnauthorized(() => runDeviceAction(path, address, successText, deviceName));
           return;
         }
         const data = await r.json().catch(() => ({}));
@@ -737,7 +768,7 @@ function BluetoothCard() {
   );
 
   const removeStalePairing = useCallback(
-    async (device: { address: string; name: string }, pairAgain: boolean) => {
+    async function runRemoveStalePairing(device: { address: string; name: string }, pairAgain: boolean) {
       setBusy(true);
       setMessage(null);
       try {
@@ -748,7 +779,7 @@ function BluetoothCard() {
           requiresAuth: true,
         });
         if (forgetResponse.status === 401) {
-          onUnauthorized(() => removeStalePairing(device, pairAgain));
+          onUnauthorized(() => runRemoveStalePairing(device, pairAgain));
           return;
         }
         const forgetData = await forgetResponse.json().catch(() => ({}));
@@ -770,7 +801,7 @@ function BluetoothCard() {
           requiresAuth: true,
         });
         if (pairResponse.status === 401) {
-          onUnauthorized(() => removeStalePairing(device, pairAgain));
+          onUnauthorized(() => runRemoveStalePairing(device, pairAgain));
           return;
         }
         const pairData = await pairResponse.json().catch(() => ({}));
@@ -1117,7 +1148,7 @@ function ChromecastCard() {
   }, [loadSource]);
 
   const updateSource = useCallback(
-    async (nextUseLiveBoard: boolean) => {
+    async function runUpdateSource(nextUseLiveBoard: boolean) {
       const previous = useLiveBoard;
       setUseLiveBoard(nextUseLiveBoard);
       setMessage(null);
@@ -1130,7 +1161,7 @@ function ChromecastCard() {
         });
         if (r.status === 401) {
           setUseLiveBoard(previous);
-          onUnauthorized(() => updateSource(nextUseLiveBoard));
+          onUnauthorized(() => runUpdateSource(nextUseLiveBoard));
           return;
         }
         const data = await r.json().catch(() => ({}));
@@ -1146,13 +1177,13 @@ function ChromecastCard() {
     [onUnauthorized, useLiveBoard, t]
   );
 
-  const discover = useCallback(async () => {
+  const discover = useCallback(async function runDiscover() {
     setDiscovering(true);
     setMessage(null);
     try {
       const r = await apiFetch('/api/connectivity/chromecast/discover', { method: 'POST', requiresAuth: true });
       if (r.status === 401) {
-        onUnauthorized(discover);
+        onUnauthorized(runDiscover);
         return;
       }
       const data = await r.json().catch(() => ({}));
@@ -1428,7 +1459,7 @@ export function AccountsCard() {
   const setField = (key: string, value: string) =>
     setFieldValues((prev) => ({ ...prev, [key]: value }));
 
-  const add = useCallback(async () => {
+  const add = useCallback(async function runAdd() {
     if (!currentType) return;
     setSubmitting(true);
     setMessage(null);
@@ -1440,7 +1471,7 @@ export function AccountsCard() {
         requiresAuth: true,
       });
       if (r.status === 401) {
-        onUnauthorized(add);
+        onUnauthorized(runAdd);
         return;
       }
       if (r.ok) {
@@ -1460,7 +1491,7 @@ export function AccountsCard() {
   }, [currentType, fieldValues, onUnauthorized, fetchAccounts, t]);
 
   const remove = useCallback(
-    async (account: AccountRecord) => {
+    async function runRemove(account: AccountRecord) {
       if (!confirm(t('connectivity.accounts.removeConfirm', { identity: account.identity }))) return;
       setBusy(true);
       setMessage(null);
@@ -1470,7 +1501,7 @@ export function AccountsCard() {
           requiresAuth: true,
         });
         if (r.status === 401) {
-          onUnauthorized(() => remove(account));
+          onUnauthorized(() => runRemove(account));
           return;
         }
         if (r.ok) {

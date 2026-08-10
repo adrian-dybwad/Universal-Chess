@@ -5,6 +5,8 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { ConnectivityPanel } from './Connectivity';
+import menuSchemaFixture from '../test/fixtures/menuSchema';
+import type { MenuCatalog } from '../types/menuCatalog';
 
 /**
  * Guards the confirmation gate on disabling WiFi from the web.
@@ -114,7 +116,7 @@ afterEach(() => {
 async function renderWifiToggle() {
   const { container } = render(
     <MemoryRouter initialEntries={['/settings/connectivity']}>
-      <ConnectivityPanel />
+      <ConnectivityPanel catalog={menuSchemaFixture as unknown as MenuCatalog} />
     </MemoryRouter>
   );
   // The WiFi card lives under the #wifi anchor; its toggle is the only switch

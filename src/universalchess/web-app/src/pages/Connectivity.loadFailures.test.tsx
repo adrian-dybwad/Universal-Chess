@@ -4,6 +4,8 @@ import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/re
 import { MemoryRouter } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { ConnectivityPanel } from './Connectivity';
+import menuSchemaFixture from '../test/fixtures/menuSchema';
+import type { MenuCatalog } from '../types/menuCatalog';
 
 /**
  * Guards the Connectivity cards against reporting an unreadable response as
@@ -118,7 +120,7 @@ afterEach(() => {
 function renderPanel() {
   return render(
     <MemoryRouter initialEntries={['/settings/connectivity']}>
-      <ConnectivityPanel />
+      <ConnectivityPanel catalog={menuSchemaFixture as unknown as MenuCatalog} />
     </MemoryRouter>
   );
 }

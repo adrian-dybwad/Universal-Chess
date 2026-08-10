@@ -224,6 +224,18 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   - Agents moves on the board to sit after Engines, matching where the web had
     it, since the web's order was the one being kept.
 
+- **About opens the board's System screen, as it opens the web's System tab**:
+  The web's System tab leads with the device's version, hardware and memory; the
+  board listed the same information fourth, between Reset Settings and Power.
+  Sharing the catalog fixed the order of the Settings sections but not the order
+  inside them, and System was where the two had drifted. About is now the first
+  System row on the board, and the rows the two surfaces share appear in the same
+  sequence on both.
+  - The web's Connectivity cards now come from the same catalog container the
+    board's Connectivity menu is built from. The order they were written in
+    happened to match, but nothing held them together, which is how System
+    drifted. WiFi, Bluetooth, Chromecast and Accounts are unchanged.
+
 - **Positions is a main-menu entry on the board**: Choosing a position starts a
   game from it, but the board listed it among the device settings while the web
   has always given it a page of its own, reached from the main navigation. The

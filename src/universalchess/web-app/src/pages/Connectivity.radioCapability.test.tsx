@@ -4,6 +4,8 @@ import { render, screen, waitFor, cleanup, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { ConnectivityPanel } from './Connectivity';
+import menuSchemaFixture from '../test/fixtures/menuSchema';
+import type { MenuCatalog } from '../types/menuCatalog';
 
 /**
  * Guards which Connectivity cards a board without radios shows.
@@ -80,7 +82,7 @@ afterEach(() => {
 function renderPanel() {
   return render(
     <MemoryRouter initialEntries={['/settings/connectivity']}>
-      <ConnectivityPanel />
+      <ConnectivityPanel catalog={menuSchemaFixture as unknown as MenuCatalog} />
     </MemoryRouter>,
   );
 }

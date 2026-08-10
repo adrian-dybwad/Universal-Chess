@@ -5,6 +5,8 @@ import { MemoryRouter } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { publishSseEvent, __resetSseBus } from '../utils/sseBus';
 import { ConnectivityPanel } from './Connectivity';
+import menuSchemaFixture from '../test/fixtures/menuSchema';
+import type { MenuCatalog } from '../types/menuCatalog';
 
 /**
  * Guards that the Connectivity cards consume board events off the shared SSE bus
@@ -71,7 +73,7 @@ afterEach(() => {
 function renderPanel() {
   return render(
     <MemoryRouter initialEntries={['/settings/connectivity']}>
-      <ConnectivityPanel />
+      <ConnectivityPanel catalog={menuSchemaFixture as unknown as MenuCatalog} />
     </MemoryRouter>
   );
 }

@@ -936,7 +936,7 @@
       "type": "menu",
       "label": "System",
       "platforms": ["board"],
-      "children": ["group.system.device", "system.updates", "system.reset", "system.about", "system.power"]
+      "children": ["system.about", "group.system.device", "system.updates", "system.reset", "system.power"]
     },
     {
       "id": "system.updates",

@@ -2434,7 +2434,7 @@ export function Settings() {
         )}
 
         {/* CONNECTIVITY TAB */}
-        {activeTab === 'connectivity' && <ConnectivityPanel />}
+        {activeTab === 'connectivity' && <ConnectivityPanel catalog={catalog} />}
 
         {/* ENGINES TAB */}
         {activeTab === 'engines' && (

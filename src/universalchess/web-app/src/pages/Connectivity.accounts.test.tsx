@@ -57,6 +57,12 @@ interface MockOptions {
   addStatus?: number;
   addBody?: unknown;
   /**
+   * Reject the first POST /api/accounts with 401 and accept the next. Models an
+   * anonymous viewer submitting the form: the card must hold the attempt, ask for
+   * a login, and then run the same submission again.
+   */
+  addUnauthorizedFirst?: boolean;
+  /**
    * How many GET /api/menu-schema calls fail before one succeeds. Use
    * `ALWAYS_FAILS` for an outage that never clears and 1 for a transient one
    * (the mount fails, a retry succeeds).
@@ -86,6 +92,7 @@ function mockAccounts(initial: AccountRecord[], opts?: MockOptions) {
   const calls: { url: string; method: string; body?: unknown }[] = [];
   let schemaCalls = 0;
   let listCalls = 0;
+  let addCalls = 0;
   const fetchMock = vi.fn(async (url: string, init?: RequestInit): Promise<JsonResponseLike> => {
     const method = ((init?.method as string) ?? 'GET').toUpperCase();
     const body = init?.body ? JSON.parse(init.body as string) : undefined;
@@ -106,6 +113,8 @@ function mockAccounts(initial: AccountRecord[], opts?: MockOptions) {
       return jsonResponse({ accounts });
     }
     if (url === '/api/accounts' && method === 'POST') {
+      addCalls += 1;
+      if (opts?.addUnauthorizedFirst && addCalls === 1) return jsonResponse({}, 401);
       if (opts?.addStatus && opts.addStatus >= 400) {
         return jsonResponse(opts.addBody ?? { error: 'error' }, opts.addStatus);
       }
@@ -192,6 +201,36 @@ describe('Accounts card (multi-account)', () => {
     const post = calls.find((c) => c.url === '/api/accounts' && c.method === 'POST');
     expect(post).toBeTruthy();
     expect(post!.body).toEqual({ type: 'lichess', fields: { api_token: 'lip_secret', range: '1000-1600' } });
+  });
+
+  it('submits the same account again after signing in on an unauthorized add', async () => {
+    // Adding an account is auth-gated, so an anonymous viewer's first POST comes
+    // back 401. The card hands its own submission to the login flow to be run
+    // again once credentials exist, and it must hand over the submission itself,
+    // carrying the typed field values -- not an empty stand-in, and not a
+    // different attempt. Every card here retries the same way, so this covers the
+    // pattern rather than this one form.
+    //
+    // How a regression manifests: the user signs in and the dialog closes with
+    // nothing added and no error, their typed token gone. The second POST below
+    // is absent, or arrives with different fields than the first.
+    const { calls } = mockAccounts([], { addUnauthorizedFirst: true });
+    render(<AccountsCard />);
+    await waitFor(() => expect(screen.getByLabelText(/API Token/i)).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText(/API Token/i), { target: { value: 'lip_secret' } });
+    fireEvent.change(screen.getByLabelText(/Rating Range/i), { target: { value: '1000-1600' } });
+    fireEvent.click(screen.getByRole('button', { name: /add account/i }));
+
+    // The 401 opens the login form rather than reporting a failure to the user.
+    fireEvent.click(await screen.findByTestId('login-submit'));
+
+    await waitFor(() => expect(screen.getByText('MagnusC')).toBeInTheDocument());
+    const posts = calls.filter((c) => c.url === '/api/accounts' && c.method === 'POST');
+    expect(posts).toHaveLength(2);
+    const submission = { type: 'lichess', fields: { api_token: 'lip_secret', range: '1000-1600' } };
+    expect(posts[0].body).toEqual(submission);
+    expect(posts[1].body).toEqual(submission);
   });
 
   it('surfaces the duplicate-username conflict from the API', async () => {
