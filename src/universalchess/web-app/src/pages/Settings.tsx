@@ -24,6 +24,7 @@ import { parseConfigBool } from '../utils/configBool';
 import type { AccountRecord } from '../types/accounts';
 import { selectableAccountsForSlot } from '../utils/accountSlots';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useGameStore } from '../stores/gameStore';
 import './Settings.css';
 
 // Sections of FormSettings that map to persisted settings, used to merge an
@@ -4311,6 +4312,26 @@ function useAuthedSystemAction() {
   // renders inline beside that control rather than in a detached page-top banner.
   const [actionOutcome, setActionOutcome] = useState<{ scope: string; ok: boolean; text: string } | null>(null);
   const { requireLogin, promptLogin, loginDialog } = useLoginRetry();
+  const connectionStatus = useGameStore((state) => state.connectionStatus);
+  const previousConnectionStatusRef = useRef(connectionStatus);
+
+  // A successful Shutdown/Reboot tells the user the web UI is unavailable. The
+  // SPA (especially an installed PWA) stays on this page through the outage, so
+  // the banner would still read "unavailable" after the navbar status is already
+  // Connected. Clear it on that transition -- not while still Connected, because
+  // the POST returns success before the board actually drops.
+  useEffect(() => {
+    const previous = previousConnectionStatusRef.current;
+    previousConnectionStatusRef.current = connectionStatus;
+    if (
+      previous !== 'connected' &&
+      connectionStatus === 'connected' &&
+      actionOutcome?.ok === true &&
+      actionOutcome.scope === 'power'
+    ) {
+      setActionOutcome(null);
+    }
+  }, [connectionStatus, actionOutcome]);
 
   // Run a system action: confirm, POST, and surface the outcome. ``scope`` tags
   // where the outcome renders. The confirmation is answered before the POST, so
