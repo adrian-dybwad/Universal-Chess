@@ -15,6 +15,159 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **USB Ethernet gadget mode in Connectivity settings**: Boards prepared with
+  `enable_usb_gadget.py` (or an equivalent boot edit) had no in-app control for
+  Off / Auto / Client / Shared, and nothing showed whether the live OS state
+  matched the preference or still needed a reboot. Settings -> Connectivity now
+  carries a USB Gadget control (after Bluetooth, before Chromecast -- the same
+  catalog node on the board's Connectivity menu): on the web, the modes are
+  radios with always-visible descriptions that name this board's own
+  `http://<hostname>.local/` URL (and `http://10.12.194.1/` in Shared), warn that
+  Shared can interrupt the host computer's normal Wi-Fi or Ethernet while the
+  cable is connected (and that the board will share its own Wi-Fi internet with
+  the computer when it has one), and note that Client needs Internet Sharing /
+  ICS. Off mentions reaching the board over Wi-Fi or Ethernet only when the board
+  actually has Wi-Fi (a plain Pi Zero without a dongle does not). A status
+  readout under the radios reports desired vs live, whether boot still loads the
+  gadget stack, whether they match, and when a reboot is required. Changing mode
+  while connected over USB can drop the session; the web page asks for
+  confirmation first. Privileged apply goes through the pinned
+  `uc-usb-gadget-admin` helper (passwordless sudo grant, same pattern as the
+  clock helpers). A board with no stored preference that is boot-prepared seeds
+  desired to Client so the control does not read Off on a card the setup script
+  prepared. When a reboot is still required for the preference to finish
+  applying, the status readout offers a Reboot now button (same
+  `/api/system/reboot` path as System -> Power).   Selecting Client or Shared pins
+  the matching NetworkManager profile and disables the vendor ICS auto-switcher:
+  stock `rpi-usb-gadget on` brings Shared up with Shared autoconnect, so without
+  that pin a Client preference returned as Shared after reboot whenever the host
+  was not offering ICS. Current packages also have no `shared` verb; Shared is
+  applied the same pin path after `on -f`. Client/Shared apply also keeps the
+  stock ``netplan-eth0`` profile off ``usb0``: that connection ships with
+  ``match: {}`` (any ethernet), and on boards with no ``eth0`` (only ``usb0`` +
+  Wi‑Fi) it claims the gadget as a DHCP *client*, fighting Shared (Pi as DHCP
+  *server*) and leaving the host on a self-assigned address with an empty
+  dnsmasq lease file.   With no ``eth0`` the profile is deleted; with ``eth0`` it
+  is restricted to that name. ``netplan apply`` is avoided (it can hang and
+  drop Wi‑Fi). Client/Shared also write early ``modules-load=dwc2,g_ether`` on
+  the kernel cmdline (takes effect on the next reboot), so the gadget is armed
+  before userspace starts and a host already plugged in at boot enumerates on
+  its first try; the vendor tool's ``modules-load.d`` binds later than that.
+  The gadget is armed once at boot and left alone from then on -- nothing
+  reloads or rebinds the driver, and nothing needs to detect the cable, because
+  an armed device enumerates whenever it is inserted. Client/Shared also need
+  ``usb0`` under NetworkManager's control: NetworkManager's stock udev rule
+  marks every gadget interface unmanaged, so the package ships a ``conf.d``
+  drop-in claiming ``usb0``, without which the cable enumerates but the pinned
+  profile never activates and the link never gets an address. Shared's fixed
+  ``10.12.194.1`` no longer forces Link=Connected when the UDC is not attached.
+  The Shared status readout reports the USB dnsmasq lease count so
+  an idle server is visible. Shared-mode help now says that on macOS the
+  per-device Internet Sharing switch for the USB gadget must be off as well
+  as the master Sharing switch (leaving the gadget checked keeps
+  ``bridge100`` / ``192.168.2.1`` and a self-assigned host address). Prepared detection accepts
+  `/etc/modules-load.d/usb-gadget.conf` (what current `on` writes) in addition
+  to cmdline `g_ether`, so a working gadget is not stuck offering Reboot forever.
+  Web and board startup re-apply the stored preference when live disagrees, and
+  the status readout polls every 10s (and on tab focus) while clearing stale rows
+  if the board is unreachable during a reboot. After Off, ``rpi-usb-gadget``
+  clears boot markers immediately but ``usb0``/``g_ether`` linger until reboot;
+  the status no longer mis-labels that leftover as Client, and Reboot now stays
+  offered until the netdev is gone. Turning Client/Shared back on after Off
+  writes boot markers immediately while ``usb0`` is still absent; Reboot now is
+  offered in that window too (vendor ``on`` itself says reboot to apply). An
+  idle ``usb0`` with Client/Shared NM profiles still present (host not attached
+  yet) reports Live Client rather than Off, so Match is not a false failure
+  while waiting for the cable or Internet Sharing. The status readout also
+  shows Host link (UDC attached / not attached / none) so a Matching Client
+  with no cable is visible without looking like a mode failure. On the board
+  e-paper USB Gadget select, the selected radio shows Connected or Disconnected
+  (and the usb0 IPv4 when present). An address on usb0 always counts as
+  Connected -- never Disconnected or ``No host`` beside an IP the session is
+  using. The web status readout uses the same Connected/Disconnected wording
+  and shows the Address (usb0 IPv4). Online
+  account management moved
+  from Connectivity to Players so credentials sit next to the per-slot account
+  picker.
+
+- **Auto USB gadget mode**: Client and Shared each require the user to know what
+  the host computer is doing -- Client needs Internet Sharing on, Shared needs it
+  off -- and the wrong choice looks like a broken cable. The USB Gadget control
+  now offers Auto as well, which hands the link back to Raspberry Pi's
+  `rpi-usb-gadget-ics.service`: it takes Client while the host offers a network
+  over the cable and Shared when it does not, changing over as that changes. The
+  board is reachable by name in either case, and at `http://10.12.194.1/` while
+  it is in Shared. Auto is not the default and its description says why: the mode
+  can change on its own, and each switch to Shared can interrupt the host
+  computer's normal Wi-Fi or Ethernet. Applying Auto enables that unit and
+  restores the autoconnect a fresh `rpi-usb-gadget on -f` leaves, undoing both
+  halves of a Client/Shared apply -- enabling the unit while leaving a profile
+  pinned against it is neither mode. Auto moves no connection itself, so
+  selecting it cannot drop the USB session the user is most likely browsing over.
+  Because `usb0` can only ever report a concrete mode, Auto's status reads as the
+  mode the switcher currently holds plus whether that switcher is enabled, and
+  Auto counts as matching for either Client or Shared. A board whose switcher is
+  disabled is pinned rather than switching, so Auto reports Match No there and
+  startup re-applies it; conversely a Client or Shared preference found with the
+  switcher still enabled reports Match No, since the unit can move it at any
+  moment. A switcher state that cannot be read stays Unknown and never
+  contradicts an otherwise healthy mode. A boot-prepared board with no stored
+  preference and the switcher still enabled -- what `enable_usb_gadget.py --auto`
+  leaves -- now seeds Auto instead of Client, so the control matches the card.
+
+- The USB Gadget help now says which socket the cable goes into: the Raspberry Pi
+  Zero's own USB data port, inside the chess board, not the Centaur's charging
+  port. The charging port is the only socket an owner can see, and it carries no
+  data, so a correctly configured board looked broken -- the mode applied, the
+  status card said Disconnected, and nothing on either surface said the cable was
+  in the wrong place. Every mode in the control depends on that cable, so the
+  requirement sits at the top of the widget, where it is read before the choice
+  is made.
+
+- The USB gadget now introduces itself to the host computer as "Universal Chess
+  USB Gadget". The product string in the gadget's USB descriptor is the only name
+  a user ever sees for this connection -- macOS shows it as the hardware port in
+  Network settings and as the entry in the Internet Sharing list, which is the
+  list Shared mode's own instructions send them to -- and the Pi kernel compiles
+  in "Raspberry Pi USB Gadget", which names the board rather than the product and
+  matches nothing the app says. The package and `enable_usb_gadget.py` both write
+  a `modprobe.d` drop-in setting `g_ether`'s `iProduct`; the module is loaded from
+  userspace, so modprobe reads it. Only the string changes: the USB vendor and
+  product IDs belong to Raspberry Pi and are left alone, since claiming an ID we
+  do not hold would misidentify the device to every host. The name takes effect at
+  the next boot -- nothing reloads `g_ether` to apply it sooner, because unloading
+  it with a host attached wedges the controller. On a host that has already seen
+  the board, the renamed device appears as a new interface, so an existing
+  Internet Sharing selection has to be made once more against the new name.
+
+- Help text on the board is now paged instead of being cut off. The HELP dialog
+  drew wrapped lines from the top of the panel with no limit, so a tip longer
+  than the thirteen lines it holds ran over the "Press any button" line and then
+  off the bottom of the screen, where it was clipped without a mark -- the reader
+  saw a tip that stopped mid-sentence and nothing said there was more. The USB
+  Gadget mode descriptions are the texts that exposed it: Shared is 25 wrapped
+  lines and Auto 23. Tips are now split into pages that fit the panel, with a
+  "Page N of X" footer; UP and DOWN turn the page and any other button closes,
+  the same keys and the same wrap-around used by the menu, the keyboard layouts
+  and the analysis pages. The idle timeout that returns an unattended board to
+  the menu now restarts on each page turn, since measured from when the dialog
+  opened it would close mid-read on the second page. A tip that fits on one page
+  is unchanged: no footer, and any button closes it. The wrap, the page split,
+  the page cursor and the footer are one widget shared with the coach statement
+  panel, which pages the same way on OK -- previously each panel had its own
+  copy of that logic, and only one of them had it at all.
+
+- Shared mode's instructions now quote the gadget's name rather than describing
+  it, so the switch to turn off in macOS's Internet Sharing list can be found by
+  reading them.
+
+- On the web, the USB Gadget card no longer prints its own title twice. The card
+  heading and the control inside it both took the catalog node's label, so
+  "USB Gadget" appeared on consecutive lines; the control is now labelled Gadget
+  Mode, which also gives the radio group an accessible name that describes what
+  it sets rather than repeating the heading. The board's menu is unaffected --
+  it has never shown both.
+
 - **Stoppable, resumable engine installs**: A source build can run for an hour,
   and until now the only way out was to let it finish or reboot the board, which
   threw the work away. An install can now be stopped and picked up later.
@@ -319,8 +472,58 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 - **Deprecated Engines**: Fire, Laser (x86-only, incompatible with ARM)
 - **Legacy CI**: Docker-based cron CI system (moved to `.github/legacy-ci/`)
 - **Obsolete Tests**: Removed outdated promotion hardware tests
+- **Legacy shutdown-time updater**: `scripts/update.sh` shipped to every board and
+  was reachable by nothing: it installed `dgtcentaurmods_armhf.deb`, a package
+  this project does not build, from an update-on-shutdown flow that Settings ->
+  System replaced. Its last line started the controller sleep hook, so the file
+  was also a stray way to power the board off.
 
 ### Fixed
+
+- `tools/sd-card-setup/enable_usb_gadget.py` prepared a Shared-mode card while
+  documenting a Client one. `rpi-usb-gadget on`, which the card's `runcmd`
+  invokes, does not select either mode: it creates both NetworkManager profiles,
+  activates `USB Gadget (shared)` with `connection.autoconnect yes`, leaves
+  `USB Gadget (client)` at `no`, and enables `rpi-usb-gadget-ics.service` to move
+  between the two according to whether the host appears to be offering Internet
+  Sharing. A card prepared by the tool came up serving DHCP from
+  `10.12.194.3-14` on `10.12.194.1`, with no route to the internet -- so the
+  board could be reached but could not install anything, which is what preparing
+  the card was for. The card now follows `on -f` with the commands that pin a
+  mode: stop the watcher, set `connection.autoconnect` on both profiles, and
+  activate the wanted one. Both profiles are named because setting only one
+  leaves the other autoconnecting, and which NetworkManager then picks for `usb0`
+  on the next boot is a race. Client is the default; `--shared` selects the other
+  mode, and re-running with a different choice replaces the previous mode's
+  commands rather than adding to them. `--auto` is the third option and pins
+  nothing: it writes `systemctl enable --now rpi-usb-gadget-ics.service` and
+  leaves the watcher to keep choosing, which is there to test the vendor
+  behaviour against a pinned mode rather than to make a board more reliable --
+  that watcher is what returned a Client preference as Shared after a reboot, and
+  a switch to Shared can hand the host a route and DNS pointing at a Pi with no
+  route out. The two flags are mutually exclusive, and the closing report
+  describes the mode that was chosen: which addresses work, what the host must
+  provide in Client, what it must not do in Shared, and that the mode is
+  unsettled in Auto. `--shared` also skips the host DNS check, which waits for an
+  interface a Shared-mode card never causes the host to create.
+
+- A card prepared by `tools/sd-card-setup/enable_usb_gadget.py` was reachable
+  over USB on its first boot and could stop being reachable on a later one.
+  NetworkManager's own `85-nm-unmanaged.rules` marks every `DEVTYPE=="gadget"`
+  interface unmanaged, and `rpi-usb-gadget` answers that with `nmcli device set
+  usb0 managed yes` -- runtime state that does not survive a reboot. What carried
+  a stock image across one was the generic `netplan-eth0` profile cloud-init
+  generates, whose empty match happens to cover `usb0`; that is an accident of
+  the image, and applying Client or Shared mode deletes that profile, because the
+  same empty match otherwise claims the gadget as a DHCP client and fights
+  Shared, where the Pi serves DHCP. With it gone `usb0` stayed at `STATE 10
+  (unmanaged)`, `REASON 77 (unmanaged via udev rule)`: the cable enumerated and
+  the link never got an address. The card now writes
+  `/etc/NetworkManager/conf.d/90-uc-usb-gadget-managed.conf` through cloud-init
+  `write_files`, claiming `usb0` regardless of what else exists, and the
+  universal-chess package installs the identical file at the same path so a
+  prepared card and an installed board are in the same state. The file is shown
+  in full in the confirmation diff rather than elided like the DNS diagnostic.
 
 - Leaving a position game dropped the user at the category list rather than at
   the position that had just been played. The Positions menu records the chosen
@@ -403,6 +606,22 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   fallback is kept in both directions and needs no configuration, so swapping
   the panel -- or restoring a configuration taken from a different board --
   corrects itself on the next startup instead of leaving the screen blank.
+
+- A board that was asleep when the app started was never found again, and the
+  only cure was restarting the service. Discovery sends a wake pair and one
+  address request, and every path that repeats them is reached only from a packet
+  the board itself sent -- so a board that answers nothing was probed exactly
+  once. Startup gave up after its three attempts and the app then polled address
+  0x00/0x00 for the rest of the session, logging a request timeout every seven
+  seconds, while the board sat awake beside it. Waking the board with its own
+  power button after startup landed there, as did a board whose controller comes
+  up slowly. Discovery now re-probes every ten seconds until the board answers,
+  clearing any half-discovered address first so a retry does not depend on how
+  far the previous attempt got, and stops as soon as discovery succeeds so a
+  working board is never disturbed mid-session. The three startup attempts remain
+  and still bound how long the splash waits, because recreating the controller
+  reopens the serial port and a bare re-probe cannot; they no longer decide
+  whether the board is ever found.
 
 - The screen went blank between the boot splash and the main menu, and again on
   entering a game, which looked like a fault rather than a transition. Every
@@ -505,6 +724,119 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   reconciliation still recovers what was reached. The board asks the web, which
   owns installs, over the socket that already connects them; the web stops the
   install itself only when the board is not running to do it.
+- The shutdown hook that exists to sleep the Centaur controller when the app is
+  not running had never once worked, so a board whose app had crashed or been
+  stopped kept its controller powered after the Pi shut down and drained the
+  controller's own battery. `board.controller` is only ever assigned by
+  `init_board`, which runs in the main service; the hook runs in its own process,
+  so the global was `None` there and every attempt failed on
+  `'NoneType' object has no attribute 'sleep'` -- twenty-six consecutive
+  shutdowns on the development board, none successful. The hook now initialises a
+  controller for itself, bounded so an absent or sleeping board cannot hold
+  shutdown open, and its unit carries an explicit `TimeoutStartSec` instead of
+  inheriting `infinity`. The two sleepers also stopped working against each
+  other: the main service tried to disarm the hook with `systemctl stop`, which
+  does nothing to an inactive `oneshot` that `shutdown.target` then pulls in
+  anyway, so on a clean shutdown the hook still ran and logged "battery may
+  drain" about a controller the main service had already slept correctly.
+  Whichever process sleeps the controller now records it under
+  `/run/universalchess`, which is emptied every boot, and the hook exits
+  immediately when it finds that record -- so the warning now appears only when a
+  controller really was left powered. The hook also defers while the main service
+  is still running, because a hook that can now open a controller of its own must
+  not open a second connection to the serial port the running service holds; a
+  service state it cannot read counts as not running, since refusing to sleep is
+  the one outcome this hook exists to prevent. Making the hook work exposed what
+  it was wired to: it was pulled in by `shutdown.target`, which is reached by
+  reboot, kexec and soft-reboot as well as by power-off. The controller is the
+  board's power manager and answers the sleep command by cutting power to the Pi,
+  which is why the app itself sleeps it only when shutting down and never when
+  rebooting -- so a working hook on that wiring would have turned every reboot,
+  including Reboot from the menu and the web, into a power-off that left the board
+  dark until someone pressed the power button. The unit is now wanted by
+  `poweroff.target` and `halt.target` alone, and installation removes the
+  `shutdown.target` link that earlier releases created, since enabling a unit
+  never retires symlinks an older `[Install]` section left behind. A power-off
+  on a real board then showed the hook still leaving the controller awake, for a
+  second reason: a start job carries no ordering against a concurrent stop job,
+  so the hook ran while the main service was still `deactivating` with its main
+  PID alive and holding the serial port. It therefore stood down in favour of a
+  service that had been stopped by systemd rather than by a menu shutdown and so
+  would never sleep the controller. The unit is now ordered
+  `After=universal-chess.service`, which a probe pair measured mid-shutdown as
+  the difference between finding that service `deactivating` and finding it
+  `inactive` with no process left; standing down is logged as a warning naming
+  the consequence, because it now describes a controller nobody will sleep.
+  What let the original defect hide for so long was that the hook's only record
+  of it went to the journal, which Raspberry Pi OS keeps in RAM
+  (`Storage=volatile`), so each failure was erased by the boot that followed it.
+  The hook now files its outcome in the Event Log under Settings, which lives in
+  /var/lib and survives: a fallback sleep it performed, a controller it could not
+  get an acknowledgement from, and a shutdown it stood down for. The ordinary
+  power-off, where the app slept the controller itself, still records nothing --
+  that path is every normal shutdown and would bury the log in routine lines.
+- Reboot and Shutdown did nothing on a board whose service user has no blanket
+  passwordless sudo. Both actions -- from the Power menu and from the web -- end
+  in `platform/system_power.py` running `sudo systemctl reboot` or
+  `sudo systemctl poweroff`, and the package granted neither. It wires
+  passwordless sudo for every other privileged action (chpasswd, bt-admin, the
+  updater, the clock, the USB gadget helper) and for exactly one systemctl form,
+  `restart universal-chess.service`, so the power commands fell through to a
+  password prompt with no TTY behind them and were denied. The Raspberry Pi
+  stayed up while the app completed its own cleanup and exited, which looked
+  like the menu had merely killed the board software. Installation now writes
+  `/etc/sudoers.d/universal-chess-power` granting those two commands, each
+  pinned with its verb -- a bare `systemctl` grant would be root over every unit
+  -- and validated with `visudo` like the other drop-ins. It is a separate file
+  from the restart grant, which is written truncating and would otherwise erase
+  it. Boards where an operator had added a blanket NOPASSWD rule by hand never
+  saw the defect, which is why it survived to now.
+- Wi-Fi was wholly non-functional on such a board, for the same reason and
+  invisibly. Every Wi-Fi action needs root -- the scan runs `iwlist`, connect and
+  forget run `nmcli`, the radio switch runs `rfkill` -- and none of them was
+  granted, so each was denied. Because no caller read the exit status, all of it
+  was reported as success: the network list came back empty as though no access
+  point were in range, connecting appeared to work and changed nothing, and the
+  radio toggle moved in the UI while the radio never moved. Those actions now go
+  through one pinned helper, `scripts/uc-wifi-admin`, which the package grants
+  passwordless sudo on and which performs only those operations; granting `nmcli`
+  itself would be control over every connection on the board, and `rfkill` over
+  every radio. The helper's exit status now reaches the caller, so a real failure
+  is reported as one. It also takes the passphrase on stdin and passes it to
+  NetworkManager through a 0600 file that is removed before it returns, where the
+  WPA2 fallback path previously put the passphrase on a command line any local
+  user could read from `ps`.
+- `scripts/check-updates.sh --install` no longer prints a permission error in the
+  middle of a successful install. apt drops privileges to its `_apt` user for the
+  acquire step even when the "download" is copying a local file into place, and
+  the `mktemp -d` staging directory is 0700, so `_apt` could not traverse it: apt
+  reported `couldn't be accessed by user '_apt' ... (13: Permission denied)` and
+  redid the copy as root. Nothing was broken, which is the problem -- it read as a
+  failure partway through an operation that had worked, on every update. The
+  staging directory is now made traversable so apt keeps its own sandbox rather
+  than escalating. Only the mode changes; the directory stays owned by the
+  invoking user, so no other local user can substitute the package between the
+  download and the install.
+- Bluetooth startup no longer attempts `sudo service rfcomm stop`. The legacy
+  `rfcomm.service` it aimed at is disabled and stopped by the package install, so
+  there was nothing left for a runtime stop to do, and the call was never granted
+  -- on a board without a blanket passwordless rule it only cost a failed sudo
+  authentication and the pause that went with it, on every startup, before the
+  RFCOMM channel could be bound. What actually holds the channel is a stray
+  `rfcomm` process, and the sweep that clears those is unchanged.
+- Every privileged command the product runs is now checked against the grants the
+  package installs, by a test that parses both sides -- the `sudo` invocations out
+  of the application's syntax trees and the `NOPASSWD` rules out of the postinst.
+  Nothing connected the two before, which is how the power and Wi-Fi defects
+  above reached a release: the grants live in a shell script and the calls live in
+  argv lists spread across the package, and reviewing that by eye does not work
+  (the first audit written by hand missed the `rfkill` calls for using single
+  quotes and the `os.system` calls for not being argv lists). Call sites that are
+  deliberately ungranted are listed with their reasons, and a listed site that has
+  gone away fails the test too, so the list cannot become cover for a call that
+  comes back. The commands that were already granted now run under `sudo -n`, so
+  a missing grant fails immediately instead of waiting on a password prompt no
+  service can answer.
 - A board that could not read its battery powered itself off after fifteen idle
   minutes, ending any engine install that was running. The idle power-off exists
   to save the battery, and the power source is known only from the baseboard's
@@ -527,6 +859,13 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   had a reading. Connect now also seeds or pulls battery and clock snapshots, a
   foreground/`online` wake always opens a fresh stream, and the battery indicator
   re-fetches while connected and still unknown.
+- Settings → System → Power left "Shutting down. The web interface is now
+  unavailable." (and the matching reboot copy) on screen after the board was
+  back and the navbar already read Connected. Shutdown and reboot return success
+  before the drop, and the SPA stays on that page through the outage, so the
+  banner was still claiming the UI was gone. A successful Power outcome now
+  clears when connection status returns to Connected after having left it; a
+  failed action is left in place.
 - Changing a player's engine (or other player-defining setting) from the web did
   not take effect in the next game: a board-reset new game restarts play in place
   and reused the player objects built when the game first started, so the old
