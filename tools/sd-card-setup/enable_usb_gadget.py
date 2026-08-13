@@ -19,8 +19,24 @@ What it changes on the card
 ``cmdline.txt``  ``modules-load=dwc2,g_ether`` so the gadget is live on the
                  first boot, with no reboot needed.
 ``user-data``    a cloud-init ``runcmd`` invoking Raspberry Pi's own
-                 ``rpi-usb-gadget`` to create the NetworkManager profiles that
-                 give ``usb0`` an address and serve DHCP to the host.
+                 ``rpi-usb-gadget`` to create the NetworkManager profiles for
+                 ``usb0``, followed by the commands that pin one of them, and a
+                 NetworkManager drop-in keeping ``usb0`` managed on every later
+                 boot.
+
+Client, Shared or Auto
+----------------------
+``rpi-usb-gadget on`` settles on nothing by itself: it creates both
+NetworkManager profiles, activates Shared, and enables a watcher unit that moves
+between the two according to what the host appears to be doing. So the card says
+which of three arrangements it wants, after that has run.
+
+No flag    Client. The Pi takes an address from the host and so has a route to
+           the internet, which is what installing Universal Chess needs.
+--shared   The Pi serves DHCP at 10.12.194.1 and needs nothing configured on the
+           host, at the cost of having no route out.
+--auto     Neither pinned: the vendor's watcher keeps choosing between them, so
+           the mode can change between boots.
 ``ssh``          an empty file, which Raspberry Pi OS consumes on first boot to
                  enable sshd.
 
@@ -32,7 +48,9 @@ shown and confirmed before any write, and writes are fsynced so the card can be
 ejected immediately. Re-running on an already prepared card makes no changes.
 
 Usage:
-    python3 enable_usb_gadget.py                 # auto-detect the card
+    python3 enable_usb_gadget.py                 # auto-detect the card, Client
+    python3 enable_usb_gadget.py --shared        # Pi serves its own DHCP
+    python3 enable_usb_gadget.py --auto          # vendor watcher decides
     python3 enable_usb_gadget.py --boot /Volumes/bootfs
     python3 enable_usb_gadget.py --dry-run
 """
@@ -71,13 +89,6 @@ ISSUE_NAME = "issue.txt"
 BYTES_PER_MB = 1024 * 1024
 MB_PER_GB = 1024
 
-# NetworkManager "shared" address that rpi-usb-gadget assigns to usb0.
-# The address the Pi serves in rpi-usb-gadget's "shared" mode. It is NOT the
-# address reached after `rpi-usb-gadget on`, which selects the "client" profile
-# and takes an address from the host's DHCP server instead.
-GADGET_ADDRESS = "10.12.194.1"
-SHARED_MODE = "shared"
-
 # How the standalone check is invoked, quoted back to the user whenever this run
 # cannot complete it.
 FIX_DNS_COMMAND = "python3 tools/sd-card-setup/fix_host_dns.py"
@@ -87,6 +98,49 @@ FIX_DNS_COMMAND = "python3 tools/sd-card-setup/fix_host_dns.py"
 MOTD_CHECK_SOURCE = Path(__file__).resolve().parent / "motd-dns-check.sh"
 MOTD_CHECK_TARGET = "/etc/update-motd.d/98-universal-chess-dns"
 MOTD_CHECK_PERMISSIONS = "0755"
+
+# NetworkManager's own 85-nm-unmanaged.rules marks every USB gadget interface
+# unmanaged. ``rpi-usb-gadget`` answers that with ``nmcli device set usb0 managed
+# yes``, which is runtime state and does not survive a reboot; what carries a
+# stock image across one is the generic ``netplan-eth0`` profile cloud-init
+# generates, whose empty match happens to cover usb0. This tool claims the
+# interface itself rather than depending on that. The content is identical to the
+# file the universal-chess package installs at the same path.
+NM_MANAGED_TARGET = "/etc/NetworkManager/conf.d/90-uc-usb-gadget-managed.conf"
+NM_MANAGED_PERMISSIONS = "0644"
+NM_MANAGED_CONTENT = """\
+# Keep the USB Ethernet gadget under NetworkManager's control.
+#
+# NetworkManager's own 85-nm-unmanaged.rules marks every DEVTYPE=="gadget"
+# interface unmanaged. Client/Shared mode needs usb0 managed so the pinned
+# profile can activate and give the link an address.
+[device-uc-usb-gadget]
+match-device=interface-name:usb0
+managed=1
+"""
+
+# The gadget's USB product string is the name the host computer shows for this
+# connection -- on macOS, the hardware port in Network settings and the entry in
+# the Internet Sharing list. The Pi kernel compiles in "Raspberry Pi USB Gadget",
+# which identifies the board rather than the product. ``g_ether`` takes it as a
+# module parameter, and the module is loaded from userspace (the ``modules-load=``
+# this tool writes to cmdline.txt), so a modprobe.d drop-in reaches it. The
+# content is identical to the file the universal-chess package installs at the
+# same path.
+GADGET_NAME_TARGET = "/etc/modprobe.d/90-uc-usb-gadget-name.conf"
+GADGET_NAME_PERMISSIONS = "0644"
+GADGET_NAME_CONTENT = """\
+# Name the USB Ethernet gadget after the product.
+#
+# g_ether's product string is the name the host computer shows for this
+# connection: macOS lists the hardware port under it in Network settings and in
+# the Internet Sharing list, where the kernel default "Raspberry Pi USB Gadget"
+# identifies the board rather than the product. Only the string changes -- the
+# USB vendor and product IDs belong to Raspberry Pi and stay as they are.
+#
+# Applies at the next boot, when modprobe loads the module.
+options g_ether iProduct="Universal Chess USB Gadget"
+"""
 
 
 # The single-file build replaces this with the script's own text. None means
@@ -109,7 +163,8 @@ def read_motd_check_script() -> str:
     if EMBEDDED_MOTD_CHECK_SCRIPT is not None:
         return EMBEDDED_MOTD_CHECK_SCRIPT
     if not MOTD_CHECK_SOURCE.is_file():
-        raise SystemExit(f"Missing required script: {MOTD_CHECK_SOURCE}")
+        message = f"Missing required script: {MOTD_CHECK_SOURCE}"
+        raise SystemExit(message)
     return MOTD_CHECK_SOURCE.read_text(encoding="utf-8")
 
 
@@ -356,26 +411,29 @@ def resolve_boot_partition(explicit: str | None) -> Path:
     if explicit is not None:
         path = Path(explicit)
         if not bootfs.looks_like_boot_partition(path):
-            raise SystemExit(
+            message = (
                 f"{path} does not look like a Raspberry Pi boot partition "
                 "(expected config.txt, cmdline.txt and firmware files)."
             )
+            raise SystemExit(message)
         return path
 
     found = find_boot_partitions()
     if not found:
-        raise SystemExit(
+        message = (
             "No Raspberry Pi boot partition found.\n"
             "Insert the freshly imaged card and re-run, or pass --boot with the "
             "path to the mounted boot partition (often /Volumes/bootfs on macOS, "
             "/media/<user>/bootfs on Linux, or a drive letter on Windows)."
         )
+        raise SystemExit(message)
     if len(found) > 1:
         listing = "\n".join(f"  {path}" for path in found)
-        raise SystemExit(
+        message = (
             f"Multiple boot partitions found:\n{listing}\n"
             "Re-run with --boot to say which card to prepare."
         )
+        raise SystemExit(message)
     return found[0]
 
 
@@ -389,7 +447,13 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
-def plan_changes(boot: Path, *, free_uart: bool, enable_ssh: bool) -> list[PlannedChange]:
+def plan_changes(
+    boot: Path,
+    *,
+    free_uart: bool,
+    enable_ssh: bool,
+    mode: str = bootfs.CLIENT_MODE,
+) -> list[PlannedChange]:
     """Return the rewrites needed to make the card reachable over USB.
 
     Args:
@@ -397,6 +461,8 @@ def plan_changes(boot: Path, *, free_uart: bool, enable_ssh: bool) -> list[Plann
         free_uart: Also detach the kernel serial console, freeing the UART for
             the DGT Centaur board. Unrelated to USB access, so opt-in.
         enable_ssh: Create the marker file that turns on sshd at first boot.
+        mode: Which of ``bootfs.MODES`` the gadget is left in. Client is the
+            default because it leaves the board with a route to the internet.
 
     """
     changes: list[PlannedChange] = []
@@ -433,15 +499,28 @@ def plan_changes(boot: Path, *, free_uart: bool, enable_ssh: bool) -> list[Plann
     )
 
     def with_gadget_setup(script_content: str) -> str:
-        return bootfs.append_runcmd(
-            bootfs.append_write_file(
-                user_data_original,
-                MOTD_CHECK_TARGET,
-                script_content,
-                MOTD_CHECK_PERMISSIONS,
-            ),
-            bootfs.GADGET_RUNCMD,
+        # write_files runs before runcmd, so the drop-in is on the card's root
+        # filesystem before rpi-usb-gadget brings the gadget profile up.
+        with_files = bootfs.append_write_file(
+            user_data_original,
+            MOTD_CHECK_TARGET,
+            script_content,
+            MOTD_CHECK_PERMISSIONS,
         )
+        with_files = bootfs.append_write_file(
+            with_files,
+            NM_MANAGED_TARGET,
+            NM_MANAGED_CONTENT,
+            NM_MANAGED_PERMISSIONS,
+        )
+        with_files = bootfs.append_write_file(
+            with_files,
+            GADGET_NAME_TARGET,
+            GADGET_NAME_CONTENT,
+            GADGET_NAME_PERMISSIONS,
+        )
+        enabled = bootfs.append_runcmd(with_files, bootfs.GADGET_RUNCMD)
+        return bootfs.pin_gadget_mode(enabled, mode)
 
     changes.append(
         PlannedChange(
@@ -539,10 +618,11 @@ def validate_user_data(text: str) -> list[str]:
             "Skipping user-data validation. The edit is still applied.",
         ]
     except Exception as exc:
-        raise SystemExit(
+        message = (
             f"Refusing to write: the resulting user-data is not valid YAML ({exc}). "
             "Please report this along with your user-data file."
-        ) from exc
+        )
+        raise SystemExit(message) from exc
 
     warnings: list[str] = []
     if not parsed.get("users"):
@@ -580,15 +660,23 @@ def _first_username(parsed: dict) -> str | None:
     return None
 
 
-def report_access_details(user_data: str) -> None:
-    """Print how to reach the board, and what the host has to provide.
+def report_access_details(user_data: str, *, mode: str = bootfs.CLIENT_MODE) -> None:
+    """Print how to reach the board, for the mode the card was prepared in.
 
-    ``rpi-usb-gadget on`` activates its "client" profile, so the Pi is a DHCP
-    *client* and its address is whatever the host hands out -- not a fixed one.
-    The fixed 10.12.194.1 belongs to the separate "shared" profile, which is not
-    what ``on`` selects.
+    The modes are reached differently, so one set of instructions cannot cover
+    them: in Client the Pi has no fixed address and the host must be sharing its
+    connection, in Shared the Pi is always at ``bootfs.GADGET_ADDRESS`` and host
+    sharing is what breaks it, and in Auto which of those is true depends on what
+    the vendor's watcher decided on this boot.
+
+    Raises:
+        KeyError: If ``mode`` is not one of ``bootfs.MODES``. Printing one mode's
+            instructions for another sends the user to configure the host in the
+            wrong direction, so an unmapped mode must not fall back to a default.
+
     """
     hostname, username = _cloud_config_identity(user_data)
+    names_a_fixed_address = mode in (bootfs.SHARED_MODE, bootfs.AUTO_MODE)
 
     emit()
     emit("Once the card has booted with a USB cable to this machine:")
@@ -598,9 +686,31 @@ def report_access_details(user_data: str) -> None:
         # printing a wrong username sends the user chasing an auth failure.
         if username:
             emit(f"  ssh {username}@{hostname}.local")
+    if names_a_fixed_address:
+        # Behind the name, not ahead of it: the name is the address that still
+        # works once the cable is out and the board is on Wi-Fi, so it is the one
+        # worth learning. This stays because it is the only route that needs no
+        # mDNS resolver on the host.
+        suffix = "if it is in Shared" if mode == bootfs.AUTO_MODE else "no mDNS needed"
+        emit(f"  http://{bootfs.GADGET_ADDRESS}/   ({suffix})")
     emit()
-    emit("The Pi requests an address by DHCP, so it has no fixed IP. The host")
-    emit("must be sharing its connection over the USB interface:")
+
+    {
+        bootfs.CLIENT_MODE: _report_client_mode,
+        bootfs.SHARED_MODE: _report_shared_mode,
+        bootfs.AUTO_MODE: _report_auto_mode,
+    }[mode]()
+
+    emit()
+    emit("Windows hosts need the one-time RNDIS driver from")
+    emit("  https://github.com/raspberrypi/rpi-usb-gadget/releases")
+    emit("On a Pi Zero, use the micro-USB port next to the mini-HDMI, not PWR IN.")
+
+
+def _report_client_mode() -> None:
+    """Print what the host must provide for a Pi that is a DHCP client."""
+    emit("Client mode: the Pi requests an address by DHCP, so it has no fixed IP.")
+    emit("The host must be sharing its connection over the USB interface:")
     emit("  macOS    System Settings > General > Sharing > Internet Sharing")
     emit("  Windows  Network Connections > adapter > Sharing tab (ICS)")
     emit("  Linux    NetworkManager 'Shared to other computers' on the usb0 link")
@@ -610,13 +720,38 @@ def report_access_details(user_data: str) -> None:
     emit("  Windows  arp -a")
     emit("  Linux    ip neigh show dev <usb interface>")
     emit()
-    emit(f"To avoid host-side sharing entirely, run 'sudo rpi-usb-gadget {SHARED_MODE}'")
-    emit(f"on the Pi. It then serves {GADGET_ADDRESS} and its own DHCP, at the cost of")
-    emit("giving the Pi no route to the internet.")
+    emit("To avoid host-side sharing entirely, re-run with --shared. The Pi then")
+    emit(f"serves {bootfs.GADGET_ADDRESS} and its own DHCP, at the cost of having no")
+    emit("route to the internet.")
+
+
+def _report_auto_mode() -> None:
+    """Print that the mode is the watcher's to choose, and what that costs."""
+    emit(f"Auto mode: no profile is pinned. {bootfs.ICS_UNIT} moves")
+    emit("the gadget between Client and Shared according to whether this machine")
+    emit("looks like it is sharing its connection, so the mode can change between")
+    emit("boots, and while the board is running.")
     emit()
-    emit("Windows hosts need the one-time RNDIS driver from")
-    emit("  https://github.com/raspberrypi/rpi-usb-gadget/releases")
-    emit("On a Pi Zero, use the micro-USB port next to the mini-HDMI, not PWR IN.")
+    emit("Which address works follows from that choice: a leased one when it")
+    emit(f"picks Client, {bootfs.GADGET_ADDRESS} when it picks Shared. The name above")
+    emit("covers both, which is the reason to use it here.")
+    emit()
+    emit("Watch for it choosing Shared while this machine's USB interface is a")
+    emit("DHCP client: the host can then take a route and DNS from a Pi that has")
+    emit("no route out, and lose its own internet until the cable is unplugged.")
+    emit("Re-run with no flag for Client, or --shared, to settle the mode.")
+
+
+def _report_shared_mode() -> None:
+    """Print what the host must *not* do for a Pi that serves its own DHCP."""
+    emit(f"Shared mode: the Pi serves DHCP at {bootfs.GADGET_ADDRESS}, so the host needs")
+    emit("no sharing turned on. Turn host sharing off for this interface if it is")
+    emit("on -- two DHCP servers on one link hand out addresses from different")
+    emit("subnets and which one the host takes is a race.")
+    emit()
+    emit("The Pi has no route to the internet over USB in this mode, so installing")
+    emit("Universal Chess still needs it on Wi-Fi. Re-run without --shared for a")
+    emit("card that takes its address, and its route, from this machine.")
 
 
 # ---------------------------------------------------------------------------
@@ -642,6 +777,19 @@ def apply_change(change: PlannedChange) -> None:
         handle.write(change.updated)
         handle.flush()
         os.fsync(handle.fileno())
+
+
+def selected_mode(args: argparse.Namespace) -> str:
+    """Return the gadget mode the flags ask for, Client when they ask for nothing.
+
+    One place maps flags to a mode, so the card that gets written and the closing
+    instructions that get printed cannot disagree about which mode was chosen.
+    """
+    if args.auto:
+        return bootfs.AUTO_MODE
+    if args.shared:
+        return bootfs.SHARED_MODE
+    return bootfs.CLIENT_MODE
 
 
 def should_wait_for_board(args: argparse.Namespace) -> bool:
@@ -797,6 +945,27 @@ def build_parser() -> argparse.ArgumentParser:
             f"How long to wait for the board to appear (default {hostcheck.DEFAULT_WAIT_SECONDS})."
         ),
     )
+    # Mutually exclusive because Shared pins a profile and Auto hands the choice
+    # to the vendor's watcher. Accepting both would write a card whose mode
+    # cannot be read off the command that made it.
+    mode_flags = parser.add_mutually_exclusive_group()
+    mode_flags.add_argument(
+        "--shared",
+        action="store_true",
+        help=(
+            f"Pin Shared mode: the Pi serves DHCP at {bootfs.GADGET_ADDRESS} and "
+            "needs no sharing on the host, but gets no route to the internet. "
+            "The default is Client mode, which takes an address from the host."
+        ),
+    )
+    mode_flags.add_argument(
+        "--auto",
+        action="store_true",
+        help=(
+            "Pin nothing: leave the vendor's ICS auto-switcher to move between "
+            "Client and Shared. The mode can then change between boots."
+        ),
+    )
     parser.add_argument(
         "--free-uart",
         action="store_true",
@@ -855,7 +1024,20 @@ def continue_to_board(
     differ only in what happened before them: in either case the card is ready
     and the next step is the same physical move. Keeping it in one place is what
     stops the two paths drifting into giving different closing instructions.
+
+    The DNS check does not apply to Shared mode. It waits for the interface the
+    *host* shares and diagnoses a resolver that missed it; a Shared-mode card
+    creates no such interface, so waiting for one would burn the timeout and
+    then report a failure that is the intended configuration. Auto keeps the
+    check: with this machine sharing, the watcher's choice is Client, and if it
+    chooses otherwise the check reports the link never appearing rather than
+    anything worse.
     """
+    if selected_mode(args) == bootfs.SHARED_MODE:
+        emit()
+        emit("Eject the card, put it in the Pi, and connect the USB cable.")
+        return 0
+
     if not should_wait_for_board(args):
         emit()
         emit("Eject the card, put it in the Pi, and connect the USB cable.")
@@ -892,16 +1074,22 @@ def main(
         return 1
 
     try:
-        changes = plan_changes(boot, free_uart=args.free_uart, enable_ssh=not args.no_ssh)
+        changes = plan_changes(
+            boot,
+            free_uart=args.free_uart,
+            enable_ssh=not args.no_ssh,
+            mode=selected_mode(args),
+        )
     except ValueError as exc:
         # bootfs refuses rather than guessing whenever an existing file is
         # shaped in a way it cannot safely extend. Surfacing that as a plain
         # message beats a traceback for someone preparing a card.
-        raise SystemExit(
+        message = (
             f"Cannot prepare this card automatically: {exc}\n"
             "Nothing has been written. tools/sd-card-setup/README.md lists the "
             "manual equivalent of each change."
-        ) from exc
+        )
+        raise SystemExit(message) from exc
 
     user_data = next(c for c in changes if c.path.name == USER_DATA_NAME)
     for warning in validate_user_data(user_data.updated):
@@ -911,7 +1099,7 @@ def main(
     if not effective:
         emit()
         emit("This card is already prepared for USB gadget access. Nothing to do.")
-        report_access_details(user_data.updated)
+        report_access_details(user_data.updated, mode=selected_mode(args))
         # An already-prepared card is the common case on a second run, and the
         # reason for that run is usually that something is not working.
         return 0 if args.dry_run else continue_to_board(args, run)
@@ -932,7 +1120,7 @@ def main(
         apply_change(change)
 
     emit(f"Done. Originals saved alongside as *{BACKUP_SUFFIX}.")
-    report_access_details(user_data.updated)
+    report_access_details(user_data.updated, mode=selected_mode(args))
 
     return continue_to_board(args, run)
 

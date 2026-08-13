@@ -253,8 +253,14 @@ def report(findings: Findings) -> None:
     emit(_EXPLANATIONS[findings.diagnosis])
 
 
-def repair(findings: Findings, run: CommandRunner, *, assume_yes: bool) -> int:
-    """Restart the resolver that missed the shared link. Returns an exit code."""
+def repair(findings: Findings, run: CommandRunner, *, assume_yes: bool) -> int:  # noqa: PLR0911
+    """Restart the resolver that missed the shared link. Returns an exit code.
+
+    The returns are a refusal cascade: each one declines for a different reason
+    and says so before returning. Collapsing them into fewer exits would either
+    lose which condition stopped the repair or restart a resolver on a host where
+    that leaves no DNS at all.
+    """
     support = findings.platform
 
     if support.restart_command is None:
@@ -318,7 +324,7 @@ DEFAULT_WAIT_SECONDS = 300
 POLL_SECONDS = 3
 
 
-def wait_for_shared_link(
+def wait_for_shared_link(  # noqa: PLR0913 - keyword-only clock and sleep injection
     support: PlatformSupport,
     run: CommandRunner,
     *,

@@ -82,11 +82,12 @@ def check_no_collisions(sources: dict[str, str]) -> None:
     clashes = {s: o for s, o in owners.items() if len(o) > 1}
     if clashes:
         detail = "\n".join(f"  {s} defined in {', '.join(o)}" for s, o in sorted(clashes.items()))
-        raise CollisionError(
+        message = (
             "Cannot merge: these names are defined in more than one module.\n"
             f"{detail}\n"
             "Move the shared definition into one module and import it."
         )
+        raise CollisionError(message)
 
 
 def strip_module_scaffolding(source: str) -> str:
@@ -146,18 +147,20 @@ def embed_motd_script(entry_source: str, script: str) -> str:
 
     """
     if EMBED_TARGET not in entry_source:
-        raise ValueError(
+        message = (
             f"Expected to find {EMBED_TARGET!r} in {ENTRY_POINT}. "
             "The single-file build needs it to embed the MOTD script."
         )
+        raise ValueError(message)
     # A repr() of the text is unreadable for a 60-line shell script. A triple
     # quoted literal keeps it legible, which is the point of this format, and
     # is safe here because the build refuses any content that could close it.
     if '"""' in script or script.rstrip().endswith("\\"):
-        raise ValueError(
+        message = (
             f"{MOTD_SCRIPT} contains a triple quote or a trailing backslash, "
             "which cannot be embedded as a readable literal."
         )
+        raise ValueError(message)
     literal = f'EMBEDDED_MOTD_CHECK_SCRIPT: str | None = """\\\n{script}"""'
     return entry_source.replace(EMBED_TARGET, literal)
 
@@ -186,9 +189,12 @@ Run it on the machine with the card in a reader:
 
     python3 {DEFAULT_OUTPUT}
 
-It prepares the card, then waits for the board and checks that DNS works over
-the USB link. Use --check-dns on its own to run only that check against a board
-that is already connected.
+It prepares the card in Client mode, where the Pi takes an address from this
+machine and so has a route to the internet, then waits for the board and checks
+that DNS works over the USB link. Use --shared for a Pi that serves its own DHCP
+at 10.12.194.1 and needs nothing configured here, at the cost of that route, or
+--auto to leave the vendor's watcher moving between the two. Use --check-dns on
+its own to run only the check, against a board already connected.
 """
 
 {_FUTURE_IMPORT}

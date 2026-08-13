@@ -33,8 +33,11 @@ mode never comes up -- on precisely the hardware this tool targets.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Collection, Sequence
 
 # Byte-identical to the line rpi-usb-gadget writes. That script de-duplicates by
 # deleting lines exactly matching its own literal before appending, so any
@@ -52,6 +55,29 @@ CLOUD_CONFIG_HEADER = "#cloud-config"
 # `-f` skips the script's interactive "unsupported device?" prompt. Without it
 # the script blocks on a read from a closed stdin and spins forever.
 GADGET_RUNCMD = "command -v rpi-usb-gadget >/dev/null 2>&1 && rpi-usb-gadget on -f || true"
+
+CLIENT_MODE = "client"
+SHARED_MODE = "shared"
+# Neither profile pinned: the vendor's watcher picks between them, and goes on
+# picking for as long as the board runs.
+AUTO_MODE = "auto"
+MODES = (CLIENT_MODE, SHARED_MODE, AUTO_MODE)
+
+# The NetworkManager profiles rpi-usb-gadget creates, named as it names them.
+CLIENT_CONN = "USB Gadget (client)"
+SHARED_CONN = "USB Gadget (shared)"
+
+_PROFILES = {CLIENT_MODE: CLIENT_CONN, SHARED_MODE: SHARED_CONN}
+
+# The vendor's mode watcher, which describes itself as "USB gadget ICS
+# auto-switcher (client <-> shared)". It moves the gadget between the two
+# profiles according to whether the host looks like it is offering Internet
+# Sharing, so a mode is only pinned once this is off -- and Auto mode is this
+# unit left running.
+ICS_UNIT = "rpi-usb-gadget-ics.service"
+
+# The Pi's own address in Shared mode, where it runs the DHCP server.
+GADGET_ADDRESS = "10.12.194.1"
 
 # A cloud-config top-level key starts at column zero. Block scalars and nested
 # mappings are always indented, so a column-zero match cannot be inside one.
@@ -86,12 +112,14 @@ def _single_cmdline(cmdline_txt: str) -> str:
     """
     content_lines = [line for line in cmdline_txt.splitlines() if line.strip()]
     if not content_lines:
-        raise ValueError("cmdline.txt is empty; refusing to construct one from scratch")
+        message = "cmdline.txt is empty; refusing to construct one from scratch"
+        raise ValueError(message)
     if len(content_lines) > 1:
-        raise ValueError(
+        message = (
             "cmdline.txt must be a single line; found "
             f"{len(content_lines)}. Refusing to edit a file that is already malformed."
         )
+        raise ValueError(message)
     return content_lines[0].strip()
 
 
@@ -189,13 +217,17 @@ def parse_cloud_config(text: str) -> dict:
         yaml.YAMLError: If the document is malformed.
 
     """
+    # Function-local by design: the single-file build normally runs under a
+    # system Python with no PyYAML, so a top-level import would stop the tool
+    # from starting at all instead of degrading to the unvalidated path.
     try:
-        import yaml
+        import yaml  # noqa: PLC0415
     except ImportError as exc:  # pragma: no cover -- environment-dependent
-        raise RuntimeError(
+        message = (
             "PyYAML is required to validate user-data. Install it with: "
             "python3 -m pip install pyyaml"
-        ) from exc
+        )
+        raise RuntimeError(message) from exc
 
     parsed = yaml.safe_load(text)
     return {} if parsed is None else parsed
@@ -262,8 +294,11 @@ def try_parse_cloud_config(text: str) -> dict | None:
     Living here rather than in the CLI keeps the imprecise ``yaml.YAMLError``
     catch next to the only import of yaml, where the type can be named.
     """
+    # Function-local for the same reason as parse_cloud_config: PyYAML is
+    # optional, and its absence must degrade this to None rather than stop the
+    # tool from importing.
     try:
-        import yaml
+        import yaml  # noqa: PLC0415
     except ImportError:
         return None
 
@@ -318,6 +353,109 @@ def append_runcmd(user_data: str, command: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def gadget_mode_runcmds(mode: str) -> tuple[str, ...]:
+    """Return the commands that leave the gadget in ``mode``.
+
+    ``rpi-usb-gadget on`` settles on nothing by itself. It creates both
+    NetworkManager profiles, activates Shared, leaves Client at ``autoconnect
+    no``, and enables the watcher that moves between them -- so every mode here
+    has to say what it wants out loud.
+
+    Client and Shared each mean three things: stop the watcher, set both
+    profiles' autoconnect, and activate the wanted one now so the first boot does
+    not need a reboot to reach it. Both profiles are named because setting only
+    the wanted one leaves the other autoconnecting as the vendor left it, and
+    which of the two NetworkManager picks for ``usb0`` on the next boot is then a
+    race.
+
+    Auto is the watcher left running, and therefore pins nothing: autoconnect
+    values set underneath it would either be ignored or fight it.
+
+    Each command tolerates its own failure: on a device without the vendor
+    script neither the unit nor the profiles exist, and a non-zero exit from
+    ``runcmd`` would abandon the rest of the first-boot configuration.
+
+    Raises:
+        ValueError: If ``mode`` is not one of ``MODES``. Anything else would
+            silently fall through to one of them, giving the card a different
+            configuration from the one asked for.
+
+    """
+    if mode not in MODES:
+        message = f"unknown gadget mode: {mode!r}"
+        raise ValueError(message)
+
+    if mode == AUTO_MODE:
+        return (f"systemctl enable --now {ICS_UNIT} || true",)
+
+    wanted = _PROFILES[mode]
+    unwanted = _PROFILES[SHARED_MODE if mode == CLIENT_MODE else CLIENT_MODE]
+    return (
+        f"systemctl disable --now {ICS_UNIT} || true",
+        f'nmcli connection modify "{wanted}" connection.autoconnect yes || true',
+        f'nmcli connection modify "{unwanted}" connection.autoconnect no || true',
+        f'nmcli connection down "{unwanted}" || true',
+        f'nmcli connection up "{wanted}" || true',
+    )
+
+
+def pin_gadget_mode(user_data: str, mode: str) -> str:
+    """Return ``user_data`` carrying exactly one mode's worth of commands.
+
+    Every other mode's commands are removed first, so re-running the tool with a
+    different choice replaces it rather than leaving two in the document. Left
+    together they would both run, and the mode would rest on which ``systemctl``
+    or ``nmcli`` call happened to be last.
+
+    Assumes the enabling command is already in ``runcmd``: the removal can then
+    never empty the sequence, which would leave a ``runcmd:`` key with no items
+    for cloud-init to reject.
+
+    What modes share -- Client and Shared both stop the watcher -- is left where
+    it is. Removing and re-appending it would reorder ``runcmd`` on every run,
+    and a document that changes each time is no longer a card that can be
+    re-checked without being rewritten.
+
+    Raises:
+        ValueError: If ``mode`` is unknown, or ``runcmd`` uses flow style.
+
+    """
+    wanted = gadget_mode_runcmds(mode)
+    superseded = {
+        command for other in MODES if other != mode for command in gadget_mode_runcmds(other)
+    } - set(wanted)
+
+    text = _drop_runcmd_items(user_data, superseded)
+    for command in wanted:
+        text = append_runcmd(text, command)
+    return text
+
+
+def _drop_runcmd_items(user_data: str, commands: Collection[str]) -> str:
+    """Return ``user_data`` without the given items in its ``runcmd`` block.
+
+    Scoped to the block so that a command appearing in a ``write_files`` body --
+    a script the card installs, say -- is left alone.
+
+    Raises:
+        ValueError: If ``runcmd`` uses flow style.
+
+    """
+    lines = user_data.splitlines()
+    key_index = _find_top_level_runcmd(lines)
+    if key_index is None:
+        return _ensure_trailing_newline(user_data)
+
+    block_end, _ = _describe_sequence_block(lines, key_index)
+    unwanted = {f"- {command}" for command in commands}
+    kept = [
+        line
+        for index, line in enumerate(lines)
+        if not (key_index < index < block_end and line.strip() in unwanted)
+    ]
+    return "\n".join(kept) + "\n"
+
+
 def _find_top_level_runcmd(lines: list[str]) -> int | None:
     """Return the index of the column-zero ``runcmd:`` line, or None.
 
@@ -343,7 +481,8 @@ def _find_top_level_sequence(lines: list[str], key: str) -> int | None:
             continue
         remainder = match.group(2).strip()
         if remainder and not remainder.startswith("#"):
-            raise ValueError(f"{key} is written in flow style; merge the entry by hand")
+            message = f"{key} is written in flow style; merge the entry by hand"
+            raise ValueError(message)
         return index
     return None
 

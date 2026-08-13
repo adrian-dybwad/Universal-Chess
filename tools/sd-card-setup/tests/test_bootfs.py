@@ -21,10 +21,13 @@ The three failure modes these guard, which motivated writing them first:
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import bootfs
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # The exact overlay line rpi-usb-gadget writes. Reproduced here as an
 # independent literal rather than imported from bootfs, so that a change to the
@@ -405,6 +408,143 @@ class TestAppendRuncmd:
         result = bootfs.append_runcmd("", COMMAND)
         assert result.startswith("#cloud-config\n")
         assert bootfs.parse_cloud_config(result)["runcmd"] == [COMMAND]
+
+
+class TestPinGadgetMode:
+    """Choosing one of the three arrangements rpi-usb-gadget's parts allow.
+
+    Two are a pinned NetworkManager profile with the vendor's mode watcher
+    stopped; the third hands the choice back to that watcher.
+    """
+
+    ENABLED = f"#cloud-config\nruncmd:\n  - {bootfs.GADGET_RUNCMD}\n"
+
+    def _runcmd(self, text):
+        return bootfs.parse_cloud_config(text)["runcmd"]
+
+    @pytest.mark.parametrize(
+        ("mode", "wanted", "unwanted"),
+        [
+            (bootfs.CLIENT_MODE, bootfs.CLIENT_CONN, bootfs.SHARED_CONN),
+            (bootfs.SHARED_MODE, bootfs.SHARED_CONN, bootfs.CLIENT_CONN),
+        ],
+    )
+    def test_sets_autoconnect_on_both_profiles(self, mode, wanted, unwanted):
+        """Both profiles must be named, not only the wanted one.
+
+        Regression: rpi-usb-gadget leaves Shared autoconnecting. Enabling Client
+        without disabling Shared leaves two profiles competing for usb0, and
+        which one NetworkManager activates on the next boot is a race -- so the
+        board comes up in the chosen mode only sometimes.
+        """
+        runcmd = self._runcmd(bootfs.pin_gadget_mode(self.ENABLED, mode))
+
+        assert f'modify "{wanted}" connection.autoconnect yes' in " ".join(runcmd)
+        assert f'modify "{unwanted}" connection.autoconnect no' in " ".join(runcmd)
+
+    def test_switching_replaces_the_previous_mode(self):
+        """Pinning the other mode must remove the first mode's commands.
+
+        Regression: append-only editing leaves both modes' nmcli calls in
+        runcmd. They would then both run, and the resulting mode would depend on
+        which happened to be appended last -- correct by accident today and
+        wrong the moment the order changes.
+        """
+        client = bootfs.pin_gadget_mode(self.ENABLED, bootfs.CLIENT_MODE)
+        switched = bootfs.pin_gadget_mode(client, bootfs.SHARED_MODE)
+        runcmd = self._runcmd(switched)
+
+        assert not any(c.startswith(f'nmcli connection up "{bootfs.CLIENT_CONN}"') for c in runcmd)
+        assert f'"{bootfs.CLIENT_CONN}" connection.autoconnect yes' not in " ".join(runcmd)
+        assert self._runcmd(switched) == self._runcmd(
+            bootfs.pin_gadget_mode(self.ENABLED, bootfs.SHARED_MODE)
+        )
+
+    def test_auto_mode_hands_the_choice_to_the_vendor_watcher(self):
+        """Auto must enable the watcher and pin nothing.
+
+        Regression: "auto" that also pinned a profile would be a contradiction --
+        the watcher moves the gadget between the two profiles, so autoconnect
+        values set underneath it are either ignored or fight it. Auto's whole
+        content is enabling the unit; anything else means the mode is not
+        actually automatic.
+        """
+        runcmd = self._runcmd(bootfs.pin_gadget_mode(self.ENABLED, bootfs.AUTO_MODE))
+
+        assert f"systemctl enable --now {bootfs.ICS_UNIT} || true" in runcmd
+        assert not any(c.startswith("nmcli") for c in runcmd)
+        assert not any("disable" in c and bootfs.ICS_UNIT in c for c in runcmd)
+
+    @pytest.mark.parametrize("pinned", [bootfs.CLIENT_MODE, bootfs.SHARED_MODE])
+    def test_switching_to_auto_removes_the_pin_that_was_there(self, pinned):
+        """Auto must undo a pinned mode, including the watcher being disabled.
+
+        Regression: the pin's first act is `systemctl disable` on the watcher.
+        Leaving that line behind while adding the enable puts both in one
+        runcmd, and the mode then depends on which systemctl call ran last --
+        a card that is automatic or pinned depending on ordering.
+        """
+        pinned_doc = bootfs.pin_gadget_mode(self.ENABLED, pinned)
+        auto = self._runcmd(bootfs.pin_gadget_mode(pinned_doc, bootfs.AUTO_MODE))
+
+        assert not any("disable" in c and bootfs.ICS_UNIT in c for c in auto)
+        assert not any(c.startswith("nmcli") for c in auto)
+        assert auto == self._runcmd(bootfs.pin_gadget_mode(self.ENABLED, bootfs.AUTO_MODE))
+
+    @pytest.mark.parametrize("pinned", [bootfs.CLIENT_MODE, bootfs.SHARED_MODE])
+    def test_switching_off_auto_removes_the_enable(self, pinned):
+        """Pinning a mode must undo Auto, not sit alongside it.
+
+        Regression: the reverse of the case above. An `enable` left in the
+        document beside the pin's `disable` leaves the watcher's fate to command
+        order, and a board that was asked for Client can still wander to Shared.
+        """
+        auto_doc = bootfs.pin_gadget_mode(self.ENABLED, bootfs.AUTO_MODE)
+        runcmd = self._runcmd(bootfs.pin_gadget_mode(auto_doc, pinned))
+
+        assert not any("enable" in c and bootfs.ICS_UNIT in c for c in runcmd)
+        assert f"systemctl disable --now {bootfs.ICS_UNIT} || true" in runcmd
+
+    @pytest.mark.parametrize("mode", bootfs.MODES)
+    def test_pinning_twice_changes_nothing(self, mode):
+        """A second pin of the same mode must be byte-identical.
+
+        Regression: the shared "disable the watcher" command belongs to both
+        modes. Dropping it as part of the other mode and re-appending it would
+        reorder runcmd on every run, so a prepared card would never compare
+        equal to itself and the tool could not report "already prepared".
+        """
+        once = bootfs.pin_gadget_mode(self.ENABLED, mode)
+        assert bootfs.pin_gadget_mode(once, mode) == once
+
+    def test_leaves_an_identical_line_inside_write_files_alone(self):
+        """Removal is scoped to the runcmd block.
+
+        Regression: a naive whole-document line filter would reach into a
+        ``write_files`` block scalar and delete a line from a script the card
+        installs, corrupting a file that has nothing to do with the mode. The
+        content here is a script whose body is exactly a runcmd item.
+        """
+        borrowed = bootfs.gadget_mode_runcmds(bootfs.SHARED_MODE)[-1]
+        source = bootfs.append_write_file(
+            self.ENABLED, "/usr/local/bin/uc-probe", f"#!/bin/sh\n- {borrowed}\n", "0755"
+        )
+
+        result = bootfs.pin_gadget_mode(source, bootfs.CLIENT_MODE)
+        entry = bootfs.parse_cloud_config(result)["write_files"][0]
+
+        assert f"- {borrowed}" in entry["content"]
+        assert borrowed not in self._runcmd(result)
+
+    def test_rejects_an_unknown_mode(self):
+        """An unrecognised mode must raise, not fall through to a default.
+
+        Regression: defaulting would hand the card the opposite configuration
+        from the one asked for, with nothing on screen to say so. This is the
+        typo case.
+        """
+        with pytest.raises(ValueError, match="unknown gadget mode"):
+            bootfs.pin_gadget_mode(self.ENABLED, "sharing")
 
 
 # ---------------------------------------------------------------------------

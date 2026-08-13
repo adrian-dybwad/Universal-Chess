@@ -81,7 +81,7 @@ partition readable from Windows and macOS, since the root filesystem is ext4.
 | --- | --- |
 | `config.txt` | dwc2 overlay in peripheral mode, under an explicit `[all]` filter |
 | `cmdline.txt` | `modules-load=dwc2,g_ether` |
-| `user-data` | a cloud-init `runcmd` that invokes `rpi-usb-gadget`, and a `write_files` entry installing the DNS diagnostic below |
+| `user-data` | a cloud-init `runcmd` that invokes `rpi-usb-gadget` and then pins one of its two profiles, and `write_files` entries installing the NetworkManager drop-in below and the DNS diagnostic |
 | `ssh` | created empty, which turns on sshd at first boot |
 
 No DNS server is configured on the card, and no network setting is changed
@@ -91,6 +91,34 @@ for why that is a deliberate choice rather than an omission.
 Putting the module load on the kernel command line rather than in
 `/etc/modules-load.d` means the gadget is live on the **first** boot, with no
 reboot — and it does not need the root filesystem, which we cannot write to.
+
+## Why the card claims `usb0` for NetworkManager
+
+NetworkManager ships `85-nm-unmanaged.rules`, which marks every
+`DEVTYPE=="gadget"` interface unmanaged. `rpi-usb-gadget` answers that with
+`nmcli device set usb0 managed yes` — runtime state that is gone on the next
+boot. What carries a stock image across a reboot is the generic `netplan-eth0`
+profile cloud-init generates, whose empty match happens to cover `usb0`.
+
+That is an accident of the image, and Universal Chess removes it when Client or
+Shared mode is applied: the same empty match otherwise claims the gadget as a
+DHCP **client**, which fights Shared mode, where the Pi is the DHCP **server**.
+Measured on a Zero 2 W across two boots differing in nothing else, with the
+profile deleted `usb0` stayed at `STATE 10 (unmanaged)`, `REASON 77 (unmanaged
+via udev rule)` for the whole boot: the cable enumerated and the link never got
+an address.
+
+So the card writes the drop-in itself, at
+`/etc/NetworkManager/conf.d/90-uc-usb-gadget-managed.conf`:
+
+```ini
+[device-uc-usb-gadget]
+match-device=interface-name:usb0
+managed=1
+```
+
+The universal-chess package installs the same file at the same path, so a
+prepared card and an installed board are in the same state.
 
 ## Why not `rpi: enable_usb_gadget: true`
 
@@ -114,31 +142,85 @@ it up. The tool tells you when it sees this.
 
 ## Reaching the board
 
-`rpi-usb-gadget` ships two NetworkManager profiles, and `rpi-usb-gadget on` —
-what this tool triggers — activates the **client** one:
+`rpi-usb-gadget` ships two NetworkManager profiles, and a watcher that chooses
+between them:
 
 | Mode | Pi's address | Who runs DHCP | Pi gets internet |
 | --- | --- | --- | --- |
-| `client` (default) | leased by the host | the host | yes, via the host |
-| `shared` | `10.12.194.1` | the Pi | no |
+| `client` (this tool's default) | leased by the host | the host | yes, via the host |
+| `shared` (`--shared`) | `10.12.194.1` | the Pi | no |
+| neither pinned (`--auto`) | whichever the watcher picked | either, per boot | only while it picks client |
 
-In client mode the Pi has **no fixed address**, so reach it by name:
+Client is the default because installing Universal Chess needs a route out.
+`--auto` exists to test the vendor behaviour against a pinned mode; it is not a
+fallback, for the reasons below.
+
+### Why the mode has to be pinned
+
+`rpi-usb-gadget on` does not leave either mode selected. It creates both
+profiles, activates **shared** with `connection.autoconnect yes`, leaves client
+at `no`, and enables `rpi-usb-gadget-ics.service`, which moves the gadget between
+the two according to whether the host looks like it is offering Internet Sharing.
+
+Measured on a card prepared by this tool before the pin existed: the first boot
+came up on `USB Gadget (shared)` serving DHCP from `10.12.194.3-14`, with
+`USB Gadget (client)` present and not autoconnecting — a shared board from a tool
+that documented a client.
+
+So the card follows `on -f` with the commands that settle it: stop the watcher,
+set `connection.autoconnect` on **both** profiles, and activate the wanted one.
+Both are named because setting only one leaves the other autoconnecting, and
+which of the two NetworkManager picks for `usb0` on the next boot is then a race.
+Re-running with another mode replaces those lines rather than adding to them.
+
+### What `--auto` leaves in place, and why it is not the default
+
+`--auto` writes one command, `systemctl enable --now rpi-usb-gadget-ics.service`,
+and pins nothing. Autoconnect values set underneath a running watcher would
+either be ignored or fight it, so the mode's whole content is leaving the unit
+alone. The unit describes itself as *USB gadget ICS auto-switcher (client
+&lt;-&gt; shared)*.
+
+It is not the default, and not a fallback, for two measured reasons. In this
+project a Client preference came back as **Shared** after a reboot whenever the
+host was not offering ICS, which made the mode chosen in the app unable to mean
+anything. And a board that switches to Shared while the host's USB interface is a
+DHCP client can hand the host a route and DNS pointing at a Pi with no route out
+— that is how a Mac lost its own internet during this work. Use `--auto` to
+observe the behaviour deliberately, not to make a board more reliable.
+
+Reach the board by name in either mode:
 
 - `http://<hostname>.local/` — needs mDNS on the host. Built in on macOS and
   most Linux; on Windows it needs Bonjour.
 
-If mDNS does not resolve, find the address the host leased: `arp -an | grep
-bridge` or `/var/db/dhcpd_leases` on macOS, `arp -a` on Windows, `ip neigh show
-dev <usb interface>` on Linux.
+The name is what the tool prints first, because it is also the address that keeps
+working once the cable is out and the board is on Wi-Fi. In client mode it is the
+only predictable one: the Pi has **no fixed address** there.
+
+If mDNS does not resolve in client mode, find the address the host leased:
+`arp -an | grep bridge` or `/var/db/dhcpd_leases` on macOS, `arp -a` on Windows,
+`ip neigh show dev <usb interface>` on Linux. In shared mode there is nothing to
+look up — the Pi is always at `10.12.194.1`, which is the route to use on a host
+with no mDNS resolver.
 
 Client mode requires the host to share its connection over the USB interface —
 Internet Sharing on macOS, ICS on Windows, or NetworkManager's "Shared to other
 computers" on Linux. Without it the Pi gets no address at all, which looks
 exactly like a gadget that failed to come up.
 
-To skip host-side configuration, run `sudo rpi-usb-gadget shared` on the Pi. It
-then serves `10.12.194.1` and its own DHCP, but has no route to the internet —
-so it cannot install packages.
+To skip host-side configuration, prepare the card with `--shared`, or run
+`sudo rpi-usb-gadget shared` on a board that is already up. The Pi then serves
+`10.12.194.1` and its own DHCP, but has no route to the internet — so it cannot
+install packages. Turn host sharing **off** for that interface in this mode: two
+DHCP servers on one link hand out addresses from different subnets, and which the
+host takes is a race.
+
+A `--shared` run also skips the host DNS check that follows a Client-mode run.
+That check waits for the interface the host shares and diagnoses a resolver that
+missed it; in Shared mode no such interface exists. An `--auto` run keeps the
+check: with the host sharing, the watcher's choice is client, and if it chooses
+otherwise the check reports a link that never appeared rather than anything worse.
 
 **Windows** needs a one-time RNDIS driver, from
 [rpi-usb-gadget releases](https://github.com/raspberrypi/rpi-usb-gadget/releases).
@@ -548,6 +630,8 @@ so there is no checked-in copy that can fall out of step with the sources.
 | `--boot PATH` | Use this boot partition instead of auto-detecting |
 | `--dry-run` | Show the diff and exit without writing |
 | `--yes` | Skip the confirmation prompts |
+| `--shared` | Pin Shared mode: the Pi serves DHCP at `10.12.194.1` and has no route out. Default is Client |
+| `--auto` | Pin nothing: the vendor's ICS auto-switcher keeps choosing between Client and Shared |
 | `--no-ssh` | Do not create the `ssh` marker file |
 | `--free-uart` | Also detach the kernel serial console |
 | `--no-wait` | Stop after writing the card; skip the board wait and DNS check |
