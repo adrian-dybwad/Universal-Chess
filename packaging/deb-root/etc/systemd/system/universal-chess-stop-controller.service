@@ -3,6 +3,13 @@ Description=Universal Chess shutdown hook (power off controller)
 DefaultDependencies=no
 # Run before shutdown completes to ensure controller sleeps
 Before=poweroff.target halt.target shutdown.target
+# Start only once the main service has finished stopping. Both drive the same
+# serial port, and a start job carries no ordering against a concurrent stop job
+# on its own: measured on a board mid-shutdown, the hook without this line found
+# universal-chess.service still "deactivating" with its main PID alive, so it
+# deferred to a service that -- stopped by systemd rather than by a menu
+# shutdown -- never sleeps the controller, and the controller stayed powered.
+After=universal-chess.service
 
 [Service]
 ExecStart=/opt/universalchess/.venv/bin/python -m universalchess.board.shutdown
@@ -11,6 +18,15 @@ WorkingDirectory=/opt/universalchess
 Type=oneshot
 # Don't fail the shutdown if this service fails
 SuccessExitStatus=0 1
+# Bound the hook. Without this it inherits TimeoutStartSec=infinity, so anything
+# that blocks while talking to the board holds shutdown open indefinitely. The
+# hook's own discovery wait (board.SHUTDOWN_INIT_TIMEOUT_SECONDS) is well inside
+# this, so reaching this limit means the hook itself is stuck, not just waiting.
+TimeoutStartSec=20
 
 [Install]
-WantedBy=shutdown.target
+# Power-off transitions only. Sleeping the controller cuts power to the Pi, so a
+# reboot must not run this hook or the board powers off instead of coming back.
+# shutdown.target would do exactly that: systemd-reboot.service,
+# systemd-kexec.service and systemd-soft-reboot.service all require it.
+WantedBy=poweroff.target halt.target

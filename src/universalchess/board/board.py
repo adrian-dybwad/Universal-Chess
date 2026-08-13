@@ -193,6 +193,18 @@ INIT_TIMEOUT_SECONDS = 10  # Shorter timeout per attempt for faster retry
 
 controller: Optional[SyncCentaur] = None
 
+# Shutdown-time sleep. Two processes can sleep the controller: the main service
+# during its own cleanup, and the universal-chess-stop-controller hook, which
+# runs in a process that never called init_board. The hook therefore needs a
+# controller of its own, bounded so it cannot stall shutdown -- its unit has no
+# start timeout. A present, awake board answers discovery in well under this.
+SHUTDOWN_INIT_TIMEOUT_SECONDS = 5
+# Written once the controller has acknowledged sleep, so the second sleeper skips
+# a board that is already asleep instead of waiting out discovery against it.
+# /run/universalchess is created per boot by tmpfiles.d and emptied on every
+# boot, so a stale stamp can never silently disable the shutdown hook.
+CONTROLLER_SLEPT_STAMP = Path("/run/universalchess/controller-slept")
+
 # Import init callback module for status updates during initialization
 from universalchess.board import init_callback
 
@@ -564,12 +576,32 @@ def sleep_controller() -> bool:
     Uses blocking request_response with retries to ensure the controller
     acknowledges the sleep command before the system powers down.
     
+    Works in a process that never called :func:`init_board` -- the
+    universal-chess-stop-controller hook is exactly that case, and before it
+    initialised a controller here the global was None, so every fallback shutdown
+    raised AttributeError and left the controller powered.
+    
     Visual feedback: Single LED at h8 position (square 7)
     
     Returns:
         True if controller acknowledged sleep command, False if all attempts failed
     """
+    global controller
+    
     log.info("Sending sleep command to DGT Centaur controller")
+    
+    if controller is None:
+        # A controller created here is deliberately not cleaned up: every
+        # SyncCentaur thread is a daemon, so the hook process exits without
+        # waiting on them, and a cleanup would write LEDs to a sleeping board.
+        log.info("[board] No controller in this process; initialising to sleep the board")
+        controller = _create_controller()
+        if not controller.wait_ready(timeout=SHUTDOWN_INIT_TIMEOUT_SECONDS):
+            log.error(
+                "[board] Board did not answer discovery in "
+                f"{SHUTDOWN_INIT_TIMEOUT_SECONDS}s; cannot confirm controller sleep"
+            )
+            return False
     
     # Visual feedback - single LED at h8
     try:
@@ -582,12 +614,44 @@ def sleep_controller() -> bool:
         success = controller.sleep(retries=3, retry_delay=0.5)
         if success:
             log.info("Controller sleep command acknowledged")
+            _mark_controller_slept()
         else:
             log.error("Controller sleep command failed - battery may drain if board remains powered")
         return success
     except Exception as e:
         log.error(f"Failed to send sleep command: {e}")
         return False
+
+
+def controller_slept_this_boot() -> bool:
+    """Return True when a process has already slept the controller this boot.
+    
+    Read by the universal-chess-stop-controller hook so a clean app shutdown --
+    which sleeps the board itself -- is not followed by the hook probing a board
+    that is already asleep. The stamp lives on tmpfs and is emptied every boot,
+    so it can never suppress the hook on a later boot.
+    """
+    try:
+        return CONTROLLER_SLEPT_STAMP.exists()
+    except OSError as e:
+        # An unreadable stamp must not suppress the sleep: report "not slept" so
+        # the caller still tries, which is the safe direction for the battery.
+        log.debug(f"[board] Could not read controller sleep stamp: {e}")
+        return False
+
+
+def _mark_controller_slept() -> None:
+    """Record that the controller acknowledged sleep, best-effort.
+    
+    Only ever called after an acknowledged sleep, because the stamp is what stops
+    the fallback hook from trying again. A write failure is logged and ignored:
+    the sleep already succeeded, and the only cost is the hook waiting out
+    discovery against a sleeping board.
+    """
+    try:
+        CONTROLLER_SLEPT_STAMP.touch()
+    except OSError as e:
+        log.debug(f"[board] Could not record controller sleep stamp: {e}")
 
 
 #

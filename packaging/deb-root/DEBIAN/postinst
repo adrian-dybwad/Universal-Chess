@@ -299,8 +299,17 @@ echo -e "::: Setup services"
 
     echo -e "::: Enabling universal-chess.service"
     systemctl enable universal-chess.service
-    # universal-chess-stop-controller.service - fallback shutdown hook for when main service isn't running
-    # The main service disables this on startup and re-enables on non-shutdown exit
+    # universal-chess-stop-controller.service - fallback shutdown hook that sleeps
+    # the controller when the main service is not running to do it itself.
+    #
+    # Releases up to 2.0.0 shipped it as WantedBy=shutdown.target, which reboot,
+    # kexec and soft-reboot also reach -- so the hook would sleep the controller
+    # mid-reboot and the controller, being the board's power manager, would cut
+    # power instead of letting the Pi come back. It is now wanted by the
+    # power-off targets alone. systemctl enable never removes symlinks an older
+    # [Install] section created, so the stale one is dropped explicitly first or
+    # upgraded boards would keep powering off on reboot.
+    rm -f /etc/systemd/system/shutdown.target.wants/universal-chess-stop-controller.service
     systemctl enable universal-chess-stop-controller.service
 
     # Boot-time BlueZ self-heal safety net. The apply/retire heal is normally

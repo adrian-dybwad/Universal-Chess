@@ -6838,13 +6838,10 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
             except Exception as e:
                 log.error(f"[Cleanup] LED pattern failed: {e}")
             
-            log.info("[Cleanup] Stopping fallback service...")
-            try:
-                import subprocess  # nosec B404 - fixed, trusted 'systemctl' call below
-                subprocess.run(["sudo", "systemctl", "stop", "universal-chess-stop-controller.service"], capture_output=True, timeout=5)  # noqa: S607  # nosec B603 B607
-            except Exception as e:
-                log.debug(f"[Cleanup] Could not stop fallback service: {e}")
-            
+            # The fallback hook is not disarmed here. It is a oneshot pulled in by
+            # shutdown.target, so stopping it while inactive is a no-op and it runs
+            # at shutdown regardless; sleep_controller instead records the sleep so
+            # the hook sees it and skips (see board.CONTROLLER_SLEPT_STAMP).
             log.info("[Cleanup] Sending sleep command to controller...")
             try:
                 success = board.sleep_controller()
