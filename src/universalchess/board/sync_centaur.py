@@ -159,6 +159,17 @@ INJECTABLE_KEY_NAMES = ("BACK", "TICK", "UP", "DOWN", "HELP", "PLAY")
 # past 1.0s before the up arrives.
 INJECTED_LONG_PRESS_RELEASE_SECONDS = 1.4
 
+# How often a board that has not answered discovery is probed again.
+#
+# The discovery probe is only re-sent from packets the board itself sends, so a
+# board that is asleep at startup -- or one the user wakes with its power button
+# after the app is already running -- would otherwise never be discovered, and
+# the app would poll address 0x00/0x00 until the service was restarted. An awake
+# board answers a probe in well under a second, so this interval only bounds how
+# long a late wake goes unnoticed; the traffic is four bytes on an otherwise idle
+# 1 Mbps line.
+DISCOVERY_RETRY_SECONDS = 10
+
 KEY_NAME_BY_CODE = dict(DGT_BUTTON_CODES)
 KEY_CODE_BY_NAME = {v: k for k, v in KEY_NAME_BY_CODE.items()}
 
@@ -211,6 +222,13 @@ class SyncCentaur:
         self.response_buffer = bytearray()
         self.packet_count = 0
         self._closed = False
+        
+        # Discovery retry: re-probe a board that has not answered yet. The event
+        # doubles as the interruptible sleep, so cleanup stops the worker at once
+        # rather than after the remaining interval.
+        self.discovery_retry_seconds = DISCOVERY_RETRY_SECONDS
+        self._discovery_stop = threading.Event()
+        self._discovery_retry_thread = None
         
         # Key event handling
         self.key_up_queue = queue.Queue(maxsize=128)
@@ -290,6 +308,7 @@ class SyncCentaur:
         self.listener_running = True
         self.ready = False
         self._discard_stale_keys = True  # Reset for re-initialization
+        self._discovery_stop.clear()  # Re-arm after a previous cleanup
         self._initialize()
         
         # Start listener thread FIRST so it's ready to capture responses
@@ -302,6 +321,45 @@ class SyncCentaur:
         
         # THEN send discovery commands
         self._discover_board_address()
+        
+        # Keep probing until the board answers: the call above is a single probe,
+        # and a sleeping board sends nothing back to drive the state machine.
+        self._discovery_retry_thread = threading.Thread(
+            target=self._discovery_retry_worker, name="discovery-retry", daemon=True
+        )
+        self._discovery_retry_thread.start()
+    
+    def _discovery_retry_worker(self):
+        """Re-send the discovery probe until the board answers or we stop.
+
+        Runs until discovery succeeds (``self.ready``) or cleanup signals
+        ``_discovery_stop``, so a board woken after startup is picked up without
+        restarting the service. Each retry clears ``addr1``/``addr2`` first: a
+        half-discovered pair (board answered the first 0x87, then went silent)
+        would make the state machine read the next 0x87 as a confirmation and
+        take its ``Discovery: ERROR`` branch, so clearing them makes a retry
+        idempotent no matter how far the previous attempt got.
+        """
+        announced = False
+        while not self.ready and not self._discovery_stop.wait(self.discovery_retry_seconds):
+            if self.ready or self._closed or not self.listener_running:
+                break
+            if not announced:
+                log.info(
+                    f"Discovery: board silent, re-probing every {self.discovery_retry_seconds}s "
+                    "until it answers"
+                )
+                announced = True
+            self.addr1 = 0x00
+            self.addr2 = 0x00
+            try:
+                self._discover_board_address()
+            except Exception as e:
+                # A port that has gone away raises here. Stop rather than spin:
+                # recovery needs a fresh controller (see board.init_board), which
+                # reopens the port and starts a new worker.
+                log.warning(f"Discovery: retry probe failed, stopping retries: {e}")
+                return
     
     def wait_ready(self, timeout=60):
         """
@@ -1274,6 +1332,10 @@ class SyncCentaur:
         # Signal listener to stop
         log.info("[SyncCentaur] Signaling listener to stop...")
         self.listener_running = False
+        
+        # Stop the discovery retry worker before the port closes, so it cannot
+        # write a probe into a closed serial port.
+        self._discovery_stop.set()
         
         if leds_off:
             log.info("[SyncCentaur] Turning off LEDs...")

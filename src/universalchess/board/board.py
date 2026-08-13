@@ -25,9 +25,16 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from universalchess.epaper import Manager, SplashScreen
-from universalchess.board.sync_centaur import SyncCentaur, command, Key, INJECTABLE_KEY_NAMES
+from universalchess.board.sync_centaur import (
+    SyncCentaur,
+    command,
+    Key,
+    INJECTABLE_KEY_NAMES,
+    DISCOVERY_RETRY_SECONDS,
+)
 import sys
 import os
+from pathlib import Path
 from universalchess.board.settings import Settings
 from universalchess.board import centaur
 import time
@@ -204,7 +211,14 @@ def init_board():
     
     If the board fails to initialize within the timeout, the controller is
     cleaned up and a new one is created. This handles cases where the board
-    communication hangs during discovery.
+    communication hangs during discovery: recreating the controller reopens the
+    serial port, which a bare re-probe cannot do.
+    
+    Exhausting the attempts is not the end of discovery. The returned controller
+    keeps re-probing in the background (SyncCentaur._discovery_retry_worker), so
+    a board that was asleep at startup and is later woken with its power button
+    is picked up without restarting the service. Startup is bounded here so the
+    splash advances to the menu instead of blocking on an absent board.
     
     Returns:
         SyncCentaur: The initialized controller
@@ -243,9 +257,14 @@ def init_board():
             controller = None
             time.sleep(0.5)  # Brief pause before retry
     
-    # All retries exhausted - log error but continue with last controller
-    log.error(f"[board] Board initialization failed after {MAX_INIT_RETRIES} attempts")
-    log.warning("[board] Continuing with potentially uninitialized board - functionality may be limited")
+    # Startup attempts exhausted. The controller is deliberately left alive and
+    # uncleaned so its discovery retry worker keeps probing; the board is picked
+    # up whenever it answers.
+    log.warning(f"[board] Board did not answer discovery in {MAX_INIT_RETRIES} startup attempts")
+    log.info(
+        "[board] Continuing without the board; discovery keeps re-probing every "
+        f"{DISCOVERY_RETRY_SECONDS}s and will pick it up when it wakes"
+    )
     return controller
 
 # But the address might not be that :( Here we send an initial 0x4d to ask the board to provide its address
