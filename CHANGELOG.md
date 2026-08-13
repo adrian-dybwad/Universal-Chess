@@ -47,8 +47,9 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   ``match: {}`` (any ethernet), and on boards with no ``eth0`` (only ``usb0`` +
   Wi‑Fi) it claims the gadget as a DHCP *client*, fighting Shared (Pi as DHCP
   *server*) and leaving the host on a self-assigned address with an empty
-  dnsmasq lease file.   With no ``eth0`` the profile is deleted; with ``eth0`` it
-  is restricted to that name. ``netplan apply`` is avoided (it can hang and
+  dnsmasq lease file.   With no ``eth0`` the profile is moved aside; with ``eth0``
+  it is restricted to that name. Either way the original is kept beside it so Off
+  can put the board back. ``netplan apply`` is avoided (it can hang and
   drop Wi‑Fi). Client/Shared also write early ``modules-load=dwc2,g_ether`` on
   the kernel cmdline (takes effect on the next reboot), so the gadget is armed
   before userspace starts and a host already plugged in at boot enumerates on
@@ -114,6 +115,28 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   contradicts an otherwise healthy mode. A boot-prepared board with no stored
   preference and the switcher still enabled -- what `enable_usb_gadget.py --auto`
   leaves -- now seeds Auto instead of Client, so the control matches the card.
+
+- Applying a USB gadget mode no longer risks the board's ability to boot, and Off
+  now reverses everything the other modes changed. The kernel command line is the
+  one file in this feature whose corruption is unrecoverable without a card
+  reader: a truncated `cmdline.txt` has no `root=` and does not boot, and this
+  board is normally turned off by cutting its power. That edit is now written to a
+  temp file and renamed over the original, so the old contents stay readable until
+  the new ones are complete on disk; it is read back and checked afterwards, and
+  restored from memory if what landed is not a single line naming a root device.
+  A command line that is already blank, multi-line, or missing `root=` is refused
+  rather than edited, so a file broken by something else is not overwritten with a
+  second broken generation. It also extends an existing `modules-load=` parameter
+  in place instead of appending a second one, matching what
+  `tools/sd-card-setup` writes -- which occurrence of a repeated parameter wins is
+  up to whoever reads it, and a board should not depend on that. Off now removes
+  those two modules from the command line, keeping any others the parameter lists,
+  and restores the `netplan-eth0` profile the on-modes moved aside: a mode setting
+  that keeps boot-time edits after the user turns the feature off is one they
+  cannot actually turn off. The file edits moved out of the shell helper into
+  `uc-usb-gadget-files.py` beside it, where they are linted and tested directly,
+  including the failure paths (a full or read-only `/boot`, a write that verifies
+  wrong) which previously could not be reached from a test at all.
 
 - The USB Gadget help now says which socket the cable goes into: the Raspberry Pi
   Zero's own USB data port, inside the chess board, not the Centaur's charging

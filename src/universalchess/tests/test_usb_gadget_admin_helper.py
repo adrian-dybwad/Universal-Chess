@@ -34,10 +34,18 @@ ICS_UNIT = "rpi-usb-gadget-ics.service"
 NETPLAN_ETH0_CONN = "netplan-eth0"
 
 
-def _run(args, action_log, *, dry_run="1", extra_env=None):
+def _run(args, action_log, *, dry_run="1", fs_root=None, extra_env=None):
+    """Run the helper in dry run, with every path it touches under ``fs_root``.
+
+    A seam root is always set, even when a test does not care about files: the
+    helper decides between deleting and re-matching netplan-eth0 by looking for
+    ``/sys/class/net/eth0``, so without it the recorded actions would depend on
+    whether the machine running the tests happens to have an eth0.
+    """
     env = dict(os.environ)
     env["UC_USB_GADGET_ADMIN_DRY_RUN"] = dry_run
     env["UC_USB_GADGET_ADMIN_ACTION_LOG"] = str(action_log)
+    env["UC_USB_GADGET_FS_ROOT"] = str(fs_root if fs_root is not None else action_log.parent / "fs")
     if extra_env:
         env.update(extra_env)
     argv = [_BASH, str(_HELPER), *args]
@@ -138,22 +146,63 @@ def test_auto_verb_never_forces_a_profile_up_or_down(tmp_path):
     assert moved == [], f"auto moved gadget profiles: {moved}"
 
 
-def test_every_on_mode_pins_netplan_eth0_off_usb0(tmp_path):
+@pytest.mark.parametrize("mode", ["shared", "client", "auto"])
+def test_every_on_mode_pins_netplan_eth0_off_usb0(tmp_path, mode):
     """Generic eth0 netplan must not match usb0 (DHCP-client vs Shared server).
 
     Why: stock ``netplan-eth0`` uses empty match and steals usb0 when Shared
     drops, turning the Pi into a DHCP client on the gadget link. Auto needs this
-    as much as the pinned modes, since the switcher can land on Shared. Failure:
-    an apply never pins ``connection.interface-name eth0`` on netplan-eth0.
+    as much as the pinned modes, since the switcher can land on Shared.
+
+    Failure: an apply never detaches the profile from usb0, so Shared loses the
+    link to a DHCP client profile on the next drop.
     """
-    for mode in ("shared", "client", "auto"):
-        log = tmp_path / f"actions-{mode}.log"
-        proc, lines = _run([mode], log)
-        assert proc.returncode == 0
-        assert "pin-netplan-eth0-off-usb0" in lines
-        assert f"nmcli connection down {NETPLAN_ETH0_CONN}" in lines
-        assert "pin-netplan-eth0-match-name eth0" not in lines
-        assert "ensure-early-g-ether-cmdline" in lines
+    log = tmp_path / f"actions-{mode}.log"
+    proc, lines = _run([mode], log)
+    assert proc.returncode == 0
+    assert "pin-netplan-eth0-off-usb0" in lines
+    assert f"nmcli connection down {NETPLAN_ETH0_CONN}" in lines
+    assert "ensure-early-g-ether-cmdline" in lines
+
+
+@pytest.mark.parametrize(
+    ("eth0_present", "expected", "forbidden"),
+    [
+        (
+            True,
+            f"nmcli connection modify {NETPLAN_ETH0_CONN} "
+            "match.interface-name eth0 connection.interface-name eth0",
+            f"nmcli connection delete {NETPLAN_ETH0_CONN}",
+        ),
+        (
+            False,
+            f"nmcli connection delete {NETPLAN_ETH0_CONN}",
+            f"nmcli connection modify {NETPLAN_ETH0_CONN} "
+            "match.interface-name eth0 connection.interface-name eth0",
+        ),
+    ],
+)
+def test_netplan_eth0_is_kept_where_there_is_an_eth0_to_keep_it_for(
+    tmp_path, eth0_present, expected, forbidden
+):
+    """A board with real ethernet keeps the profile; one without loses it.
+
+    Why: on a board that has eth0 the profile still has an interface to serve, so
+    restricting its match is enough and deleting it would take that port off the
+    network. On a Pi Zero (usb0 + wlan0 only) the same profile has nothing left to
+    match except the gadget, which is the conflict being removed.
+
+    How a regression shows: the branches swap -- a board with ethernet loses its
+    DHCP profile, or a Pi Zero keeps a profile that goes on claiming usb0.
+    """
+    root = tmp_path / "fs"
+    if eth0_present:
+        (root / "sys" / "class" / "net" / "eth0").mkdir(parents=True)
+    else:
+        root.mkdir()
+    _, lines = _run(["client"], tmp_path / "actions.log", fs_root=root)
+    assert expected in lines
+    assert forbidden not in lines
 
 
 def test_no_verb_ever_touches_the_gadget_driver(tmp_path):
@@ -176,19 +225,97 @@ def test_no_verb_ever_touches_the_gadget_driver(tmp_path):
         assert offending == [], f"{mode} touches the driver: {offending}"
 
 
-def test_off_verb_disables_the_gadget_and_touches_nothing_else(tmp_path):
-    """``off`` runs ``rpi-usb-gadget off`` and nothing more.
+def test_off_verb_disables_the_gadget_and_undoes_the_boot_time_changes(tmp_path):
+    """``off`` runs ``rpi-usb-gadget off`` then reverses what the on-modes did.
 
-    Why: Off is the user asking for the gadget to go away, so it must not also
-    rewrite the cmdline or move NetworkManager profiles around -- a board turning
-    the gadget off would silently keep boot-time changes it never asked for.
+    Why: Off is the user withdrawing consent for the feature. The vendor tool
+    removes its own overlay and modules-load.d entry, but the gadget modules this
+    helper put on the kernel command line, the stock netplan-eth0 profile it
+    moved aside, and     and the stock netplan-eth0 profile it moved aside are both
+    ours -- a board "turned off" that keeps them is one the user cannot turn off.
 
-    Failure: the action log is empty (off never ran) or carries extra entries.
+    Failure: the action log is only ``rpi-usb-gadget off`` (residue left behind),
+    or Off starts moving connections up and down, which would claim an interface
+    the user just switched off.
     """
     log = tmp_path / "actions.log"
     proc, lines = _run(["off"], log)
     assert proc.returncode == 0
-    assert lines == ["rpi-usb-gadget off"]
+    assert lines == [
+        "rpi-usb-gadget off",
+        "disarm-early-g-ether-cmdline",
+        "restore-netplan-eth0",
+    ]
+
+
+def test_off_undoes_the_command_line_arming_for_real(tmp_path):
+    """Off removes the gadget modules from an armed command line.
+
+    Why: this is the residue that survives a reboot, and it is invisible in the
+    UI. The marker test above proves the step is invoked; this proves the file it
+    is invoked on comes back clean, through the same code path the board runs.
+
+    Failure: modules-load= still names dwc2/g_ether after Off, so boot keeps
+    loading the gadget stack for a feature that is off.
+    """
+    root = tmp_path / "fs"
+    cmdline = root / "boot" / "firmware" / "cmdline.txt"
+    cmdline.parent.mkdir(parents=True)
+    cmdline.write_text(
+        "root=PARTUUID=aa-02 rootwait modules-load=dwc2,g_ether quiet\n",
+        encoding="utf-8",
+    )
+    proc, _ = _run(["off"], tmp_path / "actions.log", fs_root=root)
+    assert proc.returncode == 0
+    text = cmdline.read_text(encoding="utf-8")
+    assert "g_ether" not in text
+    assert "dwc2" not in text
+    assert "root=PARTUUID=aa-02" in text
+
+
+def test_an_on_mode_arms_the_command_line_for_real(tmp_path):
+    """Applying Client edits the actual command line under the seam.
+
+    Why: the arming is what makes a host plugged in before boot enumerate on its
+    first try. Asserting only the dry-run marker would keep passing if the tool
+    it delegates to were called with the wrong path or verb.
+
+    Failure: cmdline.txt is unchanged, or gains a second modules-load parameter.
+    """
+    root = tmp_path / "fs"
+    cmdline = root / "boot" / "firmware" / "cmdline.txt"
+    cmdline.parent.mkdir(parents=True)
+    cmdline.write_text("root=PARTUUID=aa-02 rootwait quiet\n", encoding="utf-8")
+    proc, _ = _run(["client"], tmp_path / "actions.log", fs_root=root)
+    assert proc.returncode == 0
+    tokens = cmdline.read_text(encoding="utf-8").split()
+    assert [t for t in tokens if t.startswith("modules-load=")] == [
+        "modules-load=dwc2,g_ether"
+    ]
+
+
+def test_a_command_line_it_refuses_to_edit_does_not_fail_the_mode(tmp_path):
+    """A cmdline the file tool refuses leaves the mode applied and says so.
+
+    Why: the early bind is an optimisation; the mode itself (profiles, switcher)
+    applied. Failing the whole apply would leave the user unable to select a mode
+    because of an unrelated boot file, while silently reporting success would
+    claim a boot edit that did not happen.
+
+    Failure: exit 1 from the helper (mode unusable), or no error logged, which is
+    how a board ends up behaving differently from what the log says.
+    """
+    root = tmp_path / "fs"
+    cmdline = root / "boot" / "firmware" / "cmdline.txt"
+    cmdline.parent.mkdir(parents=True)
+    # No root= parameter: the shape a truncated write leaves behind.
+    cmdline.write_text("console=tty1 rootwait quiet\n", encoding="utf-8")
+    before = cmdline.read_bytes()
+    proc, lines = _run(["client"], tmp_path / "actions.log", fs_root=root)
+    assert proc.returncode == 0
+    assert cmdline.read_bytes() == before
+    assert "ERROR" in proc.stderr
+    assert f"nmcli connection up {CLIENT_CONN}" in lines
 
 
 @pytest.mark.parametrize(

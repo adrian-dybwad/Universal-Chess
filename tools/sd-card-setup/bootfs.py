@@ -155,11 +155,15 @@ def enable_dwc2_overlay(config_txt: str) -> str:
 def add_modules_load(cmdline_txt: str, modules: Sequence[str]) -> str:
     """Return ``cmdline_txt`` with ``modules`` present in ``modules-load=``.
 
-    An existing ``modules-load=`` token is extended in place rather than having
-    a second one appended: the kernel honours only the last occurrence of a
-    repeated parameter, so appending would silently discard whatever the first
-    one named. Existing modules keep their position because load order matters
-    for dependent modules.
+    An existing ``modules-load=`` token is extended in place rather than having a
+    second one appended: which occurrence of a repeated parameter wins is up to
+    whoever reads it -- here systemd-modules-load, not the kernel -- and a card
+    must not depend on that. One token is unambiguous. Existing modules keep
+    their position because load order matters for dependent modules.
+
+    ``src/universalchess/scripts/uc-usb-gadget-files.py`` does the same edit on
+    the board itself, and the two are held to the same result by
+    ``test_the_board_and_the_card_arm_the_same_command_line``.
 
     Idempotent: modules already listed are not added again.
 

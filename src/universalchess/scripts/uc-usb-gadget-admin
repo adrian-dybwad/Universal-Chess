@@ -22,23 +22,47 @@
 #   Callers use `sudo -n` so a missing grant fails fast ("a password is
 #   required") and is logged, rather than hanging on a password prompt.
 #
+#   File edits are delegated to uc-usb-gadget-files.py beside this script, so
+#   that code can be linted and tested (it decides whether the board still
+#   boots). It is resolved next to this file and run by absolute path: anything
+#   able to modify it could already modify this granted helper, so it carries no
+#   privilege this script does not already have.
+#
+# SYMMETRY
+#   Every change the on-modes make outside ``rpi-usb-gadget`` is undone by
+#   ``off``: the kernel command line's gadget modules, and the stock
+#   netplan-eth0 profile that had to be moved aside. A mode setting that quietly
+#   keeps boot-time edits after the user turns the feature off is a setting the
+#   user cannot actually turn off.
+#
 # TEST SEAMS
 #   UC_USB_GADGET_ADMIN_DRY_RUN=1   print the intended invocation to
 #                                  $UC_USB_GADGET_ADMIN_ACTION_LOG instead of running it
 #   UC_USB_GADGET_ADMIN_ACTION_LOG  file to append dry-run actions to
+#   UC_USB_GADGET_FS_ROOT           prefix for every path read or written, so the
+#                                  real file edits can be exercised against a
+#                                  temp tree instead of /boot and /etc
+#   None of these can reach here through the sudo grant: sudo's env_reset drops
+#   the environment, and none of them is in an env_keep list.
 set -u
 
 DRY_RUN="${UC_USB_GADGET_ADMIN_DRY_RUN:-0}"
 ACTION_LOG="${UC_USB_GADGET_ADMIN_ACTION_LOG:-}"
+FS_ROOT="${UC_USB_GADGET_FS_ROOT:-}"
 LOG_TAG="uc-usb-gadget-admin"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+FILES_TOOL="${SCRIPT_DIR}/uc-usb-gadget-files.py"
 
 CLIENT_CONN="USB Gadget (client)"
 SHARED_CONN="USB Gadget (shared)"
 # Stock Pi netplan names this eth0 DHCP-client profile; empty match claims usb0.
 NETPLAN_ETH0_CONN="netplan-eth0"
 ICS_UNIT="rpi-usb-gadget-ics.service"
-CMDLINE_FW="/boot/firmware/cmdline.txt"
-CMDLINE_LEGACY="/boot/cmdline.txt"
+CMDLINE_FW="${FS_ROOT}/boot/firmware/cmdline.txt"
+CMDLINE_LEGACY="${FS_ROOT}/boot/cmdline.txt"
+NETPLAN_DIR="${FS_ROOT}/etc/netplan"
+ETH0_SYSFS="${FS_ROOT}/sys/class/net/eth0"
 
 log() { logger -t "$LOG_TAG" -- "$*" 2>/dev/null || true; echo "[$LOG_TAG] $*" >&2; }
 
@@ -47,110 +71,110 @@ usage() {
     exit 2
 }
 
+record() {
+    if [ -n "$ACTION_LOG" ]; then echo "$*" >> "$ACTION_LOG"; fi
+}
+
 run_priv() {
     if [ "$DRY_RUN" = "1" ]; then
-        if [ -n "$ACTION_LOG" ]; then echo "$*" >> "$ACTION_LOG"; fi
+        record "$*"
         return 0
     fi
     "$@"
+}
+
+# File edits run for real whenever a seam root is set, so the tests drive the
+# same code the board runs. Without one, a dry run touches no file at all.
+files_enabled() {
+    [ "$DRY_RUN" != "1" ] || [ -n "$FS_ROOT" ]
+}
+
+cmdline_path() {
+    if [ -f "$CMDLINE_FW" ]; then
+        echo "$CMDLINE_FW"
+    elif [ -f "$CMDLINE_LEGACY" ]; then
+        echo "$CMDLINE_LEGACY"
+    fi
 }
 
 # Bind dwc2 and g_ether from the kernel cmdline so the gadget is armed before
 # userspace starts and a host plugged in at boot enumerates on its first try.
 # Vendor ``on`` only writes modules-load.d, which binds later. Takes effect on
 # the next reboot.
-ensure_early_g_ether_cmdline() {
-    if [ "$DRY_RUN" = "1" ]; then
-        if [ -n "$ACTION_LOG" ]; then echo "ensure-early-g-ether-cmdline" >> "$ACTION_LOG"; fi
+#
+# A failure here does not fail the mode: the mode itself applied, and the only
+# loss is the early bind (a host already attached at boot may need one replug).
+# It is logged as an error rather than passed over, because the alternative --
+# reporting success for a boot edit that did not happen -- is how a board ends up
+# behaving differently from what the log says was done to it.
+edit_cmdline() {
+    local action="$1" marker="$2" cmdline
+    record "$marker"
+    files_enabled || return 0
+    cmdline="$(cmdline_path)"
+    if [ -z "$cmdline" ]; then
+        log "no cmdline.txt at ${CMDLINE_FW} or ${CMDLINE_LEGACY}; skipping $action"
         return 0
     fi
-    local cmdline=""
-    if [ -f "$CMDLINE_FW" ]; then
-        cmdline="$CMDLINE_FW"
-    elif [ -f "$CMDLINE_LEGACY" ]; then
-        cmdline="$CMDLINE_LEGACY"
-    else
-        return 0
+    if ! python3 "$FILES_TOOL" "$action" "$cmdline"; then
+        log "ERROR: $action on $cmdline failed; boot-time gadget binding unchanged"
+        return 1
     fi
-    python3 - "$cmdline" <<'PY' || true
-import pathlib, sys
-path = pathlib.Path(sys.argv[1])
-text = path.read_text(encoding="utf-8").strip()
-if "g_ether" in text and "modules-load=" in text:
-    raise SystemExit(0)
-# Insert after rootwait when present; otherwise append.
-needle = "modules-load=dwc2,g_ether"
-if "rootwait" in text:
-    text = text.replace("rootwait", "rootwait " + needle, 1)
-else:
-    text = text + " " + needle
-path.write_text(text + "\n", encoding="utf-8")
-PY
+    return 0
 }
 
 # Stock images ship netplan-eth0 with match:{} (any ethernet). On boards with no
 # eth0 (Pi Zero / this DGT image: only usb0+wlan0) that profile claims usb0 as a
-# DHCP *client* and fights Shared (Pi DHCP *server*). Delete it when eth0 is
-# absent; when eth0 exists, restrict the match to that name only.
+# DHCP *client* and fights Shared (Pi DHCP *server*). Move it aside when eth0 is
+# absent; when eth0 exists, restrict the match to that name only. Either way a
+# backup is kept beside it so ``off`` can put the board back.
 #
 # Do not run ``netplan apply`` here -- it can hang and disrupt wlan0. nmcli
 # delete + removing the NM-owned yaml is enough.
 #
-# Deleting it also removes what made usb0 managed at all: NetworkManager ships a
-# udev rule marking every gadget interface unmanaged. The package's
+# Moving it aside also removes what made usb0 managed at all: NetworkManager
+# ships a udev rule marking every gadget interface unmanaged. The package's
 # 90-uc-usb-gadget-managed.conf drop-in is what keeps usb0 managed from then on.
 pin_netplan_eth0_off_usb0() {
-    if [ "$DRY_RUN" = "1" ]; then
-        if [ -n "$ACTION_LOG" ]; then
-            echo "pin-netplan-eth0-off-usb0" >> "$ACTION_LOG"
-            echo "nmcli connection down $NETPLAN_ETH0_CONN" >> "$ACTION_LOG"
-        fi
-        return 0
-    fi
-    if [ ! -e /sys/class/net/eth0 ]; then
-        run_priv nmcli connection delete "$NETPLAN_ETH0_CONN" || true
-        # Remove the NM-generated netplan drop-in so it does not come back on reload.
-        python3 - <<'PY' || true
-from pathlib import Path
-netplan = Path("/etc/netplan")
-if not netplan.is_dir():
-    raise SystemExit(0)
-for path in sorted(netplan.glob("90-NM-*.yaml")):
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        continue
-    if "netplan-eth0" in text:
-        path.unlink(missing_ok=True)
-PY
-    else
+    record "pin-netplan-eth0-off-usb0"
+    if [ -e "$ETH0_SYSFS" ]; then
         # Real ethernet port: keep the profile but never let it match usb0.
         run_priv nmcli connection modify "$NETPLAN_ETH0_CONN" \
             match.interface-name eth0 \
             connection.interface-name eth0 || true
-        python3 - <<'PY' || true
-from pathlib import Path
-netplan = Path("/etc/netplan")
-if not netplan.is_dir():
-    raise SystemExit(0)
-for path in sorted(netplan.glob("90-NM-*.yaml")):
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        continue
-    if "netplan-eth0" not in text or "match: {}" not in text:
-        continue
-    path.write_text(
-        text.replace("match: {}", "match:\n        name: eth0"),
-        encoding="utf-8",
-    )
-PY
+        detach_netplan_eth0 --eth0-present
         run_priv nmcli connection reload || true
+    else
+        run_priv nmcli connection delete "$NETPLAN_ETH0_CONN" || true
+        detach_netplan_eth0 --eth0-absent
     fi
     run_priv nmcli connection down "$NETPLAN_ETH0_CONN" || true
     # Lease file is world-readable but the NetworkManager state dir is 0700;
     # allow the unprivileged service to count Shared DHCP leases for status.
     run_priv chmod o+x /var/lib/NetworkManager || true
+}
+
+detach_netplan_eth0() {
+    files_enabled || return 0
+    if ! python3 "$FILES_TOOL" detach-netplan-eth0 "$NETPLAN_DIR" "$1"; then
+        log "ERROR: could not detach $NETPLAN_ETH0_CONN from usb0 in $NETPLAN_DIR"
+        return 1
+    fi
+    return 0
+}
+
+# Restoring the yaml is enough: netplan regenerates the NetworkManager profile
+# from it at boot, and turning the gadget off already asks for a reboot to finish
+# (usb0 and the loaded modules outlive the setting change). Nothing is brought up
+# here -- that would mean claiming an interface the user just turned off.
+restore_netplan_eth0() {
+    record "restore-netplan-eth0"
+    files_enabled || return 0
+    if ! python3 "$FILES_TOOL" restore-netplan-eth0 "$NETPLAN_DIR"; then
+        log "ERROR: could not restore $NETPLAN_ETH0_CONN in $NETPLAN_DIR"
+        return 1
+    fi
+    return 0
 }
 
 # Vendor ``on`` leaves Shared autoconnecting and the ICS watcher flipping
@@ -159,7 +183,7 @@ PY
 pin_client() {
     # ICS disable is best-effort (unit may be absent on older images).
     run_priv systemctl disable --now "$ICS_UNIT" || true
-    ensure_early_g_ether_cmdline
+    edit_cmdline arm-cmdline ensure-early-g-ether-cmdline || true
     pin_netplan_eth0_off_usb0
     run_priv nmcli connection modify "$CLIENT_CONN" connection.autoconnect yes || return 1
     run_priv nmcli connection modify "$SHARED_CONN" connection.autoconnect no || return 1
@@ -171,7 +195,7 @@ pin_client() {
 
 pin_shared() {
     run_priv systemctl disable --now "$ICS_UNIT" || true
-    ensure_early_g_ether_cmdline
+    edit_cmdline arm-cmdline ensure-early-g-ether-cmdline || true
     pin_netplan_eth0_off_usb0
     run_priv nmcli connection modify "$SHARED_CONN" connection.autoconnect yes || return 1
     run_priv nmcli connection modify "$CLIENT_CONN" connection.autoconnect no || return 1
@@ -187,10 +211,19 @@ pin_shared() {
 # profile here would both race the unit and drop a live USB session.
 enable_auto_switching() {
     run_priv systemctl enable --now "$ICS_UNIT" || true
-    ensure_early_g_ether_cmdline
+    edit_cmdline arm-cmdline ensure-early-g-ether-cmdline || true
     pin_netplan_eth0_off_usb0
     run_priv nmcli connection modify "$SHARED_CONN" connection.autoconnect yes || return 1
     run_priv nmcli connection modify "$CLIENT_CONN" connection.autoconnect no || return 1
+    return 0
+}
+
+# Off is the user withdrawing consent for the whole feature, so it also undoes
+# the boot-time and NetworkManager changes the on-modes made. The vendor tool
+# removes its own overlay and modules-load.d entry; the rest is ours to clean up.
+disable_gadget() {
+    edit_cmdline disarm-cmdline disarm-early-g-ether-cmdline || true
+    restore_netplan_eth0 || true
     return 0
 }
 
@@ -198,7 +231,7 @@ run_mode() {
     local mode="$1"
     case "$mode" in
         off)
-            if run_priv rpi-usb-gadget off; then
+            if run_priv rpi-usb-gadget off && disable_gadget; then
                 log "USB gadget set to off"
                 exit 0
             fi
