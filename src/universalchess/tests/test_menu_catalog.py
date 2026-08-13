@@ -291,6 +291,33 @@ def test_usb_gadget_help_says_which_physical_port_the_cable_needs():
     assert "carga" in spanish, f"Spanish help does not rule out the charge port: {spanish}"
 
 
+def test_usb_gadget_help_says_which_end_of_the_cable_to_reconnect():
+    """The field help must say to reconnect at the board, not at a USB-C port.
+
+    Why: measured on a DGT Centaur board, unplugging and reconnecting brings the
+    link back at the board's own micro-USB socket and at a USB-A joint, but not at
+    the computer's USB-C port -- that one can leave the host seeing no device at
+    all. Nothing on the board can repair it: the gadget is armed once at boot and
+    deliberately never rebound, and only the host can start enumeration. So the
+    one thing that helps is telling the user which end to pull, in the same place
+    the widget already tells them which socket to use.
+
+    Failure: the help stops naming USB-C, or stops saying where to unplug, and the
+    next person to reconnect at their laptop concludes the board has died. Spanish
+    is asserted too, since a translation that drops the instruction leaves those
+    users with only the failure.
+    """
+    from universalchess.menus.catalog.loader import get_localized_catalog
+
+    english = load_catalog().get_node("connectivity.usb_gadget")["help"].lower()
+    assert "usb-c" in english, f"help does not name the USB-C end: {english}"
+    assert "unplug" in english, f"help does not say where to unplug: {english}"
+
+    spanish = get_localized_catalog("es").get_node("connectivity.usb_gadget")["help"].lower()
+    assert "usb-c" in spanish, f"Spanish help does not name the USB-C end: {spanish}"
+    assert "desconéct" in spanish, f"Spanish help does not say where to unplug: {spanish}"
+
+
 def test_option_sets_resolve_for_select_fields():
     """Every select field that names an optionSet must resolve to options.
 

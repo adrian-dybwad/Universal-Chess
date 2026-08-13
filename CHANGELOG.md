@@ -149,7 +149,13 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   status card said Disconnected, and nothing on either surface said the cable was
   in the wrong place. Every mode in the control depends on that cable, so the
   requirement sits at the top of the widget, where it is read before the choice
-  is made.
+  is made. The help now also says which end of the cable to reconnect. Measured
+  on a Centaur board, unplugging and plugging back in restores the link at the
+  Pi's own micro-USB socket and at a USB-A joint, but not at the host computer's
+  USB-C port, which can leave that computer seeing no device at all. Nothing on
+  the board can repair that -- the gadget is armed once at boot and never rebound,
+  since rebinding a live controller wedges it until the power is cut, and only the
+  host can begin enumeration -- so the help names the end that works.
 
 - The USB gadget now introduces itself to the host computer as "Universal Chess
   USB Gadget". The product string in the gadget's USB descriptor is the only name

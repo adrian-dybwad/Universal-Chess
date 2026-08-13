@@ -301,7 +301,7 @@
     "connectivity.usb_gadget": {
       "label": "Gadget USB",
       "boardLabel": "Gadget USB\n{value}",
-      "help": "Ethernet USB por un cable al ordenador anfitrión. El cable va al puerto USB de datos de la Pi Zero, dentro del tablero, no al puerto de carga del Centaur. Cambiar de modo mientras estás conectado puede cortar la sesión."
+      "help": "Ethernet USB por un cable al ordenador anfitrión. El cable va al puerto USB de datos de la Pi Zero, dentro del tablero, no al puerto de carga del Centaur. Cambiar de modo mientras estás conectado puede cortar la sesión. Para volver a conectar el cable, desconéctalo en el tablero (o en un conector USB-A intermedio): volver a enchufarlo en el puerto USB-C del ordenador no siempre restablece el enlace, y el ordenador puede quedarse sin ver ningún dispositivo."
     },
     "connectivity.chromecast": {
       "help": "Duplica el tablero en un dispositivo Chromecast."

@@ -721,7 +721,7 @@
       "webPresentation": "described-radio",
       "label": "USB Gadget",
       "boardLabel": "USB Gadget\n{value}",
-      "help": "USB Ethernet over a cable to the host computer. The cable goes to the Pi Zero's USB data port inside the board, not the Centaur's charging port. Changing mode while connected can drop the session.",
+      "help": "USB Ethernet over a cable to the host computer. The cable goes to the Pi Zero's USB data port inside the board, not the Centaur's charging port. Changing mode while connected can drop the session. To reconnect the cable, unplug it at the board (or at a USB-A joint): plugging back in at the computer's USB-C port does not always bring the link back, and the computer can then see no device at all.",
       "bind": { "store": "system", "key": "usb_gadget_mode" },
       "icon": "wifi",
       "platforms": ["board", "web"],
