@@ -150,6 +150,16 @@ main() {
     
     local tmp_dir
     tmp_dir=$(mktemp -d)
+    # apt drops privileges to the `_apt` user for its acquire step, even when the
+    # "download" is copying a local file into place. mktemp -d creates the
+    # directory 0700, so _apt cannot traverse it and apt reports a permission
+    # error mid-install ("Download is performed unsandboxed as root ... couldn't
+    # be accessed by user '_apt'") before redoing the copy as root. The install
+    # succeeded either way, so this only ever read as a failure that was not one.
+    # Only the mode is widened: the directory stays owned by the invoking user, so
+    # no other local user can substitute the .deb before apt installs it as root,
+    # and the package itself is a published artifact.
+    chmod 0755 "$tmp_dir"
     local deb_path="${tmp_dir}/universal-chess_${version}_all.deb"
     
     echo "Downloading to $deb_path..."
