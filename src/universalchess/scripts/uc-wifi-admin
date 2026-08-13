@@ -1,0 +1,164 @@
+#!/bin/sh
+# Root helper for the Wi-Fi operations the service needs but cannot perform
+# unprivileged: scanning for networks (iwlist), creating/activating/deleting
+# connection profiles (nmcli) and toggling the radio (rfkill).
+#
+# Invoked by the board UI and the web app through a single pinned, passwordless
+# sudo grant installed by the package postinst:
+#
+#   <service-user> ALL=(root) NOPASSWD: /opt/universalchess/scripts/uc-wifi-admin
+#
+# Why a fixed helper instead of NOPASSWD on iwlist/nmcli/rfkill directly: nmcli
+# can reconfigure every connection on the machine and rfkill can block any radio,
+# so granting those outright is broad root by another name. This narrows the grant
+# to the operations below and refuses everything else -- the `case` is the
+# security boundary for the grant; do not add a passthrough/escape branch.
+#
+# Callers use `sudo -n` so a missing grant fails fast ("a password is required")
+# and is logged, rather than hanging on a password prompt no service can answer.
+#
+# The passphrase is read from stdin, never taken as an argument, so it does not
+# appear in the caller's or sudo's command line. On the connect-wpa2 path it
+# reaches nmcli through a 0600 file that is removed before this script returns.
+# `connect` still passes it to nmcli in argv because `device wifi connect` has no
+# passwd-file option; that leaves it readable via `ps` for the length of that one
+# call, as it was before this helper existed.
+set -u
+
+INTERFACE="wlan0"
+
+# The NetworkManager property a passwd-file line addresses (nmcli(1),
+# "passwd-file"), not a secret itself.
+PSK_PROPERTY="802-11-wireless-security.psk"
+
+# 802.11 caps an SSID at 32 bytes; allow headroom for multibyte encodings. A WPA
+# passphrase is 8-63 characters, or 64 hex digits for a raw PSK.
+MAX_SSID_LENGTH=64
+MAX_PASSPHRASE_LENGTH=64
+
+psk_file=""
+passphrase=""
+
+cleanup() {
+	if [ -n "$psk_file" ]; then
+		rm -f "$psk_file"
+	fi
+}
+trap cleanup EXIT HUP INT TERM
+
+usage() {
+	echo "usage: uc-wifi-admin {scan|enable|disable|forget <uuid>|connect <ssid>|connect-wpa2 <ssid>}" >&2
+	exit 2
+}
+
+reject() {
+	echo "uc-wifi-admin: $1" >&2
+	exit 2
+}
+
+# An SSID must be a value, never something nmcli reads as an option: a leading
+# dash would be consumed as a flag and could change which device or property the
+# privileged command acts on.
+require_ssid() {
+	[ -n "$1" ] || reject "empty network name"
+	case "$1" in
+		-*) reject "network name may not begin with '-'" ;;
+		*[[:cntrl:]]*) reject "network name contains a control character" ;;
+	esac
+	[ "${#1}" -le "$MAX_SSID_LENGTH" ] || reject "network name too long"
+}
+
+# Read the passphrase from stdin. `read -r` stops at the first newline, so a
+# passphrase can never carry one into the passwd-file format below. Empty stdin
+# means "no passphrase" -- unambiguous, because no valid passphrase is empty.
+read_passphrase() {
+	IFS= read -r passphrase || true
+	if [ -n "$passphrase" ]; then
+		case "$passphrase" in
+			*[[:cntrl:]]*) reject "passphrase contains a control character" ;;
+		esac
+		[ "${#passphrase}" -le "$MAX_PASSPHRASE_LENGTH" ] ||
+			reject "passphrase too long"
+	fi
+}
+
+# Exactly 8-4-4-4-12: the first pattern fixes the length and dash positions, the
+# second rejects any character that is not a hex digit or a dash. Profiles are
+# deleted by UUID rather than name so caller-supplied text cannot select a
+# different profile.
+require_uuid() {
+	case "$1" in
+		????????-????-????-????-????????????) ;;
+		*) reject "not a connection UUID" ;;
+	esac
+	case "$1" in
+		*[!0-9a-fA-F-]*) reject "not a connection UUID" ;;
+	esac
+}
+
+# Write the passphrase where only root can read it. mktemp creates the file 0600
+# and with an unguessable name, so there is no symlink race; /dev/shm keeps a
+# cleartext passphrase off the SD card.
+write_psk_file() {
+	tmpdir="/dev/shm"
+	[ -d "$tmpdir" ] || tmpdir="${TMPDIR:-/tmp}"
+	psk_file="$(mktemp "$tmpdir/uc-wifi-psk.XXXXXX")" || reject "cannot create secret file"
+	chmod 600 "$psk_file"
+	printf '%s:%s\n' "$PSK_PROPERTY" "$passphrase" > "$psk_file"
+}
+
+[ "$#" -ge 1 ] || usage
+
+case "$1" in
+	scan)
+		[ "$#" -eq 1 ] || usage
+		exec iwlist "$INTERFACE" scan
+		;;
+	enable)
+		[ "$#" -eq 1 ] || usage
+		exec rfkill unblock wifi
+		;;
+	disable)
+		[ "$#" -eq 1 ] || usage
+		exec rfkill block wifi
+		;;
+	forget)
+		[ "$#" -eq 2 ] || usage
+		require_uuid "$2"
+		exec nmcli connection delete uuid "$2"
+		;;
+	connect)
+		# Let NetworkManager pick the security the AP advertises.
+		[ "$#" -eq 2 ] || usage
+		require_ssid "$2"
+		read_passphrase
+		if [ -n "$passphrase" ]; then
+			exec nmcli device wifi connect "$2" password "$passphrase"
+		fi
+		exec nmcli device wifi connect "$2"
+		;;
+	connect-wpa2)
+		# Force a WPA2-PSK profile for an AP whose WPA3-SAE handshake the Pi's
+		# brcmfmac driver cannot complete. `psk-flags 0` (system-owned) is what
+		# lets NetworkManager store the secret, so the board reconnects after a
+		# reboot; `pmf 2` keeps management-frame protection optional, which a
+		# WPA2/WPA3 transition AP accepts.
+		[ "$#" -eq 2 ] || usage
+		require_ssid "$2"
+		read_passphrase
+		[ -n "$passphrase" ] || reject "connect-wpa2 requires a passphrase"
+		nmcli connection add type wifi con-name "$2" \
+			ifname "$INTERFACE" ssid "$2" \
+			wifi-sec.key-mgmt wpa-psk wifi-sec.psk-flags 0 \
+			wifi-sec.pmf 2 || exit "$?"
+		write_psk_file
+		# `id` removes the ambiguity in `connection up <ID>`, which also matches
+		# UUIDs and D-Bus paths, so an SSID like "4" cannot activate an unrelated
+		# profile. Not exec'd: the EXIT trap has to run to remove the secret.
+		nmcli connection up id "$2" passwd-file "$psk_file"
+		exit "$?"
+		;;
+	*)
+		usage
+		;;
+esac

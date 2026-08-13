@@ -58,6 +58,11 @@ SCRIPTS_DIR = f"{BASE_DIR}/scripts"
 # configured and phone chess apps cannot discover the board over BLE.
 BT_ADMIN = f"{SCRIPTS_DIR}/bt-admin"
 
+# uc-wifi-admin: scans (iwlist), manages connection profiles (nmcli) and toggles
+# the radio (rfkill). Without its grant the network list is always empty, connect
+# and forget do nothing and the radio switch has no effect.
+WIFI_ADMIN = f"{SCRIPTS_DIR}/uc-wifi-admin"
+
 # Resources directory relative to this file (works in both installed and dev environments)
 # This file is at: <base>/paths.py, so resources is at: <base>/resources
 RESOURCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources")

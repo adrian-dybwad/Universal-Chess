@@ -6,6 +6,14 @@ board or e-paper dependencies. The board's keyboard/splash UX lives in
 calls these directly. Keeping the logic in one place means scan parsing and the
 stale-profile handling cannot drift between the two surfaces.
 
+Privileged steps go through the pinned ``uc-wifi-admin`` helper with ``sudo -n``,
+never by running iwlist/nmcli under sudo directly. Those direct calls had no
+sudoers grant, so on a board without a blanket passwordless rule the scan, the
+connect and the forget were all denied and the UI showed an empty network list.
+``sudo -n`` makes a missing grant fail immediately rather than stall on a prompt
+no service can answer. Read-only queries (the profile listing, the AP list,
+iwgetid) need no privilege and still run directly.
+
 Note on ``forget``/``connect`` and the active network: deleting or replacing the
 profile of the network the caller is currently using will drop that connection.
 Callers (especially the web API, which may be reaching the board over that same
@@ -14,12 +22,11 @@ operation.
 """
 
 import logging
-import os
 import re
-import subprocess  # nosec B404  # trusted, fixed-arg nmcli/iwlist/iwgetid calls below
-import tempfile
-from contextlib import contextmanager
-from typing import Iterator, List, Optional, Tuple
+import subprocess  # nosec B404  # trusted, fixed-arg helper/nmcli/iwgetid calls below
+from typing import List, Optional, Tuple
+
+from universalchess.paths import WIFI_ADMIN
 
 _DEFAULT_LOG = logging.getLogger(__name__)
 
@@ -57,17 +64,15 @@ _AP_LIST_TIMEOUT_SECONDS = 30
 # "\<char>" decodes both without the double-unescaping a chained replace risks.
 _TERSE_ESCAPE_RE = re.compile(r"\\(.)")
 
-# The NetworkManager *property name* a passwd-file line addresses, not a secret
-# (see nmcli(1), "passwd-file"). Named for the property so it does not read as
-# though it holds a key.
-_NMCLI_PSK_PROPERTY = "802-11-wireless-security.psk"
 
-# tmpfs, so a transient passphrase file never reaches the SD card. Absent
-# off-board (e.g. macOS dev machines), where the default temp dir is used.
-# S108/B108 (predictable temp path, CWE-377) does not apply: this is only the
-# *directory* handed to mkstemp, which generates an unguessable name and creates
-# it O_EXCL with mode 0600, so there is no symlink race or guessable target.
-_TMPFS_DIR = "/dev/shm"  # noqa: S108  # nosec B108
+def _admin_argv(verb: str, *args: str) -> List[str]:
+    """Argv for a privileged Wi-Fi operation through the pinned helper.
+
+    ``sudo -n`` so a board missing the grant reports "a password is required"
+    instead of stalling on a prompt. The helper validates the verb and its
+    arguments; nothing here may add an argument the helper does not expect.
+    """
+    return ["sudo", "-n", WIFI_ADMIN, verb, *args]
 
 
 def _resolve_log(log: Optional[logging.Logger]) -> logging.Logger:
@@ -117,38 +122,8 @@ def _resolve_visible_ssid(ssid: str, log: logging.Logger) -> Optional[str]:
     return None
 
 
-@contextmanager
-def _psk_passwd_file(password: str, log: logging.Logger) -> Iterator[str]:
-    """Yield the path of a private, short-lived nmcli ``passwd-file`` holding the PSK.
-
-    nmcli accepts an activation secret either on the command line or from this
-    file; its third option, ``--ask``, is documented as unsuitable for scripts.
-    The command line is the wrong choice because it is world-readable through
-    ``ps``/``/proc/<pid>/cmdline`` for the lifetime of the call (CWE-214), so a
-    file that only root and this process can read is a strictly smaller exposure.
-
-    ``mkstemp`` creates the file 0600, on tmpfs where available. It is removed as
-    soon as nmcli returns, on success and on failure alike: NetworkManager keeps
-    its own copy of the secret in the saved profile, so nothing here needs to
-    outlive the activation.
-    """
-    directory = _TMPFS_DIR if os.path.isdir(_TMPFS_DIR) else None
-    fd, path = tempfile.mkstemp(prefix="uc-wifi-", suffix=".secret", dir=directory, text=True)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(f"{_NMCLI_PSK_PROPERTY}:{password}\n")
-        yield path
-    finally:
-        try:
-            os.unlink(path)
-        except OSError as e:
-            # Leaving a cleartext passphrase behind is worth a warning, but it
-            # must not mask the connection result the caller is waiting on.
-            log.warning(f"[WiFi] Could not remove temporary secret file: {e}")
-
-
 def scan_networks(log: Optional[logging.Logger] = None) -> List[dict]:
-    """Scan for nearby WiFi networks via ``iwlist``.
+    """Scan for nearby WiFi networks via the pinned helper's ``scan`` verb.
 
     Returns a list of ``{"ssid", "signal", "security"}`` dicts, de-duplicated by
     SSID and sorted by signal strength descending. Returns an empty list on any
@@ -158,7 +133,7 @@ def scan_networks(log: Optional[logging.Logger] = None) -> List[dict]:
     log = _resolve_log(log)
     networks: List[dict] = []
     try:
-        result = subprocess.run(["sudo", "iwlist", WLAN_INTERFACE, "scan"], capture_output=True, text=True, timeout=_SCAN_TIMEOUT_SECONDS)  # noqa: S603, S607  # nosec B603 B607
+        result = subprocess.run(_admin_argv("scan"), capture_output=True, text=True, timeout=_SCAN_TIMEOUT_SECONDS)  # noqa: S603  # nosec B603
     except subprocess.TimeoutExpired:
         log.error("[WiFi] Network scan timed out")
         return networks
@@ -167,7 +142,7 @@ def scan_networks(log: Optional[logging.Logger] = None) -> List[dict]:
         return networks
 
     if result.returncode != 0:
-        log.error(f"[WiFi] iwlist failed: {result.stderr}")
+        log.error(f"[WiFi] scan failed: {result.stderr}")
         return networks
 
     seen_ssids = set()
@@ -292,7 +267,7 @@ def remove_profiles(ssid: str, log: Optional[logging.Logger] = None) -> int:
         if name == ssid and "wireless" in conn_type:
             log.info(f"[WiFi] Removing profile for '{ssid}' (uuid={uuid})")
             try:
-                proc = subprocess.run(["sudo", "nmcli", "connection", "delete", "uuid", uuid], capture_output=True, text=True, timeout=_NMCLI_TIMEOUT_SECONDS)  # noqa: S603, S607  # nosec B603 B607
+                proc = subprocess.run(_admin_argv("forget", uuid), capture_output=True, text=True, timeout=_NMCLI_TIMEOUT_SECONDS)  # noqa: S603  # nosec B603
                 if proc.returncode == 0:
                     deleted += 1
             except Exception as e:  # noqa: BLE001
@@ -346,23 +321,19 @@ def connect_network(
     # That invariant is about the shell only, and does not by itself make the
     # CodeQL py/command-line-injection findings false positives -- an earlier
     # version of this comment claimed it did. Two real defects lived behind that
-    # claim and were fixed in _connect_wpa2_psk_fallback below (alerts #200/#201):
-    # an SSID reaching `connection up` as an ambiguous ID, and the passphrase
-    # sitting in the process argv. See that function for both.
+    # claim (alerts #200/#201): an SSID reaching `connection up` as an ambiguous
+    # ID, and the passphrase sitting in the process argv. Both are now handled
+    # inside the helper, which selects profiles with an explicit `id` and takes
+    # the passphrase on stdin.
     #
-    # KNOWN GAP: the `password` value below is still an argv element, so the
-    # passphrase is visible in `ps`/`/proc/<pid>/cmdline` for the duration of this
-    # call (CWE-214). `device wifi connect` has no passwd-file option, so closing
-    # this means restructuring the primary path into `connection add` + `up`, as
-    # the fallback does. Deliberately not done here; the SSID is safe in this
-    # position because nmcli global options must precede the object word.
-    command = ["sudo", "nmcli", "device", "wifi", "connect", ssid]
-    if password:
-        command += ["password", password]
-
+    # The passphrase is written to the helper's stdin rather than passed as an
+    # argument, so it is absent from this process's and sudo's command line. The
+    # helper still hands it to nmcli in argv on this path, because `device wifi
+    # connect` has no passwd-file option, so it remains readable via `ps` for the
+    # length of that one call (CWE-214) -- narrowed from before, not closed.
     try:
         # shell=False (see SECURITY INVARIANT above): each value is one argv slot.
-        result = subprocess.run(command, capture_output=True, text=True, timeout=_CONNECT_TIMEOUT_SECONDS, shell=False)  # noqa: S603  # nosec B603
+        result = subprocess.run(_admin_argv("connect", ssid), input=password or "", capture_output=True, text=True, timeout=_CONNECT_TIMEOUT_SECONDS, shell=False)  # noqa: S603  # nosec B603
     except subprocess.TimeoutExpired:
         log.error("[WiFi] Connection timed out")
         remove_profiles(ssid, log)
@@ -413,41 +384,30 @@ def _connect_wpa2_psk_fallback(
     ``remove_profiles`` cleanup below are unaffected by the indirection.
 
     Two CodeQL "uncontrolled command line" findings (#200/#201) were raised
-    against the two privileged calls here, and both named a real defect:
+    against the privileged calls this path used to make directly, and both named a
+    real defect. Each is now the helper's responsibility, under the helper's own
+    tests:
 
       * ``nmcli connection up <ID>`` resolves ``ID`` against connection names,
         UUIDs and D-Bus paths alike (nmcli(1) notes a path may be given as "just
         num"), so an AP named e.g. "4" could activate an unrelated profile. The
-        explicit ``id`` selector removes the ambiguity.
+        helper selects with an explicit ``id``.
       * the passphrase was an argv element and so readable by any local user via
-        ``ps`` for the duration of the call. It now travels in a 0600
-        ``passwd-file`` (see :func:`_psk_passwd_file`).
+        ``ps`` for the duration of the call. It now goes to the helper on stdin,
+        which writes it to a 0600 ``passwd-file`` and removes that file before
+        returning.
 
     ``wifi-sec.psk-flags 0`` (system-owned) is what keeps the passphrase off the
     argv from costing anything: NetworkManager stores the secret it receives at
     activation, so the profile still auto-reconnects after a reboot.
+
+    The helper performs the profile add and the activation as one step and fails
+    without activating if the add fails, so a partial profile is never brought up.
     """
     log.info(f"[WiFi] Auto connect failed as SAE; retrying '{resolved_ssid}' forcing WPA2-PSK")
-    # shell=False + keyword values only (see SECURITY INVARIANT in connect_network).
-    add_command = [
-        "sudo", "nmcli", "connection", "add", "type", "wifi",
-        "con-name", resolved_ssid, "ifname", WLAN_INTERFACE, "ssid", resolved_ssid,
-        "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk-flags", "0",
-        "wifi-sec.pmf", "2",
-    ]
     try:
-        add_result = subprocess.run(add_command, capture_output=True, text=True, timeout=_NMCLI_TIMEOUT_SECONDS, shell=False)  # noqa: S603  # nosec B603
-        if add_result.returncode != 0:
-            stderr = (add_result.stderr or "").strip()
-            log.error(f"[WiFi] WPA2-PSK profile add failed: {stderr}")
-            remove_profiles(resolved_ssid, log)
-            return False, format_connect_error(stderr, True)
-        with _psk_passwd_file(password, log) as passwd_file:
-            up_command = [
-                "sudo", "nmcli", "connection", "up", "id", resolved_ssid,
-                "passwd-file", passwd_file,
-            ]
-            up_result = subprocess.run(up_command, capture_output=True, text=True, timeout=_CONNECT_TIMEOUT_SECONDS, shell=False)  # noqa: S603  # nosec B603
+        # shell=False + the passphrase on stdin (see SECURITY INVARIANT above).
+        result = subprocess.run(_admin_argv("connect-wpa2", resolved_ssid), input=password, capture_output=True, text=True, timeout=_CONNECT_TIMEOUT_SECONDS, shell=False)  # noqa: S603  # nosec B603
     except subprocess.TimeoutExpired:
         log.error("[WiFi] WPA2-PSK fallback timed out")
         remove_profiles(resolved_ssid, log)
@@ -457,11 +417,11 @@ def _connect_wpa2_psk_fallback(
         remove_profiles(resolved_ssid, log)
         return False, "Connection failed"
 
-    if up_result.returncode == 0:
+    if result.returncode == 0:
         log.info(f"[WiFi] Connected to {resolved_ssid} via WPA2-PSK fallback")
         return True, "Connected"
 
-    stderr = (up_result.stderr or "").strip()
+    stderr = (result.stderr or "").strip()
     log.error(f"[WiFi] WPA2-PSK fallback failed: {stderr}")
     remove_profiles(resolved_ssid, log)
     return False, format_connect_error(stderr, True)

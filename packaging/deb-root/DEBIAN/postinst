@@ -414,6 +414,33 @@ else
     echo -e "::: Warning: bt-admin helper not found at $BT_ADMIN_HELPER"
 fi
 
+# Allow the service user to operate Wi-Fi. Every Wi-Fi action needs root: the scan
+# (iwlist), the connection profiles (nmcli add/up/delete) and the radio toggle
+# (rfkill). None of them was granted, so on a board without a blanket NOPASSWD
+# rule the network list was always empty, connect and forget did nothing and the
+# radio switch had no effect -- and because the callers did not check the exit
+# status, all of it was reported to the user as success. Granting nmcli outright
+# would be control over every connection on the machine, so -- as with bt-admin --
+# grant exactly one pinned helper, whose `case` is the boundary: it performs only
+# these operations, validates the SSID and UUID it is given, and takes the
+# passphrase on stdin so it never reaches a command line.
+echo -e "::: Configuring sudoers for WiFi admin"
+WIFI_ADMIN_HELPER="${DGTCM_PATH}/scripts/uc-wifi-admin"
+if [ -f "$WIFI_ADMIN_HELPER" ]; then
+    chmod +x "$WIFI_ADMIN_HELPER"
+    WIFI_SUDOERS_FILE="/etc/sudoers.d/universal-chess-wifi"
+    echo "$PRIMARY_USER ALL=(root) NOPASSWD: $WIFI_ADMIN_HELPER" > "$WIFI_SUDOERS_FILE"
+    chmod 440 "$WIFI_SUDOERS_FILE"
+    # Validate the drop-in before it can take effect; a malformed sudoers file
+    # can lock out sudo, so remove it rather than leave it broken.
+    if ! visudo -cf "$WIFI_SUDOERS_FILE" >/dev/null 2>&1; then
+        echo -e "::: Warning: uc-wifi-admin sudoers entry invalid; removing"
+        rm -f "$WIFI_SUDOERS_FILE"
+    fi
+else
+    echo -e "::: Warning: uc-wifi-admin helper not found at $WIFI_ADMIN_HELPER"
+fi
+
 # Allow the service user to expand swap for the duration of an engine source
 # build. A compile of a modern engine (notably one embedding an NNUE net) can
 # exceed a 512MB board's RAM and be OOM-killed; uc-build-memory brings up a zram

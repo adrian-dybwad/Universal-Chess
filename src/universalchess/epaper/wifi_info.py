@@ -13,6 +13,8 @@ import os
 import re
 from typing import Optional, Tuple, Callable, List
 
+from universalchess.paths import WIFI_ADMIN
+
 try:
     from universalchess.board.logging import log
 except ImportError:
@@ -200,34 +202,41 @@ def format_status_label(status: dict) -> str:
     return '\n'.join(lines)
 
 
-def enable_wifi() -> bool:
-    """Enable WiFi via rfkill.
-    
-    Returns:
-        True if command succeeded, False otherwise
+def _wifi_admin(action: str) -> bool:
+    """Run the pinned ``uc-wifi-admin`` helper for a radio ``action``.
+
+    Routes the toggle through the same passwordless helper the scan and connect
+    paths use, so there is one privileged path and one NOPASSWD grant. Uses
+    ``sudo -n`` so a missing grant fails fast and is logged rather than hanging on
+    a password prompt, and checks the return code: the previous direct
+    ``sudo rfkill`` passed no ``check`` and never read ``returncode``, so it
+    returned True on any non-exception and a denied sudo was reported to the UI as
+    a working switch.
     """
     try:
-        subprocess.run(['sudo', 'rfkill', 'unblock', 'wifi'], timeout=5)  # noqa: S607  # nosec B603 B607
-        log.info("[WiFi] Enabled via rfkill")
+        result = subprocess.run(  # noqa: S603  # nosec B603 B607
+            ['sudo', '-n', WIFI_ADMIN, action],  # noqa: S607
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or "").strip() or "unknown error"
+            log.error(f"[WiFi] uc-wifi-admin {action} failed: {err}")
+            return False
+        log.info(f"[WiFi] Radio {action}d via uc-wifi-admin")
         return True
     except Exception as e:
-        log.error(f"[WiFi] Failed to enable: {e}")
+        log.error(f"[WiFi] Failed to {action}: {e}")
         return False
+
+
+def enable_wifi() -> bool:
+    """Enable the WiFi radio. Returns command success."""
+    return _wifi_admin("enable")
 
 
 def disable_wifi() -> bool:
-    """Disable WiFi via rfkill.
-    
-    Returns:
-        True if command succeeded, False otherwise
-    """
-    try:
-        subprocess.run(['sudo', 'rfkill', 'block', 'wifi'], timeout=5)  # noqa: S607  # nosec B603 B607
-        log.info("[WiFi] Disabled via rfkill")
-        return True
-    except Exception as e:
-        log.error(f"[WiFi] Failed to disable: {e}")
-        return False
+    """Disable the WiFi radio. Returns command success."""
+    return _wifi_admin("disable")
 
 
 def _status_changed(old: Optional[dict], new: dict) -> bool:

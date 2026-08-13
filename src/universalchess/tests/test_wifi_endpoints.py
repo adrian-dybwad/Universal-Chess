@@ -26,20 +26,20 @@ def _wifi_info_module():
     """Return the live wifi_info module from sys.modules.
 
     The endpoints do ``from universalchess.epaper.wifi_info import ...`` at call
-    time, resolving against sys.modules. Other tests reload that submodule, so a
-    reference captured at import time can become stale and patching it would miss
-    the object the endpoint actually uses. Re-importing here yields the current
-    object both share, and also forces the lazy epaper package __getattr__ to
-    register the submodule.
+    time, which reads sys.modules, so the patch has to land on that exact object.
+    ``importlib.import_module`` returns it; a plain ``import a.b.c as m`` does not
+    -- that form walks the parent packages' attributes, and a test that drops
+    ``universalchess.epaper`` from sys.modules leaves the ``universalchess``
+    package still pointing at the original epaper module and its original
+    submodules. The two then disagree, and patching the stale one silently lets
+    the real system-command function run.
     """
-    import universalchess.epaper.wifi_info as m
-    return m
+    return importlib.import_module("universalchess.epaper.wifi_info")
 
 
 def _wifi_core_module():
     """Return the live connectivity.wifi module from sys.modules (see above)."""
-    import universalchess.connectivity.wifi as m
-    return m
+    return importlib.import_module("universalchess.connectivity.wifi")
 
 # Mirror test_board_command_endpoints: the app module builds a DB engine against
 # /opt and opens a packaged logo at import time, neither present in a checkout.

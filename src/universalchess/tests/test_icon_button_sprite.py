@@ -34,17 +34,39 @@ def _real_pil_and_fresh_epaper():
     rebind the test-global Image, and drop cached epaper modules so they re-bind
     real PIL when re-imported below (otherwise widget.render works on mocks and
     composites nothing).
+
+    Every sys.modules entry this file removes or replaces -- including the stub
+    packages ``_import_icon_button_widget`` installs -- is put back afterwards.
+    Leaving them out corrupts later tests in a way that is hard to trace: a
+    ``universalchess.epaper`` package popped here is re-imported by whoever needs
+    it next, but the ``universalchess`` package object still holds the *original*
+    epaper module as its ``epaper`` attribute, and that one still holds the
+    original submodules. From then on ``import universalchess.epaper.x as m``
+    (which walks parent attributes) and ``from universalchess.epaper.x import y``
+    (which reads sys.modules) see two different modules, so patching one has no
+    effect on the other.
     """
     global Image
-    for name in ("PIL.ImageFont", "PIL.ImageDraw", "PIL.Image", "PIL"):
+    pil_names = ("PIL.ImageFont", "PIL.ImageDraw", "PIL.Image", "PIL")
+    epaper_names = [m for m in sys.modules if m.startswith("universalchess.epaper")]
+    saved = {name: sys.modules[name] for name in (*pil_names, *epaper_names) if name in sys.modules}
+
+    for name in pil_names:
         sys.modules.pop(name, None)
     import PIL.Image as real_image
     import PIL.ImageDraw  # noqa: F401  (ensure real submodule is registered)
     import PIL.ImageFont  # noqa: F401
     Image = real_image
-    for mod in [m for m in list(sys.modules) if m.startswith("universalchess.epaper")]:
-        sys.modules.pop(mod, None)
-    yield
+    for name in epaper_names:
+        sys.modules.pop(name, None)
+    try:
+        yield
+    finally:
+        for name in [m for m in sys.modules if m.startswith("universalchess.epaper")]:
+            del sys.modules[name]
+        for name in (*pil_names, *epaper_names):
+            sys.modules.pop(name, None)
+        sys.modules.update(saved)
 
 
 def _import_icon_button_widget():
