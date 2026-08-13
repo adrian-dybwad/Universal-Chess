@@ -23,7 +23,17 @@ from universalchess.utils.led import LED_SPEED_NORMAL, LED_INTENSITY_DEFAULT
 # and the web /api/system/return-to-universal endpoint -- issue the identical
 # command and cannot drift (the drift that caused the board to stay dead: the
 # board paths used ``stop`` while the web path used ``restart``).
-RESTART_UNIVERSAL_CHESS_CMD = ["sudo", "systemctl", "restart", "universal-chess.service"]
+#
+# ``-n`` because there is no terminal here to answer a password prompt: a board
+# missing the grant reports "a password is required" instead of stalling on a
+# prompt no one can see.
+RESTART_UNIVERSAL_CHESS_CMD = [
+    "sudo",
+    "-n",
+    "systemctl",
+    "restart",
+    "universal-chess.service",
+]
 
 # Signals that mean "the user asked centaur to exit" -- the return/exit chord
 # pkills it (SIGTERM), or a shutdown/reboot terminates it -- rather than a crash.

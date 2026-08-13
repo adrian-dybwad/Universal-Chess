@@ -423,8 +423,10 @@ def test_return_to_universal_chess_restarts_not_stops():
         ("exit", 1),
     ]
     # The command must be a restart, not a stop -- the exact bug being guarded.
+    # ``-n`` keeps a board missing the sudoers grant from stalling on a password
+    # prompt it has no terminal to answer.
     assert RESTART_UNIVERSAL_CHESS_CMD == [
-        "sudo", "systemctl", "restart", "universal-chess.service",
+        "sudo", "-n", "systemctl", "restart", "universal-chess.service",
     ]
 
 

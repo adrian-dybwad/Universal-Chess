@@ -87,10 +87,12 @@ def test_postinst_restart_grant_matches_the_command_the_code_issues(postinst_tex
     exists, so the board would still not restart.
     """
     block = _restart_sudoers_block(postinst_text)
-    # RESTART_UNIVERSAL_CHESS_CMD == ["sudo", "systemctl", "restart", "<unit>"].
-    assert RESTART_UNIVERSAL_CHESS_CMD[:1] == ["sudo"]
+    # RESTART_UNIVERSAL_CHESS_CMD == ["sudo", "-n", "systemctl", "restart", "<unit>"].
+    # ``-n`` is sudo's own flag, so it is not part of the command sudo authorizes
+    # and must not appear in the grant.
+    assert RESTART_UNIVERSAL_CHESS_CMD[:2] == ["sudo", "-n"]
     unit = RESTART_UNIVERSAL_CHESS_CMD[-1]
-    assert RESTART_UNIVERSAL_CHESS_CMD[1:] == ["systemctl", "restart", unit]
+    assert RESTART_UNIVERSAL_CHESS_CMD[2:] == ["systemctl", "restart", unit]
     # The sudoers command must use an absolute systemctl path (secure_path
     # resolves `systemctl` to this) followed by the identical restart args.
     assert f"/systemctl restart {unit}" in block

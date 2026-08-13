@@ -693,6 +693,30 @@ if ! visudo -cf "$RESTART_SUDOERS_FILE" >/dev/null 2>&1; then
     rm -f "$RESTART_SUDOERS_FILE"
 fi
 
+# Allow the service user to reboot and power off the machine. The Power menu and
+# the web Power controls both end in platform/system_power.py running
+# `sudo systemctl reboot` / `sudo systemctl poweroff`. Neither was granted, so on
+# a board without a blanket NOPASSWD rule sudo asked for a password, found no TTY
+# under the service and denied the command: the Pi stayed up while the app
+# finished its cleanup and exited, which looked like the menu had merely killed
+# the board app. Each verb is pinned with its argument -- a bare `systemctl`
+# grant would be root over every unit -- and `systemctl` is addressed by absolute
+# path because sudo authorizes by the resolved command path. Kept in its own
+# drop-in: the restart grant above is written with `>`, so sharing that file
+# would erase these lines whenever it is rewritten.
+echo -e "::: Configuring sudoers for power actions"
+POWER_SUDOERS_FILE="/etc/sudoers.d/universal-chess-power"
+{
+    echo "$PRIMARY_USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot"
+    echo "$PRIMARY_USER ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff"
+} > "$POWER_SUDOERS_FILE"
+chmod 440 "$POWER_SUDOERS_FILE"
+# Validate before it can take effect; a malformed drop-in can lock out sudo.
+if ! visudo -cf "$POWER_SUDOERS_FILE" >/dev/null 2>&1; then
+    echo -e "::: Warning: power sudoers entry invalid; removing"
+    rm -f "$POWER_SUDOERS_FILE"
+fi
+
 # Persistent application event log (services.event_log). Pre-create the log dir
 # and file owned by the service user so: (a) the app (running as that user)
 # can append AND rotate it (rotation renames within the dir, needing dir

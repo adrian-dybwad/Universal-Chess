@@ -26,6 +26,7 @@ from PIL import Image
 # Mirror test_board_command_endpoints: the app module builds a DB engine against
 # /opt and opens a packaged logo at import time, neither present in a checkout.
 import universalchess.db.uri as _uri  # noqa: E402
+from universalchess.services.power import RESTART_UNIVERSAL_CHESS_CMD  # noqa: E402
 
 _uri.get_database_uri = lambda: "sqlite:///:memory:"
 _orig_image_open = Image.open
@@ -442,9 +443,12 @@ def test_return_to_universal_kills_centaur_then_restarts_in_order(client, monkey
 
     assert resp.status_code == 200
     assert json.loads(resp.data)["success"] is True
+    # The restart is asserted through the shared constant rather than a copy of
+    # its argv, so the two cannot drift apart -- the exact command is pinned to
+    # the sudoers grant in test_postinst_restart_sudoers.
     assert calls == [
         ["pkill", "-x", "centaur"],
-        ["sudo", "systemctl", "restart", "universal-chess.service"],
+        RESTART_UNIVERSAL_CHESS_CMD,
     ]
 
 

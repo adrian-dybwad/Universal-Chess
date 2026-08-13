@@ -4,7 +4,6 @@ Manages Bluetooth RFCOMM server socket, client connections, and data routing.
 Encapsulates socket lifecycle with clean start/stop semantics.
 """
 
-import os
 import threading
 import time
 from typing import Callable, Optional
@@ -134,10 +133,13 @@ class RfcommServer:
             startup_splash.set_message("RFCOMM...")
         log.info("[RfcommServer] Starting initialization...")
         
-        # Kill any existing rfcomm processes
-        os.system('sudo service rfcomm stop 2>/dev/null')  # noqa: S605, S607 # nosec B605 B607 - fixed literal command, no untrusted input
-        time.sleep(0.5)
-        
+        # Kill any existing rfcomm process holding the channel. The legacy
+        # rfcomm.service this used to stop through sudo is disabled and stopped by
+        # the package postinst, so there is nothing left for a runtime stop to do
+        # -- and it was never authorized anyway, so on a board without a blanket
+        # passwordless rule it only ever cost a failed sudo authentication and the
+        # wait that went with it. A stray process is what actually holds the
+        # channel, and that is what this sweep clears.
         if psutil:
             for p in psutil.process_iter(attrs=['pid', 'name']):
                 if str(p.info["name"]) == "rfcomm":
