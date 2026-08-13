@@ -689,8 +689,9 @@ def _present_menu_help(title: str, body: "Optional[str]") -> None:
     """Show the focused menu entry's help tip as a modal, blocking until dismissed.
 
     Registered with MenuManager as the help presenter. Runs on the menu thread
-    (the thread blocked in show_menu); the events thread dismisses the dialog on
-    any key via the ``_active_help_widget`` check in ``_handle_key``. When there
+    (the thread blocked in show_menu); the events thread feeds keys to the dialog
+    via the ``_active_help_widget`` check in ``_handle_key``, where UP/DOWN page a
+    tip that needs more than one panel and any other key dismisses it. When there
     is no help text for the focused entry, the menu is simply re-displayed
     (no modal), so HELP never exits the menu.
 
@@ -7018,11 +7019,12 @@ def key_callback(key_id):
             _menu_manager.cancel_selection("SHUTDOWN")
         return
     
-    # Priority 0: Active help dialog - any key dismisses it. Checked first so the
-    # help overlay (shown for the focused menu entry) consumes the next key
-    # rather than letting it reach the menu/keyboard underneath.
+    # Priority 0: Active help dialog - UP/DOWN turn the page of a tip too long
+    # for one panel, any other key dismisses it. Checked first so the help
+    # overlay (shown for the focused menu entry) consumes the next key rather
+    # than letting it reach the menu/keyboard underneath.
     if _active_help_widget is not None:
-        _active_help_widget.dismiss()
+        _active_help_widget.handle_key(key_id)
         _reset_unhandled_key_count()
         return
 

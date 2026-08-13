@@ -31,7 +31,7 @@ from universalchess.epaper.text_scale import scale_font
 def _widget(text_size: str = "medium"):
     """A 128x128 coach-text widget with a no-op update callback."""
     return CoachTextWidget(
-        0, 16, 128, 128, lambda full=False, immediate=False: None,
+        0, 16, 128, 128, lambda *_a, **_k: None,
         text_size=text_size,
     )
 
@@ -77,7 +77,7 @@ def test_long_statement_paginates_and_wraps_forward():
     widget = _widget()
     line_count = 20
     widget.set_text(_multiline_text(line_count))
-    per_page = widget._lines_per_page()
+    per_page = widget.lines_per_page
     expected_pages = math.ceil(line_count / per_page)
     assert expected_pages >= 2  # guard: the fixture must actually overflow one page
     assert widget.page_count == expected_pages
@@ -99,15 +99,15 @@ def test_only_current_page_lines_are_shown_in_body():
     # statement. A regression rendering all lines would overflow the panel and the
     # first/second pages would be identical.
     widget = _widget()
-    per_page = widget._lines_per_page()
+    per_page = widget.lines_per_page
     line_count = per_page * 2 + 1  # forces 3 pages, last one partial
     widget.set_text(_multiline_text(line_count))
 
-    first_page_body = widget._body.text
+    first_page_body = widget.page_text
     assert first_page_body == "\n".join(f"Line{i}" for i in range(per_page))
 
     widget.next_page()
-    second_page_body = widget._body.text
+    second_page_body = widget.page_text
     assert second_page_body == "\n".join(
         f"Line{i}" for i in range(per_page, per_page * 2)
     )
@@ -126,7 +126,7 @@ def test_new_statement_resets_to_first_page():
 
     widget.set_text(_multiline_text(20).replace("Line", "Word"))
     assert widget.current_page == 1
-    assert widget._body.text.startswith("Word0")
+    assert widget.page_text.startswith("Word0")
 
 
 def _footer_has_ink(widget: CoachTextWidget) -> bool:
@@ -165,13 +165,13 @@ def test_text_size_scales_body_font_and_default_is_medium():
     # A regression ignoring text_size would render every size at 12px, defeating
     # the accessibility control.
     default_widget = _widget()
-    assert default_widget._body.font_size == CoachTextWidget.BODY_FONT_SIZE
+    assert default_widget.font_size == CoachTextWidget.BODY_FONT_SIZE
 
     small = _widget("small")
     large = _widget("large")
-    assert small._body.font_size == scale_font(CoachTextWidget.BODY_FONT_SIZE, "small")
-    assert large._body.font_size == scale_font(CoachTextWidget.BODY_FONT_SIZE, "large")
-    assert small._body.font_size < default_widget._body.font_size < large._body.font_size
+    assert small.font_size == scale_font(CoachTextWidget.BODY_FONT_SIZE, "small")
+    assert large.font_size == scale_font(CoachTextWidget.BODY_FONT_SIZE, "large")
+    assert small.font_size < default_widget.font_size < large.font_size
 
 
 def test_larger_text_size_fits_fewer_lines_per_page():
@@ -181,7 +181,7 @@ def test_larger_text_size_fits_fewer_lines_per_page():
     # keep lines_per_page constant and overflow the panel.
     small = _widget("small")
     large = _widget("large")
-    assert large._lines_per_page() < small._lines_per_page()
+    assert large.lines_per_page < small.lines_per_page
 
     text = _multiline_text(30)
     small.set_text(text)
