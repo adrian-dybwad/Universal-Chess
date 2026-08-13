@@ -5,6 +5,11 @@ interface FormRowProps {
   help?: ReactNode;
   /** Optional node rendered inline beside the label, e.g. an info-icon tooltip. */
   info?: ReactNode;
+  /**
+   * Stack label/help above the control at full width. Used for tall controls
+   * (described radio lists) that need the whole row, not a squeezed right column.
+   */
+  stacked?: boolean;
   children: ReactNode;
 }
 
@@ -15,10 +20,11 @@ interface FormRowProps {
  *
  * `info` sits next to the label (for an info-icon tooltip carrying longer help);
  * `help` is the short inline hint shown beneath the label.
+ * `stacked` puts the control under the label at full width instead of beside it.
  */
-export function FormRow({ label, help, info, children }: FormRowProps) {
+export function FormRow({ label, help, info, stacked = false, children }: FormRowProps) {
   return (
-    <div className="form-row">
+    <div className={`form-row${stacked ? ' form-row--stacked' : ''}`}>
       <div className="form-row-info">
         <div className="form-label-line">
           <label className="form-label">{label}</label>

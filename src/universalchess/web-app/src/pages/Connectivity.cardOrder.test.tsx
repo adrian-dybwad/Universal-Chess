@@ -10,8 +10,8 @@ import type { MenuCatalog } from '../types/menuCatalog';
 /**
  * Guards that the Connectivity cards appear in the shared catalog's order.
  *
- * Why these tests exist: this panel used to list its four cards as hand-written
- * JSX while the board took the same four from the `connectivity` container in
+ * Why these tests exist: this panel used to list its cards as hand-written
+ * JSX while the board took the same entries from the `connectivity` container in
  * menu.json. The two agreed, but only by coincidence -- nothing compared them, so
  * either could have moved alone. System had the same freedom and did drift (About
  * first on the web, fourth on the board), which is what prompted closing this one
@@ -21,6 +21,9 @@ import type { MenuCatalog } from '../types/menuCatalog';
  * the web changes, the board does not, and no test objects. The scrambled-catalog
  * test below is the one that catches it: an implementation carrying its own order
  * renders a perfectly good panel, just not the panel the catalog describes.
+ *
+ * Product order: WiFi → Bluetooth → USB Gadget → Chromecast (Accounts moved to
+ * Players).
  */
 
 const CONNECTIVITY = 'connectivity';
@@ -31,12 +34,13 @@ const BOARD_ONLY_CHILD = 'connectivity.boardOnly';
 
 // Card headers, keyed by the catalog node each card renders. The panel has one
 // CardHeader per card and no nested ones, so the headers in DOM order are the
-// card order the user sees.
+// card order the user sees. USB Gadget's status card is nested and must not use
+// CardHeader with a competing title, or this map breaks.
 const CARD_TITLES: Record<string, string> = {
   'connectivity.wifi': 'WiFi',
   'connectivity.bluetooth': 'Bluetooth',
+  'connectivity.usb_gadget': 'USB Gadget',
   'connectivity.chromecast': 'Chromecast',
-  'connectivity.accounts': 'Accounts',
 };
 
 interface JsonResponseLike {
@@ -61,8 +65,16 @@ beforeEach(() => {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string): Promise<JsonResponseLike> => {
-      // Both radios present, so all four cards mount and the order is complete.
+      // Both radios present, so all cards mount and the order is complete.
       if (url === '/api/system/info') return jsonResponse({ has_wifi: true, has_bluetooth: true });
+      if (url === '/api/system/usb-gadget')
+        return jsonResponse({
+          desired: 'client',
+          live: 'client',
+          prepared: true,
+          in_expected_state: true,
+          reboot_required: false,
+        });
       if (url === '/api/connectivity/wifi/status')
         return jsonResponse({
           enabled: true, connected: false, ssid: '', ip_address: '',
@@ -95,7 +107,7 @@ function renderPanel(catalog: MenuCatalog) {
 
 /** The card headers in the order the panel renders them. */
 async function cardTitles(): Promise<string[]> {
-  await screen.findByText(CARD_TITLES['connectivity.accounts']);
+  await screen.findByText(CARD_TITLES['connectivity.chromecast']);
   return Array.from(document.querySelectorAll('.card-title')).map((node) => node.textContent ?? '');
 }
 
@@ -138,7 +150,7 @@ describe('Connectivity card order', () => {
     const catalog = menuSchemaFixture as unknown as MenuCatalog;
     renderPanel(catalog);
 
-    expect(await cardTitles()).toEqual(['WiFi', 'Bluetooth', 'Chromecast', 'Accounts']);
+    expect(await cardTitles()).toEqual(['WiFi', 'Bluetooth', 'USB Gadget', 'Chromecast']);
     expect(await cardTitles()).toEqual(catalogCardTitles(catalog));
   });
 

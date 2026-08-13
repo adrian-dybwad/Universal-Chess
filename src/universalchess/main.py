@@ -4148,10 +4148,13 @@ def _build_players_context():
     """Build the context for the top-level Players menu (settings.players).
 
     Exposes both players' settings (for the per-player summary labels and the
-    Player 1 color icon) and the three row actions: opening each player's detail
-    menu and starting the game. ``open_player*`` forwards only a break result up
-    (so a game started from a sub-menu unwinds); ``start_game`` returns the
-    START_GAME token the Settings handler turns into a new game.
+    Player 1 color icon) and the row actions: opening each player's detail
+    menu, managing online accounts, and starting the game. ``open_player*``
+    forwards only a break result up (so a game started from a sub-menu
+    unwinds); ``open_accounts`` opens the multi-account manager (moved here
+    from Connectivity so credentials sit next to the slots that use them);
+    ``start_game`` returns the START_GAME token the Settings handler turns
+    into a new game.
     """
     from universalchess.menus.board_context import BoardMenuContext
 
@@ -4162,6 +4165,7 @@ def _build_players_context():
     ctx.register_value("player2_summary", lambda node: _player_summary(_player2_settings_dict(), with_color=False))
     ctx.register_action("open_player1", lambda: _open_player_detail(1))
     ctx.register_action("open_player2", lambda: _open_player_detail(2))
+    ctx.register_action("open_accounts", lambda: _signal_from(_handle_accounts_menu()))
     ctx.register_action("start_game", lambda: "START_GAME")
     return ctx
 
@@ -5203,7 +5207,12 @@ def _build_system_context():
     from universalchess.menus.catalog import loader as catalog_loader
     from universalchess.services.power import perform_shutdown, perform_reboot
 
-    from universalchess.services import language_service, system_time_service, timezone_service
+    from universalchess.services import (
+        language_service,
+        system_time_service,
+        timezone_service,
+        usb_gadget_service,
+    )
 
     def system_get(key):
         if key == "sleep_seconds":
@@ -5215,6 +5224,8 @@ def _build_system_context():
             # without a checkbox and selecting it enables sync, which is the
             # safe direction to move from "unknown".
             return system_time_service.get_status().ntp_enabled
+        if key == "usb_gadget_mode":
+            return usb_gadget_service.get_status().desired
         if key == "ui_language":
             return language_service.get_language()
         if key == "update_state":
@@ -5243,6 +5254,13 @@ def _build_system_context():
             # refused change simply shows the toggle snapping back.
             applied = system_time_service.set_ntp_enabled(bool(value))
             log.info(f"[Settings] Network time sync set to {bool(value)} (applied={applied})")
+            return
+        if key == "usb_gadget_mode":
+            try:
+                applied = usb_gadget_service.set_mode(str(value))
+                log.info(f"[Settings] USB gadget mode set to {value} (applied={applied})")
+            except ValueError:
+                log.warning(f"[Settings] Rejected invalid USB gadget mode: {value!r}")
             return
         if key == "ui_language":
             # Persist the UI locale, then refresh the cached catalog language so
@@ -5837,18 +5855,17 @@ def _run_chromecast_menu():
 def _build_connectivity_context():
     """Build the BoardMenuContext for the data-driven Connectivity menu.
 
-    Connectivity is mostly a pure router: every row opens a still-imperative
-    sub-flow (WiFi, Bluetooth, Chromecast, Accounts), each forwarding any break
-    result (e.g. a game-start/connection event) up through ``_signal_from`` so the
-    whole menu stack can unwind.
+    Connectivity routes WiFi / Bluetooth / Chromecast into still-imperative
+    sub-flows (each forwarding any break result through ``_signal_from``) and
+    exposes USB Gadget as a ``select`` bound to ``system.usb_gadget_mode``.
 
-    The one store is the read-only ``hardware`` radio-presence gate gating the
-    WiFi and Bluetooth rows (their ``visibleWhen``): a plain Pi Zero has no
-    wireless die, so those rows would open menus whose every control is inert.
-    Chromecast and Accounts are not gated -- the board still reaches the network
-    over the USB Ethernet gadget.
+    The ``hardware`` store gates the WiFi and Bluetooth rows (their
+    ``visibleWhen``): a plain Pi Zero has no wireless die, so those rows would
+    open menus whose every control is inert. USB Gadget and Chromecast are not
+    gated -- the board still reaches the network over the USB Ethernet gadget.
     """
     from universalchess.menus.board_context import BoardMenuContext
+    from universalchess.services import usb_gadget_service
 
     def hardware_get(key):
         # Re-read per render rather than caching: a USB Wi-Fi/Bluetooth dongle can
@@ -5863,22 +5880,35 @@ def _build_connectivity_context():
     def hardware_set(key, value):
         raise NotImplementedError(f"hardware store is read-only (key={key!r})")
 
+    def system_get(key):
+        if key == "usb_gadget_mode":
+            return usb_gadget_service.get_status().desired
+        raise KeyError(f"unknown system store key: {key!r}")
+
+    def system_set(key, value):
+        if key == "usb_gadget_mode":
+            try:
+                applied = usb_gadget_service.set_mode(str(value))
+                log.info(f"[Settings] USB gadget mode set to {value} (applied={applied})")
+            except ValueError:
+                log.warning(f"[Settings] Rejected invalid USB gadget mode: {value!r}")
+            return
+        raise NotImplementedError(f"unknown system store key: {key!r}")
+
     ctx = BoardMenuContext()
     ctx.register_store("hardware", hardware_get, hardware_set)
+    ctx.register_store("system", system_get, system_set)
     ctx.register_action("open_wifi", lambda: _signal_from(_run_wifi_settings_menu()))
     ctx.register_action("open_bluetooth", lambda: _signal_from(_run_bluetooth_settings_menu()))
     ctx.register_action("open_chromecast", lambda: _signal_from(_run_chromecast_menu()))
-    ctx.register_action("open_accounts", lambda: _signal_from(_handle_accounts_menu()))
     return ctx
 
 
 def _handle_connectivity_menu():
-    """Run the data-driven Connectivity menu (WiFi, Bluetooth, Chromecast, Accounts).
+    """Run the data-driven Connectivity menu (WiFi, Bluetooth, USB Gadget, Chromecast).
 
     Driven by the shared engine over the ``connectivity`` catalog container; the
-    board adapter supplies the four actions that open the still-imperative
-    sub-flows. Groups the outward-facing features that previously lived split
-    between the top-level Settings list (Chromecast) and System.
+    board adapter supplies the open_* actions and the system store for USB Gadget.
     """
     from universalchess.menus.board_context import run_engine_menu
 
@@ -7294,6 +7324,15 @@ def main():
     except Exception as e:
         log.error(f"[Main] Failed to load game settings: {e}", exc_info=True)
         # Continue anyway - settings are not critical
+
+    # Vendor USB gadget ``on`` leaves Shared autoconnecting; re-apply the stored
+    # preference when live disagrees so Client survives reboot without a UI click.
+    try:
+        from universalchess.services import usb_gadget_service
+        if usb_gadget_service.reconcile_desired_mode():
+            log.info("[Main] USB gadget: reconciled desired mode to live state")
+    except Exception as e:
+        log.debug(f"[Main] USB gadget reconcile skipped: {e}")
 
     # Auto-update runs at startup only, and only ever *stages* an update -- it
     # checks the channel and downloads the newest build in the background, never

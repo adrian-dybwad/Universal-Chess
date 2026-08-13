@@ -130,3 +130,125 @@ describe('CatalogField dropdown fallback (plain options)', () => {
     expect(screen.queryByRole('radio')).toBeNull();
   });
 });
+
+describe('CatalogField described-radio (webPresentation)', () => {
+  const usbNode: MenuNode = {
+    id: 'connectivity.usb_gadget',
+    type: 'select',
+    label: 'USB Gadget',
+    optionSet: 'usb_gadget_mode',
+    webPresentation: 'described-radio',
+  };
+
+  const usbOptions: MenuOption[] = [
+    { value: 'off', label: 'Off', description: 'USB Ethernet is off.' },
+    {
+      value: 'auto',
+      label: 'Auto',
+      description: 'Board chooses Client or Shared by itself.',
+    },
+    {
+      value: 'client',
+      label: 'Client',
+      description: 'Host computer shares its internet. Reach the board at http://board.local/.',
+    },
+    {
+      value: 'shared',
+      label: 'Shared',
+      description: 'Board runs the USB network at http://10.12.194.1/.',
+    },
+  ];
+
+  it('renders a radio per option with every description visible and writes the value', () => {
+    // Why: USB Gadget must show Off/Auto/Client/Shared as radios with
+    // always-visible blurbs, not a dropdown that hides unselected modes -- the
+    // descriptions are how the modes are told apart. How a regression manifests:
+    // a combobox appears, a description is missing, or onChange does not receive
+    // the option value.
+    const onChange = vi.fn();
+    render(
+      <CatalogField
+        node={usbNode}
+        value="client"
+        options={usbOptions}
+        onChange={onChange}
+      />,
+    );
+
+    const radios = screen.getAllByRole('radio') as HTMLInputElement[];
+    expect(radios.map((radio) => radio.value)).toEqual(['off', 'auto', 'client', 'shared']);
+    expect((radios.find((r) => r.value === 'client') as HTMLInputElement).checked).toBe(true);
+    expect(screen.queryByRole('combobox')).toBeNull();
+    // Stacked full-width layout so long descriptions are not squeezed into the
+    // FormRow's right column (which truncated Shared mid-sentence on desktop).
+    expect(document.querySelector('.form-row--stacked')).not.toBeNull();
+    expect(screen.getByText('USB Ethernet is off.')).toBeInTheDocument();
+    expect(screen.getByText('Board chooses Client or Shared by itself.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Host computer shares its internet. Reach the board at http://board.local/.'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Board runs the USB network at http://10.12.194.1/.'),
+    ).toBeInTheDocument();
+
+    fireEvent.click(radios.find((r) => r.value === 'shared') as HTMLInputElement);
+    expect(onChange).toHaveBeenCalledWith('shared');
+  });
+
+  it('uses a caller-supplied label in place of the node label, including the group name', () => {
+    // Why: the USB Gadget card takes its title from this same node, so rendering
+    // node.label here printed "USB Gadget" twice, once as the card heading and
+    // again as the field above the radios. The card passes a distinct label for
+    // the control instead. The accessible name of the radiogroup has to follow
+    // it, or a screen reader announces a group whose name is not on screen.
+    // How a regression manifests: the override is ignored, the heading text is
+    // duplicated, and the group is named after the card rather than the control.
+    render(
+      <CatalogField
+        node={usbNode}
+        label="Gadget Mode"
+        value="client"
+        options={usbOptions}
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Gadget Mode')).toBeInTheDocument();
+    expect(screen.queryByText('USB Gadget')).toBeNull();
+    expect(screen.getByRole('radiogroup', { name: 'Gadget Mode' })).toBeInTheDocument();
+  });
+
+  it('falls back to the node label when the caller supplies none', () => {
+    // Why: the override is for the one card that also shows this node as its
+    // title; every other caller must keep getting the catalog's label, so the
+    // menu stays data-driven. How a regression manifests: fields elsewhere lose
+    // their labels, or start showing a node id.
+    render(
+      <CatalogField node={usbNode} value="off" options={usbOptions} onChange={vi.fn()} />,
+    );
+
+    expect(screen.getByText('USB Gadget')).toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: 'USB Gadget' })).toBeInTheDocument();
+  });
+
+  it('keeps a dropdown when every option has a description but webPresentation is unset', () => {
+    // Why: time-control presets also carry descriptions and must stay a
+    // dropdown. Inferring radios from description alone would turn that long
+    // list into a radio wall. How a regression manifests: radios render without
+    // webPresentation.
+    const onChange = vi.fn();
+    render(
+      <CatalogField
+        node={{ id: 'game.time_control_preset', type: 'select', label: 'Preset' }}
+        value="blitz"
+        options={[
+          { value: 'blitz', label: '5|3 Blitz', description: '5 minutes plus 3 seconds.' },
+          { value: 'rapid', label: '10|5 Rapid', description: '10 minutes plus 5 seconds.' },
+        ]}
+        onChange={onChange}
+      />,
+    );
+    expect(screen.getByRole('combobox')).toBeInTheDocument();
+    expect(screen.queryByRole('radio')).toBeNull();
+  });
+});

@@ -10,6 +10,8 @@ catalog so the adapter's build/dispatch/persist behavior is verified without the
 e-paper display, while still exercising the real engine.
 """
 
+import pytest
+
 from universalchess.managers.menu import MenuResult, MenuSelection
 from universalchess.menus.board_context import BoardMenuContext, run_engine_menu
 from universalchess.menus.engine import MenuRow
@@ -231,6 +233,78 @@ def test_select_with_unknown_current_value_defaults_to_first_row():
     run_engine_menu("c", ctx, mm, catalog=catalog)
 
     assert mm.initial_index == 0
+
+
+@pytest.mark.parametrize(
+    ("selected", "live", "ipv4", "expected_line"),
+    [
+        ("client", "client", "192.168.2.3", "Connected\n192.168.2.3"),
+        # Auto's live mode is whatever the switcher holds; the address is how the
+        # board tells the user which one that currently is.
+        ("auto", "shared", "10.12.194.1", "Connected\n10.12.194.1"),
+    ],
+)
+def test_usb_gadget_select_shows_link_status_on_selected_radio(
+    monkeypatch, selected, live, ipv4, expected_line
+):
+    """The selected USB Gadget radio carries Connected/Disconnected (+ IP).
+
+    Why: e-paper only showed the mode names, so a Client with no host looked
+    identical to a working USB session, and Auto would show nothing about which
+    mode it settled on. Failure: selected row has no description, or the status
+    line is on every radio / only in HELP.
+    """
+    from universalchess.services import usb_gadget_service as ugs
+
+    monkeypatch.setattr(
+        ugs,
+        "get_status",
+        lambda **kwargs: ugs.UsbGadgetStatus(
+            desired=selected,
+            live=live,
+            prepared=True,
+            in_expected_state=True,
+            reboot_required=False,
+            attachment="attached",
+            ipv4=ipv4,
+        ),
+    )
+    state = {"system": {"usb_gadget_mode": selected}}
+    options = {
+        "usb_gadget_mode": [
+            {"value": "off", "label": "Off", "description": "USB Ethernet is off."},
+            {"value": "auto", "label": "Auto", "description": "Board chooses the mode."},
+            {"value": "client", "label": "Client", "description": "Host shares internet."},
+            {"value": "shared", "label": "Shared", "description": "Board runs USB net."},
+        ]
+    }
+    ctx = BoardMenuContext(option_set_fn=lambda name: options[name])
+    ctx.register_store(
+        "system",
+        lambda k: state["system"][k],
+        lambda k, v: state["system"].__setitem__(k, v),
+    )
+    select_node = {
+        "id": "connectivity.usb_gadget",
+        "key": "UsbGadget",
+        "type": "select",
+        "label": "USB Gadget",
+        "optionSet": "usb_gadget_mode",
+        "bind": {"store": "system", "key": "usb_gadget_mode"},
+    }
+    catalog = _FakeCatalog({"c": ["ug"]}, {"ug": select_node})
+    mm = _FakeMenuManager(["UsbGadget", "BACK", "BACK"])
+
+    run_engine_menu("c", ctx, mm, catalog=catalog)
+
+    # First frame of the inner select list (after opening UsbGadget).
+    select_frame = mm.shown[1]
+    by_key = {e.key: e for e in select_frame}
+    assert by_key[selected].description == expected_line
+    unselected = [key for key in ("off", "auto", "client", "shared") if key != selected]
+    assert [by_key[key].description for key in unselected] == [None] * len(unselected)
+    # Catalog mode copy stays on HELP, not replaced by the live status line.
+    assert by_key["client"].help == "Host shares internet."
 
 
 def test_provider_backed_select_lists_runtime_options_marks_current_and_persists():

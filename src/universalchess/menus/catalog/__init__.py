@@ -7,6 +7,8 @@ makes them available to both the e-paper board renderer and the web UI.
 from universalchess.menus.catalog.loader import (
     CatalogError,
     MenuCatalog,
+    fill_option_runtime_placeholders,
+    fill_runtime_placeholders,
     get_catalog,
     get_localized_catalog,
     load_catalog,
@@ -17,6 +19,8 @@ from universalchess.menus.catalog.loader import (
 __all__ = [
     "CatalogError",
     "MenuCatalog",
+    "fill_option_runtime_placeholders",
+    "fill_runtime_placeholders",
     "get_catalog",
     "get_localized_catalog",
     "load_catalog",

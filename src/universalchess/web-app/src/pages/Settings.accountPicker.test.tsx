@@ -149,6 +149,16 @@ describe('Settings account picker for online player types', () => {
     expect(screen.getByRole('option', { name: /default account/i })).toBeInTheDocument();
   });
 
+  it('shows the Accounts management card on the Players tab', async () => {
+    // Why: Accounts moved from Connectivity onto Players so credentials sit
+    // next to the slots that pick them. The web mounts AccountsCard here
+    // (settings.players children are mostly board actions). Manifests as no
+    // Accounts header on Players.
+    mockFetch({ type: 'human' }, { type: 'human' });
+    renderSettings();
+    expect(await screen.findByRole('heading', { name: 'Accounts' })).toBeInTheDocument();
+  });
+
   it('shows no account picker for offline (human) player types', async () => {
     // Offline types must not get an account picker and must keep their Name field.
     // A regression shows as an "Account" control appearing for a human player.

@@ -9,9 +9,10 @@
 export interface MenuOption {
   value: string;
   label: string;
-  /** Optional long-form description for this option, shown beneath the control
-   *  once selected (e.g. the full rules of a time-control preset). The dropdown
-   *  label stays short; this carries the detail. */
+  /** Optional long-form description for this option. On a dropdown, shown
+   *  beneath the control once selected (e.g. a time-control preset's rules).
+   *  On a ``webPresentation: "described-radio"`` field, shown under every
+   *  option's label so modes can be compared without opening a menu. */
   description?: string;
   /** Optional per-option icon (used by the board's option lists). */
   icon?: string;
@@ -87,6 +88,13 @@ export interface MenuNode {
    * The board ignores it.
    */
   webType?: MenuNode['type'];
+  /**
+   * Web-only presentation hint for option-list controls. ``described-radio``
+   * renders every option as a radio with its ``description`` always visible
+   * (USB Gadget Off/Auto/Client/Shared). Absent means the usual data-driven choice
+   * (image / font_size / dropdown). The board ignores it.
+   */
+  webPresentation?: 'described-radio';
   /** Optional board-only label override (e-paper abbreviation/template). */
   boardLabel?: string;
   /** Static icon id, or a state map `{ stateValue: icon }` keyed by the bound value. */

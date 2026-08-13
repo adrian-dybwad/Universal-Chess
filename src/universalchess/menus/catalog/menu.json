@@ -108,6 +108,28 @@
       { "value": "1800", "label": "30 min" },
       { "value": "3600", "label": "1 hour" }
     ],
+    "usb_gadget_mode": [
+      {
+        "value": "off",
+        "label": "Off",
+        "description": "USB Ethernet is off.{wifi_or_ethernet_reach: Reach the chess board only over Wi-Fi or Ethernet.}"
+      },
+      {
+        "value": "auto",
+        "label": "Auto",
+        "description": "The chess board chooses Client or Shared by itself — Client when the host computer offers a network over the cable, Shared when it does not — and changes over if that changes. Client and Shared stay fixed instead. Reach the board at {mdns_url} either way, or at http://10.12.194.1/ while it is in Shared. Because the mode can change on its own, the host computer's normal internet (Wi-Fi or Ethernet) may stop working whenever the board switches to Shared."
+      },
+      {
+        "value": "client",
+        "label": "Client",
+        "description": "The host computer shares its internet with the chess board over USB. Reach the board at {mdns_url}. Requires Internet Sharing (or ICS) on the host computer."
+      },
+      {
+        "value": "shared",
+        "label": "Shared",
+        "description": "The chess board runs the USB network. Open http://10.12.194.1/ or {mdns_url}. Turn Internet Sharing off on the host computer — on macOS also turn off the switch for \"Universal Chess USB Gadget\" in the Sharing list (the master switch alone is not enough; otherwise the Mac keeps a self-assigned address). Warning: while the cable is connected, the host computer's normal internet (Wi-Fi or Ethernet) may stop working. The chess board will share its internet connection with the computer if it is already online over Wi-Fi."
+      }
+    ],
     "analysis_time": [
       { "value": "quick", "label": "Quick (0.3s)" },
       { "value": "standard", "label": "Standard (0.8s)" },
@@ -260,10 +282,10 @@
       "label": "Players",
       "boardLabel": "{fn:players_summary}",
       "icon": "players",
-      "help": "Configure player names, types, and engine preferences.",
+      "help": "Configure player names, types, engines, and saved online accounts.",
       "section": "players",
       "epaper": { "font_size": 12, "height_ratio": 0.8 },
-      "children": ["players.player1", "players.player2", "players.start"]
+      "children": ["players.player1", "players.player2", "players.accounts", "players.start"]
     },
     {
       "id": "players.player1",
@@ -285,6 +307,17 @@
       "help": "Configure Player 2.",
       "platforms": ["board"],
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
+    },
+    {
+      "id": "players.accounts",
+      "key": "Accounts",
+      "type": "action",
+      "action": "open_accounts",
+      "label": "Accounts",
+      "icon": "account",
+      "help": "Connect external services such as Lichess.",
+      "section": "accounts",
+      "platforms": ["board", "web"]
     },
     {
       "id": "players.start",
@@ -620,7 +653,7 @@
       "type": "submenu",
       "label": "Connectivity",
       "icon": "wifi",
-      "help": "Network, peripherals, screen mirroring, and account connections.",
+      "help": "Network, peripherals, USB Ethernet, and screen mirroring.",
       "target": "connectivity",
       "platforms": ["board", "web"],
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
@@ -654,7 +687,7 @@
       "type": "menu",
       "label": "Connectivity",
       "platforms": ["board", "web"],
-      "children": ["connectivity.wifi", "connectivity.bluetooth", "connectivity.chromecast", "connectivity.accounts"]
+      "children": ["connectivity.wifi", "connectivity.bluetooth", "connectivity.usb_gadget", "connectivity.chromecast"]
     },
     {
       "id": "connectivity.wifi",
@@ -681,6 +714,20 @@
       "visibleWhen": { "store": "hardware", "key": "has_bluetooth", "equals": true }
     },
     {
+      "id": "connectivity.usb_gadget",
+      "key": "UsbGadget",
+      "type": "select",
+      "optionSet": "usb_gadget_mode",
+      "webPresentation": "described-radio",
+      "label": "USB Gadget",
+      "boardLabel": "USB Gadget\n{value}",
+      "help": "USB Ethernet over a cable to the host computer. The cable goes to the Pi Zero's USB data port inside the board, not the Centaur's charging port. Changing mode while connected can drop the session.",
+      "bind": { "store": "system", "key": "usb_gadget_mode" },
+      "icon": "wifi",
+      "platforms": ["board", "web"],
+      "epaper": { "font_size": 12, "height_ratio": 0.8 }
+    },
+    {
       "id": "connectivity.chromecast",
       "key": "Chromecast",
       "type": "action",
@@ -688,17 +735,6 @@
       "label": "Chromecast",
       "icon": "cast",
       "help": "Mirror the board to a Chromecast device.",
-      "platforms": ["board", "web"]
-    },
-    {
-      "id": "connectivity.accounts",
-      "key": "Accounts",
-      "type": "action",
-      "action": "open_accounts",
-      "label": "Accounts",
-      "icon": "account",
-      "help": "Connect external services such as Lichess.",
-      "section": "accounts",
       "platforms": ["board", "web"]
     },
 

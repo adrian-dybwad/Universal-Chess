@@ -17,7 +17,7 @@ guarantees the deleted ``players_menu``/``hand_brain_menu`` modules enforced.
 from universalchess.managers.menu import MenuResult, MenuSelection
 from universalchess.menus.board_context import BoardMenuContext, run_engine_menu
 from universalchess.menus.catalog.loader import load_catalog
-from universalchess.menus.engine import MenuRow, build_rows
+from universalchess.menus.engine import MenuRow, build_rows, dispatch
 
 _EXIT_RESULTS = {MenuResult.BACK, MenuResult.SHUTDOWN, MenuResult.HELP}
 
@@ -531,6 +531,7 @@ def _players_ctx(p1, p2, *, calls=None, p1_summary="P1", p2_summary="P2"):
     ctx.register_value("player2_summary", lambda node: p2_summary)
     ctx.register_action("open_player1", lambda: calls.append("open_player1") or None)
     ctx.register_action("open_player2", lambda: calls.append("open_player2") or None)
+    ctx.register_action("open_accounts", lambda: calls.append("open_accounts") or None)
     ctx.register_action("start_game", lambda: "START_GAME")
     ctx._recorded_calls = calls
     return ctx
@@ -540,14 +541,29 @@ def _players_rows(p1, p2, **kwargs):
     return build_rows("settings.players", _players_ctx(p1, p2, **kwargs), platform="board", catalog=load_catalog())
 
 
-def test_top_level_lists_two_players_then_start():
-    """The Players menu lists Player 1, Player 2, then Start Game, in order.
+def test_top_level_lists_two_players_accounts_then_start():
+    """Players lists Player 1, Player 2, Accounts, then Start Game.
 
-    How a regression manifests: a player row is dropped/reordered, or Start Game
-    moves out of last position -- changing this exact id list.
+    Why: Accounts moved here from Connectivity so credential management sits
+    next to the player slots that use those accounts. How a regression
+    manifests: Accounts is missing/reordered, or Start Game is no longer last.
     """
     ids = [r.node["id"] for r in _players_rows(_player_state(), _player_state())]
-    assert ids == ["players.player1", "players.player2", "players.start"]
+    assert ids == ["players.player1", "players.player2", "players.accounts", "players.start"]
+
+
+def test_accounts_row_dispatches_open_accounts():
+    """Selecting Accounts runs open_accounts (same handler as before the move).
+
+    Why: the row must open the multi-account manager, not a dead action or a
+    player detail. How a regression manifests: dispatch action is wrong or the
+    context never registered open_accounts.
+    """
+    calls = []
+    ctx = _players_ctx(_player_state(), _player_state(), calls=calls)
+    outcome = dispatch(load_catalog().get_node("players.accounts"), ctx)
+    assert outcome.kind == "action" and outcome.action == "open_accounts"
+    assert calls == ["open_accounts"]
 
 
 def test_player_rows_render_computed_summaries():

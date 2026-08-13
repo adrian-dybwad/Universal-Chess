@@ -378,6 +378,47 @@
       "syncOwnsClock": "El tablero está tomando la hora de internet. Desactiva primero Hora de red.",
       "setFailed": "No se pudo ajustar el reloj del tablero."
     },
+    "usbGadget": {
+      "title": "Estado del gadget USB",
+      "modeLabel": "Modo del gadget",
+      "description": "Modo de gadget Ethernet USB deseado frente al en vivo. Cambiar el modo mientras estás conectado por USB puede cortar esta sesión.",
+      "unavailable": "No se pudo leer el estado del gadget USB.",
+      "desired": "Deseado",
+      "live": "En vivo",
+      "match": "Coincide",
+      "matchYes": "Sí",
+      "matchNo": "No",
+      "prepared": "Preparada al arranque",
+      "preparedYes": "Sí (la pila del gadget carga al arrancar)",
+      "preparedNo": "No",
+      "link": "Enlace",
+      "linkStates": {
+        "connected": "Conectado",
+        "disconnected": "Desconectado",
+        "unknown": "Desconocido"
+      },
+      "address": "Dirección",
+      "addressNone": "Ninguna",
+      "dhcpLeases": "Concesiones DHCP",
+      "autoSwitching": "Cambio automático",
+      "autoSwitchingStates": {
+        "enabled": "Activado (el tablero puede cambiar de modo)",
+        "disabled": "Desactivado (el tablero está fijado al modo de arriba)",
+        "unknown": "Desconocido"
+      },
+      "reboot": "Reinicio",
+      "rebootNeeded": "Hace falta para que esta preferencia termine de aplicarse.",
+      "rebootNow": "Reiniciar ahora",
+      "rebooting": "Reiniciando…",
+      "changeConfirm": "¿Cambiar el modo del gadget USB? Si estás conectado por USB, esto puede cortar la sesión.",
+      "modes": {
+        "off": "Off",
+        "auto": "Auto",
+        "client": "Client",
+        "shared": "Shared",
+        "unknown": "Desconocido"
+      }
+    },
     "player1Title": "Jugador 1 (Blancas por defecto)",
     "player2Title": "Jugador 2 (Negras por defecto)",
     "handBrain": {

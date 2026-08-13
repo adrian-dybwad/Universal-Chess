@@ -3,13 +3,15 @@ import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { useLocation } from 'react-router';
 import { Button, Card, CardHeader, Input, Select, Toggle } from '../components/ui';
+import { CatalogField } from '../components/CatalogField';
 import { MenuIcon } from '../components/MenuIcon';
 import { useAuthedAction } from '../components/useAuthedAction';
+import { UsbGadgetStatusCard } from '../components/UsbGadgetStatusCard';
 import { useRadioCapability } from '../hooks/useRadioCapability';
 import { apiFetch } from '../utils/api';
 import { useSseEvent, type SseEventPayload } from '../utils/sseBus';
 import { CAST_STATE_KEYS, type CastDevice, type CastStateName } from '../utils/chromecast';
-import { childrenOf, type AccountType, type MenuCatalog } from '../types/menuCatalog';
+import { childrenOf, type AccountType, type MenuCatalog, type MenuNode } from '../types/menuCatalog';
 import type { AccountRecord } from '../types/accounts';
 import { appliesToWeb } from '../menu/engine';
 import '../components/ApiSettingsDialog.css';
@@ -116,13 +118,14 @@ interface CastStatus {
 // The card each `connectivity` child renders, and the deep-link anchor it sits
 // in. Exhaustive over the container's web children, so a node added to the
 // catalog without a component here is a type error rather than a silently
-// missing card. The board reaches these same four nodes as menu rows.
+// missing card. The board reaches these same nodes as menu rows (USB Gadget as
+// a select; the others as open_* actions).
 const CONNECTIVITY_CARDS = {
   'connectivity.wifi': { anchor: 'wifi', Card: WifiCard },
   'connectivity.bluetooth': { anchor: 'bluetooth', Card: BluetoothCard },
+  'connectivity.usb_gadget': { anchor: 'usb-gadget', Card: UsbGadgetCard },
   'connectivity.chromecast': { anchor: 'chromecast', Card: ChromecastCard },
-  'connectivity.accounts': { anchor: 'accounts', Card: AccountsCard },
-} satisfies Record<string, { anchor: string; Card: () => React.JSX.Element }>;
+} satisfies Record<string, { anchor: string; Card: (props: { catalog: MenuCatalog }) => React.JSX.Element }>;
 
 type ConnectivityNodeId = keyof typeof CONNECTIVITY_CARDS;
 
@@ -140,8 +143,9 @@ function isConnectivityCard(id: string): id is ConnectivityNodeId {
  *
  * Rendered as a tab inside the Settings page (matching the board menu, where
  * Connectivity is a child of Settings). It carries its own heading and renders
- * the WiFi, Bluetooth, Chromecast, and Accounts cards; each card self-saves, so
+ * the WiFi, Bluetooth, USB Gadget, and Chromecast cards; each card self-saves, so
  * the panel does not participate in the Settings page's bulk Save & Apply bar.
+ * Accounts management lives on the Players tab.
  *
  * Which cards appear, and in what order, comes from the shared catalog's
  * `connectivity` container -- the same children the board flattens into its
@@ -150,8 +154,8 @@ function isConnectivityCard(id: string): id is ConnectivityNodeId {
  *
  * The Wi-Fi and Bluetooth cards are omitted on a board with no such radio (a
  * plain Pi Zero), mirroring the board menu's own gate, and are withheld until the
- * capability probe answers so an unequipped board never flashes them. Chromecast
- * and Accounts stay: the board still reaches the network over the USB Ethernet
+ * capability probe answers so an unequipped board never flashes them. USB Gadget
+ * and Chromecast stay: the board still reaches the network over the USB Ethernet
  * gadget.
  */
 export function ConnectivityPanel({ catalog }: { catalog: MenuCatalog }) {
@@ -175,8 +179,8 @@ export function ConnectivityPanel({ catalog }: { catalog: MenuCatalog }) {
   const radioReady: Record<ConnectivityNodeId, boolean> = {
     'connectivity.wifi': showWifi,
     'connectivity.bluetooth': showBluetooth,
+    'connectivity.usb_gadget': true,
     'connectivity.chromecast': true,
-    'connectivity.accounts': true,
   };
 
   return (
@@ -195,7 +199,7 @@ export function ConnectivityPanel({ catalog }: { catalog: MenuCatalog }) {
           const { anchor, Card: CardComponent } = CONNECTIVITY_CARDS[id];
           return (
             <div key={id} id={anchor} className="conn-anchor">
-              <CardComponent />
+              <CardComponent catalog={catalog} />
             </div>
           );
         })}
@@ -1328,6 +1332,87 @@ function ChromecastCard() {
             )}
           </div>
         )}
+      </Card>
+    </>
+  );
+}
+
+/**
+ * USB Ethernet gadget mode (Off / Auto / Client / Shared) plus live status.
+ *
+ * Mode comes from the catalog's ``connectivity.usb_gadget`` described-radio
+ * select; apply goes through POST /api/system/usb-gadget (auth-gated) with a
+ * confirm because changing mode while connected over USB can drop the session.
+ * The embedded status readout shares this card so Connectivity has one title.
+ */
+function UsbGadgetCard({ catalog }: { catalog: MenuCatalog }) {
+  const { t } = useTranslation();
+  const node = catalog.nodes.find((n): n is MenuNode => n.id === 'connectivity.usb_gadget');
+  const options = catalog.optionSets.usb_gadget_mode ?? [];
+  const [mode, setMode] = useState('off');
+  const [refreshKey, setRefreshKey] = useState(0);
+  const { dialog, onUnauthorized } = useAuthedAction();
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const r = await apiFetch('/api/system/usb-gadget');
+        if (!r.ok) return;
+        const data = await r.json();
+        if (typeof data.desired === 'string') setMode(data.desired);
+      } catch {
+        // Status card reports unavailability; leave mode at its last known value.
+      }
+    })();
+  }, [refreshKey]);
+
+  const applyMode = useCallback(
+    async (next: string) => {
+      if (next !== mode) {
+        if (!window.confirm(t('settingsPage.usbGadget.changeConfirm'))) return;
+      }
+      setMode(next);
+      // The POST is its own function so an unauthorized retry re-runs just the
+      // request: re-entering applyMode would re-confirm a change already agreed.
+      const submit = async (): Promise<void> => {
+        try {
+          const response = await apiFetch('/api/system/usb-gadget', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: next }),
+            requiresAuth: true,
+          });
+          if (response.status === 401) {
+            onUnauthorized(() => {
+              void submit();
+            });
+            return;
+          }
+          setRefreshKey((k) => k + 1);
+        } catch (e) {
+          console.error('Failed to set USB gadget mode:', e);
+        }
+      };
+      await submit();
+    },
+    [mode, onUnauthorized, t],
+  );
+
+  if (!node) return <></>;
+
+  return (
+    <>
+      {dialog}
+      <Card className="mb-6">
+        <CardHeader title={node.label ?? t('settingsPage.usbGadget.title')} />
+        <CatalogField
+          node={node}
+          label={t('settingsPage.usbGadget.modeLabel')}
+          value={mode}
+          options={Array.isArray(options) ? options : []}
+          onChange={(value) => void applyMode(String(value))}
+        />
+        <UsbGadgetStatusCard embedded refreshKey={refreshKey} />
       </Card>
     </>
   );

@@ -14,7 +14,7 @@ import type { MenuCatalog } from '../types/menuCatalog';
  * Bluetooth. Its Wi-Fi card would scan for networks it can never see and its
  * Bluetooth card would offer a pair flow with no controller, so both are omitted
  * from the same capability probe that hides the two entries from the board's own
- * Connectivity menu. Chromecast and Accounts stay -- the board is still on the
+ * Connectivity menu. USB Gadget and Chromecast stay -- the board is still on the
  * network through the USB Ethernet gadget.
  *
  * These tests drive the real <ConnectivityPanel> against a mocked API boundary,
@@ -66,6 +66,14 @@ beforeEach(() => {
     if (url === '/api/connectivity/bluetooth/status')
       return jsonResponse({ enabled: false, paired: [], advertised_names: [], adv_state: 'radio_off' });
     if (url === '/api/connectivity/chromecast/source') return jsonResponse({ useLiveBoard: true });
+    if (url === '/api/system/usb-gadget')
+      return jsonResponse({
+        desired: 'client',
+        live: 'client',
+        prepared: true,
+        in_expected_state: true,
+        reboot_required: false,
+      });
     return jsonResponse({});
   });
 
@@ -137,14 +145,14 @@ describe('Connectivity cards on a board without radios', () => {
   });
 
   it('keeps the non-radio cards when both radios are missing', async () => {
-    // Why: hiding the whole tab would take away Chromecast and the Lichess
-    // account, which work over the USB Ethernet gadget. Manifests as an empty
-    // Connectivity tab on a Zero.
+    // Why: hiding the whole tab would take away USB Gadget and Chromecast, which
+    // work over the USB Ethernet gadget. Manifests as an empty Connectivity tab
+    // on a Zero.
     systemInfo = { has_wifi: false, has_bluetooth: false };
     renderPanel();
 
-    expect(await screen.findByText('Chromecast')).toBeInTheDocument();
-    expect(await screen.findByText('Accounts')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'USB Gadget' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Chromecast' })).toBeInTheDocument();
   });
 
   it.each([

@@ -519,6 +519,31 @@ else
     echo -e "::: Warning: device clock helper not found at $CLOCK_ADMIN_HELPER"
 fi
 
+# USB Ethernet gadget mode (off / auto / client / shared) goes through Raspberry Pi's
+# rpi-usb-gadget tool, which is root-only. Grant passwordless sudo to exactly
+# this pinned helper; its verb case is the boundary. Without it the System
+# select reports "not applied".
+echo -e "::: Configuring sudoers for USB gadget mode"
+USB_GADGET_ADMIN_HELPER="${DGTCM_PATH}/scripts/uc-usb-gadget-admin"
+if [ -f "$USB_GADGET_ADMIN_HELPER" ]; then
+    chmod +x "$USB_GADGET_ADMIN_HELPER"
+    USB_GADGET_ADMIN_SUDOERS_FILE="/etc/sudoers.d/universal-chess-usb-gadget"
+    echo "$PRIMARY_USER ALL=(root) NOPASSWD: $USB_GADGET_ADMIN_HELPER" > "$USB_GADGET_ADMIN_SUDOERS_FILE"
+    chmod 440 "$USB_GADGET_ADMIN_SUDOERS_FILE"
+    if ! visudo -cf "$USB_GADGET_ADMIN_SUDOERS_FILE" >/dev/null 2>&1; then
+        echo -e "::: Warning: USB gadget sudoers entry invalid; removing"
+        rm -f "$USB_GADGET_ADMIN_SUDOERS_FILE"
+    fi
+else
+    echo -e "::: Warning: USB gadget helper not found at $USB_GADGET_ADMIN_HELPER"
+fi
+# NetworkManager ships a udev rule marking gadget interfaces unmanaged, which
+# leaves usb0 with no address once Client/Shared apply removes netplan-eth0.
+# The drop-in claims usb0; reload so it applies without waiting for a reboot.
+if [ -f /etc/NetworkManager/conf.d/90-uc-usb-gadget-managed.conf ] && command -v nmcli >/dev/null 2>&1; then
+    nmcli general reload conf >/dev/null 2>&1 || true
+fi
+
 # Allow the service user to loop-mount an uploaded Centaur SD image read-only
 # during import. `mount` is a general primitive (any device/target/options), so
 # granting it directly would let the service mount arbitrary filesystems

@@ -2401,6 +2401,11 @@ def get_all_settings():
     if ntp_enabled is not None:
         result.setdefault("system", {})["ntp_enabled"] = str(ntp_enabled)
 
+    # USB gadget desired mode is persisted in centaur.ini but seeded/normalised
+    # by the service (prepared boards without a preference read as client).
+    from universalchess.services.usb_gadget_service import get_status as get_usb_gadget_status
+    result.setdefault("system", {})["usb_gadget_mode"] = get_usb_gadget_status().desired
+
     # Coach settings: expose the non-secret selection (coach_id/coach_provider) and
     # the per-agent model/base_url (namespaced keys pass through from the ini), but
     # never the stored API keys. Each coach API key is redacted to a boolean
@@ -3221,6 +3226,14 @@ def api_get_menu_schema():
         # language change is reflected on the next Settings load in this process.
         menu = dict(get_localized_catalog(get_language()).raw_menu())
         option_sets = dict(menu.get("optionSets", {}))
+        # Fill {mdns_url} (and any future runtime tokens) so Client-mode USB
+        # gadget help names this board -- e.g. http://dgt-cm5-64.local/ -- not a
+        # generic http://dgt.local/ example.
+        from universalchess.menus.catalog.loader import fill_option_runtime_placeholders
+        option_sets = {
+            name: fill_option_runtime_placeholders(list(options))
+            for name, options in option_sets.items()
+        }
         # The identical list the board renders: a leading Basic entry (empty key
         # -> no preset -> the base-minutes control) and a trailing Custom entry
         # bracket the registered presets.
@@ -6673,6 +6686,78 @@ def api_system_ntp_set():
         from universalchess.services.game_broadcast import notify_main_process_settings_changed
         notify_main_process_settings_changed()
         return jsonify({"success": True, "ntp_enabled": enabled, "applied": applied})
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/usb-gadget", methods=["GET"])
+def api_system_usb_gadget_get():
+    """Return USB Ethernet gadget desired/live/prepared/expected-state.
+
+    Unauthenticated like the other device status reads. ``desired`` is the
+    Connectivity USB Gadget select value; ``live`` is what the OS is doing;
+    ``in_expected_state`` is whether they match; ``prepared`` means boot still
+    loads the gadget stack (as after enable_usb_gadget.py); ``reboot_required``
+    means boot persistence still needs a reboot to finish; ``attachment`` is
+    the USB device-controller host-link state (attached / not_attached / none).
+
+    ``live`` only ever names a concrete mode, so ``auto_switching`` -- whether the
+    vendor auto-switcher unit is enabled, or null when that cannot be read -- is
+    what tells Auto apart from a board pinned to the mode it happens to hold.
+    """
+    try:
+        from universalchess.services.usb_gadget_service import get_status
+        status = get_status()
+        return jsonify({
+            "desired": status.desired,
+            "live": status.live,
+            "prepared": status.prepared,
+            "in_expected_state": status.in_expected_state,
+            "reboot_required": status.reboot_required,
+            "attachment": status.attachment,
+            "ipv4": status.ipv4,
+            "dhcp_lease_count": status.dhcp_lease_count,
+            "auto_switching": status.auto_switching,
+        })
+    except Exception as e:
+        return _internal_error(e)
+
+
+# Vendor ``rpi-usb-gadget on`` leaves Shared autoconnecting; after a reboot the
+# live mode can disagree with the stored preference until something re-applies
+# it. Reconcile once at web import (same pattern as interrupted engine installs)
+# so Client stays Client without another UI click. Failures are logged and
+# ignored -- boards without the helper/sudo grant must still serve the API.
+try:
+    from universalchess.services import usb_gadget_service as _usb_gadget_service
+    if _usb_gadget_service.reconcile_desired_mode():
+        app.logger.info("USB gadget: reconciled desired mode to live state")
+except Exception as _usb_gadget_reconcile_exc:  # noqa: BLE001 - startup best-effort
+    app.logger.debug("USB gadget reconcile skipped: %s", _usb_gadget_reconcile_exc)
+
+
+@app.route("/api/system/usb-gadget", methods=["POST"])
+@requires_auth
+def api_system_usb_gadget_set():
+    """Set USB Ethernet gadget mode to off, auto, client, or shared.
+
+    Body: {"mode": "off" | "auto" | "client" | "shared"}
+
+    Privileged apply goes through uc-usb-gadget-admin. A failed apply returns
+    ``applied: false`` rather than 500 (missing sudo grant / missing
+    rpi-usb-gadget), matching the NTP contract. Changing mode while connected
+    over USB can drop the session.
+    """
+    try:
+        from universalchess.services.usb_gadget_service import MODES, set_mode
+        data = request.get_json(force=True, silent=True) or {}
+        mode = data.get("mode")
+        if not isinstance(mode, str) or mode.strip().lower() not in MODES:
+            return jsonify({"error": "mode must be off, auto, client, or shared"}), 400
+        applied = set_mode(mode.strip().lower())
+        from universalchess.services.game_broadcast import notify_main_process_settings_changed
+        notify_main_process_settings_changed()
+        return jsonify({"success": True, "mode": mode.strip().lower(), "applied": applied})
     except Exception as e:
         return _internal_error(e)
 

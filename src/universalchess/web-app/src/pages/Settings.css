@@ -37,6 +37,19 @@
   border-bottom: none;
 }
 
+/* Tall controls (described radio lists) need the full row width; stack label
+   and help above the control instead of squeezing it into the right column. */
+.form-row--stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.form-row--stacked .form-row-control {
+  flex-shrink: 1;
+  min-width: 0;
+  width: 100%;
+}
+
 .form-row-info {
   flex: 1;
   min-width: 0;

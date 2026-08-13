@@ -98,6 +98,75 @@ def test_overlay_translates_option_labels_by_value(base_menu):
     assert color["black"] == "Black"
 
 
+def test_overlay_option_object_can_carry_description(base_menu):
+    """An option overlay may be {label, description} for per-mode help text.
+
+    Why: USB gadget Off/Auto/Client/Shared show a long description under the select;
+    a string-only overlay cannot translate those without dropping them. How a
+    regression manifests: description stays English while the label is Spanish,
+    or an object overlay is ignored and the label stays English.
+    """
+    overlay = {
+        "optionSets": {
+            "usb_gadget_mode": {
+                "client": {
+                    "label": "Cliente",
+                    "description": "La Pi toma DHCP del host.",
+                }
+            }
+        }
+    }
+    localized = localize_catalog(base_menu, "es", overlay=overlay)
+    by_value = {o["value"]: o for o in localized["optionSets"]["usb_gadget_mode"]}
+    assert by_value["client"]["label"] == "Cliente"
+    assert by_value["client"]["description"] == "La Pi toma DHCP del host."
+    # Unlisted mode keeps its English label and description (token still raw
+    # until fill_option_runtime_placeholders runs at serve time).
+    assert by_value["off"]["label"] == "Off"
+    assert "USB Ethernet is off" in by_value["off"]["description"]
+
+
+def test_fill_runtime_placeholders_names_this_boards_mdns_url():
+    """``{mdns_url}`` becomes ``http://<hostname>.local/``, not a stock example.
+
+    Why: Client-mode USB gadget copy must name the board the user is looking at.
+    Failure: token left unsubstituted, or a hardcoded ``dgt.local`` slips back in.
+    """
+    from universalchess.menus.catalog.loader import fill_runtime_placeholders
+
+    filled = fill_runtime_placeholders(
+        "Reach the board at {mdns_url}.", mdns_name="dgt-cm5-64.local"
+    )
+    assert filled == "Reach the board at http://dgt-cm5-64.local/."
+    assert fill_runtime_placeholders("no token") == "no token"
+    # Hostnames from the OS can be mixed-case; URLs are shown lowercased.
+    assert (
+        fill_runtime_placeholders("at {mdns_url}", mdns_name="DGT-CM5-64.local")
+        == "at http://dgt-cm5-64.local/"
+    )
+
+
+def test_fill_runtime_placeholders_wifi_reach_clause_gated_on_has_wifi():
+    """Off-mode USB copy mentions Wi-Fi only when the board has Wi-Fi.
+
+    Why: a plain Pi Zero has no wireless die; promising "reach over Wi-Fi" is a
+    lie. How a regression manifests: the reach clause stays on ``has_wifi=False``,
+    or the raw ``{wifi_or_ethernet_reach:...}`` token leaks into the UI.
+    """
+    from universalchess.menus.catalog.loader import fill_runtime_placeholders
+
+    template = (
+        "USB Ethernet is off."
+        "{wifi_or_ethernet_reach: Reach the chess board only over Wi-Fi or Ethernet.}"
+    )
+    assert fill_runtime_placeholders(template, has_wifi=True) == (
+        "USB Ethernet is off. Reach the chess board only over Wi-Fi or Ethernet."
+    )
+    assert fill_runtime_placeholders(template, has_wifi=False) == "USB Ethernet is off."
+    # Unknown capability fails open (keep the clause).
+    assert "Wi-Fi" in fill_runtime_placeholders(template, has_wifi=None)
+
+
 def test_overlay_translates_section_labels(base_menu):
     """A sections overlay translates the web tab labels by id.
 

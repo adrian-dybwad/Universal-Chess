@@ -92,6 +92,24 @@
       "1800": "30 min",
       "3600": "1 hora"
     },
+    "usb_gadget_mode": {
+      "off": {
+        "label": "Off",
+        "description": "El Ethernet USB está desactivado.{wifi_or_ethernet_reach: Alcanza el tablero solo por Wi‑Fi o Ethernet.}"
+      },
+      "auto": {
+        "label": "Auto",
+        "description": "El tablero elige Client o Shared por sí mismo — Client cuando el ordenador anfitrión ofrece red por el cable, Shared cuando no lo hace — y cambia si eso cambia. Client y Shared, en cambio, se mantienen fijos. Alcanza el tablero en {mdns_url} en cualquiera de los dos casos, o en http://10.12.194.1/ mientras esté en Shared. Como el modo puede cambiar por su cuenta, el internet normal del ordenador anfitrión (Wi‑Fi o Ethernet) puede dejar de funcionar cada vez que el tablero pase a Shared."
+      },
+      "client": {
+        "label": "Client",
+        "description": "El ordenador anfitrión comparte su internet con el tablero por USB. Alcanza el tablero en {mdns_url}. Hace falta Compartir Internet (o ICS) en el ordenador anfitrión."
+      },
+      "shared": {
+        "label": "Shared",
+        "description": "El tablero gestiona la red USB. Abre http://10.12.194.1/ o {mdns_url}. Desactiva Compartir Internet en el ordenador anfitrión — en macOS apaga también el interruptor de \"Universal Chess USB Gadget\" en la lista de Compartir (solo el interruptor principal no basta; si no, el Mac se queda con una dirección autoasignada). Aviso: mientras el cable esté conectado, el internet normal del ordenador anfitrión (Wi‑Fi o Ethernet) puede dejar de funcionar. El tablero compartirá su conexión a internet con el ordenador si ya está en línea por Wi‑Fi."
+      }
+    },
     "analysis_time": {
       "quick": "Rápido (0.3s)",
       "standard": "Estándar (0.8s)",
@@ -164,7 +182,7 @@
     "settings": { "label": "Ajustes" },
     "settings.players": {
       "label": "Jugadores",
-      "help": "Configura nombres de jugadores, tipos y preferencias de motor."
+      "help": "Configura nombres de jugadores, tipos, motores y cuentas en línea guardadas."
     },
     "players.player1": {
       "label": "Jugador 1\n{fn:player1_summary}",
@@ -173,6 +191,10 @@
     "players.player2": {
       "label": "Jugador 2\n{fn:player2_summary}",
       "help": "Configura al Jugador 2."
+    },
+    "players.accounts": {
+      "label": "Cuentas",
+      "help": "Conecta servicios externos como Lichess."
     },
     "players.start": {
       "label": "Nueva\npartida",
@@ -258,7 +280,7 @@
     },
     "settings.connectivity": {
       "label": "Conectividad",
-      "help": "Red, periféricos, duplicación de pantalla y conexiones de cuentas."
+      "help": "Red, periféricos, Ethernet USB y duplicación de pantalla."
     },
     "settings.engines": {
       "label": "Motores",
@@ -276,12 +298,13 @@
     "connectivity.bluetooth": {
       "help": "Empareja un teclado Bluetooth con el tablero."
     },
+    "connectivity.usb_gadget": {
+      "label": "Gadget USB",
+      "boardLabel": "Gadget USB\n{value}",
+      "help": "Ethernet USB por un cable al ordenador anfitrión. El cable va al puerto USB de datos de la Pi Zero, dentro del tablero, no al puerto de carga del Centaur. Cambiar de modo mientras estás conectado puede cortar la sesión."
+    },
     "connectivity.chromecast": {
       "help": "Duplica el tablero en un dispositivo Chromecast."
-    },
-    "connectivity.accounts": {
-      "label": "Cuentas",
-      "help": "Conecta servicios externos como Lichess."
     },
 
     "wifi": {

@@ -12,16 +12,21 @@ export type FieldValue = string | number | boolean;
 const TEXT_PREVIEW_SAMPLE = '12. Nf3 Nc6 - knight eyes d5';
 
 /**
- * Choose the rich presentation for an option-list control from the options'
- * own data, so the catalog stays the single source of truth (no per-node UI
- * flag): every option carrying an `image` renders as an image radio grid (piece
- * sprites), every option carrying a `font_size` renders as a scaled text-preview
- * radio (Text Size). Anything else is an ordinary dropdown. Requires a non-empty
- * list and every option to carry the field, so a partial list never renders a
- * half-broken grid.
+ * Choose the rich presentation for an option-list control.
+ *
+ * ``webPresentation: "described-radio"`` on the node opts into a radio list
+ * with every option's description always visible (USB Gadget). Otherwise the
+ * options' own data decide: every option carrying an `image` -> image radio
+ * grid; every option carrying a `font_size` -> scaled text-preview radio;
+ * anything else is an ordinary dropdown. Description alone must not force
+ * radios -- time-control presets also carry descriptions and stay a dropdown.
  */
-function optionPresentation(options: MenuOption[]): 'images' | 'text-preview' | 'dropdown' {
+function optionPresentation(
+  node: MenuNode,
+  options: MenuOption[],
+): 'images' | 'text-preview' | 'described-radio' | 'dropdown' {
   if (options.length === 0) return 'dropdown';
+  if (node.webPresentation === 'described-radio') return 'described-radio';
   if (options.every((o) => Boolean(o.image))) return 'images';
   if (options.every((o) => typeof o.font_size === 'number')) return 'text-preview';
   return 'dropdown';
@@ -44,6 +49,13 @@ interface CatalogFieldProps {
   disabled?: boolean;
   /** Override the help content (e.g. a live "Level: N" readout for a range). */
   help?: ReactNode;
+  /**
+   * Override the field label. For a card that already uses this node's label as
+   * its own title (USB Gadget), so the control is named for what it sets instead
+   * of repeating the heading. Callers without that conflict omit it and get the
+   * catalog's label, which is what keeps the two platforms in step.
+   */
+  label?: string;
   /**
    * Placeholder hint for an empty `text` field. Supplied by the caller (from the
    * context) so a per-slot default (e.g. player Name -> "Player 1"/"Player 2")
@@ -74,10 +86,11 @@ export function CatalogField({
   options = [],
   disabled = false,
   help,
+  label: labelOverride,
   placeholder,
 }: CatalogFieldProps) {
   const { t } = useTranslation();
-  const label = node.label ?? node.id;
+  const label = labelOverride ?? node.label ?? node.id;
   const helpContent = help ?? node.help;
 
   // webType overrides the board `type` for the web only, so a node that is an
@@ -101,11 +114,44 @@ export function CatalogField({
     // the natural equivalent of that same optionSet is a dropdown. A `dynamic`
     // value control (provider-backed radio, e.g. piece sprites) resolves the same
     // way -- its provider rows are options here. The presentation (dropdown vs a
-    // rich image/text-preview radio) is chosen from the options' own data.
+    // rich image/text-preview/described radio) is chosen from the node hint and
+    // the options' own data.
     case 'select':
     case 'cycle':
     case 'dynamic': {
-      const presentation = optionPresentation(options);
+      const presentation = optionPresentation(node, options);
+      if (presentation === 'described-radio') {
+        return (
+          <FormRow label={label} help={helpContent} stacked>
+            <div className="described-options" role="radiogroup" aria-label={label}>
+              {options.map((opt) => {
+                const selected = String(opt.value) === String(value);
+                return (
+                  <label
+                    key={opt.value}
+                    className={`described-option${selected ? ' described-option--selected' : ''}`}
+                  >
+                    <input
+                      type="radio"
+                      name={node.id}
+                      value={opt.value}
+                      checked={selected}
+                      disabled={disabled}
+                      onChange={() => onChange(opt.value)}
+                    />
+                    <span className="described-option-body">
+                      <span className="described-option-label">{opt.label}</span>
+                      {opt.description && (
+                        <span className="described-option-description">{opt.description}</span>
+                      )}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </FormRow>
+        );
+      }
       if (presentation !== 'dropdown') {
         const isImages = presentation === 'images';
         return (

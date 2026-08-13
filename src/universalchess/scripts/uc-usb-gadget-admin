@@ -1,0 +1,245 @@
+#!/bin/bash
+# uc-usb-gadget-admin -- USB Ethernet gadget mode the service cannot change unprivileged.
+#
+# WHY THIS EXISTS
+#   The web/board Settings can set USB gadget mode to off, auto, client, or
+#   shared. Boot/overlay enable goes through Raspberry Pi's ``rpi-usb-gadget``,
+#   which is root-only. Current packages only accept on|off|toggle|status|help --
+#   there is no ``shared`` verb -- and ``on`` brings the Shared NM profile up with
+#   the ICS auto-switcher enabled. UC's Client/Shared preference must therefore
+#   pin the matching NetworkManager profile and disable that watcher after
+#   ``on -f``; ``auto`` restores that vendor arrangement so the watcher chooses.
+#   The service runs unprivileged, so -- as with uc-clock-admin -- passwordless
+#   sudo is granted to exactly this one pinned helper (see package postinst):
+#     <service-user> ALL=(root) NOPASSWD: /opt/universalchess/scripts/uc-usb-gadget-admin
+#
+# SECURITY BOUNDARY
+#   The `case` below is the boundary for the grant -- it accepts one verb and
+#   refuses everything else. Do not add a passthrough or escape branch. Each
+#   verb is a fixed argv list, never through a shell, so the grant cannot become
+#   an arbitrary-command primitive.
+#
+#   Callers use `sudo -n` so a missing grant fails fast ("a password is
+#   required") and is logged, rather than hanging on a password prompt.
+#
+# TEST SEAMS
+#   UC_USB_GADGET_ADMIN_DRY_RUN=1   print the intended invocation to
+#                                  $UC_USB_GADGET_ADMIN_ACTION_LOG instead of running it
+#   UC_USB_GADGET_ADMIN_ACTION_LOG  file to append dry-run actions to
+set -u
+
+DRY_RUN="${UC_USB_GADGET_ADMIN_DRY_RUN:-0}"
+ACTION_LOG="${UC_USB_GADGET_ADMIN_ACTION_LOG:-}"
+LOG_TAG="uc-usb-gadget-admin"
+
+CLIENT_CONN="USB Gadget (client)"
+SHARED_CONN="USB Gadget (shared)"
+# Stock Pi netplan names this eth0 DHCP-client profile; empty match claims usb0.
+NETPLAN_ETH0_CONN="netplan-eth0"
+ICS_UNIT="rpi-usb-gadget-ics.service"
+CMDLINE_FW="/boot/firmware/cmdline.txt"
+CMDLINE_LEGACY="/boot/cmdline.txt"
+
+log() { logger -t "$LOG_TAG" -- "$*" 2>/dev/null || true; echo "[$LOG_TAG] $*" >&2; }
+
+usage() {
+    echo "usage: uc-usb-gadget-admin {off|auto|client|shared}" >&2
+    exit 2
+}
+
+run_priv() {
+    if [ "$DRY_RUN" = "1" ]; then
+        if [ -n "$ACTION_LOG" ]; then echo "$*" >> "$ACTION_LOG"; fi
+        return 0
+    fi
+    "$@"
+}
+
+# Bind dwc2 and g_ether from the kernel cmdline so the gadget is armed before
+# userspace starts and a host plugged in at boot enumerates on its first try.
+# Vendor ``on`` only writes modules-load.d, which binds later. Takes effect on
+# the next reboot.
+ensure_early_g_ether_cmdline() {
+    if [ "$DRY_RUN" = "1" ]; then
+        if [ -n "$ACTION_LOG" ]; then echo "ensure-early-g-ether-cmdline" >> "$ACTION_LOG"; fi
+        return 0
+    fi
+    local cmdline=""
+    if [ -f "$CMDLINE_FW" ]; then
+        cmdline="$CMDLINE_FW"
+    elif [ -f "$CMDLINE_LEGACY" ]; then
+        cmdline="$CMDLINE_LEGACY"
+    else
+        return 0
+    fi
+    python3 - "$cmdline" <<'PY' || true
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8").strip()
+if "g_ether" in text and "modules-load=" in text:
+    raise SystemExit(0)
+# Insert after rootwait when present; otherwise append.
+needle = "modules-load=dwc2,g_ether"
+if "rootwait" in text:
+    text = text.replace("rootwait", "rootwait " + needle, 1)
+else:
+    text = text + " " + needle
+path.write_text(text + "\n", encoding="utf-8")
+PY
+}
+
+# Stock images ship netplan-eth0 with match:{} (any ethernet). On boards with no
+# eth0 (Pi Zero / this DGT image: only usb0+wlan0) that profile claims usb0 as a
+# DHCP *client* and fights Shared (Pi DHCP *server*). Delete it when eth0 is
+# absent; when eth0 exists, restrict the match to that name only.
+#
+# Do not run ``netplan apply`` here -- it can hang and disrupt wlan0. nmcli
+# delete + removing the NM-owned yaml is enough.
+#
+# Deleting it also removes what made usb0 managed at all: NetworkManager ships a
+# udev rule marking every gadget interface unmanaged. The package's
+# 90-uc-usb-gadget-managed.conf drop-in is what keeps usb0 managed from then on.
+pin_netplan_eth0_off_usb0() {
+    if [ "$DRY_RUN" = "1" ]; then
+        if [ -n "$ACTION_LOG" ]; then
+            echo "pin-netplan-eth0-off-usb0" >> "$ACTION_LOG"
+            echo "nmcli connection down $NETPLAN_ETH0_CONN" >> "$ACTION_LOG"
+        fi
+        return 0
+    fi
+    if [ ! -e /sys/class/net/eth0 ]; then
+        run_priv nmcli connection delete "$NETPLAN_ETH0_CONN" || true
+        # Remove the NM-generated netplan drop-in so it does not come back on reload.
+        python3 - <<'PY' || true
+from pathlib import Path
+netplan = Path("/etc/netplan")
+if not netplan.is_dir():
+    raise SystemExit(0)
+for path in sorted(netplan.glob("90-NM-*.yaml")):
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        continue
+    if "netplan-eth0" in text:
+        path.unlink(missing_ok=True)
+PY
+    else
+        # Real ethernet port: keep the profile but never let it match usb0.
+        run_priv nmcli connection modify "$NETPLAN_ETH0_CONN" \
+            match.interface-name eth0 \
+            connection.interface-name eth0 || true
+        python3 - <<'PY' || true
+from pathlib import Path
+netplan = Path("/etc/netplan")
+if not netplan.is_dir():
+    raise SystemExit(0)
+for path in sorted(netplan.glob("90-NM-*.yaml")):
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        continue
+    if "netplan-eth0" not in text or "match: {}" not in text:
+        continue
+    path.write_text(
+        text.replace("match: {}", "match:\n        name: eth0"),
+        encoding="utf-8",
+    )
+PY
+        run_priv nmcli connection reload || true
+    fi
+    run_priv nmcli connection down "$NETPLAN_ETH0_CONN" || true
+    # Lease file is world-readable but the NetworkManager state dir is 0700;
+    # allow the unprivileged service to count Shared DHCP leases for status.
+    run_priv chmod o+x /var/lib/NetworkManager || true
+}
+
+# Vendor ``on`` leaves Shared autoconnecting and the ICS watcher flipping
+# client<->shared. Pin the requested profile so the preference survives reboot
+# and is not undone when the host is not offering ICS.
+pin_client() {
+    # ICS disable is best-effort (unit may be absent on older images).
+    run_priv systemctl disable --now "$ICS_UNIT" || true
+    ensure_early_g_ether_cmdline
+    pin_netplan_eth0_off_usb0
+    run_priv nmcli connection modify "$CLIENT_CONN" connection.autoconnect yes || return 1
+    run_priv nmcli connection modify "$SHARED_CONN" connection.autoconnect no || return 1
+    # down/up are best-effort: first enable often needs a reboot before usb0 exists.
+    run_priv nmcli connection down "$SHARED_CONN" || true
+    run_priv nmcli connection up "$CLIENT_CONN" || true
+    return 0
+}
+
+pin_shared() {
+    run_priv systemctl disable --now "$ICS_UNIT" || true
+    ensure_early_g_ether_cmdline
+    pin_netplan_eth0_off_usb0
+    run_priv nmcli connection modify "$SHARED_CONN" connection.autoconnect yes || return 1
+    run_priv nmcli connection modify "$CLIENT_CONN" connection.autoconnect no || return 1
+    run_priv nmcli connection down "$CLIENT_CONN" || true
+    run_priv nmcli connection up "$SHARED_CONN" || true
+    return 0
+}
+
+# Auto is the vendor arrangement: the ICS unit watches what the host offers and
+# moves the link between Client and Shared. Restore the autoconnect a fresh
+# ``on -f`` leaves (Shared yes, Client no) so the watcher is not working against
+# a profile the pinned modes left pinned, and move nothing itself -- choosing a
+# profile here would both race the unit and drop a live USB session.
+enable_auto_switching() {
+    run_priv systemctl enable --now "$ICS_UNIT" || true
+    ensure_early_g_ether_cmdline
+    pin_netplan_eth0_off_usb0
+    run_priv nmcli connection modify "$SHARED_CONN" connection.autoconnect yes || return 1
+    run_priv nmcli connection modify "$CLIENT_CONN" connection.autoconnect no || return 1
+    return 0
+}
+
+run_mode() {
+    local mode="$1"
+    case "$mode" in
+        off)
+            if run_priv rpi-usb-gadget off; then
+                log "USB gadget set to off"
+                exit 0
+            fi
+            ;;
+        auto)
+            if run_priv rpi-usb-gadget on -f && enable_auto_switching; then
+                log "USB gadget set to auto (on -f + ICS auto-switcher enabled)"
+                exit 0
+            fi
+            ;;
+        client)
+            # -f skips the interactive "unsupported device?" prompt; without it
+            # the tool blocks on a closed stdin under the service.
+            if run_priv rpi-usb-gadget on -f && pin_client; then
+                log "USB gadget set to client (on -f + pinned client profile)"
+                exit 0
+            fi
+            ;;
+        shared)
+            # No ``rpi-usb-gadget shared`` on current packages; enable the stack
+            # then pin the Shared NM profile (and disable ICS auto-switch).
+            if run_priv rpi-usb-gadget on -f && pin_shared; then
+                log "USB gadget set to shared (on -f + pinned shared profile)"
+                exit 0
+            fi
+            ;;
+        *)
+            log "ERROR: rejected mode (expected off|auto|client|shared): $mode"
+            exit 2
+            ;;
+    esac
+    log "ERROR: applying USB gadget mode $mode failed"
+    exit 1
+}
+
+main() {
+    [ "$#" -eq 1 ] || usage
+    case "$1" in
+        off|auto|client|shared) run_mode "$1" ;;
+        *)                      usage ;;
+    esac
+}
+
+main "$@"

@@ -59,7 +59,7 @@ def test_device_container_lists_the_shared_nodes_in_order():
     in order, and it must name the *shared* board nodes rather than a web-only
     copy. How a regression manifests: pointing children back at a ``field.system.*``
     duplicate reintroduces the drift, or a reorder shows Sleep Timer/Timezone/
-    Language out of order.
+    Language out of order -- or USB Gadget sneaking back into Device.
     """
     catalog = _catalog()
     assert catalog.has_node(_DEVICE_CONTAINER)

@@ -15,6 +15,7 @@ mistake is fixed at the source rather than degrading the menu silently.
 import copy
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -23,6 +24,101 @@ log = logging.getLogger(__name__)
 _CATALOG_DIR = Path(__file__).parent
 _MENU_FILE = _CATALOG_DIR / "menu.json"
 _ICONS_FILE = _CATALOG_DIR / "icons.json"
+
+# Option/help copy may name this board's mDNS URL. Authored as ``{mdns_url}`` and
+# filled at serve/render time from the live hostname -- never a hardcoded
+# ``http://dgt.local/`` example, which is wrong on every board that is not named
+# ``dgt`` (the same class of bug the TLS cert once had).
+# The security linters read the ``_TOKEN`` name as a credential; this is a
+# substitution placeholder that ships in translated copy, not a secret.
+MDNS_URL_TOKEN = "{mdns_url}"  # noqa: S105  # nosec B105 - substitution placeholder
+
+# Optional clause for boards that have Wi-Fi (onboard or dongle). Authored as
+# ``{wifi_or_ethernet_reach: Reach the chess board only over Wi-Fi or Ethernet.}``
+# so each locale embeds its own sentence; stripped entirely on a plain Pi Zero
+# with no wireless hardware (see board.wireless_capability).
+_WIFI_REACH_TOKEN_RE = re.compile(r"\{wifi_or_ethernet_reach:([^}]*)\}")
+
+
+def fill_runtime_placeholders(
+    text: str,
+    *,
+    mdns_name: Optional[str] = None,
+    has_wifi: Optional[bool] = None,
+) -> str:
+    """Replace runtime tokens in catalog strings with this device's values.
+
+    - ``{mdns_url}`` -> ``http://<short-hostname>.local/`` (lowercased).
+    - ``{wifi_or_ethernet_reach:...}`` -> the clause when the board has Wi-Fi
+      (or when ``has_wifi`` is unknown -- fail open), else empty. A plain Pi Zero
+      without a dongle must not promise Wi-Fi reachability.
+
+    ``mdns_name`` / ``has_wifi`` are injectable for tests; production reads
+    :func:`tls.current_mdns_name` and :func:`get_wireless_capability`.
+    """
+    if not text:
+        return text
+    if MDNS_URL_TOKEN in text:
+        if mdns_name is None:
+            from universalchess.tls import current_mdns_name
+            mdns_name = current_mdns_name()
+        text = text.replace(MDNS_URL_TOKEN, f"http://{mdns_name.lower()}/")
+    if _WIFI_REACH_TOKEN_RE.search(text):
+        # None (unread) fails open: keep the Wi-Fi clause rather than hide
+        # reachability advice from a board that has Wi-Fi.
+        include_reach = has_wifi is not False
+        text = _WIFI_REACH_TOKEN_RE.sub(
+            (lambda m: m.group(1) if include_reach else ""),
+            text,
+        )
+    return text
+
+
+def fill_option_runtime_placeholders(
+    options: List[dict],
+    *,
+    mdns_name: Optional[str] = None,
+    has_wifi: Optional[bool] = None,
+) -> List[dict]:
+    """Return option dicts with ``description`` (and ``help``) tokens filled.
+
+    Shallow-copies only options that need a rewrite so callers can mutate the
+    returned list without touching the cached catalog. When ``has_wifi`` is
+    omitted, the live wireless capability is read once for the whole list.
+    """
+    wifi = has_wifi
+    if wifi is None:
+        try:
+            from universalchess.board.wireless_capability import get_wireless_capability
+            wifi = get_wireless_capability().has_wifi
+        except Exception as exc:  # noqa: BLE001 - probe must not break menus
+            log.debug("catalog placeholders: wireless capability unread (%s)", exc)
+            wifi = None
+
+    filled: List[dict] = []
+    for option in options:
+        description = option.get("description")
+        help_text = option.get("help")
+        new_description = (
+            fill_runtime_placeholders(description, mdns_name=mdns_name, has_wifi=wifi)
+            if isinstance(description, str)
+            else description
+        )
+        new_help = (
+            fill_runtime_placeholders(help_text, mdns_name=mdns_name, has_wifi=wifi)
+            if isinstance(help_text, str)
+            else help_text
+        )
+        if new_description is description and new_help is help_text:
+            filled.append(option)
+            continue
+        rewritten = dict(option)
+        if new_description is not description:
+            rewritten["description"] = new_description
+        if new_help is not help_text:
+            rewritten["help"] = new_help
+        filled.append(rewritten)
+    return filled
 
 # Per-locale translation overlays keyed by node id / option-set name / section
 # id. English is the authored source in ``menu.json`` and needs no overlay; each
@@ -123,8 +219,15 @@ class MenuCatalog:
         return list(self._menu.get("sections", []))
 
     def option_set(self, name: str) -> List[dict]:
-        """Return the option list for an option set name."""
-        return list(self._menu.get("optionSets", {}).get(name, []))
+        """Return the option list for an option set name.
+
+        Runtime tokens in option ``description``/``help`` (e.g. ``{mdns_url}``)
+        are filled here so the board help dialog and any other option_set
+        consumer name this device, not a generic example host.
+        """
+        return fill_option_runtime_placeholders(
+            list(self._menu.get("optionSets", {}).get(name, []))
+        )
 
     # -- account types ----------------------------------------------------
 
@@ -529,8 +632,19 @@ def localize_catalog(menu_data: dict, locale: str, *, overlay: Optional[dict] = 
             continue
         for option in options:
             translated = value_labels.get(str(option.get("value")))
-            if translated is not None:
+            if translated is None:
+                continue
+            # A plain string remains a label-only translation (every existing
+            # overlay). An object may also carry ``description`` so a select can
+            # show a per-mode blurb (USB gadget Off/Auto/Client/Shared) in the same
+            # locale as its label.
+            if isinstance(translated, str):
                 option["label"] = translated
+            elif isinstance(translated, dict):
+                if "label" in translated:
+                    option["label"] = translated["label"]
+                if "description" in translated:
+                    option["description"] = translated["description"]
 
     section_overlay = overlay.get("sections", {})
     for section in localized.get("sections", []):

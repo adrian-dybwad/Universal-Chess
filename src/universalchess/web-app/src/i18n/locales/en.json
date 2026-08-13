@@ -378,6 +378,47 @@
       "syncOwnsClock": "The board is keeping time from the internet. Turn Network Time off first.",
       "setFailed": "The board's clock could not be set."
     },
+    "usbGadget": {
+      "title": "USB Gadget Status",
+      "modeLabel": "Gadget Mode",
+      "description": "Expected versus live USB Ethernet gadget mode. Changing the mode while connected over USB can drop this session.",
+      "unavailable": "USB gadget status could not be read.",
+      "desired": "Desired",
+      "live": "Live",
+      "match": "Match",
+      "matchYes": "Yes",
+      "matchNo": "No",
+      "prepared": "Prepared at boot",
+      "preparedYes": "Yes (gadget stack loads at boot)",
+      "preparedNo": "No",
+      "link": "Link",
+      "linkStates": {
+        "connected": "Connected",
+        "disconnected": "Disconnected",
+        "unknown": "Unknown"
+      },
+      "address": "Address",
+      "addressNone": "None",
+      "dhcpLeases": "DHCP leases",
+      "autoSwitching": "Auto switching",
+      "autoSwitchingStates": {
+        "enabled": "On (the board can change mode)",
+        "disabled": "Off (the board is pinned to the mode above)",
+        "unknown": "Unknown"
+      },
+      "reboot": "Reboot",
+      "rebootNeeded": "Needed for this preference to finish applying.",
+      "rebootNow": "Reboot now",
+      "rebooting": "Rebooting…",
+      "changeConfirm": "Change USB gadget mode? If you are connected over USB, this can drop the session.",
+      "modes": {
+        "off": "Off",
+        "auto": "Auto",
+        "client": "Client",
+        "shared": "Shared",
+        "unknown": "Unknown"
+      }
+    },
     "player1Title": "Player 1 (White by default)",
     "player2Title": "Player 2 (Black by default)",
     "handBrain": {

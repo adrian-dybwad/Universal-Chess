@@ -13,7 +13,7 @@ import { useLoginRetry } from '../components/useLoginRetry';
 import { useRadioCapability } from '../hooks/useRadioCapability';
 import { MenuIcon } from '../components/MenuIcon';
 import { DeviceClockCard } from '../components/DeviceClockCard';
-import { ConnectivityPanel } from './Connectivity';
+import { ConnectivityPanel, AccountsCard } from './Connectivity';
 import type { EngineDefinition, EngineFailure, EngineRef, EngineRefsResponse, EngineTier } from '../types/game';
 import type { MenuCatalog, MenuOption } from '../types/menuCatalog';
 import { childrenOf, fieldById } from '../types/menuCatalog';
@@ -286,6 +286,10 @@ interface FormSettings {
     timezone: string;
     ui_language: string;
     ntp_enabled: boolean;
+    // Desired USB Ethernet gadget mode (off | auto | client | shared). Owned by
+    // usb_gadget_service / centaur.ini and changed only through
+    // /api/system/usb-gadget, never the generic settings save.
+    usb_gadget_mode: string;
   };
 }
 
@@ -327,6 +331,7 @@ const defaultFormSettings: FormSettings = {
   system: {
     database_uri: '', inactivity_timeout: '900', timezone: 'UTC', ui_language: 'en',
     ntp_enabled: false,
+    usb_gadget_mode: 'off',
   },
 };
 
@@ -440,6 +445,10 @@ function parseRawSettings(data: SettingsData): FormSettings {
       // toggle then sits off while the Device Clock card reports it as unknown,
       // and moving the toggle sends an explicit value either way.
       ntp_enabled: parseConfigBool(data.system?.ntp_enabled, false),
+      // Desired USB Ethernet gadget mode. Overlaid from the live service on
+      // GET /api/settings (seeded to client when boot is prepared and unset).
+      // Changed only through /api/system/usb-gadget.
+      usb_gadget_mode: data.system?.usb_gadget_mode || 'off',
     },
   };
 }
@@ -1925,16 +1934,16 @@ export function Settings() {
       updateFormSettings('sound', { [key]: value } as Partial<FormSettings['sound']>),
   );
 
-  // System tab device preferences (Sleep Timer, Timezone, Network Time, Language),
-  // rendered from the catalog's web-only `group.system.device`, which lists the
-  // *shared* system.* nodes the board also renders -- so there is one node set, not
-  // a web copy. The `system` store maps each shared bind key onto this page's
-  // form/APIs: Sleep Timer's `sleep_seconds` is the form's `inactivity_timeout`
-  // (applied live on Save), while Timezone, Network Time, and Language each apply
-  // through their dedicated device endpoint (saveTimezone/saveNtp/saveLanguage)
-  // rather than the generic settings save, so the setter routes those three keys
-  // there. The `timezones` provider backs the node's `webProvider` override with
-  // the full runtime list the board injects (the board itself uses its curated
+  // System tab device preferences (Sleep Timer, Timezone, Network Time,
+  // Language), rendered from the catalog's `group.system.device`, which lists
+  // the *shared* system.* nodes the board also renders -- so there is one node
+  // set, not a web copy. The `system` store maps each shared bind key onto this
+  // page's form/APIs: Sleep Timer's `sleep_seconds` is the form's
+  // `inactivity_timeout` (applied live on Save), while Timezone, Network Time,
+  // and Language each apply through their dedicated device endpoint rather than
+  // the generic settings save. USB Gadget lives under Connectivity. The
+  // `timezones` provider backs the node's `webProvider` override with the full
+  // runtime list the board injects (the board itself uses its curated
   // `timezones_common`).
   const systemMenuCtx = new WebMenuContext(optionSet);
   systemMenuCtx.registerStore(
@@ -2111,6 +2120,13 @@ export function Settings() {
                 show the same fields, order, and gating. */}
             {renderPlayerCard('player1', t('settingsPage.player1Title'))}
             {renderPlayerCard('player2', t('settingsPage.player2Title'))}
+
+            {/* Online account credentials used by Lichess (and future) player
+                types. Lives here rather than Connectivity so management sits
+                next to the per-slot account picker. */}
+            <div className="mt-6">
+              <AccountsCard />
+            </div>
 
             {/* Hand+Brain Explanation */}
             {showHandBrainExplanation && (
@@ -2448,13 +2464,13 @@ export function Settings() {
             <SystemInfoCard />
 
             {/* Device card: Sleep Timer, Timezone, Network Time, and Language.
-                These are the shared catalog's web-only `group.system.device`
-                nodes -- the same system.* nodes the board's System menu renders.
-                systemMenuCtx maps each bind: Sleep Timer -> [system]
-                inactivity_timeout (applied live on Save & Apply);
-                Timezone/Network Time/Language -> their dedicated device
-                endpoints. The timezone list is the full runtime set (the node's
-                webProvider override); the board uses its curated list.
+                These are the shared catalog's `group.system.device` nodes -- the
+                same system.* nodes the board's System menu renders. systemMenuCtx
+                maps each bind: Sleep Timer -> [system] inactivity_timeout
+                (applied live on Save & Apply); Timezone/Network Time/Language ->
+                their dedicated device endpoints. The timezone list is the full
+                runtime set (the node's webProvider override); the board uses its
+                curated list. USB Gadget is under Connectivity.
 
                 The rows are rendered directly (buildSections + renderCatalogRow,
                 the same pattern the Players tab uses) so the page supplies the

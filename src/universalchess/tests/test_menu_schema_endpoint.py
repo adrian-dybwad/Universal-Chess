@@ -136,3 +136,57 @@ def test_menu_schema_is_localized_to_device_language(client, monkeypatch):
     assert by_id["field.player.type"]["label"] == "Tipo de jugador"
     sections = {s["id"]: s["label"] for s in data["sections"]}
     assert sections["players"] == "Jugadores"
+
+
+def test_menu_schema_fills_mdns_url_in_usb_gadget_client_description(client, monkeypatch):
+    """USB Client mode help names this board's http://<hostname>.local/ URL.
+
+    Why: a hardcoded ``http://dgt.local/`` example is wrong on every board that
+    is not named ``dgt`` (this board is ``dgt-cm5-64``, and enable_usb_gadget.py
+    already prints the card's real hostname). How a regression manifests: the
+    Client description still contains ``dgt.local`` or the raw ``{mdns_url}``
+    token.
+    """
+    monkeypatch.setattr(
+        "universalchess.tls.current_mdns_name", lambda: "dgt-cm5-64.local"
+    )
+    monkeypatch.setattr(
+        "universalchess.board.wireless_capability.get_wireless_capability",
+        lambda: type("C", (), {"has_wifi": True})(),
+    )
+    resp = client.get("/api/menu-schema")
+    assert resp.status_code == 200
+    data = json.loads(resp.data)
+    by_value = {o["value"]: o for o in data["optionSets"]["usb_gadget_mode"]}
+    description = by_value["client"]["description"]
+    assert "http://dgt-cm5-64.local/" in description
+    assert "dgt.local" not in description
+    assert "{mdns_url}" not in description
+
+    # The cached catalog must still hold the token so a rename refreshes correctly.
+    from universalchess.menus.catalog import get_catalog
+    cached = {
+        o["value"]: o
+        for o in get_catalog().raw_menu()["optionSets"]["usb_gadget_mode"]
+    }
+    assert "{mdns_url}" in cached["client"]["description"]
+
+
+def test_menu_schema_omits_wifi_reach_on_boards_without_wifi(client, monkeypatch):
+    """USB Off copy drops the Wi-Fi reach clause when the board has no Wi-Fi.
+
+    Why: a plain Pi Zero has no wireless; the Off radio must not say to reach
+    the board over Wi-Fi. How a regression manifests: Off still mentions Wi-Fi
+    when ``has_wifi`` is false, or the raw token leaks.
+    """
+    monkeypatch.setattr(
+        "universalchess.board.wireless_capability.get_wireless_capability",
+        lambda: type("C", (), {"has_wifi": False})(),
+    )
+    resp = client.get("/api/menu-schema")
+    assert resp.status_code == 200
+    by_value = {o["value"]: o for o in resp.get_json()["optionSets"]["usb_gadget_mode"]}
+    off = by_value["off"]["description"]
+    assert off == "USB Ethernet is off."
+    assert "Wi-Fi" not in off
+    assert "{wifi_or_ethernet_reach" not in off

@@ -198,8 +198,9 @@ def test_web_implemented_submenus_are_enabled_for_web():
         "connectivity",
         "connectivity.wifi",
         "connectivity.bluetooth",
+        "connectivity.usb_gadget",
         "connectivity.chromecast",
-        "connectivity.accounts",
+        "players.accounts",
         "settings.engines",
         "system.about",
         # System/power actions now have web controls (Settings -> System).
@@ -233,6 +234,61 @@ def test_sleep_timer_option_set_matches_board_choices():
         ("1800", "30 min"),
         ("3600", "1 hour"),
     ]
+
+
+def test_usb_gadget_options_match_the_service_modes_and_all_describe_themselves():
+    """The four USB gadget options are exactly the modes the service accepts.
+
+    Why: the widget, the service allowlist and the privileged helper's verbs have
+    to agree. An option the service rejects gives the user a radio that 400s, and
+    a mode missing from the catalog is unreachable from either UI. The
+    descriptions are the only place the difference between the modes is explained,
+    so an option without one is a radio the user cannot choose between.
+
+    Failure: a mode added to one layer only, or a new option shipped with no
+    description -- the web radio then renders a bare label.
+    """
+    from universalchess.services.usb_gadget_service import MODES
+
+    options = load_catalog().option_set("usb_gadget_mode")
+    values = [str(option["value"]) for option in options]
+    assert values == ["off", "auto", "client", "shared"]
+    assert set(values) == set(MODES)
+    for option in options:
+        assert option.get("label"), f"{option['value']} has no label"
+        assert option.get("description", "").strip(), (
+            f"{option['value']} has no description"
+        )
+
+
+def test_usb_gadget_help_says_which_physical_port_the_cable_needs():
+    """The field help must name the Pi's data port and rule out the charge port.
+
+    Why: on a Centaur the only socket an owner can see is the one they charge the
+    board with, and it carries no data -- the gadget needs the Raspberry Pi Zero's
+    own USB port, inside the case. Every mode in this widget is unreachable
+    without that cable, so a correctly configured board looks broken: the mode
+    applies, the status card reports Disconnected, and nothing in the UI says the
+    cable is in the wrong socket. This help is the top of the widget on both the
+    board and the web, so it is the one place the requirement is read before the
+    choice is made.
+
+    Failure: the help loses the distinction (or names only "USB"), and the next
+    person to plug into the charge port has nothing to tell them why the link
+    never comes up. Asserted in Spanish too: a translated board must not drop the
+    precondition, which is the kind of omission an overlay makes silently.
+    """
+    from universalchess.menus.catalog.loader import get_localized_catalog
+
+    english = load_catalog().get_node("connectivity.usb_gadget")["help"].lower()
+    # "data" is what distinguishes the Pi's port; "charg" covers charge/charging.
+    assert "data" in english, f"help does not identify the data port: {english}"
+    assert "charg" in english, f"help does not rule out the charge port: {english}"
+    assert "centaur" in english, f"help does not say whose charge port: {english}"
+
+    spanish = get_localized_catalog("es").get_node("connectivity.usb_gadget")["help"].lower()
+    assert "datos" in spanish, f"Spanish help does not identify the data port: {spanish}"
+    assert "carga" in spanish, f"Spanish help does not rule out the charge port: {spanish}"
 
 
 def test_option_sets_resolve_for_select_fields():

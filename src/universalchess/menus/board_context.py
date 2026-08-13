@@ -199,6 +199,17 @@ def _run_select(outcome, ctx, menu_manager) -> Optional[MenuSelection]:
 
     def build_entries() -> List[IconMenuEntry]:
         current = str(ctx.get(outcome.store, outcome.key))
+        # Live USB gadget link under the selected radio only (Wi-Fi style
+        # secondary line). Long mode copy stays on HELP via option description.
+        gadget_status_line: Optional[str] = None
+        if outcome.option_set == "usb_gadget_mode":
+            from universalchess.services import usb_gadget_service
+
+            status = usb_gadget_service.get_status()
+            gadget_status_line = usb_gadget_service.format_epaper_status(
+                attachment=status.attachment,
+                ipv4=status.ipv4,
+            )
         entries: List[IconMenuEntry] = []
         for value, option_label, option_icon, option_font_size, option_help in _choices():
             selected = str(value) == current
@@ -211,6 +222,8 @@ def _run_select(outcome, ctx, menu_manager) -> Optional[MenuSelection]:
             # Pass font_size only when the option declares one, so options without
             # it keep IconMenuEntry's default rather than being pinned to a guess.
             extra = {"font_size": option_font_size} if option_font_size is not None else {}
+            if selected and gadget_status_line:
+                extra["description"] = gadget_status_line
             entries.append(
                 IconMenuEntry(
                     key=str(value),
