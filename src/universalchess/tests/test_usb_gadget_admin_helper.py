@@ -231,7 +231,7 @@ def test_off_verb_disables_the_gadget_and_undoes_the_boot_time_changes(tmp_path)
     Why: Off is the user withdrawing consent for the feature. The vendor tool
     removes its own overlay and modules-load.d entry, but the gadget modules this
     helper put on the kernel command line, the stock netplan-eth0 profile it
-    moved aside, and     and the stock netplan-eth0 profile it moved aside are both
+    moved aside, and the state-directory mode an older release widened are all
     ours -- a board "turned off" that keeps them is one the user cannot turn off.
 
     Failure: the action log is only ``rpi-usb-gadget off`` (residue left behind),
@@ -245,6 +245,7 @@ def test_off_verb_disables_the_gadget_and_undoes_the_boot_time_changes(tmp_path)
         "rpi-usb-gadget off",
         "disarm-early-g-ether-cmdline",
         "restore-netplan-eth0",
+        "ensure-nm-state-dir-private",
     ]
 
 
@@ -316,6 +317,89 @@ def test_a_command_line_it_refuses_to_edit_does_not_fail_the_mode(tmp_path):
     assert cmdline.read_bytes() == before
     assert "ERROR" in proc.stderr
     assert f"nmcli connection up {CLIENT_CONN}" in lines
+
+
+def test_the_helper_never_widens_the_networkmanager_state_directory(tmp_path):
+    """No mode may make NetworkManager's state directory world-traversable.
+
+    Why: up to 2.0.0 this helper ran ``chmod o+x /var/lib/NetworkManager`` so the
+    unprivileged service could read the Shared lease file. That exposed
+    NetworkManager's state to every local user to save one privileged read, which
+    ``read-shared-leases`` now performs instead.
+
+    Failure: an ``o+x``/``o+r`` chmod of that directory reappears in the helper,
+    which no behavioural assertion would catch because the widening is invisible
+    until someone goes looking for it.
+    """
+    source = _HELPER.read_text(encoding="utf-8")
+    assert "chmod o+" not in source
+    assert "o+x /var/lib/NetworkManager" not in source
+    for mode in ("off", "auto", "client", "shared"):
+        log = tmp_path / f"actions-{mode}.log"
+        _, lines = _run([mode], log)
+        assert "ensure-nm-state-dir-private" in lines
+        assert not [line for line in lines if "chmod" in line]
+
+
+def test_read_shared_leases_prints_the_lease_file(tmp_path):
+    """``read-shared-leases`` is a privileged read of the Shared lease file.
+
+    Why: a lease is the only signal that a host on the gadget link took an
+    address instead of self-assigning one, and NetworkManager's state directory
+    is 0700 root. The service asks for it through the grant it already has.
+
+    Failure: nothing is printed (the web card's lease count goes permanently
+    unknown), or the verb performs a privileged *action*, which would put a
+    status read inside the mode-changing boundary.
+    """
+    root = tmp_path / "fs"
+    lease_file = root / "var" / "lib" / "NetworkManager" / "dnsmasq-usb0.leases"
+    lease_file.parent.mkdir(parents=True)
+    lease_file.write_text(
+        "1767139200 aa:bb:cc:dd:ee:ff 10.12.194.42 laptop *\n", encoding="utf-8"
+    )
+    proc, lines = _run(["read-shared-leases"], tmp_path / "actions.log", fs_root=root)
+    assert proc.returncode == 0
+    assert "10.12.194.42" in proc.stdout
+    assert lines == []
+
+
+def test_read_shared_leases_with_no_lease_file_is_empty_and_successful(tmp_path):
+    """No lease file reads as no leases, not as an error.
+
+    Why: the file only exists once Shared has served a lease, so its absence is
+    the normal state in every other mode. Reporting failure would make the
+    caller show "unknown" where zero is the truth.
+
+    Failure: non-zero exit or output on stdout, either of which the caller turns
+    into an unknown lease count.
+    """
+    root = tmp_path / "fs"
+    proc, _ = _run(["read-shared-leases"], tmp_path / "actions.log", fs_root=root)
+    assert proc.returncode == 0
+    assert proc.stdout == ""
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can read any file")
+def test_a_lease_file_that_cannot_be_read_fails_instead_of_printing_nothing(tmp_path):
+    """An unreadable lease file exits non-zero rather than looking empty.
+
+    Why: the caller turns empty output into a count of zero, which means "Shared
+    is running and no host has taken an address" -- a diagnosis. Reporting that
+    for a file this board could not read would invent an observation, and zero is
+    exactly the state the user is asked to act on.
+
+    Failure: exit 0 with no output, and the web card claims no leases whenever the
+    read is denied.
+    """
+    root = tmp_path / "fs"
+    lease_file = root / "var" / "lib" / "NetworkManager" / "dnsmasq-usb0.leases"
+    lease_file.parent.mkdir(parents=True)
+    lease_file.write_text("1767139200 aa:bb:cc:dd:ee:ff 10.12.194.42 laptop *\n")
+    lease_file.chmod(0o000)
+    proc, _ = _run(["read-shared-leases"], tmp_path / "actions.log", fs_root=root)
+    assert proc.returncode != 0
+    assert proc.stdout == ""
 
 
 @pytest.mark.parametrize(

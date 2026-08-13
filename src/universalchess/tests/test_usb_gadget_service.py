@@ -406,6 +406,93 @@ def test_count_dhcp_leases(lease_txt, expected):
     assert ugs.count_dhcp_leases(lease_txt) == expected
 
 
+def test_lease_count_is_read_through_the_granted_helper():
+    """The lease file is read via ``sudo -n <helper> read-shared-leases``.
+
+    Why: NetworkManager's state directory is 0700 root. Up to 2.0.0 the helper
+    made it world-traversable so this process could read the file itself, which
+    exposed that directory to every local user in order to avoid one privileged
+    read. Going through the grant the service already holds keeps the exposure to
+    this service.
+
+    How a regression shows: the runner is never called (a direct file read is
+    back, and with it the widening it needs), or the argv is not the pinned
+    helper -- which sudo would refuse.
+    """
+    run, calls = _recording_runner(
+        _Result(stdout="1767139200 aa:bb:cc:dd:ee:ff 10.12.194.42 laptop *\n")
+    )
+    count = ugs.read_shared_lease_count(run=run, helper_path="/opt/uc/scripts/admin")
+    assert count == 1
+    assert calls == [["sudo", "-n", "/opt/uc/scripts/admin", "read-shared-leases"]]
+
+
+@pytest.mark.parametrize(
+    ("result", "reason"),
+    [
+        (_Result(returncode=1, stderr="a password is required"), "no grant"),
+        (_Result(returncode=0, stdout=""), "no lease file yet"),
+    ],
+)
+def test_lease_count_reports_unknown_rather_than_zero_when_it_cannot_tell(
+    result, reason
+):
+    """A helper that fails reads as unknown; an empty file reads as zero.
+
+    Why: those are different facts. "No host has taken an address" is a Shared
+    diagnosis the user can act on; "this board cannot tell" is not, and showing
+    zero for it would describe a healthy empty pool that was never observed.
+
+    How a regression shows: a failed read returns 0 and the card claims no
+    leases, or an empty file returns None and the count goes blank whenever
+    Shared is idle.
+    """
+    run, _ = _recording_runner(result)
+    count = ugs.read_shared_lease_count(run=run)
+    assert count == (None if reason == "no grant" else 0)
+
+
+def test_lease_count_is_only_probed_in_shared_mode(tmp_path):
+    """get_status asks for leases when live is shared, and not otherwise.
+
+    Why: the count is a Shared-mode signal -- it is the DHCP pool this board
+    serves -- and the web card only renders it for Shared. Probing it in Client
+    or Off would spend a sudo call on every status poll to produce a number
+    nobody reads.
+
+    How a regression shows: the helper is invoked for a Client board (a sudo
+    call per poll), or not invoked for a Shared one (the count goes unknown and
+    the APIPA case it exists to catch is invisible again).
+    """
+    ini = tmp_path / "centaur.ini"
+    ini.write_text("[system]\nusb_gadget_mode = shared\n")
+    shared_run, shared_calls = _recording_runner(_Result(stdout="lease-one\n"))
+    shared = ugs.get_status(
+        config_txt=PREPARED_CONFIG,
+        cmdline_txt=PREPARED_CMDLINE,
+        usb0_exists=True,
+        usb0_ipv4=ugs.SHARED_IPV4,
+        settings_path=ini,
+        lease_run=shared_run,
+    )
+    assert shared.live == "shared"
+    assert shared.dhcp_lease_count == 1
+    assert [args[-1] for args in shared_calls] == ["read-shared-leases"]
+
+    client_run, client_calls = _recording_runner(_Result(stdout="lease-one\n"))
+    client = ugs.get_status(
+        config_txt=PREPARED_CONFIG,
+        cmdline_txt=PREPARED_CMDLINE,
+        usb0_exists=True,
+        usb0_ipv4="192.168.2.5",
+        settings_path=ini,
+        lease_run=client_run,
+    )
+    assert client.live == "client"
+    assert client.dhcp_lease_count is None
+    assert client_calls == []
+
+
 def test_get_status_includes_attachment_from_udc_state(tmp_path):
     """get_status exposes attachment so the Connectivity card can render it.
 

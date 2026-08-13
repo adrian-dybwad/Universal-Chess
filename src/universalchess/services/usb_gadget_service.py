@@ -56,7 +56,6 @@ SHARED_IPV4 = "10.12.194.1"
 DWC2_OVERLAY = "dtoverlay=dwc2,dr_mode=peripheral"
 DEFAULT_SETTINGS_PATH = Path("/opt/universalchess/config/centaur.ini")
 DEFAULT_MODULES_LOAD_PATH = Path("/etc/modules-load.d/usb-gadget.conf")
-DEFAULT_DHCP_LEASE_PATH = Path("/var/lib/NetworkManager/dnsmasq-usb0.leases")
 
 _CONFIG_CANDIDATES = (
     Path("/boot/firmware/config.txt"),
@@ -88,6 +87,9 @@ _AUTO_UNSET: object = object()
 
 CommandRunner = Callable[[Sequence[str], float], "subprocess.CompletedProcess"]
 _APPLY_TIMEOUT_SECONDS = 60
+# Status probe, not an apply: it runs on every poll, so it must not be able to
+# hold a status request open the way a mode change legitimately can.
+_LEASE_TIMEOUT_SECONDS = 5
 
 
 @dataclass(frozen=True)
@@ -256,17 +258,36 @@ def count_dhcp_leases(lease_txt: str) -> int:
     return count
 
 
-def _default_dhcp_lease_count() -> int | None:
-    """Best-effort count of NM shared dnsmasq leases on usb0.
+def read_shared_lease_count(
+    *,
+    run: CommandRunner = _default_runner,
+    helper_path: str = HELPER_PATH,
+) -> int | None:
+    """Count NetworkManager's Shared dnsmasq leases on usb0, or None if unknown.
 
-    Returns None when the lease file cannot be read (permissions / missing),
-    rather than inventing zero and looking like a healthy empty pool.
+    The lease file lives in NetworkManager's state directory, which is 0700 root,
+    so the read goes through the same pinned helper the mode changes use. Reading
+    it directly would require making that directory traversable by everyone on
+    the machine, which is what releases up to 2.0.0 did.
+
+    None means this board cannot tell (no grant, no helper, timeout) and is a
+    different fact from zero, which means Shared is running and nothing has taken
+    an address -- the APIPA case this count exists to expose.
     """
+    args = ["sudo", "-n", helper_path, "read-shared-leases"]
     try:
-        text = DEFAULT_DHCP_LEASE_PATH.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+        proc = run(args, _LEASE_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.debug("usb gadget: could not read shared leases (%s)", exc)
         return None
-    return count_dhcp_leases(text)
+    if proc.returncode != 0:
+        log.debug(
+            "usb gadget: lease read exited %s: %s",
+            proc.returncode,
+            (proc.stderr or "").strip(),
+        )
+        return None
+    return count_dhcp_leases(proc.stdout or "")
 
 
 def format_epaper_status(*, attachment: str, ipv4: str | None) -> str:
@@ -462,6 +483,32 @@ def _default_udc_state() -> str | None:
     return states[0] if states else None
 
 
+def _resolve_lease_count(
+    *,
+    live: str,
+    injected_count: int | None,
+    lease_run: CommandRunner | None,
+    probing_host: bool,
+) -> int | None:
+    """Decide the Shared DHCP lease count for one status read.
+
+    The count is the pool *this* board serves, so it means something only in
+    Shared -- which is also the only mode the web card renders it for. Probing it
+    in Client or Off would spend a privileged call on every status poll to
+    produce a number nothing displays.
+    """
+    if injected_count is not None:
+        return injected_count
+    if live != "shared":
+        return None
+    if lease_run is not None:
+        return read_shared_lease_count(run=lease_run)
+    if not probing_host:
+        # Injected (test) path: never reach for the machine running the tests.
+        return None
+    return read_shared_lease_count()
+
+
 def get_status(  # noqa: PLR0913 - keyword-only probe seams, injected per test
     *,
     config_txt: str | None = None,
@@ -473,6 +520,7 @@ def get_status(  # noqa: PLR0913 - keyword-only probe seams, injected per test
     nm_profile_names: frozenset[str] | None = None,
     udc_state: object = _UDC_UNSET,
     dhcp_lease_count: int | None = None,
+    lease_run: CommandRunner | None = None,
     auto_switching: object = _AUTO_UNSET,
     settings_path: Path | None = None,
 ) -> UsbGadgetStatus:
@@ -507,14 +555,6 @@ def get_status(  # noqa: PLR0913 - keyword-only probe seams, injected per test
     else:
         udc_raw = _default_udc_state()
 
-    # Injected paths (tests) skip the live lease file; production probes it.
-    if dhcp_lease_count is not None:
-        leases = dhcp_lease_count
-    elif usb0_exists is not None or config_txt is not None:
-        leases = None
-    else:
-        leases = _default_dhcp_lease_count()
-
     if auto_switching is not _AUTO_UNSET:
         switching = auto_switching if isinstance(auto_switching, bool) else None
     elif usb0_exists is not None or config_txt is not None:
@@ -528,6 +568,14 @@ def get_status(  # noqa: PLR0913 - keyword-only probe seams, injected per test
         nm_active=nm,
         nm_profile_names=profiles,
     )
+
+    leases = _resolve_lease_count(
+        live=live,
+        injected_count=dhcp_lease_count,
+        lease_run=lease_run,
+        probing_host=usb0_exists is None and config_txt is None,
+    )
+
     attachment = detect_attachment(udc_state=udc_raw)
     # An address from host DHCP (Client) means the USB session is up even when
     # UDC ``state`` lags. Shared's fixed 10.12.194.1 is always configured and

@@ -133,7 +133,11 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   those two modules from the command line, keeping any others the parameter lists,
   and restores the `netplan-eth0` profile the on-modes moved aside: a mode setting
   that keeps boot-time edits after the user turns the feature off is one they
-  cannot actually turn off. The file edits moved out of the shell helper into
+  cannot actually turn off. The Shared lease count is read through the same
+  privileged helper as the mode changes instead of making NetworkManager's state
+  directory world-traversable, which had exposed that directory to every local
+  user to save one privileged read; boards that took that widening have it undone
+  on the next mode change. The file edits moved out of the shell helper into
   `uc-usb-gadget-files.py` beside it, where they are linted and tested directly,
   including the failure paths (a full or read-only `/boot`, a write that verifies
   wrong) which previously could not be reached from a test at all.

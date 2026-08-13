@@ -62,12 +62,14 @@ ICS_UNIT="rpi-usb-gadget-ics.service"
 CMDLINE_FW="${FS_ROOT}/boot/firmware/cmdline.txt"
 CMDLINE_LEGACY="${FS_ROOT}/boot/cmdline.txt"
 NETPLAN_DIR="${FS_ROOT}/etc/netplan"
+NM_STATE_DIR="${FS_ROOT}/var/lib/NetworkManager"
+SHARED_LEASE_FILE="${NM_STATE_DIR}/dnsmasq-usb0.leases"
 ETH0_SYSFS="${FS_ROOT}/sys/class/net/eth0"
 
 log() { logger -t "$LOG_TAG" -- "$*" 2>/dev/null || true; echo "[$LOG_TAG] $*" >&2; }
 
 usage() {
-    echo "usage: uc-usb-gadget-admin {off|auto|client|shared}" >&2
+    echo "usage: uc-usb-gadget-admin {off|auto|client|shared|read-shared-leases}" >&2
     exit 2
 }
 
@@ -149,9 +151,6 @@ pin_netplan_eth0_off_usb0() {
         detach_netplan_eth0 --eth0-absent
     fi
     run_priv nmcli connection down "$NETPLAN_ETH0_CONN" || true
-    # Lease file is world-readable but the NetworkManager state dir is 0700;
-    # allow the unprivileged service to count Shared DHCP leases for status.
-    run_priv chmod o+x /var/lib/NetworkManager || true
 }
 
 detach_netplan_eth0() {
@@ -177,6 +176,19 @@ restore_netplan_eth0() {
     return 0
 }
 
+# Releases up to 2.0.0 widened this directory to world-traversable so the
+# unprivileged service could read the Shared dnsmasq lease file for status. That
+# made NetworkManager's state readable by every local user to save one privileged
+# read, which the ``read-shared-leases`` verb now does instead. Boards that took
+# the widening get it undone here, on any mode change.
+ensure_nm_state_dir_private() {
+    record "ensure-nm-state-dir-private"
+    if [ "$DRY_RUN" = "1" ]; then return 0; fi
+    if [ -d "$NM_STATE_DIR" ]; then
+        chmod o-rwx "$NM_STATE_DIR" || log "note: could not tighten $NM_STATE_DIR"
+    fi
+}
+
 # Vendor ``on`` leaves Shared autoconnecting and the ICS watcher flipping
 # client<->shared. Pin the requested profile so the preference survives reboot
 # and is not undone when the host is not offering ICS.
@@ -185,6 +197,7 @@ pin_client() {
     run_priv systemctl disable --now "$ICS_UNIT" || true
     edit_cmdline arm-cmdline ensure-early-g-ether-cmdline || true
     pin_netplan_eth0_off_usb0
+    ensure_nm_state_dir_private
     run_priv nmcli connection modify "$CLIENT_CONN" connection.autoconnect yes || return 1
     run_priv nmcli connection modify "$SHARED_CONN" connection.autoconnect no || return 1
     # down/up are best-effort: first enable often needs a reboot before usb0 exists.
@@ -197,6 +210,7 @@ pin_shared() {
     run_priv systemctl disable --now "$ICS_UNIT" || true
     edit_cmdline arm-cmdline ensure-early-g-ether-cmdline || true
     pin_netplan_eth0_off_usb0
+    ensure_nm_state_dir_private
     run_priv nmcli connection modify "$SHARED_CONN" connection.autoconnect yes || return 1
     run_priv nmcli connection modify "$CLIENT_CONN" connection.autoconnect no || return 1
     run_priv nmcli connection down "$CLIENT_CONN" || true
@@ -213,6 +227,7 @@ enable_auto_switching() {
     run_priv systemctl enable --now "$ICS_UNIT" || true
     edit_cmdline arm-cmdline ensure-early-g-ether-cmdline || true
     pin_netplan_eth0_off_usb0
+    ensure_nm_state_dir_private
     run_priv nmcli connection modify "$SHARED_CONN" connection.autoconnect yes || return 1
     run_priv nmcli connection modify "$CLIENT_CONN" connection.autoconnect no || return 1
     return 0
@@ -224,7 +239,27 @@ enable_auto_switching() {
 disable_gadget() {
     edit_cmdline disarm-cmdline disarm-early-g-ether-cmdline || true
     restore_netplan_eth0 || true
+    ensure_nm_state_dir_private
     return 0
+}
+
+# Privileged read of the Shared-mode dnsmasq lease file. NetworkManager's state
+# directory is 0700 root, and a lease is the only signal that a host on the gadget
+# link took an address rather than sitting on a self-assigned one.
+#
+# No lease file is success with no output: Shared has simply never served one, and
+# zero is the true count. A file that exists but cannot be read is a failure, so
+# the caller reports "unknown" -- printing nothing there would claim an empty pool
+# nobody observed, which is the exact confusion this count exists to clear up.
+read_shared_leases() {
+    if [ ! -f "$SHARED_LEASE_FILE" ]; then
+        exit 0
+    fi
+    if ! cat -- "$SHARED_LEASE_FILE"; then
+        log "ERROR: could not read $SHARED_LEASE_FILE"
+        exit 1
+    fi
+    exit 0
 }
 
 run_mode() {
@@ -271,6 +306,7 @@ main() {
     [ "$#" -eq 1 ] || usage
     case "$1" in
         off|auto|client|shared) run_mode "$1" ;;
+        read-shared-leases)     read_shared_leases ;;
         *)                      usage ;;
     esac
 }
