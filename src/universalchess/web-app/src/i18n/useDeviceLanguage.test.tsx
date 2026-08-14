@@ -53,6 +53,17 @@ describe('useDeviceLanguage', () => {
     expect(document.documentElement.lang).toBe('es');
   });
 
+  it('adopts French when the device language is French', () => {
+    // Why: French is a shipped UI locale. The previous unsupported-value test
+    // used "fr" as the bogus code; a regression that left French out of
+    // SUPPORTED_LANGUAGES would still pass the Spanish mount test and the
+    // fallback test (now "xx") while rendering English for a French device.
+    setDeviceLanguage('fr');
+    const { getByTestId } = render(<Probe />);
+    expect(getByTestId('lang').textContent).toBe('fr');
+    expect(document.documentElement.lang).toBe('fr');
+  });
+
   it('switches language live when the device setting changes', () => {
     // Why: a change made on the board (or another tab) arrives via a store refresh
     // and must switch the SPA. A regression that only read the value once (no
@@ -70,7 +81,7 @@ describe('useDeviceLanguage', () => {
     // Why: an empty/corrupt/removed locale must not leave the UI in a language
     // with no bundle. A regression passing the raw value through would set the
     // html lang to the bogus code and leave i18next on an unsupported language.
-    setDeviceLanguage('fr');
+    setDeviceLanguage('xx');
     const { getByTestId } = render(<Probe />);
     expect(getByTestId('lang').textContent).toBe('en');
     expect(document.documentElement.lang).toBe('en');

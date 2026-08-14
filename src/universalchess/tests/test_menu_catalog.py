@@ -290,6 +290,10 @@ def test_usb_gadget_help_says_which_physical_port_the_cable_needs():
     assert "datos" in spanish, f"Spanish help does not identify the data port: {spanish}"
     assert "carga" in spanish, f"Spanish help does not rule out the charge port: {spanish}"
 
+    french = get_localized_catalog("fr").get_node("connectivity.usb_gadget")["help"].lower()
+    assert "données" in french, f"French help does not identify the data port: {french}"
+    assert "charge" in french, f"French help does not rule out the charge port: {french}"
+
 
 def test_usb_gadget_help_says_which_end_of_the_cable_to_reconnect():
     """The field help must say to reconnect at the board, not at a USB-C port.
@@ -316,6 +320,10 @@ def test_usb_gadget_help_says_which_end_of_the_cable_to_reconnect():
     spanish = get_localized_catalog("es").get_node("connectivity.usb_gadget")["help"].lower()
     assert "usb-c" in spanish, f"Spanish help does not name the USB-C end: {spanish}"
     assert "desconéct" in spanish, f"Spanish help does not say where to unplug: {spanish}"
+
+    french = get_localized_catalog("fr").get_node("connectivity.usb_gadget")["help"].lower()
+    assert "usb-c" in french, f"French help does not name the USB-C end: {french}"
+    assert "débranch" in french, f"French help does not say where to unplug: {french}"
 
 
 def test_option_sets_resolve_for_select_fields():

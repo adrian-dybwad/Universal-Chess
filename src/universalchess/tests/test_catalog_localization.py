@@ -205,40 +205,41 @@ def test_missing_overlay_falls_back_to_english(base_menu):
     assert localize_catalog(base_menu, "zz") is base_menu
 
 
-# -- real Spanish overlay: drift guard ---------------------------------------
+# -- real overlays: drift guard ----------------------------------------------
 
 
-def test_spanish_overlay_keys_reference_real_catalog_entries(base_menu):
-    """Every id/name in translations/es.json resolves to a real catalog entry.
+@pytest.mark.parametrize("locale", ["es", "fr"])
+def test_overlay_keys_reference_real_catalog_entries(base_menu, locale):
+    """Every id/name in translations/<locale>.json resolves to a real catalog entry.
 
     Why: overlays are keyed by id and drift silently when the catalog is renamed
     or a node is removed -- the stale key then translates nothing and no error is
-    raised. This pins the overlay to the catalog so a rename breaks the build
+    raised. This pins each overlay to the catalog so a rename breaks the build
     here (a dead key surfaces as a failing assertion) instead of shipping a
     half-translated menu. How a regression manifests: a listed node id, optionSet
     name + value, or section id that no longer exists in menu.json.
     """
-    overlay = load_overlay("es")
-    assert overlay is not None, "Spanish overlay must exist"
+    overlay = load_overlay(locale)
+    assert overlay is not None, f"{locale} overlay must exist"
 
     node_ids = {n["id"] for n in base_menu["nodes"]}
     for node_id in overlay.get("nodes", {}):
-        assert node_id in node_ids, f"es.json node id not in catalog: {node_id}"
+        assert node_id in node_ids, f"{locale}.json node id not in catalog: {node_id}"
 
     option_sets = base_menu["optionSets"]
     for name, value_labels in overlay.get("optionSets", {}).items():
-        assert name in option_sets, f"es.json optionSet not in catalog: {name}"
+        assert name in option_sets, f"{locale}.json optionSet not in catalog: {name}"
         catalog_values = {str(o["value"]) for o in option_sets[name]}
         for value in value_labels:
-            assert value in catalog_values, f"es.json {name} value not in catalog: {value}"
+            assert value in catalog_values, f"{locale}.json {name} value not in catalog: {value}"
 
     section_ids = {s["id"] for s in base_menu["sections"]}
     for section_id in overlay.get("sections", {}):
-        assert section_id in section_ids, f"es.json section id not in catalog: {section_id}"
+        assert section_id in section_ids, f"{locale}.json section id not in catalog: {section_id}"
 
     account_ids = {a["id"] for a in base_menu.get("accountTypes", [])}
     for account_id in overlay.get("accountTypes", {}):
-        assert account_id in account_ids, f"es.json accountType id not in catalog: {account_id}"
+        assert account_id in account_ids, f"{locale}.json accountType id not in catalog: {account_id}"
 
 
 # -- get_localized_catalog / get_catalog -------------------------------------
@@ -261,6 +262,24 @@ def test_get_localized_catalog_spanish_reflects_overlay_without_mutating_base():
     assert spanish.option_label("player_type", "human") == "Humano"
 
     # ...while the shared English base is untouched.
+    assert get_localized_catalog("en").get_node("power.shutdown")["label"] == "Shutdown"
+    assert english.option_label("player_type", "human") == english_players_before == "Human"
+
+
+def test_get_localized_catalog_french_reflects_overlay_without_mutating_base():
+    """get_localized_catalog("fr") is French; the English base is unaffected.
+
+    Why: French is a shipped UI locale. A regression that applied only the
+    Spanish overlay, or mutated the English base while deriving French, would
+    show English on a French device or Spanish labels in English.
+    """
+    english = load_catalog()
+    english_players_before = english.option_label("player_type", "human")
+
+    french = get_localized_catalog("fr")
+    assert french.get_node("power.shutdown")["label"] == "Éteindre"
+    assert french.option_label("player_type", "human") == "Humain"
+
     assert get_localized_catalog("en").get_node("power.shutdown")["label"] == "Shutdown"
     assert english.option_label("player_type", "human") == english_players_before == "Human"
 

@@ -318,12 +318,12 @@ def test_the_idle_timeout_restarts_on_a_page_turn():
     )
 
 
-@pytest.mark.parametrize("language", ["en", "es"])
+@pytest.mark.parametrize("language", ["en", "es", "fr"])
 def test_the_longest_shipped_help_text_is_readable_page_by_page(language):
     """Every catalog tip and option description must render within the panel.
 
     Why this test exists: the texts that overflowed are shipped copy, and copy
-    grows -- a Spanish rendering of a tip that fits in English is routinely two
+    grows -- a Spanish or French rendering of a tip that fits in English is routinely two
     lines longer. This walks the real catalog rather than a fixture, so the
     guarantee covers what a board actually shows, and asserts the invariant that
     replaced the overflow: whatever the length, the body is split into pages that

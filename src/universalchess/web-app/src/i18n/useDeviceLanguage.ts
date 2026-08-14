@@ -19,7 +19,7 @@ function normalizeLanguage(value: string | undefined): SupportedLanguage {
  * refreshes the store after a change on the board or another tab -- this switches
  * i18next and updates `<html lang>` (for accessibility and correct hyphenation).
  * An unknown/missing value falls back to English rather than leaving the UI in a
- * language with no bundle.
+ * language with no web bundle.
  *
  * Renders nothing; mounted once near the app root.
  */

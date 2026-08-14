@@ -35,7 +35,7 @@ def test_list_languages_returns_supported_with_labels():
 
     Guards the option-list source the board menu and web selector render. A
     regression dropping a locale or a label would leave the dropdown short or
-    blank. Labels are endonyms; English and Spanish are checked explicitly and
+    blank. Labels are endonyms; English, Spanish, and French are checked explicitly and
     every entry must have a non-empty label.
     """
     langs = ls.list_languages()
@@ -45,6 +45,7 @@ def test_list_languages_returns_supported_with_labels():
     labels = {entry["value"]: entry["label"] for entry in langs}
     assert labels["en"] == "English"
     assert labels["es"] == "Español"
+    assert labels["fr"] == "Français"
 
 
 def test_supported_matches_listed_values():
@@ -72,6 +73,7 @@ def test_every_supported_locale_has_a_coach_language_name():
     # Representative mappings the coach prompt depends on.
     assert ls.coach_language_name("en") == "English"
     assert ls.coach_language_name("es") == "Spanish"
+    assert ls.coach_language_name("fr") == "French"
     assert ls.coach_language_name("de") == "German"
     assert ls.coach_language_name("ja") == "Japanese"
 

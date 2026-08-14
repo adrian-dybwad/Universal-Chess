@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import en from './locales/en.json';
 import es from './locales/es.json';
+import fr from './locales/fr.json';
 
 /**
  * Holds the shipped locale bundles to the same key set.
@@ -40,31 +41,32 @@ function placeholdersOf(bundle: Bundle, path: string): Set<string> {
   );
 }
 
-const LOCALES = { en: en as Bundle, es: es as Bundle };
+const LOCALES = { en: en as Bundle, es: es as Bundle, fr: fr as Bundle };
+const TRANSLATED = ['es', 'fr'] as const;
 
 describe('shipped locale bundles', () => {
-  it('translate exactly the same set of keys', () => {
+  it.each(TRANSLATED)('translate exactly the same set of keys as English (%s)', (code) => {
     const english = new Set(leafKeys(LOCALES.en));
-    const spanish = new Set(leafKeys(LOCALES.es));
+    const other = new Set(leafKeys(LOCALES[code]));
 
     // Reported as sorted names rather than a count so a failure says which keys
     // to add and to which file.
-    const untranslated = [...english].filter((key) => !spanish.has(key)).sort();
-    const orphaned = [...spanish].filter((key) => !english.has(key)).sort();
+    const untranslated = [...english].filter((key) => !other.has(key)).sort();
+    const orphaned = [...other].filter((key) => !english.has(key)).sort();
 
     expect({ untranslated, orphaned }).toEqual({ untranslated: [], orphaned: [] });
   });
 
-  it('keep the same interpolation placeholders in every translated string', () => {
+  it.each(TRANSLATED)('keep the same interpolation placeholders in every translated string (%s)', (code) => {
     // A key can be present and still broken: `{{amount}}` renamed or dropped in
     // translation renders the literal braces, or an empty gap, to the user.
     const mismatched = leafKeys(LOCALES.en)
       .map((path) => ({
         path,
         en: [...placeholdersOf(LOCALES.en, path)].sort(),
-        es: [...placeholdersOf(LOCALES.es, path)].sort(),
+        other: [...placeholdersOf(LOCALES[code], path)].sort(),
       }))
-      .filter(({ en: e, es: s }) => e.join() !== s.join());
+      .filter(({ en: e, other }) => e.join() !== other.join());
 
     expect(mismatched).toEqual([]);
   });

@@ -1,0 +1,48 @@
+{
+  "_comment": "French (fr) string bundle for the Python board UI. Any key omitted here falls back to the English source in en.json. Keep every key that en.json defines translated so no English leaks into the French UI (guarded by test_i18n).",
+
+  "common.enabled": "Activé",
+  "common.disabled": "Désactivé",
+
+  "splash.starting": "Démarrage...",
+  "splash.loading": "Chargement...",
+  "splash.graphics": "Graphismes...",
+  "splash.managers": "Gestionnaires...",
+  "splash.chess": "Échecs...",
+  "splash.initializing": "Initialisation...",
+  "splash.tagline": "Regardez les dents de ce cheval donné",
+
+  "game_over.result.white_wins": "Les blancs gagnent",
+  "game_over.result.black_wins": "Les noirs gagnent",
+  "game_over.result.draw": "Nulle",
+  "game_over.termination.checkmate": "Mat",
+  "game_over.termination.stalemate": "Pat",
+  "game_over.termination.insufficient_material": "Matériel insuf.",
+  "game_over.termination.seventyfive_moves": "Règle des 75 coups",
+  "game_over.termination.fivefold_repetition": "Répétition x5",
+  "game_over.termination.fifty_moves": "Règle des 50 coups",
+  "game_over.termination.threefold_repetition": "Répétition x3",
+  "game_over.termination.resign": "Abandon",
+  "game_over.termination.timeout": "Temps écoulé",
+  "game_over.termination.time_forfeit": "Temps écoulé",
+  "game_over.termination.abandoned": "Abandonnée",
+
+  "setup.mode_title": "PRÉPARATION",
+  "setup.arrange_pieces": "Placez les pièces",
+
+  "keyboard.page": "Page {current}/{max}",
+  "keyboard.up_down": "HAUT/BAS",
+  "keyboard.place_piece": "Placer pièce : taper",
+  "keyboard.back_del_tick_ok": "BACK:eff TICK:ok",
+  "keyboard.play_cancel": "PLAY : annuler",
+
+  "passkey.title": "Associer clavier",
+  "passkey.type_code": "Saisissez ce code",
+  "passkey.then_enter": "puis appuyez sur Entrée",
+
+  "about.get_support": "Assistance",
+  "about.incomplete_shutdown": "Arrêt incomplet",
+  "about.press_any_button": "Appuyez sur un bouton",
+
+  "wifi.no_networks": "Aucun réseau trouvé"
+}

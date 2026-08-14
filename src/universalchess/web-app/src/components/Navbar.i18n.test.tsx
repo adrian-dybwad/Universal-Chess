@@ -52,4 +52,15 @@ describe('Navbar localization', () => {
     expect(menu.getAllByText('Partidas').length).toBeGreaterThan(0);
     expect(menu.getAllByText('Ajustes').length).toBeGreaterThan(0);
   });
+
+  it('renders French nav labels when the language is French', async () => {
+    // Why: French is a shipped UI locale; a regression that only wired Spanish
+    // would leave the navbar in English when the device language is French.
+    await i18n.changeLanguage('fr');
+    const { container } = renderNavbar();
+    const menu = within(container);
+    expect(menu.getAllByText('Échiquier').length).toBeGreaterThan(0);
+    expect(menu.getAllByText('Parties').length).toBeGreaterThan(0);
+    expect(menu.getAllByText('Paramètres').length).toBeGreaterThan(0);
+  });
 });

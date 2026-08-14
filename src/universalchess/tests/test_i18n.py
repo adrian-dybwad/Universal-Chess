@@ -61,6 +61,17 @@ def test_returns_spanish_when_locale_is_spanish(monkeypatch):
     assert i18n.t("game_over.result.white_wins") == "Ganan las blancas"
 
 
+def test_returns_french_when_locale_is_french(monkeypatch):
+    """t() returns the French string when the active locale is French.
+
+    Why: French is a shipped UI locale with its own bundle. A regression that
+    wired only Spanish would keep showing English (or Spanish) here.
+    """
+    _set_locale(monkeypatch, "fr")
+    assert i18n.t("common.enabled") == "Activé"
+    assert i18n.t("game_over.result.white_wins") == "Les blancs gagnent"
+
+
 def test_interpolates_named_placeholders():
     """t() fills {name} placeholders from kwargs via str.format.
 
@@ -94,16 +105,17 @@ def test_missing_key_returns_key_itself():
     assert i18n.t("does.not.exist") == "does.not.exist"
 
 
-def test_spanish_bundle_covers_every_english_key():
-    """Every key in en.json has a Spanish translation in es.json.
+@pytest.mark.parametrize("locale", ["es", "fr"])
+def test_translated_bundle_covers_every_english_key(locale):
+    """Every key in en.json has a translation in each shipped locale bundle.
 
-    Why: the Spanish UI must not silently fall back to English for a migrated
-    string. This pins the two bundles together so adding an English key without
-    its Spanish counterpart fails here (listing the missing keys) rather than
-    shipping mixed-language screens. How a regression manifests: a key present in
-    en.json is absent from es.json.
+    Why: a non-English UI must not silently fall back to English for a migrated
+    string. This pins the bundles together so adding an English key without its
+    counterpart fails here (listing the missing keys) rather than shipping
+    mixed-language screens. How a regression manifests: a key present in en.json
+    is absent from the locale file.
     """
     en = i18n._load_bundle("en")
-    es = i18n._load_bundle("es")
-    missing = sorted(set(en) - set(es))
-    assert missing == [], f"es.json missing translations for: {missing}"
+    other = i18n._load_bundle(locale)
+    missing = sorted(set(en) - set(other))
+    assert missing == [], f"{locale}.json missing translations for: {missing}"

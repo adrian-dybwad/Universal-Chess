@@ -212,6 +212,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   it sets rather than repeating the heading. The board's menu is unaffected --
   it has never shown both.
 
+- **French UI**: Selecting Français now translates the board menus, e-paper
+  widgets, and the web app, not only the AI coach's remarks. English and Spanish
+  already shipped translation bundles; French was listed in the language selector
+  (the coach can write in any listed language from a name) but had no UI overlay,
+  so the menus, splash, game-over screen, and web chrome stayed English. The
+  board string bundle, the menu-catalog overlay, and the web i18n bundle now
+  ship a complete French set, and the web app treats `fr` as a supported locale
+  so the SPA follows the device instead of falling back to English.
+
 - **Stoppable, resumable engine installs**: A source build can run for an hour,
   and until now the only way out was to let it finish or reboot the board, which
   threw the work away. An install can now be stopped and picked up later.

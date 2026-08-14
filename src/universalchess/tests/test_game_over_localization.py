@@ -66,3 +66,18 @@ def test_spanish_result_and_termination(monkeypatch):
     widget.set_result(result="1-0", termination="CHECKMATE")
     assert widget.winner == "Ganan las blancas"
     assert widget.termination == "Jaque mate"
+
+
+def test_french_result_and_termination(monkeypatch):
+    """In French, the same ending renders French winner/termination.
+
+    Why: French is a shipped UI locale; the end-of-game screen must localize
+    with the device. How a regression manifests: the widget keeps hardcoded
+    English regardless of locale, so this assertion fails while the English
+    test passes.
+    """
+    _set_locale(monkeypatch, "fr")
+    widget = _widget()
+    widget.set_result(result="1-0", termination="CHECKMATE")
+    assert widget.winner == "Les blancs gagnent"
+    assert widget.termination == "Mat"

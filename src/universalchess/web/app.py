@@ -6817,7 +6817,7 @@ def api_language_get():
 def api_language_set():
     """Set the device UI language.
 
-    Body: {"language": "en" | "es"}
+    Body: {"language": "en" | "es" | "fr" | ...} (any code in language_service.SUPPORTED)
 
     Persists the locale in [system] ui_language. An unsupported code is a 400.
     Unlike timezone there is no OS apply step -- the locale only selects
