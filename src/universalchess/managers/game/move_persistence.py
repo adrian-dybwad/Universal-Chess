@@ -11,7 +11,7 @@ Keeping this logic here:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
 import chess
 
@@ -199,15 +199,17 @@ def create_game_from_moves(
     game_info: Dict[str, str],
     chess960: bool = False,
     source_file: str = "web-play-from-here",
+    analysis_for_fen: Optional[Callable[[str], Optional["PositionAnalysis"]]] = None,
 ) -> Optional[int]:
     """Persist a new in-progress game whose history is a given move sequence.
 
-    Used by "Play Game from here" on the web review page: the reviewed game's
-    moves up to the viewed ply are transferred into a fresh recorded game so the
-    live board continues from that point with the full history/PGN intact, rather
-    than starting cold from a bare FEN. The created game has no result (in
-    progress), so the normal resume path (:func:`main._resume_game`) will replay
-    these moves and hand control to the current player to continue.
+    Used by "Play Game from here" on the web review page and by "New game from
+    this position" on the board: the reviewed game's moves up to the viewed ply
+    are transferred into a fresh recorded game so the live board continues from
+    that point with the full history/PGN intact, rather than starting cold from
+    a bare FEN. The created game has no result (in progress), so the normal
+    resume path (:func:`main._resume_game`) will replay these moves and hand
+    control to the current player to continue.
 
     The moves are validated in full on a variant-aware board built from
     ``start_fen`` *before* anything is written, and the per-ply authoritative FENs
@@ -227,6 +229,10 @@ def create_game_from_moves(
         chess960: True to build the board (and persist the record) as Chess960,
             so king-onto-rook castling UCIs replay correctly.
         source_file: Stored on the game record's ``source`` column.
+        analysis_for_fen: Optional lookup of a completed analysis by FEN. Resume
+            restores the eval graph from ``GameMove.eval_score`` after resetting
+            the live analysis cache, so a fork that omits this leaves the new
+            game's graph empty. Unanalysed plies stay NULL (not a fabricated 0).
 
     Returns:
         The new game's database id, or ``None`` if ``start_fen`` is invalid,
@@ -274,6 +280,9 @@ def create_game_from_moves(
             fen_after_move=fen_after,
             white_clock=None,
             black_clock=None,
+            analysis=(
+                analysis_for_fen(fen_after) if analysis_for_fen is not None else None
+            ),
             chess960=chess960,
         )
         if not committed:
@@ -281,6 +290,13 @@ def create_game_from_moves(
                 f"[PlayFromHistory] Move {move_uci!r} failed to persist; aborting"
             )
             return None
+
+    if analysis_for_fen is not None:
+        start_analysis = analysis_for_fen(start_fen)
+        if start_analysis is not None:
+            update_move_analysis(
+                session, game_db_id=game_db_id, result=start_analysis
+            )
 
     return game_db_id if game_db_id > 0 else None
 

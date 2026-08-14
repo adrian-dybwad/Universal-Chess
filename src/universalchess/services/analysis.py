@@ -108,6 +108,26 @@ class PositionAnalysis:
         return max(-clamp, min(clamp, self.score_cp))
 
 
+def position_analysis_from_stored(
+    fen: Optional[str],
+    eval_cp: Optional[int],
+    best_move: Optional[str],
+) -> Optional[PositionAnalysis]:
+    """Rebuild a PositionAnalysis from the integers stored on a move row.
+
+    NULL eval_cp means the ply was never analysed. The +/-MATE_SCORE_CP
+    sentinel is how mate is stored; the exact mate distance is not
+    recoverable from it, so 1 stands for "mate".
+    """
+    if not fen or eval_cp is None:
+        return None
+    if eval_cp >= MATE_SCORE_CP:
+        return PositionAnalysis(fen, None, 1, best_move)
+    if eval_cp <= -MATE_SCORE_CP:
+        return PositionAnalysis(fen, None, -1, best_move)
+    return PositionAnalysis(fen, eval_cp, None, best_move)
+
+
 class AnalysisService:
     """Service that analyzes chess positions and updates AnalysisState.
     
@@ -513,18 +533,9 @@ class AnalysisService:
                 skipped, so absence stays distinguishable from a real 0.
         """
         for fen, eval_cp, best_move in stored:
-            if fen is None or eval_cp is None:
+            result = position_analysis_from_stored(fen, eval_cp, best_move)
+            if result is None:
                 continue
-            # The +/-MATE_SCORE_CP sentinel is how mate is stored; restoring it
-            # as an ordinary centipawn score would display "+100.0" where the
-            # board previously showed "M". The exact distance is not recoverable
-            # from the sentinel, so 1 stands for "mate, side unknown distance".
-            if eval_cp >= MATE_SCORE_CP:
-                result = PositionAnalysis(fen, None, 1, best_move)
-            elif eval_cp <= -MATE_SCORE_CP:
-                result = PositionAnalysis(fen, None, -1, best_move)
-            else:
-                result = PositionAnalysis(fen, eval_cp, None, best_move)
             with self._results_lock:
                 self._position_results.pop(fen, None)
                 self._position_results[fen] = result

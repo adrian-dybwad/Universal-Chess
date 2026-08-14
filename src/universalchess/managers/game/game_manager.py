@@ -469,45 +469,93 @@ class GameManager:
         # Check if current board state matches previous state
         if ChessGameState.states_match(current_state, previous_state):
             log.info("[GameManager._check_takeback] Takeback detected - board state matches previous state")
-            self.led.off()
-            
-            # Clear any pending move state - takeback invalidates the computed move
-            self.move_state.reset()
-            
-            # Remove last move from database and clear any recorded game result.
-            # Taking back the deciding move means the game is no longer over, so
-            # a stale result/termination must not survive to make a resumed game
-            # wrongly reappear as finished (see clear_game_result). cached_result
-            # is cleared to match the now-live game state.
-            if self.database_session is not None:
-                try:
-                    delete_last_move(self.database_session)
-                    clear_game_result(self.database_session, self.game_db_id)
-                except Exception as e:
-                    log.error(f"[GameManager._check_takeback] Error deleting last move: {e}")
-            self.cached_result = None
-
-            self._game_state.pop_move()  # Notifies observers automatically
+            if not self._pop_one_takeback():
+                return False
             board.beep(board.SOUND_GENERAL, event_type='game_event')
-            
-            # The takeback_callback notifies players (via on_takeback), which clears
-            # their pending moves. This is the correct flow since the position changed.
-            self.takeback_callback()
-            
             # Post-takeback validation uses low-priority queue to avoid blocking polling.
             # If the queue is busy, validation is skipped - the takeback was already
             # validated by comparing current state to previous state before executing it.
-            current = board.getChessStateLowPriority()
-            if current is not None:
-                expected_state = self._chess_board_to_state(self.chess_board)
-                if expected_state is not None and not ChessGameState.states_match(current, expected_state):
-                    log.info("[GameManager._check_takeback] Board state incorrect after takeback, entering correction mode")
-                    self._enter_correction_mode()
-                    self._provide_correction_guidance(current, expected_state)
-            
+            self._guide_physical_board_after_takeback()
             return True
 
         return False
+
+    def _pop_one_takeback(self) -> bool:
+        """Undo the last move in game state, the database, and via takeback_callback.
+
+        Shared by the physical one-move takeback and takeback_to_ply. Does not
+        beep or enter correction -- those happen once after the last pop.
+
+        Returns:
+            True if a move was popped, False if the stack was empty.
+        """
+        if len(self.chess_board.move_stack) == 0:
+            return False
+
+        self.led.off()
+        self.move_state.reset()
+
+        # Remove last move from database and clear any recorded game result.
+        # Taking back the deciding move means the game is no longer over, so
+        # a stale result/termination must not survive to make a resumed game
+        # wrongly reappear as finished (see clear_game_result). cached_result
+        # is cleared to match the now-live game state.
+        if self.database_session is not None:
+            try:
+                delete_last_move(self.database_session)
+                clear_game_result(self.database_session, self.game_db_id)
+            except Exception as e:
+                log.error(f"[GameManager._pop_one_takeback] Error deleting last move: {e}")
+        self.cached_result = None
+
+        self._game_state.pop_move()
+        if self.takeback_callback is not None:
+            self.takeback_callback()
+        return True
+
+    def _guide_physical_board_after_takeback(self) -> None:
+        """Enter correction if the physical pieces do not match the truncated game.
+
+        Reviewing a move list does not move the pieces, so taking back to an
+        earlier ply always leaves the board showing the discarded tail unless
+        the user already replaced them (the physical one-move takeback path).
+        """
+        current = board.getChessStateLowPriority()
+        if current is None:
+            return
+        expected_state = self._chess_board_to_state(self.chess_board)
+        if expected_state is not None and not ChessGameState.states_match(current, expected_state):
+            log.info("[GameManager] Board state incorrect after takeback, entering correction mode")
+            self._enter_correction_mode()
+            self._provide_correction_guidance(current, expected_state)
+
+    def takeback_to_ply(self, target_ply: int) -> int:
+        """Undo every move after ``target_ply`` so that ply becomes the live tip.
+
+        ``target_ply`` is 1-based, the same index the analysis widget uses for a
+        highlighted move. The highlighted move stays; later half-moves are
+        popped. Returns the number of half-moves undone. Returns 0 when there
+        is nothing to undo (already at the tip, or the ply was never played).
+
+        The physical board is not moved by review, so correction mode runs after
+        a successful truncation unless the pieces already match.
+        """
+        current_plies = len(self.chess_board.move_stack)
+        if target_ply < 1 or target_ply >= current_plies:
+            return 0
+
+        popped = 0
+        while len(self.chess_board.move_stack) > target_ply:
+            if not self._pop_one_takeback():
+                break
+            popped += 1
+
+        if popped == 0:
+            return 0
+
+        board.beep(board.SOUND_GENERAL, event_type='game_event')
+        self._guide_physical_board_after_takeback()
+        return popped
 
     def set_pending_hint(self, from_square: int, to_square: int):
         """Set a pending hint move to be shown after correction mode exits.

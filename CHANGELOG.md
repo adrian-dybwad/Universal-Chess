@@ -190,6 +190,17 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   panel, which pages the same way on OK -- previously each panel had its own
   copy of that logic, and only one of them had it at all.
 
+- Long-press OK on a highlighted move in the live move list offers taking the
+  game back to that position, or starting a new recorded game from it. Short OK
+  is unchanged (pages a coach statement, or forces a full refresh). Holding OK
+  for a second while a played move is selected opens Take back to this position
+  (undo every later move; the pieces are then guided back) and New game from
+  this position (copies the moves through that ply into a fresh recorded game;
+  the current game stays in history to resume later). Take back is unavailable
+  when the highlighted move is already the last one, or when the opponent cannot
+  take back (Lichess). A long-press OK anywhere else still cancels the press the
+  way the other keys do.
+
 - Shared mode's instructions now quote the gadget's name rather than describing
   it, so the switch to turn off in macOS's Internet Sharing list can be found by
   reading them.
@@ -512,6 +523,20 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   was also a stray way to power the board off.
 
 ### Fixed
+
+- Long-press OK on a highlighted move never opened Take back / New game from
+  this position. The handler called `PlayerManager.supports_takeback` as a
+  method; it is a bool property, so the events thread logged
+  `'bool' object is not callable` and swallowed the key. The overlay now
+  reads the property.
+
+- New game from a highlighted move started from that ply's FEN with an empty
+  history, and wrote no database row until a later move was played. It now
+  copies the moves through that ply into a fresh recorded game (the same path
+  as Play Game from here on the web). The original game stays in progress so
+  Games can resume it. The source plies' evaluations are copied onto the new
+  rows as well: resume resets the live analysis cache and restores the graph
+  from `GameMove.eval_score`, so omitting them left the new game's graph empty.
 
 - `tools/sd-card-setup/enable_usb_gadget.py` prepared a Shared-mode card while
   documenting a Client one. `rpi-usb-gadget on`, which the card's `runcmd`

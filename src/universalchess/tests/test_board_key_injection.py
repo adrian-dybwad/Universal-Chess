@@ -112,13 +112,14 @@ def test_long_press_holds_release_past_threshold(controller, monkeypatch):
     assert _drain(controller.key_up_queue) == [Key.PLAY_DOWN, Key.PLAY]
 
 
-@pytest.mark.parametrize("name", ["LONG_PLAY", "NOPE", "", "play_down"])
+@pytest.mark.parametrize("name", ["LONG_PLAY", "LONG_TICK", "NOPE", "", "play_down"])
 def test_controller_inject_key_rejects_non_injectable(controller, name):
     """Unknown or non-injectable names must raise and queue nothing.
 
-    LONG_PLAY is a derived hold gesture, not a real button, so it must be
-    rejected here (a single tap can never become a shutdown). A raised
-    ValueError with an empty queue proves no partial event leaked through.
+    LONG_PLAY and LONG_TICK are derived hold gestures, not real buttons, so
+    they must be rejected here (a single tap can never become a shutdown or
+    the move-list overlay). A raised ValueError with an empty queue proves no
+    partial event leaked through.
     """
     with pytest.raises(ValueError):
         controller.inject_key(name)
@@ -172,12 +173,13 @@ def test_board_inject_key_forwards_long_press(monkeypatch):
     assert fake.calls == [("PLAY", True)]
 
 
-@pytest.mark.parametrize("bad", ["LONG_PLAY", "long_play", "POWER", "", "  ", None])
+@pytest.mark.parametrize("bad", ["LONG_PLAY", "LONG_TICK", "long_play", "POWER", "", "  ", None])
 def test_board_inject_key_rejects_non_injectable(monkeypatch, bad):
-    """Unknown buttons and the LONG_PLAY name must raise, never reaching hardware.
+    """Unknown buttons and derived hold names must raise, never reaching hardware.
 
     The wrapper is the validation boundary for free-form web input. Asserts these
-    inputs raise ValueError and the controller is never called.
+    inputs raise ValueError and the controller is never called. LONG_PLAY /
+    LONG_TICK are reached via long_press=True on PLAY / TICK, never as a tap.
     """
     from universalchess.board import board
 
@@ -203,3 +205,24 @@ def test_board_inject_key_requires_controller(monkeypatch):
     monkeypatch.setattr(board, "controller", None)
     with pytest.raises(RuntimeError):
         board.inject_key("BACK")
+
+
+def test_held_tick_derives_long_tick_other_keys_abort():
+    """A 1s hold of OK must emit LONG_TICK; other keys stay an abort.
+
+    Why: short OK still pages coach text / refreshes. The events thread used to
+    abort every non-PLAY hold (beep, swallow the release). TICK is now the
+    exception so a long-press OK can open the move-list overlay; BACK/UP/DOWN/
+    HELP must keep aborting, and PLAY stays on the shutdown countdown (not
+    listed here). How a regression manifests: TICK_DOWN returns None (long OK
+    does nothing) or BACK_DOWN returns a key (a held Back would fire).
+    """
+    from universalchess.board.sync_centaur import Key, derived_long_press_key
+
+    assert derived_long_press_key(Key.TICK_DOWN) is Key.LONG_TICK
+    assert derived_long_press_key(Key.BACK_DOWN) is None
+    assert derived_long_press_key(Key.UP_DOWN) is None
+    assert derived_long_press_key(Key.DOWN_DOWN) is None
+    assert derived_long_press_key(Key.HELP_DOWN) is None
+    assert derived_long_press_key(Key.PLAY_DOWN) is None
+    assert derived_long_press_key(Key.TICK) is None

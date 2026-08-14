@@ -139,6 +139,9 @@ DGT_BUTTON_CODES = {
     0x40: "HELP",
     0x04: "PLAY",
     0x06: "LONG_PLAY",
+    # Derived hold of TICK (OK); never a raw board code. Unused 0x14 sits next
+    # to TICK (0x10) the way LONG_PLAY (0x06) sits next to PLAY (0x04).
+    0x14: "LONG_TICK",
 }
 
 from enum import IntEnum
@@ -147,9 +150,10 @@ from enum import IntEnum
 # This allows a single queue to carry both event types
 KEY_DOWN_OFFSET = 0x80
 
-# Buttons that may be synthesized by inject_key. LONG_PLAY (0x06) is a derived
-# event the events thread produces from a held PLAY; it is never a real
-# down/up code, so it is intentionally excluded.
+# Buttons that may be synthesized by inject_key. LONG_PLAY and LONG_TICK are
+# derived events the events thread produces from a held PLAY / TICK; they are
+# never real down/up codes, so they are intentionally excluded. A PLAY/TICK
+# long press is reached via long_press=True on the real button name.
 INJECTABLE_KEY_NAMES = ("BACK", "TICK", "UP", "DOWN", "HELP", "PLAY")
 
 # Delay before releasing a synthetic long-press. board.eventsThread treats a
@@ -181,7 +185,21 @@ _key_members.update({f"{name}_DOWN": code + KEY_DOWN_OFFSET for name, code in KE
 Key = IntEnum('Key', _key_members)
 
 
-__all__ = ['SyncCentaur', 'DGT_BUS_SEND_CHANGES', 'DGT_SEND_BATTERY_INFO', 'DGT_BUTTON_CODES', 'command', 'DGT_BUS_SEND_STATE_RESP', 'DGT_BUS_SEND_CHANGES_RESP', 'DGT_BUS_POLL_KEYS_RESP']
+def derived_long_press_key(key_down: Key):
+    """The synthetic key to emit when this down is held past 1s, or None to abort.
+
+    PLAY is not listed: its long press runs the shutdown countdown rather than
+    emitting a key immediately. TICK (OK) emits LONG_TICK so a hold can open
+    the move-list action overlay without stealing a short OK. Every other key
+    returns None, meaning the press is cancelled (beep at the threshold, the
+    release is consumed).
+    """
+    if key_down == Key.TICK_DOWN:
+        return Key.LONG_TICK
+    return None
+
+
+__all__ = ['SyncCentaur', 'DGT_BUS_SEND_CHANGES', 'DGT_SEND_BATTERY_INFO', 'DGT_BUTTON_CODES', 'command', 'DGT_BUS_SEND_STATE_RESP', 'DGT_BUS_SEND_CHANGES_RESP', 'DGT_BUS_POLL_KEYS_RESP', 'derived_long_press_key']
 
 
 class SyncCentaur:

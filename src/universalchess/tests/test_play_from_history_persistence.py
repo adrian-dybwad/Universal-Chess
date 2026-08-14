@@ -16,6 +16,10 @@ tests guard:
 3. Illegal/empty input aborts cleanly (returns None) and leaves no game behind --
    a game whose stored moves cannot replay would silently fail to resume, which
    is worse than not creating it.
+4. When a FEN -> analysis lookup is supplied, eval_score and best_move land on
+   the matching rows so resume can restore the graph. Resume resets the live
+   analysis cache; a fork that copies only UCIs leaves those columns NULL and
+   the new game's graph empty. Unanalysed plies stay NULL, not a fabricated 0.
 """
 
 import chess
@@ -101,6 +105,60 @@ def test_transfers_full_history_as_in_progress_game(session):
     assert [r.move for r in rows] == ["", *moves]
     assert rows[0].fen == STANDARD
     assert rows[-1].fen == _final_fen(STANDARD, moves)
+    # No analysis was supplied, so eval columns stay NULL. Fabricating 0 would
+    # draw a flat graph of "dead equal" instead of an empty one.
+    assert [r.eval_score for r in rows] == [None, None, None, None]
+    assert [r.best_move for r in rows] == [None, None, None, None]
+
+
+def test_transfers_analysis_onto_the_matching_move_rows(session):
+    """Eval and best-move of the source plies must land on the new game.
+
+    Why: resume restores the analysis graph from GameMove.eval_score. A fork
+    that copies only UCIs leaves those columns NULL, so the new game's graph
+    is empty after the analysis service is reset. How a regression manifests:
+    eval_score/best_move stay None on a ply the lookup analysed, or a score
+    is written onto the wrong ply's row.
+    """
+    from universalchess.services.analysis import PositionAnalysis
+
+    board = chess.Board()
+    board.push_uci("e2e4")
+    after_e4 = board.fen()
+    board.push_uci("e7e5")
+    after_e5 = board.fen()
+
+    analysed = {
+        STANDARD: PositionAnalysis(STANDARD, 15, None, "e2e4"),
+        after_e4: PositionAnalysis(after_e4, 30, None, "e7e5"),
+        after_e5: PositionAnalysis(after_e5, -12, None, "g1f3"),
+    }
+
+    game_id = create_game_from_moves(
+        session,
+        start_fen=STANDARD,
+        moves_uci=["e2e4", "e7e5", "g1f3"],
+        game_info={},
+        analysis_for_fen=analysed.get,
+    )
+    assert game_id is not None
+
+    rows = (
+        session.query(session.models.GameMove)
+        .filter_by(gameid=game_id)
+        .order_by(session.models.GameMove.id)
+        .all()
+    )
+    by_move = {r.move: r for r in rows}
+    assert by_move[""].eval_score == 15
+    assert by_move[""].best_move == "e2e4"
+    assert by_move["e2e4"].eval_score == 30
+    assert by_move["e2e4"].best_move == "e7e5"
+    assert by_move["e7e5"].eval_score == -12
+    assert by_move["e7e5"].best_move == "g1f3"
+    # g1f3 was not in the lookup: that ply stays unanalysed, not a fabricated 0.
+    assert by_move["g1f3"].eval_score is None
+    assert by_move["g1f3"].best_move is None
 
 
 def test_non_standard_start_persists_start_fen(session):

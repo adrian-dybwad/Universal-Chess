@@ -1882,6 +1882,7 @@ def _start_from_position(
     position_name: str,
     hint_move: str = None,
     record: bool = False,
+    chess960: bool = False,
 ) -> bool:
     """Start a game from a predefined position.
 
@@ -1903,6 +1904,8 @@ def _start_from_position(
         hint_move: Optional UCI move string (e.g., 'e2e4') to show as LED hint
         record: When True, save the game to the database (recorded game) instead
             of treating it as an unsaved practice position.
+        chess960: When True, parse and play the FEN as Chess960 so non-standard
+            castling rights on a forked mid-game position stay legal.
 
     Returns:
         True if position was loaded successfully, False otherwise
@@ -1920,7 +1923,7 @@ def _start_from_position(
         
         # Validate FEN
         try:
-            test_board = chess.Board(fen)
+            test_board = chess.Board(fen, chess960=chess960)
         except ValueError as e:
             log.error(f"[Positions] Invalid FEN: {e}")
             return False
@@ -1962,11 +1965,13 @@ def _start_from_position(
         # analysis/best-move source pointing at the previous start (the standard
         # opening): the board rendered the loaded position while the web best-move
         # indicator analysed the opening and drew an opening development move.
-        # Predefined positions are standard chess, so the 960 flag is cleared.
+        # Predefined catalog positions are standard chess (chess960=False); a
+        # fork from a live Chess960 game passes chess960=True so castling stays
+        # legal.
         from universalchess.state import get_chess_game
         from universalchess.state.chess_game import ChessGameState
         game_state = get_chess_game()
-        game_state.configure_start(fen, chess960=False)
+        game_state.configure_start(fen, chess960=chess960)
         
         log.info(f"[Positions] Position loaded: {game_state.fen}")
         
@@ -2036,13 +2041,18 @@ def _play_from_history(
     white: Optional[str],
     black: Optional[str],
     chess960: bool = False,
+    *,
+    abandon_current: bool = True,
+    source_file: str = "web-play-from-here",
+    analysis_for_fen=None,
 ) -> bool:
     """Start a recorded game seeded with a transferred move history.
 
     Backs "Play Game from here" on the web review page when the viewed ply is past
-    the start: instead of setting up a bare FEN (which starts cold with no
-    history), the reviewed game's moves up to the viewed ply are transferred so
-    the live board continues with the full PGN intact.
+    the start, and "New game from this position" on the board move-list overlay:
+    instead of setting up a bare FEN (which starts cold with no history and no
+    database row until a later move), the reviewed game's moves up to the viewed
+    ply are transferred so the live board continues with the full PGN intact.
 
     Reuses the existing resume machinery rather than duplicating game setup: the
     validated sequence is persisted as a fresh in-progress game
@@ -2050,7 +2060,7 @@ def _play_from_history(
     (:func:`_resume_game`) exactly as an interrupted game would be -- replaying the
     history, restoring the position, and prompting the player to correct the
     physical board and continue. The new game is created BEFORE the current game
-    is aborted so a failure to build it leaves the running game untouched.
+    is torn down so a failure to build it leaves the running game untouched.
 
     Args:
         start_fen: FEN the transferred sequence starts from.
@@ -2059,6 +2069,13 @@ def _play_from_history(
         black: Black player name for the new record.
         chess960: True to build/persist the game as Chess960 so king-onto-rook
             castling UCIs replay correctly.
+        abandon_current: When True (web Play from here), mark the running game
+            abandoned before resuming the new one. When False (board overlay),
+            leave it in progress so it can be resumed later from Games.
+        source_file: Stored on the new game record's ``source`` column.
+        analysis_for_fen: Optional FEN -> analysis lookup copied onto the new
+            move rows. Resume resets the live analysis cache and restores the
+            graph from those columns; without this the new game's graph is empty.
 
     Returns:
         True if the game was created and resumed; False otherwise.
@@ -2076,6 +2093,8 @@ def _play_from_history(
             moves_uci=moves_uci,
             game_info={"white": white or "", "black": black or ""},
             chess960=chess960,
+            source_file=source_file,
+            analysis_for_fen=analysis_for_fen,
         )
     finally:
         session.close()
@@ -2084,9 +2103,11 @@ def _play_from_history(
         log.warning("[PlayFromHistory] Could not persist transferred history")
         return False
 
-    # Only now discard the running game (records it abandoned), matching the plain
-    # setup_position path, then resume the freshly built one for continued play.
-    _abort_current_game()
+    # Only now discard the running game when this is a replacement (web Play
+    # from here). The board overlay forks instead: the original stays in
+    # progress so Games can resume it.
+    if abandon_current:
+        _abort_current_game()
     game_data = _get_game_by_id(game_id)
     if game_data is None:
         log.warning(f"[PlayFromHistory] New game id={game_id} not resumable")
@@ -3065,6 +3086,93 @@ def _resume_game_mode():
         display_manager.resume()
     _record_session_view(VIEW_GAME, game_db_id=_current_game_db_id())
     log.info("[App] Game resumed from menu")
+
+
+def _on_move_list_action(result: str, ply: int) -> None:
+    """Apply take-back or new-game from the highlighted move-list ply.
+
+    Takeback truncates the live game so ``ply`` is the last remaining move.
+    New game copies the moves through that ply into a fresh recorded game
+    (the same path as web "Play Game from here"); the current game is left
+    in the database in progress so it can be resumed from Games later.
+    Cancel is a no-op (the overlay already restored the board).
+    """
+    global protocol_manager, display_manager
+
+    if result == "takeback":
+        if protocol_manager is not None and protocol_manager.game_manager is not None:
+            protocol_manager.game_manager.takeback_to_ply(ply)
+        if display_manager is not None:
+            display_manager.select_analysis_ply(0)
+            _record_session_view(VIEW_GAME, analysis_selection=0)
+        return
+
+    if result != "new_game":
+        return
+
+    from universalchess.menus.move_list_menu import (
+        history_to_transfer,
+        snapshot_analyses_for_positions,
+    )
+    from universalchess.services.analysis import (
+        get_analysis_service,
+        position_analysis_from_stored,
+    )
+    from universalchess.state import get_chess_game
+
+    state = get_chess_game()
+    positions = state.history_positions()
+    transferred = history_to_transfer(positions=positions, ply=ply)
+    if transferred is None:
+        log.warning(
+            f"[App] New game from ply {ply} has no transferable history"
+        )
+        return
+    start_fen, moves_uci = transferred
+    chess960 = state.chess960
+    white = ""
+    black = ""
+    stored_by_fen = {}
+    if protocol_manager is not None and protocol_manager.game_manager is not None:
+        gm = protocol_manager.game_manager
+        info = gm.game_info or {}
+        white = info.get("white") or ""
+        black = info.get("black") or ""
+        session = gm.database_session
+        if session is not None and gm.game_db_id >= 0:
+            from universalchess.db import models
+
+            for row in session.query(models.GameMove).filter_by(
+                gameid=gm.game_db_id
+            ):
+                stored = position_analysis_from_stored(
+                    row.fen,
+                    getattr(row, "eval_score", None),
+                    getattr(row, "best_move", None),
+                )
+                if stored is not None:
+                    stored_by_fen[row.fen] = stored
+    snapshot = snapshot_analyses_for_positions(
+        positions=positions,
+        ply=ply,
+        live_lookup=get_analysis_service().get_position_analysis,
+        stored_lookup=stored_by_fen.get,
+    )
+    log.info(
+        f"[App] New game from reviewed ply {ply}: {len(moves_uci)} moves, "
+        f"chess960={chess960}, analysed={len(snapshot)}"
+    )
+    if not _play_from_history(
+        start_fen,
+        moves_uci,
+        white,
+        black,
+        chess960,
+        abandon_current=False,
+        source_file="board-move-list",
+        analysis_for_fen=snapshot.get,
+    ):
+        log.warning("[App] Failed to start new game from reviewed position")
 
 
 def _enter_game():
@@ -6994,6 +7102,7 @@ def key_callback(key_id):
     - BACK: In game mode (no game or after resign/draw), returns to menu
     - HELP: Toggle game analysis widget visibility (game mode only)
     - LONG_PLAY: Shutdown system
+    - LONG_TICK: In game move-list review, open take-back / new-game overlay
     
     If keys fall through without being handled, an error is logged. After
     too many unhandled keys (indicating a broken state), the app forces
@@ -7017,6 +7126,39 @@ def key_callback(key_id):
         # Cancel any active menu so the main loop can check the shutdown flag
         if _menu_manager is not None and _menu_manager.active_widget is not None:
             _menu_manager.cancel_selection("SHUTDOWN")
+        return
+
+    # LONG_TICK is a held OK. In move-list review it opens take-back / new-game;
+    # everywhere else it is a no-op (short OK is unchanged). Consumed here so it
+    # never counts as an unhandled key.
+    if key_id == board.Key.LONG_TICK:
+        if (
+            app_state == AppState.GAME
+            and display_manager
+            and not display_manager.is_menu_active()
+        ):
+            from universalchess.menus.move_list_menu import (
+                players_support_takeback,
+                should_open_move_list_action_menu,
+                takeback_is_available,
+            )
+            reviewing = display_manager.is_move_review_active()
+            if should_open_move_list_action_menu(reviewing=reviewing, long_tick=True):
+                ply = display_manager.analysis_widget.selected_ply()
+                num_plies = display_manager.analysis_widget.num_plies()
+                player_manager = None
+                if protocol_manager is not None and protocol_manager.game_manager is not None:
+                    player_manager = protocol_manager.game_manager.player_manager
+                supports = players_support_takeback(player_manager)
+                display_manager.show_move_list_action_menu(
+                    lambda result, selected_ply=ply: _on_move_list_action(result, selected_ply),
+                    takeback_enabled=takeback_is_available(
+                        selected_ply=ply,
+                        num_plies=num_plies,
+                        supports_takeback=supports,
+                    ),
+                )
+        _reset_unhandled_key_count()
         return
     
     # Priority 0: Active help dialog - UP/DOWN turn the page of a tip too long

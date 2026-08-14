@@ -31,6 +31,7 @@ from universalchess.board.sync_centaur import (
     Key,
     INJECTABLE_KEY_NAMES,
     DISCOVERY_RETRY_SECONDS,
+    derived_long_press_key,
 )
 import sys
 import os
@@ -354,10 +355,11 @@ def wait_for_key_up(timeout=None, accept=None):
 
 
 # Physical buttons the web remote (interactive board control) may press. These
-# are the six labelled keys on the board's control panel. LONG_PLAY is
-# deliberately excluded from the set: it is a derived hold gesture, not a real
-# button code. A PLAY long-press (which powers the board off) is still reachable,
-# but only via long_press=True so it stays a deliberate hold, never a single tap.
+# are the six labelled keys on the board's control panel. LONG_PLAY and
+# LONG_TICK are deliberately excluded from the set: they are derived hold
+# gestures, not real button codes. A PLAY long-press (which powers the board
+# off) and a TICK long-press (move-list overlay) are still reachable, but only
+# via long_press=True so they stay a deliberate hold, never a single tap.
 INJECTABLE_KEYS = INJECTABLE_KEY_NAMES
 
 
@@ -371,12 +373,13 @@ def inject_key(key_name: str, long_press: bool = False):
     Args:
         key_name: One of INJECTABLE_KEYS (case-insensitive).
         long_press: When True, hold the key past the events thread's long-press
-            threshold (e.g. PLAY long-press starts the shutdown countdown).
+            threshold (e.g. PLAY long-press starts the shutdown countdown;
+            TICK long-press emits LONG_TICK).
 
     Raises:
-        ValueError: If key_name is not an injectable button (unknown or
-            LONG_PLAY), so callers can reject bad input instead of silently
-            pressing the wrong key.
+        ValueError: If key_name is not an injectable button (unknown or a
+            derived gesture such as LONG_PLAY / LONG_TICK), so callers can
+            reject bad input instead of silently pressing the wrong key.
         RuntimeError: If the board controller is not initialized yet.
     """
     name = (key_name or "").strip().upper()
@@ -888,6 +891,9 @@ def eventsThread(keycallback, fieldcallback, tout):
     - Short press: the key-up event is passed to the callback.
     - PLAY_DOWN held 1+ second: starts the shutdown countdown (releasing during
       the countdown cancels it).
+    - TICK_DOWN held 1+ second: emits LONG_TICK (move-list takeback/new-game
+      overlay while a ply is highlighted; a no-op otherwise). The matching
+      key-up is consumed so a short OK is not also dispatched.
     - Any other key held 1+ second: an "abort" gesture - a beep fires at the
       threshold to signal the press was cancelled, and on release the key is
       consumed (no callback). This lets the user back out of a press they
@@ -1026,9 +1032,10 @@ def eventsThread(keycallback, fieldcallback, tout):
                 key_pressed = controller.get_next_key(timeout=0.0)
 
                 # All key-down events: every key acts on RELEASE. PLAY held 1s
-                # runs the shutdown countdown; any other key held 1s is an
-                # "abort" gesture (beep at threshold, consumed on release) so the
-                # user can back out of a press they changed their mind about.
+                # runs the shutdown countdown; TICK held 1s emits LONG_TICK;
+                # any other key held 1s is an "abort" gesture (beep at
+                # threshold, consumed on release) so the user can back out of a
+                # press they changed their mind about.
                 if key_pressed is not None and key_pressed.value >= 0x80:
                     # This is a _DOWN event
                     long_press_key = key_pressed
@@ -1065,10 +1072,24 @@ def eventsThread(keycallback, fieldcallback, tout):
                                 key_pressed = None
                                 break  # Exit the detection loop
                             else:
-                                # Abort gesture armed: the beep tells the user that
-                                # releasing now cancels the press. Keep waiting for
-                                # key-up, which will be consumed below.
-                                log.info('[board.events] Long press detected, key-press cancelled (release to no-op)')
+                                derived = derived_long_press_key(long_press_key)
+                                if derived is not None:
+                                    # TICK long-press: dispatch LONG_TICK now, then
+                                    # keep waiting for key-up so it is consumed and
+                                    # never delivered as a short OK.
+                                    log.info(f'[board.events] Long press detected, sending {derived.name}')
+                                    try:
+                                        keycallback(derived)
+                                    except Exception as e:
+                                        log.error(f"[board.events] LONG_TICK keycallback error: {e}")
+                                        import traceback
+                                        traceback.print_exc()
+                                else:
+                                    # Abort gesture armed: the beep tells the user
+                                    # that releasing now cancels the press. Keep
+                                    # waiting for key-up, which will be consumed
+                                    # below.
+                                    log.info('[board.events] Long press detected, key-press cancelled (release to no-op)')
                         
                         # Check for key-up
                         next_key = controller.get_next_key(timeout=0.0)
@@ -1078,8 +1099,9 @@ def eventsThread(keycallback, fieldcallback, tout):
                             if next_key.value == base_code:
                                 # Matching key-up received
                                 if long_triggered:
-                                    # Long press: PLAY already handled above; any
-                                    # other key is an aborted press - consume it.
+                                    # Long press: PLAY already handled above; TICK
+                                    # already dispatched LONG_TICK; any other key
+                                    # is an aborted press - consume the key-up.
                                     key_pressed = None
                                 else:
                                     # Short press: deliver the key-up to callback.

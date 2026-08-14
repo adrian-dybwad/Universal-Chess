@@ -855,6 +855,18 @@ class DisplayManager:
             return 0
         return self.analysis_widget.selection
 
+    def is_move_review_active(self) -> bool:
+        """True when a played move is highlighted in the analysis move list.
+
+        UP/DOWN review selects a ply (1..N); selection 0 is the eval/board view.
+        A long-press OK opens the takeback/new-game overlay only while this is
+        True, so a short OK on the board view still pages coach text or refreshes.
+        """
+        return (
+            self.analysis_widget is not None
+            and self.analysis_widget.selected_ply() is not None
+        )
+
     def set_coach_selection_callback(self, callback) -> None:
         """Register a callback invoked with the selected ply (or None).
 
@@ -1039,7 +1051,8 @@ class DisplayManager:
         Resumes only when this manager paused the clock for the menu, so a clock
         that was already paused/stopped before the menu opened is not started.
         Resign/draw outcomes end the game (their handlers stop the clock) and so
-        must not resume; only the cancel path returns to live play.
+        must not resume; only cancel and takeback return to live play on the
+        same game.
         """
         if self._clock_paused_for_menu:
             self._clock_paused_for_menu = False
@@ -1306,7 +1319,8 @@ class DisplayManager:
         strings, rebuilds the board, then invokes the stored result callback.
 
         The board is rebuilt for every outcome that returns to the board (all
-        results except the shutdown "exit"), and the rebuild happens BEFORE the
+        results except the shutdown "exit" and "new_game", which tears the
+        current managers down), and the rebuild happens BEFORE the
         result callback runs. This ordering is the fix for menu-driven game
         endings: a resign/draw selection sets the game result inside its
         callback, and the rebuilt board carries a GameOverWidget freshly
@@ -1360,14 +1374,15 @@ class DisplayManager:
                 result = "cancel"
 
         # Rebuild the board (and its GameOverWidget) before the callback for
-        # every on-board outcome; only a shutdown skips it. See docstring.
-        if result != "exit":
+        # every on-board outcome; shutdown and new_game skip it. See docstring.
+        if result not in ("exit", "new_game"):
             self._init_widgets()
 
         # Resume a clock paused for this overlay only when returning to live
-        # play. Resign/draw end the game (their handlers stop the clock) and exit
-        # powers off, so those outcomes clear the guard flag without resuming.
-        if result == "cancel":
+        # play on the same game. Resign/draw end the game (their handlers stop
+        # the clock), exit powers off, and new_game tears these managers down,
+        # so those outcomes clear the guard flag without resuming.
+        if result in ("cancel", "takeback"):
             self._resume_clock_after_menu()
         else:
             self._clock_paused_for_menu = False
@@ -1544,6 +1559,72 @@ class DisplayManager:
                 if self._menu_result_callback:
                     self._menu_result_callback("cancel")
         
+        wait_thread = threading.Thread(target=wait_for_result, daemon=True)
+        wait_thread.start()
+
+    def show_move_list_action_menu(self, on_result: callable, *, takeback_enabled: bool):
+        """Show take-back / new-game options for the highlighted move-list ply.
+
+        Non-blocking -- calls on_result when the user makes a selection.
+        Opened by a long-press OK (LONG_TICK) while a played move is highlighted;
+        a short OK still pages coach text or refreshes.
+
+        Args:
+            on_result: Callback(result: str) with 'takeback', 'new_game', or
+                'cancel'.
+            takeback_enabled: False when the highlighted ply is already the tip
+                or the players cannot take back (the row stays visible, greyed).
+        """
+        from universalchess.menus.move_list_menu import build_move_list_action_entries
+
+        log.info(f"[DisplayManager] Showing move-list action menu (takeback_enabled={takeback_enabled})")
+
+        self._pause_clock_for_menu()
+        _load_widgets()
+
+        entries = build_move_list_action_entries(takeback_enabled=takeback_enabled)
+        selected_index = 0
+        for index, entry in enumerate(entries):
+            if entry.enabled:
+                selected_index = index
+                break
+
+        action_menu = _IconMenuWidget(
+            0, 0, 128, 296, board.display_manager.update,
+            entries=entries,
+            selected_index=selected_index,
+        )
+
+        self._menu_result_callback = on_result
+        self._current_menu = action_menu
+        self._menu_active = True
+
+        if board.display_manager:
+            board.display_manager.clear_widgets(addStatusBar=False)
+            future = board.display_manager.add_widget(action_menu)
+            if future:
+                try:
+                    future.result(timeout=2.0)
+                except Exception as e:
+                    log.debug(f"[DisplayManager] Error displaying move-list menu: {e}")
+
+        action_menu.activate()
+
+        def wait_for_result():
+            try:
+                action_menu._selection_event.wait()
+                # LONG_PLAY is handled globally as shutdown; if it reached this
+                # overlay it must dismiss, not power off.
+                self._finalize_menu_selection(action_menu, shutdown_result="cancel")
+            except Exception as e:
+                log.error(f"[DisplayManager] Error in move-list action menu: {e}")
+                import traceback
+                traceback.print_exc()
+                self._menu_active = False
+                self._current_menu = None
+                if self._menu_result_callback:
+                    self._menu_result_callback("cancel")
+
         wait_thread = threading.Thread(target=wait_for_result, daemon=True)
         wait_thread.start()
     
