@@ -16,6 +16,7 @@
     "cancel": "Cancelar",
     "delete": "Eliminar",
     "retry": "Reintentar",
+    "reload": "Recargar",
     "invalidCredentials": "Credenciales no válidas. Inténtalo de nuevo.",
     "networkError": "Error de red al contactar con el tablero.",
     "imagePreviewAlt": "Vista previa de {{label}}"
@@ -73,7 +74,9 @@
     "unknown": "Desconocido",
     "changeSettings": "Haz clic para cambiar los ajustes de conexión",
     "connectedTo": "Conectado a: {{host}}",
-    "localServer": "Usando el servidor local"
+    "localServer": "Usando el servidor local",
+    "unavailableTitle": "No se puede contactar con el tablero",
+    "unavailableBody": "Puede estar apagado, reiniciándose, o se ha perdido la conexión. Inténtalo de nuevo en un momento."
   },
   "docTitle": {
     "home": "Inicio",
@@ -178,7 +181,6 @@
   },
   "positions": {
     "loading": "Cargando posiciones...",
-    "loadError": "No se pudieron cargar las posiciones desde el tablero.",
     "setupSuccess": "Se configuró \"{{name}}\" en el tablero.",
     "setupFailed": "No se pudo configurar la posición.",
     "confirmTitle": "¿Terminar la partida actual?",
@@ -314,7 +316,6 @@
   "settingsPage": {
     "title": "Ajustes",
     "loading": "Cargando ajustes...",
-    "connectError": "No se pudo conectar con el backend de Universal Chess. Asegúrate de que el tablero esté en marcha y accesible.",
     "saving": "Guardando…",
     "saved": "Guardado",
     "saveError": "No se pudo guardar. Revisa tu conexión e inténtalo de nuevo.",
@@ -437,7 +438,6 @@
       "reverseHand": "El motor encuentra la mejor jugada con esa pieza, indicada por los LED.",
       "reverseNote": "Ideal para practicar la coordinación de piezas mientras el motor se encarga de la táctica."
     },
-    "developingLocally": "Si estás desarrollando en local, configura la URL de la API en los ajustes de proxy de <0>vite.config.ts</0> o ejecuta el script <1>run-react</1> con la opción <2>--api</2>.",
     "agentsUi": {
       "none": "No hay agentes disponibles.",
       "active": "Activo",

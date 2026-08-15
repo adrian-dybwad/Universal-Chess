@@ -533,6 +533,34 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- Top-of-page status banners (a pending update, a running install, background
+  activity) sat in normal document flow above a sticky navbar, so they
+  scrolled off as soon as the page left the top. They now stick with the
+  navbar and stay visible while they are showing.
+
+- Opening a web page while the board was unreachable showed a developer
+  setup note (`vite.config.ts`, `run-react`) or the browser's "Failed to
+  fetch", with no Retry. Those screens now explain that the board cannot
+  be reached and offer Retry and Reload.
+
+- `deploy-to-pi.sh` could not copy onto a board whose SSH user has no
+  passwordless sudo for rsync -- the stock state after the package install,
+  whose tree is root-owned. The transfer ran `sudo rsync` as rsync's remote
+  command, which has no TTY, so even a real terminal printed "a terminal is
+  required to read the password" and aborted. When `sudo -n` is denied, the
+  tree is now staged into that user's home and a single `ssh -t sudo rsync`
+  installs it, so the password prompt can appear. Boards that already have
+  passwordless sudo keep the direct elevated transfer.
+
+- Settings claimed "You're running the latest version" when the update check
+  could not reach GitHub -- no DNS, no route, the USB-gadget Client case with
+  Internet Sharing not actually forwarding. A failed fetch used to look the
+  same as "no newer release" (HTTP 200, `update_available: false`), so the
+  confirmation was shown on a board that was behind. A failed check is now a
+  503, the confirmation is withheld, and the page reports that the check
+  failed. The board's Check for Updates splash reports the same failure
+  instead of "Up to date".
+
 - Long-press OK on a highlighted move never opened Take back / New game from
   this position. The handler called `PlayerManager.supports_takeback` as a
   method; it is a bool property, so the events thread logged

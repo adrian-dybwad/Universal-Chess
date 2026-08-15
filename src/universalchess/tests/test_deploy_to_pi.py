@@ -185,11 +185,14 @@ class TestTransferFailureIsReported:
 
     def test_failed_transfer_does_not_restart_the_service(self, deploy):
         # Restarting after a failed sync is what made the board look healthy
-        # while running stale code. No ssh invocation may occur at all.
-        # Regression: ssh_calls is non-empty.
+        # while running stale code. A sudo-NOPASSWD probe may run before the
+        # transfer; a restart or verification ssh must not. Regression: a
+        # systemctl/bash ssh follows a failed rsync.
         _, _, ssh_calls = deploy(rsync_exit=_RSYNC_PARTIAL_TRANSFER,
                                  rsync_stderr=_RSYNC_STDERR)
-        assert ssh_calls == []
+        remote = " ".join(a for c in ssh_calls for a in c)
+        assert "systemctl" not in remote, remote
+        assert "bash" not in remote, remote
 
     def test_transfer_diagnostics_reach_the_operator(self, deploy):
         # The permission errors existed but were merged into stdout and eaten by
@@ -244,6 +247,35 @@ class TestElevationAndOwnership:
         _, rsync_calls, _ = deploy("--no-elevate")
         argv = rsync_calls[0]
         assert not any(a.startswith("--rsync-path=") for a in argv), argv
+
+    def test_password_sudo_stages_then_copies_with_a_tty(self, deploy):
+        """sudo via --rsync-path has no TTY, so a board without NOPASSWD never
+        prompts -- the operator sees "a terminal is required" and the transfer
+        dies, even in a real terminal.
+
+        When ``sudo -n`` is denied, the tree is rsynced into the SSH user's
+        home (no elevation) and a separate ``ssh -t sudo rsync`` installs it
+        into the root-owned prefix, which can prompt. How a regression
+        manifests: --rsync-path still points at sudo, or the install ssh has
+        no -t so the password prompt is still impossible.
+        """
+        _, rsync_calls, ssh_calls = deploy(
+            ssh_exit=1, ssh_fail_pattern="sudo -n",
+        )
+        assert rsync_calls, "rsync was never invoked"
+        argv = rsync_calls[0]
+        assert not any(a.startswith("--rsync-path=") for a in argv), argv
+        assert any("uc-deploy-staging" in a for a in argv), argv
+        assert "-a" not in argv and "-o" not in argv and "-g" not in argv, argv
+        apply = [c for c in ssh_calls if "-t" in c]
+        assert apply, ssh_calls
+        joined = " ".join(apply[0])
+        assert "sudo rsync -rlptD" in joined, joined
+        assert "/opt/universalchess" in joined, joined
+        assert "sudo rsync -a" not in joined, joined
+        assert "chown" in joined, joined
+        for directory in ("db", "web/static"):
+            assert directory in joined, (directory, joined)
 
 
 class TestRuntimeOwnershipIsRestored:

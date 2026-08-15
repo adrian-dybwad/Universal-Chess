@@ -8,6 +8,15 @@
   min-height: 100vh;
 }
 
+/* Update and activity banners sit above the navbar. They used to be in normal
+   flow while only the navbar was sticky, so they scrolled off the top. This
+   wrapper sticks as one unit so a visible banner stays on screen with the nav. */
+.app-chrome {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky, 100);
+}
+
 .section {
   flex: 1;
 }

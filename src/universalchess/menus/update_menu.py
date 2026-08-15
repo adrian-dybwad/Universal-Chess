@@ -31,8 +31,10 @@ def _show_update_splash(board, message: str, timeout: float = 2.0) -> None:
     if promise:
         try:
             promise.result(timeout=timeout)
-        except Exception:
-            pass
+        except TimeoutError:
+            # The splash was shown; waiting for the panel to settle is
+            # best-effort so a slow refresh cannot stall the menu.
+            return
 
 
 def check_for_updates_interactive(board, log) -> None:
@@ -49,6 +51,9 @@ def check_for_updates_interactive(board, log) -> None:
             _show_update_splash(board, f"Update available\nv{release.version}")
             time.sleep(2)
         else:
+            # None is a completed "current" check. Fetch failures raise
+            # UpdateCheckError (caught below) rather than returning None, so
+            # this splash cannot claim "Up to date" when GitHub was unreachable.
             current = update_service.get_current_version()
             _show_update_splash(board, f"Up to date\nv{current}")
             time.sleep(2)
@@ -142,6 +147,7 @@ def find_local_deb_files(search_dir: str = None) -> List[str]:
         for f in os.listdir(search_dir):
             if f.endswith(".deb"):
                 deb_files.append(os.path.join(search_dir, f))
-    except Exception:
-        pass
+    except OSError:
+        # An unreadable home (or missing path) is not a local .deb source.
+        return []
     return sorted(deb_files)

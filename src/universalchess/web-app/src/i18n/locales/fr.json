@@ -16,6 +16,7 @@
     "cancel": "Annuler",
     "delete": "Supprimer",
     "retry": "Réessayer",
+    "reload": "Recharger",
     "invalidCredentials": "Identifiants incorrects. Veuillez réessayer.",
     "networkError": "Erreur réseau lors de la communication avec le plateau.",
     "imagePreviewAlt": "Aperçu de {{label}}"
@@ -73,7 +74,9 @@
     "unknown": "Inconnu",
     "changeSettings": "Cliquez pour modifier les paramètres de connexion",
     "connectedTo": "Connecté à : {{host}}",
-    "localServer": "Utilisation du serveur local"
+    "localServer": "Utilisation du serveur local",
+    "unavailableTitle": "Impossible de joindre le plateau",
+    "unavailableBody": "Il est peut-être éteint, en train de redémarrer, ou la connexion a été perdue. Réessayez dans un instant."
   },
   "docTitle": {
     "home": "Accueil",
@@ -178,7 +181,6 @@
   },
   "positions": {
     "loading": "Chargement des positions...",
-    "loadError": "Impossible de charger les positions depuis le plateau.",
     "setupSuccess": "Position « {{name}} » placée sur le plateau.",
     "setupFailed": "Impossible de placer la position.",
     "confirmTitle": "Terminer la partie actuelle ?",
@@ -314,7 +316,6 @@
   "settingsPage": {
     "title": "Paramètres",
     "loading": "Chargement des paramètres...",
-    "connectError": "Impossible de se connecter au backend Universal Chess. Vérifiez que le plateau est en marche et accessible.",
     "saving": "Enregistrement…",
     "saved": "Enregistré",
     "saveError": "Impossible d'enregistrer. Vérifiez votre connexion et réessayez.",
@@ -437,7 +438,6 @@
       "reverseHand": "Le moteur trouve le meilleur coup avec cette pièce, indiqué par les LED.",
       "reverseNote": "Idéal pour pratiquer la coordination des pièces pendant que le moteur gère la tactique."
     },
-    "developingLocally": "Si vous développez en local, configurez l'URL de l'API dans les paramètres de proxy de <0>vite.config.ts</0> ou exécutez le script <1>run-react</1> avec l'option <2>--api</2>.",
     "agentsUi": {
       "none": "Aucun agent n'est disponible.",
       "active": "Actif",

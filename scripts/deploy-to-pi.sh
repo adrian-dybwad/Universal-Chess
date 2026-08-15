@@ -35,6 +35,11 @@
 #       --no-elevate   Do not run the remote rsync under sudo. Only for targets
 #                      whose tree is owned by the SSH user; the .deb install
 #                      tree is root-owned and needs the default elevation.
+#                      A board without passwordless sudo is still elevated:
+#                      the tree is staged into the SSH user's home, then
+#                      `ssh -t sudo rsync` installs it so the terminal can
+#                      prompt. `--rsync-path=sudo rsync` cannot prompt --
+#                      rsync's remote command has no TTY.
 #   -H, --host HOST    SSH target            (default: pi@dgt.local)
 #       --path PATH    Remote source dir     (default: /opt/universalchess/)
 #       --service NAME board systemd unit    (default: universal-chess)
@@ -102,6 +107,11 @@ SSH_OPTS="ssh -o ConnectTimeout=10"
 # denied for every file -- the failure this script previously reported as
 # "Deploy complete".
 REMOTE_RSYNC="sudo rsync"
+
+# Home-relative staging dir used when remote sudo cannot run without a TTY
+# (--rsync-path=sudo rsync never prompts). Filled unelevated, then installed
+# with ssh -t sudo rsync so the operator's terminal can ask for a password.
+REMOTE_STAGING="uc-deploy-staging/"
 
 # -a without -o -g. A root-side receiver honours -o/-g by applying the *sender's*
 # numeric uid/gid, which on macOS is 501:staff -- silently destroying the
@@ -268,22 +278,61 @@ fi
 # incompatible and silently writes 0-byte files for newly-created paths. Plain
 # -a transfers correctly over the (fast, local) network without that risk.
 RSYNC_FLAGS=("${RSYNC_ARCHIVE[@]}" --itemize-changes "${EXCLUDES[@]}")
-if [[ $ELEVATE -eq 1 ]]; then
-	RSYNC_FLAGS+=(--rsync-path="$REMOTE_RSYNC")
-fi
 if [[ $DRY_RUN -eq 1 ]]; then
 	RSYNC_FLAGS+=(-n)
 fi
 
-echo "Syncing ${SRC_DIR} -> ${HOST}:${REMOTE_PATH}$([[ $DRY_RUN -eq 1 ]] && echo '  (dry-run)')"
-run_rsync "${RSYNC_FLAGS[@]}" -e "$SSH_OPTS" "$SRC_DIR" "${HOST}:${REMOTE_PATH}"
+# sudo via --rsync-path has no TTY, so a board whose SSH user cannot
+# NOPASSWD never prompts -- the operator sees "a terminal is required"
+# even in a real terminal. Probe first. ssh exit 255 is unreachable, not
+# "needs a password"; any other non-zero is treated as a passworded sudo.
+ELEVATE_VIA_TTY=0
+if [[ $ELEVATE -eq 1 && $DRY_RUN -eq 0 ]]; then
+	set +e
+	$SSH_OPTS -o BatchMode=yes "$HOST" "sudo -n true" >/dev/null 2>&1
+	probe_rc=$?
+	set -e
+	if [[ $probe_rc -eq 0 ]]; then
+		RSYNC_FLAGS+=(--rsync-path="$REMOTE_RSYNC")
+	elif [[ $probe_rc -eq 255 ]]; then
+		echo "Cannot reach ${HOST} (ssh exit 255); aborting." >&2
+		exit 255
+	else
+		ELEVATE_VIA_TTY=1
+		echo "Remote sudo requires a password; staging to ~/${REMOTE_STAGING%/} then installing as root."
+	fi
+elif [[ $ELEVATE -eq 1 ]]; then
+	RSYNC_FLAGS+=(--rsync-path="$REMOTE_RSYNC")
+fi
 
-# Mirror the freshly built bundle with --delete so the remote bundle dir exactly
-# matches the local stage -- removing the previous build's orphaned hashed assets.
-if [[ $BUILD_WEB -eq 1 ]]; then
-	echo "Mirroring web/react-app (with --delete) -> ${HOST}:${REMOTE_PATH}web/react-app/"
-	run_rsync "${RSYNC_FLAGS[@]}" --delete -e "$SSH_OPTS" \
-		"${SRC_DIR}web/react-app/" "${HOST}:${REMOTE_PATH}web/react-app/"
+if [[ $ELEVATE_VIA_TTY -eq 1 ]]; then
+	echo "Syncing ${SRC_DIR} -> ${HOST}:${REMOTE_STAGING}"
+	run_rsync "${RSYNC_FLAGS[@]}" -e "$SSH_OPTS" "$SRC_DIR" "${HOST}:${REMOTE_STAGING}"
+	if [[ $BUILD_WEB -eq 1 ]]; then
+		echo "Mirroring web/react-app (with --delete) -> ${HOST}:${REMOTE_STAGING}web/react-app/"
+		run_rsync "${RSYNC_FLAGS[@]}" --delete -e "$SSH_OPTS" \
+			"${SRC_DIR}web/react-app/" "${HOST}:${REMOTE_STAGING}web/react-app/"
+	fi
+	SERVICE_USER="${HOST%%@*}"
+	# One ssh -t so sudo can prompt once. Do not pipe a script: -t uses stdin
+	# for the password. -rlptD, not -a: same ownership rule as the direct path.
+	apply="sudo rsync -rlptD \"\$HOME/${REMOTE_STAGING}\" \"${REMOTE_PATH}\""
+	if [[ $BUILD_WEB -eq 1 ]]; then
+		apply+=" && sudo rsync -rlptD --delete \"\$HOME/${REMOTE_STAGING}web/react-app/\" \"${REMOTE_PATH}web/react-app/\""
+	fi
+	for dir in "${RUNTIME_WRITABLE_DIRS[@]}"; do
+		apply+=" && sudo chown -R ${SERVICE_USER}:${SERVICE_USER} '${REMOTE_PATH%/}/${dir}'"
+	done
+	echo "Installing staged tree into ${REMOTE_PATH} (sudo may ask for a password) ..."
+	ssh -t -o ConnectTimeout=10 "$HOST" "$apply"
+else
+	echo "Syncing ${SRC_DIR} -> ${HOST}:${REMOTE_PATH}$([[ $DRY_RUN -eq 1 ]] && echo '  (dry-run)')"
+	run_rsync "${RSYNC_FLAGS[@]}" -e "$SSH_OPTS" "$SRC_DIR" "${HOST}:${REMOTE_PATH}"
+	if [[ $BUILD_WEB -eq 1 ]]; then
+		echo "Mirroring web/react-app (with --delete) -> ${HOST}:${REMOTE_PATH}web/react-app/"
+		run_rsync "${RSYNC_FLAGS[@]}" --delete -e "$SSH_OPTS" \
+			"${SRC_DIR}web/react-app/" "${HOST}:${REMOTE_PATH}web/react-app/"
+	fi
 fi
 
 if [[ $DRY_RUN -eq 1 ]]; then
@@ -292,9 +341,10 @@ if [[ $DRY_RUN -eq 1 ]]; then
 fi
 
 # Hand the runtime data directories back to the service user, mirroring
-# postinst's grantRuntimeDataOwnership. Only needed after an elevated sync,
-# which is the only way root-owned files appear there.
-if [[ $ELEVATE -eq 1 ]]; then
+# postinst's grantRuntimeDataOwnership. Only needed after a *direct* elevated
+# sync (new files created as root). The TTY path already chowns in the same
+# sudo that copies, so it does not need a second password prompt here.
+if [[ $ELEVATE -eq 1 && $ELEVATE_VIA_TTY -eq 0 ]]; then
 	SERVICE_USER="${HOST%%@*}"
 	echo "Restoring ${SERVICE_USER} ownership of runtime data dirs ..."
 	regrant=""

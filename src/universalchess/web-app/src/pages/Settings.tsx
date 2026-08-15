@@ -8,6 +8,7 @@ import { MenuContainer } from '../menu/MenuContainer';
 import { renderCatalogRow } from '../menu/renderCatalogRow';
 import { buildSections } from '../menu/engine';
 import { EngineProfileEditor } from '../components/EngineProfileEditor';
+import { BoardUnreachableCard } from '../components/BoardUnreachableCard';
 import type { FieldValue } from '../components/CatalogField';
 import { useLoginRetry } from '../components/useLoginRetry';
 import { useRadioCapability } from '../hooks/useRadioCapability';
@@ -599,7 +600,7 @@ export function Settings() {
   // Fetched from GET /api/coaches. Independent of the AI provider/key.
   const [coaches, setCoaches] = useState<CoachInfo[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   // Live save state for the inline indicator. Value settings save automatically
   // (debounced) on every change -- there is no explicit Save button -- so this
   // reports whether the last auto-save is in flight, succeeded, or failed.
@@ -674,7 +675,7 @@ export function Settings() {
   // version, but its strings are localized server-side to the device UI language,
   // so it is fetched on mount and again whenever that language changes (below) --
   // not on every settings refresh. Treated as a required dependency: a failure
-  // surfaces via the load error path rather than silently rendering hardcoded
+  // surfaces via the unreachable card rather than silently rendering hardcoded
   // labels that may have drifted from the catalog.
   const loadCatalog = useCallback(async () => {
     const data = await apiFetch('/api/menu-schema').then((r) => r.json());
@@ -810,26 +811,30 @@ export function Settings() {
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
   }, []);
 
-  // Load the catalog (once) and the settings on mount. Both are required for the
-  // page to render correctly, so either failing shows the load error. The work is
-  // wrapped in an inline async function (effects cannot be async) so the state
-  // updates happen after the awaited fetches resolve, not synchronously within the
-  // effect body -- this is data fetching, not a synchronous render cascade.
+  // Load the catalog and settings. Both are required to render the page, so
+  // either failing shows the unreachable card (Retry re-runs this). Exposed as a
+  // callback so Retry can call it without remounting. Effects cannot be async;
+  // the work is awaited inside so state updates happen after the fetches, not
+  // synchronously within the effect body.
+  const loadPage = useCallback(async () => {
+    setLoadFailed(false);
+    setLoading(true);
+    try {
+      await Promise.all([loadCatalog(), fetchSettings()]);
+      // Gate the remote-merge effect: only genuine remote refreshes after the
+      // initial paint should overwrite the freshly loaded form.
+      initialLoadedRef.current = true;
+      setLoading(false);
+    } catch (e) {
+      console.error('Failed to load settings:', e);
+      setLoadFailed(true);
+      setLoading(false);
+    }
+  }, [fetchSettings, loadCatalog]);
+
   useEffect(() => {
-    void (async () => {
-      try {
-        await Promise.all([loadCatalog(), fetchSettings()]);
-        // Gate the remote-merge effect: only genuine remote refreshes after the
-        // initial paint should overwrite the freshly loaded form.
-        initialLoadedRef.current = true;
-        setLoading(false);
-      } catch (e) {
-        console.error('Failed to load settings:', e);
-        setLoadError(t('settingsPage.connectError'));
-        setLoading(false);
-      }
-    })();
-  }, [fetchSettings, loadCatalog, t]);
+    void loadPage();
+  }, [loadPage]);
 
   // Mirror engineLevels into a ref so the cache check below can read the latest
   // cache without making loadEngineLevels depend on engineLevels. Depending on the
@@ -1740,19 +1745,10 @@ export function Settings() {
     );
   }
 
-  if (loadError) {
+  if (loadFailed) {
     return (
       <div className="page container--lg">
-        <Card>
-          <h2 className="page-title">{t('settingsPage.title')}</h2>
-          <div className="error mt-6">
-            <p>{loadError}</p>
-            <p className="mt-4" style={{ fontSize: 'var(--text-sm)' }}>
-              If you're developing locally, configure the API URL in <code>vite.config.ts</code> proxy settings
-              or run the <code>run-react</code> script with the <code>--api</code> flag.
-            </p>
-          </div>
-        </Card>
+        <BoardUnreachableCard onRetry={() => void loadPage()} />
       </div>
     );
   }
@@ -3294,8 +3290,7 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Informational (non-error) message, e.g. an async install that was started.
-  // Kept separate from `error` so it is not rendered as a failure and is not
-  // wiped by the periodic status poll.
+  // Kept separate from `error` so it is not rendered as a failure.
   const [notice, setNotice] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -3318,7 +3313,12 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
       if (response.ok) {
         const data = await response.json();
         setStatus(data);
-        setError(null);
+        // Do not clear `error` here. The 10s poll and the post-check status
+        // refresh used to wipe "Check failed", so a GitHub/DNS failure flashed
+        // then vanished -- or, with the on-open check, never appeared at all
+        // -- while the page either claimed "latest version" or sat quiet.
+        // Check/download/install already call setError(null) when the user
+        // starts a new attempt.
         return data;
       }
     } catch (e) {
@@ -3334,11 +3334,12 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
     // (mark the session checked, no network check); otherwise run a fresh check.
     // Gating the confirmation on sessionChecked is what prevents a stale or
     // missing last_check from claiming "latest version" until a check has
-    // actually completed. The check requires auth; on 401 (or any failure) it is
-    // skipped silently -- matching the load-time pattern used elsewhere (e.g.
-    // Connectivity/Accounts) rather than forcing a login just to view the page --
-    // and the confirmation stays hidden. The recurring poll only refreshes
-    // status (never re-checks).
+    // actually completed. The check requires auth; on 401 it is skipped silently
+    // -- matching Connectivity/Accounts rather than forcing a login just to view
+    // the page -- and the confirmation stays hidden. Any other failure (the
+    // board cannot reach GitHub) must not be silent: claiming "latest version"
+    // after a failed fetch is how a USB-gadget Client board with no internet
+    // looked current. The recurring poll only refreshes status (never re-checks).
     void (async () => {
       const current = await fetchStatus();
       const lastCheckMs = current?.last_check ? Date.parse(current.last_check) : NaN;
@@ -3351,9 +3352,13 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
       setChecking(true);
       try {
         const response = await apiFetch('/api/updates/check', { method: 'POST', requiresAuth: true });
-        if (response.ok) setSessionChecked(true);
+        if (response.ok) {
+          setSessionChecked(true);
+        } else if (response.status !== 401) {
+          setError(t('settingsPage.updates.checkFailed'));
+        }
       } catch {
-        /* best-effort: the status read above still renders the cached state */
+        setError(t('settingsPage.updates.networkError'));
       } finally {
         await fetchStatus();
         setChecking(false);
@@ -3361,7 +3366,7 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
     })();
     const interval = setInterval(fetchStatus, 10000); // Poll every 10 seconds
     return () => clearInterval(interval);
-  }, [fetchStatus]);
+  }, [fetchStatus, t]);
 
   // Detect completion of an install started from this session. The install
   // succeeded once it is no longer running (is_installing false) and the
@@ -3383,8 +3388,7 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
       const response = await apiFetch('/api/updates/check', { method: 'POST', requiresAuth: true });
       if (requireLogin(response, checkForUpdates)) return;
       if (!response.ok) {
-        const data = await response.json();
-        setError(data.error || t('settingsPage.updates.checkFailed'));
+        setError(t('settingsPage.updates.checkFailed'));
       } else {
         setSessionChecked(true);
       }

@@ -6478,7 +6478,10 @@ def api_update_check():
         JSON with update availability and version info
     """
     try:
-        from universalchess.services.update_service import get_update_service
+        from universalchess.services.update_service import (
+            UpdateCheckError,
+            get_update_service,
+        )
         service = get_update_service()
         release = service.check_for_updates()
         
@@ -6498,6 +6501,13 @@ def api_update_check():
                 "update_available": False,
                 "current_version": service.get_current_version(),
             })
+    except UpdateCheckError:
+        # Fixed message: a GitHub/DNS failure is not "no update", and the
+        # exception text must not reach the client (CWE-209).
+        return jsonify({
+            "success": False,
+            "error": "Could not check for updates.",
+        }), 503
     except Exception as e:
         return _internal_error(e)
 

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { GameView } from '../components/GameView';
+import { BoardUnreachableCard } from '../components/BoardUnreachableCard';
 import { useAuthedAction } from '../components/useAuthedAction';
 import { useGameStore } from '../stores/gameStore';
 import { isGameInProgress } from '../utils/gameProgress';
@@ -61,6 +62,7 @@ export function Analyze() {
   const [chess960, setChess960] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [unreachable, setUnreachable] = useState(false);
 
   // FULL FEN and ply index of the position currently in view, reported by
   // GameView. The FEN drives the fallback (ply 0) setup; the ply index slices the
@@ -95,11 +97,12 @@ export function Analyze() {
   const liveGame = useGameStore((s) => s.gameState);
   const gameInProgress = isGameInProgress(liveGame);
 
-  useEffect(() => {
+  const loadGame = useCallback(() => {
     if (!gameId) return;
 
     setLoading(true);
     setError(null);
+    setUnreachable(false);
     setPositions(null);
     setStartFen(null);
     setChess960(false);
@@ -114,7 +117,14 @@ export function Analyze() {
         setLoading(false);
       })
       .catch((e) => {
-        setError(e.message);
+        // fetch() rejects with TypeError when the board is unreachable; an HTTP
+        // 404 is a missing game, not a dead server, so it keeps the not-found
+        // copy rather than the retry card.
+        if (e instanceof TypeError) {
+          setUnreachable(true);
+        } else {
+          setError(e instanceof Error ? e.message : t('analyze.notFound'));
+        }
         setLoading(false);
       });
 
@@ -134,6 +144,10 @@ export function Analyze() {
         /* leave positions null; the move list stays empty */
       });
   }, [gameId, t]);
+
+  useEffect(() => {
+    loadGame();
+  }, [loadGame]);
 
   const handleViewedPositionChange = useCallback((fen: string, ply: number) => {
     setViewedFen(fen);
@@ -296,6 +310,14 @@ export function Analyze() {
 
   if (loading) {
     return <div className="loading">{t('analyze.loading')}</div>;
+  }
+
+  if (unreachable) {
+    return (
+      <div className="page container--lg">
+        <BoardUnreachableCard onRetry={loadGame} />
+      </div>
+    );
   }
 
   if (error) {

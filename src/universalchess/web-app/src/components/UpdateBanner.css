@@ -1,10 +1,10 @@
 /* Top-of-page install prompt for a downloaded update (auto-download case).
  *
- * Rendered above the navbar in normal document flow so it sits at the very top.
- * Uses a green accent (matching the "success"/ready-to-install language elsewhere
- * in the update UI) so it reads as an actionable, positive prompt rather than a
- * warning. The busy variant drops the accent to a neutral tone while the install
- * runs. */
+ * Rendered above the navbar inside the sticky `.app-chrome` wrapper so it stays
+ * on screen with the nav. Uses a green accent (matching the "success"/ready-to-
+ * install language elsewhere in the update UI) so it reads as an actionable,
+ * positive prompt rather than a warning. The busy variant drops the accent to
+ * a neutral tone while the install runs. */
 .update-banner {
   --color-update: #2e8b57;
 

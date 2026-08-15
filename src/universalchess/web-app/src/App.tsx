@@ -64,10 +64,12 @@ function AppShell() {
     <>
       <DocumentTitle />
       <div className="app">
-        <AppUpdateBanner />
-        <UpdateBanner />
-        <BackgroundActivityBanner />
-        <Navbar />
+        <div className="app-chrome">
+          <AppUpdateBanner />
+          <UpdateBanner />
+          <BackgroundActivityBanner />
+          <Navbar />
+        </div>
 
         <section className="section">
           <div className="container">

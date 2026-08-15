@@ -16,6 +16,7 @@
     "cancel": "Cancel",
     "delete": "Delete",
     "retry": "Retry",
+    "reload": "Reload",
     "invalidCredentials": "Invalid credentials. Please try again.",
     "networkError": "Network error contacting the board.",
     "imagePreviewAlt": "{{label}} preview"
@@ -73,7 +74,9 @@
     "unknown": "Unknown",
     "changeSettings": "Click to change connection settings",
     "connectedTo": "Connected to: {{host}}",
-    "localServer": "Using local server"
+    "localServer": "Using local server",
+    "unavailableTitle": "Can't reach the board",
+    "unavailableBody": "It may be off, restarting, or the connection dropped. Try again in a moment."
   },
   "docTitle": {
     "home": "Home",
@@ -178,7 +181,6 @@
   },
   "positions": {
     "loading": "Loading positions...",
-    "loadError": "Could not load positions from the board.",
     "setupSuccess": "Set up \"{{name}}\" on the board.",
     "setupFailed": "Failed to set up position.",
     "confirmTitle": "End current game?",
@@ -314,7 +316,6 @@
   "settingsPage": {
     "title": "Settings",
     "loading": "Loading settings...",
-    "connectError": "Could not connect to the Universal Chess backend. Make sure the board is running and accessible.",
     "saving": "Saving…",
     "saved": "Saved",
     "saveError": "Could not save. Check your connection and try again.",
@@ -437,7 +438,6 @@
       "reverseHand": "The engine finds the best move with that piece, shown via LEDs.",
       "reverseNote": "Great for practicing piece coordination while engine handles tactics."
     },
-    "developingLocally": "If you're developing locally, configure the API URL in <0>vite.config.ts</0> proxy settings or run the <1>run-react</1> script with the <2>--api</2> flag.",
     "agentsUi": {
       "none": "No agents are available.",
       "active": "Active",

@@ -1,10 +1,11 @@
 /**
  * Top-of-screen background-activity banner.
  *
- * Rendered above the navbar in normal document flow (so it sits at the very top
- * of the page) and only while at least one background task is running. Uses a
- * neutral surface with a primary-colour accent stripe so the reused ProgressBar
- * keeps its themed track/fill contrast instead of being placed on a dark bar.
+ * Rendered above the navbar inside the sticky `.app-chrome` wrapper (so it
+ * stays on screen with the nav) and only while at least one background task is
+ * running. Uses a neutral surface with a primary-colour accent stripe so the
+ * reused ProgressBar keeps its themed track/fill contrast instead of being
+ * placed on a dark bar.
  */
 
 .activity-banner {

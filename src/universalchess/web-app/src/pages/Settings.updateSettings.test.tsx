@@ -284,6 +284,23 @@ describe('UpdateManager up-to-date confirmation', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('does not claim latest version when the on-open check cannot reach the release server', async () => {
+    // Why: a GitHub fetch failure used to return 200 with update_available
+    // false, so Settings said "You're running the latest version" on a board
+    // that had no internet (USB-gadget Client, DNS/NAT down). A 503 must hide
+    // that confirmation and show that the check failed. A regression restoring
+    // the 200-as-up-to-date mapping shows the latest-version line here; a
+    // regression that swallows the failure hides the error as well.
+    checkHttpStatus = 503;
+    renderSystemTab();
+    expect(
+      await screen.findByText(/Check failed/)
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("You're running the latest version.")
+    ).not.toBeInTheDocument();
+  });
+
   it('hides the up-to-date message when an update is available', async () => {
     // Why: the confirmation must be mutually exclusive with the "update
     // available" card. A regression in the derived condition would show both the

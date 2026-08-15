@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { Card } from '../components/ui';
+import { BoardUnreachableCard } from '../components/BoardUnreachableCard';
 import { ChessBoard } from '../components/ChessBoard';
 import { useLoginRetry } from '../components/useLoginRetry';
 import { MenuIcon } from '../components/MenuIcon';
@@ -106,7 +107,7 @@ export function Positions() {
   const { t } = useTranslation();
   const [categories, setCategories] = useState<PositionCategory[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [status, setStatus] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const [pending, setPending] = useState<PositionEntry | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -149,19 +150,20 @@ export function Positions() {
   const gameInProgress = isGameInProgress(gameState);
 
   const loadPositions = useCallback(async (): Promise<void> => {
+    setLoading(true);
     try {
       const response = await apiFetch('/api/positions');
       const data = await response.json();
       if (data?.error) throw new Error(data.error);
       setCategories(Array.isArray(data?.categories) ? data.categories : []);
-      setLoadError(null);
+      setLoadFailed(false);
     } catch (e) {
       console.error('Failed to load positions:', e);
-      setLoadError(t('positions.loadError'));
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, []);
 
   // Load once, on mount. The rule reports any effect that calls a function able
   // to setState, without following it past the first await; every write in the
@@ -316,9 +318,9 @@ export function Positions() {
       )}
 
       <div className="page">
-        {loadError ? (
+        {loadFailed ? (
           <div className="container--lg">
-            <Card variant="danger">{loadError}</Card>
+            <BoardUnreachableCard onRetry={() => void loadPositions()} />
           </div>
         ) : categories.length === 0 ? (
           <div className="container--lg">

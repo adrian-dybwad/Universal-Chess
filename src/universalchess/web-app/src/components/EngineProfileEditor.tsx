@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button, Card, FormRow, Input, Select } from './ui';
+import { BoardUnreachableCard } from './BoardUnreachableCard';
 import { useLoginRetry } from './useLoginRetry';
 import { apiFetch } from '../utils/api';
 import {
@@ -57,6 +58,7 @@ export function EngineProfileEditor({
   const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [unreachable, setUnreachable] = useState(false);
   const [editable, setEditable] = useState(true);
   // Why the editor is unavailable, when it is. Distinguishes an engine that is
   // not installed from one that is installed and will not start; both used to
@@ -109,6 +111,7 @@ export function EngineProfileEditor({
     async (selectAfter?: string) => {
       setLoading(true);
       setLoadError(null);
+      setUnreachable(false);
       try {
         const resp = await apiFetch(`/api/engines/${engineName}/uci-schema`);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -127,7 +130,13 @@ export function EngineProfileEditor({
         setNameInput('');
         loadField(ordered, data.profiles, next);
       } catch (e) {
-        setLoadError(t('engineProfile.loadError', { error: e instanceof Error ? e.message : t('engineProfile.unknownError') }));
+        // fetch() rejects with TypeError when the board is gone; HTTP failures
+        // keep the interpolated status so a 500 is distinguishable from offline.
+        if (e instanceof TypeError) {
+          setUnreachable(true);
+        } else {
+          setLoadError(t('engineProfile.loadError', { error: e instanceof Error ? e.message : t('engineProfile.unknownError') }));
+        }
       } finally {
         setLoading(false);
       }
@@ -419,6 +428,8 @@ export function EngineProfileEditor({
 
       {loading ? (
         <p className="text-muted">{t('engineProfile.loading')}</p>
+      ) : unreachable ? (
+        <BoardUnreachableCard onRetry={() => void fetchProfiles()} />
       ) : loadError ? (
         <Card>
           <p className="engine-card-error" role="alert">{loadError}</p>

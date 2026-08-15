@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { Button, Card, Badge } from '../components/ui';
+import { BoardUnreachableCard } from '../components/BoardUnreachableCard';
 import { LoginDialog } from '../components/LoginDialog';
 import type { GameRecord } from '../types/game';
 import { apiFetch, getStoredCredentials } from '../utils/api';
@@ -36,6 +37,7 @@ export function Games() {
   // month shown is decided by activeGroup below.
   const [selectedMonthKey, setSelectedMonthKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [expandedPgn, setExpandedPgn] = useState<Record<number, string>>({});
   const [loginDialogOpen, setLoginDialogOpen] = useState(false);
   const [loginError, setLoginError] = useState<string | undefined>(undefined);
@@ -50,9 +52,11 @@ export function Games() {
       const response = await apiFetch('/api/games');
       const data = await response.json();
       setGames(Array.isArray(data?.games) ? data.games : []);
+      setLoadFailed(false);
     } catch (e) {
       console.error('Failed to fetch games:', e);
       setGames([]);
+      setLoadFailed(true);
     }
     setLoading(false);
   }, []);
@@ -241,6 +245,14 @@ export function Games() {
     return (
       <div className="page container--lg">
         <div className="loading">{t('games.loading')}</div>
+      </div>
+    );
+  }
+
+  if (loadFailed) {
+    return (
+      <div className="page container--lg">
+        <BoardUnreachableCard onRetry={() => void refreshGames()} />
       </div>
     );
   }

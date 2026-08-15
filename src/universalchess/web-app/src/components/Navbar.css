@@ -3,9 +3,7 @@
  */
 
 .navbar {
-  position: sticky;
-  top: 0;
-  z-index: 100;
+  position: relative;
   background: 
     linear-gradient(135deg, 
       rgba(255,255,255,0.1) 0%, 
@@ -69,7 +67,7 @@
 }
 
 /* The full knight piece is portrait, so at 40px wide it stands ~80px tall. It
-   is absolutely positioned and lifted above the sticky navbar (z-index) so it
+   is absolutely positioned and lifted above the sticky chrome (z-index) so it
    overflows past the bar into the page below rather than stretching the row.
    pointer-events pass through to the link. */
 .navbar-logo-img {

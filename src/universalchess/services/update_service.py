@@ -81,6 +81,15 @@ class UpdateChannel(Enum):
     NIGHTLY = "nightly"
 
 
+class UpdateCheckError(Exception):
+    """The update check could not determine whether a newer release exists.
+
+    Raised instead of returning None so callers cannot treat a failed fetch
+    (no DNS, GitHub unreachable, empty payload) as "up to date". None remains
+    the completed "board is current" result.
+    """
+
+
 class UpdateEvent(Enum):
     """Events emitted by the update service."""
     CHECKING = "checking"
@@ -351,13 +360,19 @@ class UpdateService:
     
     def check_for_updates(self) -> Optional[ReleaseInfo]:
         """Check for available updates.
-        
+
         Returns:
-            ReleaseInfo if update available, None if up to date or error
+            ReleaseInfo if a newer release exists, None if the board is current.
+
+        Raises:
+            UpdateCheckError: the release list could not be fetched or compared,
+                so availability is unknown. Callers must not treat this as
+                up-to-date: that is what made Settings claim "latest version"
+                on a board that could not reach GitHub.
         """
         if self._checking:
             log.warning("[UpdateService] Already checking for updates")
-            return None
+            raise UpdateCheckError("Already checking for updates")
         
         with self._lock:
             self._checking = True
@@ -368,7 +383,7 @@ class UpdateService:
             releases = self._fetch_releases()
             if not releases:
                 self._notify(UpdateEvent.ERROR, "Could not fetch releases")
-                return None
+                raise UpdateCheckError("Could not fetch releases")
             
             current = self.get_current_version()
             channel = self.get_channel()
@@ -409,10 +424,12 @@ class UpdateService:
             self._notify(UpdateEvent.UP_TO_DATE, f"Up to date (v{current})")
             return None
             
+        except UpdateCheckError:
+            raise
         except Exception as e:
             log.error(f"[UpdateService] Check failed: {e}")
             self._notify(UpdateEvent.ERROR, str(e))
-            return None
+            raise UpdateCheckError("Could not fetch releases") from e
         finally:
             with self._lock:
                 self._checking = False
@@ -591,7 +608,10 @@ class UpdateService:
             return None
         
         if release is None:
-            release = self.check_for_updates()
+            try:
+                release = self.check_for_updates()
+            except UpdateCheckError:
+                return None
             if release is None:
                 return None
         

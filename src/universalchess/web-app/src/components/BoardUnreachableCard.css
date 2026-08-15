@@ -1,0 +1,14 @@
+.board-unreachable-title {
+  margin: 0 0 0.5rem;
+  font-size: var(--text-lg);
+}
+
+.board-unreachable-body {
+  margin: 0 0 1rem;
+}
+
+.board-unreachable-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}

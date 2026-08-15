@@ -992,3 +992,44 @@ class TestLastCheckTimestamp:
 
         assert service.check_for_updates() is not None
         self._assert_utc_designator(service._state.last_check)
+
+
+class TestFailedCheckIsNotUpToDate:
+    """A check that cannot reach the release list must not look like 'up to date'.
+
+    check_for_updates returned None both when the board was current and when
+    curl could not resolve api.github.com. Callers (the web Settings page, the
+    board splash) treated None as current and said so. These pin the split:
+    a completed comparison returns None; a failed fetch raises.
+    """
+
+    def test_empty_fetch_raises(self, service, monkeypatch):
+        """_fetch_releases returning [] (DNS failure, curl error, GitHub error
+        payload) must raise, not return None.
+
+        How a regression manifests: this returns None and Settings claims
+        "You're running the latest version" on a board with no internet.
+        """
+        monkeypatch.setattr(service, "_fetch_releases", lambda: [])
+        with pytest.raises(us.UpdateCheckError):
+            service.check_for_updates()
+        assert service._state.available_version is None
+        # A failed check must not stamp last_check. The web UI's 5-minute
+        # freshness window would then skip the next real check and keep showing
+        # whatever the previous successful check concluded.
+        assert service._state.last_check is None
+
+    def test_failed_check_preserves_prior_last_check(self, service, monkeypatch):
+        """A failed check must leave a previous successful last_check in place.
+
+        How a regression manifests: last_check is overwritten with 'now' on
+        failure, so the UI treats the failed attempt as a fresh up-to-date
+        result and will not check again for five minutes.
+        """
+        prior = "2026-08-13T17:10:16.554523+00:00"
+        service._state.last_check = prior
+        service._save_state()
+        monkeypatch.setattr(service, "_fetch_releases", lambda: [])
+        with pytest.raises(us.UpdateCheckError):
+            service.check_for_updates()
+        assert service._state.last_check == prior
