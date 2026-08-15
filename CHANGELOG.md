@@ -533,7 +533,16 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
-- Top-of-page status banners (a pending update, a running install, background
+- The System card's Bluetooth advertising row treated BCM43430B0 on kernel
+  6.18 as a known fault regardless of BlueZ. That combination only breaks
+  advertising when BlueZ still sends the over-long extended-advertising
+  command (Raspberry Pi ``5.82-1.1+rpt1``). ``5.82-1.1+rpt2`` backports the
+  upstream length fix, so stock advertising works and the install-time
+  self-heal correctly leaves the distribution binary in place -- but the card
+  kept a red "Known issue" badge. The row now requires a faulty BlueZ as well,
+  and treats a patched ``bluetoothd`` as already repaired.
+
+- Top-of-page status banners (a pending update, a running install, background)
   activity) sat in normal document flow above a sticky navbar, so they
   scrolled off as soon as the page left the top. They now stick with the
   navbar and stay visible while they are showing.

@@ -11,19 +11,25 @@ Why this is separate from :mod:`universalchess.board.system_info`:
 Primary motivation -- the Bluetooth advertising health row:
   The DGT Centaur's Pi uses a Broadcom combo (Wi-Fi + Bluetooth on one die).
   Field investigation proved that on the **BCM43430B0** stepping running the
-  Raspberry Pi **kernel 6.18.x** line, BlueZ LE advertising stops working: the
-  identical ``RegisterAdvertisement`` call accepted on kernel 6.12.x is rejected
-  with ``Invalid Parameters`` on 6.18 (the companion app can no longer see the
-  board). The *same* B0 die works on kernel 6.12.x, and the older **BCM43430A1**
-  stepping works on every kernel observed. So the honest signal is the chip
-  stepping *together with* the kernel version -- not the chip alone. The scope
-  is strictly Bluetooth LE advertising; the Wi-Fi STA/AP path was not shown to
-  fail and is deliberately not claimed here.
+  Raspberry Pi **kernel 6.18.x** line with **BlueZ 5.82-1.1+rpt1**, LE
+  advertising stops working: the identical ``RegisterAdvertisement`` call
+  accepted on kernel 6.12.x is rejected with ``Invalid Parameters`` on 6.18
+  (the companion app can no longer see the board). The *same* B0 die works on
+  kernel 6.12.x, the older **BCM43430A1** stepping works on every kernel
+  observed, and Raspberry Pi **BlueZ 5.82-1.1+rpt2** backports the upstream
+  length fix, so stock advertising works on 6.18 and the install-time self-heal
+  does not patch. Chip+kernel alone is therefore a false "affected". The honest
+  signal is the chip stepping, the kernel version, *and* whether BlueZ is still
+  the build that sends the over-long MGMT command. The scope is strictly
+  Bluetooth LE advertising; the Wi-Fi STA/AP path was not shown to fail and is
+  deliberately not claimed here.
 
-  Mitigation: running a 6.12.x kernel avoids it, and Universal Chess applies a
-  self-healing patch on install (to be rolled back once the official fix ships).
-  :func:`assess_wireless_health` encodes exactly the proven data points and
-  reports "unknown" for combinations never observed, rather than guessing.
+  Mitigation: a 6.12.x kernel, or a BlueZ that carries the advertising-length
+  fix (Raspberry Pi ``5.82-1.1+rpt2`` or later, upstream 5.85+). Universal Chess
+  also applies a self-healing patch on install when stock BlueZ cannot
+  advertise; that patch retires once stock works. :func:`assess_wireless_health`
+  encodes exactly the proven data points and reports "unknown" for combinations
+  never observed, rather than guessing.
 
 Design mirrors ``system_info``: all OS access is isolated behind an injectable
 :class:`HardwareInfoSource`, so assembly (:func:`collect_hardware_info`), the
@@ -98,14 +104,23 @@ HEALTH_OK = "ok"
 HEALTH_AFFECTED = "affected"
 HEALTH_UNKNOWN = "unknown"
 
-# The proven-broken stepping and the kernel boundary where it breaks. Both are
-# evidence, not assumption: BCM43430B0 was confirmed working on 6.12.47/6.12.75
-# and broken on 6.18.34, where BlueZ LE advertising is rejected with "Invalid
-# Parameters". The known-good recovery is to run a 6.12.x kernel (or rely on the
-# self-healing patch applied at install).
+# The proven-broken combination. Evidence, not assumption: BCM43430B0 was
+# confirmed working on 6.12.47/6.12.75 and broken on 6.18.34 *with BlueZ
+# 5.82-1.1+rpt1*, where LE advertising is rejected with "Invalid Parameters".
+# Raspberry Pi 5.82-1.1+rpt2 backported the upstream length fix (2a6968b); the
+# same chip+kernel with that package advertises, so BlueZ is a required third
+# input. Known-good recoveries: a 6.12.x kernel, a BlueZ that carries the fix,
+# or the self-healing patch applied at install when stock still fails.
 _AFFECTED_CHIP = "BCM43430B0"
 _AFFECTED_KERNEL_MIN: tuple[int, int] = (6, 18)
 _KNOWN_GOOD_KERNEL_MAX: tuple[int, int] = (6, 12)
+# First upstream BlueZ that contains 2a6968b ("advertising: Fix sending extra
+# bytes with MGMT_OP_ADD_EXT_ADV_DATA"). 5.82/5.83/5.84 do not.
+_BLUEZ_FIX_UPSTREAM: tuple[int, int] = (5, 85)
+# Raspberry Pi's 5.82-1.1+rptN line: rpt1 is the investigation baseline (faulty);
+# rpt2 is the first package whose changelog names the extra-bytes fix.
+_RPI_BLUEZ_RPT = re.compile(r"^5\.82-1\.1\+rpt(\d+)$")
+_BLUEZ_UPSTREAM = re.compile(r"^(\d+)\.(\d+)")
 
 # Packages whose versions are part of the wireless story and worth surfacing.
 _WIFI_FIRMWARE_PACKAGE = "firmware-brcm80211"
@@ -235,6 +250,41 @@ def parse_dpkg_version(dpkg_status: str, package: str) -> Optional[str]:
     return None
 
 
+def classify_bluez_ext_adv_fix(bluez_version: Optional[str]) -> Optional[bool]:
+    """Whether this BlueZ package is known to carry the advertising-length fix.
+
+    Returns ``True`` if the package is known to include upstream ``2a6968b``
+    (or Raspberry Pi's backport of it), ``False`` if it is known to still send
+    the over-long ``MGMT_OP_ADD_EXT_ADV_DATA`` command, and ``None`` when this
+    package has not been classified. ``None`` is the honest answer for an
+    unread version or an older BlueZ that was never part of the investigation;
+    the health classifier must not invent affected/ok from that.
+
+    Version strings are matched as dpkg reports them. The Raspberry Pi
+    ``5.82-1.1+rptN`` line is classified by revision (rpt1 faulty, rpt2+
+    fixed) rather than by the upstream 5.82 number, because rpt2 is still
+    labelled 5.82 and a 5.82-wide "faulty" rule would keep warning after the
+    distro already shipped the fix.
+    """
+    if not bluez_version:
+        return None
+    version = bluez_version.strip()
+    if not version:
+        return None
+    rpt = _RPI_BLUEZ_RPT.match(version)
+    if rpt:
+        return int(rpt.group(1)) >= 2
+    upstream = _BLUEZ_UPSTREAM.match(version)
+    if not upstream:
+        return None
+    major_minor = (int(upstream.group(1)), int(upstream.group(2)))
+    if major_minor >= _BLUEZ_FIX_UPSTREAM:
+        return True
+    if major_minor in ((5, 82), (5, 83), (5, 84)):
+        return False
+    return None
+
+
 def parse_kernel_tuple(kernel_release: str) -> Optional[tuple[int, int]]:
     """Parse the leading ``major.minor`` from a kernel release string.
 
@@ -249,16 +299,23 @@ def parse_kernel_tuple(kernel_release: str) -> Optional[tuple[int, int]]:
 
 
 def assess_wireless_health(
-    wireless_chip: Optional[str], kernel_release: str
+    wireless_chip: Optional[str],
+    kernel_release: str,
+    bluez_version: Optional[str] = None,
+    bluez_stack: Optional[str] = None,
 ) -> tuple[str, str]:
-    """Classify Bluetooth LE advertising reliability for the fitted chip+kernel.
+    """Classify Bluetooth LE advertising reliability for this chip+kernel+BlueZ.
 
     Returns ``(health, human_summary)`` where ``health`` is one of
     :data:`HEALTH_OK`, :data:`HEALTH_AFFECTED`, :data:`HEALTH_UNKNOWN`.
 
-    Only the proven data points drive an ``ok``/``affected`` verdict; every other
-    combination is ``unknown`` so the card never asserts a result that was not
-    actually observed (see module docstring for the evidence).
+    The proven failure is BCM43430B0 + kernel 6.18+ *and* a BlueZ that still
+    sends the over-long extended-advertising MGMT command. Chip+kernel without
+    a faulty BlueZ is not that failure -- Raspberry Pi ``5.82-1.1+rpt2``
+    advertises on 6.18, and a patched ``bluetoothd`` does too. Only proven data
+    points drive an ``ok``/``affected`` verdict; every other combination is
+    ``unknown`` so the card never asserts a result that was not actually
+    observed (see module docstring for the evidence).
     """
     if not wireless_chip:
         return (
@@ -284,13 +341,38 @@ def assess_wireless_health(
         )
 
     if kernel >= _AFFECTED_KERNEL_MIN:
+        # Running patched bluetoothd already has the length fix, even when dpkg
+        # still names the faulty package the binary was built from.
+        if bluez_stack == bluez_patch_status.STACK_PATCHED:
+            return (
+                HEALTH_OK,
+                f"{wireless_chip} on kernel {kernel_release}: Bluetooth "
+                "advertising was restored by a patched bluetoothd.",
+            )
+        has_fix = classify_bluez_ext_adv_fix(bluez_version)
+        if has_fix is True:
+            return (
+                HEALTH_OK,
+                f"{wireless_chip} on kernel {kernel_release} with BlueZ "
+                f"{bluez_version}: this BlueZ carries the advertising-length "
+                "fix, so no Bluetooth advertising issue is expected.",
+            )
+        if has_fix is False:
+            return (
+                HEALTH_AFFECTED,
+                f"{wireless_chip} on kernel {kernel_release} with BlueZ "
+                f"{bluez_version} has a known fault: Bluetooth advertising can "
+                "stop working. The fault needs this chip, a 6.18+ kernel, and a "
+                "BlueZ that still sends the over-long advertising command. A "
+                "6.12.x kernel, or BlueZ 5.82-1.1+rpt2 or later, resolves it; "
+                "installing Universal Chess also applies a self-healing patch "
+                "that retires once stock BlueZ works.",
+            )
         return (
-            HEALTH_AFFECTED,
-            f"{wireless_chip} on kernel {kernel_release} has a known fault: "
-            "Bluetooth advertising can stop working. Running a 6.12.x kernel "
-            "resolves it, or on installing Universal Chess a self-healing patch "
-            "is applied that will be rolled back as soon as the official fix is "
-            "released.",
+            HEALTH_UNKNOWN,
+            f"{wireless_chip} on kernel {kernel_release}: Bluetooth advertising "
+            "reliability also depends on whether BlueZ still sends the over-long "
+            "advertising command, and that BlueZ package could not be classified.",
         )
     if kernel <= _KNOWN_GOOD_KERNEL_MAX:
         return (
@@ -396,8 +478,14 @@ def collect_hardware_info(source: HardwareInfoSource) -> HardwareInfo:
     dpkg_status = source.dpkg_status()
 
     wireless_chip = parse_wireless_chip(kernel_log)
-    health, summary = assess_wireless_health(wireless_chip, kernel_release)
+    bluez_version = parse_dpkg_version(dpkg_status, _BLUEZ_PACKAGE)
     bluez_stack, bluez_stack_summary = summarize_bluez_stack(source.bluez_patch())
+    health, summary = assess_wireless_health(
+        wireless_chip,
+        kernel_release,
+        bluez_version=bluez_version,
+        bluez_stack=bluez_stack,
+    )
     status_raw = source.display_status()
     display_status, display_detail = derive_display_status(status_raw)
     busy_timeout = bool(status_raw.get("busy_timeout")) if status_raw else False
@@ -411,7 +499,7 @@ def collect_hardware_info(source: HardwareInfoSource) -> HardwareInfo:
         kernel_release=kernel_release,
         wireless_chip=wireless_chip,
         wifi_firmware_version=parse_dpkg_version(dpkg_status, _WIFI_FIRMWARE_PACKAGE),
-        bluez_version=parse_dpkg_version(dpkg_status, _BLUEZ_PACKAGE),
+        bluez_version=bluez_version,
         bluez_stack=bluez_stack,
         bluez_stack_summary=bluez_stack_summary,
         hotspot_health=health,

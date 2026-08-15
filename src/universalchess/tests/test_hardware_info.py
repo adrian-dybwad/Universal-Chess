@@ -3,12 +3,15 @@ Bluetooth advertising health classifier.
 
 Why these tests exist:
   The System card's Bluetooth advertising verdict is derived from the Broadcom
-  chip stepping plus the kernel version. The field investigation that motivated
-  this module proved exactly three data points (BCM43430B0's BlueZ LE
-  advertising broken on 6.18, fine on 6.12; BCM43430A1 fine). These tests pin
-  the parser to real kernel-log shapes
-  and pin the classifier to those proven points -- and, just as importantly, to
-  return "unknown" (never a guess) for combinations that were never observed.
+  chip stepping, the kernel version, AND whether BlueZ is still the build that
+  sends the over-long MGMT command. The field investigation proved BCM43430B0's
+  BlueZ LE advertising broken on 6.18 with BlueZ 5.82-1.1+rpt1 and fine on
+  6.12; BCM43430A1 fine. Raspberry Pi later shipped 5.82-1.1+rpt2 with the
+  advertising-length fix, so chip+kernel alone is a false "affected" (observed
+  on a live board whose self-heal probe left stock BlueZ in place). These tests
+  pin the parser to real kernel-log shapes and pin the classifier to those
+  proven points -- and, just as importantly, to return "unknown" (never a
+  guess) for combinations that were never observed.
 
 How a regression manifests:
   - If the chip regex loses the stepping preference, ``parse_wireless_chip``
@@ -42,21 +45,33 @@ _LOG_BARE_ONLY = (
     "brcmfmac: brcmf_c_preinit_dcmds: Firmware: BCM43430/2 wl0\n"
 )
 
-# A minimal two-stanza dpkg status snippet. The trailing "bluez-tools" stanza
-# guards against a substring false-match when querying "bluez".
-_DPKG_STATUS = (
-    "Package: firmware-brcm80211\n"
-    "Status: install ok installed\n"
-    "Version: 1:20250410-1+rpt1\n"
-    "\n"
-    "Package: bluez\n"
-    "Status: install ok installed\n"
-    "Version: 5.82-1.1+rpt1\n"
-    "\n"
-    "Package: bluez-tools\n"
-    "Status: install ok installed\n"
-    "Version: 0.2.0-1\n"
-)
+# Proven-faulty Raspberry Pi BlueZ (the investigation baseline) and the
+# first package that backported the advertising-length fix.
+_BLUEZ_FAULTY = "5.82-1.1+rpt1"
+_BLUEZ_FIXED_RPT2 = "5.82-1.1+rpt2"
+_KERNEL_618 = "6.18.34+rpt-rpi-v7"
+_KERNEL_618_DGT64 = "6.18.39+rpt-rpi-v8"
+
+
+def _dpkg_status(bluez_version: str = _BLUEZ_FAULTY) -> str:
+    # A minimal two-stanza dpkg status snippet. The trailing "bluez-tools"
+    # stanza guards against a substring false-match when querying "bluez".
+    return (
+        "Package: firmware-brcm80211\n"
+        "Status: install ok installed\n"
+        "Version: 1:20250410-1+rpt1\n"
+        "\n"
+        "Package: bluez\n"
+        "Status: install ok installed\n"
+        f"Version: {bluez_version}\n"
+        "\n"
+        "Package: bluez-tools\n"
+        "Status: install ok installed\n"
+        "Version: 0.2.0-1\n"
+    )
+
+
+_DPKG_STATUS = _dpkg_status()
 
 
 class WirelessChipParseTests(unittest.TestCase):
@@ -101,7 +116,7 @@ class DpkgVersionParseTests(unittest.TestCase):
 
 class KernelTupleParseTests(unittest.TestCase):
     def test_parses_major_minor(self):
-        self.assertEqual(hw.parse_kernel_tuple("6.18.34+rpt-rpi-v7"), (6, 18))
+        self.assertEqual(hw.parse_kernel_tuple(_KERNEL_618), (6, 18))
         self.assertEqual(hw.parse_kernel_tuple("6.12.47+rpt-rpi-v7"), (6, 12))
 
     def test_unparseable_returns_none(self):
@@ -110,44 +125,132 @@ class KernelTupleParseTests(unittest.TestCase):
         self.assertIsNone(hw.parse_kernel_tuple("weird-kernel"))
 
 
+class BluezExtAdvFixClassifyTests(unittest.TestCase):
+    """Pins which BlueZ packages are known to send (or not send) the over-long
+    MGMT_OP_ADD_EXT_ADV_DATA command. The advertising verdict must not treat
+    chip+kernel as sufficient once a fixed BlueZ is installed.
+    """
+
+    def test_rpi_rpt1_is_faulty(self):
+        # The investigation baseline. If this ever classifies as fixed, an
+        # unhealed board would silently drop the "affected" warning.
+        self.assertIs(hw.classify_bluez_ext_adv_fix(_BLUEZ_FAULTY), False)
+
+    def test_rpi_rpt2_carries_the_fix(self):
+        # Raspberry Pi 5.82-1.1+rpt2 backported 2a6968b (changelog: "Fix sending
+        # extra bytes with MGMT_OP_ADD_EXT_ADV_DATA"). Classifying this as
+        # faulty is the false warning on a live B0 / 6.18.39 board whose
+        # self-heal probe left stock BlueZ in place.
+        self.assertIs(hw.classify_bluez_ext_adv_fix(_BLUEZ_FIXED_RPT2), True)
+
+    def test_later_rpi_rpt_is_also_fixed(self):
+        # A later +rptN of the same 5.82-1.1 line keeps the backport.
+        self.assertIs(hw.classify_bluez_ext_adv_fix("5.82-1.1+rpt3"), True)
+
+    def test_debian_582_without_backport_is_faulty(self):
+        # Debian 5.82-1.1 has no advertising-length patch (its changelog is the
+        # mpris-proxy NMU). Same buggy 5.82 source as rpt1.
+        self.assertIs(hw.classify_bluez_ext_adv_fix("5.82-1.1"), False)
+
+    def test_upstream_585_carries_the_fix(self):
+        self.assertIs(hw.classify_bluez_ext_adv_fix("5.85-1"), True)
+
+    def test_unclassified_or_missing_is_none(self):
+        # Older BlueZ (e.g. 5.66) was never part of the investigation; None
+        # keeps the health classifier from inventing affected/ok.
+        self.assertIsNone(hw.classify_bluez_ext_adv_fix("5.66-1"))
+        self.assertIsNone(hw.classify_bluez_ext_adv_fix(None))
+        self.assertIsNone(hw.classify_bluez_ext_adv_fix(""))
+
+
 class WirelessHealthTests(unittest.TestCase):
     """Each case maps to a proven data point or an explicitly-unverified one."""
 
-    def test_b0_on_618_is_affected(self):
-        # The proven failure: B0 + kernel 6.18 breaks BlueZ LE advertising
-        # (RegisterAdvertisement rejected). The summary must name the chip and
-        # the known-good remedy (6.12.x), and stay scoped to Bluetooth -- it must
-        # NOT claim a Wi-Fi hotspot failure, which was never observed.
-        health, summary = hw.assess_wireless_health("BCM43430B0", "6.18.34+rpt-rpi-v7")
+    def test_b0_on_618_with_faulty_bluez_is_affected(self):
+        # The proven failure: B0 + kernel 6.18 + BlueZ 5.82-1.1+rpt1 breaks LE
+        # advertising (RegisterAdvertisement rejected). The summary must name the
+        # chip, the faulty BlueZ, and the known-good remedies, and stay scoped
+        # to Bluetooth -- it must NOT claim a Wi-Fi hotspot failure, which was
+        # never observed.
+        health, summary = hw.assess_wireless_health(
+            "BCM43430B0", _KERNEL_618, bluez_version=_BLUEZ_FAULTY
+        )
         self.assertEqual(health, hw.HEALTH_AFFECTED)
         self.assertIn("BCM43430B0", summary)
-        self.assertIn("6.12", summary)  # names the known-good remedy
+        self.assertIn(_BLUEZ_FAULTY, summary)
+        self.assertIn("6.12", summary)  # names the known-good kernel
         self.assertIn("Bluetooth", summary)
         self.assertNotIn("Wi-Fi", summary)
 
+    def test_b0_on_618_with_rpi_fixed_bluez_is_ok(self):
+        # The live false-positive: BCM43430B0 on 6.18.39+rpt-rpi-v8 with
+        # BlueZ 5.82-1.1+rpt2. Chip+kernel still match the old rule, but this
+        # BlueZ carries the fix and the self-heal probe does not patch. Must
+        # read "ok", not "affected".
+        health, summary = hw.assess_wireless_health(
+            "BCM43430B0",
+            _KERNEL_618_DGT64,
+            bluez_version=_BLUEZ_FIXED_RPT2,
+        )
+        self.assertEqual(health, hw.HEALTH_OK)
+        self.assertIn(_BLUEZ_FIXED_RPT2, summary)
+        self.assertIn("Bluetooth", summary)
+
+    def test_b0_on_618_with_patched_stack_is_ok(self):
+        # dpkg can still say 5.82-1.1+rpt1 while bluetoothd is our rebuilt
+        # binary. The running daemon has the fix, so advertising works; the
+        # BlueZ-stack row is what warns about the substitution. Classifying
+        # this as affected would keep a red advertising badge on a healed board.
+        health, _ = hw.assess_wireless_health(
+            "BCM43430B0",
+            _KERNEL_618,
+            bluez_version=_BLUEZ_FAULTY,
+            bluez_stack=bluez_patch_status.STACK_PATCHED,
+        )
+        self.assertEqual(health, hw.HEALTH_OK)
+
+    def test_b0_on_618_without_bluez_version_is_unknown(self):
+        # Chip+kernel match the broken combo, but BlueZ was not read. Warning
+        # "affected" here is the false positive the version check exists to
+        # stop: the card must not assert a fault that needs a broken BlueZ.
+        health, _ = hw.assess_wireless_health("BCM43430B0", _KERNEL_618)
+        self.assertEqual(health, hw.HEALTH_UNKNOWN)
+
     def test_b0_on_612_is_ok(self):
-        # Same die, known-good kernel: this is the fix state, must read "ok".
-        health, _ = hw.assess_wireless_health("BCM43430B0", "6.12.75+rpt-rpi-v7")
+        # Same die, known-good kernel: this is the fix state, must read "ok"
+        # even with the faulty BlueZ package (older kernels tolerate the extra
+        # bytes).
+        health, _ = hw.assess_wireless_health(
+            "BCM43430B0", "6.12.75+rpt-rpi-v7", bluez_version=_BLUEZ_FAULTY
+        )
         self.assertEqual(health, hw.HEALTH_OK)
 
     def test_b0_on_intermediate_kernel_is_unknown(self):
         # 6.13-6.17 were never observed; assert no false "ok"/"affected".
-        health, _ = hw.assess_wireless_health("BCM43430B0", "6.15.0+rpt-rpi-v7")
+        health, _ = hw.assess_wireless_health(
+            "BCM43430B0", "6.15.0+rpt-rpi-v7", bluez_version=_BLUEZ_FAULTY
+        )
         self.assertEqual(health, hw.HEALTH_UNKNOWN)
 
     def test_a1_is_ok_regardless_of_kernel(self):
         # The older stepping had no reported fault on any observed kernel.
-        health, _ = hw.assess_wireless_health("BCM43430A1", "6.18.34+rpt-rpi-v7")
+        health, _ = hw.assess_wireless_health(
+            "BCM43430A1", _KERNEL_618, bluez_version=_BLUEZ_FAULTY
+        )
         self.assertEqual(health, hw.HEALTH_OK)
 
     def test_unknown_chip_is_unknown(self):
         # No chip identified -> no verdict (not a silent "ok").
-        health, _ = hw.assess_wireless_health(None, "6.18.34+rpt-rpi-v7")
+        health, _ = hw.assess_wireless_health(
+            None, _KERNEL_618, bluez_version=_BLUEZ_FAULTY
+        )
         self.assertEqual(health, hw.HEALTH_UNKNOWN)
 
     def test_b0_with_unparseable_kernel_is_unknown(self):
         # B0 fitted but kernel unreadable -> cannot decide; must be "unknown".
-        health, _ = hw.assess_wireless_health("BCM43430B0", "")
+        health, _ = hw.assess_wireless_health(
+            "BCM43430B0", "", bluez_version=_BLUEZ_FAULTY
+        )
         self.assertEqual(health, hw.HEALTH_UNKNOWN)
 
 
@@ -155,14 +258,21 @@ class CollectHardwareInfoTests(unittest.TestCase):
     """End-to-end assembly through an injected (fake) source -- no Pi needed."""
 
     @staticmethod
-    def _source(kernel_release, kernel_log, display_status=None, bluez_patch=None):
+    def _source(
+        kernel_release,
+        kernel_log,
+        display_status=None,
+        bluez_patch=None,
+        dpkg_status=None,
+    ):
         # bluez_patch defaults to "no marker" (unknown) so the common cases do
         # not have to specify it; the stack-specific tests pass a real marker.
+        status_text = _DPKG_STATUS if dpkg_status is None else dpkg_status
         return hw.HardwareInfoSource(
             pi_model=lambda: "Raspberry Pi Zero W Rev 1.1",
             kernel_release=lambda: kernel_release,
             kernel_log=lambda: kernel_log,
-            dpkg_status=lambda: _DPKG_STATUS,
+            dpkg_status=lambda: status_text,
             display_status=lambda: display_status,
             bluez_patch=lambda: bluez_patch
             if bluez_patch is not None
@@ -173,7 +283,7 @@ class CollectHardwareInfoTests(unittest.TestCase):
         # Verifies the whole to_dict shape for the affected board, so the React
         # card cannot read an undefined field and the verdict is wired through.
         # display_status None -> "unknown": the board has not reported yet.
-        info = hw.collect_hardware_info(self._source("6.18.34+rpt-rpi-v7", _LOG_B0))
+        info = hw.collect_hardware_info(self._source(_KERNEL_618, _LOG_B0))
         self.assertEqual(
             info.to_dict(),
             {
@@ -198,6 +308,24 @@ class CollectHardwareInfoTests(unittest.TestCase):
             },
         )
         self.assertEqual(info.hotspot_health, hw.HEALTH_AFFECTED)
+
+    def test_rpi_fixed_bluez_on_618_assembles_ok(self):
+        # End-to-end of the live false-positive: B0 + 6.18.39 + BlueZ
+        # 5.82-1.1+rpt2 must not produce hotspot_health=affected, because the
+        # React card would keep a red "Known issue" badge after stock BlueZ
+        # already advertises. Manifests as this assembly still reporting
+        # HEALTH_AFFECTED despite the rpt2 dpkg stanza.
+        info = hw.collect_hardware_info(
+            self._source(
+                _KERNEL_618_DGT64,
+                _LOG_B0,
+                dpkg_status=_dpkg_status(_BLUEZ_FIXED_RPT2),
+                bluez_patch=bluez_patch_status.stock_status(),
+            )
+        )
+        self.assertEqual(info.bluez_version, _BLUEZ_FIXED_RPT2)
+        self.assertEqual(info.hotspot_health, hw.HEALTH_OK)
+        self.assertIn(_BLUEZ_FIXED_RPT2, info.hotspot_summary)
 
     def test_patched_stack_wired_through_assembly(self):
         # The patched-BlueZ marker must reach the card's flat contract so the
