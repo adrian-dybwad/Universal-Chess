@@ -644,6 +644,27 @@ else
     echo -e "::: Warning: engine deps helper not found at $ENGINE_DEPS_HELPER"
 fi
 
+# Allow the service user to refresh Raspberry Pi OS packages from Settings.
+# `apt-get update && apt-get upgrade` needs root, but granting NOPASSWD on apt
+# is unrestricted root (`apt-get install` accepts any package). As with the
+# other helpers, grant passwordless sudo to exactly this one pinned script,
+# whose verb case (check / apply only) is the boundary. Without it the
+# Software Updates card cannot move the OS on a board that is never SSHed into.
+echo -e "::: Configuring sudoers for OS package upgrades"
+OS_UPGRADE_HELPER="${DGTCM_PATH}/scripts/uc-os-upgrade"
+if [ -f "$OS_UPGRADE_HELPER" ]; then
+    chmod +x "$OS_UPGRADE_HELPER"
+    OS_UPGRADE_SUDOERS_FILE="/etc/sudoers.d/universal-chess-os-upgrade"
+    echo "$PRIMARY_USER ALL=(root) NOPASSWD: $OS_UPGRADE_HELPER" > "$OS_UPGRADE_SUDOERS_FILE"
+    chmod 440 "$OS_UPGRADE_SUDOERS_FILE"
+    if ! visudo -cf "$OS_UPGRADE_SUDOERS_FILE" >/dev/null 2>&1; then
+        echo -e "::: Warning: os-upgrade sudoers entry invalid; removing"
+        rm -f "$OS_UPGRADE_SUDOERS_FILE"
+    fi
+else
+    echo -e "::: Warning: os-upgrade helper not found at $OS_UPGRADE_HELPER"
+fi
+
 # Undo the armhf cross toolchain this package used to recommend onto every board.
 # gcc-arm-linux-gnueabihf + libc6-dev-armhf-cross are only usable on arm64, where
 # Centaur's 32-bit display shim must be cross-compiled; centaur-armhf-setup above

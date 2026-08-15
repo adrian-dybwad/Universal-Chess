@@ -14,6 +14,7 @@ import { useLoginRetry } from '../components/useLoginRetry';
 import { useRadioCapability } from '../hooks/useRadioCapability';
 import { MenuIcon } from '../components/MenuIcon';
 import { DeviceClockCard } from '../components/DeviceClockCard';
+import { OsUpgradePanel } from '../components/OsUpgradePanel';
 import { ConnectivityPanel, AccountsCard } from './Connectivity';
 import type { EngineDefinition, EngineFailure, EngineRef, EngineRefsResponse, EngineTier } from '../types/game';
 import type { MenuCatalog, MenuOption } from '../types/menuCatalog';
@@ -3619,6 +3620,8 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
             {checking ? t('settingsPage.updates.checking') : t('settingsPage.updates.check')}
           </Button>
         </div>
+
+        <OsUpgradePanel />
       </div>
     </>
   );

@@ -628,6 +628,23 @@
   font-size: var(--text-xs);
 }
 
+/* OS package upgrades sit under Universal Chess OTA in the same card. */
+.os-upgrade {
+  margin-top: var(--space-6);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-gray-200);
+}
+
+.os-upgrade-title {
+  font-size: var(--text-base);
+  font-weight: var(--font-semibold);
+  margin: 0 0 var(--space-2);
+}
+
+.os-upgrade-intro {
+  margin-bottom: var(--space-3);
+}
+
 /* System Information definition list (System tab). Two columns (label / value)
    on wide viewports; the label column is sized to its content so values align
    in a clean column. The value column may wrap long, hyphen-free strings

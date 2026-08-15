@@ -6888,6 +6888,66 @@ def api_update_auto_set():
 
 
 # -----------------------------------------------------------------------------
+# Raspberry Pi OS package upgrades (apt), distinct from Universal Chess OTA
+# -----------------------------------------------------------------------------
+
+@app.route("/api/system/os-upgrade", methods=["GET"])
+def api_os_upgrade_status():
+    """Status of the OS package check/upgrade (unauthenticated, polled)."""
+    try:
+        from universalchess.services.os_upgrade_service import get_status
+        return jsonify(get_status())
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/os-upgrade/check", methods=["POST"])
+@requires_auth
+def api_os_upgrade_check():
+    """Refresh apt indexes and count upgradable OS packages."""
+    try:
+        from universalchess.services.os_upgrade_service import (
+            OsUpgradeBusyError,
+            start_check,
+        )
+        start_check()
+        return jsonify({"success": True})
+    except OsUpgradeBusyError:
+        return jsonify({
+            "success": False,
+            "error": "An operating system update is already running.",
+        }), 409
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/os-upgrade/apply", methods=["POST"])
+@requires_auth
+def api_os_upgrade_apply():
+    """Start ``apt-get upgrade`` in the transient OS-upgrade unit."""
+    try:
+        from universalchess.services.os_upgrade_service import (
+            OsUpgradeBlockedError,
+            OsUpgradeBusyError,
+            start_apply,
+        )
+        start_apply()
+        return jsonify({"success": True})
+    except OsUpgradeBusyError:
+        return jsonify({
+            "success": False,
+            "error": "An operating system update is already running.",
+        }), 409
+    except OsUpgradeBlockedError:
+        return jsonify({
+            "success": False,
+            "error": "A Universal Chess update is installing. Try again after it finishes.",
+        }), 409
+    except Exception as e:
+        return _internal_error(e)
+
+
+# -----------------------------------------------------------------------------
 # TLS CA certificate endpoints
 # -----------------------------------------------------------------------------
 

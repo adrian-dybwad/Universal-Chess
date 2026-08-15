@@ -63,6 +63,11 @@ BT_ADMIN = f"{SCRIPTS_DIR}/bt-admin"
 # and forget do nothing and the radio switch has no effect.
 WIFI_ADMIN = f"{SCRIPTS_DIR}/uc-wifi-admin"
 
+# uc-os-upgrade: apt-get update + apt-get upgrade for Raspberry Pi OS packages.
+# Without its grant the Software Updates card cannot refresh the OS; granting
+# apt itself would be unrestricted root.
+OS_UPGRADE_ADMIN = f"{SCRIPTS_DIR}/uc-os-upgrade"
+
 # Resources directory relative to this file (works in both installed and dev environments)
 # This file is at: <base>/paths.py, so resources is at: <base>/resources
 RESOURCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources")

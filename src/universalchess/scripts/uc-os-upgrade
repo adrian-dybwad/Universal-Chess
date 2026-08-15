@@ -1,0 +1,263 @@
+#!/bin/sh
+# uc-os-upgrade -- refresh Raspberry Pi OS packages (apt-get update && upgrade).
+#
+# WHY THIS EXISTS
+#   Settings -> System -> Software Updates can install Universal Chess from
+#   GitHub, but the OS itself (kernel, firmware, BlueZ, OpenSSL) only moves when
+#   someone SSHs in and runs `sudo apt update && sudo apt upgrade -y`. Boards
+#   that never get a shell stay on whatever the card had at first install.
+#
+#   Granting NOPASSWD on apt is equivalent to unrestricted root (`apt-get
+#   install` accepts any package). This helper is the pinned target of one
+#   passwordless sudo grant (see package postinst):
+#
+#     <service-user> ALL=(root) NOPASSWD: /opt/universalchess/scripts/uc-os-upgrade
+#
+# SECURITY BOUNDARY
+#   The verb case is the boundary for the grant. It accepts only `check` and
+#   `apply`, plus an internal `--run` re-exec used after systemd-run. No package
+#   names, no apt `-o` flags, no passthrough. Do not add either.
+#
+#   `universal-chess` is held for the duration of `apt-get upgrade` so this
+#   path cannot fight GitHub OTA, and unheld on EXIT so a killed run cannot
+#   leave the package held (a permanent hold would also block OTA).
+#
+#   Apply (and check) run in a transient systemd unit: an upgrade of python or
+#   of this package restarts universal-chess-web (KillMode=control-group), which
+#   would otherwise kill the apt child. A fixed unit name is also mutual
+#   exclusion -- systemd-run refuses a second start while one is active.
+#
+# TEST SEAMS
+#   UC_OS_UPGRADE_DRY_RUN=1     log intended privileged argv instead of running
+#   UC_OS_UPGRADE_ACTION_LOG    file to append dry-run actions to
+#   UC_OS_UPGRADE_STATE_FILE    override the JSON status path
+#   UC_OS_UPGRADE_REBOOT_FLAG   override /var/run/reboot-required
+#   UC_OS_UPGRADE_LOG           override the apply/check log
+#   UC_OS_UPGRADE_UNIT          override the transient unit name
+#   UC_OS_UPGRADE_SELF          override the re-exec path recorded for systemd-run
+set -u
+
+DRY_RUN="${UC_OS_UPGRADE_DRY_RUN:-0}"
+ACTION_LOG="${UC_OS_UPGRADE_ACTION_LOG:-}"
+STATE_FILE="${UC_OS_UPGRADE_STATE_FILE:-/opt/universalchess/os-upgrade-state.json}"
+REBOOT_FLAG="${UC_OS_UPGRADE_REBOOT_FLAG:-/var/run/reboot-required}"
+LOG="${UC_OS_UPGRADE_LOG:-/var/log/universal-chess-os-upgrade.log}"
+UNIT="${UC_OS_UPGRADE_UNIT:-universal-chess-os-upgrade}"
+SELF="${UC_OS_UPGRADE_SELF:-/opt/universalchess/scripts/uc-os-upgrade}"
+PACKAGE="universal-chess"
+LOCK_FRONTEND="/var/lib/dpkg/lock-frontend"
+
+log() { echo "uc-os-upgrade: $*" >&2; }
+
+usage() {
+	echo "usage: uc-os-upgrade [--run] {check|apply}" >&2
+	exit 2
+}
+
+run_priv() {
+	if [ "$DRY_RUN" = "1" ]; then
+		if [ -n "$ACTION_LOG" ]; then echo "$*" >> "$ACTION_LOG"; fi
+		return 0
+	fi
+	"$@"
+}
+
+iso_now() {
+	date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+# Merge key=value overrides into the status JSON. Values travel as argv (not
+# prefix assignments) so the python child actually sees them. Empty `error=`
+# is JSON null. Unknown existing keys are dropped so a truncated file cannot
+# inject fields the API would echo.
+write_state() {
+	python3 - "$STATE_FILE" "$@" <<'PY'
+import json, pathlib, sys
+
+path = pathlib.Path(sys.argv[1])
+existing = {}
+try:
+    loaded = json.loads(path.read_text())
+    if isinstance(loaded, dict):
+        existing = loaded
+except (OSError, ValueError):
+    existing = {}
+
+overrides = {}
+for item in sys.argv[2:]:
+    key, _, val = item.partition("=")
+    overrides[key] = val
+
+def keep(name, default=None):
+    if name in overrides:
+        return overrides[name]
+    return existing.get(name, default)
+
+phase = keep("phase", "idle") or "idle"
+last_check = keep("last_check")
+last_apply = keep("last_apply")
+if last_check == "":
+    last_check = None
+if last_apply == "":
+    last_apply = None
+count = keep("count", existing.get("upgradable_count", 0))
+try:
+    count = int(count)
+except (TypeError, ValueError):
+    count = 0
+if "packages" in overrides:
+    packages = [p for p in overrides["packages"].split(",") if p]
+else:
+    packages = existing.get("upgradable") if isinstance(existing.get("upgradable"), list) else []
+if "reboot" in overrides:
+    reboot = overrides["reboot"] == "1"
+else:
+    reboot = bool(existing.get("reboot_required"))
+if "error" in overrides:
+    error = overrides["error"] or None
+else:
+    error = existing.get("error")
+payload = {
+    "phase": phase,
+    "last_check": last_check,
+    "last_apply": last_apply,
+    "upgradable_count": count,
+    "upgradable": packages,
+    "reboot_required": reboot,
+    "error": error,
+}
+path.write_text(json.dumps(payload, indent=2) + "\n")
+PY
+}
+
+wait_for_lock() {
+	[ "$DRY_RUN" = "1" ] && return 0
+	[ -e "$LOCK_FRONTEND" ] || return 0
+	command -v fuser >/dev/null 2>&1 || return 0
+	i=0
+	while fuser "$LOCK_FRONTEND" >/dev/null 2>&1 && [ "$i" -lt 60 ]; do
+		sleep 2
+		i=$((i + 1))
+	done
+	if fuser "$LOCK_FRONTEND" >/dev/null 2>&1; then
+		log "dpkg frontend lock still held"
+		write_state phase=failed error=locked
+		exit 1
+	fi
+}
+
+hold_app() {
+	run_priv apt-mark hold "$PACKAGE" || true
+}
+
+unhold_app() {
+	run_priv apt-mark unhold "$PACKAGE" || true
+}
+
+# Parse argv. Only --run, check, and apply are accepted, each at most once.
+MODE="launch"
+VERB=""
+for arg in "$@"; do
+	case "$arg" in
+		--run)
+			if [ "$MODE" = "run" ]; then usage; fi
+			MODE="run"
+			;;
+		check|apply)
+			if [ -n "$VERB" ]; then usage; fi
+			VERB="$arg"
+			;;
+		*)
+			usage
+			;;
+	esac
+done
+[ -n "$VERB" ] || usage
+
+if [ "$MODE" = "launch" ]; then
+	if [ "$VERB" = "check" ]; then
+		write_state phase=checking error=
+	else
+		write_state phase=applying error=
+	fi
+	if [ "$DRY_RUN" = "1" ]; then
+		run_priv systemd-run --collect --unit="$UNIT" "$SELF" --run "$VERB"
+		exit 0
+	fi
+	if ! systemd-run --collect --unit="$UNIT" "$SELF" --run "$VERB"; then
+		write_state phase=failed error=launch_failed
+		log "systemd-run failed"
+		exit 1
+	fi
+	exit 0
+fi
+
+# --- MODE=run: inside the transient unit, as root ---
+if [ "$DRY_RUN" != "1" ]; then
+	mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
+	exec >>"$LOG" 2>&1
+fi
+export DEBIAN_FRONTEND=noninteractive
+log "$VERB start"
+
+if [ "$VERB" = "check" ]; then
+	wait_for_lock
+	hold_app
+	# Unhold even if update/listing fails, so a check cannot leave OTA blocked.
+	trap unhold_app EXIT
+	run_priv apt-get update || log "apt-get update failed (continuing; a cached index may suffice)"
+	packages=""
+	count=0
+	if [ "$DRY_RUN" != "1" ]; then
+		# `apt-get -s upgrade` is the stable listing interface. `apt list` is not.
+		listed=$(apt-get -s -q upgrade 2>/dev/null | awk '/^Inst / { print $2 }') || listed=""
+		for pkg in $listed; do
+			[ "$pkg" = "$PACKAGE" ] && continue
+			count=$((count + 1))
+			if [ "$count" -le 50 ]; then
+				if [ -z "$packages" ]; then
+					packages="$pkg"
+				else
+					packages="$packages,$pkg"
+				fi
+			fi
+		done
+	fi
+	unhold_app
+	trap - EXIT
+	write_state \
+		phase=idle \
+		last_check="$(iso_now)" \
+		count="$count" \
+		packages="$packages" \
+		error=
+	log "check complete count=$count"
+	exit 0
+fi
+
+# apply
+wait_for_lock
+hold_app
+trap unhold_app EXIT
+run_priv dpkg --configure -a || log "dpkg --configure -a failed (continuing)"
+run_priv apt-get update || log "apt-get update failed (continuing; a cached index may suffice)"
+if ! run_priv apt-get -y -o Dpkg::Options::=--force-confold upgrade; then
+	unhold_app
+	trap - EXIT
+	write_state phase=failed error=upgrade_failed
+	log "apt-get upgrade FAILED"
+	exit 1
+fi
+unhold_app
+trap - EXIT
+reboot=0
+[ -f "$REBOOT_FLAG" ] && reboot=1
+write_state \
+	phase=idle \
+	last_apply="$(iso_now)" \
+	count=0 \
+	packages= \
+	reboot="$reboot" \
+	error=
+log "apply complete reboot_required=$reboot"
+exit 0

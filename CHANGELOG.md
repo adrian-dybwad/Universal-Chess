@@ -15,6 +15,19 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **Operating system updates in Settings**: The Software Updates card could
+  install Universal Chess from GitHub, but Raspberry Pi OS packages (kernel,
+  firmware, libraries) still needed an SSH session and
+  `sudo apt update && sudo apt upgrade -y`. Settings -> System -> Software
+  Updates now has an Operating system subsection: Check for OS updates counts
+  upgradable packages, Update operating system runs the upgrade, and Reboot now
+  appears when the OS says a reboot is required. Universal Chess itself stays
+  on the GitHub updater above; the OS path holds that package only for the
+  duration of `apt-get upgrade` so the two cannot fight. Privileged work goes
+  through the pinned `uc-os-upgrade` helper (passwordless sudo grant, same
+  pattern as the clock helpers) in a transient systemd unit so an upgrade that
+  restarts the web service cannot kill apt. The board menu is unchanged.
+
 - **USB Ethernet gadget mode in Connectivity settings**: Boards prepared with
   `enable_usb_gadget.py` (or an equivalent boot edit) had no in-app control for
   Off / Auto / Client / Shared, and nothing showed whether the live OS state

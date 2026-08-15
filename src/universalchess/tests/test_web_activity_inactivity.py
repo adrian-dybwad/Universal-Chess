@@ -174,6 +174,7 @@ def test_after_request_does_not_fire_on_fen_poll(client, capture_commands):
     "/api/system/centaur-status",  # Settings centaur-status poll (~3s)
     "/api/engines/status",        # engine install-status poll
     "/api/updates/status",        # update indicator/banner
+    "/api/system/os-upgrade",     # Settings OS-upgrade poll
     "/api/connectivity/wifi/status",       # connectivity indicator/page
     "/api/connectivity/bluetooth/status",  # connectivity indicator/page
 ])

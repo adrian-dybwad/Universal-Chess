@@ -129,6 +129,17 @@ beforeEach(() => {
       posts.push({ url, body: JSON.parse((init?.body as string) ?? '{}') });
       return jsonResponse({ success: true });
     }
+    if (url === '/api/system/os-upgrade') {
+      return jsonResponse({
+        is_checking: false,
+        is_applying: false,
+        upgradable_count: null,
+        upgradable: [],
+        last_check: null,
+        reboot_required: false,
+        error: null,
+      });
+    }
     if (url === '/api/system/hardware') return jsonResponse({}, 503);
     if (url === '/api/system/stats') return jsonResponse({}, 503);
     if (url === '/api/accounts') return jsonResponse({ accounts: [] });
@@ -325,5 +336,24 @@ describe('UpdateManager up-to-date confirmation', () => {
     expect(
       await screen.findByText('Update Ready to Install: v2.5.0!')
     ).toBeInTheDocument();
+  });
+});
+
+describe('Software Updates card OS subsection', () => {
+  it('renders Operating system inside the Software Updates card', async () => {
+    // Why: apt upgrade is a second updater, not a second card. Putting it
+    // outside Software Updates (or omitting it) either hides the control or
+    // makes "You're running the latest version" look like it covers the OS.
+    // Failure: the heading is missing, or it is not a descendant of the
+    // Software Updates card.
+    renderSystemTab();
+    const updatesHeading = await screen.findByRole('heading', { name: 'Software Updates' });
+    const card = updatesHeading.closest('.card');
+    expect(card).not.toBeNull();
+    expect(
+      await screen.findByRole('heading', { name: 'Operating system' })
+    ).toBeInTheDocument();
+    expect(within(card as HTMLElement).getByRole('heading', { name: 'Operating system' })).toBeInTheDocument();
+    expect(within(card as HTMLElement).getByRole('button', { name: 'Check for OS updates' })).toBeInTheDocument();
   });
 });
