@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
@@ -14,11 +15,15 @@ import menuSchemaFixture from '../test/fixtures/menuSchema';
  *  - strength is chosen from a profile dropdown (not free-text Elo), and the old
  *    Threads/Hash inputs are gone;
  *  - in translate mode the engine/strength group renders *before* the handover
- *    action button (the reorder), so the user configures the engine, then acts.
+ *    action button (the reorder), so the user configures the engine, then acts;
+ *  - a collapsed Troubleshooting card documents the Windows PowerShell errors
+ *    that stop `make-centaur-image.ps1` (current-directory invocation and the
+ *    unsigned-script execution policy).
  *
  * A regression manifests as: no "Original Centaur" tab; an "Elo"/"Threads"/"Hash"
- * input reappearing; the strength dropdown missing; or the action button
- * preceding the engine group again.
+ * input reappearing; the strength dropdown missing; the action button
+ * preceding the engine group again; or the PowerShell remedies missing / shown
+ * expanded so they crowd the import steps.
  */
 
 const menuSchema: unknown = menuSchemaFixture;
@@ -151,5 +156,46 @@ describe('Original Centaur tab', () => {
     // DOCUMENT_POSITION_FOLLOWING means switchButton comes after saveEngine.
     const relation = saveEngine.compareDocumentPosition(switchButton);
     expect(relation & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('keeps Windows PowerShell troubleshooting collapsed until opened', async () => {
+    // Why: importing Original Centaur from Windows is blocked by two PowerShell
+    // errors (current-directory invocation, then unsigned-script policy). Those
+    // remedies belong on this tab, collapsed so they do not crowd the import
+    // steps. A regression drops the card, leaves the commands visible by
+    // default, or omits Bypass / Unblock-File / RemoteSigned so a stuck user
+    // has no copy-pasteable fix.
+    installCentaurFetchMock({ centaurAvailable: false });
+    renderCentaurTab();
+
+    const cardTitle = await screen.findByRole('heading', { name: 'Troubleshooting' });
+    const card = cardTitle.closest('.card') as HTMLElement;
+    const expand = within(card).getByRole('button', { name: 'Show details' });
+    expect(expand).toHaveAttribute('aria-expanded', 'false');
+    expect(within(card).queryByText(/ExecutionPolicy Bypass/)).toBeNull();
+    expect(within(card).queryByText('Unblock-File .\\make-centaur-image.ps1')).toBeNull();
+
+    await userEvent.click(expand);
+
+    expect(expand).toHaveAttribute('aria-expanded', 'true');
+    expect(within(card).getByText(/does not run scripts from the current folder/i)).toBeInTheDocument();
+    expect(within(card).getByText(/not digitally signed/i)).toBeInTheDocument();
+    expect(within(card).getByText('powershell -ExecutionPolicy Bypass -File .\\make-centaur-image.ps1')).toBeInTheDocument();
+    expect(within(card).getByText('Unblock-File .\\make-centaur-image.ps1')).toBeInTheDocument();
+    expect(within(card).getByText('Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned')).toBeInTheDocument();
+    expect(within(card).getByText(/elevated \(Administrator\) PowerShell/i)).toBeInTheDocument();
+  });
+
+  it('shows the Troubleshooting card when Centaur is already installed', async () => {
+    // Why: the PowerShell errors happen on the computer holding the SD card,
+    // independent of whether Centaur is already on the board. Burying the
+    // section inside Re-import would hide it after the first install. A
+    // regression that gates the card on !centaurAvailable drops the help
+    // exactly when a re-image is being attempted.
+    installCentaurFetchMock({ centaurAvailable: true });
+    renderCentaurTab();
+
+    expect(await screen.findByText('Re-import from SD')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Troubleshooting' })).toBeInTheDocument();
   });
 });

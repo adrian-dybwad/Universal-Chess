@@ -726,3 +726,28 @@
   color: var(--color-text-muted);
   white-space: nowrap;
 }
+
+/* Original Centaur troubleshooting: stacked prose + copy-pasteable commands.
+   Inner `code` drops the global chip background so it does not double up
+   inside `pre`. */
+.centaur-troubleshoot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.centaur-troubleshoot p {
+  margin: 0;
+}
+
+.centaur-troubleshoot-cmd {
+  margin: 0;
+}
+
+.centaur-troubleshoot-cmd code {
+  background: transparent;
+  padding: 0;
+}

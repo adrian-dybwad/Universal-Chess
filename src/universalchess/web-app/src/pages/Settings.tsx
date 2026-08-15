@@ -4078,8 +4078,22 @@ interface CollapsibleCardProps {
 }
 
 /**
+ * Copy-pasteable shell command shown in the Original Centaur troubleshooting
+ * card. `pre` supplies the block chrome; inner `code` is unstyled so the two
+ * do not stack backgrounds from the global `code`/`pre` rules.
+ */
+function ShellCommand({ command }: { command: string }) {
+  return (
+    <pre className="centaur-troubleshoot-cmd">
+      <code>{command}</code>
+    </pre>
+  );
+}
+
+/**
  * Card whose body collapses behind a header toggle, collapsed by default. Keeps
- * long or secondary sections (Game Database, Diagnostics) out of the way until
+ * long or secondary sections (Game Database, Diagnostics, Original Centaur
+ * troubleshooting) out of the way until
  * opened. Mirrors the SystemInfoCard toggle: a small secondary button carrying
  * aria-expanded, with the shared Show/Hide details labels.
  */
@@ -4959,6 +4973,30 @@ function CentaurSettings() {
           </>
         )}
       </Card>
+
+      {/* Collapsed by default: the import steps stay short, and this card is
+          always on the tab (not gated on the importer) so a Windows user who
+          already downloaded the script can still find the PowerShell remedies. */}
+      <CollapsibleCard title={t('settingsPage.systemActions.troubleshootingTitle')}>
+        <h4 className="settings-group-title">{t('settingsPage.systemActions.troubleshootingWindowsHeading')}</h4>
+        <div className="centaur-troubleshoot">
+          <p>
+            <Trans
+              i18nKey="settingsPage.systemActions.troubleshootingDotSource"
+              components={{ 0: <code />, 1: <code /> }}
+            />
+          </p>
+          <p>{t('settingsPage.systemActions.troubleshootingUnsigned')}</p>
+          <p>{t('settingsPage.systemActions.troubleshootingBypassIntro')}</p>
+          <ShellCommand command={t('settingsPage.systemActions.troubleshootingBypassCommand')} />
+          <p>{t('settingsPage.systemActions.troubleshootingUnblockIntro')}</p>
+          <ShellCommand command={t('settingsPage.systemActions.troubleshootingUnblockCommand')} />
+          <ShellCommand command={t('settingsPage.systemActions.troubleshootingRunCommand')} />
+          <p>{t('settingsPage.systemActions.troubleshootingPolicyIntro')}</p>
+          <ShellCommand command={t('settingsPage.systemActions.troubleshootingPolicyCommand')} />
+          <p>{t('settingsPage.systemActions.troubleshootingAdmin')}</p>
+        </div>
+      </CollapsibleCard>
     </section>
   );
 }

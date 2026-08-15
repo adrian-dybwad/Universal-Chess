@@ -15,6 +15,16 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **Windows PowerShell troubleshooting on Original Centaur**: Importing from an
+  SD card on Windows is blocked by two PowerShell errors that the download
+  buttons did not mention: the shell refuses a bare `make-centaur-image.ps1` in
+  the current folder, then refuses the `.\` form because the script is not
+  digitally signed. Settings -> Original Centaur now has a collapsed
+  Troubleshooting card with those two errors and the three remedies (one-run
+  Bypass, Unblock-File for a downloaded script, and CurrentUser RemoteSigned),
+  plus the Administrator requirement. The card stays on the tab after Centaur is
+  installed, so a re-image does not bury the help inside Re-import.
+
 - **Operating system updates in Settings**: The Software Updates card could
   install Universal Chess from GitHub, but Raspberry Pi OS packages (kernel,
   firmware, libraries) still needed an SSH session and
