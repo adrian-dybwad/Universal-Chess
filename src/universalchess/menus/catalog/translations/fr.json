@@ -577,6 +577,7 @@
     },
     "updates.install_pending": {
       "label": "Installer\nla mise à jour",
+      "boardLabel": "Installer\nv{value}",
       "help": "Installe la mise à jour téléchargée ; le plateau redémarre avec la nouvelle version."
     },
     "updates.download": {

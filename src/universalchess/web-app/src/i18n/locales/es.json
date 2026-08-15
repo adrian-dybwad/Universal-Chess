@@ -280,13 +280,13 @@
   },
   "update": {
     "installing": "Instalando la actualización… el tablero se reiniciará y esta página puede desconectarse brevemente.",
-    "ready": "Se ha descargado una actualización y está lista para instalar.",
+    "ready": "v{{version}} se ha descargado y está lista para instalar.",
     "details": "Detalles",
     "installNow": "Instalar ahora",
     "installingShort": "Instalando…",
     "installFailed": "La instalación falló",
     "networkError": "Error de red",
-    "indicatorReady": "Actualización lista para instalar"
+    "indicatorReady": "Actualización v{{version}} lista para instalar"
   },
   "appUpdate": {
     "available": "Hay una nueva versión de la app disponible.",
@@ -582,7 +582,7 @@
       "lastChecked": "Última comprobación: {{time}}",
       "inProgressTitle": "Actualización en curso…",
       "inProgressBody": "Se está instalando una actualización. El tablero se reiniciará cuando termine; esta página puede desconectarse brevemente.",
-      "readyTitle": "¡Actualización lista para instalar!",
+      "readyTitle": "¡Actualización lista para instalar: v{{version}}!",
       "readyBody": "Se ha descargado una nueva versión y está lista para instalar.",
       "installNow": "Instalar ahora",
       "installing": "Instalando...",

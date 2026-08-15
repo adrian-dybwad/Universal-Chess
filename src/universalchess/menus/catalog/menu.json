@@ -1414,6 +1414,8 @@
       "type": "action",
       "action": "install_pending",
       "label": "Install\nPending Update",
+      "boardLabel": "Install\nv{value}",
+      "bind": { "store": "update", "key": "available" },
       "icon": "play",
       "help": "Install the downloaded update; the board restarts onto the new version.",
       "visibleWhen": { "store": "update", "key": "has_pending", "equals": true },

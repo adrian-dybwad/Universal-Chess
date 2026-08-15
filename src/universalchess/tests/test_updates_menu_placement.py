@@ -257,3 +257,31 @@ def test_selecting_updates_from_the_system_menu_opens_the_update_menu():
     outcome = dispatch(_catalog().get_node(UPDATES_NODE), ctx)
     assert outcome.kind == "action" and outcome.action == OPEN_ACTION
     assert ctx.opened == [OPEN_ACTION]
+
+
+def test_ready_row_label_names_the_pending_version():
+    """A staged update's System-menu summary names the version, not just Ready!.
+
+    Why this test exists: the available (not-yet-downloaded) state already
+    shows ``v<ver>``; once the same build is staged the row used to collapse to
+    ``Ready!``, so the board no longer said *which* version would install. A
+    regression restoring that label fails the ready assertion here; a missing
+    version must still say Ready! rather than ``Ready! v``.
+    """
+    from universalchess.menus.update_menu import updates_row_state_and_label
+
+    assert updates_row_state_and_label({
+        "has_pending_update": True,
+        "available_version": "2.5.0",
+        "auto_update": False,
+    }) == ("ready", "Ready! v2.5.0")
+    assert updates_row_state_and_label({
+        "has_pending_update": True,
+        "available_version": None,
+        "auto_update": False,
+    }) == ("ready", "Ready!")
+    assert updates_row_state_and_label({
+        "has_pending_update": False,
+        "available_version": "2.5.0",
+        "auto_update": False,
+    }) == ("available", "v2.5.0")

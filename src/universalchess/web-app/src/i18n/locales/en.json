@@ -280,13 +280,13 @@
   },
   "update": {
     "installing": "Installing update… the board will restart and this page may briefly disconnect.",
-    "ready": "An update has been downloaded and is ready to install.",
+    "ready": "v{{version}} has been downloaded and is ready to install.",
     "details": "Details",
     "installNow": "Install now",
     "installingShort": "Installing…",
     "installFailed": "Install failed",
     "networkError": "Network error",
-    "indicatorReady": "Update ready to install"
+    "indicatorReady": "Update v{{version}} ready to install"
   },
   "appUpdate": {
     "available": "A new version of the app is available.",
@@ -582,7 +582,7 @@
       "lastChecked": "Last checked: {{time}}",
       "inProgressTitle": "Update in progress…",
       "inProgressBody": "An update is installing. The board will restart when it completes; this page may briefly disconnect.",
-      "readyTitle": "Update Ready to Install!",
+      "readyTitle": "Update Ready to Install: v{{version}}!",
       "readyBody": "A new version has been downloaded and is ready to install.",
       "installNow": "Install Now",
       "installing": "Installing...",

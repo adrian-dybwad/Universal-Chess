@@ -312,4 +312,18 @@ describe('UpdateManager up-to-date confirmation', () => {
       screen.queryByText("You're running the latest version.")
     ).not.toBeInTheDocument();
   });
+
+  it('names the pending version on the ready-to-install card', async () => {
+    // Why: "Update Ready to Install!" used to omit the version, so a downloaded
+    // build could not be told apart from any other. The available card already
+    // names v{{version}}; the ready card must do the same. A regression dropping
+    // the interpolation shows the old title with no 2.5.0.
+    updateStatus.has_pending_update = true;
+    updateStatus.available_version = '2.5.0';
+    updateStatus.last_check = new Date().toISOString();
+    renderSystemTab();
+    expect(
+      await screen.findByText('Update Ready to Install: v2.5.0!')
+    ).toBeInTheDocument();
+  });
 });

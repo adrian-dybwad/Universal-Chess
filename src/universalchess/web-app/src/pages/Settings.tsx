@@ -3554,7 +3554,9 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
         {/* Update Status */}
         {status.has_pending_update && !status.is_installing && (
           <Card variant="primary" className="mb-4">
-            <strong>{t('settingsPage.updates.readyTitle')}</strong>
+            <strong>{t('settingsPage.updates.readyTitle', {
+              version: status.available_version || t('settingsPage.updates.unknown'),
+            })}</strong>
             <p className="text-muted mt-2">
               {t('settingsPage.updates.readyBody')}
             </p>

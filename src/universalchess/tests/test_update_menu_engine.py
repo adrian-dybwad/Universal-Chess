@@ -87,13 +87,18 @@ def test_pending_update_replaces_download_with_install_pending():
 
     Why this test exists: Download and Install-Pending are mutually exclusive
     (``has_download`` is false once pending); the user must see exactly one
-    install path. How a regression manifests: both rows show at once, or neither,
-    after a download completes.
+    install path, and Install-Pending must keep naming the staged version the
+    way Download did. How a regression manifests: both rows show at once, or
+    neither, after a download completes; or Install-Pending reverts to a
+    version-less "Pending Update" label.
     """
     _, rows = _rows(available="2.5.0", has_pending=True)
-    keys = {r.key for r in rows}
-    assert "InstallPending" in keys
-    assert "DownloadUpdate" not in keys
+    by_key = {r.key: r for r in rows}
+    assert "InstallPending" in by_key
+    assert "DownloadUpdate" not in by_key
+    # The Download row named the version; Install-Pending must keep naming it
+    # once it takes Download's place, or the staged build becomes anonymous.
+    assert by_key["InstallPending"].label == "Install\nv2.5.0"
 
 
 def test_auto_update_toggle_icon_and_label_track_state():

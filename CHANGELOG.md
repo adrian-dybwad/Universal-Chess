@@ -406,6 +406,13 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Changed
 
+- **Ready-to-install update copy names the version**: A staged update used to
+  say only "Update Ready to Install!" (and "Ready!" on the board), so which
+  build would be applied was not visible. The Settings card, the top-of-page
+  banner, the navbar indicator, and the board's Updates / Install Pending rows
+  now include the pending version, matching the "Update Available: v…" line
+  that already named it before the download.
+
 - **Engine list groups and orders itself by rating**: The Settings engine list
   puts each engine in a strength group and, within it, lists the strongest
   first. Both now follow the engine's published rating, recorded once in the

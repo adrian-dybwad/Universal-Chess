@@ -577,6 +577,7 @@
     },
     "updates.install_pending": {
       "label": "Instalar\nactualización",
+      "boardLabel": "Instalar\nv{value}",
       "help": "Instala la actualización descargada; el tablero se reinicia con la nueva versión."
     },
     "updates.download": {

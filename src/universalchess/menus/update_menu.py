@@ -4,18 +4,38 @@ The Updates menu structure (auto-update toggle, channel select, the
 check/download/install rows, and the local-.deb install confirmation) is
 data-driven (the ``updates`` catalog container, including
 ``updates.install_local.confirm``, rendered through the engine). This module
-holds only the imperative, splash-screen-driven operations those rows invoke as
-actions -- checking, downloading, installing a pending update, and performing a
-confirmed local-.deb install -- plus the local .deb discovery helper. All update
+holds the System-menu Updates row's (icon-state, summary) helper -- so the
+pending version can be named without importing ``main`` -- plus the
+imperative, splash-screen-driven operations those rows invoke as actions --
+checking, downloading, installing a pending update, and performing a
+confirmed local-.deb install -- and the local .deb discovery helper. All update
 state goes through the unified UpdateService.
 """
 
 import os
 import time
-from typing import List
+from typing import List, Tuple
 
 from universalchess.epaper import SplashScreen
 from universalchess.services.update_service import get_update_service
+
+
+def updates_row_state_and_label(status: dict) -> Tuple[str, str]:
+    """Return the (icon-state, summary label) pair for the System menu Updates row.
+
+    Both derive from the one update-service status so the row's state-mapped icon
+    and its computed label cannot disagree: a pending update reads "Ready!" (with
+    the staged version when known), an available (not-yet-downloaded) version
+    reads "v<ver>", otherwise the auto-update setting decides "Auto"/"Manual".
+    """
+    version = status.get("available_version") or ""
+    if status.get("has_pending_update"):
+        return "ready", f"Ready! v{version}" if version else "Ready!"
+    if version:
+        return "available", f"v{version}"
+    if status.get("auto_update"):
+        return "auto", "Auto"
+    return "manual", "Manual"
 
 
 def _show_update_splash(board, message: str, timeout: float = 2.0) -> None:

@@ -280,13 +280,13 @@
   },
   "update": {
     "installing": "Installation de la mise à jour… le plateau va redémarrer et cette page peut se déconnecter brièvement.",
-    "ready": "Une mise à jour a été téléchargée et est prête à être installée.",
+    "ready": "v{{version}} a été téléchargée et est prête à être installée.",
     "details": "Détails",
     "installNow": "Installer maintenant",
     "installingShort": "Installation…",
     "installFailed": "L'installation a échoué",
     "networkError": "Erreur réseau",
-    "indicatorReady": "Mise à jour prête à installer"
+    "indicatorReady": "Mise à jour v{{version}} prête à installer"
   },
   "appUpdate": {
     "available": "Une nouvelle version de l'application est disponible.",
@@ -582,7 +582,7 @@
       "lastChecked": "Dernière vérification : {{time}}",
       "inProgressTitle": "Mise à jour en cours…",
       "inProgressBody": "Une mise à jour s'installe. Le plateau redémarrera à la fin ; cette page peut se déconnecter brièvement.",
-      "readyTitle": "Mise à jour prête à installer !",
+      "readyTitle": "Mise à jour prête à installer : v{{version}} !",
       "readyBody": "Une nouvelle version a été téléchargée et est prête à être installée.",
       "installNow": "Installer maintenant",
       "installing": "Installation...",

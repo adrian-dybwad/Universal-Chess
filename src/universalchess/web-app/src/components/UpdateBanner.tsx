@@ -15,6 +15,7 @@ interface UpdateStatusLite {
   auto_update: boolean;
   has_pending_update: boolean;
   is_installing: boolean;
+  available_version: string | null;
 }
 
 /**
@@ -90,7 +91,7 @@ export function UpdateBanner() {
       {showInstall && (
         <div className="update-banner" role="status" aria-live="polite">
           <span className="update-banner__text">
-            {t('update.ready')}
+            {t('update.ready', { version: status?.available_version || t('settingsPage.updates.unknown') })}
           </span>
           <span className="update-banner__actions">
             {error && <span className="update-banner__error">{error}</span>}

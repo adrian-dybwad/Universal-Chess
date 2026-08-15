@@ -25,6 +25,7 @@ export function UpdateIndicator() {
   const { t } = useTranslation();
   const [pending, setPending] = useState(false);
   const [autoUpdate, setAutoUpdate] = useState(false);
+  const [availableVersion, setAvailableVersion] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -36,6 +37,9 @@ export function UpdateIndicator() {
         if (!active) return;
         setPending(Boolean(data.has_pending_update));
         setAutoUpdate(Boolean(data.auto_update));
+        setAvailableVersion(
+          typeof data.available_version === 'string' ? data.available_version : null,
+        );
       } catch {
         // Best-effort: keep the last known state until a later poll succeeds.
       }
@@ -51,12 +55,16 @@ export function UpdateIndicator() {
   // Defer to the top banner when auto-download is on (it owns the install CTA).
   if (!pending || autoUpdate) return null;
 
+  const readyLabel = t('update.indicatorReady', {
+    version: availableVersion || t('settingsPage.updates.unknown'),
+  });
+
   return (
     <Link
       to="/settings/system"
       className="navbar-control-icon navbar-update-icon"
-      title={t('update.indicatorReady')}
-      aria-label={t('update.indicatorReady')}
+      title={readyLabel}
+      aria-label={readyLabel}
     >
       <MenuIcon name="update" size={18} />
     </Link>

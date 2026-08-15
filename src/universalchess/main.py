@@ -5109,16 +5109,10 @@ def _update_status_state_and_label():
     available (not-yet-downloaded) version reads "available", otherwise the
     auto-update setting decides "auto"/"manual".
     """
+    from universalchess.menus.update_menu import updates_row_state_and_label
     from universalchess.services.update_service import get_update_service
 
-    status = get_update_service().get_status_dict()
-    if status["has_pending_update"]:
-        return "ready", "Ready!"
-    if status["available_version"]:
-        return "available", f"v{status['available_version']}"
-    if status["auto_update"]:
-        return "auto", "Auto"
-    return "manual", "Manual"
+    return updates_row_state_and_label(get_update_service().get_status_dict())
 
 
 def _system_telemetry_rows():
