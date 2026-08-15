@@ -46,11 +46,13 @@ UUID = "1b9f2c3d-4e5f-6789-abcd-ef0123456789"
 # invocations and their order. A passwd-file argument is expanded into its mode
 # and contents: the point of that path is that the secret is in the file and not
 # in the argv, which only a test that reads both can distinguish.
+# GNU ``stat -c`` must be tried before BSD ``stat -f``: GNU ``-f`` is
+# ``--file-system`` and succeeds, so a BSD-first fallback never runs on Linux.
 _FAKE_TOOL = """#!/bin/sh
 echo "{name} $*" >> "$UC_WIFI_TEST_LOG"
 for arg in "$@"; do
 	if [ "$seen_passwd_file" = "1" ]; then
-		echo "passwd-file-mode $(stat -f '%Lp' "$arg" 2>/dev/null || stat -c '%a' "$arg")" \
+		echo "passwd-file-mode $(stat -c '%a' "$arg" 2>/dev/null || stat -f '%Lp' "$arg")" \
 			>> "$UC_WIFI_TEST_LOG"
 		echo "passwd-file-body $(cat "$arg")" >> "$UC_WIFI_TEST_LOG"
 		echo "passwd-file-path $arg" >> "$UC_WIFI_TEST_LOG"

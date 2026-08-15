@@ -241,7 +241,8 @@ def _find_sudo_calls(source_path: Path) -> list[SudoCall]:
     relative_path = str(source_path.relative_to(APP_ROOT))
     calls: list[SudoCall] = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.List | ast.Tuple):
+        # isinstance does not accept PEP 604 unions on Python 3.9.
+        if isinstance(node, (ast.List, ast.Tuple)):
             argv = _argv_from_sequence(node, source_path)
         elif isinstance(node, ast.Constant):
             argv = _argv_from_command_string(node)

@@ -241,9 +241,13 @@ def test_the_write_replaces_the_file_rather_than_truncating_it(tmp_path, monkeyp
     A rename over the original has no such window: the old bytes stay readable
     until the new file is complete on disk.
 
-    How a regression shows: os.replace is never called, meaning the tool went
+    How a regression shows: Path.replace is never called, meaning the tool went
     back to writing the live path directly. Asserted by failing the rename and
     requiring the original bytes to survive it.
+
+    Path.replace is the call the tool makes. Patching os.replace instead misses
+    Python 3.9, where pathlib binds os.replace onto its accessor at import time
+    and never looks it up again.
     """
     module = _load_tool()
     path = _cmdline_file(tmp_path)
@@ -254,9 +258,10 @@ def test_the_write_replaces_the_file_rather_than_truncating_it(tmp_path, monkeyp
         calls.append((source, target))
         raise OSError(28, "No space left on device")
 
+    monkeypatch.setattr(module.Path, "replace", refuse_replace)
     monkeypatch.setattr(module.os, "replace", refuse_replace)
     code = module.main(["arm-cmdline", str(path)])
-    assert calls, "the tool must write through a temp file and os.replace"
+    assert calls, "the tool must write through a temp file and Path.replace"
     assert code == _FAILED
     assert path.read_bytes() == before
     assert [p.name for p in tmp_path.iterdir()] == ["cmdline.txt"]
