@@ -2,7 +2,7 @@
 
 The game talks to :class:`LichessPlayer`. Hosts, tokens, identity, seek, and
 the board lobby live in this package. Chess.com (or any other provider) does
-not import these modules.
+not import these modules. Plugin tests live in ``tests/``.
 """
 
 from .player import (

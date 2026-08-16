@@ -1,6 +1,10 @@
 """
 Pytest configuration and fixtures for Universal-Chess tests.
 
+Lives on the package so the app dump (``tests/``) and player-plugin trees
+(``players/*/tests``) share hardware stubs. Pytest loads this file for any
+test under ``src/universalchess/``.
+
 This module provides:
 - Mock controller fixture for tests that need board functionality
 - Automatic cleanup of board state between tests

@@ -1,11 +1,23 @@
-# Static-analysis configuration for Universal-Chess.
+# Pytest collection and static-analysis configuration for Universal-Chess.
 #
-# This file configures the local static-analysis toolchain (ruff, bandit). It
-# intentionally does NOT declare [build-system]/[project] tables so the repo is
-# not turned into an installable package (tox uses skipsdist=true and the app is
-# deployed as a source tree, not a wheel).
+# This file configures pytest collection and the local static-analysis toolchain
+# (ruff, bandit). It intentionally does NOT declare [build-system]/[project]
+# tables so the repo is not turned into an installable package (tox uses
+# skipsdist=true and the app is deployed as a source tree, not a wheel).
 #
 # Run everything with: ./scripts/analyze.sh
+
+# ---------------------------------------------------------------------------
+# Pytest: app tests plus any test_*.py under a player plugin
+# (players/<name>/tests/). Coaches, agents, emulators, and other expandable
+# trees stay in the app dump until those packages grow a tests/ folder; add
+# their package path here then.
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = [
+    "src/universalchess/tests",
+    "src/universalchess/players",
+]
 
 # ---------------------------------------------------------------------------
 # Ruff: fast linter covering pyflakes, pycodestyle, bugbear, security
@@ -54,6 +66,8 @@ ignore = [
 # randomised behaviour is reproducible, which is a test requirement, not a
 # security concern.
 "**/tests/**" = ["S101", "S105", "S106", "S107", "S311", "ANN", "D", "PLR2004", "INP001"]
+# Package-level conftest is shared by the app dump and plugin test trees.
+"**/conftest.py" = ["S101", "S105", "S106", "S107", "S311", "ANN", "D", "PLR2004", "INP001"]
 
 # The SD-card tool is a flat directory of sibling modules, not a package. Users
 # run a single generated file built by concatenating them, and the modular source
@@ -67,7 +81,7 @@ check-typed-exception = true
 
 # ---------------------------------------------------------------------------
 # Bandit: dedicated security linter. Run at all severities/confidences for
-# maximum coverage; only the test tree is excluded (it deliberately contains
+# maximum coverage; test trees are excluded (they deliberately contain
 # assert/eval-like test fixtures). No checks are skipped globally -- false
 # positives are suppressed per-line with a scoped, justified `# nosec <code>`
 # so each new occurrence is consciously re-reviewed and other findings on the
@@ -76,6 +90,7 @@ check-typed-exception = true
 [tool.bandit]
 exclude_dirs = [
     "src/universalchess/tests",
+    "src/universalchess/players/lichess/tests",
     "tools/sd-card-setup/tests",
     ".venv",
     ".cache",

@@ -149,7 +149,7 @@ the shared `menu.json` catalog changed (the web reads the catalog via
 `/api/menu-schema`). Requires `npm` locally.
 
 > Run the test suite before deploying:
-> `PYTHONPATH=src .venv/bin/python -m pytest src/universalchess/tests -q`
+> `PYTHONPATH=src .venv/bin/python -m pytest -q`
 
 ## Subdirectories
 

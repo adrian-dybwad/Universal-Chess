@@ -118,7 +118,7 @@ If you prefer manual steps:
 git status
 
 # 2. Run tests
-./bin/pytest src/universalchess/tests/
+./bin/pytest
 
 # 3. Update CHANGELOG.md with release notes
 # Change "Unreleased" to today's date

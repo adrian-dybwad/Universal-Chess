@@ -73,7 +73,7 @@ check_branch() {
 # Run tests
 run_tests() {
     print_step "3" "Running tests..."
-    if ! "${REPO_ROOT}/bin/pytest" "${REPO_ROOT}/src/universalchess/tests/" -q; then
+    if ! "${REPO_ROOT}/bin/pytest" -q; then
         print_error "Tests failed! Fix them before releasing."
         exit 1
     fi
