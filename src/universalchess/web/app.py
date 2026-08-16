@@ -6992,7 +6992,7 @@ def ca_download():
 
     Query parameters:
         format=mobileconfig  Apple .mobileconfig profile (iOS/iPadOS)
-        format=der           DER-encoded .crt (Android)
+        format=der           DER-encoded .crt (Android, Windows)
         qr=1                 SVG QR code pointing to the PEM download URL
         (default)            PEM format
 

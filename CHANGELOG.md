@@ -585,6 +585,13 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- The CA install page's Windows download saved `UniversalChess-CA.pem`.
+  Windows Certificate Manager associates `.crt` and `.cer`, not `.pem`, so
+  double-clicking the file opened a text editor or the "how do you want to
+  open this" dialog instead of the Certificate Import Wizard. Windows now
+  gets the same DER `.crt` as Android (`/ca.pem?format=der`, filename
+  `UniversalChess-CA.crt`).
+
 - The System card's Bluetooth advertising row treated BCM43430B0 on kernel
   6.18 as a known fault regardless of BlueZ. That combination only breaks
   advertising when BlueZ still sends the over-long extended-advertising

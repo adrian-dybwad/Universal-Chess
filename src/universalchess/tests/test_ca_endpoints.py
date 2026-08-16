@@ -103,6 +103,22 @@ class TestCaInstallPage:
         resp = client.get("/ca-install")
         assert b"Universal Chess" in resp.data
 
+    def test_windows_download_is_crt_not_pem(self, client):
+        """Windows Certificate Manager associates .crt/.cer, not .pem.
+        Regression: a .pem download opens as text or the 'how do you want
+        to open this' dialog instead of the Certificate Import Wizard.
+        """
+        resp = client.get("/ca-install")
+        html = resp.data.decode()
+        start = html.find('id="platform-win"')
+        end = html.find('id="platform-linux"')
+        assert start != -1, "Windows platform section missing"
+        assert end != -1 and end > start, "Linux section must follow Windows"
+        win_section = html[start:end]
+        assert "UniversalChess-CA.crt" in win_section
+        assert "format=der" in win_section
+        assert "UniversalChess-CA.pem" not in win_section
+
 
 class TestCaDownload:
     """Tests for GET /ca.pem."""
@@ -118,14 +134,16 @@ class TestCaDownload:
         assert resp.content_type == "application/x-pem-file"
 
     def test_der_format(self, client, ca_cert_dir, monkeypatch):
-        """DER format download must return binary cert with correct MIME type.
-        Regression: wrong format would prevent Android from recognizing the cert.
+        """DER format download must return binary cert named .crt.
+        Regression: wrong format or a .pem filename would prevent Android
+        and Windows from recognizing the cert as installable.
         """
         monkeypatch.setattr("universalchess.web.app.CONFIG_DIR", str(ca_cert_dir))
         resp = client.get("/ca.pem?format=der")
         assert resp.status_code == 200
         assert resp.content_type == "application/x-x509-ca-cert"
         assert b"BEGIN CERTIFICATE" not in resp.data
+        assert "UniversalChess-CA.crt" in resp.headers.get("Content-Disposition", "")
 
     def test_mobileconfig_format(self, client, ca_cert_dir, monkeypatch):
         """Mobileconfig download must return Apple profile XML.
