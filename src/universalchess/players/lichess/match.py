@@ -80,15 +80,50 @@ def create_berserk_client(token: str, host_id: str = DEFAULT_HOST_ID):
     return berserk.Client(session=session, base_url=lichess_base_url(host_id))
 
 
-def lichess_waiting_message(mode) -> str:
-    """Copy shown while seeking or joining, before the stream accepts."""
+def lichess_waiting_message(mode, seek=None) -> str:
+    """Copy shown while seeking or joining, before the stream accepts.
+
+    ``seek`` is the posted (or join) parameters. NEW lists clock, rated,
+    color, host:user, and rating range so the wait screen matches the seek.
+    Ongoing/challenge join fills a dummy 10+5 on ``LichessSeek``; that clock
+    is not the remote game's and is omitted. Host:user is still shown.
+    """
     from .player import LichessGameMode
+    from .hosts import credential_label, get_host, parse_credential_id
 
     if mode == LichessGameMode.ONGOING:
-        return "Connecting..."
-    if mode == LichessGameMode.CHALLENGE:
-        return "Loading\nChallenge..."
-    return "Waiting for game"
+        headline = "Connecting..."
+        include_clock = False
+    elif mode == LichessGameMode.CHALLENGE:
+        headline = "Loading\nChallenge..."
+        include_clock = False
+    else:
+        headline = "Waiting for game"
+        include_clock = True
+
+    if seek is None:
+        return headline
+
+    lines = [headline]
+    if include_clock:
+        rated = "rated" if seek.rated else "casual"
+        lines.append(f"{seek.time_minutes}+{seek.increment_seconds} {rated}")
+        lines.append(str(seek.color).capitalize())
+    host_id, username = parse_credential_id(seek.account_id)
+    if not username:
+        host_id = seek.host_id
+    if username:
+        lines.append(credential_label(host_id, username))
+    else:
+        lines.append(get_host(host_id).label)
+    if include_clock and seek.rating_range:
+        lines.append(seek.rating_range)
+    return "\n".join(lines)
+
+
+def lichess_cancelling_message() -> str:
+    """Copy while BACK tears down a seek that has not been accepted yet."""
+    return "Exiting..."
 
 
 def lichess_started_message(human_is_white: bool) -> str:

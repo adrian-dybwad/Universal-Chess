@@ -148,6 +148,41 @@ def test_back_during_seek_stops_players():
     assert menus == []
 
 
+def test_back_during_seek_paints_exiting_before_stop(monkeypatch):
+    """The splash must say Exiting before players are torn down.
+
+    Why: stop_players takes seconds. Updating the splash first is what makes
+    BACK look like it registered; painting after teardown never reaches the
+    panel.
+
+    How the regression manifests: splash is skipped, or "stop" is recorded
+    before the splash call.
+    """
+    order = []
+
+    def fake_cancelling(panel):
+        order.append(("splash", panel))
+        return True
+
+    monkeypatch.setattr(
+        "universalchess.players.lichess.lobby.show_lichess_cancelling_splash",
+        fake_cancelling,
+    )
+    remote = LichessPlayer()
+    session = LichessPlaySession.from_players(HumanPlayer(), remote)
+    panel = object()
+    session._panel = panel
+    session.on_back(
+        stop_players=lambda: order.append("stop"),
+        return_to_menu=lambda reason: order.append(reason),
+        show_back_menu=lambda **kwargs: order.append("menu"),
+    )
+    assert order[0] == ("splash", panel)
+    assert order[1] == "stop"
+    assert order[2] == "Lichess cancel"
+    assert "menu" not in order
+
+
 def test_back_after_connect_shows_abort_menu():
     """BACK after accept must offer abort, not silently cancel.
 

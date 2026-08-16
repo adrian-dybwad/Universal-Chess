@@ -2348,7 +2348,10 @@ def _start_game_mode(
         lichess_seek_from_settings,
         START_PLAYING_SPLASH_SECONDS,
     )
-    from universalchess.players.lichess.lobby import show_lichess_error
+    from universalchess.players.lichess.lobby import (
+        active_lichess_account,
+        show_lichess_error,
+    )
     from universalchess.players.lichess.session import LichessPlaySession
 
     join = _lichess_join
@@ -2361,8 +2364,11 @@ def _start_game_mode(
     if is_lichess:
         join_mode = join["mode"] if join else LichessGameMode.NEW
         try:
+            account = active_lichess_account(settings)
+            rating_range = (account or {}).get("range") or ""
             lichess_seek = lichess_seek_from_settings(
                 settings,
+                rating_range=rating_range,
                 require_clock=(join_mode == LichessGameMode.NEW),
             )
         except LichessSeekError as e:
@@ -2566,7 +2572,9 @@ def _start_game_mode(
     # not wipe "Waiting for game" before the e-paper shows it.
     if lichess_session is not None:
         from universalchess.players.lichess.lobby import show_lichess_waiting_splash
-        show_lichess_waiting_splash(board.display_manager, lichess_session.waiting_mode)
+        show_lichess_waiting_splash(
+            board.display_manager, lichess_session.waiting_mode, seek=lichess_seek
+        )
 
     display_manager = DisplayManager(
         flip_board=False,

@@ -104,14 +104,21 @@ def build_lichess_menu_entries(username: Optional[str], ongoing_games: bool, has
     return entries
 
 
-def lichess_waiting_message(mode) -> str:
+def lichess_waiting_message(mode, seek=None) -> str:
     """Copy shown on the panel while a Lichess game is being found or joined."""
     from .match import lichess_waiting_message as _waiting
 
-    return _waiting(mode)
+    return _waiting(mode, seek=seek)
 
 
-def show_lichess_waiting_splash(panel_manager, mode) -> bool:
+def lichess_cancelling_message() -> str:
+    """Copy shown after BACK while the seek is torn down."""
+    from .match import lichess_cancelling_message as _cancelling
+
+    return _cancelling()
+
+
+def show_lichess_waiting_splash(panel_manager, mode, seek=None) -> bool:
     """Paint the Lichess waiting splash and wait until it reaches the e-paper.
 
     Uses :func:`show_fullscreen_splash` so the frame is on the panel before the
@@ -121,7 +128,35 @@ def show_lichess_waiting_splash(panel_manager, mode) -> bool:
     """
     from universalchess.epaper.splash_screen import show_fullscreen_splash
 
-    return show_fullscreen_splash(panel_manager, lichess_waiting_message(mode))
+    return show_fullscreen_splash(
+        panel_manager, lichess_waiting_message(mode, seek=seek)
+    )
+
+
+def show_lichess_cancelling_splash(panel_manager, timeout: float = 5.0) -> bool:
+    """Change the waiting splash to 'Exiting...' and wait for that frame.
+
+    Updates an existing SplashScreen so the panel does not flash empty. Waits
+    for the paint Future: ``stop_players`` after BACK takes seconds, and
+    clearing widgets first would drop this message before it reached e-paper.
+    """
+    from universalchess.board.logging import log
+    from universalchess.epaper.splash_screen import SplashScreen, show_fullscreen_splash
+    from .match import lichess_cancelling_message
+
+    message = lichess_cancelling_message()
+    widgets = getattr(panel_manager, "_widgets", None) or []
+    for widget in widgets:
+        if isinstance(widget, SplashScreen):
+            widget.set_message(message)
+            promise = panel_manager.update() if hasattr(panel_manager, "update") else None
+            if promise:
+                try:
+                    promise.result(timeout=timeout)
+                except Exception as e:
+                    log.debug(f"[Lichess] Cancelling splash wait failed: {e}")
+            return True
+    return show_fullscreen_splash(panel_manager, message, timeout=timeout)
 
 
 def show_lichess_started_splash(panel_manager, human_is_white: bool) -> bool:

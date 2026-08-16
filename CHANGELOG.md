@@ -440,7 +440,7 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   the bound credential's host is the server the token is sent to. Credentials
   are managed under Players → Lichess Settings (with Play for the lobby). The
   waiting splash
-  says "Waiting for game"; when the stream accepts, the board remaps the human to
+  lists the seek (clock, rated, color, host:user, rating range); when the stream accepts, the board remaps the human to
   the stream's color, flips if they play Black, and shows "Game started / You play
   White" (or Black) until the first move or five seconds. BACK during seek cancels;
   Abort is on the in-game BACK menu while abort is still legal; Resign still ends
@@ -846,6 +846,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   the splash entirely. The waiting splash ("Waiting for game") is now shown
   through `show_fullscreen_splash` (which waits for the frame) and game widgets
   are deferred until the stream connects.
+
+- The Lichess wait splash named only the path (Waiting / Connecting / Loading
+  Challenge), so clock, rated, color, host:user, and rating range were hidden
+  until an opponent appeared. The splash now lists those seek fields. Join of
+  an ongoing game or challenge still omits the dummy 10+5 `LichessSeek` stores
+  when the remote clock is already set. BACK during seek left the wait copy on
+  screen while `stop_players` ran for several seconds, so the key looked
+  ignored. The splash switches to "Exiting..." and waits for that frame before
+  teardown.
 
 - Setting the pieces back to the start during a Lichess game reset only the
   local board. The same `LichessPlayer` kept streaming the old remote game

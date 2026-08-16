@@ -500,7 +500,7 @@ in `tests/`.
 | `hosts.py` | `org` / `dev` API servers and `host:user` credential ids |
 | `accounts.py` | Plugin credential rows on the generic account store |
 | `match.py` | Seek params, berserk client |
-| `lobby.py` | Board menu, identity fetch, waiting/started splash |
+| `lobby.py` | Board menu, identity fetch, waiting/cancelling/started splash |
 | `session.py` | In-game splash, color remap, offers, BACK-during-seek |
 | `tests/` | Plugin tests (hosts, credentials, seek, lobby, session, echo guard) |
 

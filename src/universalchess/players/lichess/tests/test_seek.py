@@ -29,6 +29,7 @@ from universalchess.players.lichess.match import (
     LichessSeekError,
     lichess_base_url,
     lichess_seek_from_settings,
+    lichess_cancelling_message,
     lichess_started_message,
     lichess_waiting_message,
 )
@@ -270,6 +271,21 @@ def test_waiting_and_started_splash_copy():
     assert lichess_waiting_message(LichessGameMode.NEW) == "Waiting for game"
     assert lichess_waiting_message(LichessGameMode.ONGOING) == "Connecting..."
     assert lichess_waiting_message(LichessGameMode.CHALLENGE) == "Loading\nChallenge..."
+    seek = LichessSeek(
+        time_minutes=15,
+        increment_seconds=10,
+        color="white",
+        rated=False,
+        rating_range="",
+        account_id="org:alice",
+        host_id="org",
+    )
+    waiting = lichess_waiting_message(LichessGameMode.NEW, seek=seek)
+    assert "Waiting for game" in waiting
+    assert "15+10 casual" in waiting
+    assert "White" in waiting
+    assert "lichess.org:alice" in waiting
+    assert lichess_cancelling_message() == "Exiting..."
     assert lichess_started_message(True) == "Game started\nYou play White"
     assert lichess_started_message(False) == "Game started\nYou play Black"
 

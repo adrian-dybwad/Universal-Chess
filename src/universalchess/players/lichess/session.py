@@ -98,6 +98,9 @@ class LichessPlaySession:
         """BACK during seek cancels; BACK after accept opens abort/resign."""
         if not self.game_connected:
             log.info("[Lichess] Seek cancelled")
+            from .lobby import show_lichess_cancelling_splash
+
+            show_lichess_cancelling_splash(self._panel)
             stop_players()
             return_to_menu("Lichess cancel")
             return

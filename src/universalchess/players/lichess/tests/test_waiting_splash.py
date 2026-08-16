@@ -14,9 +14,26 @@ from unittest.mock import MagicMock
 from universalchess.players.base import PlayerState
 from universalchess.players.lichess import LichessGameMode, LichessPlayer
 from universalchess.players.lichess.lobby import (
+    lichess_cancelling_message,
     lichess_waiting_message,
+    show_lichess_cancelling_splash,
     show_lichess_waiting_splash,
 )
+from universalchess.players.lichess.match import LichessSeek
+
+
+def _seek(**overrides):
+    fields = dict(
+        time_minutes=10,
+        increment_seconds=5,
+        color="white",
+        rated=False,
+        rating_range="",
+        account_id="org:alice",
+        host_id="org",
+    )
+    fields.update(overrides)
+    return LichessSeek(**fields)
 
 
 def test_waiting_message_for_each_mode():
@@ -33,6 +50,86 @@ def test_waiting_message_for_each_mode():
     assert lichess_waiting_message(LichessGameMode.NEW) == "Waiting for game"
     assert lichess_waiting_message(LichessGameMode.ONGOING) == "Connecting..."
     assert lichess_waiting_message(LichessGameMode.CHALLENGE) == "Loading\nChallenge..."
+
+
+def test_waiting_message_lists_seek_parameters():
+    """The wait splash must name the seek the board is actually posting.
+
+    Why: "Waiting for game" alone hid clock, rated, color, host, account, and
+    rating range, so a mis-set color or lichess.dev seek looked identical to
+    the intended one until an opponent appeared.
+
+    How the regression manifests: clock, casual/rated, color, host:user, or
+    range is missing from the copy while those fields are set on the seek.
+    """
+    message = lichess_waiting_message(
+        LichessGameMode.NEW,
+        seek=_seek(
+            time_minutes=5,
+            increment_seconds=3,
+            color="black",
+            rated=True,
+            rating_range="800-1200",
+            account_id="dev:bob",
+            host_id="dev",
+        ),
+    )
+    assert "Waiting for game" in message
+    assert "5+3 rated" in message
+    assert "Black" in message
+    assert "lichess.dev:bob" in message
+    assert "800-1200" in message
+
+
+def test_waiting_message_omits_empty_rating_range():
+    """Unrestricted range must not invent a band on the splash.
+
+    Why: an empty range means any opponent. Showing a leftover band or a
+    placeholder would misstate the seek.
+
+    How the regression manifests: a dash, "any", or a numeric range appears
+    when rating_range is empty.
+    """
+    message = lichess_waiting_message(LichessGameMode.NEW, seek=_seek())
+    assert "Waiting for game" in message
+    assert "10+5 casual" in message
+    assert "White" in message
+    assert "lichess.org:alice" in message
+    assert "-" not in message.split("lichess.org:alice")[-1]
+
+
+def test_waiting_message_join_does_not_show_dummy_clock():
+    """Ongoing/challenge join uses a dummy 10+5 locally; the splash must not.
+
+    Why: require_clock=False fills 10+5 so LichessSeek stays valid, but that
+    is not the remote game's clock. Showing it on Connecting/Challenge would
+    claim a time control the board is not seeking.
+
+    How the regression manifests: "10+5" appears on an ONGOING or CHALLENGE
+    wait.
+    """
+    dummy = _seek(time_minutes=10, increment_seconds=5, rating_range="800-1200")
+    ongoing = lichess_waiting_message(LichessGameMode.ONGOING, seek=dummy)
+    challenge = lichess_waiting_message(LichessGameMode.CHALLENGE, seek=dummy)
+    assert ongoing.startswith("Connecting...")
+    assert "lichess.org:alice" in ongoing
+    assert "10+5" not in ongoing
+    assert "800-1200" not in ongoing
+    assert "Loading" in challenge
+    assert "Challenge..." in challenge
+    assert "lichess.org:alice" in challenge
+    assert "10+5" not in challenge
+
+
+def test_cancelling_message_says_exiting():
+    """BACK during seek must change the splash before teardown starts.
+
+    Why: cancel takes several seconds (stop players, close the seek). Leaving
+    "Waiting for game" up looks like the key did nothing.
+
+    How the regression manifests: the copy still says Waiting, or is empty.
+    """
+    assert lichess_cancelling_message() == "Exiting..."
 
 
 def test_show_lichess_waiting_splash_uses_fullscreen_helper(monkeypatch):
@@ -57,11 +154,45 @@ def test_show_lichess_waiting_splash_uses_fullscreen_helper(monkeypatch):
     )
     panel = object()
 
-    rendered = show_lichess_waiting_splash(panel, LichessGameMode.NEW)
+    rendered = show_lichess_waiting_splash(
+        panel, LichessGameMode.NEW, seek=_seek(time_minutes=3, increment_seconds=0)
+    )
 
     assert rendered is True
     assert shown["manager"] is panel
-    assert shown["message"] == "Waiting for game"
+    assert "Waiting for game" in shown["message"]
+    assert "3+0 casual" in shown["message"]
+    assert "lichess.org:alice" in shown["message"]
+
+
+def test_show_lichess_cancelling_splash_updates_existing_and_waits(monkeypatch):
+    """BACK must rewrite the waiting splash and wait for that frame.
+
+    Why: replacing with a new fullscreen clear flashes empty; not waiting
+    lets stop_players clear the panel before "Exiting..." reaches e-paper.
+
+    How the regression manifests: show_fullscreen_splash is called while a
+    SplashScreen is already present, set_message is not "Exiting...", or
+    update's Future is never waited on.
+    """
+    from universalchess.epaper.splash_screen import SplashScreen
+
+    splash = MagicMock(spec=SplashScreen)
+    promise = MagicMock()
+    panel = MagicMock()
+    panel._widgets = [splash]
+    panel.update.return_value = promise
+    fullscreen = MagicMock(return_value=True)
+    monkeypatch.setattr(
+        "universalchess.epaper.splash_screen.show_fullscreen_splash", fullscreen
+    )
+
+    shown = show_lichess_cancelling_splash(panel)
+
+    assert shown is True
+    splash.set_message.assert_called_once_with("Exiting...")
+    promise.result.assert_called_once()
+    fullscreen.assert_not_called()
 
 
 def test_game_connected_callback_fires_before_ready():

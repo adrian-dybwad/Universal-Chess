@@ -65,7 +65,7 @@ class SplashScreen(Widget):
     UNIVERSAL_Y = 154  # Y position for "UNIVERSAL" text (below the logo band)
     TEXT_MARGIN = 4  # Margin on each side
     TEXT_Y = 186  # Y position for message text (below "UNIVERSAL")
-    TEXT_HEIGHT = 88  # Height for 4 lines of text at font size 18
+    TEXT_HEIGHT = 110  # Height for 5 lines of text at font size 18 (296 - TEXT_Y)
     DISMISS_TEXT_HEIGHT = 72  # Leave a band at the bottom for "Press any button"
     INSTRUCTION_HEIGHT = 16
     DISMISS_INSTRUCTION = "Press any button"
