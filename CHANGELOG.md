@@ -445,7 +445,11 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   White" (or Black) until the first move or five seconds. BACK during seek cancels;
   Abort is on the in-game BACK menu while abort is still legal; Resign still ends
   on the game-over screen. The lobby Token row writes the active account's store,
-  not the legacy single `[lichess]` key.
+  not the legacy single `[lichess]` key. A leftover `[lichess]` token is
+  promoted to a host:user credential on boot when the username is already
+  cached (no network). `game.lichess_use_dev` selects `dev:` for that one
+  copy, matching how player bindings already migrate. A token with no cached
+  username stays in `[lichess]` until Lichess Settings can resolve it.
 
 - **Ready-to-install update copy names the version**: A staged update used to
   say only "Update Ready to Install!" (and "Ready!" on the board), so which

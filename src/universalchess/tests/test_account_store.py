@@ -237,6 +237,65 @@ def test_default_account_returns_first_of_type(config_files):
     assert first is not None and first.id == "alice"
 
 
+def test_migrate_legacy_lichess_keys_dev_when_use_dev_is_set(config_files):
+    """A leftover [lichess] token on a .dev board must become dev:user, not org.
+
+    Why: migrate_lichess_layout already maps player bindings with
+    ``lichess_use_dev`` to ``dev:alice``. Copying the token as org would
+    authenticate against lichess.org with a .dev token. Failure: section is
+    ``account:lichess:org:alice`` and host=org.
+    """
+    cfg, _ = config_files
+    _seed_section(cfg, "game", {"lichess_use_dev": "true"})
+    _seed_section(
+        cfg, "lichess", {"api_token": "lip_dev", "username": "Alice", "range": "800-1200"}
+    )
+
+    account = migrate_legacy_lichess(LICHESS_TYPE)
+    assert account is not None
+    assert account.id == "dev:alice"
+    stored = _read_section(cfg, "account:lichess:dev:alice")
+    assert stored["api_token"] == "lip_dev"
+    assert stored["host"] == "dev"
+    assert _read_section(cfg, "lichess").get("api_token", "") == ""
+
+
+def test_migrate_legacy_passes_legacy_host_to_resolver(config_files):
+    """When username is missing, the resolver must authenticate on the leftover host.
+
+    Why: Accounts-menu migration uses a resolver. Without host in the fields,
+    identity is fetched from org even when ``lichess_use_dev`` is set. Failure:
+    resolver sees host org (or no host) and the account is ``org:alice``.
+    """
+    cfg, _ = config_files
+    _seed_section(cfg, "game", {"lichess_use_dev": "true"})
+    _seed_section(cfg, "lichess", {"api_token": "lip_dev", "username": ""})
+    seen = []
+
+    def resolver(fields):
+        seen.append(fields)
+        return ResolvedIdentity(identity="Alice")
+
+    account = migrate_legacy_lichess(LICHESS_TYPE, resolver=resolver)
+    assert seen and seen[0].get("host") == "dev"
+    assert account is not None and account.id == "dev:alice"
+
+
+def test_board_main_promotes_legacy_lichess_offline_on_boot():
+    """Board startup must run the offline [lichess] promotion.
+
+    Why: Lichess Settings and the web accounts list were the only callers, so a
+    board that never opened them kept the token in ``[lichess]``. Failure:
+    ``main()`` does not call ``ensure_lichess_migrated(resolver=None)``.
+    """
+    from pathlib import Path
+
+    import universalchess
+
+    source = Path(universalchess.__file__).resolve().parent.joinpath("main.py").read_text()
+    assert "ensure_lichess_migrated(resolver=None)" in source
+
+
 def test_migrate_legacy_lichess_moves_section_and_clears_legacy(config_files):
     """A legacy [lichess] token+username must migrate into one account, once.
 

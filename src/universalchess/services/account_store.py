@@ -333,9 +333,11 @@ def migrate_legacy_lichess(
     """Move a legacy single ``[lichess]`` credential into an account, once.
 
     The former model stored one token/username/range in ``[lichess]``. This
-    promotes it to a normal ``account:lichess:<username>`` and clears the legacy
-    token/username so the account becomes the single source of truth (preventing
-    two-source drift). It is a no-op when:
+    promotes it to a normal ``account:lichess:<host>:<username>`` and clears the
+    legacy token/username so the account becomes the single source of truth
+    (preventing two-source drift). Host is org, or ``dev`` when leftover
+    ``game.lichess_use_dev`` is set (the same choice player-binding migration
+    uses). It is a no-op when:
     - there is no legacy token, or it is the ``tokenhere`` placeholder;
     - any Lichess account already exists (already migrated); or
     - the identity is unknown offline (no cached username and no working
@@ -353,27 +355,29 @@ def migrate_legacy_lichess(
     if list_accounts("lichess", config=config):
         return None
 
+    from universalchess.players.lichess.accounts import legacy_lichess_host_id
+    from universalchess.players.lichess.hosts import credential_id
+
+    host_id = legacy_lichess_host_id(config)
     identity = config.get("lichess", "username", fallback="").strip()
     if not identity and resolver is not None:
-        resolved = resolver({"api_token": token})
+        resolved = resolver({"api_token": token, "host": host_id})
         if not resolved.error:
             identity = resolved.identity
     if not identity:
         return None
 
-    from universalchess.players.lichess.hosts import HOST_ORG, credential_id
-
     rating_range = config.get("lichess", "range", fallback="")
     values = {
         "api_token": token,
         account_type["identityField"]: identity,
-        "host": HOST_ORG,
+        "host": host_id,
     }
     if rating_range:
         values["range"] = rating_range
     account = Account(
         type="lichess",
-        id=credential_id(HOST_ORG, identity),
+        id=credential_id(host_id, identity),
         values=values,
     )
     save_account(account)

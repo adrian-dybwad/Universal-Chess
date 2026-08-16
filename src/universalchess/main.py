@@ -7662,6 +7662,15 @@ def main():
         log.error(f"[Main] Failed to load game settings: {e}", exc_info=True)
         # Continue anyway - settings are not critical
 
+    # Promote a leftover single [lichess] token into a host:user credential.
+    # Offline: only when username is already cached. Lichess Settings still
+    # passes a resolver for tokens that never cached a name.
+    try:
+        from universalchess.services.account_store import ensure_lichess_migrated
+        ensure_lichess_migrated(resolver=None)
+    except Exception as e:
+        log.warning(f"[Main] Lichess credential migration skipped: {e}")
+
     # Vendor USB gadget ``on`` leaves Shared autoconnecting; re-apply the stored
     # preference when live disagrees so Client survives reboot without a UI click.
     try:

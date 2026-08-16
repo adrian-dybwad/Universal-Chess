@@ -34,6 +34,22 @@ from .hosts import (
 )
 
 _PLAYER_SECTIONS = ("PlayerOne", "PlayerTwo")
+_LEGACY_USE_DEV = ("1", "true", "yes", "on")
+
+
+def legacy_lichess_host_id(config=None) -> str:
+    """Host for a leftover ``[lichess]`` token or a bare player binding.
+
+    Reads ``game.lichess_use_dev`` once. That flag is not a live host selector;
+    it only tells upgrade which server the old single token talked to.
+    """
+    if config is None:
+        config = Settings.get_config()
+    if config.has_section("game"):
+        flag = config.get("game", "lichess_use_dev", fallback="").strip().lower()
+        if flag in _LEGACY_USE_DEV:
+            return HOST_DEV
+    return HOST_ORG
 
 
 def host_id_of(account: Account) -> str:
@@ -224,15 +240,7 @@ def migrate_lichess_layout() -> None:
             _copy_section(config, section, new_section, values)
         changed = True
 
-    use_dev = False
-    if config.has_section("game"):
-        use_dev = config.get("game", "lichess_use_dev", fallback="").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        )
-    default_host = HOST_DEV if use_dev else HOST_ORG
+    default_host = legacy_lichess_host_id(config)
     for player_section in _PLAYER_SECTIONS:
         if not config.has_section(player_section):
             continue
