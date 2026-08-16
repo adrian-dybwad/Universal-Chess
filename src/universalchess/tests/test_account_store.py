@@ -251,9 +251,9 @@ def test_migrate_legacy_lichess_moves_section_and_clears_legacy(config_files):
 
     account = migrate_legacy_lichess(LICHESS_TYPE)
     assert account is not None
-    assert account.id == "legacyuser"
+    assert account.id == "org:legacyuser"
 
-    stored = _read_section(cfg, "account:lichess:legacyuser")
+    stored = _read_section(cfg, "account:lichess:org:legacyuser")
     assert stored["api_token"] == "lip_legacy"
     assert stored["username"] == "LegacyUser"
     assert stored["range"] == "800-1200"
@@ -292,7 +292,7 @@ def test_migrate_resolves_username_when_absent(config_files):
     cfg, _ = config_files
     _seed_section(cfg, "lichess", {"api_token": "lip_legacy", "username": "", "range": "0-3000"})
     account = migrate_legacy_lichess(LICHESS_TYPE, resolver=_resolver("Resolved"))
-    assert account is not None and account.id == "resolved"
+    assert account is not None and account.id == "org:resolved"
     assert list_accounts("lichess")[0].get("username") == "Resolved"
 
 
@@ -323,7 +323,7 @@ def test_ensure_lichess_migrated_uses_packaged_definition(config_files):
     from universalchess.services.account_store import ensure_lichess_migrated
 
     account = ensure_lichess_migrated()
-    assert account is not None and account.id == "cached"
+    assert account is not None and account.id == "org:cached"
     assert list_accounts("lichess")[0].get("api_token") == "lip_legacy"
 
 

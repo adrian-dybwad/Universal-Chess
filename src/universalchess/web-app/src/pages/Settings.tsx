@@ -252,6 +252,8 @@ interface FormSettings {
     deep_analysis: boolean;
     ponder: boolean;
     chess960: boolean;
+    lichess_rated: boolean;
+    lichess_use_dev: boolean;
     // Show the YOUR QUEEN warning when the side to move's own queen is attacked.
     // On by default; the CHECK warning has no equivalent flag because it cannot be
     // turned off (see GameSettings.alert_queen_threat).
@@ -315,6 +317,8 @@ const defaultFormSettings: FormSettings = {
     deep_analysis: false,
     ponder: false,
     chess960: false,
+    lichess_rated: false,
+    lichess_use_dev: false,
     alert_queen_threat: true,
     show_board: true,
     show_clock: true,
@@ -402,6 +406,8 @@ function parseRawSettings(data: SettingsData): FormSettings {
       deep_analysis: parseConfigBool(data.game?.deep_analysis, false),
       ponder: parseConfigBool(data.game?.ponder, false),
       chess960: parseConfigBool(data.game?.chess960, false),
+      lichess_rated: parseConfigBool(data.game?.lichess_rated, false),
+      lichess_use_dev: parseConfigBool(data.game?.lichess_use_dev, false),
       alert_queen_threat: parseConfigBool(data.game?.alert_queen_threat, true),
       show_board: parseConfigBool(data.game?.show_board, true),
       show_clock: parseConfigBool(data.game?.show_clock, true),
@@ -1778,7 +1784,8 @@ export function Settings() {
   // players carry their own account identity and engines auto-name -- so the Name
   // field, and any account-name defaulting, applies to human players only.
   const accountTypes = catalog?.accountTypes ?? [];
-  const isOnlineType = (type: string): boolean => accountTypes.some((t) => t.id === type);
+  const isOnlineType = (type: string): boolean =>
+    accountTypes.some((t) => t.id === type || t.playerType === type);
   const accountsForType = (type: string): AccountRecord[] => accounts.filter((a) => a.type === type);
 
   // Tabs, labels, icons and order all come from the shared catalog, so the board
@@ -1992,6 +1999,13 @@ export function Settings() {
           updateFormSettings(playerKey, { [key]: value } as unknown as Partial<PlayerSettings>);
       },
     );
+    ctx.registerStore(
+      'game',
+      (key) => (formSettings.game as unknown as Record<string, FieldValue>)[key],
+      (key, value) => {
+        updateFormSettings('game', { [key]: value } as unknown as Partial<FormSettings['game']>);
+      },
+    );
     ctx.registerProvider('installed_engines', () => engineOptions);
     ctx.registerProvider(
       'engine_levels',
@@ -2015,7 +2029,7 @@ export function Settings() {
       const choices = selectableAccountsForSlot(list, other.type === ps.type, other.account);
       return [
         ...(choices.defaultAllowed ? [{ value: '', label: t('settingsPage.players.defaultAccount') }] : []),
-        ...choices.accounts.map((a) => ({ value: a.id, label: a.identity })),
+        ...choices.accounts.map((a) => ({ value: a.id, label: a.label ?? a.identity })),
       ];
     });
     return ctx;
@@ -2119,12 +2133,16 @@ export function Settings() {
             {renderPlayerCard('player1', t('settingsPage.player1Title'))}
             {renderPlayerCard('player2', t('settingsPage.player2Title'))}
 
-            {/* Online account credentials used by Lichess (and future) player
-                types. Lives here rather than Connectivity so management sits
-                next to the per-slot account picker. */}
-            <div className="mt-6">
-              <AccountsCard />
-            </div>
+            {/* Lichess plugin settings: credentials (server:user) live here.
+                Catalog-driven from players.lichess so the board submenu and
+                this card stay in sync; Play is board-only. */}
+            <Card className="mb-6">
+              <CardHeader title={fieldById(catalog, 'players.lichess')?.label ?? 'Lichess Settings'} />
+              {buildSections(catalog, 'players.lichess', gameMenuCtx.get).flatMap((section) =>
+                section.rows.map((node) => renderCatalogRow(node, gameMenuCtx)),
+              )}
+              <AccountsCard embedded />
+            </Card>
 
             {/* Hand+Brain Explanation */}
             {showHandBrainExplanation && (

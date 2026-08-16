@@ -9,4 +9,8 @@ export interface AccountRecord {
   identity: string;
   values: Record<string, string>;
   secretsSet: Record<string, boolean>;
+  /** Lichess host id (org / dev). Absent for other providers. */
+  host?: string;
+  /** Chooser text, e.g. lichess.org:Alice. */
+  label?: string;
 }

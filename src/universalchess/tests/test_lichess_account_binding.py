@@ -75,17 +75,30 @@ def test_resolve_falls_back_to_default_when_unbound(config_files):
     assert token == "lip_alice"  # default_account is first by sorted id
 
 
-def test_resolve_falls_back_to_default_when_bound_account_missing(config_files):
-    """A slot bound to a deleted account must not fail; it uses the default.
+def test_resolve_bound_missing_on_active_host_is_unbound(config_files):
+    """A bound id that is not on this host must not use another account.
 
-    If the bound account was removed, failing outright would break a saved game
-    setup. Falling back to the default keeps play working. A regression shows as
-    an empty token despite an available default account.
+    Why: switching to lichess.dev with an org account id (or a deleted id) must
+    not silently authenticate as a different user. Failure: ghost yields Alice.
     """
     _seed_two_accounts()
     player = LichessPlayer(LichessPlayerConfig(account_id="ghost"))
-    token, _ = player._resolve_account()
-    assert token == "lip_alice"
+    token, rating_range = player._resolve_account()
+    assert token == ""
+    assert rating_range == ""
+
+
+def test_resolve_dev_credential_does_not_read_org_accounts(config_files):
+    """A dev:bob binding never returns an org token.
+
+    Why: org and .dev are separate credentials. Failure: Bob's org token is used
+    when the slot is bound to dev:bob.
+    """
+    _seed_two_accounts()
+    player = LichessPlayer(LichessPlayerConfig(account_id="dev:bob"))
+    token, rating_range = player._resolve_account()
+    assert token == ""
+    assert rating_range == ""
 
 
 def test_resolve_falls_back_to_legacy_token_when_no_accounts(config_files):

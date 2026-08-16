@@ -427,7 +427,25 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
     lost. Writing the odds into the standard tag would either be rejected by a
     conforming parser or understate one side's budget.
 
-### Changed
+- **Lichess is one play path**: Human vs Lichess now starts the same way as
+  Human vs Engine (PLAY, or Lichess Settings → New Game). Seek color comes from
+  which slot is Human, the clock from the Game time control (whole minutes plus
+  Fischer increment), rated from the Rated toggle, and the rating range from the
+  bound account on the active host. A second launcher had forced Human White and
+  minutes+0, skipped PLAY's game widgets, and froze the board when its imports
+  were stale. That launcher is gone. Ongoing and Challenges still join by id, then
+  sit in the same game. A Lichess player chooses a credential listed as
+  server:user (`lichess.org:Alice`, `lichess.dev:Bob`). Org and .dev are hosts
+  on the Lichess plugin, not a second account type and not a Game toggle;
+  the bound credential's host is the server the token is sent to. Credentials
+  are managed under Players → Lichess Settings (with Play for the lobby). The
+  waiting splash
+  says "Waiting for game"; when the stream accepts, the board remaps the human to
+  the stream's color, flips if they play Black, and shows "Game started / You play
+  White" (or Black) until the first move or five seconds. BACK during seek cancels;
+  Abort is on the in-game BACK menu while abort is still legal; Resign still ends
+  on the game-over screen. The lobby Token row writes the active account's store,
+  not the legacy single `[lichess]` key.
 
 - **Ready-to-install update copy names the version**: A staged update used to
   say only "Update Ready to Install!" (and "Ready!" on the board), so which
@@ -756,6 +774,32 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   and still bound how long the splash waits, because recreating the controller
   reopens the serial port and a bare re-probe cannot; they no longer decide
   whether the board is ever found.
+
+- Pressing New Game on the e-paper Lichess menu killed the app and left the
+  last frame on the panel. A dedicated `start_lichess_game_service` imported
+  `ProtocolManager` and `ControllerManager` from paths that do not exist; the
+  `ModuleNotFoundError` was uncaught on the menu thread, so the main loop
+  exited into cleanup with status 0 and systemd `Restart=on-failure` left the
+  process dead. That launcher is gone: New Game uses the same PLAY path as
+  Human vs Engine, a start failure is shown as an error instead of taking the
+  process down, and an uncaught exception in the main loop now exits 1 so the
+  unit restarts.
+
+- Starting a Lichess game never showed a waiting splash (or "Connecting..." /
+  "Loading Challenge..."). The dedicated Lichess menu added a splash with
+  `add_widget` and did not wait for the e-paper, then constructed
+  `DisplayManager`, whose first paint `clear_widgets` and draws the chess board
+  -- wiping the splash before it appeared. PLAY with a Lichess player skipped
+  the splash entirely. The waiting splash ("Waiting for game") is now shown
+  through `show_fullscreen_splash` (which waits for the frame) and game widgets
+  are deferred until the stream connects.
+
+- Setting the pieces back to the start during a Lichess game reset only the
+  local board. The same `LichessPlayer` kept streaming the old remote game
+  (`on_new_game` only logged), no new seek ran, and the waiting splash never
+  appeared. A board-reset now leaves the remote game (abort, or resign if abort
+  is no longer allowed) and rebuilds through `_start_game_mode`, which seeks a
+  new opponent and shows "Waiting for game".
 
 - The screen went blank between the boot splash and the main menu, and again on
   entering a game, which looked like a fault rather than a transition. Every

@@ -200,7 +200,7 @@
           "required": true,
           "secret": true,
           "placeholder": "lip_xxxxxxxx",
-          "help": "Get a token from lichess.org with challenge:write and board:play permissions"
+          "help": "Get a token from the chosen Lichess server with challenge:write and board:play permissions"
         },
         {
           "key": "range",
@@ -211,6 +211,10 @@
           "placeholder": "1000-1600",
           "help": "Preferred opponent rating range for matchmaking"
         }
+      ],
+      "hosts": [
+        { "id": "org", "label": "lichess.org", "baseUrl": "https://lichess.org" },
+        { "id": "dev", "label": "lichess.dev", "baseUrl": "https://lichess.dev" }
       ]
     }
   ],
@@ -282,10 +286,10 @@
       "label": "Players",
       "boardLabel": "{fn:players_summary}",
       "icon": "players",
-      "help": "Configure player names, types, engines, and saved online accounts.",
+      "help": "Configure player names, types, engines, and Lichess.",
       "section": "players",
       "epaper": { "font_size": 12, "height_ratio": 0.8 },
-      "children": ["players.player1", "players.player2", "players.accounts", "players.start"]
+      "children": ["players.player1", "players.player2", "players.lichess", "players.start"]
     },
     {
       "id": "players.player1",
@@ -309,15 +313,40 @@
       "epaper": { "font_size": 12, "height_ratio": 0.8 }
     },
     {
+      "id": "players.lichess",
+      "key": "Lichess",
+      "type": "submenu",
+      "target": "players.lichess",
+      "label": "Lichess Settings",
+      "boardLabel": "Lichess\nSettings",
+      "icon": "lichess",
+      "help": "Lichess credentials and online play. Each login is a server and user (lichess.org or lichess.dev). Play opens New Game, ongoing games, and challenges.",
+      "section": "players",
+      "platforms": ["board", "web"],
+      "epaper": { "font_size": 12, "height_ratio": 0.8 },
+      "children": ["players.accounts", "players.lichess.play"]
+    },
+    {
+      "id": "players.lichess.play",
+      "type": "action",
+      "action": "lichess",
+      "label": "Play",
+      "boardLabel": "Play",
+      "icon": "play",
+      "help": "New game, ongoing games, and challenges on Lichess.",
+      "platforms": ["board"],
+      "epaper": { "font_size": 12, "height_ratio": 0.8 }
+    },
+    {
       "id": "players.accounts",
       "key": "Accounts",
       "type": "action",
       "action": "open_accounts",
       "label": "Accounts",
       "icon": "account",
-      "help": "Connect external services such as Lichess.",
+      "help": "Connect a Lichess token. Each account is listed as server:user.",
       "section": "accounts",
-      "platforms": ["board", "web"]
+      "platforms": ["board"]
     },
     {
       "id": "players.start",
@@ -341,11 +370,11 @@
         "field.player.type",
         "field.player.name",
         "field.player.account",
+        "field.player.lichess_rated",
         "field.player.hand_brain_mode",
         "field.player.engine",
         "field.player.elo",
-        "field.player.think_time",
-        "field.player.lichess"
+        "field.player.think_time"
       ]
     },
     {
@@ -1578,15 +1607,15 @@
       "platforms": ["board", "web"]
     },
     {
-      "id": "field.player.lichess",
-      "type": "action",
-      "label": "Lichess Settings",
-      "boardLabel": "Lichess\nSettings",
-      "help": "Configure Lichess account and matchmaking for this player",
-      "action": "lichess",
-      "icon": "lichess",
+      "id": "field.player.lichess_rated",
+      "type": "toggle",
+      "label": "Rated",
+      "boardLabel": "Rated",
+      "help": "Seek a rated Lichess game. Casual when off.",
+      "bind": { "store": "game", "key": "lichess_rated" },
+      "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
       "visibleWhen": { "store": "player", "key": "type", "equals": "lichess" },
-      "platforms": ["board"]
+      "platforms": ["board", "web"]
     },
     {
       "id": "field.display.show_board",

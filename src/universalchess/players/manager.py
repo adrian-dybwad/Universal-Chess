@@ -327,6 +327,24 @@ class PlayerManager:
         log.info(f"[PlayerManager] Replaced {old_player.name} with {player.name} for {'White' if color == chess.WHITE else 'Black'}")
         
         return old_player
+
+    def reassign_slots(self, white_player: Player, black_player: Player) -> None:
+        """Move already-started players between colors without stop/start.
+
+        A Lichess stream may report the local account is Black after the players
+        were built from settings. :meth:`set_player` stops the outgoing player,
+        which would kill the live seek/stream. This only retargets the two
+        existing instances and updates PlayersState.
+        """
+        self._white_player = white_player
+        self._black_player = black_player
+        white_player.color = chess.WHITE
+        black_player.color = chess.BLACK
+        self._update_players_state()
+        log.info(
+            f"[PlayerManager] Reassigned slots: White={white_player.name}, "
+            f"Black={black_player.name}"
+        )
     
     def get_current_player(self, board: chess.Board) -> Player:
         """Get the player whose turn it is.

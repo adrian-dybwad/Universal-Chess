@@ -326,8 +326,15 @@ class LocalController(GameController):
                     self._player_manager.on_new_game()
                 if self._assistant_manager:
                     self._assistant_manager.on_new_game()
-                self._request_current_player_move()
-                self._check_assistant_suggestion()
+                # Engine/human games continue in place. A Lichess player is still
+                # attached to the remote game, so requesting a move here would be
+                # against that game while the local board is at start. The app
+                # rebuilds through _start_game_mode (new seek + waiting splash).
+                if self._player_manager and self._player_manager.has_lichess:
+                    log.info("[LocalController] Lichess board-reset - skipping in-place move request")
+                else:
+                    self._request_current_player_move()
+                    self._check_assistant_suggestion()
             elif event == EVENT_WHITE_TURN or event == EVENT_BLACK_TURN:
                 self._request_current_player_move()
                 self._check_assistant_suggestion()

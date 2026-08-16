@@ -449,7 +449,9 @@ def _validate_account_types(menu_data: dict, icon_ids: "set[str]") -> None:
     - ``fields`` non-empty, each with a unique ``key``, a ``label``, and a
       supported control ``type`` (an unfillable/blank row otherwise);
     - ``identitySource`` is a known mode and, when identity is ``entered``, the
-      ``identityField`` names a real field (else uniqueness has no value to key).
+      ``identityField`` names a real field (else uniqueness has no value to key);
+    - optional ``hosts`` is a non-empty list of ``{id, label, baseUrl}`` with
+      unique ids and ``https://`` URLs (the web Add Account server picker).
 
     The block is optional; a catalog without ``accountTypes`` is valid.
     """
@@ -472,7 +474,8 @@ def _validate_account_types(menu_data: dict, icon_ids: "set[str]") -> None:
             raise CatalogError(f"duplicate account type id: {type_id}")
         seen_ids.add(type_id)
 
-        if type_id not in player_type_values:
+        player_type = entry.get("playerType") or type_id
+        if player_type not in player_type_values:
             raise CatalogError(
                 f"account type '{type_id}' has no matching value in the "
                 f"'player_type' option set (an online player type must exist)"
@@ -520,6 +523,38 @@ def _validate_account_types(menu_data: dict, icon_ids: "set[str]") -> None:
                 f"account type '{type_id}' identityField '{identity_field}' is not one of "
                 f"its fields (an entered identity must be a collected field)"
             )
+
+        hosts = entry.get("hosts")
+        if hosts is None:
+            continue
+        if not isinstance(hosts, list) or not hosts:
+            raise CatalogError(
+                f"account type '{type_id}' 'hosts' must be a non-empty list when present"
+            )
+        seen_hosts: "set[str]" = set()
+        for host in hosts:
+            if not isinstance(host, dict):
+                raise CatalogError(
+                    f"account type '{type_id}' has a host that is not an object: {host!r}"
+                )
+            host_id = host.get("id")
+            if not host_id:
+                raise CatalogError(f"account type '{type_id}' has a host missing 'id': {host!r}")
+            if host_id in seen_hosts:
+                raise CatalogError(
+                    f"account type '{type_id}' has duplicate host id '{host_id}'"
+                )
+            seen_hosts.add(host_id)
+            if not host.get("label"):
+                raise CatalogError(
+                    f"account type '{type_id}' host '{host_id}' missing 'label'"
+                )
+            base_url = host.get("baseUrl")
+            if not isinstance(base_url, str) or not base_url.startswith("https://"):
+                raise CatalogError(
+                    f"account type '{type_id}' host '{host_id}' baseUrl must be an "
+                    f"https URL, got {base_url!r}"
+                )
 
 
 def load_catalog(

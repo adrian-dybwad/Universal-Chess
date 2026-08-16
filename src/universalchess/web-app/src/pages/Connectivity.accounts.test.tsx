@@ -50,6 +50,8 @@ interface AccountRecord {
   identity: string;
   values: Record<string, string>;
   secretsSet: Record<string, boolean>;
+  host?: string;
+  label?: string;
 }
 
 interface MockOptions {
@@ -130,7 +132,7 @@ function mockAccounts(initial: AccountRecord[], opts?: MockOptions) {
     }
     if (url.endsWith('/delete') && method === 'POST') {
       const parts = url.split('/'); // /api/accounts/<type>/<id>/delete
-      const id = parts[parts.length - 2];
+      const id = decodeURIComponent(parts[parts.length - 2]);
       const idx = accounts.findIndex((a) => a.id === id);
       if (idx >= 0) accounts.splice(idx, 1);
       return jsonResponse({ ok: true });
@@ -149,8 +151,10 @@ afterEach(() => {
 
 const lichessAccount: AccountRecord = {
   type: 'lichess',
-  id: 'magnusc',
+  id: 'org:magnusc',
   identity: 'MagnusC',
+  label: 'lichess.org:MagnusC',
+  host: 'org',
   values: { username: 'MagnusC', range: '1000-1600' },
   secretsSet: { api_token: true },
 };
@@ -162,13 +166,14 @@ describe('Accounts card (multi-account)', () => {
     vi.clearAllMocks();
   });
 
-  it('lists existing accounts with their connected username', async () => {
-    // The list is the core read view: an existing account must show "Connected
-    // as <username>" so a user can tell their accounts apart. A regression
-    // (wrong field, not rendering the list) shows as a missing username here.
+  it('lists existing accounts as server:user', async () => {
+    // The list is the core read view: an existing Lichess credential must show
+    // "Connected as lichess.org:MagnusC" so org and .dev of the same username
+    // can be told apart. A regression (username-only, or not rendering the
+    // list) shows as a missing server:user label here.
     mockAccounts([lichessAccount]);
     render(<AccountsCard />);
-    await waitFor(() => expect(screen.getByText('MagnusC')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('lichess.org:MagnusC')).toBeInTheDocument());
     expect(screen.getByText(/Connected as/i)).toBeInTheDocument();
     // A per-account delete control is present.
     expect(screen.getByRole('button', { name: /delete/i })).toBeInTheDocument();
@@ -182,6 +187,9 @@ describe('Accounts card (multi-account)', () => {
     render(<AccountsCard />);
     await waitFor(() => expect(screen.getByLabelText(/API Token/i)).toBeInTheDocument());
     expect(screen.getByLabelText(/Rating Range/i)).toBeInTheDocument();
+    expect(screen.getByLabelText('Server')).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'lichess.org' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'lichess.dev' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /add account/i })).toBeInTheDocument();
   });
 
@@ -200,7 +208,26 @@ describe('Accounts card (multi-account)', () => {
     await waitFor(() => expect(screen.getByText('MagnusC')).toBeInTheDocument());
     const post = calls.find((c) => c.url === '/api/accounts' && c.method === 'POST');
     expect(post).toBeTruthy();
-    expect(post!.body).toEqual({ type: 'lichess', fields: { api_token: 'lip_secret', range: '1000-1600' } });
+    expect(post!.body).toEqual({ type: 'lichess', fields: { api_token: 'lip_secret', range: '1000-1600', host: 'org' } });
+  });
+
+  it('posts the chosen Lichess host with the credential fields', async () => {
+    // Why: host is selected on add, not by a game toggle. Failure: POST omits
+    // host or always sends org regardless of the Server picker.
+    const { calls } = mockAccounts([]);
+    render(<AccountsCard />);
+    await waitFor(() => expect(screen.getByLabelText('Server')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText('Server'), { target: { value: 'dev' } });
+    fireEvent.change(screen.getByLabelText(/API Token/i), { target: { value: 'lip_dev' } });
+    fireEvent.click(screen.getByRole('button', { name: /add account/i }));
+
+    await waitFor(() => {
+      const post = calls.find((c) => c.url === '/api/accounts' && c.method === 'POST');
+      expect(post).toBeTruthy();
+    });
+    const post = calls.find((c) => c.url === '/api/accounts' && c.method === 'POST');
+    expect(post!.body).toEqual({ type: 'lichess', fields: { api_token: 'lip_dev', host: 'dev' } });
   });
 
   it('submits the same account again after signing in on an unauthorized add', async () => {
@@ -228,7 +255,7 @@ describe('Accounts card (multi-account)', () => {
     await waitFor(() => expect(screen.getByText('MagnusC')).toBeInTheDocument());
     const posts = calls.filter((c) => c.url === '/api/accounts' && c.method === 'POST');
     expect(posts).toHaveLength(2);
-    const submission = { type: 'lichess', fields: { api_token: 'lip_secret', range: '1000-1600' } };
+    const submission = { type: 'lichess', fields: { api_token: 'lip_secret', range: '1000-1600', host: 'org' } };
     expect(posts[0].body).toEqual(submission);
     expect(posts[1].body).toEqual(submission);
   });
@@ -252,10 +279,10 @@ describe('Accounts card (multi-account)', () => {
     vi.stubGlobal('confirm', () => true);
     const { calls } = mockAccounts([lichessAccount]);
     render(<AccountsCard />);
-    await waitFor(() => expect(screen.getByText('MagnusC')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('lichess.org:MagnusC')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: /delete/i }));
-    await waitFor(() => expect(screen.queryByText('MagnusC')).not.toBeInTheDocument());
-    expect(calls.some((c) => c.url === '/api/accounts/lichess/magnusc/delete' && c.method === 'POST')).toBe(true);
+    await waitFor(() => expect(screen.queryByText('lichess.org:MagnusC')).not.toBeInTheDocument());
+    expect(calls.some((c) => c.url === '/api/accounts/lichess/org%3Amagnusc/delete' && c.method === 'POST')).toBe(true);
   });
 });
 
@@ -346,7 +373,7 @@ describe('Accounts card load failures', () => {
     fireEvent.click(screen.getByRole('button', { name: /^login$/i }));
     fireEvent.click(await screen.findByTestId('login-submit'));
 
-    await waitFor(() => expect(screen.getByText('MagnusC')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('lichess.org:MagnusC')).toBeInTheDocument());
     expect(screen.getByText(/Connected as/i)).toBeInTheDocument();
     expect(screen.queryByText(/sign in to see saved accounts/i)).not.toBeInTheDocument();
   });

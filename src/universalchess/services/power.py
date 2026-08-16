@@ -146,6 +146,24 @@ def restart_exit_code(pending_exception: Optional[BaseException]) -> int:
     return 0
 
 
+def process_exit_code(
+    pending_exception: Optional[BaseException],
+    uncaught_main_loop_error: bool = False,
+) -> int:
+    """Exit status for the board process after the main loop ends.
+
+    ``Restart=on-failure`` only restarts on a non-zero status. A caught
+    exception in the main loop was historically torn down with exit 0, so a
+    crash (for example the Lichess New Game ``ModuleNotFoundError``) left the
+    panel frozen. ``uncaught_main_loop_error`` forces 1. ``SystemExit`` from the
+    Centaur return fallback still wins via :func:`restart_exit_code` when no
+    loop crash was recorded. Deliberate shutdowns pass False and exit 0.
+    """
+    if uncaught_main_loop_error:
+        return 1
+    return restart_exit_code(pending_exception)
+
+
 # Values that mean "on" for a stored boolean flag, parsed leniently so a config
 # hand-edited with any of these spellings behaves the same as the UI toggle.
 _TRUTHY = ("1", "true", "on", "yes")

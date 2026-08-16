@@ -62,8 +62,6 @@ from universalchess.menus import (
     handle_engine_detail_menu,
     show_engine_install_progress,
     reset_all_settings,
-    get_lichess_client,
-    start_lichess_game_service,
 )
 from universalchess.utils.wifi import (
     scan_wifi_networks,
@@ -631,12 +629,18 @@ _pending_settings_reload = False  # Flag: web changed settings, rebuild live gam
 # in place, reusing the current player objects. Those objects were built from the
 # settings in effect when the game started, so if player-defining settings changed
 # since (e.g. the engine was changed from the web), the reused players are stale.
-# This flag, set when such a new game is detected, defers a full game rebuild to
-# the main thread (game/display mutation must not run on the event/subscriber
-# thread). _active_player_signature records the running game's player config so the
-# change can be detected; see _player_config_signature.
+# A Lichess player is also stale on board-reset: it is still attached to the
+# remote game, and in-place reuse would not seek a new opponent or show
+# "Waiting for game". This flag, set when such a new game is detected, defers a
+# full game rebuild to the main thread (game/display mutation must not run on the
+# event/subscriber thread). _active_player_signature records the running game's
+# player config so a settings change can be detected; see _player_config_signature.
 _pending_player_rebuild = False
 _active_player_signature: Optional[tuple] = None
+# Lobby Ongoing/Challenge stashes join ids here for the next _start_game_mode.
+# PLAY and lobby New Game leave it None (mode NEW). Consumed at start so a
+# failed start cannot reuse a stale game id.
+_lichess_join: Optional[dict] = None
 # A board-reset / setup-mode new game reuses the current DisplayManager and its
 # widgets. When a layout-affecting setting changed since the widgets were built
 # (in practice a deferred time-control change that flips timed<->untimed), the
@@ -2316,8 +2320,39 @@ def _start_game_mode(
     """
     global app_state, protocol_manager, display_manager, controller_manager, _is_position_game
     global _active_player_signature, _pending_player_rebuild, _pending_layout_rebuild
+    global _lichess_join
 
     log.info(f"[App] Transitioning to GAME mode (position_game={is_position_game})")
+
+    from universalchess.players.lichess import (
+        LichessPlayer, LichessPlayerConfig, LichessGameMode
+    )
+    from universalchess.services.lichess_match import (
+        LichessSeekError,
+        lichess_seek_from_settings,
+        START_PLAYING_SPLASH_SECONDS,
+    )
+    from universalchess.services.lichess_service import show_lichess_error
+
+    join = _lichess_join
+    _lichess_join = None
+    settings = _get_settings()
+    p1 = settings.player1
+    p2 = settings.player2
+    is_lichess = (p1.type == "lichess" or p2.type == "lichess")
+    lichess_seek = None
+    if is_lichess:
+        join_mode = join["mode"] if join else LichessGameMode.NEW
+        try:
+            lichess_seek = lichess_seek_from_settings(
+                settings,
+                require_clock=(join_mode == LichessGameMode.NEW),
+            )
+        except LichessSeekError as e:
+            log.warning(f"[App] Lichess start refused ({e.code}): {e.message}")
+            if _menu_manager is not None:
+                show_lichess_error(_menu_manager, "Lichess", e.message)
+            return
 
     # Tear down any prior game first. Since a game can now be suspended (managers
     # kept alive) behind the menu, an explicit "start new game" path (e.g. player
@@ -2368,9 +2403,6 @@ def _start_game_mode(
         HumanPlayer, HumanPlayerConfig, EnginePlayer, EnginePlayerConfig,
         HandBrainPlayer, HandBrainConfig, HandBrainMode
     )
-    from universalchess.players.lichess import (
-        LichessPlayer, LichessPlayerConfig, LichessGameMode
-    )
     from universalchess.players.settings import PlayerSettings
     from universalchess.managers.engine_manager import ENGINES
 
@@ -2419,11 +2451,20 @@ def _start_game_mode(
                 return PolicyEnginePlayer(config, SPECS[ps.engine])
             return EnginePlayer(config)
         elif ps.type == 'lichess':
+            join_mode = join["mode"] if join else LichessGameMode.NEW
             config = LichessPlayerConfig(
                 name="Lichess",
                 color=color,
-                mode=LichessGameMode.NEW,
-                account_id=ps.account,
+                mode=join_mode,
+                time_minutes=lichess_seek.time_minutes if lichess_seek else 10,
+                increment_seconds=lichess_seek.increment_seconds if lichess_seek else 5,
+                rated=lichess_seek.rated if lichess_seek else False,
+                color_preference=lichess_seek.color if lichess_seek else "random",
+                rating_range=lichess_seek.rating_range if lichess_seek else "",
+                game_id=(join or {}).get("game_id", "") or "",
+                challenge_id=(join or {}).get("challenge_id", "") or "",
+                challenge_direction=(join or {}).get("challenge_direction", "in") or "in",
+                account_id=lichess_seek.account_id if lichess_seek else ps.account,
             )
             return LichessPlayer(config)
         elif ps.type == 'hand_brain':
@@ -2460,6 +2501,7 @@ def _start_game_mode(
     is_two_player = (p1.type == 'human' and p2.type == 'human')
     # Hand-brain mode is enabled if either player is a hand_brain player
     is_hand_brain = (p1.type == 'hand_brain' or p2.type == 'hand_brain')
+    is_lichess = (p1.type == 'lichess' or p2.type == 'lichess')
 
     # Get analysis engine path if analysis mode is enabled
     # The engine registry handles sharing - if a player engine uses the same binary,
@@ -2520,6 +2562,13 @@ def _start_game_mode(
     # Create DisplayManager - handles all game widgets (chess board, analysis, clock)
     # Analysis runs in a background thread so it doesn't block move processing
     # Hand-brain hints are set per-player via display_manager.set_brain_hint()
+    # Lichess seek: splash first, defer the board paint so _init_widgets does
+    # not wipe "Waiting for game" before the e-paper shows it.
+    if is_lichess:
+        from universalchess.services.lichess_service import show_lichess_waiting_splash
+        wait_mode = join["mode"] if join else LichessGameMode.NEW
+        show_lichess_waiting_splash(board.display_manager, wait_mode)
+
     display_manager = DisplayManager(
         flip_board=False,
         show_analysis=game.show_analysis,
@@ -2534,7 +2583,8 @@ def _start_game_mode(
         led_from_to_hint_callback=led_callbacks.from_to_hint,
         led_off_callback=led_callbacks.off,
         time_control_spec=time_control_spec,
-        engine_move_clock_delay_seconds=game.engine_move_clock_delay_seconds
+        engine_move_clock_delay_seconds=game.engine_move_clock_delay_seconds,
+        defer_widgets=is_lichess,
     )
     log.info(f"[App] DisplayManager initialized (time_control={time_control_spec.describe()}, "
              f"analysis_mode={analysis_mode}, "
@@ -2578,6 +2628,13 @@ def _start_game_mode(
             _notify_players_resign(chess.BLACK)
         elif result == "draw":
             game_manager.handle_draw()
+        elif result == "abort":
+            if player_manager:
+                for player in (player_manager.white_player, player_manager.black_player):
+                    if isinstance(player, LichessPlayer):
+                        player.abort_game()
+                        break
+            _return_to_menu("Lichess abort")
         elif result == "exit":
             cleanup_and_exit(reason="User selected 'exit' from game menu", system_shutdown=True)
         # cancel is handled by DisplayManager (restores display)
@@ -2728,6 +2785,104 @@ def _start_game_mode(
         send_callback=sendMessage,
         protocol_detected_callback=protocol_manager.on_protocol_detected
     )
+
+    if is_lichess:
+        from universalchess.epaper import InfoOverlayWidget
+        from universalchess.services.lichess_service import show_lichess_started_splash
+
+        _info_overlay = InfoOverlayWidget(0, 216, 128, 80, board.display_manager.update)
+        lichess_game_connected = False
+        started_splash_held = True
+
+        def _lichess_player():
+            if player_manager is None:
+                return None
+            for player in (player_manager.white_player, player_manager.black_player):
+                if isinstance(player, LichessPlayer):
+                    return player
+            return None
+
+        def _dismiss_lichess_started_splash():
+            nonlocal started_splash_held
+            if not started_splash_held:
+                return
+            started_splash_held = False
+            display_manager.show_game_widgets()
+            board.display_manager.add_widget(_info_overlay)
+
+        def _on_lichess_game_connected():
+            nonlocal lichess_game_connected
+            if lichess_game_connected:
+                return
+            lichess_game_connected = True
+            lp = _lichess_player()
+            human_is_white = True if lp is None or lp.player_is_white is None else lp.player_is_white
+            if player_manager is not None:
+                human = None
+                remote = None
+                for player in (player_manager.white_player, player_manager.black_player):
+                    if isinstance(player, LichessPlayer):
+                        remote = player
+                    else:
+                        human = player
+                if human is not None and remote is not None:
+                    if human_is_white:
+                        player_manager.reassign_slots(human, remote)
+                    else:
+                        player_manager.reassign_slots(remote, human)
+            display_manager.set_flip_board(not human_is_white)
+            show_lichess_started_splash(board.display_manager, human_is_white)
+            timer = threading.Timer(
+                START_PLAYING_SPLASH_SECONDS, _dismiss_lichess_started_splash
+            )
+            timer.daemon = True
+            timer.start()
+
+        def _on_lichess_takeback_offer(accept_fn, decline_fn):
+            log.info("[App] Lichess takeback offer received")
+            board.beep(board.SOUND_GENERAL)
+            entries = [
+                IconMenuEntry(key="accept", label="Accept\nTakeback", icon_name="undo"),
+                IconMenuEntry(key="decline", label="Decline", icon_name="cancel"),
+            ]
+            result = _menu_manager.show_menu(entries)
+            if hasattr(result, "key") and result.key == "accept":
+                accept_fn()
+            else:
+                decline_fn()
+
+        def _on_lichess_draw_offer(accept_fn, decline_fn):
+            log.info("[App] Lichess draw offer received")
+            board.beep(board.SOUND_GENERAL)
+            entries = [
+                IconMenuEntry(key="accept", label="Accept\nDraw", icon_name="draw"),
+                IconMenuEntry(key="decline", label="Decline", icon_name="cancel"),
+            ]
+            result = _menu_manager.show_menu(entries)
+            if hasattr(result, "key") and result.key == "accept":
+                accept_fn()
+            else:
+                decline_fn()
+
+        def _on_lichess_game_over(result: str, termination: str, winner):
+            log.info(
+                f"[App] Lichess game over: result={result}, "
+                f"termination={termination}, winner={winner}"
+            )
+            display_manager.stop_clock()
+            from universalchess.state import get_chess_game
+            get_chess_game().set_result(result, termination)
+
+        def _on_lichess_info_message(message: str):
+            _info_overlay.show_message(message, duration_seconds=5.0)
+
+        for player in (white_player, black_player):
+            if isinstance(player, LichessPlayer):
+                player.set_on_game_connected(_on_lichess_game_connected)
+                player.set_game_over_callback(_on_lichess_game_over)
+                player.set_takeback_offer_callback(_on_lichess_takeback_offer)
+                player.set_draw_offer_callback(_on_lichess_draw_offer)
+                player.set_info_message_callback(_on_lichess_info_message)
     
     # Activate local controller by default (this starts players)
     controller_manager.activate_local()
@@ -2741,6 +2896,19 @@ def _start_game_mode(
     # For position games, skip the resign/draw menu and return directly
     if is_position_game:
         protocol_manager.set_on_back_pressed(_on_position_game_back)
+    elif is_lichess:
+        def _on_lichess_back():
+            if not lichess_game_connected:
+                log.info("[App] Lichess seek cancelled")
+                protocol_manager.stop_lichess()
+                _return_to_menu("Lichess cancel")
+                return
+            display_manager.show_back_menu(
+                _on_back_menu_result,
+                is_two_player=False,
+                allow_abort=True,
+            )
+        protocol_manager.set_on_back_pressed(_on_lichess_back)
     else:
         # In 2-player mode, show separate resign options for white and black
         protocol_manager.set_on_back_pressed(lambda: display_manager.show_back_menu(
@@ -2896,6 +3064,13 @@ def _start_game_mode(
                 # rebuild is needed in this branch.
                 log.info("[App] New game on board with changed player settings - scheduling player rebuild")
                 _pending_player_rebuild = True
+            elif player_manager.has_lichess:
+                # In-place reset only clears the local board. The LichessPlayer
+                # would keep streaming the old remote game, and the waiting splash
+                # is owned by _start_game_mode. Rebuild so the next game is a new
+                # seek with "Waiting for game".
+                log.info("[App] New game on board during Lichess - scheduling rebuild to seek a new game")
+                _pending_player_rebuild = True
             elif display_manager.layout_needs_rebuild():
                 # The reused widgets no longer match current settings (the
                 # set_time_control_spec above may have flipped timed<->untimed).
@@ -2906,6 +3081,8 @@ def _start_game_mode(
         elif event == EVENT_WHITE_TURN or event == EVENT_BLACK_TURN:
             # Start clock on first turn event (game has truly started)
             # Turn indicator is handled by ChessClockWidget observing ChessGameState directly
+            if is_lichess:
+                _dismiss_lichess_started_splash()
             if not _clock_started:
                 display_manager.start_clock()
                 _clock_started = True
@@ -3223,11 +3400,20 @@ def _abort_current_game() -> None:
     a position or aborting). Marks the live game abandoned via the existing
     abandonment path so the history reflects the abort, then leaves teardown to
     the caller (``_start_from_position`` / ``_return_to_menu`` clean up managers).
-    No-op when no resumable game is in progress.
+    A Lichess game is left on the server (abort, or resign if abort is no
+    longer allowed) so the opponent is not stranded. No-op when no resumable
+    game is in progress.
     """
     if protocol_manager is None:
         return
     game_manager = getattr(protocol_manager, "game_manager", None)
+    player_manager = getattr(protocol_manager, "player_manager", None)
+    if player_manager is not None:
+        from universalchess.players.lichess import LichessPlayer
+        for player in (player_manager.white_player, player_manager.black_player):
+            if isinstance(player, LichessPlayer):
+                player.on_new_game()
+                break
     if game_manager is None:
         return
     try:
@@ -4258,10 +4444,11 @@ def _build_players_context():
 
     Exposes both players' settings (for the per-player summary labels and the
     Player 1 color icon) and the row actions: opening each player's detail
-    menu, managing online accounts, and starting the game. ``open_player*``
-    forwards only a break result up (so a game started from a sub-menu
-    unwinds); ``open_accounts`` opens the multi-account manager (moved here
-    from Connectivity so credentials sit next to the slots that use them);
+    menu, Lichess Settings (host toggle and lobby), managing online accounts,
+    and starting the game. ``open_player*`` forwards only a break result up
+    (so a game started from a sub-menu unwinds); ``lichess`` opens the lobby;
+    ``open_accounts`` opens the multi-account manager (moved here from
+    Connectivity so credentials sit next to the slots that use them);
     ``start_game`` returns the START_GAME token the Settings handler turns
     into a new game.
     """
@@ -4275,7 +4462,13 @@ def _build_players_context():
     ctx.register_action("open_player1", lambda: _open_player_detail(1))
     ctx.register_action("open_player2", lambda: _open_player_detail(2))
     ctx.register_action("open_accounts", lambda: _signal_from(_handle_accounts_menu()))
+    ctx.register_action("lichess", lambda: _signal_from(_handle_lichess_menu()))
     ctx.register_action("start_game", lambda: "START_GAME")
+    ctx.register_store(
+        "game",
+        lambda key: _game_settings_dict()[key],
+        lambda key, value: _save_game_setting(key, value),
+    )
     return ctx
 
 
@@ -4285,7 +4478,7 @@ def _build_player_detail_context(player_num: int):
     Binds the engine's generic "player" store to the chosen player's settings,
     registers the Engine/ELO list providers (installed engines, per-engine
     levels) backing those provider-backed selects, and the board interactions the
-    detail rows invoke (name keyboard, Lichess). The virtual ``has_color`` key
+    detail rows invoke (name keyboard). The virtual ``has_color`` key
     drives the Color row's visibility (Player 1 only). The store returns the real
     stored values (an unset name reads as ""); the per-slot "Player N" default for
     the Name row is supplied by the ``player_name`` compute ({fn:player_name}) so the
@@ -4364,24 +4557,36 @@ def _build_player_detail_context(player_num: int):
         """
         from universalchess.menus.catalog import get_catalog
         from universalchess.menus.engine import MenuRow
-        from universalchess.services import account_store
+        from universalchess.services.lichess_accounts import (
+            get_lichess_credential,
+            label_of,
+            list_lichess_credentials,
+        )
 
         catalog = get_catalog()
         type_id = settings_dict()["type"]
-        if not catalog.has_account_type(type_id):
+        if type_id != "lichess" or not catalog.has_account_type(type_id):
             return []
-        definition = catalog.account_type(type_id)
-        icon = definition.get("icon", "account")
+        icon = catalog.account_type(type_id).get("icon", "account")
+        accounts = list_lichess_credentials()
         other = other_settings_dict()
-        choices = account_store.selectable_accounts_for_slot(
-            type_id, other.get("type", ""), other.get("account", "")
-        )
+        taken = None
+        if other.get("type") == "lichess":
+            other_id = other.get("account", "") or ""
+            if other_id:
+                bound = get_lichess_credential(other_id)
+                taken = bound.id if bound is not None else other_id
+            elif accounts:
+                taken = accounts[0].id
+        default_id = accounts[0].id if accounts else None
+        default_allowed = taken is None or default_id != taken
         rows = []
-        if choices.default_allowed:
+        if default_allowed:
             rows.append(MenuRow(key="", label="Default account", icon=icon))
-        for account in choices.accounts:
-            identity = account.get(definition["identityField"], account.id)
-            rows.append(MenuRow(key=account.id, label=identity, icon=icon))
+        for account in accounts:
+            if account.id == taken:
+                continue
+            rows.append(MenuRow(key=account.id, label=label_of(account), icon=icon))
         return rows
 
     def player_account_label(_node):
@@ -4390,20 +4595,16 @@ def _build_player_detail_context(player_num: int):
         Shows 'Default' when the slot is unbound or the bound account no longer
         exists (deleted), so the row never advertises a stale/missing account.
         """
-        from universalchess.menus.catalog import get_catalog
-        from universalchess.services import account_store
+        from universalchess.services.lichess_accounts import get_lichess_credential, label_of
 
-        catalog = get_catalog()
         settings = settings_dict()
         account_id = settings.get("account", "")
-        type_id = settings["type"]
-        if not account_id or not catalog.has_account_type(type_id):
+        if settings.get("type") != "lichess" or not account_id:
             return "Default"
-        definition = catalog.account_type(type_id)
-        account = account_store.get_account(type_id, account_id)
+        account = get_lichess_credential(account_id)
         if account is None:
             return "Default"
-        return account.get(definition["identityField"], account_id)
+        return label_of(account)
 
     ctx = BoardMenuContext()
     ctx.register_store("player", player_get, player_set)
@@ -4420,7 +4621,11 @@ def _build_player_detail_context(player_num: int):
         lambda node: settings_dict().get("name") or default_player_name(player_num),
     )
     ctx.register_action("edit_name", lambda: _prompt_player_name(player_num))
-    ctx.register_action("lichess", lambda: _signal_from(_handle_lichess_menu()))
+    ctx.register_store(
+        "game",
+        lambda key: _game_settings_dict()[key],
+        lambda key, value: _save_game_setting(key, value),
+    )
     return ctx
 
 
@@ -6024,11 +6229,14 @@ def _handle_connectivity_menu():
 
 def _handle_lichess_menu():
     """Handle Lichess submenu - delegates to service."""
-    from universalchess.services.lichess_service import handle_lichess_menu
+    from universalchess.services.lichess_service import (
+        handle_lichess_menu,
+        lichess_client_from_settings,
+    )
     from universalchess.board import centaur
 
     return handle_lichess_menu(
-        get_lichess_client_fn=lambda: get_lichess_client(centaur, log),
+        get_lichess_client_fn=lambda: lichess_client_from_settings(_get_settings(), log),
         get_settings_fn=_get_settings,
         menu_manager=_menu_manager,
         keyboard_factory=lambda update_fn, title, max_len: KeyboardWidget(update_fn, title=title, max_length=max_len),
@@ -6043,45 +6251,22 @@ def _handle_lichess_menu():
 
 
 def _start_lichess_game(lichess_config) -> bool:
-    """Start a Lichess game with the given configuration.
-    
-    Delegates to lichess_service.start_lichess_game_service and updates global managers.
-    
-    Args:
-        lichess_config: LichessConfig with game parameters
-        
-    Returns:
-        True if game started successfully, False otherwise
+    """Start PLAY with a Lichess join mode stashed for ``_start_game_mode``.
+
+    New Game, Ongoing, and Challenges all enter the same Human vs Lichess
+    path. Seek color/clock/rated come from Players + Game settings; this only
+    carries the lobby's join ids (ongoing game or challenge).
     """
-    global app_state, protocol_manager, display_manager, controller_manager
-    from universalchess.services.lichess_service import start_lichess_game_service
-    from universalchess.paths import get_engine_path
-    
-    def set_app_state(state):
-        global app_state
-        app_state = state
-    
-    result = start_lichess_game_service(
-        lichess_config=lichess_config,
-        game_settings=_game_settings_dict(),
-        board=board,
-        log=log,
-        menu_manager=_menu_manager,
-        connection_manager=_connection_manager,
-        return_to_menu_fn=_return_to_menu,
-        cleanup_game_fn=_cleanup_game,
-        set_app_state_fn=set_app_state,
-        app_state_game=AppState.GAME,
-        app_state_settings=AppState.SETTINGS,
-        get_engine_path=get_engine_path,
-    )
-    
-    if result.success:
-        protocol_manager = result.protocol_manager
-        display_manager = result.display_manager
-        controller_manager = result.controller_manager
-    
-    return result.success
+    global _lichess_join
+
+    _lichess_join = {
+        "mode": lichess_config.mode,
+        "game_id": getattr(lichess_config, "game_id", "") or "",
+        "challenge_id": getattr(lichess_config, "challenge_id", "") or "",
+        "challenge_direction": getattr(lichess_config, "challenge_direction", "in") or "in",
+    }
+    _start_game_mode()
+    return app_state == AppState.GAME
 
 
 def _capture_account_field(field: dict):
@@ -6119,40 +6304,38 @@ def _handle_accounts_menu():
     account, so painting the list needs no network call.
     """
     from universalchess.menus.catalog import get_catalog
+    from universalchess.menus.accounts_menu import choose_account_type
     from universalchess.services import account_store
+    from universalchess.services.lichess_accounts import (
+        add_lichess_credential,
+        host_id_of,
+        label_of,
+        list_lichess_credentials,
+    )
+    from universalchess.services.lichess_hosts import LICHESS_HOSTS, get_host
     from universalchess.services.lichess_service import resolve_lichess_identity, show_lichess_error
 
     catalog = get_catalog()
 
-    # Bring any legacy [lichess] credential into the account model first so it
-    # appears in the list. Offline (no resolver network call) this is a no-op
-    # unless a cached username exists; the resolver lets it complete online.
     account_store.ensure_lichess_migrated(
-        resolver=lambda fields: resolve_lichess_identity(fields.get("api_token", ""), log)
+        resolver=lambda fields: resolve_lichess_identity(
+            fields.get("api_token", ""), log, host_id=fields.get("host") or "org"
+        )
     )
-
-    def _resolver_for(type_id: str):
-        if type_id == "lichess":
-            return lambda fields: resolve_lichess_identity(fields.get("api_token", ""), log)
-        return None
 
     def _list_views():
         views = []
-        for account in account_store.list_accounts():
-            if not catalog.has_account_type(account.type):
-                continue
-            definition = catalog.account_type(account.type)
-            identity = account.get(definition["identityField"], account.id)
-            secret_key = next((f["key"] for f in definition["fields"] if f.get("secret")), None)
-            masked = mask_token(account.get(secret_key)) if secret_key else ""
+        for account in list_lichess_credentials():
+            host = get_host(host_id_of(account))
+            masked = mask_token(account.get("api_token"))
             views.append(
                 AccountView(
                     type_id=account.type,
                     account_id=account.id,
-                    identity=identity,
-                    type_label=definition.get("label", account.type),
+                    identity=label_of(account),
+                    type_label=host.label,
                     masked_secret=masked,
-                    icon=definition.get("icon", "account"),
+                    icon="lichess",
                 )
             )
         return views
@@ -6164,12 +6347,28 @@ def _handle_accounts_menu():
         ]
 
     def _add(type_id: str):
+        if type_id != "lichess" or not catalog.has_account_type(type_id):
+            return
         definition = catalog.account_type(type_id)
+        host_id = choose_account_type(
+            _menu_manager,
+            [(host.id, host.label, "lichess") for host in LICHESS_HOSTS],
+        )
+        if not host_id:
+            return
 
         def _submit(values):
-            result = account_store.add_account(definition, values, resolver=_resolver_for(type_id))
+            values = {**values, "host": host_id}
+            result = add_lichess_credential(
+                values,
+                resolver=lambda fields: resolve_lichess_identity(
+                    fields.get("api_token", ""),
+                    log,
+                    host_id=fields.get("host") or host_id,
+                ),
+            )
             if result.error is None:
-                log.info("[Accounts] Added %s account '%s'", type_id, result.account.id)
+                log.info("[Accounts] Added Lichess account '%s'", result.account.id)
                 board.beep(board.SOUND_GENERAL)
                 return True, ""
             return False, result.message or "Could not add account"
@@ -8053,6 +8252,7 @@ def main():
     
     _startup_completed_at = time.monotonic()
 
+    _uncaught_main_loop_error = False
     try:
         while running and not kill:
             try:
@@ -8339,6 +8539,7 @@ def main():
         log.error(f"[App] Error in main loop: {e}")
         import traceback
         traceback.print_exc()
+        _uncaught_main_loop_error = True
     finally:
         # A non-zero SystemExit propagating into this finally means the
         # return-from-Centaur fallback asked systemd to restart us
@@ -8348,8 +8549,10 @@ def main():
         # board stays dead. Captured before the import below, which does not
         # touch the in-flight exception. See services.power.restart_exit_code.
         _pending_exc = sys.exc_info()[1]
-        from universalchess.services.power import restart_exit_code
-        _restart_code = restart_exit_code(_pending_exc)
+        from universalchess.services.power import process_exit_code
+        _restart_code = process_exit_code(
+            _pending_exc, uncaught_main_loop_error=_uncaught_main_loop_error
+        )
         # Check if shutdown was requested from events thread (e.g., LONG_PLAY key)
         if _shutdown_requested:
             cleanup_and_exit("LONG_PLAY shutdown requested", system_shutdown=True)

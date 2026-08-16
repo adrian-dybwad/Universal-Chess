@@ -31,7 +31,7 @@ def fake_berserk(monkeypatch):
             return {"username": state["username"]}
 
     class FakeClient:
-        def __init__(self, session=None):
+        def __init__(self, session=None, **kwargs):
             self.account = FakeAccount()
 
     module = types.ModuleType("berserk")

@@ -121,7 +121,8 @@ class DisplayManager:
                  led_from_to_hint_callback: callable = None,
                  led_off_callback: callable = None,
                  time_control_spec: TimeControl = None,
-                 engine_move_clock_delay_seconds: int = 1):
+                 engine_move_clock_delay_seconds: int = 1,
+                 defer_widgets: bool = False):
         """Initialize the display controller.
         
         Args:
@@ -138,6 +139,11 @@ class DisplayManager:
             led_from_to_hint_callback: LED callback (from_sq, to_sq, repeat) for hint-style
                                        LEDs (slow speed, dim intensity). Used for check/queen alerts.
             led_off_callback: LED callback () to turn off all LEDs. Used for pause.
+            defer_widgets: If True, skip the first ``_init_widgets`` paint.
+                ``_init_widgets`` clears the panel, so constructing this manager
+                during a Lichess seek would wipe the "Waiting for game" splash
+                before the e-paper showed it. The caller shows that splash first
+                and calls :meth:`show_game_widgets` when the stream connects.
         
         Note: Player names are read from PlayersState by the clock widget.
               Hand-brain hints are set per-player via set_brain_hint().
@@ -246,12 +252,31 @@ class DisplayManager:
         # survives reset() and applies for the whole game.
         self._clock.set_engine_move_delay_seconds(engine_move_clock_delay_seconds)
         
-        # Initialize widgets first (fast, non-blocking)
-        self._init_widgets()
+        # Initialize widgets first (fast, non-blocking) unless the caller is
+        # holding a waiting splash on the panel (Lichess seek).
+        if not defer_widgets:
+            self._init_widgets()
         
         # Initialize analysis engine asynchronously (slow, done in background)
         if analysis_engine_path:
             self._init_analysis_engine_async(analysis_engine_path)
+
+    def show_game_widgets(self) -> None:
+        """Paint the game board/clock/analysis, replacing whatever is on the panel.
+
+        Used after construction with ``defer_widgets=True`` so a waiting splash
+        can occupy the panel until a Lichess game stream connects. Safe to call
+        later to rebuild the same layout.
+        """
+        self._init_widgets()
+
+    def set_flip_board(self, flip: bool) -> None:
+        """Show the board from Black's side when the local human is Black.
+
+        Must be set before :meth:`show_game_widgets` so the first paint matches
+        the Lichess stream's colors. Does not rebuild widgets by itself.
+        """
+        self._flip_board = bool(flip)
     
     def _init_analysis_engine_async(self, engine_path: str):
         """Initialize the UCI analysis engine asynchronously via registry.
@@ -1400,15 +1425,18 @@ class DisplayManager:
         """
         self._draw_offer_resolver = resolver
     
-    def show_back_menu(self, on_result: callable, is_two_player: bool = False):
+    def show_back_menu(self, on_result: callable, is_two_player: bool = False,
+                       allow_abort: bool = False):
         """Show the back button menu (resign/draw/cancel).
         
         Non-blocking - calls on_result when user makes a selection.
         
         Args:
             on_result: Callback function(result: str) with result:
-                      'resign', 'resign_white', 'resign_black', 'draw', 'cancel', or 'exit'
+                      'resign', 'resign_white', 'resign_black', 'draw', 'cancel',
+                      'exit', or 'abort' when allow_abort is True
             is_two_player: If True, show separate resign options for white and black
+            allow_abort: If True, add Abort (Lichess, while abort is still legal)
         """
 
         
@@ -1435,6 +1463,8 @@ class DisplayManager:
                 _IconMenuEntry(key="draw", label="Draw", icon_name="draw"),
                 _IconMenuEntry(key="cancel", label="Cancel", icon_name="cancel"),
             ]
+            if allow_abort:
+                entries.insert(0, _IconMenuEntry(key="abort", label="Abort", icon_name="cancel"))
         
         # Create menu - default to Cancel (last item)
         back_menu = _IconMenuWidget(

@@ -88,6 +88,8 @@ def _detail_ctx(state, *, has_color=True, calls=None):
 
     ctx = BoardMenuContext()
     ctx.register_store("player", player_get, player_set)
+    game = {"lichess_rated": False, "lichess_use_dev": False}
+    ctx.register_store("game", lambda key: game[key], lambda key, value: game.__setitem__(key, value))
     ctx.register_provider(
         "installed_engines",
         lambda: [
@@ -122,7 +124,6 @@ def _detail_ctx(state, *, has_color=True, calls=None):
         lambda node: state.get("name") or f"Player {player_num}",
     )
     ctx.register_action("edit_name", lambda: calls.append("edit_name") or None)
-    ctx.register_action("lichess", lambda: calls.append("lichess") or None)
     ctx._recorded_calls = calls
     return ctx
 
@@ -233,21 +234,22 @@ def test_hand_brain_shows_mode_row_with_checkbox_icon():
     assert normal["field.player.hand_brain_mode"].icon == "checkbox_empty"
 
 
-def test_lichess_shows_color_type_account_and_lichess():
-    """A Lichess player exposes Color, Type, the Account picker, and Lichess Settings.
+def test_lichess_shows_color_type_account_and_rated():
+    """A Lichess player exposes Color, Type, the Account picker, and Rated.
 
     Why this test exists: an online (Lichess) slot binds to a specific saved
     account via the account picker (``field.player.account``), which is gated to
-    online player types. How a regression manifests: the engine/ELO/name rows
-    (non-Lichess) leak in, the account picker is hidden for an online player, or
-    the Lichess row is missing.
+    online player types. Host/dev and the Lichess lobby are not per-slot: they
+    live under Players → Lichess Settings. How a regression manifests: the
+    engine/ELO/name rows (non-Lichess) leak in, the account picker is hidden
+    for an online player, or lichess.dev / Lichess Settings reappear on the slot.
     """
     ids = [r.node["id"] for r in _detail_rows(_player_state(type="lichess"))]
     assert ids == [
         "field.player.color",
         "field.player.type",
         "field.player.account",
-        "field.player.lichess",
+        "field.player.lichess_rated",
     ]
 
 
@@ -532,8 +534,14 @@ def _players_ctx(p1, p2, *, calls=None, p1_summary="P1", p2_summary="P2"):
     ctx.register_action("open_player1", lambda: calls.append("open_player1") or None)
     ctx.register_action("open_player2", lambda: calls.append("open_player2") or None)
     ctx.register_action("open_accounts", lambda: calls.append("open_accounts") or None)
+    ctx.register_action("lichess", lambda: calls.append("lichess") or None)
     ctx.register_action("start_game", lambda: "START_GAME")
+    game = {"lichess_use_dev": False, "lichess_rated": False}
+    ctx.register_store(
+        "game", lambda k: game[k], lambda k, v: game.__setitem__(k, v)
+    )
     ctx._recorded_calls = calls
+    ctx._game = game
     return ctx
 
 
@@ -541,15 +549,53 @@ def _players_rows(p1, p2, **kwargs):
     return build_rows("settings.players", _players_ctx(p1, p2, **kwargs), platform="board", catalog=load_catalog())
 
 
-def test_top_level_lists_two_players_accounts_then_start():
-    """Players lists Player 1, Player 2, Accounts, then Start Game.
+def test_top_level_lists_two_players_lichess_then_start():
+    """Players lists Player 1, Player 2, Lichess Settings, then Start.
 
-    Why: Accounts moved here from Connectivity so credential management sits
-    next to the player slots that use those accounts. How a regression
-    manifests: Accounts is missing/reordered, or Start Game is no longer last.
+    Why: Lichess Settings holds credentials and the lobby, not a per-slot row.
+    How a regression manifests: Lichess Settings is missing/reordered, Accounts
+    returns to the top level, or Start Game is no longer last.
     """
     ids = [r.node["id"] for r in _players_rows(_player_state(), _player_state())]
-    assert ids == ["players.player1", "players.player2", "players.accounts", "players.start"]
+    assert ids == [
+        "players.player1",
+        "players.player2",
+        "players.lichess",
+        "players.start",
+    ]
+
+
+def test_lichess_settings_contains_accounts_and_play():
+    """Lichess Settings holds the credentials manager and the Play lobby action.
+
+    Why: each Lichess login is a server:user credential, listed here; Play opens
+    the lobby. How a regression manifests: a host toggle returns, Play is
+    missing, or Accounts is not on this page.
+    """
+    ids = [
+        r.node["id"]
+        for r in build_rows(
+            "players.lichess",
+            _players_ctx(_player_state(), _player_state()),
+            platform="board",
+            catalog=load_catalog(),
+        )
+    ]
+    assert ids == ["players.accounts", "players.lichess.play"]
+
+
+def test_lichess_play_row_dispatches_lichess_action():
+    """Selecting Play on Lichess Settings runs the existing lichess lobby.
+
+    Why: the lobby used to be the whole 'Lichess Settings' row on a player
+    slot. It must still open from the new page. How a regression manifests:
+    dispatch action is wrong or the players context never registered lichess.
+    """
+    calls = []
+    ctx = _players_ctx(_player_state(), _player_state(), calls=calls)
+    outcome = dispatch(load_catalog().get_node("players.lichess.play"), ctx)
+    assert outcome.kind == "action" and outcome.action == "lichess"
+    assert calls == ["lichess"]
 
 
 def test_accounts_row_dispatches_open_accounts():

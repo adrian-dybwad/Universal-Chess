@@ -200,7 +200,7 @@ def test_web_implemented_submenus_are_enabled_for_web():
         "connectivity.bluetooth",
         "connectivity.usb_gadget",
         "connectivity.chromecast",
-        "players.accounts",
+        "players.lichess",
         "settings.engines",
         "system.about",
         # System/power actions now have web controls (Settings -> System).
@@ -530,22 +530,41 @@ def test_packaged_catalog_exposes_lichess_account_type():
     """
     catalog = load_catalog()
     assert catalog.has_account_type("lichess")
+    assert not catalog.has_account_type("lichess_dev")
     lichess = catalog.account_type("lichess")
     assert lichess["label"] == "Lichess"
     assert lichess["icon"] == "lichess"
     # Identity is the account username, resolved by authenticating the token
-    # (not typed by the user), which is what enforces "no two accounts share a
-    # player name".
+    # (not typed by the user). Uniqueness is host+username inside the plugin.
     assert lichess["identityField"] == "username"
     assert lichess["identitySource"] == "resolved"
     fields = {f["key"]: f for f in lichess["fields"]}
     assert set(fields) == {"api_token", "range"}
-    # The token is the required secret; the range is an optional plain field.
     assert fields["api_token"]["secret"] is True
     assert fields["api_token"]["required"] is True
     assert fields["api_token"]["type"] == "password"
     assert fields["range"].get("secret", False) is False
     assert fields["range"]["type"] == "text"
+    hosts = {h["id"]: h for h in lichess["hosts"]}
+    assert set(hosts) == {"org", "dev"}
+    assert hosts["org"]["baseUrl"] == "https://lichess.org"
+    assert hosts["dev"]["baseUrl"] == "https://lichess.dev"
+
+
+def test_lichess_catalog_hosts_match_plugin():
+    """Catalog host URLs must match the Lichess plugin's host list.
+
+    Why: the web form reads hosts from the catalog; berserk uses Python. Drift
+    would send a token to the wrong server. Failure: an id or URL differs.
+    """
+    from universalchess.services.lichess_hosts import LICHESS_HOSTS
+
+    catalog = load_catalog()
+    catalog_hosts = [
+        (h["id"], h["baseUrl"]) for h in catalog.account_type("lichess")["hosts"]
+    ]
+    plugin_hosts = [(h.id, h.base_url) for h in LICHESS_HOSTS]
+    assert catalog_hosts == plugin_hosts
 
 
 def test_account_type_ids_are_online_player_types():
@@ -562,7 +581,8 @@ def test_account_type_ids_are_online_player_types():
     catalog = load_catalog()
     player_type_values = {o["value"] for o in catalog.option_set("player_type")}
     for entry in catalog.account_types():
-        assert entry["id"] in player_type_values, (
+        player_type = entry.get("playerType") or entry["id"]
+        assert player_type in player_type_values, (
             f"account type '{entry['id']}' has no matching player_type option"
         )
 
@@ -684,6 +704,50 @@ def test_account_type_entered_identity_must_be_a_field(tmp_path):
     }
     menu_path, icons_path = _write(tmp_path, _account_type_menu(entry), _ACCOUNT_ICONS)
     with pytest.raises(CatalogError, match="identityField 'handle'"):
+        load_catalog(menu_path, icons_path)
+
+
+def test_account_type_host_without_https_url_raises(tmp_path):
+    """A host whose baseUrl is not https must be rejected.
+
+    Why: the Add Account picker and berserk send the token to this URL. An
+    http or missing URL would ship a picker that cannot be used safely.
+    Failure: load_catalog accepts the entry.
+    """
+    entry = {
+        "id": "lichess",
+        "label": "Lichess",
+        "icon": "lichess",
+        "identityField": "username",
+        "identitySource": "resolved",
+        "fields": [{"key": "api_token", "label": "Token", "type": "password"}],
+        "hosts": [{"id": "org", "label": "lichess.org", "baseUrl": "http://lichess.org"}],
+    }
+    menu_path, icons_path = _write(tmp_path, _account_type_menu(entry), _ACCOUNT_ICONS)
+    with pytest.raises(CatalogError, match="baseUrl must be an https URL"):
+        load_catalog(menu_path, icons_path)
+
+
+def test_account_type_duplicate_host_id_raises(tmp_path):
+    """Two hosts with the same id must be rejected.
+
+    Why: the Server picker keys options by id; a duplicate would shadow a
+    server. Failure: load_catalog accepts both rows.
+    """
+    entry = {
+        "id": "lichess",
+        "label": "Lichess",
+        "icon": "lichess",
+        "identityField": "username",
+        "identitySource": "resolved",
+        "fields": [{"key": "api_token", "label": "Token", "type": "password"}],
+        "hosts": [
+            {"id": "org", "label": "lichess.org", "baseUrl": "https://lichess.org"},
+            {"id": "org", "label": "lichess.dev", "baseUrl": "https://lichess.dev"},
+        ],
+    }
+    menu_path, icons_path = _write(tmp_path, _account_type_menu(entry), _ACCOUNT_ICONS)
+    with pytest.raises(CatalogError, match="duplicate host id 'org'"):
         load_catalog(menu_path, icons_path)
 
 

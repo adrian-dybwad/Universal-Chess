@@ -49,8 +49,8 @@ const buildSettingsPayload = (p1: PlayerSeed, p2: PlayerSeed) => ({
 
 const accountsPayload = {
   accounts: [
-    { type: 'lichess', id: 'magnusc', identity: 'MagnusC', values: { username: 'MagnusC' }, secretsSet: { api_token: true } },
-    { type: 'lichess', id: 'second', identity: 'SecondUser', values: { username: 'SecondUser' }, secretsSet: { api_token: true } },
+    { type: 'lichess', id: 'org:magnusc', identity: 'MagnusC', label: 'lichess.org:MagnusC', host: 'org', values: { username: 'MagnusC' }, secretsSet: { api_token: true } },
+    { type: 'lichess', id: 'org:second', identity: 'SecondUser', label: 'lichess.org:SecondUser', host: 'org', values: { username: 'SecondUser' }, secretsSet: { api_token: true } },
   ],
 };
 
@@ -144,19 +144,39 @@ describe('Settings account picker for online player types', () => {
     renderSettings();
     const picker = await screen.findByLabelText('Account');
     expect(picker).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'MagnusC' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'SecondUser' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'lichess.org:MagnusC' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'lichess.org:SecondUser' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /default account/i })).toBeInTheDocument();
   });
 
-  it('shows the Accounts management card on the Players tab', async () => {
-    // Why: Accounts moved from Connectivity onto Players so credentials sit
-    // next to the slots that pick them. The web mounts AccountsCard here
-    // (settings.players children are mostly board actions). Manifests as no
-    // Accounts header on Players.
+  it('lists org and .dev credentials of the same username as distinct options', async () => {
+    // Why: host is part of the credential, not a game toggle. Org Alice and
+    // .dev Alice must both appear as server:user. Failure: one option, or
+    // both labelled only "Alice".
+    mockFetch({ type: 'lichess' }, { type: 'human' }, {
+      accounts: [
+        { type: 'lichess', id: 'org:alice', identity: 'Alice', label: 'lichess.org:Alice', host: 'org', values: { username: 'Alice' }, secretsSet: { api_token: true } },
+        { type: 'lichess', id: 'dev:alice', identity: 'Alice', label: 'lichess.dev:Alice', host: 'dev', values: { username: 'Alice' }, secretsSet: { api_token: true } },
+      ],
+    });
+    renderSettings();
+    await screen.findByLabelText('Account');
+    expect(screen.getByRole('option', { name: 'lichess.org:Alice' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'lichess.dev:Alice' })).toBeInTheDocument();
+  });
+
+  it('shows Lichess Settings with credential management on the Players tab', async () => {
+    // Why: credentials live under Players → Lichess Settings, not Connectivity
+    // and not a Game host toggle. Human slots must still see the card so an
+    // account can be added before either side is Lichess. Failure: no Lichess
+    // Settings heading, the Use lichess.dev toggle returns, or the Add Account
+    // form is missing.
     mockFetch({ type: 'human' }, { type: 'human' });
     renderSettings();
-    expect(await screen.findByRole('heading', { name: 'Accounts' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Lichess Settings' })).toBeInTheDocument();
+    expect(await screen.findByLabelText('Server')).toBeInTheDocument();
+    expect(screen.getByLabelText(/API Token/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Use lichess.dev')).not.toBeInTheDocument();
   });
 
   it('shows no account picker for offline (human) player types', async () => {
@@ -179,28 +199,31 @@ describe('Settings account picker excludes the other slot (both-sides rule)', ()
 
   it("removes each slot's account from the other slot's picker", async () => {
     // One online account may not play both sides. With both slots Lichess and
-    // bound to distinct accounts (P1=magnusc, P2=second), each picker must omit
-    // the account the *other* slot uses so it can never be chosen twice:
-    //  - P2's picker excludes 'MagnusC' AND 'Default account' (Default resolves
-    //    to the first account 'magnusc', which is taken), leaving only SecondUser.
-    //  - P1's picker excludes 'SecondUser'; Default (-> magnusc, its own) stays.
+    // bound to distinct credentials (P1=org:magnusc, P2=org:second), each picker
+    // must omit the account the *other* slot uses so it can never be chosen twice:
+    //  - P2's picker excludes 'lichess.org:MagnusC' AND 'Default account' (Default
+    //    resolves to the first account 'org:magnusc', which is taken), leaving
+    //    only lichess.org:SecondUser.
+    //  - P1's picker excludes 'lichess.org:SecondUser'; Default (-> org:magnusc,
+    //    its own) stays.
     // A regression (no exclusion, or comparing only raw ids so 'Default' slips
     // through) shows as the forbidden option reappearing in a picker below.
-    mockFetch({ type: 'lichess', account: 'magnusc' }, { type: 'lichess', account: 'second' });
+    mockFetch({ type: 'lichess', account: 'org:magnusc' }, { type: 'lichess', account: 'org:second' });
     renderSettings();
     const pickers = await screen.findAllByLabelText('Account');
     expect(pickers).toHaveLength(2);
     const [p1Picker, p2Picker] = pickers;
 
-    // P2 (bound 'second') must not offer P1's 'magnusc', nor Default (=> magnusc).
-    expect(within(p2Picker).queryByRole('option', { name: 'MagnusC' })).not.toBeInTheDocument();
+    // P2 (bound 'org:second') must not offer P1's org MagnusC, nor Default
+    // (=> first account org:magnusc).
+    expect(within(p2Picker).queryByRole('option', { name: 'lichess.org:MagnusC' })).not.toBeInTheDocument();
     expect(within(p2Picker).queryByRole('option', { name: /default account/i })).not.toBeInTheDocument();
-    expect(within(p2Picker).getByRole('option', { name: 'SecondUser' })).toBeInTheDocument();
+    expect(within(p2Picker).getByRole('option', { name: 'lichess.org:SecondUser' })).toBeInTheDocument();
 
-    // P1 (bound 'magnusc') must not offer P2's 'second', but keeps its own +
-    // Default (which resolves to magnusc, not the taken 'second').
-    expect(within(p1Picker).queryByRole('option', { name: 'SecondUser' })).not.toBeInTheDocument();
-    expect(within(p1Picker).getByRole('option', { name: 'MagnusC' })).toBeInTheDocument();
+    // P1 (bound 'org:magnusc') must not offer P2's second, but keeps its own +
+    // Default (which resolves to org:magnusc, not the taken second).
+    expect(within(p1Picker).queryByRole('option', { name: 'lichess.org:SecondUser' })).not.toBeInTheDocument();
+    expect(within(p1Picker).getByRole('option', { name: 'lichess.org:MagnusC' })).toBeInTheDocument();
     expect(within(p1Picker).getByRole('option', { name: /default account/i })).toBeInTheDocument();
   });
 });
@@ -224,7 +247,7 @@ describe('Settings account picker auth and load failures', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /login/i })).toBeInTheDocument());
     expect(screen.getByText(/sign in to see saved accounts/i)).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: /default account/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: 'MagnusC' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'lichess.org:MagnusC' })).not.toBeInTheDocument();
   });
 
   it('loads the account picker after Sign in succeeds', async () => {
@@ -239,8 +262,8 @@ describe('Settings account picker auth and load failures', () => {
     fireEvent.click(screen.getByRole('button', { name: /login/i }));
     fireEvent.click(await screen.findByTestId('login-submit'));
 
-    await waitFor(() => expect(screen.getByRole('option', { name: 'MagnusC' })).toBeInTheDocument());
-    expect(screen.getByRole('option', { name: 'SecondUser' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('option', { name: 'lichess.org:MagnusC' })).toBeInTheDocument());
+    expect(screen.getByRole('option', { name: 'lichess.org:SecondUser' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /default account/i })).toBeInTheDocument();
     expect(screen.queryByText(/sign in to see saved accounts/i)).not.toBeInTheDocument();
   });
@@ -272,6 +295,6 @@ describe('Settings account picker auth and load failures', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /retry/i }));
 
-    await waitFor(() => expect(screen.getByRole('option', { name: 'MagnusC' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('option', { name: 'lichess.org:MagnusC' })).toBeInTheDocument());
   });
 });

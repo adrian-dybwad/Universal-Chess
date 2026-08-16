@@ -2936,7 +2936,11 @@ def _account_resolver(type_id):
     if type_id == "lichess":
         from universalchess.services.lichess_service import resolve_lichess_identity
 
-        return lambda fields: resolve_lichess_identity(fields.get("api_token", ""), log=None)
+        return lambda fields: resolve_lichess_identity(
+            fields.get("api_token", ""),
+            log=None,
+            host_id=fields.get("host") or "org",
+        )
     return None
 
 
@@ -2956,13 +2960,19 @@ def _redact_account(account, account_type):
             secrets_set[key] = bool(value)
         else:
             values[key] = value
-    return {
+    payload = {
         "type": account.type,
         "id": account.id,
         "identity": account.get(account_type["identityField"], account.id),
         "values": values,
         "secretsSet": secrets_set,
     }
+    if account.type == "lichess":
+        from universalchess.services.lichess_accounts import host_id_of, label_of
+
+        payload["host"] = host_id_of(account)
+        payload["label"] = label_of(account)
+    return payload
 
 
 # HTTP status for each add-account failure code. Absent codes map to 400.
@@ -3022,9 +3032,16 @@ def api_add_account():
         return jsonify({"error": "unknown_type"}), 400
     account_type = catalog.account_type(type_id)
 
-    result = account_store.add_account(
-        account_type, fields, resolver=_account_resolver(type_id)
-    )
+    if type_id == "lichess":
+        from universalchess.services.lichess_accounts import add_lichess_credential
+
+        result = add_lichess_credential(
+            fields, resolver=_account_resolver(type_id)
+        )
+    else:
+        result = account_store.add_account(
+            account_type, fields, resolver=_account_resolver(type_id)
+        )
     if result.error:
         status = _ADD_ACCOUNT_STATUS.get(result.error, 400)
         return jsonify({"error": result.error, "message": result.message}), status
@@ -3043,7 +3060,14 @@ def api_delete_account(type_id, account_id):
     Returns ``{"ok": true}`` when removed, or 404 when no such account exists.
     Broadcasts a settings change so any player bound to it can be reconciled.
     """
+    from urllib.parse import unquote
+
     from universalchess.services import account_store
+
+    # Credential ids are ``org:alice``; the web client percent-encodes the colon.
+    # Werkzeug usually decodes the path already; unquote is idempotent for a
+    # decoded id and recovers the colon if the segment arrives still encoded.
+    account_id = unquote(account_id)
 
     if account_store.delete_account(type_id, account_id):
         _broadcast_settings_changed()

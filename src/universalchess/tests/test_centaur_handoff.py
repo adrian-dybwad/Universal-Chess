@@ -34,6 +34,7 @@ from universalchess.services.power import (
     perform_centaur_handoff,
     perform_centaur_translate_handoff,
     restart_exit_code,
+    process_exit_code,
     return_to_universal_chess,
 )
 
@@ -488,6 +489,21 @@ def test_restart_exit_code_maps_pending_exception(pending, expected):
     systemd treat every clean exit as a failure.
     """
     assert restart_exit_code(pending) == expected
+
+
+def test_process_exit_code_restarts_after_main_loop_crash():
+    """A caught main-loop exception must exit 1 so Restart=on-failure fires.
+
+    Why: the Lichess New Game ModuleNotFoundError was logged, then cleanup
+    exited 0, and the panel stayed on the last frame. KeyboardInterrupt and a
+    clean end still exit 0.
+
+    How the regression manifests: uncaught_main_loop_error True maps to 0.
+    """
+    assert process_exit_code(RuntimeError("boom"), uncaught_main_loop_error=True) == 1
+    assert process_exit_code(None, uncaught_main_loop_error=False) == 0
+    assert process_exit_code(KeyboardInterrupt(), uncaught_main_loop_error=False) == 0
+    assert process_exit_code(SystemExit(1), uncaught_main_loop_error=False) == 1
 
 
 if __name__ == "__main__":

@@ -1033,6 +1033,7 @@
       "delete": "Eliminar",
       "add": "Añadir cuenta",
       "type": "Tipo de cuenta",
+      "host": "Servidor",
       "adding": "Añadiendo…",
       "added": "Cuenta añadida.",
       "removeConfirm": "¿Eliminar la cuenta «{{identity}}»?",
@@ -1046,7 +1047,8 @@
         "auth_failed": "No se pudo verificar la cuenta. Revisa el token e inténtalo de nuevo.",
         "no_token": "Se requiere un token.",
         "no_berserk": "El cliente de Lichess no está disponible en el tablero.",
-        "unknown_type": "Tipo de cuenta desconocido."
+        "unknown_type": "Tipo de cuenta desconocido.",
+        "unknown_host": "Servidor de Lichess desconocido."
       }
     }
   }

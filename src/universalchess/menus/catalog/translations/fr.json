@@ -196,6 +196,16 @@
       "label": "Comptes",
       "help": "Connecte des services externes comme Lichess."
     },
+    "players.lichess": {
+      "label": "Paramètres Lichess",
+      "boardLabel": "Paramètres\nLichess",
+      "help": "Identifiants Lichess et jeu en ligne. Chaque compte est un serveur et un utilisateur (lichess.org ou lichess.dev). Jouer ouvre une nouvelle partie, les parties en cours et les défis."
+    },
+    "players.lichess.play": {
+      "label": "Jouer",
+      "boardLabel": "Jouer",
+      "help": "Nouvelle partie, parties en cours et défis sur Lichess."
+    },
     "players.start": {
       "label": "Nouvelle\npartie",
       "help": "Lance une nouvelle partie avec la configuration actuelle des joueurs. Termine toute partie en cours."
@@ -642,11 +652,6 @@
       "label": "Compte",
       "boardLabel": "Compte\n{fn:player_account}",
       "help": "Avec quel compte enregistré ce joueur joue"
-    },
-    "field.player.lichess": {
-      "label": "Paramètres Lichess",
-      "boardLabel": "Paramètres\nLichess",
-      "help": "Configure le compte Lichess et l'appariement pour ce joueur"
     },
     "field.display.show_board": {
       "label": "Afficher l'échiquier",

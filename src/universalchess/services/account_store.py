@@ -361,11 +361,21 @@ def migrate_legacy_lichess(
     if not identity:
         return None
 
+    from universalchess.services.lichess_hosts import HOST_ORG, credential_id
+
     rating_range = config.get("lichess", "range", fallback="")
-    values = {"api_token": token, account_type["identityField"]: identity}
+    values = {
+        "api_token": token,
+        account_type["identityField"]: identity,
+        "host": HOST_ORG,
+    }
     if rating_range:
         values["range"] = rating_range
-    account = Account(type="lichess", id=normalize_account_id(identity), values=values)
+    account = Account(
+        type="lichess",
+        id=credential_id(HOST_ORG, identity),
+        values=values,
+    )
     save_account(account)
 
     # Clear the legacy credential so the new account is the only source.
@@ -390,4 +400,8 @@ def ensure_lichess_migrated(resolver: Optional[Resolver] = None) -> Optional[Acc
     catalog = get_catalog()
     if not catalog.has_account_type("lichess"):
         return None
-    return migrate_legacy_lichess(catalog.account_type("lichess"), resolver=resolver)
+    account = migrate_legacy_lichess(catalog.account_type("lichess"), resolver=resolver)
+    from universalchess.services.lichess_accounts import migrate_lichess_layout
+
+    migrate_lichess_layout()
+    return account

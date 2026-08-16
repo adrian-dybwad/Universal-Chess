@@ -110,14 +110,16 @@ def test_add_account_persists_and_list_redacts_token(client, config_files, resol
     resp = _post_account(client, "lichess", {"api_token": "lip_secret", "range": "1000-1600"})
     assert resp.status_code == 201, resp.data
     # Token is persisted server-side.
-    assert _read_section(cfg, "account:lichess:magnusc")["api_token"] == "lip_secret"
+    assert _read_section(cfg, "account:lichess:org:magnusc")["api_token"] == "lip_secret"
 
     listed = json.loads(client.get("/api/accounts").data)["accounts"]
     assert len(listed) == 1
     account = listed[0]
     assert account["type"] == "lichess"
-    assert account["id"] == "magnusc"
+    assert account["id"] == "org:magnusc"
     assert account["identity"] == "MagnusC"
+    assert account["host"] == "org"
+    assert account["label"] == "lichess.org:MagnusC"
     assert account["values"]["range"] == "1000-1600"
     assert account["values"]["username"] == "MagnusC"
     assert account["secretsSet"] == {"api_token": True}
@@ -181,6 +183,38 @@ def test_add_account_unknown_type_returns_400(client, config_files):
     assert json.loads(resp.data)["error"] == "unknown_type"
 
 
+def test_add_lichess_dev_host_is_a_distinct_credential(client, config_files, resolve_ok):
+    """host=dev stores ``dev:<user>``, not an org credential.
+
+    Why: org Alice and .dev Alice are two logins. Failure: the section is
+    ``account:lichess:org:magnusc`` or host is omitted/org.
+    """
+    cfg, _ = config_files
+    resolve_ok("MagnusC")
+    resp = _post_account(client, "lichess", {"api_token": "lip_dev", "host": "dev"})
+    assert resp.status_code == 201, resp.data
+    account = json.loads(resp.data)["account"]
+    assert account["id"] == "dev:magnusc"
+    assert account["host"] == "dev"
+    assert account["label"] == "lichess.dev:MagnusC"
+    assert _read_section(cfg, "account:lichess:dev:magnusc")["api_token"] == "lip_dev"
+    assert not _read_section(cfg, "account:lichess:org:magnusc")
+
+
+def test_org_and_dev_same_username_are_not_duplicates(client, config_files, resolve_ok):
+    """The same Lichess username on org and .dev is two accounts, not a 409.
+
+    Why: tokens are host-specific. Failure: the second add is 409 or overwrites
+    the first section.
+    """
+    resolve_ok("MagnusC")
+    assert _post_account(client, "lichess", {"api_token": "lip_org", "host": "org"}).status_code == 201
+    second = _post_account(client, "lichess", {"api_token": "lip_dev", "host": "dev"})
+    assert second.status_code == 201, second.data
+    listed = json.loads(client.get("/api/accounts").data)["accounts"]
+    assert {a["id"] for a in listed} == {"org:magnusc", "dev:magnusc"}
+
+
 def test_delete_account_removes_then_404(client, config_files, resolve_ok):
     """Deleting an account removes it; deleting again is a 404.
 
@@ -190,11 +224,24 @@ def test_delete_account_removes_then_404(client, config_files, resolve_ok):
     """
     resolve_ok("MagnusC")
     _post_account(client, "lichess", {"api_token": "lip_a"})
-    ok = client.post("/api/accounts/lichess/magnusc/delete")
+    ok = client.post("/api/accounts/lichess/org:magnusc/delete")
     assert ok.status_code == 200
     assert json.loads(client.get("/api/accounts").data)["accounts"] == []
-    again = client.post("/api/accounts/lichess/magnusc/delete")
+    again = client.post("/api/accounts/lichess/org:magnusc/delete")
     assert again.status_code == 404
+
+
+def test_delete_account_accepts_percent_encoded_colon(client, config_files, resolve_ok):
+    """The web client encodes ``org:alice`` as ``org%3Aalice`` in the path.
+
+    Why: encodeURIComponent percent-encodes the colon. Failure: 404 while the
+    section still exists.
+    """
+    resolve_ok("MagnusC")
+    _post_account(client, "lichess", {"api_token": "lip_a"})
+    ok = client.post("/api/accounts/lichess/org%3Amagnusc/delete")
+    assert ok.status_code == 200, ok.data
+    assert json.loads(client.get("/api/accounts").data)["accounts"] == []
 
 
 def test_accounts_require_auth(client, config_files, monkeypatch):
@@ -220,7 +267,7 @@ def test_get_all_settings_redacts_account_token(client, config_files, resolve_ok
     resolve_ok("MagnusC")
     _post_account(client, "lichess", {"api_token": "lip_secret", "range": "1000-1600"})
     settings = json.loads(client.get("/api/settings").data)
-    section = settings["account:lichess:magnusc"]
+    section = settings["account:lichess:org:magnusc"]
     assert section["api_token"] == ""
     assert section["api_token_set"] == "True" or section["api_token_set"] is True
     assert "lip_secret" not in json.dumps(settings)

@@ -179,11 +179,16 @@ export interface AccountType {
   id: string;
   label: string;
   icon: string;
+  /** Player type this account binds to when it is not itself a player type.
+   *  Absent means ``id`` is the player type. */
+  playerType?: string;
   /** Stored key that uniquely identifies an account of this type. */
   identityField: string;
   /** Whether the identity is user-`entered` or `resolved` after authenticating. */
   identitySource: 'entered' | 'resolved';
   fields: AccountTypeField[];
+  /** Lichess plugin host list. Absent on other providers. */
+  hosts?: { id: string; label: string; baseUrl: string }[];
 }
 
 export interface MenuCatalog {

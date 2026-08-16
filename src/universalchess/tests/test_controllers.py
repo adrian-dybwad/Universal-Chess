@@ -208,6 +208,54 @@ class TestLocalController(unittest.TestCase):
         
         assert controller.is_lichess is False
 
+    def test_new_game_requests_move_when_not_lichess(self):
+        """An engine/human board-reset still starts the next game in place.
+
+        Why: EVENT_NEW_GAME must keep requesting a move after on_new_game for
+        local opponents; only Lichess skips that because the player is still
+        attached to the remote game.
+
+        How the regression manifests: _request_current_player_move is not called,
+        so an engine game after a board-reset never asks White to move.
+        """
+        from universalchess.controllers.local import LocalController
+        from universalchess.managers.events import EVENT_NEW_GAME
+
+        controller = LocalController(MagicMock())
+        controller._player_manager = MagicMock()
+        controller._player_manager.has_lichess = False
+        controller._request_current_player_move = MagicMock()
+        controller._check_assistant_suggestion = MagicMock()
+
+        controller._on_game_event(EVENT_NEW_GAME)
+
+        controller._player_manager.on_new_game.assert_called_once()
+        controller._request_current_player_move.assert_called_once()
+
+    def test_new_game_with_lichess_does_not_request_in_place_move(self):
+        """Board-reset during Lichess must not request a move from the old stream.
+
+        Why: EVENT_NEW_GAME always called _request_current_player_move after
+        on_new_game. For engines that starts the next game in place; for Lichess
+        the player is still on the remote game, so a move request would be
+        against that abandoned game while the local board is at start.
+
+        How the regression manifests: _request_current_player_move is called.
+        """
+        from universalchess.controllers.local import LocalController
+        from universalchess.managers.events import EVENT_NEW_GAME
+
+        controller = LocalController(MagicMock())
+        controller._player_manager = MagicMock()
+        controller._player_manager.has_lichess = True
+        controller._request_current_player_move = MagicMock()
+        controller._check_assistant_suggestion = MagicMock()
+
+        controller._on_game_event(EVENT_NEW_GAME)
+
+        controller._player_manager.on_new_game.assert_called_once()
+        controller._request_current_player_move.assert_not_called()
+
 
 class TestRemoteController(unittest.TestCase):
     """Test cases for RemoteController."""

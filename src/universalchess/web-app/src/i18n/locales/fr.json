@@ -1033,6 +1033,7 @@
       "delete": "Supprimer",
       "add": "Ajouter un compte",
       "type": "Type de compte",
+      "host": "Serveur",
       "adding": "Ajout…",
       "added": "Compte ajouté.",
       "removeConfirm": "Supprimer le compte « {{identity}} » ?",
@@ -1046,7 +1047,8 @@
         "auth_failed": "Impossible de vérifier le compte. Vérifiez le jeton et réessayez.",
         "no_token": "Un jeton est requis.",
         "no_berserk": "Le client Lichess n'est pas disponible sur le plateau.",
-        "unknown_type": "Type de compte inconnu."
+        "unknown_type": "Type de compte inconnu.",
+        "unknown_host": "Serveur Lichess inconnu."
       }
     }
   }

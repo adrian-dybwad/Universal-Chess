@@ -45,9 +45,9 @@ class LichessPlayerConfig(PlayerConfig):
         game_id: Game ID to resume (for ONGOING mode).
         challenge_id: Challenge ID to accept (for CHALLENGE mode).
         challenge_direction: 'in' for incoming, 'out' for outgoing.
-        account_id: Id of the saved Lichess account this slot plays as. Empty
-            uses the default (first) account for back-compat; the token and
-            rating range are resolved from the account store at start().
+        account_id: Lichess credential id this slot plays as (``org:alice``).
+            Empty uses the default (first) credential for back-compat; the
+            token, host, and rating range are resolved at start().
     """
     mode: LichessGameMode = LichessGameMode.NEW
     time_minutes: int = 10
@@ -98,7 +98,7 @@ class LichessPlayer(Player):
         
         # Game state
         self._game_id: Optional[str] = None
-        self._player_is_white: Optional[bool] = None  # Is the LOCAL player white?
+        self._player_is_white: Optional[bool] = None  # Is the LOCAL human white?
         self._current_turn_is_white: bool = True
         
         # Player info
@@ -241,20 +241,28 @@ class LichessPlayer(Player):
             A ``(token, rating_range)`` tuple; ``rating_range`` is '' when the
             account has none (matchmaking then uses the config/global default).
         """
-        from universalchess.services import account_store
+        from universalchess.services.lichess_accounts import (
+            default_lichess_credential,
+            get_lichess_credential,
+            host_id_of,
+        )
+        from universalchess.services.lichess_hosts import DEFAULT_HOST_ID
 
-        account = None
         if self._lichess_config.account_id:
-            account = account_store.get_account("lichess", self._lichess_config.account_id)
+            account = get_lichess_credential(self._lichess_config.account_id)
             if account is None:
                 log.warning(
                     f"[LichessPlayer] Bound account '{self._lichess_config.account_id}' "
-                    "not found; using default account"
+                    "not found"
                 )
-        if account is None:
-            account = account_store.default_account("lichess")
+                self._host_id = DEFAULT_HOST_ID
+                return "", ""
+        else:
+            account = default_lichess_credential()
         if account is not None:
+            self._host_id = host_id_of(account)
             return account.get("api_token", ""), account.get("range", "")
+        self._host_id = DEFAULT_HOST_ID
         return centaur.get_lichess_api(), ""
 
     def start(self) -> bool:
@@ -279,9 +287,10 @@ class LichessPlayer(Player):
         
         # Initialize berserk client
         try:
-            import berserk
-            session = berserk.TokenSession(self._token)
-            self._client = berserk.Client(session=session)
+            from universalchess.services.lichess_match import create_berserk_client
+            self._client = create_berserk_client(
+                self._token, host_id=getattr(self, "_host_id", "org")
+            )
         except ImportError:
             log.error("[LichessPlayer] berserk library not installed")
             self._set_state(PlayerState.ERROR, "berserk not installed")
@@ -458,8 +467,28 @@ class LichessPlayer(Player):
         log.error(f"[LichessPlayer] Failed to send move after {retries} attempts")
     
     def on_new_game(self) -> None:
-        """Notification that a new game is starting."""
-        log.info("[LichessPlayer] New game notification")
+        """Board reset: leave the remote game so a rebuild can seek a new one.
+
+        Abort if still allowed (early in the game); otherwise resign. ``stop()``
+        only ends the stream, which would leave the opponent waiting in the
+        abandoned Lichess game.
+        """
+        log.info("[LichessPlayer] New game notification - leaving remote game")
+        self._pending_move = None
+        self._lifted_squares = []
+        if not self._game_id or not self._client:
+            return
+        try:
+            self._client.board.abort_game(self._game_id)
+            log.info("[LichessPlayer] Aborted remote game")
+            return
+        except Exception as abort_error:
+            log.info(f"[LichessPlayer] Abort not available ({abort_error}); resigning")
+        try:
+            self._client.board.resign_game(self._game_id)
+            log.info("[LichessPlayer] Resigned remote game")
+        except Exception as e:
+            log.warning(f"[LichessPlayer] Could not leave remote game: {e}")
     
     def on_resign(self, color: chess.Color) -> None:
         """Resign the current game."""
@@ -548,14 +577,23 @@ class LichessPlayer(Player):
         except Exception as e:
             log.error(f"[LichessPlayer] Failed to decline takeback: {e}")
     
+    @property
+    def player_is_white(self) -> Optional[bool]:
+        """Whether the local Lichess account sits White, once the stream has said.
+
+        None until ``_extract_player_info`` runs. Used to remap Human/Lichess
+        slots and flip the board without reading a private attribute.
+        """
+        return self._player_is_white
+
     def abort_game(self) -> None:
-        """Abort the current game (only valid in first few moves)."""
+        """Abort the current game (only valid in first few moves).
+
+        Does not require READY: the stream can accept while the started splash
+        is still up, and READY is set only after ``on_game_connected`` returns.
+        """
         if not self._game_id or not self._client:
             log.warning("[LichessPlayer] Cannot abort - no active game")
-            return
-        
-        if self._state != PlayerState.READY:
-            log.info(f"[LichessPlayer] Cannot abort - state is {self._state}")
             return
         
         log.info("[LichessPlayer] Aborting game")
@@ -610,7 +648,6 @@ class LichessPlayer(Player):
             rating_range = (
                 self._lichess_config.rating_range
                 or self._account_range
-                or centaur.lichess_range
             )
             
             self._client.board.seek(
@@ -868,8 +905,6 @@ class LichessPlayer(Player):
         log.info(f"[LichessPlayer] Local user is: {'White' if self._player_is_white else 'Black'}")
         log.info(f"[LichessPlayer] This player instance represents: {'White' if self._color == chess.WHITE else 'Black'}")
         
-        self._set_state(PlayerState.READY)
-        
         # Notify game info callback
         if self._game_info_callback:
             self._game_info_callback(
@@ -877,12 +912,16 @@ class LichessPlayer(Player):
                 self._black_player, self._black_rating
             )
         
-        # Notify game connected callback
+        # Replace the waiting splash with the started splash before READY. READY
+        # fires on_all_players_ready (first-move request, clock); that must not
+        # run while the panel still holds a modal "Waiting for game" splash.
         if self._on_game_connected:
             try:
                 self._on_game_connected()
             except Exception as e:
                 log.warning(f"[LichessPlayer] Error in on_game_connected: {e}")
+
+        self._set_state(PlayerState.READY)
     
     def _process_time_update(self, state: dict):
         """Process clock time update."""

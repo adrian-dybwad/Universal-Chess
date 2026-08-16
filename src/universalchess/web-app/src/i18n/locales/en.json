@@ -1033,6 +1033,7 @@
       "delete": "Delete",
       "add": "Add Account",
       "type": "Account Type",
+      "host": "Server",
       "adding": "Adding…",
       "added": "Account added.",
       "removeConfirm": "Remove the account \"{{identity}}\"?",
@@ -1046,7 +1047,8 @@
         "auth_failed": "Could not verify the account. Check the token and try again.",
         "no_token": "A token is required.",
         "no_berserk": "The Lichess client is unavailable on the board.",
-        "unknown_type": "Unknown account type."
+        "unknown_type": "Unknown account type.",
+        "unknown_host": "Unknown Lichess server."
       }
     }
   }

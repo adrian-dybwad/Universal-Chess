@@ -1429,6 +1429,7 @@ const ADD_ERROR_KEYS: Record<string, string> = {
   no_token: 'connectivity.accounts.errors.no_token',
   no_berserk: 'connectivity.accounts.errors.no_berserk',
   unknown_type: 'connectivity.accounts.errors.unknown_type',
+  unknown_host: 'connectivity.accounts.errors.unknown_host',
 };
 
 /**
@@ -1454,11 +1455,12 @@ const ADD_ERROR_KEYS: Record<string, string> = {
  * shows Sign in (same idea as the Players Account row) instead of claiming
  * "No accounts yet" or forcing a login dialog on every anonymous page view.
  */
-export function AccountsCard() {
+export function AccountsCard({ embedded = false }: { embedded?: boolean } = {}) {
   const { t } = useTranslation();
   const [accountTypes, setAccountTypes] = useState<AccountType[]>([]);
   const [accounts, setAccounts] = useState<AccountRecord[]>([]);
   const [selectedType, setSelectedType] = useState('');
+  const [selectedHost, setSelectedHost] = useState('org');
   // Add-form field values, keyed by field key (reset after a successful add).
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [catalogState, setCatalogState] = useState<LoadState>('loading');
@@ -1505,6 +1507,8 @@ export function AccountsCard() {
       const types: AccountType[] = data?.accountTypes ?? [];
       setAccountTypes(types);
       if (types.length > 0) setSelectedType(types[0].id);
+      const firstHosts = types[0]?.hosts;
+      if (firstHosts && firstHosts.length > 0) setSelectedHost(firstHosts[0].id);
       setCatalogState('ready');
     } catch {
       setCatalogState('failed');
@@ -1542,7 +1546,12 @@ export function AccountsCard() {
       const r = await apiFetch('/api/accounts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: currentType.id, fields: fieldValues }),
+        body: JSON.stringify({
+          type: currentType.id,
+          fields: currentType.hosts?.length
+            ? { ...fieldValues, host: selectedHost }
+            : fieldValues,
+        }),
         requiresAuth: true,
       });
       if (r.status === 401) {
@@ -1563,7 +1572,7 @@ export function AccountsCard() {
     } finally {
       setSubmitting(false);
     }
-  }, [currentType, fieldValues, onUnauthorized, fetchAccounts, t]);
+  }, [currentType, fieldValues, selectedHost, onUnauthorized, fetchAccounts, t]);
 
   const remove = useCallback(
     async function runRemove(account: AccountRecord) {
@@ -1571,10 +1580,13 @@ export function AccountsCard() {
       setBusy(true);
       setMessage(null);
       try {
-        const r = await apiFetch(`/api/accounts/${account.type}/${account.id}/delete`, {
-          method: 'POST',
-          requiresAuth: true,
-        });
+        const r = await apiFetch(
+          `/api/accounts/${account.type}/${encodeURIComponent(account.id)}/delete`,
+          {
+            method: 'POST',
+            requiresAuth: true,
+          },
+        );
         if (r.status === 401) {
           onUnauthorized(() => runRemove(account));
           return;
@@ -1593,14 +1605,22 @@ export function AccountsCard() {
     [onUnauthorized, fetchAccounts, t]
   );
 
-  return (
-    <>
-      {dialog}
-      <Card className="mb-6">
-        <CardHeader title={t('connectivity.accounts.header')} />
-        <p className="text-muted mb-4" style={{ fontSize: '0.875rem' }}>
-          {t('connectivity.accounts.intro')}
-        </p>
+  const hosts = currentType?.hosts ?? [];
+  const body = (
+        <>
+        {!embedded && (
+          <>
+            <CardHeader title={t('connectivity.accounts.header')} />
+            <p className="text-muted mb-4" style={{ fontSize: '0.875rem' }}>
+              {t('connectivity.accounts.intro')}
+            </p>
+          </>
+        )}
+        {embedded && (
+          <p className="text-muted mb-4" style={{ fontSize: '0.875rem' }}>
+            {t('connectivity.accounts.intro')}
+          </p>
+        )}
 
         {message && <div className={`conn-message conn-message--${message.kind}`}>{message.text}</div>}
 
@@ -1629,14 +1649,13 @@ export function AccountsCard() {
           <div className="conn-list">
             <h4 className="conn-list-title">{t('connectivity.accounts.saved')}</h4>
             {accounts.map((account) => {
-              const typeLabel = accountTypes.find((t) => t.id === account.type)?.label ?? account.type;
+              const display = account.label ?? account.identity;
               return (
                 <div key={`${account.type}:${account.id}`} className="conn-list-item conn-list-item--static">
                   <span className="conn-list-name">
-                    <MenuIcon name="account" size={16} />
+                    <MenuIcon name="lichess" size={16} />
                     <span>
-                      {t('connectivity.accounts.connectedAs')} <strong>{account.identity}</strong>
-                      <span className="text-muted"> · {typeLabel}</span>
+                      {t('connectivity.accounts.connectedAs')} <strong>{display}</strong>
                       {account.values.range && (
                         <span className="text-muted"> · {account.values.range}</span>
                       )}
@@ -1660,6 +1679,18 @@ export function AccountsCard() {
             }}
           >
             <h4 className="conn-list-title">{t('connectivity.accounts.add')}</h4>
+
+            {hosts.length > 0 && (
+              <div className="form-group">
+                <label htmlFor="account-host">{t('connectivity.accounts.host')}</label>
+                <Select
+                  id="account-host"
+                  value={selectedHost}
+                  options={hosts.map((h) => ({ value: h.id, label: h.label }))}
+                  onChange={(e) => setSelectedHost(e.target.value)}
+                />
+              </div>
+            )}
 
             {accountTypes.length > 1 && (
               <div className="form-group">
@@ -1703,7 +1734,13 @@ export function AccountsCard() {
             </div>
           </form>
         )}
-      </Card>
+        </>
+  );
+
+  return (
+    <>
+      {dialog}
+      {embedded ? body : <Card className="mb-6">{body}</Card>}
     </>
   );
 }
