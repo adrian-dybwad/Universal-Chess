@@ -939,7 +939,9 @@ class GameManager:
 
         GameManager handles game-related key logic:
         - BACK during game: Shows resign/draw menu, only passes through if user chooses to exit
-        - BACK with no game: Passes through to external callback (caller handles exit)
+        - BACK during a remote seek / connected splash (no moves yet): same
+          in-game handler (cancel seek or abort menu)
+        - BACK with no local game: Passes through to external callback (caller handles exit)
         - BACK after game over: Passes through to external callback (return to menu)
         - Other keys: Passed through to external callback
 
@@ -951,11 +953,14 @@ class GameManager:
             if self._game_state.is_game_over:
                 # Game is over - pass through to external callback for exit handling
                 log.info(f"[GameManager] BACK pressed after game over - passing to external callback")
-            elif self._game_state.is_game_in_progress:
+            elif self._game_state.is_game_in_progress or self._back_owned_by_remote_session():
                 log.info("[GameManager] BACK pressed during game - notifying display controller")
                 if self.on_back_pressed:
                     self.on_back_pressed()
-                return
+                    return
+                # Handler not wired yet (LichessPlayer.start still authenticating).
+                # Pass through so the caller can cancel; _start_game_mode must
+                # tolerate protocol_manager becoming None.
             else:
                 # No game in progress - pass through to external callback for exit handling
                 log.info("[GameManager] BACK pressed - no game in progress, passing to external callback")
@@ -963,6 +968,16 @@ class GameManager:
         # Pass other keys (and BACK when no game) to external callback
         if self.key_callback is not None:
             self.key_callback(key_pressed)
+
+    def _back_owned_by_remote_session(self) -> bool:
+        """True when a remote player owns BACK before the first move.
+
+        is_game_in_progress is ply > 0. A Lichess seek (and the connected
+        splash) has no moves, but BACK must cancel the seek or open abort,
+        not fall through as 'no game'.
+        """
+        pm = self._player_manager
+        return pm is not None and pm.requires_rebuild_on_new_game
     
     def set_player_manager(self, player_manager) -> None:
         """Set the player manager for this game.

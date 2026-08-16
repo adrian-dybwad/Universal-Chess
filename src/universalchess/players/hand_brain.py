@@ -29,7 +29,7 @@ import chess.engine
 from universalchess.board.logging import log
 from universalchess.board.settings import Settings
 from universalchess.services.engine_registry import get_engine_registry, EngineHandle
-from .base import Player, PlayerConfig, PlayerState, PlayerType
+from .base import HelpKeyResult, Player, PlayerConfig, PlayerState, PlayerType
 
 
 # Settings section and key for root_moves compatibility statistics
@@ -302,6 +302,32 @@ class HandBrainPlayer(Player):
             callback: Function(squares, flash_count) to flash the squares.
         """
         self._invalid_selection_flash_callback = callback
+
+    def bind_board_cues(
+        self,
+        *,
+        brain_hint=None,
+        piece_squares_led=None,
+        invalid_selection_flash=None,
+    ) -> None:
+        """Wire hint and LED callbacks used by NORMAL and REVERSE modes."""
+        if brain_hint is not None:
+            self.set_brain_hint_callback(brain_hint)
+        if piece_squares_led is not None:
+            self.set_piece_squares_led_callback(piece_squares_led)
+        if invalid_selection_flash is not None:
+            self.set_invalid_selection_flash_callback(invalid_selection_flash)
+
+    def help_key_result(self, board: chess.Board):
+        """? is this player's hint, not the analysis engine's.
+
+        NORMAL paints the stored best move. REVERSE lights piece-type squares
+        inside :meth:`get_hint` and must not also show a full-move arrow.
+        """
+        move = self.get_hint(board)
+        if self._hb_config.mode == HandBrainMode.NORMAL:
+            return HelpKeyResult(show_move=move)
+        return HelpKeyResult(show_move=None)
     
     def get_hint(self, board: chess.Board) -> Optional[chess.Move]:
         """Get a hint move for the ? key.

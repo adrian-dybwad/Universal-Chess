@@ -779,6 +779,17 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   reopens the serial port and a bare re-probe cannot; they no longer decide
   whether the board is ever found.
 
+- BACK during a Lichess seek (or the connected splash before the first
+  move) killed the app. `is_game_in_progress` is true only after a move, so
+  BACK was treated as "no game" and `_return_to_menu` ran while
+  `_start_game_mode` was still in `LichessPlayer.start()` (network auth on
+  that thread). `protocol_manager` was already None when the start path
+  called `set_on_promotion_needed`, which raised `AttributeError`; cleanup
+  exited 0 and systemd left the unit inactive. BACK at ply 0 against a
+  remote player now goes to the session handler (cancel seek, or the abort
+  menu once the stream has accepted). If start is torn down mid-authenticate,
+  `_start_game_mode` returns instead of touching the manager.
+
 - Pressing New Game on the e-paper Lichess menu killed the app and left the
   last frame on the panel. A dedicated `start_lichess_game_service` imported
   `ProtocolManager` and `ControllerManager` from paths that do not exist; the

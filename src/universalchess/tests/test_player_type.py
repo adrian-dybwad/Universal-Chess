@@ -13,6 +13,8 @@ How a regression manifests
 ``REMOTE``, or Human/Engine report that they cannot continue in place.
 """
 
+import chess
+
 from universalchess.players.base import PlayerType
 from universalchess.players.human import HumanPlayer
 from universalchess.players.lichess import LichessPlayer
@@ -81,6 +83,12 @@ def test_human_remote_session_hooks_are_noops():
     human.bind_remote_session(clock_callback=lambda *_: None, game_info_callback=lambda *_: None)
     human.abort_remote_game()
     human.leave_remote_game()
+    human.bind_board_cues(
+        brain_hint=lambda *_: None,
+        piece_squares_led=lambda *_: None,
+        invalid_selection_flash=lambda *_: None,
+    )
+    assert human.help_key_result(chess.Board()) is None
 
 
 def test_lichess_bind_remote_session_wires_clock_and_game_info():

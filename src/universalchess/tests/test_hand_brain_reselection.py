@@ -817,6 +817,50 @@ class TestHandBrainHint(unittest.TestCase):
         assert hint is None, \
             "Expected hint to be None before suggestion computed"
 
+    def test_bind_board_cues_wires_hint_and_led_callbacks(self):
+        """The game must not isinstance HandBrainPlayer to attach cues.
+
+        Failure: bind_board_cues is missing or a no-op, so NORMAL hints never
+        reach the clock and REVERSE never lights piece squares.
+        """
+        player = self._create_normal_player()
+        hints = []
+        leds = []
+        flashes = []
+        player.bind_board_cues(
+            brain_hint=lambda color, symbol: hints.append((color, symbol)),
+            piece_squares_led=lambda squares: leds.append(list(squares)),
+            invalid_selection_flash=lambda squares, count: flashes.append((list(squares), count)),
+        )
+        player._brain_hint_callback("white", "N")
+        player._piece_squares_led_callback([chess.E2])
+        player._invalid_selection_flash_callback([chess.E2], 2)
+        assert hints == [("white", "N")]
+        assert leds == [[chess.E2]]
+        assert flashes == [([chess.E2], 2)]
+
+    def test_help_key_result_normal_shows_stored_move(self):
+        """NORMAL ? must return the stored move so the board paints it.
+
+        Failure: None (standard analysis hint runs) or show_move is None.
+        """
+        player = self._create_normal_player()
+        move = chess.Move.from_uci("e2e4")
+        player._suggested_best_move = move
+        result = player.help_key_result(chess.Board())
+        assert result is not None
+        assert result.show_move == move
+
+    def test_help_key_result_reverse_consumes_key_without_board_arrow(self):
+        """REVERSE ? lights LEDs inside get_hint; the board must not also arrow.
+
+        Failure: show_move is set, so main paints a full-move hint on reverse.
+        """
+        player = self._create_reverse_player()
+        result = player.help_key_result(chess.Board())
+        assert result is not None
+        assert result.show_move is None
+
 
 if __name__ == '__main__':
     unittest.main()

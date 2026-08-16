@@ -2486,8 +2486,6 @@ def _start_game_mode(
     
     # Check for special modes
     is_two_player = (p1.type == 'human' and p2.type == 'human')
-    # Hand-brain mode is enabled if either player is a hand_brain player
-    is_hand_brain = (p1.type == 'hand_brain' or p2.type == 'hand_brain')
     lichess_session = LichessPlaySession.from_players(white_player, black_player)
 
     # Get analysis engine path if analysis mode is enabled
@@ -2713,7 +2711,7 @@ def _start_game_mode(
         return opponent_accepts_draw(player_manager, get_chess_game().board)
     display_manager.set_draw_offer_resolver(_resolve_draw_offer)
     
-    log.info(f"[App] Game components created: White={white_player.name}, Black={black_player.name}, hand_brain={is_hand_brain}, save_to_db={save_to_database}")
+    log.info(f"[App] Game components created: White={white_player.name}, Black={black_player.name}, save_to_db={save_to_database}")
     
     # Create ControllerManager for routing events to local/remote controllers
     controller_manager = ControllerManager(game_manager)
@@ -2723,37 +2721,29 @@ def _start_game_mode(
     local_controller.set_player_manager(player_manager)
     local_controller.set_suppress_move_requests(suppress_initial_move_request)
     
-    # Wire up Hand+Brain hint display for NORMAL mode players
-    # HandBrainPlayer handles its own engine - just need to wire hint callback to display
-    if is_hand_brain:
-        def _on_brain_hint(color: str, piece_symbol: str) -> None:
-            """Display brain hint on the clock widget."""
-            display_manager.set_brain_hint(color, piece_symbol)
-        
-        def _on_piece_squares_led(squares: List[int]) -> None:
-            """Light up squares for piece type selection (REVERSE mode).
-            Uses standard LED speed/intensity.
-            """
-            led_callbacks.array(squares, repeat=0)
-        
-        def _on_invalid_selection_flash(squares: List[int], flash_count: int) -> None:
-            """Flash squares rapidly to indicate invalid piece selection (REVERSE mode).
-            Uses fast LED speed for urgent feedback.
-            """
-            led_callbacks.array_fast(squares, repeat=flash_count)
-        
-        # Wire hint callback to any HandBrainPlayer in NORMAL mode
-        # Wire LED callback to any HandBrainPlayer in REVERSE mode
-        if isinstance(white_player, HandBrainPlayer):
-            white_player.set_brain_hint_callback(_on_brain_hint)
-            white_player.set_piece_squares_led_callback(_on_piece_squares_led)
-            white_player.set_invalid_selection_flash_callback(_on_invalid_selection_flash)
-            log.info(f"[App] White Hand+Brain player: {white_player.mode.name} mode")
-        if isinstance(black_player, HandBrainPlayer):
-            black_player.set_brain_hint_callback(_on_brain_hint)
-            black_player.set_piece_squares_led_callback(_on_piece_squares_led)
-            black_player.set_invalid_selection_flash_callback(_on_invalid_selection_flash)
-            log.info(f"[App] Black Hand+Brain player: {black_player.mode.name} mode")
+    # Hand+Brain wires hint/LED cues; other players no-op.
+    def _on_brain_hint(color: str, piece_symbol: str) -> None:
+        """Display brain hint on the clock widget."""
+        display_manager.set_brain_hint(color, piece_symbol)
+
+    def _on_piece_squares_led(squares: List[int]) -> None:
+        """Light up squares for piece type selection (REVERSE mode)."""
+        led_callbacks.array(squares, repeat=0)
+
+    def _on_invalid_selection_flash(squares: List[int], flash_count: int) -> None:
+        """Flash squares rapidly to indicate invalid piece selection."""
+        led_callbacks.array_fast(squares, repeat=flash_count)
+
+    white_player.bind_board_cues(
+        brain_hint=_on_brain_hint,
+        piece_squares_led=_on_piece_squares_led,
+        invalid_selection_flash=_on_invalid_selection_flash,
+    )
+    black_player.bind_board_cues(
+        brain_hint=_on_brain_hint,
+        piece_squares_led=_on_piece_squares_led,
+        invalid_selection_flash=_on_invalid_selection_flash,
+    )
     
     local_controller.set_takeback_callback(_on_takeback)
     
@@ -2791,6 +2781,14 @@ def _start_game_mode(
     
     # Activate local controller by default (this starts players)
     controller_manager.activate_local()
+
+    # LichessPlayer.start() authenticates on this thread. BACK on the events
+    # thread can _return_to_menu and set protocol_manager to None before the
+    # rest of this function runs. Calling methods on None raised AttributeError
+    # ('set_on_promotion_needed'), which the main loop treated as a clean exit.
+    if protocol_manager is None:
+        log.info("[App] Game cancelled during player start")
+        return
     
     # Note: Turn indicator comes from ChessGameState which the clock widget observes directly.
     # No need to manually set clock active color here.
@@ -7338,23 +7336,14 @@ def key_callback(key_id):
                 player_manager = protocol_manager.game_manager.player_manager
                 if player_manager:
                     current_player = player_manager.get_current_player(game_board)
-                    from universalchess.players.hand_brain import HandBrainPlayer, HandBrainMode
-                    if isinstance(current_player, HandBrainPlayer):
-                        # Use Hand+Brain specific hint
-                        hint_move = current_player.get_hint(game_board)
-                        if hint_move:
-                            if current_player.mode == HandBrainMode.NORMAL:
-                                # NORMAL mode: show full move (user decides which piece of that type)
-                                display_manager.show_hint(hint_move)
-                                log.info(f"[App] Hand+Brain NORMAL hint: {hint_move.uci()}")
-                                # Add the AI coach's remark about the recommended move.
-                                _show_hint_coach_async(display_manager, game_board.fen(), hint_move.uci())
-                            else:
-                                # REVERSE mode: get_hint already lit up piece type squares
-                                # Don't show full move - only piece type is the hint
-                                log.info(f"[App] Hand+Brain REVERSE hint: piece type shown on LEDs")
-                        else:
-                            log.info("[App] Hand+Brain hint not available yet")
+                    help_result = current_player.help_key_result(game_board)
+                    if help_result is not None:
+                        if help_result.show_move is not None:
+                            display_manager.show_hint(help_result.show_move)
+                            log.info(f"[App] Player hint: {help_result.show_move.uci()}")
+                            _show_hint_coach_async(
+                                display_manager, game_board.fen(), help_result.show_move.uci()
+                            )
                         _reset_unhandled_key_count()
                         return
                 
@@ -7437,6 +7426,17 @@ def key_callback(key_id):
                 log.info("[App] BACK after game over - returning to menu")
                 _return_to_menu("Game over - BACK pressed")
             elif not game_state.is_game_in_progress:
+                # A remote seek/session owns BACK at ply 0 (cancel / abort menu).
+                # Returning to the menu here would dismiss that handler — and
+                # during player start it tore down protocol_manager while
+                # _start_game_mode was still wiring callbacks.
+                pm = (
+                    protocol_manager.player_manager
+                    if protocol_manager is not None
+                    else None
+                )
+                if pm is not None and pm.requires_rebuild_on_new_game:
+                    return
                 log.info("[App] BACK with no game - returning to menu")
                 _return_to_menu("BACK pressed")
         return

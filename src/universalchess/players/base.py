@@ -57,6 +57,18 @@ class PlayerType(Enum):
     REMOTE = auto()
 
 
+@dataclass(frozen=True)
+class HelpKeyResult:
+    """The ? key was consumed by this player.
+
+    ``show_move`` is a full-move tip to paint (NORMAL Hand+Brain). None means
+    the player handled ? without a board arrow (REVERSE lights LEDs itself).
+    Returning this object from :meth:`Player.help_key_result` (instead of
+    None) means the standard analysis hint must not run.
+    """
+    show_move: Optional[chess.Move] = None
+
+
 @dataclass
 class PlayerConfig:
     """Base configuration for players.
@@ -224,6 +236,28 @@ class Player(ABC):
         Distinct from :meth:`abort_remote_game`, which does not fall back to
         resign, and from :meth:`on_new_game`, which also resets local state.
         """
+
+    def bind_board_cues(
+        self,
+        *,
+        brain_hint: Optional[Callable] = None,
+        piece_squares_led: Optional[Callable] = None,
+        invalid_selection_flash: Optional[Callable] = None,
+    ) -> None:
+        """Wire piece-type hint and LED cues.
+
+        No-op on players that do not use board cues. Hand+Brain forwards
+        these to its hint and LED callbacks so the game does not isinstance
+        that class.
+        """
+
+    def help_key_result(self, board: chess.Board) -> Optional[HelpKeyResult]:
+        """Outcome of the ? key for this side.
+
+        None: this player does not own ?; the standard analysis hint runs.
+        A :class:`HelpKeyResult`: the key was consumed.
+        """
+        return None
     
     @property
     def pending_move(self) -> Optional[chess.Move]:
