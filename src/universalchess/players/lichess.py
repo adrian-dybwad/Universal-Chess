@@ -139,8 +139,13 @@ class LichessPlayer(Player):
     
     @property
     def player_type(self) -> PlayerType:
-        """Lichess player type."""
-        return PlayerType.LICHESS
+        """Moves arrive from outside; the local human transcribes them."""
+        return PlayerType.REMOTE
+
+    @property
+    def requires_rebuild_on_new_game(self) -> bool:
+        """Still attached to the remote game after a local board-reset."""
+        return True
     
     @property
     def pending_move(self) -> Optional[chess.Move]:

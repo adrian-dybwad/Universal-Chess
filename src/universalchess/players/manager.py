@@ -444,10 +444,12 @@ class PlayerManager:
                 self._black_player.player_type == PlayerType.ENGINE)
     
     @property
-    def has_lichess(self) -> bool:
-        """Check if either player is Lichess."""
-        return (self._white_player.player_type == PlayerType.LICHESS or 
-                self._black_player.player_type == PlayerType.LICHESS)
+    def requires_rebuild_on_new_game(self) -> bool:
+        """True when either player cannot continue in place after a local reset."""
+        return (
+            self._white_player.requires_rebuild_on_new_game
+            or self._black_player.requires_rebuild_on_new_game
+        )
     
     @property
     def is_ready(self) -> bool:
@@ -467,5 +469,5 @@ class PlayerManager:
             'black': self._black_player.get_info(),
             'is_two_human': self.is_two_human,
             'has_engine': self.has_engine,
-            'has_lichess': self.has_lichess,
+            'requires_rebuild_on_new_game': self.requires_rebuild_on_new_game,
         }

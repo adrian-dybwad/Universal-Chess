@@ -7,9 +7,9 @@
 # moves in a chess game. Each game has two players (White and Black).
 #
 # All players receive piece events and submit moves via callback:
-# - HumanPlayer: Constructs moves from piece events
-# - EnginePlayer: Computes moves, piece events confirm execution
-# - LichessPlayer: Receives moves from server, piece events confirm execution
+# - Human: constructs moves from piece events
+# - Engine: computes moves, piece events confirm execution
+# - Remote: receives moves from outside, piece events confirm execution
 #
 # The game validates all submitted moves the same way.
 #
@@ -44,23 +44,16 @@ class PlayerState(Enum):
 
 
 class PlayerType(Enum):
-    """Type of player - determines how moves are sourced.
-    
-    HUMAN: Moves come from physical board interactions.
-           The game waits for the human to move pieces.
-    
-    ENGINE: Moves come from a UCI chess engine.
-            The engine computes moves, human executes them on board.
-    
-    LICHESS: Moves come from the Lichess server.
-             For online games, the server determines the move.
-    
-    REMOTE: Moves come from a remote human (network play).
-            Another human provides moves, local human executes them.
+    """How this side's move is sourced. Not a catalog of who exists.
+
+    HUMAN: Constructed from physical board interactions.
+    ENGINE: Computed locally; the human transcribes it on the board.
+    REMOTE: Arrives from outside (an online server, a networked human);
+            the local human transcribes it. Providers (Lichess, later
+            Chess.com) are implementations, not members of this enum.
     """
     HUMAN = auto()
     ENGINE = auto()
-    LICHESS = auto()
     REMOTE = auto()
 
 
@@ -192,6 +185,17 @@ class Player(ABC):
         (e.g., remote players in some online modes).
         """
         return True
+
+    @property
+    def requires_rebuild_on_new_game(self) -> bool:
+        """Whether a local new-game cannot reuse this player in place.
+
+        False (default): Human and Engine continue after a board-reset.
+        True: the player is still attached to an external game, so the next
+        local start must rebuild (new seek / join) instead of requesting a
+        move against that abandoned game.
+        """
+        return False
     
     @property
     def pending_move(self) -> Optional[chess.Move]:

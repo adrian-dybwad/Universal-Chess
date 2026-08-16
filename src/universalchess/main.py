@@ -3064,12 +3064,12 @@ def _start_game_mode(
                 # rebuild is needed in this branch.
                 log.info("[App] New game on board with changed player settings - scheduling player rebuild")
                 _pending_player_rebuild = True
-            elif player_manager.has_lichess:
-                # In-place reset only clears the local board. The LichessPlayer
-                # would keep streaming the old remote game, and the waiting splash
+            elif player_manager.requires_rebuild_on_new_game:
+                # In-place reset only clears the local board. A remote player
+                # would keep streaming the old game, and the waiting splash
                 # is owned by _start_game_mode. Rebuild so the next game is a new
                 # seek with "Waiting for game".
-                log.info("[App] New game on board during Lichess - scheduling rebuild to seek a new game")
+                log.info("[App] New game on board during remote play - scheduling rebuild to seek a new game")
                 _pending_player_rebuild = True
             elif display_manager.layout_needs_rebuild():
                 # The reused widgets no longer match current settings (the
