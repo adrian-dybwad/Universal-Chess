@@ -5,11 +5,12 @@ Displays the knight logo with "UNIVERSAL" text below,
 and an updateable message at the bottom.
 """
 
+import threading
 from PIL import Image
 from .framework.widget import Widget
 from .text import TextWidget, Justify
 from .status_bar import STATUS_BAR_HEIGHT
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 try:
     from universalchess.board.logging import log
@@ -65,6 +66,10 @@ class SplashScreen(Widget):
     TEXT_MARGIN = 4  # Margin on each side
     TEXT_Y = 186  # Y position for message text (below "UNIVERSAL")
     TEXT_HEIGHT = 88  # Height for 4 lines of text at font size 18
+    DISMISS_TEXT_HEIGHT = 72  # Leave a band at the bottom for "Press any button"
+    INSTRUCTION_HEIGHT = 16
+    DISMISS_INSTRUCTION = "Press any button"
+    DISMISS_TIMEOUT_SECONDS = 30.0
     # Optional byline shown under "UNIVERSAL" (only when a tagline is supplied,
     # i.e. the boot/idle and shutdown screens). When present the message is
     # pushed below it. Sized for the wrapped byline at font 16.
@@ -81,7 +86,8 @@ class SplashScreen(Widget):
     def __init__(self, update_callback, message: str = "Press [OK]", background_shade: int = 4,
                  leave_room_for_status_bar: bool = True,
                  logo: Image.Image = None, logo_mask: Image.Image = None,
-                 show_battery: bool = False, tagline: Optional[str] = None):
+                 show_battery: bool = False, tagline: Optional[str] = None,
+                 dismissible: bool = False):
         """Initialize splash screen widget.
         
         Args:
@@ -97,6 +103,10 @@ class SplashScreen(Widget):
             tagline: Optional byline drawn under "UNIVERSAL" (e.g. the boot screen).
                 Injected as text so the widget stays free of the i18n catalog. When
                 set, the message is pushed down to leave room for it.
+            dismissible: When True, draw a "Press any button" instruction and
+                unblock ``wait_for_dismiss`` on any key. Used for error splashes
+                so the user can read the message instead of a non-selectable menu
+                row that cannot be dismissed.
         """
         if leave_room_for_status_bar:
             y_pos = STATUS_BAR_HEIGHT
@@ -107,6 +117,8 @@ class SplashScreen(Widget):
         super().__init__(0, y_pos, 128, height, update_callback, background_shade=background_shade)
         self.message = message
         self._show_battery = show_battery
+        self._dismissible = dismissible
+        self._dismissed = threading.Event()
         
         # Use provided logo or module-level logo
         if logo is not None:
@@ -129,11 +141,23 @@ class SplashScreen(Widget):
             text="UNIVERSAL", font_size=24, justify=Justify.CENTER, transparent=True
         )
         
+        message_height = self.DISMISS_TEXT_HEIGHT if dismissible else self.TEXT_HEIGHT
         self._text_widget = TextWidget(
-            x=0, y=0, width=text_width, height=self.TEXT_HEIGHT,
+            x=0, y=0, width=text_width, height=message_height,
             update_callback=self._handle_child_update,
             text=message, font_size=18, justify=Justify.CENTER, wrapText=True
         )
+
+        self._instruction_text = None
+        if dismissible:
+            from universalchess.i18n import t
+
+            self._instruction_text = TextWidget(
+                x=0, y=0, width=self.width, height=self.INSTRUCTION_HEIGHT,
+                update_callback=self._handle_child_update,
+                text=t("about.press_any_button") or self.DISMISS_INSTRUCTION,
+                font_size=12, justify=Justify.CENTER, transparent=True
+            )
 
         # Optional byline under "UNIVERSAL". Present on the boot/idle and shutdown
         # screens; when shown, the message starts below it, otherwise it keeps
@@ -218,6 +242,11 @@ class SplashScreen(Widget):
         # Draw message text directly onto the sprite (below the byline when shown)
         self._text_widget.draw_on(sprite, self.TEXT_MARGIN, self._message_y)
 
+        if self._instruction_text is not None:
+            self._instruction_text.draw_on(
+                sprite, 0, self.height - self.INSTRUCTION_HEIGHT
+            )
+
         if self._show_battery:
             self._render_battery(sprite)
 
@@ -246,6 +275,34 @@ class SplashScreen(Widget):
         if self._battery_percent_text is not None:
             self._battery_percent_text.text = "--%" if percent is None else f"{percent}%"
             self._battery_percent_text.draw_on(sprite, 0, self._battery_percent_y)
+
+    def handle_key(self, key_id: object) -> bool:
+        """Dismiss on any key when this splash is waiting for the user.
+
+        Returns True so the key does not reach a menu underneath. A
+        non-dismissible splash (boot, shutdown, waiting) ignores keys.
+        """
+        if not self._dismissible:
+            return False
+        self.dismiss()
+        return True
+
+    def dismiss(self) -> None:
+        """Unblock ``wait_for_dismiss`` (any key, or the idle timeout caller)."""
+        self._dismissed.set()
+
+    def wait_for_dismiss(self, timeout: float = DISMISS_TIMEOUT_SECONDS) -> bool:
+        """Block until a key dismisses this splash, or ``timeout`` seconds elapse.
+
+        Returns:
+            True if dismissed by a key, False if the idle window expired.
+        """
+        return self._dismissed.wait(timeout=timeout)
+
+    def stop(self) -> None:
+        """Release a thread blocked in ``wait_for_dismiss`` when the widget is torn down."""
+        self._dismissed.set()
+        super().stop()
 
 
 def show_fullscreen_splash(manager, message: str, timeout: float = 5.0,
@@ -294,3 +351,61 @@ def show_fullscreen_splash(manager, message: str, timeout: float = 5.0,
     except Exception as e:
         log.debug(f"[Splash] Failed to show splash '{message}': {e}")
         return False
+
+
+def show_dismissible_splash(
+    manager,
+    message: str,
+    timeout: float = SplashScreen.DISMISS_TIMEOUT_SECONDS,
+    bind_keys: Optional[Callable[[Optional[object]], None]] = None,
+) -> bool:
+    """Overlay a splash, block until any key (or idle timeout), then remove it.
+
+    Does not clear the panel: the splash is modal, so the menu underneath stays
+    in the widget list and is visible again after ``remove_widget``. Clearing
+    would return the user to a blank panel.
+
+    ``bind_keys`` is called with the widget so the application can route board
+    keys to ``widget.handle_key``, and called with ``None`` in ``finally`` so a
+    render failure cannot leave later keys swallowed. Without it the splash still
+    waits out ``timeout``.
+
+    Args:
+        manager: Panel manager exposing add_widget/remove_widget/update. None
+            renders nothing and returns False.
+        message: Error (or other) copy to show.
+        timeout: Seconds to wait for a key before closing.
+        bind_keys: Optional ``widget -> None`` registrar; ``None`` unbinds.
+
+    Returns:
+        True if the splash was shown and the wait finished, False if there was
+        no manager or rendering failed.
+    """
+    if manager is None:
+        return False
+    widget = None
+    try:
+        widget = SplashScreen(
+            manager.update,
+            message=message,
+            leave_room_for_status_bar=False,
+            dismissible=True,
+        )
+        if bind_keys is not None:
+            bind_keys(widget)
+        promise = manager.add_widget(widget)
+        if promise:
+            promise.result(timeout=5.0)
+        widget.wait_for_dismiss(timeout=timeout)
+        return True
+    except Exception as e:
+        log.debug(f"[Splash] Failed to show dismissible splash '{message}': {e}")
+        return False
+    finally:
+        if bind_keys is not None:
+            bind_keys(None)
+        if widget is not None:
+            try:
+                manager.remove_widget(widget)
+            except Exception as e:
+                log.debug(f"[Splash] Failed to remove dismissible splash: {e}")

@@ -1,10 +1,34 @@
 """Lichess service wrappers to orchestrate client, menus, and game start."""
 
+import re
 from typing import Optional, Callable
 
 from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.managers.menu import is_break_result
 from universalchess.utils.token_display import mask_token
+
+_MISSING_SCOPE = re.compile(r"Missing scope:\s*([a-z0-9:_-]+)", re.IGNORECASE)
+
+
+def _lichess_permission_panel_message(error_msg: str, fallback: str) -> Optional[str]:
+    """E-paper copy for a missing OAuth scope or HTTP 401/403, else None.
+
+    Listing challenges with ``board:play`` but without ``challenge:read`` is
+    HTTP 403 ``Missing scope: challenge:read``, not 401. Mapping only 401
+    showed a truncated HTTP dump instead of naming the scope to add.
+    """
+    match = _MISSING_SCOPE.search(error_msg)
+    if match:
+        return f"Token needs\n{match.group(1)}"
+    lowered = error_msg.lower()
+    if (
+        "401" in error_msg
+        or "403" in error_msg
+        or "unauthorized" in lowered
+        or "forbidden" in lowered
+    ):
+        return fallback
+    return None
 
 
 def get_lichess_client(token, log, host_id: str = "org"):
@@ -121,12 +145,23 @@ def show_lichess_started_splash(panel_manager, human_is_white: bool) -> bool:
 
 
 def show_lichess_error(menu_manager, title: str, message: str, show_accounts_button: bool = False):
-    """Show a blocking error message.
+    """Show a blocking error splash; any key dismisses it.
 
     ``message`` is the e-paper copy (pairing/clock/token). ``title`` is logged
-    by the caller; the panel shows the message so the user sees why start failed.
+    by the caller. Previously this was a one-row menu whose only entry was
+    ``selectable=False``, so the copy was truncated and no key could dismiss it.
     """
-    entries = [IconMenuEntry(key="BACK", label=message or title, icon_name="cancel", enabled=True, selectable=False)]
+    text = message or title
+    board_mod = getattr(menu_manager, "_board", None)
+    panel = getattr(board_mod, "display_manager", None) if board_mod is not None else None
+    bind_keys = getattr(menu_manager, "_error_splash_binder", None)
+    from universalchess.epaper.splash_screen import show_dismissible_splash
+
+    if show_dismissible_splash(panel, text, bind_keys=bind_keys):
+        return None
+    entries = [
+        IconMenuEntry(key="BACK", label=text, icon_name="cancel", enabled=True, selectable=True)
+    ]
     return menu_manager.show_menu(entries)
 
 
@@ -269,8 +304,11 @@ def show_lichess_ongoing_games(client, menu_manager, log) -> Optional[str]:
     except Exception as e:
         error_msg = str(e)
         log.error(f"[Lichess] Error fetching ongoing games: {e}")
-        if "401" in error_msg or "unauthorized" in error_msg.lower():
-            show_lichess_error(menu_manager, "Auth Error", "Token does not have\nboard:play permission")
+        permission = _lichess_permission_panel_message(
+            error_msg, "Token does not have\nboard:play permission"
+        )
+        if permission:
+            show_lichess_error(menu_manager, "Auth Error", permission)
         elif "network" in error_msg.lower() or "connection" in error_msg.lower():
             show_lichess_error(menu_manager, "Network Error", "Could not connect\nto Lichess")
         else:
@@ -371,8 +409,11 @@ def show_lichess_challenges(client, menu_manager, log) -> Optional[dict]:
     except Exception as e:
         error_msg = str(e)
         log.error(f"[Lichess] Error fetching challenges: {e}")
-        if "401" in error_msg or "unauthorized" in error_msg.lower():
-            show_lichess_error(menu_manager, "Auth Error", "Token does not have\nchallenge permissions")
+        permission = _lichess_permission_panel_message(
+            error_msg, "Token does not have\nchallenge permissions"
+        )
+        if permission:
+            show_lichess_error(menu_manager, "Auth Error", permission)
         elif "network" in error_msg.lower() or "connection" in error_msg.lower():
             show_lichess_error(menu_manager, "Network Error", "Could not connect\nto Lichess")
         else:
@@ -411,8 +452,9 @@ def handle_lichess_menu(
         clear_active_keyboard: Clear the active keyboard registration.
 
     Returns:
-        True if a Lichess game was started, break result if break action,
-        None/False otherwise.
+        ``"START_GAME"`` if a Lichess game was requested (join stashed; Settings
+        starts it after menus unwind), a break result if a break action, or
+        None otherwise.
     """
     from .player import LichessPlayerConfig as LichessConfig, LichessGameMode
     from universalchess.managers.menu import MenuSelection
@@ -515,6 +557,10 @@ def handle_lichess_menu(
 
     if is_break_result(result):
         return result
-
-    return game_started
+    if game_started:
+        # Same token as Players → Start Game. The lobby only stashes the join;
+        # Settings starts the game after nested menus have exited, so they cannot
+        # redraw player rows over the board.
+        return "START_GAME"
+    return None
 

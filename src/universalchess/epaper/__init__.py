@@ -27,6 +27,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "BackgroundWidget": ("universalchess.epaper.background", "BackgroundWidget"),
     "SplashScreen": ("universalchess.epaper.splash_screen", "SplashScreen"),
     "show_fullscreen_splash": ("universalchess.epaper.splash_screen", "show_fullscreen_splash"),
+    "show_dismissible_splash": ("universalchess.epaper.splash_screen", "show_dismissible_splash"),
     "StatusBarWidget": ("universalchess.epaper.status_bar", "StatusBarWidget"),
     "WiFiStatusWidget": ("universalchess.epaper.wifi_status", "WiFiStatusWidget"),
     "BluetoothStatusWidget": ("universalchess.epaper.bluetooth_status", "BluetoothStatusWidget"),

@@ -149,7 +149,7 @@
       "fields": {
         "api_token": {
           "label": "Token de API",
-          "help": "Obtén un token en lichess.org con los permisos challenge:write y board:play"
+          "help": "Obtén un token en el servidor Lichess elegido con los permisos board:play, challenge:read y challenge:write"
         },
         "range": {
           "label": "Rango de rating",
@@ -711,7 +711,7 @@
     },
     "field.lichess.api_token": {
       "label": "Token de API",
-      "help": "Obtén un token en lichess.org con los permisos challenge:write y board:play"
+      "help": "Obtén un token en el servidor Lichess elegido con los permisos board:play, challenge:read y challenge:write"
     },
     "field.lichess.range": {
       "label": "Rango de rating",

@@ -790,6 +790,25 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   menu once the stream has accepted). If start is torn down mid-authenticate,
   `_start_game_mode` returns instead of touching the manager.
 
+- Opening Challenges on the Lichess menu with a token that had `board:play`
+  but not `challenge:read` showed a truncated HTTP 403 dump. Lichess returns
+  403 `Missing scope: challenge:read` for `GET /api/challenge` (not 401);
+  the panel only mapped 401 to a permission error. Challenges and Ongoing
+  now name the missing scope, and the token-field help lists `board:play`,
+  `challenge:read`, and `challenge:write`. Those errors (and the other Lichess
+  failures: no token, start failed, unreachable server) were a one-row menu
+  whose only entry was not selectable, so the copy was truncated and no key
+  dismissed it. They are now a full-screen splash with the message and
+  "Press any button"; any key (or 30s idle) returns to the menu.
+
+- Starting a Lichess challenge (or New Game / Ongoing) from Players → Lichess
+  Settings left the player-menu rows on the e-paper where the board should be;
+  the analysis widget still painted below. The lobby started the game while
+  those nested menus were still looping, returned `True` (not a break and not
+  `START_GAME`), and the engine dropped the result so Players redrew over the
+  board. The lobby now only stashes the join and returns `START_GAME`; nested
+  menus unwind and Settings starts the game on a clear panel.
+
 - Pressing New Game on the e-paper Lichess menu killed the app and left the
   last frame on the panel. A dedicated `start_lichess_game_service` imported
   `ProtocolManager` and `ControllerManager` from paths that do not exist; the

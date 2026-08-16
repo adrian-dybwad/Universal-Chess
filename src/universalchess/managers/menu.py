@@ -154,6 +154,10 @@ class MenuManager:
         # set_help_presenter(). When unset, HELP propagates to the caller as
         # before, keeping the manager usable without a presenter (e.g. in tests).
         self._help_presenter: Optional[Callable[[str, Optional[str]], None]] = None
+        # Optional binder for dismissible error splashes. The application owns
+        # key routing (same split as the help presenter); the binder is called
+        # with the splash widget, then with None when the splash is gone.
+        self._error_splash_binder: Optional[Callable[[Optional[object]], None]] = None
     
     @classmethod
     def get_instance(cls) -> 'MenuManager':
@@ -183,7 +187,20 @@ class MenuManager:
                 propagates to the caller as a normal result).
         """
         self._help_presenter = presenter
-    
+
+    def set_error_splash_binder(self, binder: Optional[Callable[[Optional[object]], None]]):
+        """Register key routing for dismissible error splashes.
+
+        The binder receives the splash widget so the application can send board
+        keys to ``widget.handle_key``, and receives ``None`` when the splash is
+        removed. Injecting it keeps MenuManager free of the splash widget.
+
+        Args:
+            binder: Callable, or None to show the splash without live key
+                routing (it then waits out the idle timeout).
+        """
+        self._error_splash_binder = binder
+
     def set_dimensions(self, width: int, height: int, status_bar_height: int = 16):
         """Set display dimensions.
         

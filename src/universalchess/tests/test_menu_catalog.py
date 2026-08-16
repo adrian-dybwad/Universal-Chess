@@ -543,6 +543,12 @@ def test_packaged_catalog_exposes_lichess_account_type():
     assert fields["api_token"]["secret"] is True
     assert fields["api_token"]["required"] is True
     assert fields["api_token"]["type"] == "password"
+    # Listing GET /api/challenge needs challenge:read; omitting it mints a
+    # token that authenticates and seeks but 403s on Challenges.
+    help_text = fields["api_token"]["help"]
+    assert "board:play" in help_text
+    assert "challenge:read" in help_text
+    assert "challenge:write" in help_text
     assert fields["range"].get("secret", False) is False
     assert fields["range"]["type"] == "text"
     hosts = {h["id"]: h for h in lichess["hosts"]}

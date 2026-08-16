@@ -191,9 +191,47 @@ def test_lichess_menu_new_game_start_failure_does_not_kill_loop():
         clear_active_keyboard=lambda: None,
     )
 
-    assert result is False
+    assert result is None
     log.error.assert_called()
     assert shown, "start failure must show an error menu"
+
+
+def test_lichess_menu_successful_start_returns_start_game_token():
+    """New Game / Challenge must return START_GAME so nested Players menus exit.
+
+    Why: the lobby used to return True. ``_signal_from`` dropped that, Lichess
+    Settings dropped non-break submenu results, and Players redrew its rows
+    over the board. Analysis still painted. START_GAME is the same token as
+    Players → Start Game; Settings starts the game after those menus have left.
+
+    How a regression manifests: the return is True/None, so the parent menu
+    loop keeps running and the board region shows player-menu buttons.
+    """
+    from universalchess.managers.menu import MenuSelection
+    from universalchess.players.lichess.lobby import handle_lichess_menu
+
+    started = []
+
+    class Menu:
+        def run_menu_loop(self, build_entries, handle_selection, **kwargs):
+            return handle_selection(MenuSelection.from_key("NewGame"))
+
+    result = handle_lichess_menu(
+        get_lichess_client_fn=lambda: (object(), "alice", None),
+        get_settings_fn=MagicMock(),
+        menu_manager=Menu(),
+        keyboard_factory=lambda *a, **k: None,
+        start_lichess_game_fn=lambda config: started.append(config) or True,
+        handle_accounts_menu_fn=lambda: None,
+        centaur_module=MagicMock(),
+        board=MagicMock(),
+        log=MagicMock(),
+        set_active_keyboard=lambda w: None,
+        clear_active_keyboard=lambda: None,
+    )
+
+    assert result == "START_GAME"
+    assert started, "join must be stashed via start_lichess_game_fn"
 
 
 def test_started_splash_updates_existing_splash(monkeypatch):

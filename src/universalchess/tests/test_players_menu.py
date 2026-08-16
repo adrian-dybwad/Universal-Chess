@@ -598,6 +598,24 @@ def test_lichess_play_row_dispatches_lichess_action():
     assert calls == ["lichess"]
 
 
+def test_lichess_lobby_start_game_unwinds_through_lichess_settings():
+    """START_GAME from Play must leave Players, not redraw the player rows.
+
+    Why: Challenges/New Game run inside Players → Lichess Settings → Play. The
+    engine only forwarded break results from a submenu, so START_GAME was
+    dropped and Players painted over the board (analysis still showed below).
+
+    How a regression manifests: result is None or BACK, meaning Players stayed
+    open after the lobby asked to start.
+    """
+    ctx = _players_ctx(_player_state(), _player_state())
+    ctx.register_action("lichess", lambda: "START_GAME")
+    mm = _FakeMenuManager(["Lichess", "players.lichess.play"])
+    result = run_engine_menu("settings.players", ctx, mm, catalog=load_catalog())
+    assert result is not None
+    assert result.key == "START_GAME"
+
+
 def test_accounts_row_dispatches_open_accounts():
     """Selecting Accounts runs open_accounts (same handler as before the move).
 

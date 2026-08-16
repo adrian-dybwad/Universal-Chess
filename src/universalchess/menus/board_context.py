@@ -405,7 +405,15 @@ def run_engine_menu(
             sub = run_engine_menu(
                 outcome.target, ctx, menu_manager, platform=platform, catalog=catalog, nav_context=nav
             )
-            return sub if (sub is not None and sub.is_break) else None
+            # Break tokens unwind every menu (PLAY / client / piece). START_GAME
+            # is not a break -- Settings starts a fresh game rather than
+            # resuming -- but it must still leave this parent loop. Dropping it
+            # redraws Players over a Lichess game that the nested lobby already
+            # requested (board region stays on player-menu rows; analysis can
+            # still paint over the bottom).
+            if sub is not None and (sub.is_break or sub.key == "START_GAME"):
+                return sub
+            return None
         if outcome.kind == "select":
             sub = _run_select(outcome, ctx, menu_manager)
             return sub if (sub is not None and sub.is_break) else None

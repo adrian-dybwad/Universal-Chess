@@ -200,7 +200,7 @@
           "required": true,
           "secret": true,
           "placeholder": "lip_xxxxxxxx",
-          "help": "Get a token from the chosen Lichess server with challenge:write and board:play permissions"
+          "help": "Get a token from the chosen Lichess server with board:play, challenge:read, and challenge:write"
         },
         {
           "key": "range",
@@ -1783,7 +1783,7 @@
       "id": "field.lichess.api_token",
       "type": "text",
       "label": "API Token",
-      "help": "Get a token from lichess.org with challenge:write and board:play permissions",
+      "help": "Get a token from the chosen Lichess server with board:play, challenge:read, and challenge:write",
       "section": "accounts",
       "platforms": ["web"]
     },

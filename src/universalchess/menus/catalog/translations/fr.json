@@ -149,7 +149,7 @@
       "fields": {
         "api_token": {
           "label": "Jeton d'API",
-          "help": "Obtenez un jeton sur lichess.org avec les permissions challenge:write et board:play"
+          "help": "Obtenez un jeton sur le serveur Lichess choisi avec les permissions board:play, challenge:read et challenge:write"
         },
         "range": {
           "label": "Plage de classement",
@@ -711,7 +711,7 @@
     },
     "field.lichess.api_token": {
       "label": "Jeton d'API",
-      "help": "Obtenez un jeton sur lichess.org avec les permissions challenge:write et board:play"
+      "help": "Obtenez un jeton sur le serveur Lichess choisi avec les permissions board:play, challenge:read et challenge:write"
     },
     "field.lichess.range": {
       "label": "Plage de classement",

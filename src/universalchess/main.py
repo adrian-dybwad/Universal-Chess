@@ -729,6 +729,17 @@ def _present_menu_help(title: str, body: "Optional[str]") -> None:
             log.debug(f"[App] Error removing help dialog: {e}")
 
 
+def _bind_error_splash(widget) -> None:
+    """Route board keys to a dismissible error splash, or clear that routing.
+
+    Called by ``show_dismissible_splash`` with the widget while it is on screen
+    and with ``None`` when it is removed, so a failed render cannot leave keys
+    swallowed.
+    """
+    global _active_error_splash
+    _active_error_splash = widget
+
+
 # Bluetooth keyboard state
 bt_keyboard_manager = None  # BluetoothKeyboardManager, started in main()
 _active_passkey_widget = None  # Modal passkey widget shown during keyboard pairing
@@ -1143,6 +1154,10 @@ _active_about_widget = None
 # modal (HELP key in a menu). Any key dismisses it (see _handle_key), and the
 # MenuManager help presenter blocks on it until dismissed.
 _active_help_widget = None
+
+# Dismissible error splash (Lichess token/scope/start failures). Any key
+# dismisses it; MenuManager.bind routes keys here while the splash is up.
+_active_error_splash = None
 
 # Args (stored globally after parsing for access in callbacks)
 _args = None
@@ -3820,18 +3835,24 @@ def _player_summary(player_settings: Dict[str, Any], *, with_color: bool) -> str
 def _signal_from(result) -> Optional[str]:
     """Map a board sub-handler result to a menu-engine action signal.
 
-    Sub-handlers (engine/ELO lists, Lichess) return None on normal completion or
-    a break result (MenuSelection or token string) when a game-start/connection
-    event must unwind every menu. The engine's action loop exits on any non-None
-    signal, so only break results are forwarded (as their key); normal
-    completion returns None to stay in the player menu and redraw.
+    Sub-handlers (engine/ELO lists, Lichess) return None on normal completion, a
+    break result when PLAY/client/piece must unwind every menu, or ``START_GAME``
+    when the Lichess lobby has stashed a join. The engine's action loop exits on
+    any non-None signal. ``START_GAME`` is forwarded so nested Lichess Settings
+    cannot redraw Players over the board; a bare ``True`` is treated the same
+    (the lobby used to return that). Normal completion returns None to stay and
+    redraw.
     """
     if result is None:
         return None
     if isinstance(result, MenuSelection):
-        return result.key if result.is_break else None
+        if result.is_break or result.key == "START_GAME":
+            return result.key
+        return None
     if is_break_result(result):
         return result
+    if result is True or result == "START_GAME":
+        return "START_GAME"
     return None
 
 
@@ -6147,11 +6168,14 @@ def _handle_lichess_menu():
 
 
 def _start_lichess_game(lichess_config) -> bool:
-    """Start PLAY with a Lichess join mode stashed for ``_start_game_mode``.
+    """Stash a Lichess join so Settings can start the game after menus unwind.
 
     New Game, Ongoing, and Challenges all enter the same Human vs Lichess
     path. Seek color/clock/rated come from Players + Game settings; this only
-    carries the lobby's join ids (ongoing game or challenge).
+    carries the lobby's join ids (ongoing game or challenge). Starting here
+    left the Players menu loop alive: it redrew player rows over the board
+    (analysis still painted below). The lobby returns START_GAME; Settings
+    calls ``_start_game_mode`` once the nested menus have exited.
     """
     global _lichess_join
 
@@ -6161,8 +6185,7 @@ def _start_lichess_game(lichess_config) -> bool:
         "challenge_id": getattr(lichess_config, "challenge_id", "") or "",
         "challenge_direction": getattr(lichess_config, "challenge_direction", "in") or "in",
     }
-    _start_game_mode()
-    return app_state == AppState.GAME
+    return True
 
 
 def _capture_account_field(field: dict):
@@ -7197,7 +7220,7 @@ def key_callback(key_id):
     too many unhandled keys (indicating a broken state), the app forces
     recovery by returning to the main menu.
     """
-    global running, kill, display_manager, app_state, _menu_manager, _active_keyboard_widget, _active_about_widget
+    global running, kill, display_manager, app_state, _menu_manager, _active_keyboard_widget, _active_about_widget, _active_error_splash
     
     log.info(f"[App] Key event received: {key_id}, app_state={app_state}")
     
@@ -7256,6 +7279,13 @@ def key_callback(key_id):
     # than letting it reach the menu/keyboard underneath.
     if _active_help_widget is not None:
         _active_help_widget.handle_key(key_id)
+        _reset_unhandled_key_count()
+        return
+
+    # Priority 0b: Dismissible error splash - any key closes it so the user can
+    # read the message (missing Lichess scope, start failure, ...) and continue.
+    if _active_error_splash is not None:
+        _active_error_splash.handle_key(key_id)
         _reset_unhandled_key_count()
         return
 
@@ -7597,6 +7627,7 @@ def main():
         _menu_manager.set_board(board)
         _menu_manager.set_dimensions(DISPLAY_WIDTH, DISPLAY_HEIGHT, STATUS_BAR_HEIGHT)
         _menu_manager.set_help_presenter(_present_menu_help)
+        _menu_manager.set_error_splash_binder(_bind_error_splash)
         log.info("[Main] MenuManager initialized")
     except Exception as e:
         log.error(f"[Main] Failed to initialize MenuManager: {e}", exc_info=True)
