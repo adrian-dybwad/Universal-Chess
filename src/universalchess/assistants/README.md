@@ -101,18 +101,19 @@ class CoachAssistant(Assistant):
 - **Auto-suggest** (`auto_suggest=True`): Suggestions provided automatically when it's the player's turn. Used for Hand+Brain mode.
 - **On-demand** (`auto_suggest=False`): Suggestions only when explicitly requested. Used for hints.
 
-## Combining with Opponents
+## Combining with players
 
-Assistants can be used alongside any opponent:
+Assistants can be used alongside any player:
 
 ```python
+from universalchess.players.lichess import LichessPlayer, LichessPlayerConfig, LichessGameMode
+
 # Play against Lichess with Hand+Brain assistance
-opponent = create_lichess_opponent(mode=LichessGameMode.NEW)
+remote = LichessPlayer(LichessPlayerConfig(mode=LichessGameMode.NEW))
 assistant = create_hand_brain_assistant(player_color=chess.WHITE)
 
-# Engine plays black, provides hints for white
-opponent.start()
+remote.start()
 assistant.start()
 ```
 
-This allows mixing and matching opponents and assistants for various play modes.
+This allows mixing and matching players and assistants for various play modes.

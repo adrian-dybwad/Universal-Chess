@@ -1,11 +1,13 @@
 # Players Module
 
 This module provides the player abstraction for chess games. Every game has
-two players: one for White and one for Black. Each player can be:
+two players: one for White and one for Black. `PlayerType` is how a move is
+sourced (`HUMAN`, `ENGINE`, `REMOTE`), not a catalog of providers.
 
 - **HumanPlayer**: Moves come from the physical board
 - **EnginePlayer**: Moves come from a UCI chess engine
-- **LichessPlayer**: Moves come from the Lichess server
+- **HandBrainPlayer**: Catalog type that reports HUMAN or ENGINE by mode
+- **LichessPlayer**: REMOTE provider plugin; moves come from a Lichess host
 
 ## Key Concepts
 
@@ -58,7 +60,7 @@ that color (if that player can resign).
 ### Two-Player Mode (Human vs Human)
 
 ```python
-from DGTCentaurMods.players import HumanPlayer, PlayerManager
+from universalchess.players import HumanPlayer, PlayerManager
 
 white = HumanPlayer()
 black = HumanPlayer()
@@ -77,7 +79,7 @@ manager.on_piece_event("place", square, board)
 ### Human vs Engine
 
 ```python
-from DGTCentaurMods.players import HumanPlayer, EnginePlayer, EnginePlayerConfig
+from universalchess.players import HumanPlayer, EnginePlayer, EnginePlayerConfig
 import chess
 
 # Human plays white
@@ -108,8 +110,8 @@ manager.start()
 ### Lichess Online Game
 
 ```python
-from DGTCentaurMods.players import HumanPlayer
-from DGTCentaurMods.players.lichess import LichessPlayer, LichessPlayerConfig, LichessGameMode
+from universalchess.players import HumanPlayer
+from universalchess.players.lichess import LichessPlayer, LichessPlayerConfig, LichessGameMode
 
 # Create Lichess player for the remote opponent
 lichess_config = LichessPlayerConfig(
@@ -134,10 +136,12 @@ manager.start()
 
 ## Module Structure
 
-- `base.py` - `Player` base class, `PlayerConfig`, `PlayerState`, `PlayerType`
+- `base.py` - `Player` base class, `PlayerConfig`, `PlayerState`, `PlayerType` (`HUMAN` / `ENGINE` / `REMOTE`)
 - `human.py` - `HumanPlayer` for physical board moves
 - `engine.py` - `EnginePlayer` for UCI engine moves
-- `lichess.py` - `LichessPlayer` for Lichess online games
+- `hand_brain.py` - `HandBrainPlayer` (catalog type; HUMAN or ENGINE by mode)
+- `lichess/` - Lichess provider plugin (`player`, `hosts`, `accounts`, `match`, `lobby`)
+- `lichess/tests/` - plugin tests; host-socket tests stay in `src/universalchess/tests/`
 - `manager.py` - `PlayerManager` to coordinate both players
 
 ## Design Notes

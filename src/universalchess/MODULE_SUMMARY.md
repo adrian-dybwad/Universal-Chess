@@ -464,8 +464,9 @@ Entities that make moves in chess games.
 
 #### Responsibilities
 - Abstract base class for all player types
-- Common player interface
-- Player state management
+- `PlayerType` is the move source (`HUMAN`, `ENGINE`, `REMOTE`), not a provider name
+- Rebuild-on-new-game is a capability (`requires_rebuild_on_new_game`), not a type
+- Common player interface and player state management
 
 ### human.py (HumanPlayer)
 
@@ -480,13 +481,25 @@ Entities that make moves in chess games.
 - Move computation with ELO-based settings
 - Move submission when physical events match
 
-### lichess.py (LichessPlayer)
+### hand_brain.py (HandBrainPlayer)
 
 #### Responsibilities
-- Lichess API integration
-- Game stream handling
-- Clock synchronization
-- Game info callbacks
+- Catalog type that reports HUMAN or ENGINE by mode
+- Piece-type then move phases for Hand+Brain play
+
+### lichess/ (Lichess plugin)
+
+A REMOTE provider package. The game talks to `LichessPlayer`; hosts, tokens,
+identity, seek, and the board lobby live here. Plugin tests live in `tests/`.
+
+| File | Purpose |
+|------|---------|
+| `player.py` | `LichessPlayer` (`PlayerType.REMOTE`, rebuilds on new game) |
+| `hosts.py` | `org` / `dev` API servers and `host:user` credential ids |
+| `accounts.py` | Plugin credential rows on the generic account store |
+| `match.py` | Seek params, berserk client |
+| `lobby.py` | Board menu, identity fetch, waiting/started splash |
+| `tests/` | Plugin tests (hosts, credentials, seek, lobby, echo guard) |
 
 ### manager.py (PlayerManager)
 
@@ -643,7 +656,8 @@ main.py (Entry Point)
     +-- players/ (Move Sources)
     |     +-- HumanPlayer (Physical board)
     |     +-- EnginePlayer (UCI engine)
-    |     +-- LichessPlayer (Online play)
+    |     +-- HandBrainPlayer (HUMAN or ENGINE by mode)
+    |     +-- lichess/ (REMOTE plugin; tests in package)
     |
     +-- assistants/ (Helpers)
     |     +-- HandBrainAssistant (Piece hints)
