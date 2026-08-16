@@ -20,6 +20,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "BatteryWidget": ("universalchess.epaper.battery", "BatteryWidget"),
     "TextWidget": ("universalchess.epaper.text", "TextWidget"),
     "Justify": ("universalchess.epaper.text", "Justify"),
+    "Overflow": ("universalchess.epaper.text", "Overflow"),
     "BallWidget": ("universalchess.epaper.ball", "BallWidget"),
     "ChessBoardWidget": ("universalchess.epaper.chess_board", "ChessBoardWidget"),
     "GameAnalysisWidget": ("universalchess.epaper.game_analysis", "GameAnalysisWidget"),

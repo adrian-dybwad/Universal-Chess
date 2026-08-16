@@ -18,13 +18,12 @@ import threading
 import time
 from typing import TYPE_CHECKING, Callable
 
-from PIL import Image, ImageDraw
-
-from universalchess.resources import get_font
+from PIL import Image
 
 from .framework.widget import Widget
 from .paged_text import NavigationHint, PagedTextWidget
-from .text import Justify
+from .text import Justify, Overflow, TextWidget
+from .text_scale import DEFAULT_TEXT_SIZE, normalize_text_size, scale_font
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -72,7 +71,8 @@ class HelpDialogWidget(Widget):
     IDLE_TIMEOUT_SECONDS = 30.0
 
     def __init__(self, update_callback: Callable[..., object], title: str, body: str,
-                 background_shade: int = 0) -> None:
+                 background_shade: int = 0,
+                 text_size: str = DEFAULT_TEXT_SIZE) -> None:
         """Initialize the dialog.
 
         Args:
@@ -80,13 +80,34 @@ class HelpDialogWidget(Widget):
             title: Short heading (the focused entry's label, newlines flattened).
             body: Help tip text; wrapped and paged to the panel.
             background_shade: Background shade 0-16 (0=white).
+            text_size: Display > Text Size name (small/medium/large).
 
         """
         super().__init__(0, 0, 128, 296, update_callback, background_shade=background_shade)
+        text_size = normalize_text_size(text_size)
+        self.TITLE_FONT_SIZE = scale_font(HelpDialogWidget.TITLE_FONT_SIZE, text_size)
+        self.BODY_FONT_SIZE = scale_font(HelpDialogWidget.BODY_FONT_SIZE, text_size)
+        self.INSTRUCTION_FONT_SIZE = scale_font(
+            HelpDialogWidget.INSTRUCTION_FONT_SIZE, text_size
+        )
         # Flatten newlines so a multi-line menu label reads as one title line.
         self._title = " ".join((title or "").split())
         self._dismissed = threading.Event()
         self._last_input = time.monotonic()
+        self._title_text = TextWidget(
+            0, 0, self.width, self.TITLE_FONT_SIZE + 6,
+            self._handle_child_update,
+            text=self._title, font_size=self.TITLE_FONT_SIZE,
+            justify=Justify.CENTER, transparent=True,
+            overflow=Overflow.FIT, min_font_size=10,
+        )
+        self._instruction_text = TextWidget(
+            0, 0, self.width, self.INSTRUCTION_FONT_SIZE + 4,
+            self._handle_child_update,
+            text="", font_size=self.INSTRUCTION_FONT_SIZE,
+            justify=Justify.CENTER, transparent=True,
+            overflow=Overflow.FIT, min_font_size=8,
+        )
         self._pages = PagedTextWidget(
             self.SIDE_MARGIN,
             self.BODY_TOP_Y,
@@ -177,16 +198,17 @@ class HelpDialogWidget(Widget):
     def render(self, sprite: Image.Image) -> None:
         """Render the title, the page showing, and the instruction line."""
         self.draw_background_on_sprite(sprite)
-        draw = ImageDraw.Draw(sprite)
 
         if self._title:
-            draw.text((64, self.TITLE_Y), self._title,
-                      font=get_font(self.TITLE_FONT_SIZE), fill=0, anchor="mm")
+            self._title_text.set_text(self._title)
+            self._title_text.draw_on(sprite, 0, self.TITLE_Y - self.TITLE_FONT_SIZE // 2)
 
         self._pages.draw_on(sprite, self.SIDE_MARGIN, self.BODY_TOP_Y)
 
-        draw.text((64, self.INSTRUCTION_Y), self.instruction,
-                  font=get_font(self.INSTRUCTION_FONT_SIZE), fill=0, anchor="mm")
+        self._instruction_text.set_text(self.instruction)
+        self._instruction_text.draw_on(
+            sprite, 0, self.INSTRUCTION_Y - self.INSTRUCTION_FONT_SIZE // 2
+        )
 
     # ------------------------------------------------------------------
     # Dismissal

@@ -11,7 +11,8 @@ Time comes from ChessClockState (manages countdown).
 
 from PIL import Image, ImageDraw
 from .framework.widget import Widget
-from .text import TextWidget, Justify
+from .text import TextWidget, Justify, Overflow
+from .text_scale import DEFAULT_TEXT_SIZE, normalize_text_size, scale_font
 from typing import Optional
 
 try:
@@ -73,7 +74,8 @@ class ChessClockWidget(Widget):
     
     def __init__(self, x: int, y: int, width: int, height: int, update_callback,
                  timed_mode: bool = True, flip: bool = False,
-                 on_tick_refresh: Optional[callable] = None):
+                 on_tick_refresh: Optional[callable] = None,
+                 text_size: str = DEFAULT_TEXT_SIZE):
         """Initialize chess clock widget.
         
         Args:
@@ -91,11 +93,20 @@ class ChessClockWidget(Widget):
                 routine changes are deferred by the Manager and fold into it.
                 When None (e.g. tests, untimed play), ticks fall back to the
                 normal deferred update path.
+            text_size: Display > Text Size name (small/medium/large).
         """
         super().__init__(x, y, width, height, update_callback)
         self._timed_mode = timed_mode
         self._flip = flip
         self._on_tick_refresh = on_tick_refresh
+        text_size = normalize_text_size(text_size)
+        label_font = scale_font(10, text_size)
+        name_font = scale_font(8, text_size)
+        time_font = scale_font(16, text_size)
+        annot_font = scale_font(8, text_size)
+        turn_font = scale_font(16, text_size)
+        turn_name_font = scale_font(10, text_size)
+        hint_font = scale_font(16, text_size)
         # Compact turn indicator, driven by the analysis widget's paging so
         # move-history pages show a smaller clock; restored on the analysis page.
         # Untimed mode: the large turn-indicator circle is omitted and the
@@ -122,48 +133,58 @@ class ChessClockWidget(Widget):
         
         # Create TextWidgets for timed mode - use parent handler for child updates
         # White label (left aligned, after indicator)
-        self._white_label = TextWidget(20, 0, 40, 16, self._handle_child_update,
-                                        text="White", font_size=10, 
-                                        justify=Justify.LEFT, transparent=True)
+        self._white_label = TextWidget(20, 0, 40, label_font + 6, self._handle_child_update,
+                                        text="White", font_size=label_font,
+                                        justify=Justify.LEFT, transparent=True,
+                                        overflow=Overflow.FIT, min_font_size=8)
         # White player name (smaller, under the label)
-        self._white_name_text = TextWidget(20, 0, 60, 12, self._handle_child_update,
-                                           text="", font_size=8,
-                                           justify=Justify.LEFT, transparent=True)
+        self._white_name_text = TextWidget(20, 0, 60, name_font + 4, self._handle_child_update,
+                                           text="", font_size=name_font,
+                                           justify=Justify.LEFT, transparent=True,
+                                           overflow=Overflow.FIT, min_font_size=6)
         # White time (right aligned)
-        self._white_time_text = TextWidget(60, 0, 64, 20, self._handle_child_update,
-                                           text="00:00", font_size=16,
-                                           justify=Justify.RIGHT, transparent=True)
+        self._white_time_text = TextWidget(60, 0, 64, time_font + 4, self._handle_child_update,
+                                           text="00:00", font_size=time_font,
+                                           justify=Justify.RIGHT, transparent=True,
+                                           overflow=Overflow.SHRINK, min_font_size=10)
         # Black label
-        self._black_label = TextWidget(20, 0, 40, 16, self._handle_child_update,
-                                       text="Black", font_size=10,
-                                       justify=Justify.LEFT, transparent=True)
+        self._black_label = TextWidget(20, 0, 40, label_font + 6, self._handle_child_update,
+                                       text="Black", font_size=label_font,
+                                       justify=Justify.LEFT, transparent=True,
+                                       overflow=Overflow.FIT, min_font_size=8)
         # Black player name (smaller, under the label)
-        self._black_name_text = TextWidget(20, 0, 60, 12, self._handle_child_update,
-                                           text="", font_size=8,
-                                           justify=Justify.LEFT, transparent=True)
+        self._black_name_text = TextWidget(20, 0, 60, name_font + 4, self._handle_child_update,
+                                           text="", font_size=name_font,
+                                           justify=Justify.LEFT, transparent=True,
+                                           overflow=Overflow.FIT, min_font_size=6)
         # Black time
-        self._black_time_text = TextWidget(60, 0, 64, 20, self._handle_child_update,
-                                           text="00:00", font_size=16,
-                                           justify=Justify.RIGHT, transparent=True)
+        self._black_time_text = TextWidget(60, 0, 64, time_font + 4, self._handle_child_update,
+                                           text="00:00", font_size=time_font,
+                                           justify=Justify.RIGHT, transparent=True,
+                                           overflow=Overflow.SHRINK, min_font_size=10)
         # Increment/delay annotation (small, right-aligned under each time). Shows
         # "+3"/"d3"/"b3" for the active control, or the live simple-delay
         # countdown for the side on move; blank for plain sudden death/untimed.
-        self._white_annot_text = TextWidget(60, 0, 64, 10, self._handle_child_update,
-                                            text="", font_size=8,
-                                            justify=Justify.RIGHT, transparent=True)
-        self._black_annot_text = TextWidget(60, 0, 64, 10, self._handle_child_update,
-                                            text="", font_size=8,
-                                            justify=Justify.RIGHT, transparent=True)
+        self._white_annot_text = TextWidget(60, 0, 64, annot_font + 2, self._handle_child_update,
+                                            text="", font_size=annot_font,
+                                            justify=Justify.RIGHT, transparent=True,
+                                            overflow=Overflow.SHRINK, min_font_size=6)
+        self._black_annot_text = TextWidget(60, 0, 64, annot_font + 2, self._handle_child_update,
+                                            text="", font_size=annot_font,
+                                            justify=Justify.RIGHT, transparent=True,
+                                            overflow=Overflow.SHRINK, min_font_size=6)
         
         # Create TextWidgets for compact mode
         # Turn indicator text (color)
-        self._turn_text = TextWidget(0, 0, width, 20, self._handle_child_update,
-                                     text="White's Turn", font_size=16,
-                                     justify=Justify.CENTER, transparent=True)
+        self._turn_text = TextWidget(0, 0, width, turn_font + 4, self._handle_child_update,
+                                     text="White's Turn", font_size=turn_font,
+                                     justify=Justify.CENTER, transparent=True,
+                                     overflow=Overflow.FIT, min_font_size=10)
         # Player name text (below turn indicator)
-        self._turn_name_text = TextWidget(0, 0, width, 14, self._handle_child_update,
-                                          text="", font_size=10,
-                                          justify=Justify.CENTER, transparent=True)
+        self._turn_name_text = TextWidget(0, 0, width, turn_name_font + 4, self._handle_child_update,
+                                          text="", font_size=turn_name_font,
+                                          justify=Justify.CENTER, transparent=True,
+                                          overflow=Overflow.FIT, min_font_size=8)
         
         # Track last state to avoid unnecessary updates
         self._last_white_time = None
@@ -177,12 +198,14 @@ class ChessClockWidget(Widget):
         self._black_brain_hint: str = ""
         
         # TextWidgets for brain hints (large letter)
-        self._white_hint_text = TextWidget(0, 0, 20, 20, self._handle_child_update,
-                                           text="", font_size=16,
-                                           justify=Justify.CENTER, transparent=True)
-        self._black_hint_text = TextWidget(0, 0, 20, 20, self._handle_child_update,
-                                           text="", font_size=16,
-                                           justify=Justify.CENTER, transparent=True)
+        self._white_hint_text = TextWidget(0, 0, 20, hint_font + 4, self._handle_child_update,
+                                           text="", font_size=hint_font,
+                                           justify=Justify.CENTER, transparent=True,
+                                           overflow=Overflow.SHRINK, min_font_size=10)
+        self._black_hint_text = TextWidget(0, 0, 20, hint_font + 4, self._handle_child_update,
+                                           text="", font_size=hint_font,
+                                           justify=Justify.CENTER, transparent=True,
+                                           overflow=Overflow.SHRINK, min_font_size=10)
     
     def _handle_child_update(self, full: bool = False, immediate: bool = False):
         """No-op update callback for the clock's render-only child text widgets.

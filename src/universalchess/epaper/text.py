@@ -16,6 +16,24 @@ class Justify(Enum):
     RIGHT = "right"
 
 
+class Overflow(Enum):
+    """How text that is wider than the widget is brought onto the panel.
+
+    CLIP: one line at the designed size; wider text is drawn at a negative x
+        and loses glyphs. The historical default.
+    WRAP: word-wrap at the designed size; lines that do not fit the height are
+        dropped (same as wrapText=True).
+    SHRINK: reduce the font until the text fits on one line (explicit newlines
+        still break), down to min_font_size. Does not wrap.
+    FIT: wrap when the wrapped lines fit the widget height; otherwise shrink
+        like SHRINK. Last resort is WRAP at min_font_size (extra lines drop).
+    """
+    CLIP = "clip"
+    WRAP = "wrap"
+    SHRINK = "shrink"
+    FIT = "fit"
+
+
 class TextWidget(Widget):
     """Text display widget with configurable background dithering, text wrapping, justification, and bold.
     
@@ -33,7 +51,8 @@ class TextWidget(Widget):
                  text: str = "", 
                  background: int = -1, font_size: int = 12, font: ImageFont.FreeTypeFont = None,
                  wrapText: bool = False, justify: Justify = Justify.LEFT,
-                 transparent: bool = True, bold: bool = False):
+                 transparent: bool = True, bold: bool = False,
+                 overflow: Overflow = Overflow.CLIP, min_font_size: int = 8):
         """
         Initialize text widget.
         
@@ -53,12 +72,16 @@ class TextWidget(Widget):
                 4 = heavy dither (~67% black)
                 5 = solid black
             font_size: Font size in points (used if font not provided)
-            font: Optional PIL ImageFont object. If provided, font_size is ignored.
-            wrapText: If True, wrap text to fit within widget width and height
+            font: Optional PIL ImageFont object. If provided, font_size is ignored
+                and Overflow.SHRINK/FIT cannot load smaller sizes (wrap only).
+            wrapText: If True, wrap text to fit within widget width and height.
+                Equivalent to overflow=WRAP when overflow is left at CLIP.
             justify: Text justification (Justify.LEFT, Justify.CENTER, or Justify.RIGHT)
             transparent: If True (default), background is transparent and text appears
                         over parent widget's pixels. Overrides background=-1.
             bold: If True, simulate bold by drawing text twice with 1px horizontal offset
+            overflow: CLIP (default), WRAP, SHRINK, or FIT. See Overflow.
+            min_font_size: Floor for SHRINK/FIT, in points (default 8).
         """
         super().__init__(x, y, width, height, update_callback)
         self.text = text
@@ -69,10 +92,17 @@ class TextWidget(Widget):
         else:
             self.background = max(-1, min(5, background))
         self.font_size = font_size
+        self.min_font_size = max(1, min(min_font_size, font_size))
         self.wrapText = wrapText
+        # wrapText=True is the historical WRAP switch; an explicit overflow other
+        # than CLIP wins so FIT/SHRINK callers can still pass wrapText.
+        self.overflow = Overflow.WRAP if wrapText and overflow is Overflow.CLIP else overflow
         self.justify = justify
         self.bold = bold
+        self._custom_font = font
         self._font = font if font is not None else self._load_font()
+        self._original_font = self._font
+        self._layout = None  # (font_size, wrap, font) resolved by overflow
         self._mask = None  # Cached mask image
         
         # Pre-rendered text sprite cache
@@ -95,8 +125,9 @@ class TextWidget(Widget):
         
         If this key changes, all cached sprites must be invalidated.
         """
-        return (self.text, self.width, self.height, self.font_size, 
-                self.wrapText, self.justify, self.bold)
+        return (self.text, self.width, self.height, self.font_size,
+                self.wrapText, self.justify, self.bold, self.overflow,
+                self.min_font_size, self.fitted_font_size)
     
     def _invalidate_caches(self) -> None:
         """Invalidate all cached data (sprites, masks, rendered images)."""
@@ -104,6 +135,8 @@ class TextWidget(Widget):
         self._mask = None
         self._sprite_cache.clear()
         self._sprite_cache_key = None
+        self._layout = None
+        self._font = self._original_font
     
     def set_text(self, text: str) -> None:
         """Set the text to display."""
@@ -166,6 +199,98 @@ class TextWidget(Widget):
             self.bold = bold
             self._invalidate_caches()
             self.request_update(full=False)
+
+    def _text_len(self, text: str, font) -> int:
+        """Pixel width of ``text`` in ``font``, using the same measure as wrap."""
+        probe = ImageDraw.Draw(Image.new("1", (1, 1), 255))
+        try:
+            return int(probe.textlength(text, font=font))
+        except (AttributeError, ValueError):
+            bbox = probe.textbbox((0, 0), text, font=font)
+            return bbox[2] - bbox[0]
+
+    def _font_for_size(self, size: int):
+        """Font at ``size``, or the custom font when size cannot be reloaded."""
+        if self._custom_font is not None:
+            return self._custom_font
+        return get_font(size)
+
+    def _lines_fit(self, font, size: int, word_wrap: bool) -> bool:
+        """True when every line is within width and the block is within height."""
+        if not self.text:
+            return True
+        if word_wrap:
+            lines = self._wrap_text(self.text, self.width, font)
+        else:
+            lines = self.text.split("\n")
+        if any(self._text_len(line, font) > self.width for line in lines if line):
+            return False
+        line_height = size + 2
+        n_lines = max(1, len(lines))
+        return n_lines * line_height <= self.height
+
+    def _compute_layout(self):
+        """Resolve (font_size, wrap, font) for the current overflow mode."""
+        designed = self.font_size
+        designed_font = self._original_font
+
+        if self.overflow is Overflow.CLIP:
+            return designed, False, designed_font
+        if self.overflow is Overflow.WRAP:
+            return designed, True, designed_font
+
+        allow_wrap = self.overflow is Overflow.FIT
+        if self._custom_font is not None:
+            sizes = (designed,)
+        else:
+            sizes = range(designed, self.min_font_size - 1, -1)
+
+        for size in sizes:
+            font = self._font_for_size(size)
+            # Prefer a single line at this size (keeps headlines on one row
+            # when shrinking is enough). Fall back to wrap when FIT allows it.
+            if self._lines_fit(font, size, word_wrap=False):
+                return size, False, font
+            if allow_wrap and self._lines_fit(font, size, word_wrap=True):
+                return size, True, font
+
+        # Last resort: wrap at the floor so as much as possible is shown.
+        floor = self.min_font_size if self._custom_font is None else designed
+        return floor, True, self._font_for_size(floor)
+
+    def _ensure_fitted(self) -> None:
+        """Resolve overflow into the font/wrap used for measuring and drawing."""
+        if self._layout is not None:
+            return
+        size, wrap, font = self._compute_layout()
+        self._layout = (size, wrap, font)
+        self._font = font
+
+    @property
+    def fitted_font_size(self) -> int:
+        """Font size actually used after overflow fitting."""
+        self._ensure_fitted()
+        return self._layout[0]
+
+    @property
+    def fitted_wrap(self) -> bool:
+        """Whether drawing word-wraps after overflow fitting."""
+        self._ensure_fitted()
+        return self._layout[1]
+
+    def used_height(self) -> int:
+        """Pixel height of the lines that will actually be drawn."""
+        self._ensure_fitted()
+        if not self.text:
+            return 0
+        size, wrap, font = self._layout
+        line_height = size + 2
+        if not wrap:
+            n_lines = max(1, self.text.count("\n") + 1)
+        else:
+            n_lines = max(1, len(self._wrap_text(self.text, self.width, font)))
+        max_lines = max(1, self.height // line_height)
+        return min(self.height, min(n_lines, max_lines) * line_height)
     
     def _draw_text(self, draw: ImageDraw.Draw, x: int, y: int, text: str, fill: int) -> None:
         """Draw text with optional bold effect.
@@ -319,30 +444,34 @@ class TextWidget(Widget):
         # Start with all black (transparent)
         mask = Image.new("1", (self.width, self.height), 0)
         draw = ImageDraw.Draw(mask)
-        
-        if self.wrapText:
+        self._paint_text(draw, 255)
+        return mask
+
+    def _paint_text(self, draw: ImageDraw.Draw, fill: int) -> None:
+        """Draw the overflow-fitted text onto ``draw``."""
+        self._ensure_fitted()
+        size, wrap, _font = self._layout
+        if wrap:
             wrapped_lines = self._wrap_text(self.text, self.width)
-            line_height = self.font_size + 2
+            line_height = size + 2
             max_lines = max(1, self.height // line_height)
             for idx, line in enumerate(wrapped_lines[:max_lines]):
                 y_pos = idx * line_height
                 if y_pos + line_height > self.height:
                     break
                 x_pos = self._get_x_position(line, draw)
-                # Draw text in white (opaque) on mask, respecting bold
-                self._draw_text(draw, x_pos, y_pos - 1, line, 255)
+                self._draw_text(draw, x_pos, y_pos - 1, line, fill)
         else:
             x_pos = self._get_x_position(self.text, draw)
-            self._draw_text(draw, x_pos, -1, self.text, 255)
-        
-        return mask
+            self._draw_text(draw, x_pos, -1, self.text, fill)
     
     def wrap_lines(self, text: str = None) -> list:
         """Return `text` wrapped to this widget's width using its font.
 
         Public entry point for callers (e.g. a paginating parent widget) that
         need the exact line breaks this widget will render. Defaults to the
-        widget's current text.
+        widget's current text. When ``text`` is omitted, the lines match the
+        overflow-fitted layout (one line after a shrink, wrapped after FIT).
 
         Args:
             text: Text to wrap; uses self.text when None.
@@ -350,9 +479,14 @@ class TextWidget(Widget):
         Returns:
             List of wrapped lines (respecting explicit newlines).
         """
-        return self._wrap_text(self.text if text is None else text, self.width)
+        if text is None:
+            self._ensure_fitted()
+            if not self.fitted_wrap:
+                return self.text.split("\n") if self.text else []
+            return self._wrap_text(self.text, self.width)
+        return self._wrap_text(text, self.width)
 
-    def _wrap_text(self, text: str, max_width: int) -> list:
+    def _wrap_text(self, text: str, max_width: int, font=None) -> list:
         """
         Wrap text to fit within max_width using the widget's font.
         
@@ -362,6 +496,7 @@ class TextWidget(Widget):
         Args:
             text: Text to wrap (may contain \\n for explicit line breaks)
             max_width: Maximum width in pixels
+            font: Font to measure with; defaults to the widget's current font.
             
         Returns:
             List of wrapped text lines
@@ -369,6 +504,7 @@ class TextWidget(Widget):
         if not text:
             return []
         
+        measure_font = font if font is not None else self._font
         temp_image = Image.new("1", (1, 1), 255)
         temp_draw = ImageDraw.Draw(temp_image)
         
@@ -392,7 +528,7 @@ class TextWidget(Widget):
             current = words[0]
             for word in words[1:]:
                 candidate = f"{current} {word}"
-                if temp_draw.textlength(candidate, font=self._font) <= max_width:
+                if temp_draw.textlength(candidate, font=measure_font) <= max_width:
                     current = candidate
                 else:
                     lines.append(current)
@@ -417,22 +553,7 @@ class TextWidget(Widget):
         # Create white background image
         sprite = Image.new("1", (self.width, self.height), 255)
         draw = ImageDraw.Draw(sprite)
-        
-        if self.wrapText:
-            wrapped_lines = self._wrap_text(self.text, self.width)
-            line_height = self.font_size + 2
-            max_lines = max(1, self.height // line_height)
-            
-            for idx, line in enumerate(wrapped_lines[:max_lines]):
-                y_pos = idx * line_height
-                if y_pos + line_height > self.height:
-                    break
-                x_pos = self._get_x_position(line, draw)
-                self._draw_text(draw, x_pos, y_pos - 1, line, text_color)
-        else:
-            x_pos = self._get_x_position(self.text, draw)
-            self._draw_text(draw, x_pos, -1, self.text, text_color)
-        
+        self._paint_text(draw, text_color)
         return sprite
     
     def _get_sprite(self, text_color: int) -> Image.Image:

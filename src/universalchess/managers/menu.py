@@ -15,6 +15,7 @@ from typing import List, Callable, Optional, Any, Union
 from dataclasses import dataclass
 
 from universalchess.epaper.icon_menu import IconMenuEntry, IconMenuWidget
+from universalchess.epaper.text_scale import read_text_size
 
 log = logging.getLogger(__name__)
 
@@ -397,7 +398,8 @@ class MenuManager:
                 self._board.display_manager.update,
                 entries=entries,
                 selected_index=current_index,
-                on_index_change=on_index_change
+                on_index_change=on_index_change,
+                text_size=read_text_size(),
             )
 
             # Register as active menu (keys will be queued until loading completes)

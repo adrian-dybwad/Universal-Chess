@@ -1,8 +1,10 @@
 """Text-size scaling for e-paper widgets.
 
 A single Display > Text Size setting (``small`` / ``medium`` / ``large``) scales
-the font sizes of widgets that opt in. Currently the coach statement panel and
-the analysis move list read it; more widgets will adopt it later.
+the font sizes of widgets that opt in: the coach statement panel, the analysis
+move list, game-over and setup status, the chess clock labels, the help dialog,
+info overlays, and icon menus (which also raise their minimum row height so
+Large can use extra space on the buttons).
 
 The mapping is kept here as a pure lookup so the board renderer and any other
 caller resolve a size name to the exact same pixel sizes, and so the single
@@ -18,7 +20,13 @@ DEFAULT_TEXT_SIZE = "medium"
 # tighter, large fits fewer lines/rows (paging absorbs the difference).
 _SCALE = {"small": 0.8, "medium": 1.0, "large": 1.25}
 
-__all__ = ["TEXT_SIZES", "DEFAULT_TEXT_SIZE", "normalize_text_size", "scale_font"]
+__all__ = [
+    "TEXT_SIZES",
+    "DEFAULT_TEXT_SIZE",
+    "normalize_text_size",
+    "scale_font",
+    "read_text_size",
+]
 
 
 def normalize_text_size(value: str) -> str:
@@ -41,3 +49,17 @@ def scale_font(base_size: int, text_size: str) -> int:
     """
     factor = _SCALE[normalize_text_size(text_size)]
     return max(1, round(base_size * factor))
+
+
+def read_text_size() -> str:
+    """Return the persisted Display > Text Size, normalized to a valid name.
+
+    Read live so a menu change takes effect on the next widget that is built
+    (the next menu screen, the next game-widget rebuild). Unknown or missing
+    values become ``medium``.
+    """
+    from universalchess.board.settings import Settings
+
+    return normalize_text_size(
+        Settings.read("game", "text_size", DEFAULT_TEXT_SIZE)
+    )

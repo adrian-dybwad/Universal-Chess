@@ -271,8 +271,9 @@ def test_selecting_text_size_opens_option_list_and_persists_choice():
     Why this test exists: Text Size is a select bound to game.text_size; on the
     board a select opens an option sub-list (small/medium/large) and persists the
     chosen value to the game store. How the regression manifests: the row is inert
-    or writes to the wrong key, so the coach/move-list text never resizes from the
-    board menu. Script: open the row, pick "large", then exit the parent.
+    or writes to the wrong key, so board text (menus, game-over, coach, move list)
+    never resizes from the board menu. Script: open the row, pick "large", then
+    exit the parent.
     """
     state = _state(text_size="small")
     mm = _FakeMenuManager(["field.display.text_size", "large", "BACK"])
@@ -293,6 +294,10 @@ def test_selecting_text_size_opens_option_list_and_persists_choice():
     # sizes and this mapping check fails on whichever row lost its size.
     sizes_by_key = {e.key: e.font_size for e in option_screens[0]}
     assert sizes_by_key == {"small": 13, "medium": 16, "large": 20}
+    # Those sizes are the preview, not a medium design to scale. Flag them so
+    # IconMenuWidget does not multiply 20 by Large's 1.25. Failure: the flag is
+    # missing and Large in the picker renders at 25px.
+    assert all(not entry.scale_with_text_size for entry in option_screens[0])
 
 
 def test_selecting_led_advances_brightness_within_range():

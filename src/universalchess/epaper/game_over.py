@@ -17,6 +17,8 @@ from PIL import Image, ImageDraw, ImageFont, ImageChops
 from .framework.widget import Widget
 from .text import TextWidget, Justify
 from universalchess.i18n import t
+from .text import TextWidget, Justify, Overflow
+from .text_scale import DEFAULT_TEXT_SIZE, normalize_text_size, scale_font
 import os
 import sys
 import logging
@@ -44,9 +46,15 @@ class GameOverWidget(Widget):
     DEFAULT_Y = 144
     DEFAULT_HEIGHT = 72
     
+    # Designed (medium) font sizes; Display > Text Size scales them.
+    WINNER_FONT_SIZE = 16
+    TERMINATION_FONT_SIZE = 12
+    SMALL_FONT_SIZE = 10
+    
     def __init__(self, x: int, y: int, width: int, height: int, update_callback,
                  game_state=None,
-                 led_off_callback: callable = None):
+                 led_off_callback: callable = None,
+                 text_size: str = DEFAULT_TEXT_SIZE):
         """
         Initialize game over widget.
         
@@ -61,9 +69,14 @@ class GameOverWidget(Widget):
             update_callback: Callback to trigger display updates. Must not be None.
             game_state: Optional ChessGameState to observe. If None, uses singleton.
             led_off_callback: LED callback () to turn off all LEDs. Used on game over.
+            text_size: Display > Text Size name (small/medium/large).
         """
         super().__init__(x, y, width, height, update_callback)
         self._led_off = led_off_callback
+        self._text_size = normalize_text_size(text_size)
+        winner_font = scale_font(self.WINNER_FONT_SIZE, self._text_size)
+        term_font = scale_font(self.TERMINATION_FONT_SIZE, self._text_size)
+        small_font = scale_font(self.SMALL_FONT_SIZE, self._text_size)
         
         self.result = ""           # "1-0", "0-1", "1/2-1/2"
         self.winner = ""           # "White wins", "Black wins", "Draw"
@@ -75,19 +88,30 @@ class GameOverWidget(Widget):
         # Start hidden - will show on game_over event
         self.visible = False
         
-        # Create TextWidgets for each line - use parent handler for child updates
-        self._winner_text = TextWidget(0, 4, width, 18, self._handle_child_update,
-                                        text="", font_size=16,
-                                        justify=Justify.CENTER, transparent=True)
-        self._termination_text = TextWidget(0, 24, width, 16, self._handle_child_update,
-                                            text="", font_size=12,
-                                            justify=Justify.CENTER, transparent=True)
-        self._moves_text = TextWidget(0, 44, width, 14, self._handle_child_update,
-                                      text="", font_size=10,
-                                      justify=Justify.CENTER, transparent=True)
-        self._times_text = TextWidget(0, 58, width, 14, self._handle_child_update,
-                                      text="", font_size=10,
-                                      justify=Justify.CENTER, transparent=True)
+        # Winner may wrap to two lines (French "Les blancs gagnent") or shrink
+        # when the slot is one line; FIT chooses. Height is two designed lines
+        # so wrap is available; used_height() reports what was actually drawn.
+        winner_line = winner_font + 2
+        self._winner_text = TextWidget(0, 0, width, winner_line * 2, self._handle_child_update,
+                                        text="", font_size=winner_font,
+                                        justify=Justify.CENTER, transparent=True,
+                                        overflow=Overflow.FIT, min_font_size=10)
+        self._termination_text = TextWidget(0, 0, width, term_font + 4, self._handle_child_update,
+                                            text="", font_size=term_font,
+                                            justify=Justify.CENTER, transparent=True,
+                                            overflow=Overflow.FIT, min_font_size=8)
+        self._moves_text = TextWidget(0, 0, width, small_font + 4, self._handle_child_update,
+                                      text="", font_size=small_font,
+                                      justify=Justify.CENTER, transparent=True,
+                                      overflow=Overflow.FIT, min_font_size=8)
+        self._times_text = TextWidget(0, 0, width, small_font + 4, self._handle_child_update,
+                                      text="", font_size=small_font,
+                                      justify=Justify.CENTER, transparent=True,
+                                      overflow=Overflow.FIT, min_font_size=8)
+        self._footer_text = TextWidget(0, 0, width, small_font + 4, self._handle_child_update,
+                                       text="", font_size=small_font,
+                                       justify=Justify.CENTER, transparent=True,
+                                       overflow=Overflow.FIT, min_font_size=8)
         
         # Subscribe to game state events
         if game_state is None:
@@ -298,12 +322,11 @@ class GameOverWidget(Widget):
     def render(self, sprite: Image.Image) -> None:
         """
         Render game over widget using TextWidgets.
-        
-        Layout (72 pixels height):
-        - Line 1 (y=4): Winner (e.g., "White wins", "Black wins", "Draw")
-        - Line 2 (y=24): Termination reason (e.g., "Checkmate", "Resignation")
-        - Line 3 (y=44): Move count (e.g., "42 moves")
-        - Line 4 (y=58): Final times if available (e.g., "W:5:23 B:3:17")
+
+        The winner line uses Overflow.FIT: it stays one line when the string
+        fits (English "White wins") and wraps to two when the slot allows
+        (French "Les blancs gagnent"). Remaining rows shift down; if times
+        would fall off the 72px panel they merge with the move count.
         """
         draw = ImageDraw.Draw(sprite)
         
@@ -313,27 +336,43 @@ class GameOverWidget(Widget):
         # Draw separator line at top
         draw.line([(0, 0), (self.width, 0)], fill=0, width=1)
         
-        # Line 1: Winner (centered, large font)
+        y = 4
         if self.winner:
             self._winner_text.set_text(self.winner)
-            self._winner_text.draw_on(sprite, 0, 4)
+            self._winner_text.draw_on(sprite, 0, y)
+            y += self._winner_text.used_height() + 2
         
-        # Line 2: Termination reason (centered, medium font)
         if self.termination:
             self._termination_text.set_text(self.termination)
-            self._termination_text.draw_on(sprite, 0, 24)
+            self._termination_text.draw_on(sprite, 0, y)
+            y += self._termination_text.used_height() + 2
         
-        # Line 3: Move count (centered, small font)
-        if self.move_count > 0:
-            self._moves_text.set_text(f"{self.move_count} moves")
-            self._moves_text.draw_on(sprite, 0, 44)
-        
-        # Line 4: Final times if available (centered, small font)
+        moves = f"{self.move_count} moves" if self.move_count > 0 else ""
+        times = ""
         if self.white_time is not None and self.black_time is not None:
-            white_str = self._format_time(self.white_time)
-            black_str = self._format_time(self.black_time)
-            self._times_text.set_text(f"W:{white_str}  B:{black_str}")
-            self._times_text.draw_on(sprite, 0, 58)
+            times = (
+                f"W:{self._format_time(self.white_time)}  "
+                f"B:{self._format_time(self.black_time)}"
+            )
+        
+        small_line = self._moves_text.font_size + 2
+        remaining = self.height - y
+        if moves and times:
+            if remaining >= 2 * small_line:
+                self._moves_text.set_text(moves)
+                self._moves_text.draw_on(sprite, 0, y)
+                y += self._moves_text.used_height()
+                self._times_text.set_text(times)
+                self._times_text.draw_on(sprite, 0, y)
+            else:
+                self._footer_text.set_text(f"{moves}  {times}")
+                self._footer_text.draw_on(sprite, 0, y)
+        elif moves:
+            self._moves_text.set_text(moves)
+            self._moves_text.draw_on(sprite, 0, y)
+        elif times:
+            self._times_text.set_text(times)
+            self._times_text.draw_on(sprite, 0, y)
 
     def render_red(self, sprite: Image.Image) -> None:
         """Render the RED overlay: the winner/result line in red (three-color).
@@ -346,11 +385,10 @@ class GameOverWidget(Widget):
         if not self.winner:
             return
 
-        # Render the winner glyphs to a scratch image at the same size/offset as
-        # render() draws them, then paste red where those glyphs are black.
-        glyphs = Image.new('1', (self.width, 18), 255)
         self._winner_text.set_text(self.winner)
+        used = max(1, self._winner_text.used_height())
+        glyphs = Image.new('1', (self.width, used), 255)
         self._winner_text.draw_on(glyphs, 0, 0)
         # 4-tuple box sizes the paste region from the box, not from the mask via
         # isImageType, which is robust to PIL-mock pollution from other tests.
-        sprite.paste(0, (0, 4, self.width, 22), ImageChops.invert(glyphs))
+        sprite.paste(0, (0, 4, self.width, 4 + used), ImageChops.invert(glyphs))

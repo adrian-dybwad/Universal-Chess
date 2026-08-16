@@ -8,6 +8,7 @@ Supports callbacks for selection and external key event routing.
 from PIL import Image
 from .framework.widget import Widget
 from .icon_button import IconButtonWidget
+from .text_scale import DEFAULT_TEXT_SIZE, normalize_text_size, scale_font
 from typing import Optional, Callable, List
 from dataclasses import dataclass
 import threading
@@ -58,6 +59,9 @@ class IconMenuEntry:
         description: Optional long description text rendered below the icon+label area.
                     Displayed as smaller, word-wrapped text spanning the full button width.
         description_font_size: Font size for description text (default 11)
+        scale_with_text_size: When True (default), Display > Text Size multiplies
+                    font_size, description_font_size, and max_height. False keeps
+                    the declared sizes (the Text Size option list previews 13/16/20).
         icon_image: Optional pre-rendered image used as the main icon instead of
                     a drawn icon_name (e.g. a chess-piece sprite preview).
         icon_mask: Optional transparency mask for icon_image (opaque where the
@@ -86,6 +90,7 @@ class IconMenuEntry:
     icon_image: Optional[Image.Image] = None
     icon_mask: Optional[Image.Image] = None
     trailing_icon_name: Optional[str] = None
+    scale_with_text_size: bool = True
 
 
 class IconMenuWidget(Widget):
@@ -117,7 +122,8 @@ class IconMenuWidget(Widget):
                  button_height: int = 70,
                  button_margin: int = 4,
                  background_shade: int = 2,
-                 min_button_height: int = 45):
+                 min_button_height: int = 45,
+                 text_size: str = DEFAULT_TEXT_SIZE):
         """Initialize icon menu widget.
         
         Args:
@@ -137,7 +143,11 @@ class IconMenuWidget(Widget):
             button_height: Height of each button (default 70)
             button_margin: Margin around buttons, passed to each button (default 4)
             background_shade: Dithered background shade 0-16 (default 2 = ~12.5% grey)
-            min_button_height: Minimum button height before scrolling (default 45)
+            min_button_height: Minimum button height before scrolling (default 45).
+                Scaled by ``text_size`` so Large rows are taller.
+            text_size: Display > Text Size name (small/medium/large). Scales
+                entry fonts and the minimum row height unless an entry sets
+                scale_with_text_size=False.
         """
         super().__init__(x, y, width, height, update_callback, background_shade=background_shade)
         
@@ -163,7 +173,8 @@ class IconMenuWidget(Widget):
         # Layout
         self.button_height = button_height
         self.button_margin = button_margin
-        self.min_button_height = min_button_height
+        self._text_size = normalize_text_size(text_size)
+        self.min_button_height = scale_font(min_button_height, self._text_size)
         
         # Scrolling state
         self.scroll_offset = 0  # Index of first visible entry
@@ -259,8 +270,11 @@ class IconMenuWidget(Widget):
             
             # Apply max_height constraint if specified (only for selectable entries)
             # Non-selectable info widgets are exempt from height constraints
-            if entry.selectable and entry.max_height is not None and button_height > entry.max_height:
-                button_height = entry.max_height
+            max_height = entry.max_height
+            if entry.scale_with_text_size and max_height is not None:
+                max_height = scale_font(max_height, self._text_size)
+            if entry.selectable and max_height is not None and button_height > max_height:
+                button_height = max_height
             
             # Determine icon size - use entry's custom size or derive from height
             if entry.icon_size is not None:
@@ -269,6 +283,15 @@ class IconMenuWidget(Widget):
                 # Default icon size scales with button height
                 icon_size = min(36, max(20, button_height - 24))
             
+            if entry.scale_with_text_size:
+                font_size = scale_font(entry.font_size, self._text_size)
+                description_font_size = scale_font(
+                    entry.description_font_size, self._text_size
+                )
+            else:
+                font_size = entry.font_size
+                description_font_size = entry.description_font_size
+
             is_selected = (actual_idx == self.selected_index)
             button = IconButtonWidget(
                 0,
@@ -284,11 +307,11 @@ class IconMenuWidget(Widget):
                 margin=self.button_margin,
                 icon_size=icon_size,
                 layout=entry.layout,
-                font_size=entry.font_size,
+                font_size=font_size,
                 bold=entry.bold,
                 border_width=entry.border_width,
                 description=entry.description,
-                description_font_size=entry.description_font_size,
+                description_font_size=description_font_size,
                 icon_image=entry.icon_image,
                 icon_mask=entry.icon_mask,
                 trailing_icon_name=entry.trailing_icon_name
@@ -604,7 +627,8 @@ def create_icon_menu_entries(entries_config: List[dict]) -> List[IconMenuEntry]:
         entries_config: List of dicts with 'key', 'label', 'icon_name',
                        and optional 'enabled', 'height_ratio', 'max_height',
                        'icon_size', 'layout', 'font_size', 'bold',
-                       'description', 'description_font_size'
+                       'description', 'description_font_size',
+                       'scale_with_text_size'
         
     Returns:
         List of IconMenuEntry objects
@@ -622,7 +646,8 @@ def create_icon_menu_entries(entries_config: List[dict]) -> List[IconMenuEntry]:
             font_size=e.get('font_size', 16),
             bold=e.get('bold', False),
             description=e.get('description', None),
-            description_font_size=e.get('description_font_size', 11)
+            description_font_size=e.get('description_font_size', 11),
+            scale_with_text_size=e.get('scale_with_text_size', True),
         )
         for e in entries_config
     ]

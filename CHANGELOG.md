@@ -15,6 +15,16 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **Display > Text Size on more of the board UI**: The setting previously
+  scaled only the coach statement and the analysis move list. It now also
+  scales game-over and setup-status copy, chess-clock labels and names, the
+  help dialog, info overlays, and icon menus. Large raises the menu's
+  minimum row height so dense lists show fewer, taller buttons, and labels
+  on a tall button wrap into the extra space instead of clipping. Medium
+  remains the identity scale, so existing layouts are unchanged until the
+  setting is moved. The Text Size picker still previews Small/Medium/Large
+  at 13/16/20 rather than scaling those preview sizes a second time.
+
 - **Windows PowerShell troubleshooting on Original Centaur**: Importing from an
   SD card on Windows is blocked by two PowerShell errors that the download
   buttons did not mention: the shell refuses a bare `make-centaur-image.ps1` in
@@ -584,6 +594,18 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   was also a stray way to power the board off.
 
 ### Fixed
+
+- **Localized e-paper headlines no longer run off the 128px panel**: French
+  "Les blancs gagnent" is 135px at the game-over winner's 16px font, and
+  Spanish "Ganan las blancas" is 129px, so centered drawing started at a
+  negative x and lost glyphs on both edges. Turning wrap on in that 18px
+  slot dropped the second line, so the user saw "Les blancs". TextWidget
+  now has an overflow policy: wrap when the slot is tall enough for the
+  wrapped lines, otherwise shrink the font until one line fits. Game-over
+  gives the winner two lines when it needs them and merges the move count
+  with the clocks if the extra line would push times off the 72px strip.
+  Menu button labels, clock names, setup titles, and help headings use the
+  same policy.
 
 - **Original Centaur engine settings auto-save**: Engine and strength on
   Settings -> Original Centaur required an explicit Save, unlike every other

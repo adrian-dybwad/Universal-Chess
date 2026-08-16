@@ -12,6 +12,7 @@ from universalchess.epaper.text_scale import (
     DEFAULT_TEXT_SIZE,
     TEXT_SIZES,
     normalize_text_size,
+    read_text_size,
     scale_font,
 )
 
@@ -84,3 +85,23 @@ def test_scale_font_never_returns_non_positive():
     # A tiny base at the smallest factor must still be renderable (>=1); a 0px or
     # negative font would raise deep in PIL when the widget draws.
     assert scale_font(1, "small") >= 1
+
+
+def test_read_text_size_normalizes_the_persisted_setting(monkeypatch):
+    """Menus and widgets must see the same live setting, including dirty values.
+
+    Why: IconMenuWidget and DisplayManager both need the current size when they
+    are built, not a stale constructor default. Failure: a stored "Large" or
+    blank is not normalized, so scaling is skipped or raises.
+    """
+    monkeypatch.setattr(
+        "universalchess.board.settings.Settings.read",
+        lambda section, key, default="": "Large",
+    )
+    assert read_text_size() == "large"
+
+    monkeypatch.setattr(
+        "universalchess.board.settings.Settings.read",
+        lambda section, key, default="": "",
+    )
+    assert read_text_size() == DEFAULT_TEXT_SIZE

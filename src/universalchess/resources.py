@@ -450,8 +450,8 @@ class ResourceLoader:
 _resource_loader: Optional[ResourceLoader] = None
 
 
-def set_resource_loader(loader: ResourceLoader) -> None:
-    """Register the application-wide ResourceLoader singleton."""
+def set_resource_loader(loader: Optional[ResourceLoader]) -> None:
+    """Register the application-wide ResourceLoader singleton, or clear it."""
     global _resource_loader
     _resource_loader = loader
 

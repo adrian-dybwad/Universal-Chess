@@ -7,7 +7,7 @@ button menus on the small e-paper display.
 
 from PIL import Image, ImageDraw, ImageFont
 from .framework.widget import Widget, DITHER_PATTERNS
-from .text import TextWidget, Justify
+from .text import TextWidget, Justify, Overflow
 from typing import Optional, Tuple, Dict
 import math
 
@@ -150,7 +150,8 @@ class IconButtonWidget(Widget):
         """
         return None
     
-    def _get_cached_text_widget(self, width: int, centered: bool, font_size: int = None, bold: bool = None) -> TextWidget:
+    def _get_cached_text_widget(self, width: int, centered: bool, font_size: int = None, bold: bool = None,
+                                height: int = None, overflow: Overflow = Overflow.CLIP) -> TextWidget:
         """Get or create a cached TextWidget for the given parameters.
         
         Args:
@@ -158,6 +159,8 @@ class IconButtonWidget(Widget):
             centered: If True, center-justify the text
             font_size: Font size to use (defaults to self.font_size)
             bold: Whether to use bold (defaults to self.bold)
+            height: Widget height (defaults to one line)
+            overflow: Overflow policy (CLIP for already-wrapped description lines)
             
         Returns:
             Cached TextWidget instance
@@ -166,16 +169,17 @@ class IconButtonWidget(Widget):
             font_size = self.font_size
         if bold is None:
             bold = self.bold
+        if height is None:
+            height = font_size + 4
         
-        cache_key = (width, centered, bold, font_size)
+        cache_key = (width, height, centered, bold, font_size, overflow)
         
         if cache_key not in self._text_widgets_cache:
-            line_height = font_size + 4
             widget = TextWidget(
-                0, 0, width, line_height, self._handle_child_update,
+                0, 0, width, height, self._handle_child_update,
                 text="", font_size=font_size,
                 justify=Justify.CENTER if centered else Justify.LEFT,
-                transparent=True, bold=bold
+                transparent=True, bold=bold, overflow=overflow
             )
             self._text_widgets_cache[cache_key] = widget
         
@@ -417,41 +421,26 @@ class IconButtonWidget(Widget):
                                  lines: list, line_height: int, text_color: int):
         """Render button with icon on top, text below (both centered).
         
-        Uses TextWidget for text rendering.
-        
-        Args:
-            sprite: Sprite image to draw onto
-            draw: ImageDraw object
-            content_left: Left edge of content area
-            content_top: Top edge of content area
-            content_width: Width of content area
-            content_height: Height of content area
-            lines: Text lines to render
-            line_height: Height of each text line
-            text_color: Color for text (0 or 255)
+        Uses TextWidget for text rendering. Labels that do not fit the
+        remaining height wrap or shrink (Overflow.FIT) so Large can use the
+        extra space on a tall button instead of clipping.
         """
-        # Calculate total text height
-        text_total_height = len(lines) * line_height
-        
-        # Calculate vertical distribution: icon on top, text below
-        # Leave some spacing between icon and text
         icon_text_gap = 4
-        total_content = self.icon_size + icon_text_gap + text_total_height
-        
-        # Center the combined icon+text vertically
+        text_area_height = max(self.font_size + 2, content_height - self.icon_size - icon_text_gap)
+        text_widget = self._get_cached_text_widget(
+            content_width, True, height=text_area_height, overflow=Overflow.FIT
+        )
+        text_widget.set_text(self.label)
+        used = text_widget.used_height()
+        total_content = self.icon_size + icon_text_gap + used
         start_y = content_top + (content_height - total_content) // 2
         
-        # Draw icon centered horizontally
         icon_x = content_left + content_width // 2
         icon_y = start_y + self.icon_size // 2
         self._draw_main_icon(draw, icon_x, icon_y, self.icon_size, self.selected)
         
-        # Draw text centered below icon using TextWidget
         text_start_y = start_y + self.icon_size + icon_text_gap
-        for i, line in enumerate(lines):
-            text_y = text_start_y + i * line_height
-            self._render_text_line(sprite, line, content_left, text_y, 
-                                   content_width, text_color, centered=True)
+        text_widget.draw_on(sprite, content_left, text_start_y, text_color=text_color)
     
     def _render_horizontal_layout(self, sprite: Image.Image, draw: ImageDraw.Draw,
                                    inside_left: int, inside_top: int,
@@ -500,17 +489,13 @@ class IconButtonWidget(Widget):
         text_width = (self.width - text_x - self.margin - self.border_width
                       - self.padding - trailing_reserved)
         
-        if len(lines) > 1:
-            # Multi-line: center text block vertically
-            total_text_height = len(lines) * line_height
-            text_y = content_top + (content_height - total_text_height) // 2
-            for line in lines:
-                self._render_text_line(sprite, line, text_x, text_y, text_width, text_color)
-                text_y += line_height
-        else:
-            # Single line: center vertically in content area
-            text_y = content_top + (content_height - self.label_height) // 2
-            self._render_text_line(sprite, self.label, text_x, text_y, text_width, text_color)
+        text_widget = self._get_cached_text_widget(
+            max(1, text_width), False, height=max(1, content_height), overflow=Overflow.FIT
+        )
+        text_widget.set_text(self.label)
+        used = text_widget.used_height()
+        text_y = content_top + max(0, (content_height - used) // 2)
+        text_widget.draw_on(sprite, text_x, text_y, text_color=text_color)
 
     def _render_state_footer(self, sprite: Image.Image, draw: ImageDraw.Draw,
                              content_left: int, footer_top: int,

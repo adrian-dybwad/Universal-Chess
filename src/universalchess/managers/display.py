@@ -31,7 +31,7 @@ from universalchess.state import get_chess_game
 from universalchess.state.time_control import TimeControl
 from universalchess.managers.game_layout import compute_clock_analysis_layout
 from universalchess.utils.chess_notation import format_move
-from universalchess.epaper.text_scale import DEFAULT_TEXT_SIZE, normalize_text_size
+from universalchess.epaper.text_scale import DEFAULT_TEXT_SIZE, read_text_size
 
 # Lazy imports for widgets to avoid loading all epaper modules at startup
 _widgets_loaded = False
@@ -326,9 +326,7 @@ class DisplayManager:
         self._show_analysis = load_bool('show_analysis', True)
         self._show_graph = load_bool('show_graph', True)
         self._notation = Settings.read('game', 'notation', 'figurine')
-        self._text_size = normalize_text_size(
-            Settings.read('game', 'text_size', DEFAULT_TEXT_SIZE)
-        )
+        self._text_size = read_text_size()
 
         # Re-apply the selected chess sprite sheet so the board widget rebuilt by
         # _init_widgets() reflects a sprite change made in the display menu (hot
@@ -465,7 +463,8 @@ class DisplayManager:
         self.clock_widget = _ChessClockWidget(
             0, clock_y, 128, clock_height, board.display_manager.update,
             timed_mode=timed_mode, flip=self._flip_board,
-            on_tick_refresh=board.display_manager.flush_now
+            on_tick_refresh=board.display_manager.flush_now,
+            text_size=self._text_size,
         )
         # Always add clock widget if timed mode, hidden if show_clock=False
         # For untimed mode, only add if show_clock=True
@@ -545,7 +544,8 @@ class DisplayManager:
         # ChessClockWidget also observes game_over and manages its own visibility.
         self.game_over_widget = _GameOverWidget(
             0, 144, 128, 72, board.display_manager.update,
-            led_off_callback=self._led_off
+            led_off_callback=self._led_off,
+            text_size=self._text_size,
         )
         # Game over is a terminal, time-sensitive result screen: refresh at once
         # (the clock is stopped on game over, but this keeps the panel current
@@ -1197,7 +1197,8 @@ class DisplayManager:
         if self.clock_widget:
             self.clock_widget.hide()
         self.setup_status_widget = _SetupStatusWidget(
-            0, 144, 128, 72, board.display_manager.update
+            0, 144, 128, 72, board.display_manager.update,
+            text_size=self._text_size,
         )
         board.display_manager.add_widget(self.setup_status_widget)
         log.info("[DisplayManager] Setup status shown (turn indicator hidden)")
@@ -1296,7 +1297,8 @@ class DisplayManager:
         promotion_menu = _IconMenuWidget(
             0, 0, 128, 296, board.display_manager.update,
             entries=entries,
-            on_select=on_select
+            on_select=on_select,
+            text_size=self._text_size,
         )
         promotion_menu.activate()
         self._menu_active = True
@@ -1470,7 +1472,8 @@ class DisplayManager:
         back_menu = _IconMenuWidget(
             0, 0, 128, 296, board.display_manager.update,
             entries=entries,
-            selected_index=len(entries) - 1  # Default to Cancel (last item)
+            selected_index=len(entries) - 1,  # Default to Cancel (last item)
+            text_size=self._text_size,
         )
         
         self._menu_result_callback = on_result
@@ -1550,7 +1553,8 @@ class DisplayManager:
         resign_menu = _IconMenuWidget(
             0, 0, 128, 296, board.display_manager.update,
             entries=entries,
-            selected_index=1  # Default to No (cancel)
+            selected_index=1,  # Default to No (cancel)
+            text_size=self._text_size,
         )
         
         self._menu_result_callback = on_result
@@ -1623,6 +1627,7 @@ class DisplayManager:
             0, 0, 128, 296, board.display_manager.update,
             entries=entries,
             selected_index=selected_index,
+            text_size=self._text_size,
         )
 
         self._menu_result_callback = on_result

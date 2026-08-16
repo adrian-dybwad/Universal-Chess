@@ -8,7 +8,8 @@ specified duration or on the next move.
 
 from PIL import Image, ImageDraw
 from .framework.widget import Widget
-from .text import TextWidget, Justify
+from .text import TextWidget, Justify, Overflow
+from .text_scale import DEFAULT_TEXT_SIZE, normalize_text_size, scale_font
 import threading
 import logging
 
@@ -27,7 +28,8 @@ class InfoOverlayWidget(Widget):
     DEFAULT_Y = 216
     DEFAULT_HEIGHT = 80
     
-    def __init__(self, x: int, y: int, width: int, height: int, update_callback):
+    def __init__(self, x: int, y: int, width: int, height: int, update_callback,
+                 text_size: str = DEFAULT_TEXT_SIZE):
         """Initialize info overlay widget.
         
         Args:
@@ -46,8 +48,8 @@ class InfoOverlayWidget(Widget):
         # Create TextWidget for message - use parent handler for child updates
         self._text_widget = TextWidget(
             0, 0, width, height, self._handle_child_update,
-            text="", font_size=16,
-            justify=Justify.CENTER, wrapText=True,
+            text="", font_size=scale_font(16, normalize_text_size(text_size)),
+            justify=Justify.CENTER, overflow=Overflow.FIT, min_font_size=10,
             transparent=True
         )
     

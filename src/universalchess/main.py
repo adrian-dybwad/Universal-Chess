@@ -715,8 +715,10 @@ def _present_menu_help(title: str, body: "Optional[str]") -> None:
         return
 
     from universalchess.epaper.help_dialog import HelpDialogWidget
+    from universalchess.epaper.text_scale import read_text_size
 
-    widget = HelpDialogWidget(fdm.update, title=title, body=body)
+    widget = HelpDialogWidget(fdm.update, title=title, body=body,
+                              text_size=read_text_size())
     _active_help_widget = widget
     try:
         fdm.add_widget(widget)
@@ -824,6 +826,7 @@ def _confirm_pairing_on_board(passkey) -> bool:
     try:
         from universalchess.menus.pairing_confirm import (
             build_pairing_confirm_entries, is_pairing_accepted, REJECT_KEY)
+        from universalchess.epaper.text_scale import read_text_size
 
         def make_entry(key, label, icon_name, selectable):
             return IconMenuEntry(key=key, label=label, icon_name=icon_name,
@@ -835,7 +838,8 @@ def _confirm_pairing_on_board(passkey) -> bool:
 
         confirm_menu = IconMenuWidget(
             0, 0, 128, 296, display_mgr.update,
-            entries=entries, selected_index=reject_index)
+            entries=entries, selected_index=reject_index,
+            text_size=read_text_size())
         # Render as a modal overlay so removing it restores whatever screen
         # (menu or game) was underneath without rebuilding it here.
         confirm_menu.is_modal = True
@@ -2784,8 +2788,12 @@ def _start_game_mode(
 
     if lichess_session is not None:
         from universalchess.epaper import InfoOverlayWidget
+        from universalchess.epaper.text_scale import read_text_size
 
-        _info_overlay = InfoOverlayWidget(0, 216, 128, 80, board.display_manager.update)
+        _info_overlay = InfoOverlayWidget(
+            0, 216, 128, 80, board.display_manager.update,
+            text_size=read_text_size(),
+        )
 
         def _set_lichess_result(result: str, termination: str) -> None:
             from universalchess.state import get_chess_game
@@ -6779,6 +6787,7 @@ def _show_ble_connection_confirm(client_type: str):
     if display_manager is not None:
         from universalchess.epaper.icon_menu import IconMenuEntry as _IconMenuEntry
         from universalchess.epaper.icon_menu import IconMenuWidget as _IconMenuWidget
+        from universalchess.epaper.text_scale import read_text_size
         
         entries = [
             _IconMenuEntry(key="new_game", label="New Game\n(abandon)", icon_name="play"),
@@ -6788,7 +6797,8 @@ def _show_ble_connection_confirm(client_type: str):
         confirm_menu = _IconMenuWidget(
             0, 0, 128, 296, board.display_manager.update,
             entries=entries,
-            selected_index=1  # Default to Cancel
+            selected_index=1,  # Default to Cancel
+            text_size=read_text_size(),
         )
         
         display_manager._menu_result_callback = _on_confirm_result

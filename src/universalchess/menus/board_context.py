@@ -221,7 +221,7 @@ def _run_select(outcome, ctx, menu_manager) -> Optional[MenuSelection]:
                 label = option_label
             # Pass font_size only when the option declares one, so options without
             # it keep IconMenuEntry's default rather than being pinned to a guess.
-            extra = {"font_size": option_font_size} if option_font_size is not None else {}
+            extra = {"font_size": option_font_size, "scale_with_text_size": False} if option_font_size is not None else {}
             if selected and gadget_status_line:
                 extra["description"] = gadget_status_line
             entries.append(
