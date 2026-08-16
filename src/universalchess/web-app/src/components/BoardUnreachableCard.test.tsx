@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
+import type { ConnectionStatus } from '../types/game';
+import { useGameStore } from '../stores/gameStore';
 import { BoardUnreachableCard } from './BoardUnreachableCard';
 
 /**
@@ -11,7 +13,22 @@ import { BoardUnreachableCard } from './BoardUnreachableCard';
  * with no way back. How a regression manifests: the title/body mention
  * backend/vite, or Retry/Reload are missing so the only recovery is a
  * manual browser refresh.
+ *
+ * When the navbar status returns to Connected the same Retry must run without
+ * a click: the SPA stays on the error card through a reboot, and the green
+ * dot is the signal the board is back. How that regression manifests: the
+ * card stays up after connectionStatus flips to connected.
  */
+
+function setConnection(status: ConnectionStatus): void {
+  act(() => {
+    useGameStore.setState({ connectionStatus: status });
+  });
+}
+
+beforeEach(() => {
+  useGameStore.setState({ connectionStatus: 'disconnected' });
+});
 
 afterEach(() => {
   cleanup();
@@ -36,5 +53,29 @@ describe('BoardUnreachableCard', () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
     expect(onReload).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries when the navbar connection status becomes connected', () => {
+    // Why: the status dot turning green is the same recovery Retry is for, so
+    // a reboot should not leave the error card up until the user clicks.
+    // Failure: onRetry stays at 0 after disconnected/reconnecting -> connected.
+    const onRetry = vi.fn();
+    render(<BoardUnreachableCard onRetry={onRetry} />);
+    expect(onRetry).not.toHaveBeenCalled();
+
+    setConnection('reconnecting');
+    expect(onRetry).not.toHaveBeenCalled();
+
+    setConnection('connected');
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry on mount when the connection is already connected', () => {
+    // Why: a 500 while SSE is still up must not loop Retry. Failure: onRetry
+    // is called from the first render because status happens to be connected.
+    setConnection('connected');
+    const onRetry = vi.fn();
+    render(<BoardUnreachableCard onRetry={onRetry} />);
+    expect(onRetry).not.toHaveBeenCalled();
   });
 });

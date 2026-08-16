@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, within, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, within, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
 import menuSchemaFixture from '../test/fixtures/menuSchema';
+import { useGameStore } from '../stores/gameStore';
 
 /**
  * Guards the Settings account picker: an online player type (Lichess) exposes a
@@ -294,6 +295,23 @@ describe('Settings account picker auth and load failures', () => {
     expect(screen.queryByText(/sign in to see saved accounts/i)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /retry/i }));
+
+    await waitFor(() => expect(screen.getByRole('option', { name: 'lichess.org:MagnusC' })).toBeInTheDocument());
+  });
+
+  it('retries the account list when the navbar connection status becomes connected', async () => {
+    // Why: Retry is on screen because the board could not be read; the green
+    // status dot is the same recovery. Failure: Default-only (or the error
+    // row) stays after connectionStatus flips to connected.
+    useGameStore.setState({ connectionStatus: 'disconnected' });
+    mockFetch({ type: 'lichess' }, { type: 'human' }, accountsPayload, { accountsStatus: 500 });
+    renderSettings();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument());
+
+    act(() => {
+      useGameStore.setState({ connectionStatus: 'connected' });
+    });
 
     await waitFor(() => expect(screen.getByRole('option', { name: 'lichess.org:MagnusC' })).toBeInTheDocument());
   });

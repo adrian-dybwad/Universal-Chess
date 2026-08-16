@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { ConnectivityPanel } from './Connectivity';
 import menuSchemaFixture from '../test/fixtures/menuSchema';
 import type { MenuCatalog } from '../types/menuCatalog';
+import { useGameStore } from '../stores/gameStore';
 
 /**
  * Guards the Connectivity cards against reporting an unreadable response as
@@ -98,6 +99,7 @@ const callsTo = (url: string): number =>
 
 beforeEach(() => {
   replies = {};
+  useGameStore.setState({ connectionStatus: 'disconnected' });
   fetchMock = vi.fn(async (url: string): Promise<JsonResponseLike> => {
     const queue = replies[url];
     if (queue && queue.length > 0) {
@@ -155,6 +157,23 @@ describe('WiFi saved networks load failure', () => {
     expect(await screen.findByText(SAVED_NETWORK.ssid)).toBeInTheDocument();
     expect(screen.getByText(/saved networks/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /forget/i })).toBeInTheDocument();
+    expect(screen.queryByText(/could not load saved networks/i)).not.toBeInTheDocument();
+    expect(callsTo(WIFI_SAVED)).toBe(2);
+  });
+
+  it('retries the saved-networks list when the navbar connection status becomes connected', async () => {
+    // Why: Retry is on screen because the board could not be read; the green
+    // status dot is the same recovery. Failure: callsTo stays at 1 and the
+    // error line remains after connectionStatus flips to connected.
+    replies[WIFI_SAVED] = [{ status: SERVER_ERROR }, { body: { networks: [SAVED_NETWORK] } }];
+    renderPanel();
+    await waitFor(() => expect(retryButton()).toBeInTheDocument());
+
+    act(() => {
+      useGameStore.setState({ connectionStatus: 'connected' });
+    });
+
+    expect(await screen.findByText(SAVED_NETWORK.ssid)).toBeInTheDocument();
     expect(screen.queryByText(/could not load saved networks/i)).not.toBeInTheDocument();
     expect(callsTo(WIFI_SAVED)).toBe(2);
   });

@@ -618,7 +618,10 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 - Opening a web page while the board was unreachable showed a developer
   setup note (`vite.config.ts`, `run-react`) or the browser's "Failed to
   fetch", with no Retry. Those screens now explain that the board cannot
-  be reached and offer Retry and Reload.
+  be reached and offer Retry and Reload. Retry also runs when the navbar
+  connection status returns to Connected (the same signal after a reboot
+  or brief outage), so the error card and Connectivity/account load
+  failures do not stay up until the user clicks.
 
 - `deploy-to-pi.sh` could not copy onto a board whose SSH user has no
   passwordless sudo for rsync -- the stock state after the package install,

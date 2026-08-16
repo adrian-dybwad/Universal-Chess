@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { useRetryOnReconnect } from '../hooks/useRetryOnReconnect';
 import { Button, Card } from './ui';
 import './BoardUnreachableCard.css';
 
@@ -7,7 +8,9 @@ import './BoardUnreachableCard.css';
  *
  * Replaces exception text ("Failed to fetch") and developer setup notes
  * (vite.config.ts, run-react) with a short explanation and two ways back:
- * Retry re-runs the caller's load, Reload refreshes the whole page.
+ * Retry re-runs the caller's load, Reload refreshes the whole page. Retry
+ * also runs when the navbar connection status transitions to connected, so a
+ * reboot does not leave this card up until the user clicks.
  */
 export function BoardUnreachableCard({
   onRetry,
@@ -19,6 +22,7 @@ export function BoardUnreachableCard({
   onReload?: () => void;
 }) {
   const { t } = useTranslation();
+  useRetryOnReconnect(onRetry);
   return (
     <Card variant="danger" className="board-unreachable" role="alert">
       <h2 className="board-unreachable-title">{t('connection.unavailableTitle')}</h2>

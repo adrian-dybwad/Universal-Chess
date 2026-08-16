@@ -8,6 +8,7 @@ import { MenuIcon } from '../components/MenuIcon';
 import { useAuthedAction } from '../components/useAuthedAction';
 import { UsbGadgetStatusCard } from '../components/UsbGadgetStatusCard';
 import { useRadioCapability } from '../hooks/useRadioCapability';
+import { useRetryOnReconnect } from '../hooks/useRetryOnReconnect';
 import { apiFetch } from '../utils/api';
 import { useSseEvent, type SseEventPayload } from '../utils/sseBus';
 import { CAST_STATE_KEYS, type CastDevice, type CastStateName } from '../utils/chromecast';
@@ -222,9 +223,11 @@ type LoadState = 'loading' | 'ready' | 'failed' | 'unauthorized';
  * Shared so every card reports an unreadable response the same way instead of
  * falling back to a confident default or a silently missing section. Reuses the
  * cards' existing message and action styles, so it needs no CSS of its own.
+ * Retry also runs when the navbar connection status transitions to connected.
  */
 function LoadFailure({ message, onRetry }: { message: string; onRetry: () => void }) {
   const { t } = useTranslation();
+  useRetryOnReconnect(onRetry);
   return (
     <>
       <div className="conn-message conn-message--error">{message}</div>

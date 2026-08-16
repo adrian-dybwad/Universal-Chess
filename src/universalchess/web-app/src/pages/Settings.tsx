@@ -12,6 +12,7 @@ import { BoardUnreachableCard } from '../components/BoardUnreachableCard';
 import type { FieldValue } from '../components/CatalogField';
 import { useLoginRetry } from '../components/useLoginRetry';
 import { useRadioCapability } from '../hooks/useRadioCapability';
+import { useRetryOnReconnect } from '../hooks/useRetryOnReconnect';
 import { MenuIcon } from '../components/MenuIcon';
 import { DeviceClockCard } from '../components/DeviceClockCard';
 import { OsUpgradePanel } from '../components/OsUpgradePanel';
@@ -552,6 +553,36 @@ interface AgentEdit {
   api_key_dirty: boolean;
   model: string;
   base_url: string;
+}
+
+/**
+ * Account picker stand-in when GET /api/accounts failed. Retry also runs when
+ * the navbar connection status turns green, matching the page-level unreachable
+ * card: a reboot should not leave this row up until the user clicks.
+ */
+function AccountLoadFailed({
+  label,
+  help,
+  onRetry,
+}: {
+  label: string;
+  help?: string;
+  onRetry: () => void;
+}) {
+  const { t } = useTranslation();
+  useRetryOnReconnect(onRetry);
+  return (
+    <FormRow label={label} help={help}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.5rem' }}>
+        <p className="text-muted" style={{ margin: 0, fontSize: '0.875rem' }}>
+          {t('settingsPage.players.accountLoadFailed')}
+        </p>
+        <Button variant="secondary" size="sm" onClick={onRetry}>
+          {t('common.retry')}
+        </Button>
+      </div>
+    </FormRow>
+  );
 }
 
 /**
@@ -2067,16 +2098,12 @@ export function Settings() {
           }
           if (accountsState === 'failed') {
             return (
-              <FormRow key={node.id} label={node.label ?? 'Account'} help={node.help}>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.5rem' }}>
-                  <p className="text-muted" style={{ margin: 0, fontSize: '0.875rem' }}>
-                    {t('settingsPage.players.accountLoadFailed')}
-                  </p>
-                  <Button variant="secondary" size="sm" onClick={() => void fetchAccounts()}>
-                    {t('common.retry')}
-                  </Button>
-                </div>
-              </FormRow>
+              <AccountLoadFailed
+                key={node.id}
+                label={node.label ?? 'Account'}
+                help={node.help}
+                onRetry={() => void fetchAccounts()}
+              />
             );
           }
         }

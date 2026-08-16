@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useGameStore } from '../stores/gameStore';
 import menuSchemaFixture from '../test/fixtures/menuSchema';
 
 /**
@@ -69,6 +70,7 @@ function healthyResponse(url: string): JsonResponseLike {
 beforeEach(() => {
   reachable = false;
   useSettingsStore.setState({ raw: null, loaded: false, revision: 0, pendingKeys: new Set<string>() });
+  useGameStore.setState({ connectionStatus: 'disconnected' });
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string): Promise<JsonResponseLike> => {
@@ -112,6 +114,22 @@ describe('Settings load failure', () => {
     await screen.findByRole('button', { name: 'Retry' });
     reachable = true;
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+    expect(await screen.findByText('Original Centaur')).toBeInTheDocument();
+  });
+
+  it('re-fetches Settings when the navbar connection status becomes connected', async () => {
+    // Why: the status dot turning green is the same recovery Retry is for, so a
+    // reboot must not leave the error card up until the user clicks. Failure:
+    // the alert stays in the document after connectionStatus flips to connected.
+    renderSettings();
+    await screen.findByRole('button', { name: 'Retry' });
+    reachable = true;
+    act(() => {
+      useGameStore.setState({ connectionStatus: 'connected' });
+    });
     await waitFor(() => {
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
