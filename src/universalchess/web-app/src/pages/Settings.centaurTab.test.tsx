@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, within } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import '@testing-library/jest-dom/vitest';
@@ -16,13 +16,16 @@ import menuSchemaFixture from '../test/fixtures/menuSchema';
  *    Threads/Hash inputs are gone;
  *  - in translate mode the engine/strength group renders *before* the handover
  *    action button (the reorder), so the user configures the engine, then acts;
+ *  - engine and strength auto-save on change (no Save button), and changing the
+ *    engine resets strength to Default so a mismatched profile is never written;
  *  - a collapsed Troubleshooting card documents the Windows PowerShell errors
  *    that stop `make-centaur-image.ps1` (current-directory invocation and the
  *    unsigned-script execution policy).
  *
  * A regression manifests as: no "Original Centaur" tab; an "Elo"/"Threads"/"Hash"
  * input reappearing; the strength dropdown missing; the action button
- * preceding the engine group again; or the PowerShell remedies missing / shown
+ * preceding the engine group again; a Save button returning (and changes not
+ * POSTing until it is clicked); or the PowerShell remedies missing / shown
  * expanded so they crowd the import steps.
  */
 
@@ -61,17 +64,29 @@ function settingsPayload() {
   };
 }
 
+interface PostRecord { url: string; body: Record<string, unknown> }
+
 // `centaurAvailable` toggles the installed vs. importer branch; the rest of the
-// Centaur endpoints are stubbed to a stopped board in translate mode.
-function installCentaurFetchMock(opts: { centaurAvailable: boolean }) {
+// Centaur endpoints are stubbed to a stopped board in translate mode. Engine
+// POSTs are recorded so auto-save tests can assert the dedicated endpoint body.
+function installCentaurFetchMock(opts: { centaurAvailable: boolean; enginePostStatus?: number }) {
+  const posts: PostRecord[] = [];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit): Promise<JsonResponseLike> => {
     const method = ((init?.method as string) ?? 'GET').toUpperCase();
     if (url === '/api/menu-schema') return jsonResponse(menuSchema);
     if (url === '/api/settings' && method === 'GET') return jsonResponse(settingsPayload());
-    if (url === '/api/settings' && method === 'POST') return jsonResponse({ success: true });
+    if (url === '/api/settings' && method === 'POST') {
+      posts.push({ url, body: JSON.parse((init?.body as string) ?? '{}') });
+      return jsonResponse({ success: true });
+    }
     if (url === '/api/system/info') return jsonResponse({ centaur_available: opts.centaurAvailable });
     if (url === '/api/system/centaur-mode') return jsonResponse({ direct_mode: false });
     if (url === '/api/system/centaur-status') return jsonResponse({ running: false });
+    if (url === '/api/system/centaur-engine' && method === 'POST') {
+      posts.push({ url, body: JSON.parse((init?.body as string) ?? '{}') });
+      const status = opts.enginePostStatus ?? 200;
+      return jsonResponse(status >= 200 && status < 300 ? { success: true } : { success: false }, status);
+    }
     if (url === '/api/system/centaur-engine') return jsonResponse({ engine: 'stockfish', level: '1500 ELO', options: {} });
     if (url.startsWith('/api/engines/stockfish/levels')) {
       return jsonResponse([
@@ -79,12 +94,33 @@ function installCentaurFetchMock(opts: { centaurAvailable: boolean }) {
         { value: '1500 ELO', label: '1500 ELO' },
       ]);
     }
-    if (url === '/api/engines/all') return jsonResponse([{ name: 'stockfish', display_name: 'Stockfish', installed: true }]);
+    if (url.startsWith('/api/engines/maia/levels')) {
+      return jsonResponse([
+        { value: 'Default', label: 'Default' },
+        { value: '1100 ELO', label: '1100 ELO' },
+      ]);
+    }
+    if (url === '/api/engines/all') {
+      return jsonResponse([
+        { name: 'stockfish', display_name: 'Stockfish', installed: true },
+        { name: 'maia', display_name: 'Maia', installed: true },
+      ]);
+    }
     if (url === '/api/accounts') return jsonResponse({ accounts: [] });
     return jsonResponse({});
   });
   vi.stubGlobal('fetch', fetchMock);
   vi.stubGlobal('EventSource', MockEventSource);
+  return { posts };
+}
+
+// Engine and Strength both render as labeled form rows; the group heading is
+// also "Engine", so the row is the labeled ancestor, not getByText('Engine').
+function selectInLabeledRow(label: string): HTMLSelectElement {
+  const matches = screen.getAllByText(label);
+  const row = matches.map((el) => el.closest('.form-row')).find((el): el is HTMLElement => el !== null);
+  if (!row) throw new Error(`${label} form row not found`);
+  return within(row).getByRole('combobox') as HTMLSelectElement;
 }
 
 beforeEach(() => {
@@ -132,10 +168,8 @@ describe('Original Centaur tab', () => {
     renderCentaurTab();
 
     // The strength dropdown is present and pre-selects the saved level.
-    const strengthLabel = await screen.findByText('Strength');
-    expect(strengthLabel).toBeInTheDocument();
-    const strengthSelect = within(strengthLabel.closest('.form-row') as HTMLElement).getByRole('combobox') as HTMLSelectElement;
-    expect(strengthSelect.value).toBe('1500 ELO');
+    await screen.findByText('Strength');
+    expect(selectInLabeledRow('Strength').value).toBe('1500 ELO');
 
     // The removed controls must not be present anywhere on the tab.
     expect(screen.queryByText('Elo')).toBeNull();
@@ -150,12 +184,93 @@ describe('Original Centaur tab', () => {
     installCentaurFetchMock({ centaurAvailable: true });
     renderCentaurTab();
 
-    const saveEngine = await screen.findByRole('button', { name: 'Save engine settings' });
+    const engineHeading = await screen.findByRole('heading', { name: 'Engine' });
     const switchButton = screen.getByRole('button', { name: 'Switch to Original Centaur' });
 
-    // DOCUMENT_POSITION_FOLLOWING means switchButton comes after saveEngine.
-    const relation = saveEngine.compareDocumentPosition(switchButton);
+    // DOCUMENT_POSITION_FOLLOWING means switchButton comes after the engine group.
+    const relation = engineHeading.compareDocumentPosition(switchButton);
     expect(relation & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('auto-saves a strength change and shows no Save engine button', async () => {
+    // Why: engine/strength used an explicit Save while every other value setting
+    // (and Direct Mode on this card) persist on change. Leaving the tab after a
+    // dropdown edit discarded the choice. A regression restores the button and
+    // leaves lastEnginePost null until it is clicked.
+    const { posts } = installCentaurFetchMock({ centaurAvailable: true });
+    renderCentaurTab();
+
+    await screen.findByText('Strength');
+    expect(screen.queryByRole('button', { name: 'Save engine settings' })).toBeNull();
+    expect(screen.getByText(/apply the next time Centaur launches/i)).toBeInTheDocument();
+
+    fireEvent.change(selectInLabeledRow('Strength'), { target: { value: 'Default' } });
+
+    await waitFor(() => {
+      expect(posts.some((p) => p.url === '/api/system/centaur-engine')).toBe(true);
+    });
+    const enginePost = posts.find((p) => p.url === '/api/system/centaur-engine');
+    expect(enginePost?.body).toEqual({ engine: 'stockfish', level: 'Default' });
+    expect(posts.some((p) => p.url === '/api/settings')).toBe(false);
+  });
+
+  it('resets strength to Default and auto-saves when the engine changes', async () => {
+    // Why: an engine's profiles are engine-specific. Carrying "1500 ELO" onto
+    // Maia would persist a level that engine may not have (Players already
+    // resets to Default). A regression that saves the old level, or that does
+    // not POST at all, is this test failing.
+    const { posts } = installCentaurFetchMock({ centaurAvailable: true });
+    renderCentaurTab();
+
+    const engineSelect = await waitFor(() => {
+      const select = selectInLabeledRow('Engine');
+      if (![...select.options].some((o) => o.value === 'maia')) {
+        throw new Error('maia option not loaded');
+      }
+      return select;
+    });
+    fireEvent.change(engineSelect, { target: { value: 'maia' } });
+
+    expect(selectInLabeledRow('Strength').value).toBe('Default');
+    await waitFor(() => {
+      expect(posts.some((p) => p.url === '/api/system/centaur-engine')).toBe(true);
+    });
+    expect(posts.find((p) => p.url === '/api/system/centaur-engine')?.body).toEqual({
+      engine: 'maia',
+      level: 'Default',
+    });
+  });
+
+  it('does not POST engine settings on load', async () => {
+    // Why: populating the dropdowns from GET must not write the loaded values
+    // back. A useEffect-on-state auto-save would POST stockfish/1500 ELO on
+    // every visit, which this asserts by requiring an empty post log after
+    // the controls have rendered.
+    const { posts } = installCentaurFetchMock({ centaurAvailable: true });
+    renderCentaurTab();
+
+    await screen.findByText('Strength');
+    expect(selectInLabeledRow('Strength').value).toBe('1500 ELO');
+    expect(posts.filter((p) => p.url === '/api/system/centaur-engine')).toEqual([]);
+  });
+
+  it('shows an inline error when the engine auto-save fails', async () => {
+    // Why: Direct Mode reports a failed persist in place and does not pretend
+    // the change stuck. A silent failure would leave the dropdown showing a
+    // value the proxy will not use. Manifests as the engineSaveFailed copy
+    // missing after a 500.
+    const { posts } = installCentaurFetchMock({ centaurAvailable: true, enginePostStatus: 500 });
+    renderCentaurTab();
+
+    await screen.findByText('Strength');
+    fireEvent.change(selectInLabeledRow('Strength'), { target: { value: 'Default' } });
+
+    await waitFor(() => {
+      expect(posts.some((p) => p.url === '/api/system/centaur-engine')).toBe(true);
+    });
+    expect(
+      await screen.findByText('Failed to save the Centaur engine settings.')
+    ).toBeInTheDocument();
   });
 
   it('keeps Windows PowerShell troubleshooting collapsed until opened', async () => {

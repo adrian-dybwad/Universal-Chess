@@ -4669,34 +4669,46 @@ function CentaurSettings() {
     }
   };
 
-  // Persist the Centaur engine and strength level. The level is a profile
-  // section name resolved to UCI options server-side (like a player's strength),
-  // so the client sends only the name. On 401, reuse the shared login-retry.
-  const saveCentaurEngine = async () => {
+  // Persist the Centaur engine and strength as soon as either dropdown changes
+  // (no Save button -- the same contract as other value settings and Direct Mode
+  // on this card). The dedicated endpoint still resolves the level to UCI
+  // options; the proxy reads them at its next launch. Values are passed in so
+  // the POST is not a stale closure from before setState. On 401, reuse the
+  // shared login-retry. Success is silent; failures surface inline.
+  const saveCentaurEngine = async (engine: string, level: string) => {
     setEngineBusy(true);
     setActionOutcome(null);
     try {
       const response = await apiFetch('/api/system/centaur-engine', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ engine: centaurEngine, level: centaurLevel }),
+        body: JSON.stringify({ engine, level }),
         requiresAuth: true,
       });
-      if (requireLogin(response, () => saveCentaurEngine())) return;
+      if (requireLogin(response, () => saveCentaurEngine(engine, level))) return;
       if (!response.ok) {
         setActionOutcome({ scope: 'engine', ok: false, text: t('settingsPage.systemActions.engineSaveFailed') });
         return;
       }
-      setActionOutcome({
-        scope: 'engine',
-        ok: true,
-        text: t('settingsPage.systemActions.engineSaved'),
-      });
     } catch {
       setActionOutcome({ scope: 'engine', ok: false, text: t('settingsPage.systemActions.networkError') });
     } finally {
       setEngineBusy(false);
     }
+  };
+
+  // Changing the engine resets strength to Default: an engine's levels are
+  // engine-specific, so carrying the old selection would bind a level it does
+  // not have. Same reset Players applies when its engine dropdown changes.
+  const updateCentaurEngine = (nextEngine: string) => {
+    setCentaurEngine(nextEngine);
+    setCentaurLevel('Default');
+    void saveCentaurEngine(nextEngine, 'Default');
+  };
+
+  const updateCentaurLevel = (nextLevel: string) => {
+    setCentaurLevel(nextLevel);
+    void saveCentaurEngine(centaurEngine, nextLevel);
   };
 
   // Download the SD image-generator script for the given platform. Served as an
@@ -4912,7 +4924,7 @@ function CentaurSettings() {
                   <Select
                     value={centaurEngine}
                     options={engineList.length ? engineList : [{ value: centaurEngine, label: centaurEngine }]}
-                    onChange={(e) => setCentaurEngine(e.target.value)}
+                    onChange={(e) => updateCentaurEngine(e.target.value)}
                     disabled={engineBusy || centaurRunning}
                   />
                 </FormRow>
@@ -4920,17 +4932,10 @@ function CentaurSettings() {
                   <Select
                     value={centaurLevel}
                     options={engineLevels.length ? engineLevels : [{ value: centaurLevel, label: centaurLevel }]}
-                    onChange={(e) => setCentaurLevel(e.target.value)}
+                    onChange={(e) => updateCentaurLevel(e.target.value)}
                     disabled={engineBusy || centaurRunning}
                   />
                 </FormRow>
-                <Button
-                  variant="secondary"
-                  disabled={engineBusy || centaurRunning}
-                  onClick={saveCentaurEngine}
-                >
-                  {engineBusy ? t('settingsPage.systemActions.savingEngine') : t('settingsPage.systemActions.saveEngine')}
-                </Button>
                 {renderOutcome('engine')}
               </div>
             )}

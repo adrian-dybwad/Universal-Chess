@@ -585,6 +585,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Original Centaur engine settings auto-save**: Engine and strength on
+  Settings -> Original Centaur required an explicit Save, unlike every other
+  value setting and unlike Direct Mode on the same card. Changing a dropdown
+  and leaving the tab discarded the choice. The dropdowns now persist on
+  change through the existing engine-proxy endpoint; changing the engine
+  resets strength to Default the same way Players does. The Save button is
+  gone. The card still says the proxy reads the values the next time Centaur
+  launches.
+
 - The CA install page's Windows download saved `UniversalChess-CA.pem`.
   Windows Certificate Manager associates `.crt` and `.cer`, not `.pem`, so
   double-clicking the file opened a text editor or the "how do you want to
