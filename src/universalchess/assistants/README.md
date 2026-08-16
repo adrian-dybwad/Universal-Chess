@@ -34,7 +34,7 @@ class SuggestionType(Enum):
 In Hand+Brain mode, the engine suggests which piece type to move.
 
 ```python
-from DGTCentaurMods.assistants import create_hand_brain_assistant
+from universalchess.assistants import create_hand_brain_assistant
 
 assistant = create_hand_brain_assistant(engine_name="stockfish")
 assistant.set_suggestion_callback(on_suggestion)
@@ -49,7 +49,7 @@ assistant.get_suggestion(board, for_color=player_color)  # Delivers suggestion v
 Provides move hints on demand (HELP button).
 
 ```python
-from DGTCentaurMods.assistants import create_hint_assistant
+from universalchess.assistants import create_hint_assistant
 
 assistant = create_hint_assistant()
 assistant.set_analysis_callback(get_best_move_from_analysis)
@@ -71,7 +71,7 @@ assistant.set_predefined_hint(from_sq=12, to_sq=28)  # e2e4
 ## Creating Custom Assistants
 
 ```python
-from DGTCentaurMods.assistants import Assistant, AssistantConfig, Suggestion
+from universalchess.assistants import Assistant, AssistantConfig, Suggestion
 
 class CoachAssistant(Assistant):
     def start(self) -> bool:
@@ -106,6 +106,7 @@ class CoachAssistant(Assistant):
 Assistants can be used alongside any player:
 
 ```python
+from universalchess.assistants import create_hand_brain_assistant
 from universalchess.players.lichess import LichessPlayer, LichessPlayerConfig, LichessGameMode
 
 # Play against Lichess with Hand+Brain assistance

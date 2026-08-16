@@ -1,4 +1,4 @@
-# DGTCentaurMods Module Summary
+# Universal Chess Module Summary
 
 This document provides a comprehensive overview of all modules, their internal global variables, and responsibilities.
 
@@ -23,7 +23,8 @@ This document provides a comprehensive overview of all modules, their internal g
 ## main.py (Entry Point)
 
 ### Purpose
-Main application entry point - Universal Bluetooth Relay with BLE and RFCOMM support. Connects to target devices via Bluetooth and relays data between the board and connected clients.
+Main application entry point. Starts the board UI (splash, menus, local and
+online play) and the BLE/RFCOMM relay so companion apps can connect.
 
 ### Global Variables
 | Variable | Purpose |

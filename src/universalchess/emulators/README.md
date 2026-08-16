@@ -1,10 +1,11 @@
 # Emulators
 
-Protocol parsing and encoding modules used by `protocol_manager.py` to translate between chess app protocols and the physical board.
+Protocol parsing and encoding modules used by `RemoteController` to translate
+between chess app protocols and the physical board.
 
 ## Purpose
 
-These are library modules imported by `protocol_manager.py` (and other relay scripts). They provide:
+These are library modules imported by `controllers/remote.py`. They provide:
 - Protocol packet parsing (decoding commands from apps)
 - Response encoding (generating replies in the expected format)
 - Board state translation between Centaur and target protocol formats
@@ -20,13 +21,15 @@ These are library modules imported by `protocol_manager.py` (and other relay scr
 ## Architecture
 
 ```
-Chess App <--BLE/RFCOMM--> protocol_manager.py <--uses--> emulators/*.py
+Chess App <--BLE/RFCOMM--> RemoteController <--uses--> emulators/*.py
                                   |
                                   v
                           Physical Centaur Board
 ```
 
-The ProtocolManager class handles protocol parsing and routing. These emulator modules handle protocol-specific logic.
+`RemoteController` owns protocol detection and routing. These modules handle
+protocol-specific parse/encode. `ProtocolManager` wires players and assistants;
+it does not import the emulators.
 
 ## Requirements
 
@@ -35,5 +38,5 @@ The ProtocolManager class handles protocol parsing and routing. These emulator m
 
 ## See Also
 
-- `tools/simulators/` - Standalone board simulators that run without hardware
-- `protocol_manager.py` - The ProtocolManager class that uses these modules
+- `src/universalchess/simulators/` - Standalone board simulators that run without hardware
+- `controllers/remote.py` - Creates and drives the emulator instances
