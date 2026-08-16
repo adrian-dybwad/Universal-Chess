@@ -12,7 +12,7 @@ import types
 
 import pytest
 
-from universalchess.services.lichess_service import resolve_lichess_identity
+from universalchess.players.lichess.lobby import resolve_lichess_identity
 
 
 @pytest.fixture

@@ -19,7 +19,7 @@ import chess
 
 from universalchess.board import board, centaur
 from universalchess.board.logging import log
-from .base import Player, PlayerConfig, PlayerState, PlayerType
+from ..base import Player, PlayerConfig, PlayerState, PlayerType
 
 
 class LichessGameMode(Enum):
@@ -246,12 +246,12 @@ class LichessPlayer(Player):
             A ``(token, rating_range)`` tuple; ``rating_range`` is '' when the
             account has none (matchmaking then uses the config/global default).
         """
-        from universalchess.services.lichess_accounts import (
+        from .accounts import (
             default_lichess_credential,
             get_lichess_credential,
             host_id_of,
         )
-        from universalchess.services.lichess_hosts import DEFAULT_HOST_ID
+        from .hosts import DEFAULT_HOST_ID
 
         if self._lichess_config.account_id:
             account = get_lichess_credential(self._lichess_config.account_id)
@@ -292,7 +292,7 @@ class LichessPlayer(Player):
         
         # Initialize berserk client
         try:
-            from universalchess.services.lichess_match import create_berserk_client
+            from .match import create_berserk_client
             self._client = create_berserk_client(
                 self._token, host_id=getattr(self, "_host_id", "org")
             )

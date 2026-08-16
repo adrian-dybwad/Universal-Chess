@@ -13,7 +13,7 @@ def get_lichess_client(token, log, host_id: str = "org"):
         log.warning("[Lichess] No valid API token configured")
         return None, None, "no_token"
     try:
-        from universalchess.services.lichess_match import create_berserk_client
+        from .match import create_berserk_client
 
         client = create_berserk_client(token, host_id=host_id)
         user_info = client.account.get()
@@ -41,7 +41,7 @@ def resolve_lichess_identity(token, log=None, host_id: str = "org"):
     if not token or token == "tokenhere":  # noqa: S105 # nosec B105 - placeholder sentinel, not a secret
         return ResolvedIdentity(error="no_token", message="No API token provided")
     try:
-        from universalchess.services.lichess_match import create_berserk_client
+        from .match import create_berserk_client
 
         client = create_berserk_client(token, host_id=host_id)
         username = client.account.get().get("username", "")
@@ -82,7 +82,7 @@ def build_lichess_menu_entries(username: Optional[str], ongoing_games: bool, has
 
 def lichess_waiting_message(mode) -> str:
     """Copy shown on the panel while a Lichess game is being found or joined."""
-    from universalchess.services.lichess_match import lichess_waiting_message as _waiting
+    from .match import lichess_waiting_message as _waiting
 
     return _waiting(mode)
 
@@ -107,7 +107,7 @@ def show_lichess_started_splash(panel_manager, human_is_white: bool) -> bool:
     to an empty board between waiting and started. Falls back to a new splash.
     """
     from universalchess.epaper.splash_screen import SplashScreen, show_fullscreen_splash
-    from universalchess.services.lichess_match import lichess_started_message
+    from .match import lichess_started_message
 
     message = lichess_started_message(human_is_white)
     widgets = getattr(panel_manager, "_widgets", None) or []
@@ -143,7 +143,7 @@ def _lichess_slot_settings(settings):
 
 def active_lichess_account(settings):
     """Bound (or default) Lichess credential, or None."""
-    from universalchess.services.lichess_accounts import (
+    from .accounts import (
         default_lichess_credential,
         get_lichess_credential,
     )
@@ -157,7 +157,7 @@ def active_lichess_account(settings):
 
 def lichess_client_from_settings(settings, log):
     """Authenticate the bound credential for lobby Ongoing/Challenges lists."""
-    from universalchess.players.lichess import LichessPlayer, LichessPlayerConfig
+    from .player import LichessPlayer, LichessPlayerConfig
 
     ps = _lichess_slot_settings(settings)
     account_id = getattr(ps, "account", "") if ps is not None else ""
@@ -414,7 +414,7 @@ def handle_lichess_menu(
         True if a Lichess game was started, break result if break action,
         None/False otherwise.
     """
-    from universalchess.players.lichess import LichessPlayerConfig as LichessConfig, LichessGameMode
+    from .player import LichessPlayerConfig as LichessConfig, LichessGameMode
     from universalchess.managers.menu import MenuSelection
 
     client, username, error = get_lichess_client_fn()

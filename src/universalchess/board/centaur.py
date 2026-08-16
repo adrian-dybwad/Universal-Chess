@@ -40,7 +40,7 @@ def get_lichess_api():
     yet. This is the single back-compat shim the older single-account consumers
     (accounts display, ``get_lichess_client``) route through.
     """
-    from universalchess.services.lichess_accounts import default_lichess_credential
+    from universalchess.players.lichess.accounts import default_lichess_credential
 
     account = default_lichess_credential()
     if account is not None:
@@ -57,7 +57,7 @@ def get_lichess_username():
     the account can be shown without a network call on an unmigrated board.
     Empty when no username is known.
     """
-    from universalchess.services.lichess_accounts import default_lichess_credential
+    from universalchess.players.lichess.accounts import default_lichess_credential
 
     account = default_lichess_credential()
     if account is not None:

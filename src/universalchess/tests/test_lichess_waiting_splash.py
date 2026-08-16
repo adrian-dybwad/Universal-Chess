@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 from universalchess.players.base import PlayerState
 from universalchess.players.lichess import LichessGameMode, LichessPlayer
-from universalchess.services.lichess_service import (
+from universalchess.players.lichess.lobby import (
     lichess_waiting_message,
     show_lichess_waiting_splash,
 )
@@ -139,7 +139,7 @@ def test_start_lichess_game_service_is_removed():
     How the regression manifests: the symbol is reintroduced on the service
     module, so two launchers can drift again.
     """
-    import universalchess.services.lichess_service as service
+    import universalchess.players.lichess.lobby as service
 
     assert not hasattr(service, "start_lichess_game_service")
     assert not hasattr(service, "LichessStartResult")
@@ -155,7 +155,7 @@ def test_lichess_menu_new_game_start_failure_does_not_kill_loop():
     returning, so the caller (the main loop) dies.
     """
     from universalchess.managers.menu import MenuSelection
-    from universalchess.services.lichess_service import handle_lichess_menu
+    from universalchess.players.lichess.lobby import handle_lichess_menu
 
     shown = []
 
@@ -207,7 +207,7 @@ def test_started_splash_updates_existing_splash(monkeypatch):
     SplashScreen is already on the panel, or the message is not the started copy.
     """
     from universalchess.epaper.splash_screen import SplashScreen
-    from universalchess.services.lichess_service import show_lichess_started_splash
+    from universalchess.players.lichess.lobby import show_lichess_started_splash
 
     splash = MagicMock(spec=SplashScreen)
     panel = MagicMock()

@@ -31,7 +31,7 @@ from .update_menu import (
     download_update_interactive,
     install_pending_interactive,
 )
-from universalchess.services.lichess_service import (
+from universalchess.players.lichess.lobby import (
     get_lichess_client,
     build_lichess_menu_entries,
     show_lichess_error,

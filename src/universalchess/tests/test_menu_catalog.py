@@ -557,7 +557,7 @@ def test_lichess_catalog_hosts_match_plugin():
     Why: the web form reads hosts from the catalog; berserk uses Python. Drift
     would send a token to the wrong server. Failure: an id or URL differs.
     """
-    from universalchess.services.lichess_hosts import LICHESS_HOSTS
+    from universalchess.players.lichess.hosts import LICHESS_HOSTS
 
     catalog = load_catalog()
     catalog_hosts = [

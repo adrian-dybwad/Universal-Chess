@@ -19,7 +19,7 @@ from types import SimpleNamespace
 import pytest
 
 from universalchess.players.lichess import LichessGameMode
-from universalchess.services.lichess_match import (
+from universalchess.players.lichess.match import (
     ACCOUNT_TYPE_LICHESS,
     LICHESS_DEV_BASE_URL,
     LICHESS_ORG_BASE_URL,

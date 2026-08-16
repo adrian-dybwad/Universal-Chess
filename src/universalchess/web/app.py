@@ -2934,7 +2934,7 @@ def _account_resolver(type_id):
     inject a fake resolver instead of contacting Lichess.
     """
     if type_id == "lichess":
-        from universalchess.services.lichess_service import resolve_lichess_identity
+        from universalchess.players.lichess.lobby import resolve_lichess_identity
 
         return lambda fields: resolve_lichess_identity(
             fields.get("api_token", ""),
@@ -2968,7 +2968,7 @@ def _redact_account(account, account_type):
         "secretsSet": secrets_set,
     }
     if account.type == "lichess":
-        from universalchess.services.lichess_accounts import host_id_of, label_of
+        from universalchess.players.lichess.accounts import host_id_of, label_of
 
         payload["host"] = host_id_of(account)
         payload["label"] = label_of(account)
@@ -3033,7 +3033,7 @@ def api_add_account():
     account_type = catalog.account_type(type_id)
 
     if type_id == "lichess":
-        from universalchess.services.lichess_accounts import add_lichess_credential
+        from universalchess.players.lichess.accounts import add_lichess_credential
 
         result = add_lichess_credential(
             fields, resolver=_account_resolver(type_id)

@@ -20,7 +20,7 @@ from universalchess.services.account_store import (
     list_accounts,
     save_account,
 )
-from universalchess.services.lichess_hosts import (
+from .hosts import (
     ACCOUNT_TYPE_LICHESS,
     DEFAULT_HOST_ID,
     HOST_BY_ID,

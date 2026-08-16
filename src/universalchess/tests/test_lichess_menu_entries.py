@@ -10,7 +10,7 @@ which, under the old widget behavior, hid the header entirely (a latent bug: the
 header must be a visible, non-selectable row. These tests pin both.
 """
 
-from universalchess.services.lichess_service import build_lichess_menu_entries
+from universalchess.players.lichess.lobby import build_lichess_menu_entries
 
 
 def test_sections_present_when_account_has_them():

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from universalchess.state.time_control import DelayMode, build_time_control
-from universalchess.services.lichess_hosts import (
+from .hosts import (
     ACCOUNT_TYPE_LICHESS,
     DEFAULT_HOST_ID,
     HOST_DEV,
@@ -82,7 +82,7 @@ def create_berserk_client(token: str, host_id: str = DEFAULT_HOST_ID):
 
 def lichess_waiting_message(mode) -> str:
     """Copy shown while seeking or joining, before the stream accepts."""
-    from universalchess.players.lichess import LichessGameMode
+    from .player import LichessGameMode
 
     if mode == LichessGameMode.ONGOING:
         return "Connecting..."

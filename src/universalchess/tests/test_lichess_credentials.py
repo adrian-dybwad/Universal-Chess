@@ -18,7 +18,7 @@ import pytest
 
 from universalchess.board.settings import Settings
 from universalchess.services.account_store import ResolvedIdentity, get_account, list_accounts
-from universalchess.services.lichess_accounts import (
+from universalchess.players.lichess.accounts import (
     add_lichess_credential,
     default_lichess_credential,
     get_lichess_credential,
@@ -26,7 +26,7 @@ from universalchess.services.lichess_accounts import (
     list_lichess_credentials,
     migrate_lichess_layout,
 )
-from universalchess.services.lichess_hosts import HOST_DEV, HOST_ORG
+from universalchess.players.lichess.hosts import HOST_DEV, HOST_ORG
 
 
 @pytest.fixture

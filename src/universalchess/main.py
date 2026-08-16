@@ -2327,12 +2327,12 @@ def _start_game_mode(
     from universalchess.players.lichess import (
         LichessPlayer, LichessPlayerConfig, LichessGameMode
     )
-    from universalchess.services.lichess_match import (
+    from universalchess.players.lichess.match import (
         LichessSeekError,
         lichess_seek_from_settings,
         START_PLAYING_SPLASH_SECONDS,
     )
-    from universalchess.services.lichess_service import show_lichess_error
+    from universalchess.players.lichess.lobby import show_lichess_error
 
     join = _lichess_join
     _lichess_join = None
@@ -2565,7 +2565,7 @@ def _start_game_mode(
     # Lichess seek: splash first, defer the board paint so _init_widgets does
     # not wipe "Waiting for game" before the e-paper shows it.
     if is_lichess:
-        from universalchess.services.lichess_service import show_lichess_waiting_splash
+        from universalchess.players.lichess.lobby import show_lichess_waiting_splash
         wait_mode = join["mode"] if join else LichessGameMode.NEW
         show_lichess_waiting_splash(board.display_manager, wait_mode)
 
@@ -2788,7 +2788,7 @@ def _start_game_mode(
 
     if is_lichess:
         from universalchess.epaper import InfoOverlayWidget
-        from universalchess.services.lichess_service import show_lichess_started_splash
+        from universalchess.players.lichess.lobby import show_lichess_started_splash
 
         _info_overlay = InfoOverlayWidget(0, 216, 128, 80, board.display_manager.update)
         lichess_game_connected = False
@@ -4557,7 +4557,7 @@ def _build_player_detail_context(player_num: int):
         """
         from universalchess.menus.catalog import get_catalog
         from universalchess.menus.engine import MenuRow
-        from universalchess.services.lichess_accounts import (
+        from universalchess.players.lichess.accounts import (
             get_lichess_credential,
             label_of,
             list_lichess_credentials,
@@ -4595,7 +4595,7 @@ def _build_player_detail_context(player_num: int):
         Shows 'Default' when the slot is unbound or the bound account no longer
         exists (deleted), so the row never advertises a stale/missing account.
         """
-        from universalchess.services.lichess_accounts import get_lichess_credential, label_of
+        from universalchess.players.lichess.accounts import get_lichess_credential, label_of
 
         settings = settings_dict()
         account_id = settings.get("account", "")
@@ -6229,7 +6229,7 @@ def _handle_connectivity_menu():
 
 def _handle_lichess_menu():
     """Handle Lichess submenu - delegates to service."""
-    from universalchess.services.lichess_service import (
+    from universalchess.players.lichess.lobby import (
         handle_lichess_menu,
         lichess_client_from_settings,
     )
@@ -6306,14 +6306,14 @@ def _handle_accounts_menu():
     from universalchess.menus.catalog import get_catalog
     from universalchess.menus.accounts_menu import choose_account_type
     from universalchess.services import account_store
-    from universalchess.services.lichess_accounts import (
+    from universalchess.players.lichess.accounts import (
         add_lichess_credential,
         host_id_of,
         label_of,
         list_lichess_credentials,
     )
-    from universalchess.services.lichess_hosts import LICHESS_HOSTS, get_host
-    from universalchess.services.lichess_service import resolve_lichess_identity, show_lichess_error
+    from universalchess.players.lichess.hosts import LICHESS_HOSTS, get_host
+    from universalchess.players.lichess.lobby import resolve_lichess_identity, show_lichess_error
 
     catalog = get_catalog()
 

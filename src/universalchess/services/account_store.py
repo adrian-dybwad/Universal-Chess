@@ -361,7 +361,7 @@ def migrate_legacy_lichess(
     if not identity:
         return None
 
-    from universalchess.services.lichess_hosts import HOST_ORG, credential_id
+    from universalchess.players.lichess.hosts import HOST_ORG, credential_id
 
     rating_range = config.get("lichess", "range", fallback="")
     values = {
@@ -401,7 +401,7 @@ def ensure_lichess_migrated(resolver: Optional[Resolver] = None) -> Optional[Acc
     if not catalog.has_account_type("lichess"):
         return None
     account = migrate_legacy_lichess(catalog.account_type("lichess"), resolver=resolver)
-    from universalchess.services.lichess_accounts import migrate_lichess_layout
+    from universalchess.players.lichess.accounts import migrate_lichess_layout
 
     migrate_lichess_layout()
     return account

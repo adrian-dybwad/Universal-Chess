@@ -13,7 +13,7 @@ How a regression manifests
 not treated as org; or lichess.dev is no longer in the host list.
 """
 
-from universalchess.services.lichess_hosts import (
+from universalchess.players.lichess.hosts import (
     DEFAULT_HOST_ID,
     HOST_DEV,
     HOST_ORG,
