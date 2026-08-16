@@ -40,6 +40,12 @@ class Manager:
                                     on_display_updated=on_refresh,
                                     batch_updates=batch_updates)
         self._widgets: List[Widget] = []
+        # Modals displaced by a later modal (shutdown/inactivity countdown over a
+        # waiting splash). Only one modal is visible; the previous one is parked
+        # here without stop() so remove_widget can restore it. clear_widgets and
+        # shutdown still stop everything in this list so a real screen change
+        # cannot resurrect a splash from the previous one.
+        self._parked_modals: List[Widget] = []
         self._background = None  # Optional BackgroundWidget for dithered backgrounds
         self._initialized = False
         self._shutting_down = False
@@ -160,7 +166,9 @@ class Manager:
         """Add a widget on top of the display stack and paint the result.
         
         If the widget has is_modal=True, it takes over the display and all other
-        widgets are ignored until this widget is removed.
+        widgets are ignored until this widget is removed. An existing modal is
+        parked (not stopped) and restored when this one is removed, so cancelling
+        a countdown splash returns the waiting splash that was underneath.
         
         The widget should call request_update() when it's ready to be displayed.
         
@@ -197,7 +205,8 @@ class Manager:
         must not paint the half-built screen it leaves behind.
         
         If adding a modal widget when another modal is already present, the previous
-        modal is stopped and removed, since only one can be shown.
+        modal is parked (removed from the visible stack, not stopped) so that
+        remove_widget can restore it. Only one modal is drawn.
         
         Args:
             widget: The widget to register
@@ -207,13 +216,13 @@ class Manager:
         if widget.is_modal:
             for existing in self._widgets:
                 if existing.is_modal:
-                    log.warning(f"Manager._attach_widget() replacing existing modal {existing.__class__.__name__} with {widget.__class__.__name__}")
-                    try:
-                        existing.stop()
-                    except Exception as e:
-                        log.debug(f"Error stopping replaced modal widget: {e}")
+                    log.debug(
+                        f"Manager._attach_widget() parking modal "
+                        f"{existing.__class__.__name__} under {widget.__class__.__name__}"
+                    )
                     self._widgets.remove(existing)
-                    break  # Only one modal should exist
+                    self._parked_modals.append(existing)
+                    break  # Only one modal is visible
         
         # Pass scheduler and update callback to widget so it can trigger updates.
         # The callback is wrapped per widget so the widget's own refresh_priority
@@ -252,6 +261,9 @@ class Manager:
     
     def remove_widget(self, widget: Widget) -> Future:
         """Remove a widget from the display.
+
+        Removing a modal restores the modal it displaced, if any, so a cancelled
+        countdown returns the splash that was showing before it.
         
         Args:
             widget: The widget to remove
@@ -269,6 +281,13 @@ class Manager:
             
             if widget.is_modal:
                 log.debug(f"Manager.remove_widget() removed modal widget {widget.__class__.__name__}")
+                if self._parked_modals:
+                    restored = self._parked_modals.pop()
+                    self._widgets.append(restored)
+                    log.debug(
+                        f"Manager.remove_widget() restored parked modal "
+                        f"{restored.__class__.__name__}"
+                    )
             else:
                 log.debug(f"Manager.remove_widget() removed {widget.__class__.__name__}")
             
@@ -281,8 +300,8 @@ class Manager:
         """Clear all widgets and background from the display, WITHOUT painting.
         
         Stops all widget background threads, drops refresh requests queued by those
-        widgets, clears the widget list and the background, and optionally seeds the
-        fresh screen with a status bar.
+        widgets, clears the widget list, any parked modals, and the background, and
+        optionally seeds the fresh screen with a status bar.
         
         Deliberately paints nothing. This is the first half of a screen transition
         ("clear the old widgets, add the new ones") and the screen it leaves behind
@@ -304,13 +323,14 @@ class Manager:
         self._scheduler.clear_pending()
         
         # Stop all existing widgets before clearing to prevent background threads from continuing
-        for widget in self._widgets:
+        for widget in list(self._widgets) + list(self._parked_modals):
             try:
                 widget.stop()
             except Exception as e:
                 log.debug(f"Error stopping widget {widget.__class__.__name__} during clear: {e}")
         
         self._widgets.clear()
+        self._parked_modals.clear()
         
         # Clear background to revert to plain white
         self._background = None
@@ -627,11 +647,12 @@ class Manager:
         
         try:
             # Stop all widgets to allow cleanup of background threads and resources
-            for widget in self._widgets:
+            for widget in list(self._widgets) + list(self._parked_modals):
                 try:
                     widget.stop()
                 except Exception as e:
                     log.debug(f"Error stopping widget {widget.__class__.__name__}: {e}")
+            self._parked_modals.clear()
             
             self._scheduler.stop()
             
@@ -671,11 +692,12 @@ class Manager:
         """
         self._shutting_down = True
 
-        for widget in self._widgets:
+        for widget in list(self._widgets) + list(self._parked_modals):
             try:
                 widget.stop()
             except Exception as e:
                 log.debug(f"Error stopping widget {widget.__class__.__name__}: {e}")
+        self._parked_modals.clear()
 
         self._scheduler.stop()
 

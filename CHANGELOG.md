@@ -595,6 +595,26 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Cancelling shutdown no longer blanks a waiting splash**: Long-press PLAY
+  during a Lichess seek (or any other modal) replaced "Waiting for game" with
+  the countdown splash, and the panel manager kept only one modal by stopping
+  and discarding the first. Releasing PLAY removed the countdown and painted
+  an empty stack -- game widgets are deferred so they will not wipe the wait
+  splash, so the panel went white and slept while the seek kept running.
+  Inactivity countdown used the same add/remove pair. A displaced modal is
+  now parked without being stopped and put back when the one that covered it
+  is removed. A real screen change still tears parked modals down, so a
+  connected game cannot resurrect the wait splash.
+
+- **Releasing PLAY during the shutdown countdown is honoured**: On a slow
+  panel the countdown splash's first refresh blocks for up to two seconds,
+  longer than the hold. The PLAY key-up was queued during that wait, then a
+  drain of every pending key threw it away before the countdown looked for
+  it, so the countdown ran to completion (or only cancelled on a second
+  press). The drain is gone. PLAY is watched during the splash wait and
+  through the countdown; other keys are still discarded so they cannot
+  dispatch afterwards.
+
 - **Localized e-paper headlines no longer run off the 128px panel**: French
   "Les blancs gagnent" is 135px at the game-over winner's 16px font, and
   Spanish "Ganan las blancas" is 129px, so centered drawing started at a

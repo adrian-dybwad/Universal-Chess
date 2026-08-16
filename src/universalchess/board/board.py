@@ -495,20 +495,56 @@ def sendCustomLedArray(data: bytes):
     """
     controller.sendCommand(command.LED_CMD, data)
 
+def _play_key_up_queued() -> bool:
+    """Return True if a PLAY key-up is in the queue, discarding other keys.
+
+    Shutdown cancel is PLAY released. Other keys are dropped so they cannot
+    dispatch after the countdown returns to the events thread. PLAY itself must
+    not be thrown away as 'pending' after the splash render wait: that wait is
+    the e-paper refresh, which on a slow panel (dgt-64 SSD1680) outlasts the
+    physical release. A drain of the whole queue after that wait discarded the
+    cancel, so the countdown ran to completion.
+    """
+    released = False
+    while True:
+        key = controller.get_next_key(timeout=0.0)
+        if key is None:
+            return released
+        if key == Key.PLAY:
+            released = True
+
+
+def _remove_countdown_splash(countdown_splash) -> None:
+    """Take the countdown splash off the panel; restore whatever it covered."""
+    try:
+        if display_manager is not None and countdown_splash is not None:
+            display_manager.remove_widget(countdown_splash)
+    except Exception as e:
+        log.debug(f"[board.shutdown_countdown] Failed to remove countdown splash: {e}")
+
+
+def _cancel_shutdown_countdown(countdown_splash) -> bool:
+    """User released PLAY. Clear the splash and tell the caller not to shut down."""
+    log.info("[board.shutdown_countdown] Cancelled (PLAY released)")
+    beep(SOUND_GENERAL, event_type='key_press')
+    _remove_countdown_splash(countdown_splash)
+    return False
+
+
 def shutdown_countdown(countdown_seconds: int = 3) -> bool:
     """
     Display a shutdown countdown with option to cancel.
     
     Shows a modal splash screen counting down from countdown_seconds to 0.
     The modal widget takes over the display, ignoring all other widgets.
-    User can press BACK button to cancel the shutdown.
+    Releasing PLAY cancels the shutdown.
     
     Args:
-        countdown_seconds: Number of seconds to count down (default 5)
+        countdown_seconds: Number of seconds to count down (default 3)
     
     Returns:
         True if countdown completed (proceed with shutdown)
-        False if user cancelled (pressed BACK)
+        False if the user released PLAY
     """
     global display_manager
     
@@ -517,24 +553,36 @@ def shutdown_countdown(countdown_seconds: int = 3) -> bool:
     
     # Create countdown splash (SplashScreen is modal - only it will be rendered)
     countdown_splash = None
+    splash_future = None
     try:
         if display_manager is not None:
             from universalchess.epaper import SplashScreen
             countdown_splash = SplashScreen(display_manager.update, message=f"Shutdown in\n  {countdown_seconds}",
                                             leave_room_for_status_bar=False)
-            future = display_manager.add_widget(countdown_splash)
-            # Wait for initial render so splash is visible immediately
-            if future:
-                try:
-                    future.result(timeout=2.0)
-                except Exception as e:
-                    log.debug(f"[board.shutdown_countdown] Splash render wait failed: {e}")
+            splash_future = display_manager.add_widget(countdown_splash)
     except Exception as e:
         log.debug(f"Failed to show countdown splash: {e}")
-    
-    # Drain any pending key events before starting countdown
-    while controller.get_next_key(timeout=0.0) is not None:
-        pass
+
+    # Watch for PLAY release during the splash paint. Blocking on
+    # future.result(timeout=2) without polling is how the cancel was lost:
+    # the key-up is queued while the panel refreshes, then never read.
+    splash_deadline = time.monotonic() + 2.0
+    while splash_future is not None:
+        if _play_key_up_queued():
+            return _cancel_shutdown_countdown(countdown_splash)
+        remaining_wait = splash_deadline - time.monotonic()
+        if remaining_wait <= 0:
+            break
+        try:
+            splash_future.result(timeout=min(0.1, remaining_wait))
+            break
+        except TimeoutError:
+            log.debug("[board.shutdown_countdown] Splash render still in progress")
+        except Exception as e:
+            log.debug(f"[board.shutdown_countdown] Splash render wait failed: {e}")
+            break
+    if _play_key_up_queued():
+        return _cancel_shutdown_countdown(countdown_splash)
     
     # Countdown loop - releasing PLAY button (PLAY key-up) cancels
     for remaining in range(countdown_seconds, 0, -1):
@@ -547,19 +595,9 @@ def shutdown_countdown(countdown_seconds: int = 3) -> bool:
         
         # Wait 1 second, checking for PLAY release every 100ms
         for _ in range(10):
+            if _play_key_up_queued():
+                return _cancel_shutdown_countdown(countdown_splash)
             time.sleep(0.1)
-            key = controller.get_next_key(timeout=0.0)
-            if key == Key.PLAY:
-                # PLAY key-up means button was released - cancel shutdown
-                log.info("[board.shutdown_countdown] Cancelled (PLAY released)")
-                beep(SOUND_GENERAL, event_type='key_press')
-                # Remove modal widget to restore normal widget rendering
-                try:
-                    if display_manager is not None and countdown_splash is not None:
-                        display_manager.remove_widget(countdown_splash)
-                except Exception as e:
-                    log.debug(f"[board.shutdown_countdown] Failed to remove countdown splash: {e}")
-                return False
     
     log.info("[board.shutdown_countdown] Countdown complete, proceeding with shutdown")
     # Don't remove countdown splash here - shutdown() will add its own modal splash
