@@ -140,7 +140,7 @@ manager.start()
 - `human.py` - `HumanPlayer` for physical board moves
 - `engine.py` - `EnginePlayer` for UCI engine moves
 - `hand_brain.py` - `HandBrainPlayer` (catalog type; HUMAN or ENGINE by mode)
-- `lichess/` - Lichess provider plugin (`player`, `hosts`, `accounts`, `match`, `lobby`)
+- `lichess/` - Lichess provider plugin (`player`, `hosts`, `accounts`, `match`, `lobby`, `session`)
 - `lichess/tests/` - plugin tests; host-socket tests stay in `src/universalchess/tests/`
 - `manager.py` - `PlayerManager` to coordinate both players
 

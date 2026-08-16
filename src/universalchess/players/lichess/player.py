@@ -193,6 +193,18 @@ class LichessPlayer(Player):
     def set_game_info_callback(self, callback: Callable[[str, str, str, str], None]) -> None:
         """Set callback for game info (white_player, white_rating, black_player, black_rating)."""
         self._game_info_callback = callback
+
+    def bind_remote_session(
+        self,
+        *,
+        clock_callback: Optional[Callable[[int, int], None]] = None,
+        game_info_callback: Optional[Callable[[str, str, str, str], None]] = None,
+    ) -> None:
+        """Wire ProtocolManager clock and name updates from the Lichess stream."""
+        if clock_callback is not None:
+            self.set_clock_callback(clock_callback)
+        if game_info_callback is not None:
+            self.set_game_info_callback(game_info_callback)
     
     def set_game_over_callback(self, callback: Callable[[str, str, Optional[str]], None]) -> None:
         """Set callback for game over (result, termination_type, winner).
@@ -481,6 +493,10 @@ class LichessPlayer(Player):
         log.info("[LichessPlayer] New game notification - leaving remote game")
         self._pending_move = None
         self._lifted_squares = []
+        self.leave_remote_game()
+
+    def leave_remote_game(self) -> None:
+        """Abort the Lichess game, or resign when abort is no longer legal."""
         if not self._game_id or not self._client:
             return
         try:
@@ -606,6 +622,10 @@ class LichessPlayer(Player):
             self._client.board.abort_game(self._game_id)
         except Exception as e:
             log.error(f"[LichessPlayer] Failed to abort: {e}")
+
+    def abort_remote_game(self) -> None:
+        """In-game abort menu: abort only, no resign fallback."""
+        self.abort_game()
     
     def supports_takeback(self) -> bool:
         """Lichess doesn't support takeback from external boards."""
@@ -1087,3 +1107,31 @@ def create_lichess_player(
     )
     
     return LichessPlayer(config)
+
+
+def lichess_player_from_seek(seek, *, color, join=None) -> LichessPlayer:
+    """Build the Lichess player PLAY uses from seek params and optional lobby join.
+
+    ``seek`` is :class:`~universalchess.players.lichess.match.LichessSeek`
+    (clock, rated, color preference, account, rating range). ``join`` is the
+    lobby stash from Ongoing/Challenge (``mode``, ``game_id``, ``challenge_id``,
+    ``challenge_direction``). Direct PLAY omits ``join`` and seeks a new game.
+    """
+    join = join or {}
+    mode = join.get("mode") or LichessGameMode.NEW
+    return LichessPlayer(
+        LichessPlayerConfig(
+            name="Lichess",
+            color=color,
+            mode=mode,
+            time_minutes=seek.time_minutes,
+            increment_seconds=seek.increment_seconds,
+            rated=seek.rated,
+            color_preference=seek.color,
+            rating_range=seek.rating_range,
+            game_id=join.get("game_id", "") or "",
+            challenge_id=join.get("challenge_id", "") or "",
+            challenge_direction=join.get("challenge_direction", "in") or "in",
+            account_id=seek.account_id,
+        )
+    )

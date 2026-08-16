@@ -10,6 +10,7 @@ from .player import (
     LichessPlayer,
     LichessPlayerConfig,
     create_lichess_player,
+    lichess_player_from_seek,
 )
 
 __all__ = [
@@ -17,4 +18,5 @@ __all__ = [
     "LichessPlayer",
     "LichessPlayerConfig",
     "create_lichess_player",
+    "lichess_player_from_seek",
 ]

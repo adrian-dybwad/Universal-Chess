@@ -255,6 +255,33 @@ class PlayerManager:
         """Notify both players of new game."""
         self._white_player.on_new_game()
         self._black_player.on_new_game()
+
+    def bind_remote_sessions(
+        self,
+        *,
+        clock_callback=None,
+        game_info_callback=None,
+    ) -> None:
+        """Offer clock and game-info callbacks to both slots.
+
+        Local players no-op. A remote player forwards the server clock and
+        names. Callers must not inspect player classes.
+        """
+        for player in (self._white_player, self._black_player):
+            player.bind_remote_session(
+                clock_callback=clock_callback,
+                game_info_callback=game_info_callback,
+            )
+
+    def abort_remote_games(self) -> None:
+        """Abort any attached remote game (in-game abort menu)."""
+        self._white_player.abort_remote_game()
+        self._black_player.abort_remote_game()
+
+    def leave_remote_games(self) -> None:
+        """Leave any attached remote game so the opponent is not stranded."""
+        self._white_player.leave_remote_game()
+        self._black_player.leave_remote_game()
     
     def on_takeback(self, board: chess.Board) -> None:
         """Notify both players of takeback.

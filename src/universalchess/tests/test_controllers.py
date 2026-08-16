@@ -195,18 +195,20 @@ class TestLocalController(unittest.TestCase):
             if 'spidev' in str(e) or 'RPi' in str(e):
                 self.skipTest("Requires Raspberry Pi hardware modules")
     
-    def test_is_lichess_false_by_default(self):
-        """Test that is_lichess is False without player manager.
-        
-        Expected: is_lichess should be False when no player manager set.
-        Failure: Lichess detection wrong without players.
+    def test_local_controller_has_no_lichess_property(self):
+        """LocalController must not name a player plugin.
+
+        Why: is_lichess was isinstance LichessPlayer with no production
+        callers. Rebuild vs in-place is requires_rebuild_on_new_game.
+
+        Failure: is_lichess is back, so the controller still special-cases
+        Lichess instead of the remote-session capability.
         """
         from universalchess.controllers.local import LocalController
-        
-        mock_game_manager = MagicMock()
-        controller = LocalController(mock_game_manager)
-        
-        assert controller.is_lichess is False
+
+        assert not hasattr(LocalController, "is_lichess")
+        controller = LocalController(MagicMock())
+        assert not hasattr(controller, "is_lichess")
 
     def test_new_game_requests_move_when_rebuild_not_required(self):
         """An engine/human board-reset still starts the next game in place.

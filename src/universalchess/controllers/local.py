@@ -157,16 +157,6 @@ class LocalController(GameController):
         return self._player_manager
     
     @property
-    def is_lichess(self) -> bool:
-        """Whether this is a Lichess game."""
-        if not self._player_manager:
-            return False
-        from universalchess.players.lichess import LichessPlayer
-        return any(isinstance(p, LichessPlayer) 
-                   for p in [self._player_manager.white_player, 
-                             self._player_manager.black_player])
-    
-    @property
     def is_two_player_mode(self) -> bool:
         """Whether both players are human."""
         if self._player_manager:

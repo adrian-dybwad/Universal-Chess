@@ -491,16 +491,18 @@ Entities that make moves in chess games.
 ### lichess/ (Lichess plugin)
 
 A REMOTE provider package. The game talks to `LichessPlayer`; hosts, tokens,
-identity, seek, and the board lobby live here. Plugin tests live in `tests/`.
+identity, seek, lobby, and the in-game session live here. Plugin tests live
+in `tests/`.
 
 | File | Purpose |
 |------|---------|
-| `player.py` | `LichessPlayer` (`PlayerType.REMOTE`, rebuilds on new game) |
+| `player.py` | `LichessPlayer` (`PlayerType.REMOTE`, rebuilds on new game); `lichess_player_from_seek` |
 | `hosts.py` | `org` / `dev` API servers and `host:user` credential ids |
 | `accounts.py` | Plugin credential rows on the generic account store |
 | `match.py` | Seek params, berserk client |
 | `lobby.py` | Board menu, identity fetch, waiting/started splash |
-| `tests/` | Plugin tests (hosts, credentials, seek, lobby, echo guard) |
+| `session.py` | In-game splash, color remap, offers, BACK-during-seek |
+| `tests/` | Plugin tests (hosts, credentials, seek, lobby, session, echo guard) |
 
 ### manager.py (PlayerManager)
 

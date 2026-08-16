@@ -11,7 +11,7 @@
 # RemoteController in the controllers/ module.
 #
 # Player integrations are handled via the players/ module, which provides
-# clean abstractions for different player types (Human, Engine, Lichess).
+# clean abstractions for different player types (Human, Engine, Remote).
 #
 # Licensed under the GNU General Public License v3.0 or later.
 # See LICENSE.md for details.
@@ -51,7 +51,6 @@ class ProtocolManager:
     CLIENT_MILLENNIUM = "millennium"
     CLIENT_PEGASUS = "pegasus"
     CLIENT_CHESSNUT = "chessnut"
-    CLIENT_LICHESS = "lichess"
     
     def __init__(self, game_manager: GameManager):
         """Initialize the ProtocolManager.
@@ -84,15 +83,6 @@ class ProtocolManager:
         
         log.info(f"[ProtocolManager] Initialized")
     
-    def _setup_lichess_callbacks(self):
-        """Set up callbacks for Lichess player."""
-        from universalchess.players.lichess import LichessPlayer
-        
-        for player in [self._player_manager.white_player, self._player_manager.black_player]:
-            if isinstance(player, LichessPlayer):
-                player.set_clock_callback(self._on_lichess_clock_update)
-                player.set_game_info_callback(self._on_lichess_game_info)
-    
     @property
     def is_two_player_mode(self) -> bool:
         """Check if the game is in 2-player mode (both players are human).
@@ -117,13 +107,10 @@ class ProtocolManager:
         """
         self._player_manager = player_manager
         self.game_manager.set_player_manager(player_manager)
-        
-        # Check if this is a Lichess game and set up callbacks
-        from universalchess.players.lichess import LichessPlayer
-        is_lichess = any(isinstance(p, LichessPlayer) 
-                        for p in [player_manager.white_player, player_manager.black_player])
-        if is_lichess:
-            self._setup_lichess_callbacks()
+        player_manager.bind_remote_sessions(
+            clock_callback=self._on_remote_clock_update,
+            game_info_callback=self._on_remote_game_info,
+        )
         
         log.info(f"[ProtocolManager] PlayerManager set: White={player_manager.white_player.name}, Black={player_manager.black_player.name}")
     
@@ -213,12 +200,12 @@ class ProtocolManager:
             self._player_manager.stop()
     
     # =========================================================================
-    # Lichess-Specific Methods
+    # Remote session (clock and names from an attached online game)
     # =========================================================================
     
-    def _on_lichess_clock_update(self, white_time: int, black_time: int):
-        """Handle clock update from Lichess.
-        
+    def _on_remote_clock_update(self, white_time: int, black_time: int):
+        """Handle clock update from a remote player.
+
         Args:
             white_time: White's remaining time in seconds.
             black_time: Black's remaining time in seconds.
@@ -226,10 +213,10 @@ class ProtocolManager:
         if self.game_manager:
             self.game_manager.set_clock(white_time, black_time)
     
-    def _on_lichess_game_info(self, white_player: str, white_rating: str,
+    def _on_remote_game_info(self, white_player: str, white_rating: str,
                                black_player: str, black_rating: str):
-        """Handle game info update from Lichess.
-        
+        """Handle game info update from a remote player.
+
         Args:
             white_player: White player's username.
             white_rating: White player's rating.
@@ -240,28 +227,6 @@ class ProtocolManager:
             white_str = f"{white_player}({white_rating})"
             black_str = f"{black_player}({black_rating})"
             self.game_manager.set_game_info("", "", "", white_str, black_str)
-    
-    def start_lichess(self) -> bool:
-        """Start the Lichess connection and game.
-        
-        Returns:
-            True if Lichess started successfully, False on error.
-        """
-        return self.start_players()
-    
-    def stop_lichess(self):
-        """Stop the Lichess connection."""
-        self.stop_players()
-    
-    def is_lichess_connected(self) -> bool:
-        """Check if Lichess game is active.
-        
-        Returns:
-            True if connected to a Lichess game, False otherwise.
-        """
-        if self._player_manager and self.is_lichess:
-            return self._player_manager.is_ready
-        return False
     
     # =========================================================================
     # App Connection Management
@@ -274,9 +239,9 @@ class ProtocolManager:
         by ControllerManager, not by checking this method.
         
         Returns:
-            True if a chess app is connected (Millennium, Pegasus, Chessnut, or Lichess)
+            True if a chess app is connected (Millennium, Pegasus, or Chessnut)
         """
-        return self.is_millennium or self.is_pegasus or self.is_chessnut or self.is_lichess
+        return self.is_millennium or self.is_pegasus or self.is_chessnut
 
     def on_app_connected(self):
         """Called when a BLE app connects.

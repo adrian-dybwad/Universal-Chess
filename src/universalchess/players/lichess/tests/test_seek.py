@@ -18,11 +18,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from universalchess.players.lichess import LichessGameMode
+import chess
+
+from universalchess.players.lichess import LichessGameMode, lichess_player_from_seek
 from universalchess.players.lichess.match import (
     ACCOUNT_TYPE_LICHESS,
     LICHESS_DEV_BASE_URL,
     LICHESS_ORG_BASE_URL,
+    LichessSeek,
     LichessSeekError,
     lichess_base_url,
     lichess_seek_from_settings,
@@ -269,3 +272,67 @@ def test_waiting_and_started_splash_copy():
     assert lichess_waiting_message(LichessGameMode.CHALLENGE) == "Loading\nChallenge..."
     assert lichess_started_message(True) == "Game started\nYou play White"
     assert lichess_started_message(False) == "Game started\nYou play Black"
+
+
+def test_lichess_player_from_seek_copies_seek_and_join():
+    """PLAY constructs the player from seek + lobby join, not hardcoded 10+5.
+
+    Why: main inlined LichessPlayerConfig with the same defaults PLAY used to
+    seek (10+5 casual random). The factory is the single place seek fields
+    become a player, so a board-reset new game cannot drift from lobby join.
+
+    Failure: time/increment/rated/color/account come from dataclass defaults,
+    or ONGOING join still seeks NEW with an empty game_id.
+    """
+    seek = LichessSeek(
+        time_minutes=5,
+        increment_seconds=3,
+        color="black",
+        rated=True,
+        rating_range="1000-1600",
+        account_id="dev:bob",
+        host_id="dev",
+    )
+    player = lichess_player_from_seek(
+        seek,
+        color=chess.BLACK,
+        join={
+            "mode": LichessGameMode.ONGOING,
+            "game_id": "abc123",
+            "challenge_id": "",
+            "challenge_direction": "in",
+        },
+    )
+    cfg = player._lichess_config
+    assert player.color == chess.BLACK
+    assert cfg.mode is LichessGameMode.ONGOING
+    assert cfg.time_minutes == 5
+    assert cfg.increment_seconds == 3
+    assert cfg.rated is True
+    assert cfg.color_preference == "black"
+    assert cfg.rating_range == "1000-1600"
+    assert cfg.account_id == "dev:bob"
+    assert cfg.game_id == "abc123"
+    assert cfg.challenge_id == ""
+
+
+def test_lichess_player_from_seek_defaults_to_new_when_join_omitted():
+    """PLAY without a lobby stash seeks a new game as the bound account.
+
+    Why: the join dict is only set from Ongoing/Challenge. Direct PLAY must
+    still bind the seek's credential.
+
+    Failure: mode is ONGOING or account_id is empty.
+    """
+    seek = LichessSeek(
+        time_minutes=10,
+        increment_seconds=0,
+        color="white",
+        rated=False,
+        rating_range="",
+        account_id="org:alice",
+    )
+    player = lichess_player_from_seek(seek, color=chess.WHITE)
+    assert player._lichess_config.mode is LichessGameMode.NEW
+    assert player._lichess_config.account_id == "org:alice"
+    assert player._lichess_config.game_id == ""

@@ -84,7 +84,7 @@ class Player(ABC):
     
     - HumanPlayer: Constructs a move from piece events (lift A, place B)
     - EnginePlayer: Computes a move, then validates piece events match
-    - LichessPlayer: Receives a move from server, validates piece events match
+    - Remote: Receives a move from outside, validates piece events match
     
     Key Methods:
     - request_move(): Called when it's this player's turn
@@ -196,6 +196,34 @@ class Player(ABC):
         move against that abandoned game.
         """
         return False
+
+    def bind_remote_session(
+        self,
+        *,
+        clock_callback: Optional[Callable[[int, int], None]] = None,
+        game_info_callback: Optional[Callable[[str, str, str, str], None]] = None,
+    ) -> None:
+        """Wire clock and game-info updates from an attached remote session.
+
+        No-op on local players. Remote players (Lichess, later Chess.com)
+        forward server clock and names through these callbacks. ProtocolManager
+        calls this on both slots so it does not need to name a provider.
+        """
+
+    def abort_remote_game(self) -> None:
+        """Abort an attached remote game if this player owns one.
+
+        No-op on local players. Used from the in-game abort menu while abort
+        is still legal on the server (early in the game).
+        """
+
+    def leave_remote_game(self) -> None:
+        """End an attached remote game so the opponent is not stranded.
+
+        No-op on local players. Abort if still allowed; otherwise resign.
+        Distinct from :meth:`abort_remote_game`, which does not fall back to
+        resign, and from :meth:`on_new_game`, which also resets local state.
+        """
     
     @property
     def pending_move(self) -> Optional[chess.Move]:

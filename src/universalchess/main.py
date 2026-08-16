@@ -2325,7 +2325,8 @@ def _start_game_mode(
     log.info(f"[App] Transitioning to GAME mode (position_game={is_position_game})")
 
     from universalchess.players.lichess import (
-        LichessPlayer, LichessPlayerConfig, LichessGameMode
+        LichessGameMode,
+        lichess_player_from_seek,
     )
     from universalchess.players.lichess.match import (
         LichessSeekError,
@@ -2333,6 +2334,7 @@ def _start_game_mode(
         START_PLAYING_SPLASH_SECONDS,
     )
     from universalchess.players.lichess.lobby import show_lichess_error
+    from universalchess.players.lichess.session import LichessPlaySession
 
     join = _lichess_join
     _lichess_join = None
@@ -2451,22 +2453,7 @@ def _start_game_mode(
                 return PolicyEnginePlayer(config, SPECS[ps.engine])
             return EnginePlayer(config)
         elif ps.type == 'lichess':
-            join_mode = join["mode"] if join else LichessGameMode.NEW
-            config = LichessPlayerConfig(
-                name="Lichess",
-                color=color,
-                mode=join_mode,
-                time_minutes=lichess_seek.time_minutes if lichess_seek else 10,
-                increment_seconds=lichess_seek.increment_seconds if lichess_seek else 5,
-                rated=lichess_seek.rated if lichess_seek else False,
-                color_preference=lichess_seek.color if lichess_seek else "random",
-                rating_range=lichess_seek.rating_range if lichess_seek else "",
-                game_id=(join or {}).get("game_id", "") or "",
-                challenge_id=(join or {}).get("challenge_id", "") or "",
-                challenge_direction=(join or {}).get("challenge_direction", "in") or "in",
-                account_id=lichess_seek.account_id if lichess_seek else ps.account,
-            )
-            return LichessPlayer(config)
+            return lichess_player_from_seek(lichess_seek, color=color, join=join)
         elif ps.type == 'hand_brain':
             mode = HandBrainMode.NORMAL if ps.hand_brain_mode == 'normal' else HandBrainMode.REVERSE
             mode_str = 'N' if mode == HandBrainMode.NORMAL else 'R'
@@ -2501,7 +2488,7 @@ def _start_game_mode(
     is_two_player = (p1.type == 'human' and p2.type == 'human')
     # Hand-brain mode is enabled if either player is a hand_brain player
     is_hand_brain = (p1.type == 'hand_brain' or p2.type == 'hand_brain')
-    is_lichess = (p1.type == 'lichess' or p2.type == 'lichess')
+    lichess_session = LichessPlaySession.from_players(white_player, black_player)
 
     # Get analysis engine path if analysis mode is enabled
     # The engine registry handles sharing - if a player engine uses the same binary,
@@ -2564,10 +2551,9 @@ def _start_game_mode(
     # Hand-brain hints are set per-player via display_manager.set_brain_hint()
     # Lichess seek: splash first, defer the board paint so _init_widgets does
     # not wipe "Waiting for game" before the e-paper shows it.
-    if is_lichess:
+    if lichess_session is not None:
         from universalchess.players.lichess.lobby import show_lichess_waiting_splash
-        wait_mode = join["mode"] if join else LichessGameMode.NEW
-        show_lichess_waiting_splash(board.display_manager, wait_mode)
+        show_lichess_waiting_splash(board.display_manager, lichess_session.waiting_mode)
 
     display_manager = DisplayManager(
         flip_board=False,
@@ -2584,7 +2570,7 @@ def _start_game_mode(
         led_off_callback=led_callbacks.off,
         time_control_spec=time_control_spec,
         engine_move_clock_delay_seconds=game.engine_move_clock_delay_seconds,
-        defer_widgets=is_lichess,
+        defer_widgets=lichess_session is not None,
     )
     log.info(f"[App] DisplayManager initialized (time_control={time_control_spec.describe()}, "
              f"analysis_mode={analysis_mode}, "
@@ -2630,10 +2616,7 @@ def _start_game_mode(
             game_manager.handle_draw()
         elif result == "abort":
             if player_manager:
-                for player in (player_manager.white_player, player_manager.black_player):
-                    if isinstance(player, LichessPlayer):
-                        player.abort_game()
-                        break
+                player_manager.abort_remote_games()
             _return_to_menu("Lichess abort")
         elif result == "exit":
             cleanup_and_exit(reason="User selected 'exit' from game menu", system_shutdown=True)
@@ -2786,103 +2769,25 @@ def _start_game_mode(
         protocol_detected_callback=protocol_manager.on_protocol_detected
     )
 
-    if is_lichess:
+    if lichess_session is not None:
         from universalchess.epaper import InfoOverlayWidget
-        from universalchess.players.lichess.lobby import show_lichess_started_splash
 
         _info_overlay = InfoOverlayWidget(0, 216, 128, 80, board.display_manager.update)
-        lichess_game_connected = False
-        started_splash_held = True
 
-        def _lichess_player():
-            if player_manager is None:
-                return None
-            for player in (player_manager.white_player, player_manager.black_player):
-                if isinstance(player, LichessPlayer):
-                    return player
-            return None
-
-        def _dismiss_lichess_started_splash():
-            nonlocal started_splash_held
-            if not started_splash_held:
-                return
-            started_splash_held = False
-            display_manager.show_game_widgets()
-            board.display_manager.add_widget(_info_overlay)
-
-        def _on_lichess_game_connected():
-            nonlocal lichess_game_connected
-            if lichess_game_connected:
-                return
-            lichess_game_connected = True
-            lp = _lichess_player()
-            human_is_white = True if lp is None or lp.player_is_white is None else lp.player_is_white
-            if player_manager is not None:
-                human = None
-                remote = None
-                for player in (player_manager.white_player, player_manager.black_player):
-                    if isinstance(player, LichessPlayer):
-                        remote = player
-                    else:
-                        human = player
-                if human is not None and remote is not None:
-                    if human_is_white:
-                        player_manager.reassign_slots(human, remote)
-                    else:
-                        player_manager.reassign_slots(remote, human)
-            display_manager.set_flip_board(not human_is_white)
-            show_lichess_started_splash(board.display_manager, human_is_white)
-            timer = threading.Timer(
-                START_PLAYING_SPLASH_SECONDS, _dismiss_lichess_started_splash
-            )
-            timer.daemon = True
-            timer.start()
-
-        def _on_lichess_takeback_offer(accept_fn, decline_fn):
-            log.info("[App] Lichess takeback offer received")
-            board.beep(board.SOUND_GENERAL)
-            entries = [
-                IconMenuEntry(key="accept", label="Accept\nTakeback", icon_name="undo"),
-                IconMenuEntry(key="decline", label="Decline", icon_name="cancel"),
-            ]
-            result = _menu_manager.show_menu(entries)
-            if hasattr(result, "key") and result.key == "accept":
-                accept_fn()
-            else:
-                decline_fn()
-
-        def _on_lichess_draw_offer(accept_fn, decline_fn):
-            log.info("[App] Lichess draw offer received")
-            board.beep(board.SOUND_GENERAL)
-            entries = [
-                IconMenuEntry(key="accept", label="Accept\nDraw", icon_name="draw"),
-                IconMenuEntry(key="decline", label="Decline", icon_name="cancel"),
-            ]
-            result = _menu_manager.show_menu(entries)
-            if hasattr(result, "key") and result.key == "accept":
-                accept_fn()
-            else:
-                decline_fn()
-
-        def _on_lichess_game_over(result: str, termination: str, winner):
-            log.info(
-                f"[App] Lichess game over: result={result}, "
-                f"termination={termination}, winner={winner}"
-            )
-            display_manager.stop_clock()
+        def _set_lichess_result(result: str, termination: str) -> None:
             from universalchess.state import get_chess_game
             get_chess_game().set_result(result, termination)
 
-        def _on_lichess_info_message(message: str):
-            _info_overlay.show_message(message, duration_seconds=5.0)
-
-        for player in (white_player, black_player):
-            if isinstance(player, LichessPlayer):
-                player.set_on_game_connected(_on_lichess_game_connected)
-                player.set_game_over_callback(_on_lichess_game_over)
-                player.set_takeback_offer_callback(_on_lichess_takeback_offer)
-                player.set_draw_offer_callback(_on_lichess_draw_offer)
-                player.set_info_message_callback(_on_lichess_info_message)
+        lichess_session.attach(
+            player_manager=player_manager,
+            game_display=display_manager,
+            panel=board.display_manager,
+            info_overlay=_info_overlay,
+            menu_manager=_menu_manager,
+            beep=lambda: board.beep(board.SOUND_GENERAL),
+            set_game_result=_set_lichess_result,
+            splash_seconds=START_PLAYING_SPLASH_SECONDS,
+        )
     
     # Activate local controller by default (this starts players)
     controller_manager.activate_local()
@@ -2896,17 +2801,14 @@ def _start_game_mode(
     # For position games, skip the resign/draw menu and return directly
     if is_position_game:
         protocol_manager.set_on_back_pressed(_on_position_game_back)
-    elif is_lichess:
+    elif lichess_session is not None:
         def _on_lichess_back():
-            if not lichess_game_connected:
-                log.info("[App] Lichess seek cancelled")
-                protocol_manager.stop_lichess()
-                _return_to_menu("Lichess cancel")
-                return
-            display_manager.show_back_menu(
-                _on_back_menu_result,
-                is_two_player=False,
-                allow_abort=True,
+            lichess_session.on_back(
+                stop_players=protocol_manager.stop_players,
+                return_to_menu=_return_to_menu,
+                show_back_menu=lambda **kwargs: display_manager.show_back_menu(
+                    _on_back_menu_result, **kwargs
+                ),
             )
         protocol_manager.set_on_back_pressed(_on_lichess_back)
     else:
@@ -3081,8 +2983,8 @@ def _start_game_mode(
         elif event == EVENT_WHITE_TURN or event == EVENT_BLACK_TURN:
             # Start clock on first turn event (game has truly started)
             # Turn indicator is handled by ChessClockWidget observing ChessGameState directly
-            if is_lichess:
-                _dismiss_lichess_started_splash()
+            if lichess_session is not None:
+                lichess_session.dismiss_started_splash()
             if not _clock_started:
                 display_manager.start_clock()
                 _clock_started = True
@@ -3409,11 +3311,7 @@ def _abort_current_game() -> None:
     game_manager = getattr(protocol_manager, "game_manager", None)
     player_manager = getattr(protocol_manager, "player_manager", None)
     if player_manager is not None:
-        from universalchess.players.lichess import LichessPlayer
-        for player in (player_manager.white_player, player_manager.black_player):
-            if isinstance(player, LichessPlayer):
-                player.on_new_game()
-                break
+        player_manager.leave_remote_games()
     if game_manager is None:
         return
     try:

@@ -66,3 +66,64 @@ def test_player_manager_rebuild_follows_either_side():
     assert remote_black.requires_rebuild_on_new_game is True
     remote_white = PlayerManager(LichessPlayer(), HumanPlayer())
     assert remote_white.requires_rebuild_on_new_game is True
+
+
+def test_human_remote_session_hooks_are_noops():
+    """Core does not special-case a provider; Human ignores remote session hooks.
+
+    Why: ProtocolManager and abort/leave used isinstance LichessPlayer. The
+    default Player hooks must be safe to call on every slot.
+
+    Failure: bind_remote_session / abort_remote_game / leave_remote_game raise
+    or do not exist on Human.
+    """
+    human = HumanPlayer()
+    human.bind_remote_session(clock_callback=lambda *_: None, game_info_callback=lambda *_: None)
+    human.abort_remote_game()
+    human.leave_remote_game()
+
+
+def test_lichess_bind_remote_session_wires_clock_and_game_info():
+    """A remote player accepts clock and game-info callbacks through the hook.
+
+    Why: ProtocolManager imported LichessPlayer to call set_clock_callback.
+    bind_remote_session is the capability; core must not name the plugin.
+
+    Failure: callbacks are not stored, so GameManager never receives clock/info.
+    """
+    player = LichessPlayer()
+    clocks = []
+    infos = []
+    player.bind_remote_session(
+        clock_callback=lambda w, b: clocks.append((w, b)),
+        game_info_callback=lambda *args: infos.append(args),
+    )
+    player._clock_callback(60, 45)
+    player._game_info_callback("a", "1", "b", "2")
+    assert clocks == [(60, 45)]
+    assert infos == [("a", "1", "b", "2")]
+
+
+def test_player_manager_abort_and_leave_reach_only_remote_slot():
+    """Abort/leave on the manager must hit the remote player, not require isinstance.
+
+    Why: main aborted by looping players with isinstance LichessPlayer.
+
+    Failure: Human is asked to abort (would raise if we later make that an
+    error) or the Lichess slot's client is never called.
+    """
+    from unittest.mock import MagicMock
+
+    remote = LichessPlayer()
+    remote._game_id = "game-1"
+    remote._client = MagicMock()
+    manager = PlayerManager(HumanPlayer(), remote)
+    manager.abort_remote_games()
+    remote._client.board.abort_game.assert_called_once_with("game-1")
+    remote._client.board.resign_game.assert_not_called()
+
+    remote._client.reset_mock()
+    remote._client.board.abort_game.side_effect = Exception("too late")
+    manager.leave_remote_games()
+    remote._client.board.abort_game.assert_called_once_with("game-1")
+    remote._client.board.resign_game.assert_called_once_with("game-1")
