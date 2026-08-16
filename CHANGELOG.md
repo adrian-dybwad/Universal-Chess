@@ -595,6 +595,16 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Lichess lobby accept left the board on the waiting splash**: After an
+  opponent took the board's seek (or challenged the account from the lobby),
+  Lichess already had a live game -- the web player sat on a board waiting for
+  the first move -- but the e-paper never left "Waiting for game" and Human
+  moves were never sent. ``board.seek`` holds an HTTP stream open until Lichess
+  closes it; after a match that stream often keeps sending keep-alives, and
+  the player only looked up the game once seek() returned. The Board API event
+  stream now attaches on ``gameStart``, incoming challenges are accepted while
+  seeking, and ongoing games are polled in parallel with the seek.
+
 - **Cancelling shutdown no longer blanks a waiting splash**: Long-press PLAY
   during a Lichess seek (or any other modal) replaced "Waiting for game" with
   the countdown splash, and the panel manager kept only one modal by stopping

@@ -61,6 +61,18 @@ class LichessPlayerConfig(PlayerConfig):
     account_id: str = ''
 
 
+def ongoing_game_id(game: dict) -> str:
+    """Id of one ``GET /api/account/playing`` nowPlaying row.
+
+    Lichess JSON uses ``gameId``. A snake_case converter or a truncated object
+    may expose ``game_id`` or ``id`` instead. Empty means the row cannot be
+    streamed.
+    """
+    if not game:
+        return ""
+    return str(game.get("gameId") or game.get("game_id") or game.get("id") or "")
+
+
 class LichessPlayer(Player):
     """A player that connects to Lichess for online games.
     
@@ -76,6 +88,7 @@ class LichessPlayer(Player):
     
     Thread Model:
     - start() authenticates and begins seek/stream
+    - Event and poll threads attach the game even if seek() never returns
     - Stream thread receives remote moves and stores them
     - Piece events validate execution and submit
     """
@@ -123,6 +136,8 @@ class LichessPlayer(Player):
         self._should_stop = threading.Event()
         self._stream_thread: Optional[threading.Thread] = None
         self._seek_thread: Optional[threading.Thread] = None
+        self._event_thread: Optional[threading.Thread] = None
+        self._match_thread: Optional[threading.Thread] = None
         self._state_lock = threading.Lock()
         
         # Board orientation
@@ -350,6 +365,10 @@ class LichessPlayer(Player):
             self._stream_thread.join(timeout=2.0)
         if self._seek_thread and self._seek_thread.is_alive():
             self._seek_thread.join(timeout=2.0)
+        if self._event_thread and self._event_thread.is_alive():
+            self._event_thread.join(timeout=2.0)
+        if self._match_thread and self._match_thread.is_alive():
+            self._match_thread.join(timeout=2.0)
         
         self._set_state(PlayerState.STOPPED)
         log.info("[LichessPlayer] Lichess player stopped")
@@ -650,21 +669,126 @@ class LichessPlayer(Player):
     # =========================================================================
     
     def _start_new_game(self) -> bool:
-        """Start seeking a new game."""
+        """Start seeking a new game.
+
+        Three threads run until a game id is known:
+
+        * the Board API event stream (``gameStart``, incoming challenges);
+        * ``board.seek``, which holds an HTTP stream open for the lobby hook;
+        * a poller on ``games.get_ongoing``, because seek() often does not
+          return after someone takes the hook (Lichess keeps sending
+          keep-alives) and ``gameStart`` is a one-shot that can be missed.
+        """
         log.info(f"[LichessPlayer] Seeking: {self._lichess_config.time_minutes}+{self._lichess_config.increment_seconds}")
         self._report_status("Finding opponent...")
-        
+
+        self._event_thread = threading.Thread(
+            target=self._event_stream_thread,
+            name="lichess-events",
+            daemon=True,
+        )
+        self._match_thread = threading.Thread(
+            target=self._match_poll_thread,
+            name="lichess-match-poll",
+            daemon=True,
+        )
         self._seek_thread = threading.Thread(
             target=self._seek_game_thread,
             name="lichess-seek",
-            daemon=True
+            daemon=True,
         )
+        self._event_thread.start()
+        self._match_thread.start()
         self._seek_thread.start()
-        
         return True
-    
+
+    def _begin_game(self, game_id: str) -> bool:
+        """Attach ``game_id`` and start the game stream at most once."""
+        if not game_id:
+            return False
+        with self._state_lock:
+            if self._game_id or self._should_stop.is_set():
+                return False
+            self._game_id = game_id
+        log.info(f"[LichessPlayer] Found game: {game_id}")
+        self._start_game_stream()
+        return True
+
+    def _try_attach_ongoing_game(self) -> bool:
+        """Attach the first nowPlaying game, if any."""
+        if self._game_id or not self._client:
+            return bool(self._game_id)
+        try:
+            ongoing = self._client.games.get_ongoing(30)
+        except Exception as e:
+            log.warning(f"[LichessPlayer] Error checking ongoing games: {e}")
+            return False
+        for game in ongoing or []:
+            game_id = ongoing_game_id(game)
+            if game_id and self._begin_game(game_id):
+                return True
+        return False
+
+    def _match_poll_thread(self):
+        """Poll ongoing games until attached. Does not wait for seek()."""
+        while not self._should_stop.is_set() and not self._game_id:
+            if self._try_attach_ongoing_game():
+                return
+            time.sleep(0.5)
+
+    def _event_stream_thread(self):
+        """Board incoming-event stream: gameStart and challenges."""
+        if not self._client:
+            return
+        try:
+            for event in self._client.board.stream_incoming_events():
+                if self._should_stop.is_set() or self._game_id:
+                    break
+                self._handle_incoming_event(event)
+        except Exception as e:
+            if not self._should_stop.is_set() and not self._game_id:
+                log.warning(f"[LichessPlayer] Event stream ended: {e}")
+
+    def _handle_incoming_event(self, event: dict) -> None:
+        """React to one Board API event. Safe to call from tests."""
+        if not event or self._should_stop.is_set():
+            return
+        etype = event.get("type")
+        if etype == "gameStart":
+            game = event.get("game") or {}
+            self._begin_game(ongoing_game_id(game) or str(game.get("id") or ""))
+            return
+        if etype != "challenge" or self._lichess_config.mode != LichessGameMode.NEW:
+            return
+        if self._game_id:
+            return
+        challenge = event.get("challenge") or {}
+        if not self._challenge_is_incoming(challenge):
+            return
+        challenge_id = challenge.get("id")
+        if not challenge_id or not self._client:
+            return
+        log.info(f"[LichessPlayer] Accepting incoming challenge: {challenge_id}")
+        try:
+            self._client.challenges.accept(challenge_id)
+        except Exception as e:
+            log.warning(f"[LichessPlayer] Could not accept challenge: {e}")
+
+    def _challenge_is_incoming(self, challenge: dict) -> bool:
+        """True when this account is the challenge destination."""
+        dest = challenge.get("destUser") or {}
+        dest_id = str(dest.get("id") or dest.get("name") or "").lower()
+        if dest_id:
+            return dest_id == (self._username or "").lower()
+        return str(challenge.get("direction") or "").lower() == "in"
+
     def _seek_game_thread(self):
-        """Background thread for game seeking."""
+        """Post the lobby seek and hold the HTTP stream open.
+
+        When Lichess closes the stream, poll once more in case the event
+        stream missed gameStart. The match poller is already looking while
+        this call blocks.
+        """
         try:
             rated = self._lichess_config.rated
             color = self._lichess_config.color_preference.lower()
@@ -683,40 +807,14 @@ class LichessPlayer(Player):
                 rating_range=rating_range
             )
             
-            if not self._should_stop.is_set():
-                self._find_and_start_game()
+            if not self._should_stop.is_set() and not self._game_id:
+                self._try_attach_ongoing_game()
                 
         except Exception as e:
-            if not self._should_stop.is_set():
+            if not self._should_stop.is_set() and not self._game_id:
                 log.error(f"[LichessPlayer] Seek failed: {e}")
                 self._set_state(PlayerState.ERROR, "Seek failed")
-    
-    def _find_and_start_game(self):
-        """Find the most recent matching game and start streaming."""
-        log.info("[LichessPlayer] Looking for started game...")
-        
-        max_attempts = 30
-        for attempt in range(max_attempts):
-            if self._should_stop.is_set():
-                return
-            
-            try:
-                ongoing = self._client.games.get_ongoing(30)
-                for game in ongoing:
-                    game_id = game.get('gameId')
-                    if game_id:
-                        self._game_id = game_id
-                        log.info(f"[LichessPlayer] Found game: {game_id}")
-                        self._start_game_stream()
-                        return
-            except Exception as e:
-                log.warning(f"[LichessPlayer] Error checking ongoing games: {e}")
-            
-            time.sleep(0.5)
-        
-        log.error("[LichessPlayer] Could not find started game")
-        self._set_state(PlayerState.ERROR, "Game not found")
-    
+
     def _start_ongoing_game(self) -> bool:
         """Resume an ongoing game."""
         self._game_id = self._lichess_config.game_id
