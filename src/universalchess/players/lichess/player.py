@@ -345,6 +345,8 @@ class LichessPlayer(Player):
             True if connection started successfully, False on error.
         """
         log.info("[LichessPlayer] Starting Lichess player")
+        if self._should_stop.is_set():
+            return False
         self._set_state(PlayerState.INITIALIZING)
         self._report_status("Connecting to Lichess...")
         
@@ -369,6 +371,11 @@ class LichessPlayer(Player):
             log.error(f"[LichessPlayer] Failed to create berserk client: {e}")
             self._set_state(PlayerState.ERROR, "API client error")
             return False
+
+        # BACK can run on the key thread while this start() is still on the
+        # main thread. If stop() already ran, do not authenticate or post a seek.
+        if self._abandon_start() or self._client is None:
+            return False
         
         # Authenticate and get user info
         self._report_status("Authenticating...")
@@ -379,8 +386,14 @@ class LichessPlayer(Player):
             self._config.name = self._username if self._username else "Lichess"
             log.info(f"[LichessPlayer] Authenticated as: {self._username}")
         except Exception as e:
+            if self._should_stop.is_set():
+                self._close_http_session()
+                return False
             log.error(f"[LichessPlayer] Authentication failed: {e}")
             self._set_state(PlayerState.ERROR, "API token invalid")
+            return False
+
+        if self._abandon_start():
             return False
         
         # Start appropriate game flow
@@ -396,10 +409,16 @@ class LichessPlayer(Player):
         return False
     
     def stop(self) -> None:
-        """Stop the Lichess connection and cleanup."""
+        """Stop the Lichess connection and cleanup.
+
+        Closes the HTTP session first so a streamed ``board.seek`` drops. Lichess
+        keeps a lobby seek alive until that POST connection closes; joining the
+        seek thread does not close the socket.
+        """
         log.info("[LichessPlayer] Stopping Lichess player")
         self._should_stop.set()
-        
+        self._close_http_session()
+
         # Wait for threads to finish
         if self._stream_thread and self._stream_thread.is_alive():
             self._stream_thread.join(timeout=2.0)
@@ -409,9 +428,31 @@ class LichessPlayer(Player):
             self._event_thread.join(timeout=2.0)
         if self._match_thread and self._match_thread.is_alive():
             self._match_thread.join(timeout=2.0)
-        
+
         self._set_state(PlayerState.STOPPED)
         log.info("[LichessPlayer] Lichess player stopped")
+
+    def _close_http_session(self) -> None:
+        """Abort in-flight Board API streams (seek and event)."""
+        client = self._client
+        self._client = None
+        if client is None:
+            return
+        session = getattr(client, "session", None)
+        if session is None or not hasattr(session, "close"):
+            return
+        session.close()
+
+    def _abandon_start(self) -> bool:
+        """True when stop() ran during start(); drop any client created after.
+
+        stop() on the key thread can beat client creation, so there is no
+        session to close. Returning here is what prevents a seek after BACK.
+        """
+        if not self._should_stop.is_set():
+            return False
+        self._close_http_session()
+        return True
     
     def _do_request_move(self, board: chess.Board) -> None:
         """Request a move from this player.
@@ -740,6 +781,8 @@ class LichessPlayer(Player):
           return after someone takes the hook (Lichess keeps sending
           keep-alives) and ``gameStart`` is a one-shot that can be missed.
         """
+        if self._should_stop.is_set():
+            return False
         log.info(f"[LichessPlayer] Seeking: {self._lichess_config.time_minutes}+{self._lichess_config.increment_seconds}")
         self._report_status("Finding opponent...")
         self._listen_for_match()
@@ -907,6 +950,8 @@ class LichessPlayer(Player):
         stream missed gameStart. The match poller is already looking while
         this call blocks.
         """
+        if self._should_stop.is_set() or self._client is None:
+            return
         try:
             rated = self._lichess_config.rated
             color = self._lichess_config.color_preference.lower()

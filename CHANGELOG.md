@@ -613,6 +613,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   and UP/DOWN always pages it. Wrapping home restores the board; the eval
   panel only comes back when Show Analysis is on.
 
+- **BACK on Waiting for game left the Lichess seek listed**: The splash
+  called stop, but ``board.seek`` is a streamed POST that Lichess treats as
+  the live seek until the connection closes. stop() only set a flag and
+  joined that thread, so the socket stayed open and the lobby still showed
+  the seek. The HTTP session is closed first so the POST drops. BACK is also
+  wired before players start, so the key is not swallowed while the splash
+  is already on screen and start() is still authenticating. BACK that arrives
+  before GameManager exists is recorded so the seek is never posted.
+
 - **Lichess lobby accept left the board on the waiting splash**: After an
   opponent took the board's seek, Lichess already had a live game -- the web
   player sat on a board waiting for the first move -- but the e-paper never

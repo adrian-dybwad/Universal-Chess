@@ -644,6 +644,10 @@ _active_player_signature: Optional[tuple] = None
 # and boot resume leave it None (ATTACH, no seek). Consumed at start so a
 # failed start cannot reuse a stale game id.
 _lichess_join: Optional[dict] = None
+# BACK on the waiting splash can arrive before ProtocolManager exists. The
+# events thread sets this; _start_game_mode checks it on the main thread so
+# teardown does not run while DisplayManager is still being constructed.
+_cancel_game_start = False
 # A board-reset / setup-mode new game reuses the current DisplayManager and its
 # widgets. When a layout-affecting setting changed since the widgets were built
 # (in practice a deferred time-control change that flips timed<->untimed), the
@@ -2380,7 +2384,7 @@ def _start_game_mode(
     """
     global app_state, protocol_manager, display_manager, controller_manager, _is_position_game
     global _active_player_signature, _pending_player_rebuild, _pending_layout_rebuild
-    global _lichess_join
+    global _lichess_join, _cancel_game_start
 
     log.info(f"[App] Transitioning to GAME mode (position_game={is_position_game})")
 
@@ -2401,6 +2405,7 @@ def _start_game_mode(
 
     join = _lichess_join
     _lichess_join = None
+    _cancel_game_start = False
     settings = _get_settings()
     p1 = settings.player1
     p2 = settings.player2
@@ -2648,6 +2653,22 @@ def _start_game_mode(
              f"analysis={game.show_analysis}, "
              f"graph={game.show_graph})")
 
+    def _abort_cancelled_game_start() -> bool:
+        """Honor BACK that arrived while this start was still constructing."""
+        if not _cancel_game_start:
+            return False
+        log.info("[App] Game cancelled before players started")
+        if lichess_session is not None:
+            from universalchess.players.lichess.lobby import show_lichess_cancelling_splash
+            show_lichess_cancelling_splash(board.display_manager)
+            _return_to_menu("Lichess cancel")
+        else:
+            _return_to_menu("BACK pressed")
+        return True
+
+    if _abort_cancelled_game_start():
+        return
+
     # Back menu result handler
     def _on_back_menu_result(result: str):
         """Handle result from back menu (resign/draw/cancel/exit).
@@ -2855,25 +2876,11 @@ def _start_game_mode(
             splash_seconds=START_PLAYING_SPLASH_SECONDS,
             rewind_to_move_count=game_manager.sync_move_count,
         )
-    
-    # Activate local controller by default (this starts players)
-    controller_manager.activate_local()
 
-    # LichessPlayer.start() authenticates on this thread. BACK on the events
-    # thread can _return_to_menu and set protocol_manager to None before the
-    # rest of this function runs. Calling methods on None raised AttributeError
-    # ('set_on_promotion_needed'), which the main loop treated as a clean exit.
-    if protocol_manager is None:
-        log.info("[App] Game cancelled during player start")
-        return
-    
-    # Note: Turn indicator comes from ChessGameState which the clock widget observes directly.
-    # No need to manually set clock active color here.
-    
-    # Wire up GameManager callbacks to DisplayManager
+    # BACK on the waiting splash must cancel before players start. start()
+    # authenticates on this thread; wiring the handler afterwards left BACK
+    # swallowed (remote ply-0 owns the key, but on_back_pressed was still None).
     protocol_manager.set_on_promotion_needed(display_manager.show_promotion_menu)
-    
-    # For position games, skip the resign/draw menu and return directly
     if is_position_game:
         protocol_manager.set_on_back_pressed(_on_position_game_back)
     elif lichess_session is not None:
@@ -2887,11 +2894,27 @@ def _start_game_mode(
             )
         protocol_manager.set_on_back_pressed(_on_lichess_back)
     else:
-        # In 2-player mode, show separate resign options for white and black
         protocol_manager.set_on_back_pressed(lambda: display_manager.show_back_menu(
-            _on_back_menu_result, 
+            _on_back_menu_result,
             is_two_player=protocol_manager.is_two_player_mode
         ))
+
+    if _abort_cancelled_game_start():
+        return
+
+    # Activate local controller by default (this starts players)
+    controller_manager.activate_local()
+
+    # LichessPlayer.start() authenticates on this thread. BACK on the events
+    # thread can _return_to_menu and set protocol_manager to None before the
+    # rest of this function runs. Calling methods on None raised AttributeError
+    # ('set_on_promotion_needed'), which the main loop treated as a clean exit.
+    if protocol_manager is None:
+        log.info("[App] Game cancelled during player start")
+        return
+
+    # Note: Turn indicator comes from ChessGameState which the clock widget observes directly.
+    # No need to manually set clock active color here.
     
     # Kings-in-center gesture (DGT resign/draw) - only for 2-player mode
     # In engine games, players should only move pieces indicated by LEDs
@@ -7348,7 +7371,7 @@ def key_callback(key_id):
     too many unhandled keys (indicating a broken state), the app forces
     recovery by returning to the main menu.
     """
-    global running, kill, display_manager, app_state, _menu_manager, _active_keyboard_widget, _active_about_widget, _active_error_splash
+    global running, kill, display_manager, app_state, _menu_manager, _active_keyboard_widget, _active_about_widget, _active_error_splash, _cancel_game_start
     
     log.info(f"[App] Key event received: {key_id}, app_state={app_state}")
     
@@ -7583,6 +7606,14 @@ def key_callback(key_id):
             protocol_manager.receive_key(key_id)
             _reset_unhandled_key_count()
         else:
+            from universalchess.players.lichess.lobby import back_cancels_unready_game_start
+            if (
+                key_id == board.Key.BACK
+                and back_cancels_unready_game_start(has_game_managers=False)
+            ):
+                _cancel_game_start = True
+                _reset_unhandled_key_count()
+                return
             # No controller or protocol_manager in GAME mode - should not happen
             _handle_unhandled_key(key_id, "No controller or protocol_manager in GAME mode")
             return
@@ -7607,6 +7638,12 @@ def key_callback(key_id):
                     else None
                 )
                 if pm is not None and pm.requires_rebuild_on_new_game:
+                    gm = protocol_manager.game_manager
+                    if gm is not None and gm.on_back_pressed is None:
+                        # Handler is wired just before activate_local. BACK in
+                        # that window must still cancel the seek that start()
+                        # is about to post.
+                        _cancel_game_start = True
                     return
                 log.info("[App] BACK with no game - returning to menu")
                 _return_to_menu("BACK pressed")

@@ -271,3 +271,53 @@ def test_attach_without_seek_does_not_start_seek_thread():
     assert player._attach_without_seek() is True
     assert player._seek_thread is None
     player._seek_game_thread.assert_not_called()
+
+
+def test_stop_closes_http_session_so_the_lobby_seek_is_cancelled():
+    """BACK must drop the POST /api/board/seek connection, not only set a flag.
+
+    Why: Lichess keeps a public seek until that streamed POST closes. stop()
+    joined the seek thread, but berserk.board.seek reads until Lichess closes
+    the stream, so join timed out and the seek stayed in the lobby.
+
+    How the regression manifests: session.close is not called, so the seek
+    remains listed after BACK on "Waiting for game".
+    """
+    player = LichessPlayer()
+    session = MagicMock()
+    player._client = MagicMock(session=session)
+    player.stop()
+    session.close.assert_called_once()
+    assert player._should_stop.is_set()
+    assert player._client is None
+
+
+def test_start_does_not_seek_if_stopped_before_client_exists(monkeypatch):
+    """BACK during authenticate must not post a seek once start() continues.
+
+    Why: stop() can run on the key thread before start() has a client, so
+    there is no HTTP session to close. start() then created the client and
+    called board.seek after the user had already cancelled.
+
+    How the regression manifests: _start_new_game runs after _should_stop.
+    """
+    player = LichessPlayer(LichessPlayerConfig(mode=LichessGameMode.NEW))
+    player._resolve_account = MagicMock(return_value=("tok", ""))
+    player._start_new_game = MagicMock(return_value=True)
+    created = []
+
+    def create_client(*_args, **_kwargs):
+        session = MagicMock()
+        client = MagicMock(session=session)
+        created.append(client)
+        player._should_stop.set()
+        return client
+
+    monkeypatch.setattr(
+        "universalchess.players.lichess.match.create_berserk_client",
+        create_client,
+    )
+    assert player.start() is False
+    player._start_new_game.assert_not_called()
+    assert created[0].session.close.called
+    assert player._client is None

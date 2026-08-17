@@ -352,6 +352,15 @@ def skip_unsolicited_lichess_start(*, is_lichess: bool, join, explicit_seek: boo
     return not explicit_seek
 
 
+def back_cancels_unready_game_start(*, has_game_managers: bool) -> bool:
+    """True when BACK arrives in GAME before ProtocolManager exists.
+
+    The waiting splash is painted first. Keys in that window were logged
+    unhandled, then start() still posted the seek.
+    """
+    return not has_game_managers
+
+
 def show_lichess_help(menu_manager, title: str, body: str) -> None:
     """Show how a Lichess Settings row works, then return to the caller.
 

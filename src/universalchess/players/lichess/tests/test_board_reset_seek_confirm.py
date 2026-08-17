@@ -11,6 +11,7 @@ without seeking when the user declines.
 
 from universalchess.managers.menu import MenuSelection
 from universalchess.players.lichess.lobby import (
+    back_cancels_unready_game_start,
     board_reset_rebuild_action,
     confirm_lichess_seek,
     explicit_lichess_seek_join,
@@ -128,3 +129,16 @@ def test_skip_unsolicited_lichess_start_only_when_lichess_without_join_or_play()
     assert skip_unsolicited_lichess_start(
         is_lichess=False, join=None, explicit_seek=False
     ) is False
+
+
+def test_back_cancels_unready_game_start_before_managers_exist():
+    """BACK on the waiting splash must cancel even before GameManager exists.
+
+    Why: the splash is painted first. GAME keys with no controller were
+    logged unhandled, then start() posted the seek anyway.
+
+    How the regression manifests: BACK before managers exist returns False,
+    so the start path still seeks.
+    """
+    assert back_cancels_unready_game_start(has_game_managers=False) is True
+    assert back_cancels_unready_game_start(has_game_managers=True) is False
