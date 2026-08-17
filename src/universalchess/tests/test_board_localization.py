@@ -27,9 +27,33 @@ from universalchess.epaper.paged_text import PagedTextWidget
 from universalchess.epaper.wifi_info import format_status_label
 from universalchess.menus.about_menu import build_system_info_entries
 from universalchess.menus.bluetooth_menu import keyboard_rows
+from universalchess.menus.catalog.loader import get_localized_catalog
 from universalchess.menus.engine_manager_menu import confirm_discard_install
 
 COUNTDOWN_SECONDS = 3
+SHIPPED_LOCALES = ("en", "es", "fr", "de")
+
+
+def _with_locale(monkeypatch, locale, read):
+    """Read a bundle string in ``locale``, leaving no cached locale behind.
+
+    The bundle memoises the device language on first use, so a test that
+    switched it without resetting would decide the language of every test that
+    ran afterwards.
+    """
+    from universalchess import i18n
+
+    monkeypatch.setattr(
+        "universalchess.services.language_service.get_language", lambda: locale
+    )
+    i18n._active_locale = None
+    i18n._bundles.clear()
+    i18n.refresh_active_language()
+    try:
+        return read(i18n)
+    finally:
+        i18n._active_locale = None
+        i18n._bundles.clear()
 
 
 class _FakeMenuManager:
@@ -196,3 +220,36 @@ def test_the_discard_prompt_and_its_rows_are_in_the_device_language(spanish_boar
     ]
     assert "Stockfish" in labels[0]
     assert labels[1] == "Descartar" and labels[2] == "Cancelar"
+
+
+@pytest.mark.parametrize("locale", SHIPPED_LOCALES)
+def test_the_queen_warning_help_quotes_the_words_the_panel_draws(locale, monkeypatch):
+    """The queen-threat help quotes the alert as the alert panel draws it.
+
+    Why: the help explains the warning by quoting it, and the panel drew English
+    when the overlays were written. Localizing the panel left all three overlays
+    quoting YOUR QUEEN while the board drew IHRE DAME, TU DAMA or VOTRE DAME, so
+    the help named words that never appear on screen -- a drift a coverage audit
+    cannot see, because both strings are translated, just not to each other. How
+    a regression manifests: the drawn wording is missing from that locale's help.
+    """
+    drawn = _with_locale(monkeypatch, locale, lambda i18n: i18n.t("alert.your_queen"))
+    help_text = get_localized_catalog(locale).get_node("alerts.queen_threat")["help"]
+
+    assert drawn.replace("\n", " ") in help_text
+
+
+@pytest.mark.parametrize("locale", SHIPPED_LOCALES)
+def test_the_play_help_quotes_the_word_the_tile_shows_mid_game(locale):
+    """Play's help quotes the label the tile itself carries once a game is on.
+
+    Why: the help says which word replaces PLAY while a game is in progress, so
+    it quotes a label translated a few lines above it in the same overlay. The
+    German pair was the live risk: the tile reads WEITER because FORTSETZEN does
+    not fit at 32 pt, and a help text translated independently would have said
+    FORTSETZEN. How a regression manifests: the two disagree and the help points
+    at a word the tile never shows.
+    """
+    node = get_localized_catalog(locale).get_node("main.play")
+
+    assert node["label_in_progress"] in node["help"]

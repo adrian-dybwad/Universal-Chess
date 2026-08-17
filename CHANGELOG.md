@@ -629,6 +629,23 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Translated help quoted words the screen never shows**: Alerts > Queen Threat
+  explains the warning by quoting what the panel draws, and the panel drew
+  English when the Spanish and French overlays were written. Localizing the
+  alert changed the panel to TU DAMA, VOTRE DAME and IHRE DAME while all three
+  help texts still said YOUR QUEEN, pointing at wording that no longer appears
+  anywhere. The help now quotes the alert in the language it is drawn in. A
+  coverage audit cannot see this class of drift -- both strings are translated,
+  just no longer to each other -- so a test now checks each locale's help
+  against the alert it quotes, and the Play tile's help against the label the
+  tile carries once a game is under way.
+
+- **German tagline differed between the board and the web app**: the splash and
+  the web header show the same line, but the German bundles rendered the proverb
+  two ways ("Dem geschenkten Gaul ins Maul geschaut" against "Dem geschenkten
+  Pferd ins Maul schauen"). Both now read the Gaul wording the proverb uses, as
+  Spanish and French already matched across the two bundles.
+
 - **Web app Reload did nothing when a new version was waiting**: The "A new
   version of the app is available" banner posted ``SKIP_WAITING`` to the
   service worker and then waited for ``controllerchange`` before calling

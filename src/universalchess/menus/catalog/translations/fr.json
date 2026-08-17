@@ -514,7 +514,7 @@
     "alerts.queen_threat": {
       "label": "Alerte dame menacée",
       "boardLabel": "Votre dame",
-      "help": "Avertit lorsque votre propre dame est menacée : YOUR QUEEN à l'écran, un flash LED de la pièce attaquante jusqu'à votre dame et un avertissement sur le plateau web. L'échec est toujours affiché et ne peut pas être désactivé."
+      "help": "Avertit lorsque votre propre dame est menacée : VOTRE DAME à l'écran, un flash LED de la pièce attaquante jusqu'à votre dame et un avertissement sur le plateau web. L'échec est toujours affiché et ne peut pas être désactivé."
     },
     "group.game.clock": { "label": "Pendule d'échecs" },
     "group.game.variant": { "label": "Variante" },

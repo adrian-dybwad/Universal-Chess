@@ -514,7 +514,7 @@
     "alerts.queen_threat": {
       "label": "Aviso de dama amenazada",
       "boardLabel": "Tu dama",
-      "help": "Avisa cuando tu propia dama está amenazada: YOUR QUEEN en la pantalla, un destello de LED desde la pieza atacante hasta tu dama y un aviso en el tablero web. El jaque siempre se muestra y no se puede desactivar."
+      "help": "Avisa cuando tu propia dama está amenazada: TU DAMA en la pantalla, un destello de LED desde la pieza atacante hasta tu dama y un aviso en el tablero web. El jaque siempre se muestra y no se puede desactivar."
     },
     "group.game.clock": { "label": "Reloj de ajedrez" },
     "group.game.variant": { "label": "Variante" },

@@ -512,7 +512,7 @@
     "alerts.queen_threat": {
       "label": "Warnung eigene Dame",
       "boardLabel": "Eigene Dame",
-      "help": "Warnt, wenn die eigene Dame angegriffen ist: YOUR QUEEN auf der Anzeige, ein LED-Blitz von der angreifenden Figur zur eigenen Dame und eine Warnung auf dem Web-Brett. Schach wird immer angezeigt und lässt sich nicht abschalten."
+      "help": "Warnt, wenn die eigene Dame angegriffen ist: IHRE DAME auf der Anzeige, ein LED-Blitz von der angreifenden Figur zur eigenen Dame und eine Warnung auf dem Web-Brett. Schach wird immer angezeigt und lässt sich nicht abschalten."
     },
     "group.game.clock": {
       "label": "Schachuhr"
