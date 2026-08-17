@@ -529,6 +529,31 @@ class GameManager:
             self._enter_correction_mode()
             self._provide_correction_guidance(current, expected_state)
 
+    def sync_move_count(self, remaining_plies: int) -> int:
+        """Pop until the live game has ``remaining_plies`` half-moves.
+
+        ``0`` is the opening. A remote takeback (Lichess) streams the shortened
+        move list; this is the board matching that count. Returns the number of
+        half-moves popped.
+        """
+        remaining_plies = max(0, int(remaining_plies))
+        current_plies = len(self.chess_board.move_stack)
+        if remaining_plies >= current_plies:
+            return 0
+
+        popped = 0
+        while len(self.chess_board.move_stack) > remaining_plies:
+            if not self._pop_one_takeback():
+                break
+            popped += 1
+
+        if popped == 0:
+            return 0
+
+        board.beep(board.SOUND_GENERAL, event_type='game_event')
+        self._guide_physical_board_after_takeback()
+        return popped
+
     def takeback_to_ply(self, target_ply: int) -> int:
         """Undo every move after ``target_ply`` so that ply becomes the live tip.
 
@@ -543,19 +568,7 @@ class GameManager:
         current_plies = len(self.chess_board.move_stack)
         if target_ply < 1 or target_ply >= current_plies:
             return 0
-
-        popped = 0
-        while len(self.chess_board.move_stack) > target_ply:
-            if not self._pop_one_takeback():
-                break
-            popped += 1
-
-        if popped == 0:
-            return 0
-
-        board.beep(board.SOUND_GENERAL, event_type='game_event')
-        self._guide_physical_board_after_takeback()
-        return popped
+        return self.sync_move_count(target_ply)
 
     def set_pending_hint(self, from_square: int, to_square: int):
         """Set a pending hint move to be shown after correction mode exits.

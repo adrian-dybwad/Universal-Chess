@@ -319,7 +319,7 @@ class LocalController(GameController):
                 # Engine/human games continue in place. A remote player is still
                 # attached to the external game, so requesting a move here would be
                 # against that game while the local board is at start. The app
-                # rebuilds through _start_game_mode (new seek + waiting splash).
+                # rebuilds through _start_game_mode after confirming a new seek.
                 if self._player_manager and self._player_manager.requires_rebuild_on_new_game:
                     log.info("[LocalController] Remote board-reset - skipping in-place move request")
                 else:

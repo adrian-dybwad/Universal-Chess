@@ -130,3 +130,44 @@ def test_get_lichess_api_prefers_account_then_legacy(config_files):
     assert centaur.get_lichess_api() == "lip_legacy"
     add_account(LICHESS_TYPE, {"api_token": "lip_account"}, resolver=_resolver("Alice"))
     assert centaur.get_lichess_api() == "lip_account"
+
+
+def test_picker_choices_unbound_selects_default_and_lists_every_account(config_files):
+    """The Play/slot picker offers Default plus each credential when nothing is taken.
+
+    Why: User on Play opens this list. Regression: Default missing, a credential
+    dropped, or Default not marked selected when the slot is unbound.
+    """
+    from universalchess.players.lichess.accounts import (
+        label_of,
+        lichess_account_picker_choices,
+        list_lichess_credentials,
+    )
+
+    _seed_two_accounts()
+    accounts = list_lichess_credentials()
+    assert lichess_account_picker_choices("", "human", "") == [
+        ("", "Default account", True),
+        *[(account.id, label_of(account), False) for account in accounts],
+    ]
+
+
+def test_picker_choices_excludes_the_other_lichess_slot(config_files):
+    """The other Lichess slot's account is not offered (both-sides rule).
+
+    Why: one credential cannot play both sides. How a regression manifests:
+    the taken id is listed, or Default stays when it would resolve to that id.
+    """
+    from universalchess.players.lichess.accounts import (
+        label_of,
+        lichess_account_picker_choices,
+        list_lichess_credentials,
+    )
+
+    _seed_two_accounts()
+    accounts = list_lichess_credentials()
+    taken = accounts[0].id
+    other = accounts[1]
+    choices = lichess_account_picker_choices("", "lichess", "")
+    assert choices == [(other.id, label_of(other), False)]
+    assert taken not in [key for key, _label, _selected in choices]

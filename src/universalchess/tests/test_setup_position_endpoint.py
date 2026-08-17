@@ -42,7 +42,8 @@ def client(monkeypatch):
 
     send_board_command is patched to record the (command, params) it receives and
     return True, so the test reads back exactly what the endpoint forwarded
-    without needing a running board.
+    without needing a running board. Players slots are Human vs Engine so a host
+    ini with Lichess cannot 409 these forwarding tests.
     """
     captured = {}
 
@@ -53,6 +54,14 @@ def client(monkeypatch):
 
     monkeypatch.setattr(game_broadcast, "send_board_command", fake_send)
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (True, "tester"))
+    monkeypatch.setattr(
+        webapp,
+        "_read_player_dicts",
+        lambda: (
+            {"type": "human", "color": "white", "elo": "Default"},
+            {"type": "engine", "color": "black", "elo": "Default"},
+        ),
+    )
     yield make_test_client(webapp), captured
 
 

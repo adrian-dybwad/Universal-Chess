@@ -565,43 +565,26 @@ def test_top_level_lists_two_players_lichess_then_start():
     ]
 
 
-def test_lichess_settings_contains_accounts_and_play():
-    """Lichess Settings holds the credentials manager and the Play lobby action.
+def test_lichess_settings_opens_the_lobby():
+    """Selecting Lichess Settings runs the lobby (Account, Ongoing, Challenges, New Game).
 
-    Why: each Lichess login is a server:user credential, listed here; Play opens
-    the lobby. How a regression manifests: a host toggle returns, Play is
-    missing, or Accounts is not on this page.
-    """
-    ids = [
-        r.node["id"]
-        for r in build_rows(
-            "players.lichess",
-            _players_ctx(_player_state(), _player_state()),
-            platform="board",
-            catalog=load_catalog(),
-        )
-    ]
-    assert ids == ["players.accounts", "players.lichess.play"]
-
-
-def test_lichess_play_row_dispatches_lichess_action():
-    """Selecting Play on Lichess Settings runs the existing lichess lobby.
-
-    Why: the lobby used to be the whole 'Lichess Settings' row on a player
-    slot. It must still open from the new page. How a regression manifests:
-    dispatch action is wrong or the players context never registered lichess.
+    Why: those rows used to sit behind Players → Lichess Settings → Play. The
+    Settings row itself is the lobby now. How a regression manifests: the node
+    is a submenu with a Play child, or dispatch does not run lichess.
     """
     calls = []
     ctx = _players_ctx(_player_state(), _player_state(), calls=calls)
-    outcome = dispatch(load_catalog().get_node("players.lichess.play"), ctx)
+    node = load_catalog().get_node("players.lichess")
+    assert node["type"] == "action" and node["action"] == "lichess"
+    outcome = dispatch(node, ctx)
     assert outcome.kind == "action" and outcome.action == "lichess"
     assert calls == ["lichess"]
 
 
-def test_lichess_lobby_start_game_unwinds_through_lichess_settings():
-    """START_GAME from Play must leave Players, not redraw the player rows.
+def test_lichess_lobby_start_game_unwinds_from_lichess_settings():
+    """START_GAME from Lichess Settings must leave Players, not redraw the rows.
 
-    Why: Challenges/New Game run inside Players → Lichess Settings → Play. The
+    Why: New Game / Challenges run inside Players → Lichess Settings. The
     engine only forwarded break results from a submenu, so START_GAME was
     dropped and Players painted over the board (analysis still showed below).
 
@@ -610,7 +593,7 @@ def test_lichess_lobby_start_game_unwinds_through_lichess_settings():
     """
     ctx = _players_ctx(_player_state(), _player_state())
     ctx.register_action("lichess", lambda: "START_GAME")
-    mm = _FakeMenuManager(["Lichess", "players.lichess.play"])
+    mm = _FakeMenuManager(["Lichess"])
     result = run_engine_menu("settings.players", ctx, mm, catalog=load_catalog())
     assert result is not None
     assert result.key == "START_GAME"

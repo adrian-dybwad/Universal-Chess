@@ -27,6 +27,7 @@ class LichessGameMode(Enum):
     NEW = auto()        # Seek a new game with specified parameters
     ONGOING = auto()    # Resume an ongoing game by ID
     CHALLENGE = auto()  # Accept or wait for a challenge
+    ATTACH = auto()     # Watch for an ongoing game; do not post a seek
 
 
 @dataclass
@@ -36,7 +37,7 @@ class LichessPlayerConfig(PlayerConfig):
     Attributes:
         name: Display name.
         color: The color this player plays (set after game starts).
-        mode: Game mode (NEW, ONGOING, or CHALLENGE).
+        mode: Game mode (NEW, ONGOING, CHALLENGE, or ATTACH).
         time_minutes: Time control in minutes (for NEW mode).
         increment_seconds: Increment in seconds (for NEW mode).
         rated: Whether game is rated (for NEW mode).
@@ -73,6 +74,21 @@ def ongoing_game_id(game: dict) -> str:
     return str(game.get("gameId") or game.get("game_id") or game.get("id") or "")
 
 
+def server_move_list_delta(previous: str, current: str):
+    """Compare two Lichess ``moves`` strings (space-separated UCI).
+
+    Returns ``(removed_count, added_ucis)``. A takeback is a shorter prefix;
+    a new ply appends; a different continuation removes then adds.
+    """
+    prev = previous.split() if previous else []
+    curr = current.split() if current else []
+    i = 0
+    limit = min(len(prev), len(curr))
+    while i < limit and prev[i].lower() == curr[i].lower():
+        i += 1
+    return len(prev) - i, curr[i:]
+
+
 class LichessPlayer(Player):
     """A player that connects to Lichess for online games.
     
@@ -88,7 +104,8 @@ class LichessPlayer(Player):
     
     Thread Model:
     - start() authenticates and begins seek/stream
-    - Event and poll threads attach the game even if seek() never returns
+    - Event and poll threads attach a seek-take even if seek() never returns
+    - Incoming challenges are offered on a worker so the event loop stays free
     - Stream thread receives remote moves and stores them
     - Piece events validate execution and submit
     """
@@ -150,6 +167,10 @@ class LichessPlayer(Player):
         self._game_over_callback: Optional[Callable[[str, str, Optional[str]], None]] = None
         self._takeback_offer_callback: Optional[Callable[[Callable, Callable], None]] = None
         self._draw_offer_callback: Optional[Callable[[Callable, Callable], None]] = None
+        self._challenge_offer_callback = None
+        self._challenge_prompt_lock = threading.Lock()
+        self._challenge_prompt_open = False
+        self._remote_takeback_callback = None
         self._info_message_callback: Optional[Callable[[str], None]] = None
     
     @property
@@ -249,6 +270,23 @@ class LichessPlayer(Player):
                 Caller should show menu and call accept_fn() or decline_fn().
         """
         self._draw_offer_callback = callback
+
+    def set_challenge_offer_callback(self, callback) -> None:
+        """Set callback for an incoming challenge while seeking.
+
+        A seek is the board's terms. A challenge is the opponent's. The
+        callback is (offer, accept_fn, decline_fn); it must show those terms
+        and call one of the functions. No callback leaves the challenge pending.
+        """
+        self._challenge_offer_callback = callback
+
+    def set_remote_takeback_callback(self, callback) -> None:
+        """Called with remaining half-move count when the server shortens the line.
+
+        Lichess takeback (and a recapture line) streams a shorter ``moves``
+        string. The game must pop to that count; this player cannot.
+        """
+        self._remote_takeback_callback = callback
     
     def set_info_message_callback(self, callback: Callable[[str], None]) -> None:
         """Set callback for informational messages to display.
@@ -301,7 +339,7 @@ class LichessPlayer(Player):
         """Start the Lichess connection and game.
         
         Authenticates with Lichess API, then starts the appropriate
-        game flow based on config.mode (NEW, ONGOING, or CHALLENGE).
+        game flow based on config.mode (NEW, ONGOING, CHALLENGE, or ATTACH).
         
         Returns:
             True if connection started successfully, False on error.
@@ -352,6 +390,8 @@ class LichessPlayer(Player):
             return self._start_ongoing_game()
         elif self._lichess_config.mode == LichessGameMode.CHALLENGE:
             return self._start_challenge()
+        elif self._lichess_config.mode == LichessGameMode.ATTACH:
+            return self._attach_without_seek()
         
         return False
     
@@ -668,20 +708,13 @@ class LichessPlayer(Player):
     # Game Flow Methods - Private
     # =========================================================================
     
-    def _start_new_game(self) -> bool:
-        """Start seeking a new game.
+    def _listen_for_match(self) -> None:
+        """Start the Board API event stream and ongoing-game poller.
 
-        Three threads run until a game id is known:
-
-        * the Board API event stream (``gameStart``, incoming challenges);
-        * ``board.seek``, which holds an HTTP stream open for the lobby hook;
-        * a poller on ``games.get_ongoing``, because seek() often does not
-          return after someone takes the hook (Lichess keeps sending
-          keep-alives) and ``gameStart`` is a one-shot that can be missed.
+        Does not post a seek. NEW adds a seek thread on top of this; ATTACH
+        uses only these listeners so a boot resume can reconnect without
+        listing a new game in the Lichess lobby.
         """
-        log.info(f"[LichessPlayer] Seeking: {self._lichess_config.time_minutes}+{self._lichess_config.increment_seconds}")
-        self._report_status("Finding opponent...")
-
         self._event_thread = threading.Thread(
             target=self._event_stream_thread,
             name="lichess-events",
@@ -692,14 +725,37 @@ class LichessPlayer(Player):
             name="lichess-match-poll",
             daemon=True,
         )
+        self._event_thread.start()
+        self._match_thread.start()
+
+    def _start_new_game(self) -> bool:
+        """Start seeking a new game.
+
+        Three threads run until a game id is known:
+
+        * the Board API event stream (``gameStart``; incoming challenges are
+          offered, not accepted, so the Human can refuse the opponent's terms);
+        * ``board.seek``, which holds an HTTP stream open for the lobby hook;
+        * a poller on ``games.get_ongoing``, because seek() often does not
+          return after someone takes the hook (Lichess keeps sending
+          keep-alives) and ``gameStart`` is a one-shot that can be missed.
+        """
+        log.info(f"[LichessPlayer] Seeking: {self._lichess_config.time_minutes}+{self._lichess_config.increment_seconds}")
+        self._report_status("Finding opponent...")
+        self._listen_for_match()
         self._seek_thread = threading.Thread(
             target=self._seek_game_thread,
             name="lichess-seek",
             daemon=True,
         )
-        self._event_thread.start()
-        self._match_thread.start()
         self._seek_thread.start()
+        return True
+
+    def _attach_without_seek(self) -> bool:
+        """Reconnect to an ongoing game. Does not post ``board.seek``."""
+        log.info("[LichessPlayer] Watching for an ongoing game (no seek)")
+        self._report_status("Connecting...")
+        self._listen_for_match()
         return True
 
     def _begin_game(self, game_id: str) -> bool:
@@ -737,13 +793,26 @@ class LichessPlayer(Player):
             time.sleep(0.5)
 
     def _event_stream_thread(self):
-        """Board incoming-event stream: gameStart and challenges."""
+        """Board incoming-event stream: gameStart and challenges.
+
+        Challenge prompts block on the e-paper menu. They run on a worker so
+        this loop can still attach a seek-take (``gameStart``) while the dialog
+        is up.
+        """
         if not self._client:
             return
         try:
             for event in self._client.board.stream_incoming_events():
                 if self._should_stop.is_set() or self._game_id:
                     break
+                if (event or {}).get("type") == "challenge":
+                    threading.Thread(
+                        target=self._handle_incoming_event,
+                        args=(event,),
+                        name="lichess-challenge-offer",
+                        daemon=True,
+                    ).start()
+                    continue
                 self._handle_incoming_event(event)
         except Exception as e:
             if not self._should_stop.is_set() and not self._game_id:
@@ -763,16 +832,65 @@ class LichessPlayer(Player):
         if self._game_id:
             return
         challenge = event.get("challenge") or {}
+        self._offer_incoming_challenge(challenge)
+
+    def _offer_incoming_challenge(self, challenge: dict) -> None:
+        """Ask the UI to Accept/Decline. Does not POST accept itself."""
+        if self._game_id or self._should_stop.is_set():
+            return
         if not self._challenge_is_incoming(challenge):
             return
-        challenge_id = challenge.get("id")
+        from .match import lichess_challenge_offer
+
+        offer = lichess_challenge_offer(challenge)
+        if offer is None:
+            return
+        callback = self._challenge_offer_callback
+        if callback is None:
+            log.info(
+                f"[LichessPlayer] Incoming challenge {offer.challenge_id} left pending"
+            )
+            return
+        with self._challenge_prompt_lock:
+            if self._challenge_prompt_open:
+                log.info(
+                    f"[LichessPlayer] Incoming challenge {offer.challenge_id} "
+                    "deferred; prompt already open"
+                )
+                return
+            self._challenge_prompt_open = True
+        try:
+            callback(
+                offer,
+                lambda: self._accept_incoming_challenge(offer.challenge_id),
+                lambda: self._decline_incoming_challenge(offer.challenge_id),
+            )
+        finally:
+            with self._challenge_prompt_lock:
+                self._challenge_prompt_open = False
+
+    def _accept_incoming_challenge(self, challenge_id: str) -> None:
+        """POST accept, or decline if a seek-take already attached a game."""
         if not challenge_id or not self._client:
+            return
+        if self._game_id or self._should_stop.is_set():
+            self._decline_incoming_challenge(challenge_id)
             return
         log.info(f"[LichessPlayer] Accepting incoming challenge: {challenge_id}")
         try:
             self._client.challenges.accept(challenge_id)
         except Exception as e:
             log.warning(f"[LichessPlayer] Could not accept challenge: {e}")
+
+    def _decline_incoming_challenge(self, challenge_id: str) -> None:
+        """POST decline so the web opponent is not left waiting."""
+        if not challenge_id or not self._client:
+            return
+        log.info(f"[LichessPlayer] Declining incoming challenge: {challenge_id}")
+        try:
+            self._client.challenges.decline(challenge_id)
+        except Exception as e:
+            log.warning(f"[LichessPlayer] Could not decline challenge: {e}")
 
     def _challenge_is_incoming(self, challenge: dict) -> bool:
         """True when this account is the challenge destination."""
@@ -924,10 +1042,8 @@ class LichessPlayer(Player):
         
         moves = str(moves) if moves else ''
         
-        # Check for new remote moves
         if moves != self._remote_moves:
-            self._remote_moves = moves
-            self._check_for_remote_move()
+            self._sync_server_moves(moves)
         
         # Check game status
         self._check_game_status(status, state)
@@ -1064,6 +1180,27 @@ class LichessPlayer(Player):
         except Exception as e:
             log.warning(f"[LichessPlayer] Error processing time: {e}")
     
+    def _sync_server_moves(self, moves: str) -> None:
+        """Apply a Lichess ``moves`` string: rewind takebacks, then new plies.
+
+        The stream used to treat any change as a new last move. A takeback is
+        a shorter prefix; without popping, Lichess and the board diverge.
+        """
+        removed, added = server_move_list_delta(self._last_processed_moves, moves)
+        self._remote_moves = moves
+        if removed:
+            log.info(f"[LichessPlayer] Server took back {removed} half-move(s)")
+            self._pending_move = None
+            remaining = len(moves.split()) if moves else 0
+            if self._remote_takeback_callback:
+                self._remote_takeback_callback(remaining)
+            kept = (self._last_processed_moves.split() if self._last_processed_moves else [])
+            self._last_processed_moves = " ".join(kept[: len(kept) - removed])
+        if not added:
+            self._last_processed_moves = moves
+            return
+        self._check_for_remote_move()
+
     def _check_for_remote_move(self):
         """Check if there's a new remote move to process."""
         if not self._remote_moves:
@@ -1208,15 +1345,17 @@ def create_lichess_player(
 
 
 def lichess_player_from_seek(seek, *, color, join=None) -> LichessPlayer:
-    """Build the Lichess player PLAY uses from seek params and optional lobby join.
+    """Build the Lichess player from seek params and optional lobby join.
 
     ``seek`` is :class:`~universalchess.players.lichess.match.LichessSeek`
     (clock, rated, color preference, account, rating range). ``join`` is the
-    lobby stash from Ongoing/Challenge (``mode``, ``game_id``, ``challenge_id``,
-    ``challenge_direction``). Direct PLAY omits ``join`` and seeks a new game.
+    stash from PLAY / New Game / Ongoing / Challenge (``mode``, ``game_id``,
+    ``challenge_id``, ``challenge_direction``). Omitting ``join`` attaches an
+    ongoing game if one exists and does **not** post a seek (piece lift, boot
+    resume). PLAY and New Game stash ``mode`` NEW.
     """
     join = join or {}
-    mode = join.get("mode") or LichessGameMode.NEW
+    mode = join.get("mode") or LichessGameMode.ATTACH
     return LichessPlayer(
         LichessPlayerConfig(
             name="Lichess",

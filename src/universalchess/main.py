@@ -633,12 +633,15 @@ _pending_settings_reload = False  # Flag: web changed settings, rebuild live gam
 # remote game, and in-place reuse would not seek a new opponent or show
 # "Waiting for game". This flag, set when such a new game is detected, defers a
 # full game rebuild to the main thread (game/display mutation must not run on the
-# event/subscriber thread). _active_player_signature records the running game's
-# player config so a settings change can be detected; see _player_config_signature.
+# event/subscriber thread). A Lichess rebuild asks before posting a seek; PLAY,
+# lobby New Game, and web New Game do not use this flag. _active_player_signature
+# records the running game's player config so a settings change can be detected;
+# see _player_config_signature.
 _pending_player_rebuild = False
 _active_player_signature: Optional[tuple] = None
 # Lobby Ongoing/Challenge stashes join ids here for the next _start_game_mode.
-# PLAY and lobby New Game leave it None (mode NEW). Consumed at start so a
+# PLAY and New Game stash mode NEW (explicit seek). Piece lift, client connect,
+# and boot resume leave it None (ATTACH, no seek). Consumed at start so a
 # failed start cannot reuse a stale game id.
 _lichess_join: Optional[dict] = None
 # A board-reset / setup-mode new game reuses the current DisplayManager and its
@@ -1900,6 +1903,32 @@ def _resume_game_by_id(game_id: int) -> bool:
 # Position Loading Functions
 # ============================================================================
 
+def _lichess_is_a_player() -> bool:
+    """True when either Players slot is Lichess."""
+    from universalchess.menus.positions_menu import position_unavailable_with_lichess
+
+    settings = _get_settings()
+    return position_unavailable_with_lichess(settings.player1.type, settings.player2.type)
+
+
+def _alert_position_unavailable_with_lichess(_message: str = None) -> None:
+    """Show the Positions-unavailable splash on the e-paper."""
+    from universalchess.menus.positions_menu import POSITION_UNAVAILABLE_WITH_LICHESS
+    from universalchess.players.lichess.lobby import show_lichess_error
+
+    text = _message or POSITION_UNAVAILABLE_WITH_LICHESS
+    if _menu_manager is not None:
+        show_lichess_error(_menu_manager, "Positions", text)
+
+
+def _refuse_position_start_if_lichess() -> bool:
+    """Alert and return True when a custom FEN cannot start with a Lichess slot."""
+    if not _lichess_is_a_player():
+        return False
+    _alert_position_unavailable_with_lichess()
+    return True
+
+
 def _start_from_position(
     fen: str,
     position_name: str,
@@ -1911,6 +1940,11 @@ def _start_from_position(
 
     Sets up the game with the given FEN position and enters correction mode
     to guide the user in setting up the physical board.
+
+    Returns False without starting when a Players slot is Lichess: a live
+    Lichess game always starts from the opening, so a custom FEN would desync
+    this board from the remote opponent. Callers that need an on-screen alert
+    show it before invoking this.
 
     By default the game is practice/testing: it is NOT saved to the database and
     the back button returns directly to the menu without a resign prompt. When
@@ -1934,6 +1968,10 @@ def _start_from_position(
         True if position was loaded successfully, False otherwise
     """
     global protocol_manager, app_state, display_manager
+
+    if _lichess_is_a_player():
+        log.warning("[Positions] Refused: Lichess cannot start from a FEN")
+        return False
     
     try:
         import chess
@@ -2103,6 +2141,9 @@ def _play_from_history(
     Returns:
         True if the game was created and resumed; False otherwise.
     """
+    if _refuse_position_start_if_lichess():
+        return False
+
     from sqlalchemy.orm import sessionmaker
     from universalchess.db import models
     from universalchess.managers.game.move_persistence import create_game_from_moves
@@ -2366,7 +2407,7 @@ def _start_game_mode(
     is_lichess = (p1.type == "lichess" or p2.type == "lichess")
     lichess_seek = None
     if is_lichess:
-        join_mode = join["mode"] if join else LichessGameMode.NEW
+        join_mode = join["mode"] if join else LichessGameMode.ATTACH
         try:
             account = active_lichess_account(settings)
             rating_range = (account or {}).get("range") or ""
@@ -2421,9 +2462,13 @@ def _start_game_mode(
     # already satisfied here.
     _pending_layout_rebuild = False
 
-    # Player 1 is at the bottom of the board
-    # Determine which color each player plays
-    player1_is_white = (p1.color == 'white')
+    # Player 1 is at the bottom of the board (White's physical side).
+    # Lichess names the account's color after the pieces are already set, so a
+    # Lichess pairing never swaps those sides from the Players color control.
+    # Human as Black rotates the e-paper instead of the pieces: White stays
+    # player 1, Black player 2.
+    lichess_pairing = p1.type == "lichess" or p2.type == "lichess"
+    player1_is_white = True if lichess_pairing else (p1.color == "white")
 
     # Create players based on settings
     from universalchess.players import (
@@ -2808,6 +2853,7 @@ def _start_game_mode(
             beep=lambda: board.beep(board.SOUND_GENERAL),
             set_game_result=_set_lichess_result,
             splash_seconds=START_PLAYING_SPLASH_SECONDS,
+            rewind_to_move_count=game_manager.sync_move_count,
         )
     
     # Activate local controller by default (this starts players)
@@ -2998,9 +3044,10 @@ def _start_game_mode(
             elif player_manager.requires_rebuild_on_new_game:
                 # In-place reset only clears the local board. A remote player
                 # would keep streaming the old game, and the waiting splash
-                # is owned by _start_game_mode. Rebuild so the next game is a new
-                # seek with "Waiting for game".
-                log.info("[App] New game on board during remote play - scheduling rebuild to seek a new game")
+                # is owned by _start_game_mode. Rebuild on the main thread; a
+                # Lichess rebuild asks before posting a new seek (PLAY / lobby /
+                # web New Game skip that prompt because they are explicit).
+                log.info("[App] New game on board during remote play - scheduling rebuild")
                 _pending_player_rebuild = True
             elif display_manager.layout_needs_rebuild():
                 # The reused widgets no longer match current settings (the
@@ -3283,19 +3330,59 @@ def _on_move_list_action(result: str, ply: int) -> None:
         log.warning("[App] Failed to start new game from reviewed position")
 
 
-def _enter_game():
+def _is_play_start(result) -> bool:
+    """True when the menu result is PLAY (button) or the main-menu PLAY row."""
+    if result in ("PLAY", "Universal"):
+        return True
+    key = getattr(result, "key", None)
+    return key in ("PLAY", "Universal")
+
+
+def _stash_explicit_lichess_seek() -> None:
+    """Mark the next ``_start_game_mode`` as an explicit new Lichess seek."""
+    global _lichess_join
+    if not _lichess_is_a_player() or _lichess_join is not None:
+        return
+    from universalchess.players.lichess.lobby import explicit_lichess_seek_join
+
+    _lichess_join = explicit_lichess_seek_join()
+
+
+def _enter_game(*, explicit_lichess_seek: bool = False):
     """Enter the game screen from the menu, resuming or starting as appropriate.
 
     Single entry point for every menu->game transition (PLAY button, piece lift,
     client connect, settings break-out). When a suspended game exists it is
     resumed so PLAY never discards an in-progress game; otherwise a fresh game is
-    started (and menu navigation state cleared). Any piece events queued while
-    the menu was showing are forwarded as the first move, and an already-
-    connected client is switched to remote control.
+    started (and menu navigation state cleared). Piece lift and client connect
+    do not post a Lichess seek; PLAY and New Game pass ``explicit_lichess_seek``.
+    Any piece events queued while the menu was showing are forwarded as the first
+    move, and an already-connected client is switched to remote control.
     """
+    global _lichess_join, _pending_piece_events
+
     if _has_suspended_game() and not _player_config_changed_since_game_start():
         _resume_game_mode()
     else:
+        from universalchess.players.lichess.lobby import (
+            explicit_lichess_seek_join,
+            skip_unsolicited_lichess_start,
+        )
+
+        if skip_unsolicited_lichess_start(
+            is_lichess=_lichess_is_a_player(),
+            join=_lichess_join,
+            explicit_seek=explicit_lichess_seek,
+        ):
+            log.info("[App] Lichess start skipped; PLAY or New Game required to seek")
+            _pending_piece_events.clear()
+            return
+        if (
+            explicit_lichess_seek
+            and _lichess_is_a_player()
+            and _lichess_join is None
+        ):
+            _lichess_join = explicit_lichess_seek_join()
         # No suspended game, or the suspended game's players are stale because
         # player-defining settings changed since it began (e.g. engine changed
         # from the web). Start fresh so the new players/engine take effect rather
@@ -3485,13 +3572,14 @@ def _process_pending_board_command() -> None:
 
     Handles 'setup_position' (abort any running game, then set up the position),
     'abort_game' (abort and return to the menu), 'new_game' (abort and start a
-    fresh game), 'reset_settings', 'shutdown', 'reboot' and 'run_centaur'. Each
+    fresh game), 'lichess_start' (lobby New Game / Ongoing / Challenge from the
+    web), 'reset_settings', 'shutdown', 'reboot' and 'run_centaur'. Each
     runs the same board-side code path as the corresponding e-paper menu action so
     the web and on-board behavior are identical. Runs only from the main loop so
     display widgets, game managers and in-memory settings are mutated on the main
     thread.
     """
-    global _pending_board_command
+    global _pending_board_command, _lichess_join
     cmd = _pending_board_command
     _pending_board_command = None
     if not cmd:
@@ -3524,6 +3612,8 @@ def _process_pending_board_command() -> None:
                 log.warning(f"[App] Web play-from-history failed for {name}")
         else:
             log.info(f"[App] Web setup_position: {name} (record={record})")
+            if _refuse_position_start_if_lichess():
+                return
             _abort_current_game()
             if not _start_from_position(fen, name, hint, record=record):
                 log.warning(f"[App] Web setup_position failed for {name}")
@@ -3534,12 +3624,27 @@ def _process_pending_board_command() -> None:
             _return_to_menu("Web abort")
     elif command == "new_game":
         # Start a fresh game with the current player settings -- the same outcome
-        # as "New Game" in the on-board players menu. Any running game is first
-        # recorded as abandoned (DB result "*") so history reflects it; then
+        # as PLAY / "New Game" in the on-board players menu. Any running game is
+        # first recorded as abandoned (DB result "*") so history reflects it; then
         # _start_game_mode tears down the prior game and starts a standard game.
         log.info("[App] Web new_game")
+        _stash_explicit_lichess_seek()
         _abort_current_game()
         _start_game_mode()
+    elif command == "lichess_start":
+        # Same join stash as the board lobby (New Game / Ongoing / Challenge),
+        # then the shared Human vs Lichess start. Invalid params are ignored so
+        # a truncated web payload cannot seek with an empty game id.
+        from universalchess.players.lichess.lobby import lichess_join_from_web_params
+
+        join = lichess_join_from_web_params(cmd)
+        if join is None:
+            log.warning("[App] Web lichess_start ignored: invalid params")
+        else:
+            _lichess_join = join
+            log.info(f"[App] Web lichess_start mode={join['mode']}")
+            _abort_current_game()
+            _start_game_mode()
     elif command == "make_move":
         # Move played from the web Control page. Applied through the active
         # GameManager exactly like an on-board move (validated, executed, opponent
@@ -3659,14 +3764,16 @@ def _handle_positions_menu(*, return_to_last_position: bool = False) -> None:
             return_to_last_position=return_to_last_position,
             is_game_in_progress=_has_suspended_game,
             abort_game=_abort_current_game,
+            lichess_as_player=_lichess_is_a_player,
+            show_alert=_alert_position_unavailable_with_lichess,
         )
     finally:
         ctx.leave_menu()
 
     if is_break_result(result):
-        # A client connected or a piece moved while the menu was open.
+        # A client connected, a piece moved, or PLAY while the menu was open.
         ctx.clear()
-        _enter_game()
+        _enter_game(explicit_lichess_seek=_is_play_start(result))
     elif result:
         # A position game was started: _start_from_position has already switched
         # to GAME, so drop the menu path the game is now playing out of.
@@ -3763,6 +3870,7 @@ def _handle_settings(initial_selection: str = None):
                 # Player configuration complete, start game
                 ctx.clear()
                 app_state = AppState.MENU
+                _stash_explicit_lichess_seek()
                 _start_game_mode()
                 return
         
@@ -4377,11 +4485,11 @@ def _build_players_context():
 
     Exposes both players' settings (for the per-player summary labels and the
     Player 1 color icon) and the row actions: opening each player's detail
-    menu, Lichess Settings (host toggle and lobby), managing online accounts,
-    and starting the game. ``open_player*`` forwards only a break result up
-    (so a game started from a sub-menu unwinds); ``lichess`` opens the lobby;
-    ``open_accounts`` opens the multi-account manager (moved here from
-    Connectivity so credentials sit next to the slots that use them);
+    menu, Lichess Lobby (Account, ongoing, challenges, New Game),
+    managing online accounts from that same page, and starting the game.
+    ``open_player*`` forwards only a break result up (so a game started from a
+    sub-menu unwinds); ``lichess`` opens the lobby; ``open_accounts`` opens the
+    multi-account manager (also reachable from Accounts on the Account picker);
     ``start_game`` returns the START_GAME token the Settings handler turns
     into a new game.
     """
@@ -4490,37 +4598,22 @@ def _build_player_detail_context(player_num: int):
         """
         from universalchess.menus.catalog import get_catalog
         from universalchess.menus.engine import MenuRow
-        from universalchess.players.lichess.accounts import (
-            get_lichess_credential,
-            label_of,
-            list_lichess_credentials,
-        )
+        from universalchess.players.lichess.accounts import lichess_account_picker_choices
 
         catalog = get_catalog()
         type_id = settings_dict()["type"]
         if type_id != "lichess" or not catalog.has_account_type(type_id):
             return []
         icon = catalog.account_type(type_id).get("icon", "account")
-        accounts = list_lichess_credentials()
         other = other_settings_dict()
-        taken = None
-        if other.get("type") == "lichess":
-            other_id = other.get("account", "") or ""
-            if other_id:
-                bound = get_lichess_credential(other_id)
-                taken = bound.id if bound is not None else other_id
-            elif accounts:
-                taken = accounts[0].id
-        default_id = accounts[0].id if accounts else None
-        default_allowed = taken is None or default_id != taken
-        rows = []
-        if default_allowed:
-            rows.append(MenuRow(key="", label="Default account", icon=icon))
-        for account in accounts:
-            if account.id == taken:
-                continue
-            rows.append(MenuRow(key=account.id, label=label_of(account), icon=icon))
-        return rows
+        return [
+            MenuRow(key=key, label=label, icon=icon)
+            for key, label, _selected in lichess_account_picker_choices(
+                settings_dict().get("account", "") or "",
+                other.get("type", ""),
+                other.get("account", "") or "",
+            )
+        ]
 
     def player_account_label(_node):
         """Computed label for the Account row: the bound account's identity.
@@ -6166,21 +6259,38 @@ def _handle_lichess_menu():
         handle_lichess_menu,
         lichess_client_from_settings,
     )
-    from universalchess.board import centaur
 
     return handle_lichess_menu(
         get_lichess_client_fn=lambda: lichess_client_from_settings(_get_settings(), log),
-        get_settings_fn=_get_settings,
         menu_manager=_menu_manager,
-        keyboard_factory=lambda update_fn, title, max_len: KeyboardWidget(update_fn, title=title, max_length=max_len),
         start_lichess_game_fn=_start_lichess_game,
         handle_accounts_menu_fn=_handle_accounts_menu,
-        centaur_module=centaur,
-        board=board,
         log=log,
-        set_active_keyboard=_set_active_keyboard_widget,
-        clear_active_keyboard=_clear_active_keyboard_widget,
+        list_account_choices_fn=_lichess_play_account_choices,
+        bind_account_fn=_bind_lichess_play_account,
     )
+
+
+def _lichess_play_account_choices():
+    """Account picker rows for Play User, bound to the Lichess Players slot.
+
+    Player 1's slot is used when both sides are Lichess, matching
+    :func:`lichess_client_from_settings`. With no Lichess slot the list is
+    unfiltered (nothing is taken).
+    """
+    from universalchess.players.lichess.accounts import lichess_play_account_choices
+
+    return lichess_play_account_choices(_get_settings())
+
+
+def _bind_lichess_play_account(account_id: str) -> None:
+    """Persist the Play User pick onto the Lichess Players slot."""
+    settings = _get_settings()
+    if settings.player1.type == "lichess":
+        _save_player1_setting("account", account_id)
+        return
+    if settings.player2.type == "lichess":
+        _save_player2_setting("account", account_id)
 
 
 def _start_lichess_game(lichess_config) -> bool:
@@ -7266,6 +7376,9 @@ def key_callback(key_id):
             app_state == AppState.GAME
             and display_manager
             and not display_manager.is_menu_active()
+            and not (
+                _menu_manager is not None and _menu_manager.active_widget is not None
+            )
         ):
             from universalchess.menus.move_list_menu import (
                 players_support_takeback,
@@ -7362,9 +7475,16 @@ def key_callback(key_id):
         return
     
     elif app_state == AppState.GAME:
-        # Priority: DisplayManager menu (resign/draw, promotion) > app keys > game
+        # Priority: DisplayManager menu (resign/draw, promotion) > MenuManager
+        # overlay (Lichess takeback/draw/challenge) > app keys > game.
+        # Takeback Accept is a MenuManager.show_menu during GAME; without this
+        # TICK full-refreshes and BACK opens abort instead of selecting Accept.
         if display_manager and display_manager.is_menu_active():
             display_manager.handle_key(key_id)
+            _reset_unhandled_key_count()
+            return
+
+        if _menu_manager is not None and _menu_manager.handle_if_active(key_id):
             _reset_unhandled_key_count()
             return
         
@@ -8262,7 +8382,7 @@ def main():
                         settings_result = _handle_settings(initial_selection=restore_settings_submenu)
                         restore_settings_submenu = None  # Clear after use
                         if is_break_result(settings_result):
-                            _enter_game()
+                            _enter_game(explicit_lichess_seek=_is_play_start(settings_result))
                         continue  # After settings, loop back to check state
 
                     # Check if we need to reopen the Positions menu (on startup)
@@ -8292,7 +8412,7 @@ def main():
                             log.info(f"[App] Restoring suspended menu position (submenu={resume_submenu})")
                             settings_result = _handle_settings(initial_selection=resume_submenu)
                             if is_break_result(settings_result):
-                                _enter_game()
+                                _enter_game(explicit_lichess_seek=_is_play_start(settings_result))
                             continue
                         if resume_path and resume_path[0][0] == POSITIONS_MENU_TOKEN:
                             # PLAY was pressed inside Positions: reopen it, at the
@@ -8362,8 +8482,9 @@ def main():
                     elif result in ("Universal", "PLAY", "CLIENT_CONNECTED", "PIECE_MOVED"):
                         # Start a new game or resume the suspended one. _enter_game()
                         # decides which, forwards queued piece events, and wires up an
-                        # already-connected client.
-                        _enter_game()
+                        # already-connected client. PLAY / Universal may seek; piece
+                        # lift and client connect do not.
+                        _enter_game(explicit_lichess_seek=_is_play_start(result))
 
                     elif result == "Positions":
                         _handle_positions_menu()
@@ -8373,7 +8494,7 @@ def main():
                         # A board event or PLAY pressed inside Settings breaks out to
                         # enter (start or resume) the game.
                         if is_break_result(settings_result):
-                            _enter_game()
+                            _enter_game(explicit_lichess_seek=_is_play_start(settings_result))
                         # After settings, continue to main menu
 
                     elif result == "HELP":
@@ -8393,6 +8514,20 @@ def main():
                     # tears down the stale players and re-reads the current settings.
                     elif _pending_player_rebuild:
                         _pending_player_rebuild = False
+                        from universalchess.players.lichess.lobby import (
+                            board_reset_rebuild_action,
+                        )
+
+                        action = board_reset_rebuild_action(
+                            _menu_manager,
+                            is_lichess=_lichess_is_a_player(),
+                        )
+                        if action == "menu":
+                            log.info("[App] Lichess seek after board reset declined")
+                            _return_to_menu("Lichess seek declined")
+                            continue
+                        if action == "seek":
+                            _stash_explicit_lichess_seek()
                         log.info("[App] Rebuilding game with updated player settings (new engine/players)")
                         _cleanup_game()
                         _start_game_mode()

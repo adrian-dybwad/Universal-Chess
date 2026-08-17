@@ -12,7 +12,23 @@ from typing import Callable, Optional
 from universalchess.board.logging import log
 from universalchess.epaper.icon_menu import IconMenuEntry
 
+from .match import LichessChallengeOffer, lichess_challenge_terms_label
 from .player import LichessPlayer
+
+
+def challenge_menu_entries(offer: LichessChallengeOffer):
+    """Accept/Decline rows plus a non-selectable summary of the challenger's terms."""
+    return [
+        IconMenuEntry(
+            key="terms",
+            label=lichess_challenge_terms_label(offer),
+            icon_name="lichess",
+            selectable=False,
+            font_size=12,
+        ),
+        IconMenuEntry(key="accept", label="Accept\nChallenge", icon_name="play"),
+        IconMenuEntry(key="decline", label="Decline", icon_name="cancel"),
+    ]
 
 
 class LichessPlaySession:
@@ -31,6 +47,7 @@ class LichessPlaySession:
         self._set_game_result = None
         self._splash_seconds = 5.0
         self._show_started_splash = None
+        self._rewind_to_move_count = None
 
     @classmethod
     def from_players(cls, white_player, black_player) -> Optional["LichessPlaySession"]:
@@ -57,6 +74,7 @@ class LichessPlaySession:
         set_game_result: Callable,
         splash_seconds: float,
         show_started_splash: Optional[Callable] = None,
+        rewind_to_move_count: Optional[Callable[[int], None]] = None,
     ) -> None:
         """Wire stream callbacks onto the remote player."""
         self._player_manager = player_manager
@@ -67,6 +85,7 @@ class LichessPlaySession:
         self._beep = beep
         self._set_game_result = set_game_result
         self._splash_seconds = splash_seconds
+        self._rewind_to_move_count = rewind_to_move_count
         if show_started_splash is None:
             from .lobby import show_lichess_started_splash
 
@@ -76,6 +95,8 @@ class LichessPlaySession:
         self._remote.set_game_over_callback(self._on_game_over)
         self._remote.set_takeback_offer_callback(self._on_takeback_offer)
         self._remote.set_draw_offer_callback(self._on_draw_offer)
+        self._remote.set_challenge_offer_callback(self._on_challenge_offer)
+        self._remote.set_remote_takeback_callback(self._on_remote_takeback)
         self._remote.set_info_message_callback(self._on_info_message)
 
     def dismiss_started_splash(self) -> None:
@@ -110,6 +131,9 @@ class LichessPlaySession:
         if self.game_connected:
             return
         self.game_connected = True
+        # Physical White is always player 1, Black player 2. The stream only
+        # decides which of those slots the Human occupies. Flip is display-only
+        # (e-paper from Black's side) so the pieces do not have to be rotated.
         human_is_white = (
             True if self._remote.player_is_white is None else self._remote.player_is_white
         )
@@ -129,6 +153,8 @@ class LichessPlaySession:
                     self._player_manager.reassign_slots(human, remote)
                 else:
                     self._player_manager.reassign_slots(remote, human)
+        if self._menu_manager is not None:
+            self._menu_manager.cancel_selection("BACK")
         if self._game_display is not None:
             self._game_display.set_flip_board(not human_is_white)
         if self._show_started_splash is not None:
@@ -136,6 +162,58 @@ class LichessPlaySession:
         timer = threading.Timer(self._splash_seconds, self.dismiss_started_splash)
         timer.daemon = True
         timer.start()
+
+    def _on_challenge_offer(self, offer, accept_fn, decline_fn) -> None:
+        """Show the challenger's terms. Decline restores the seek splash."""
+        log.info(
+            "[Lichess] Incoming challenge %s",
+            getattr(offer, "challenge_id", ""),
+        )
+        if self.game_connected or getattr(self._remote, "_game_id", None):
+            decline_fn()
+            return
+        if self._beep is not None:
+            self._beep()
+        if self._menu_manager is None:
+            decline_fn()
+            return
+        result = self._menu_manager.show_menu(challenge_menu_entries(offer))
+        if self.game_connected or getattr(self._remote, "_game_id", None):
+            decline_fn()
+            return
+        if hasattr(result, "key") and result.key == "accept":
+            accept_fn()
+            return
+        decline_fn()
+        self._restore_waiting_splash()
+
+    def _restore_waiting_splash(self) -> None:
+        """Put 'Waiting for game' back after show_menu cleared the panel."""
+        if self.game_connected or self._panel is None:
+            return
+        from .hosts import DEFAULT_HOST_ID
+        from .lobby import show_lichess_waiting_splash
+        from .match import LichessSeek
+
+        cfg = self._remote._lichess_config
+        seek = LichessSeek(
+            time_minutes=int(cfg.time_minutes),
+            increment_seconds=int(cfg.increment_seconds),
+            color=str(cfg.color_preference or "random"),
+            rated=bool(cfg.rated),
+            rating_range=str(
+                cfg.rating_range or getattr(self._remote, "_account_range", "") or ""
+            ),
+            account_id=str(cfg.account_id or ""),
+            host_id=getattr(self._remote, "_host_id", None) or DEFAULT_HOST_ID,
+        )
+        show_lichess_waiting_splash(self._panel, self.waiting_mode, seek=seek)
+
+    def _on_remote_takeback(self, remaining_plies: int) -> None:
+        """Pop the live game to the ply count Lichess now has."""
+        log.info("[Lichess] Remote takeback to %s half-moves", remaining_plies)
+        if self._rewind_to_move_count is not None:
+            self._rewind_to_move_count(remaining_plies)
 
     def _on_takeback_offer(self, accept_fn, decline_fn) -> None:
         log.info("[Lichess] Takeback offer received")
@@ -150,6 +228,7 @@ class LichessPlaySession:
             accept_fn()
         else:
             decline_fn()
+        self._restore_game_widgets()
 
     def _on_draw_offer(self, accept_fn, decline_fn) -> None:
         log.info("[Lichess] Draw offer received")
@@ -164,6 +243,14 @@ class LichessPlaySession:
             accept_fn()
         else:
             decline_fn()
+        self._restore_game_widgets()
+
+    def _restore_game_widgets(self) -> None:
+        """Put the board back after show_menu cleared the panel."""
+        if self._started_splash_held:
+            return
+        if self._game_display is not None:
+            self._game_display.show_game_widgets()
 
     def _on_game_over(self, result: str, termination: str, winner) -> None:
         log.info(

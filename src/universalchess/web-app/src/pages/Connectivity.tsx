@@ -1458,7 +1458,14 @@ const ADD_ERROR_KEYS: Record<string, string> = {
  * shows Sign in (same idea as the Players Account row) instead of claiming
  * "No accounts yet" or forcing a login dialog on every anonymous page view.
  */
-export function AccountsCard({ embedded = false }: { embedded?: boolean } = {}) {
+export function AccountsCard({
+  embedded = false,
+  onAccountsChanged,
+}: {
+  embedded?: boolean;
+  /** Called after a successful add or delete so a parent list can refresh. */
+  onAccountsChanged?: () => void;
+} = {}) {
   const { t } = useTranslation();
   const [accountTypes, setAccountTypes] = useState<AccountType[]>([]);
   const [accounts, setAccounts] = useState<AccountRecord[]>([]);
@@ -1565,6 +1572,7 @@ export function AccountsCard({ embedded = false }: { embedded?: boolean } = {}) 
         setFieldValues({});
         setMessage({ kind: 'success', text: t('connectivity.accounts.added') });
         await fetchAccounts();
+        onAccountsChanged?.();
         return;
       }
       const data = await r.json().catch(() => ({}));
@@ -1575,7 +1583,7 @@ export function AccountsCard({ embedded = false }: { embedded?: boolean } = {}) 
     } finally {
       setSubmitting(false);
     }
-  }, [currentType, fieldValues, selectedHost, onUnauthorized, fetchAccounts, t]);
+  }, [currentType, fieldValues, selectedHost, onUnauthorized, fetchAccounts, onAccountsChanged, t]);
 
   const remove = useCallback(
     async function runRemove(account: AccountRecord) {
@@ -1596,6 +1604,7 @@ export function AccountsCard({ embedded = false }: { embedded?: boolean } = {}) 
         }
         if (r.ok) {
           await fetchAccounts();
+          onAccountsChanged?.();
         } else {
           setMessage({ kind: 'error', text: t('connectivity.accounts.removeFailed') });
         }
@@ -1605,7 +1614,7 @@ export function AccountsCard({ embedded = false }: { embedded?: boolean } = {}) 
         setBusy(false);
       }
     },
-    [onUnauthorized, fetchAccounts, t]
+    [onUnauthorized, fetchAccounts, onAccountsChanged, t]
   );
 
   const hosts = currentType?.hosts ?? [];

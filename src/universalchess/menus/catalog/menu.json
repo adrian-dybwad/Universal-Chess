@@ -315,27 +315,49 @@
     {
       "id": "players.lichess",
       "key": "Lichess",
-      "type": "submenu",
-      "target": "players.lichess",
-      "label": "Lichess Settings",
-      "boardLabel": "Lichess\nSettings",
+      "type": "action",
+      "action": "lichess",
+      "label": "Lichess Lobby",
+      "boardLabel": "Lichess\nLobby",
       "icon": "lichess",
-      "help": "Lichess credentials and online play. Each login is a server and user (lichess.org or lichess.dev). Play opens New Game, ongoing games, and challenges.",
+      "help": "Lichess credentials and online play. Each login is a server and user (lichess.org or lichess.dev). Opens the account picker, ongoing games, challenges, and New Game.",
       "section": "players",
       "platforms": ["board", "web"],
       "epaper": { "font_size": 12, "height_ratio": 0.8 },
-      "children": ["players.accounts", "players.lichess.play"]
+      "children": ["lichess.account", "lichess.ongoing", "lichess.challenges", "lichess.new_game"]
     },
     {
-      "id": "players.lichess.play",
+      "id": "lichess.account",
+      "type": "select",
+      "label": "Account",
+      "icon": "lichess",
+      "help": "Which saved Lichess login the slot uses. The same picker as the player-slot Account row, including the both-sides exclusion. Accounts at the end adds or deletes logins.",
+      "section": "players",
+      "children": ["players.accounts"]
+    },
+    {
+      "id": "lichess.ongoing",
       "type": "action",
-      "action": "lichess",
-      "label": "Play",
-      "boardLabel": "Play",
+      "label": "Ongoing Games",
+      "icon": "lichess",
+      "help": "Continue a Lichess game this account already started, on this board, the website, or another device.\n\nSelect a game to resume it here. The clock and your color come from that match.\n\nIf none are listed, this account has no unfinished games. Use New Game to seek a new opponent.",
+      "section": "players"
+    },
+    {
+      "id": "lichess.challenges",
+      "type": "action",
+      "label": "Challenges",
+      "icon": "lichess",
+      "help": "A challenge is a game offered to this account, or that this account offered to someone else.\n\nIncoming: select one to accept it on this board. A challenge that arrives during a seek also shows Accept or Decline.\n\nOutgoing: waiting for the other player. New Game posts a public seek instead of challenging one person.",
+      "section": "players"
+    },
+    {
+      "id": "lichess.new_game",
+      "type": "action",
+      "label": "New Game",
       "icon": "play",
-      "help": "New game, ongoing games, and challenges on Lichess.",
-      "platforms": ["board"],
-      "epaper": { "font_size": 12, "height_ratio": 0.8 }
+      "help": "Seek a new opponent on Lichess with this account. Time control and rated come from Game and Players settings.",
+      "section": "players"
     },
     {
       "id": "players.accounts",
@@ -346,7 +368,7 @@
       "icon": "account",
       "help": "Connect a Lichess token. Each account is listed as server:user.",
       "section": "accounts",
-      "platforms": ["board"]
+      "platforms": ["board", "web"]
     },
     {
       "id": "players.start",

@@ -36,11 +36,20 @@ finally:
     Image.open = _orig_image_open
 
 
+def _human_engine_players():
+    """Default Players slots so setup-position tests are not bound to the host ini."""
+    return (
+        {"type": "human", "color": "white", "elo": "Default"},
+        {"type": "engine", "color": "black", "elo": "Default"},
+    )
+
+
 @pytest.fixture
 def client(monkeypatch):
     configure_for_testing(webapp)
     # Bypass HTTP Basic Auth so the protected endpoints are reachable in tests.
     monkeypatch.setattr(webapp, "verify_webdav_authentication", lambda: (True, "tester"))
+    monkeypatch.setattr(webapp, "_read_player_dicts", _human_engine_players)
     return webapp.app.test_client()
 
 
@@ -86,6 +95,88 @@ def test_setup_position_rejects_invalid_fen(client, monkeypatch):
         content_type="application/json",
     )
     assert resp.status_code == 400
+    assert sent == []
+
+
+def test_setup_position_rejects_lichess_player(client, monkeypatch):
+    """A Lichess slot must not start a custom FEN; the web shows the same alert.
+
+    Why: Lichess live games start from the opening. Forwarding setup-position
+    would abort the current game and seek a different match. How a regression
+    manifests: 200 and a setup_position command, or a different error string.
+    """
+    sent = []
+    monkeypatch.setattr(
+        "universalchess.services.game_broadcast.send_board_command",
+        lambda command, params=None: (
+            sent.append((command, params)) if command != "reset_inactivity" else None
+        )
+        or True,
+    )
+    monkeypatch.setattr(
+        webapp,
+        "_read_player_dicts",
+        lambda: (
+            {"type": "human", "color": "white", "elo": "Default"},
+            {"type": "lichess", "color": "black", "elo": "Default"},
+        ),
+    )
+    fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    resp = client.post(
+        "/api/board/setup-position",
+        data=json.dumps({"fen": fen, "name": "Start"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 409
+    assert json.loads(resp.data) == {
+        "success": False,
+        "error": "Unavailable with lichess as a player",
+    }
+    assert sent == []
+
+
+def test_setup_position_rejects_lichess_player_with_history(client, monkeypatch):
+    """Play-from-here with a Lichess slot must 409 the same way as a catalog FEN.
+
+    Why: Analyze "Play Game from here" posts record+moves. That path must not
+    skip the Lichess check and abort the live match. How a regression manifests:
+    200 and a setup_position command carrying moves.
+    """
+    sent = []
+    monkeypatch.setattr(
+        "universalchess.services.game_broadcast.send_board_command",
+        lambda command, params=None: (
+            sent.append((command, params)) if command != "reset_inactivity" else None
+        )
+        or True,
+    )
+    monkeypatch.setattr(
+        webapp,
+        "_read_player_dicts",
+        lambda: (
+            {"type": "lichess", "color": "white", "elo": "Default"},
+            {"type": "human", "color": "black", "elo": "Default"},
+        ),
+    )
+    fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+    resp = client.post(
+        "/api/board/setup-position",
+        data=json.dumps(
+            {
+                "fen": fen,
+                "name": "Analysis",
+                "record": True,
+                "moves": ["e2e4"],
+                "start_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            }
+        ),
+        content_type="application/json",
+    )
+    assert resp.status_code == 409
+    assert json.loads(resp.data) == {
+        "success": False,
+        "error": "Unavailable with lichess as a player",
+    }
     assert sent == []
 
 

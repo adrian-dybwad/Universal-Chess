@@ -5,7 +5,6 @@ from typing import Optional, Callable
 
 from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.managers.menu import is_break_result
-from universalchess.utils.token_display import mask_token
 
 _MISSING_SCOPE = re.compile(r"Missing scope:\s*([a-z0-9:_-]+)", re.IGNORECASE)
 
@@ -82,26 +81,111 @@ def resolve_lichess_identity(token, log=None, host_id: str = "org"):
         return ResolvedIdentity(error="auth_failed", message="Could not verify token with Lichess")
 
 
-def build_lichess_menu_entries(username: Optional[str], ongoing_games: bool, has_challenges: bool):
-    """Build top-level Lichess menu entries.
+DEFAULT_ACCOUNT_MENU_KEY = "Default"
+ACCOUNTS_MENU_KEY = "Accounts"
 
-    The username is a header row: shown, but non-selectable (``selectable=False``)
-    rather than ``enabled=False`` -- the latter would render it faded/disabled,
-    and previously hid it outright. Sections with nothing to open (no ongoing
-    games, no challenges) are *omitted* rather than shown disabled, since hiding
-    a row is done by leaving it out, never by ``enabled=False``.
+ONGOING_GAMES_HELP = (
+    "Continue a Lichess game this account already started, on this board, "
+    "the website, or another device.\n\n"
+    "Select a game to resume it here. The clock and your color come from "
+    "that match.\n\n"
+    "If none are listed, this account has no unfinished games. Use New Game "
+    "to seek a new opponent."
+)
+
+CHALLENGES_HELP = (
+    "A challenge is a game offered to this account, or that this account "
+    "offered to someone else.\n\n"
+    "Incoming: select one to accept it on this board. A challenge that "
+    "arrives during a seek also shows Accept or Decline.\n\n"
+    "Outgoing: waiting for the other player. New Game posts a public seek "
+    "instead of challenging one person."
+)
+
+
+def build_lichess_menu_entries(username: Optional[str]):
+    """Build Lichess Settings rows (the lobby, not a nested Play page).
+
+    Account is first and selectable: it opens the account picker for the
+    Lichess slot. Ongoing Games and Challenges are always listed; selecting
+    either shows how it works, then the live list. New Game is last. Add or
+    delete logins is Accounts on the picker, not a lobby sibling.
     """
-    user_label = f"User\n{username}" if username else "User\nUnknown"
-    entries = [
-        IconMenuEntry(key="User", label=user_label, icon_name="lichess", selectable=False),
+    account_label = f"Account\n{username}" if username else "Account\nUnknown"
+    return [
+        IconMenuEntry(key="Account", label=account_label, icon_name="lichess"),
+        IconMenuEntry(
+            key="Ongoing",
+            label="Ongoing\nGames",
+            icon_name="lichess",
+            help=ONGOING_GAMES_HELP,
+        ),
+        IconMenuEntry(
+            key="Challenges",
+            label="Challenges",
+            icon_name="lichess",
+            help=CHALLENGES_HELP,
+        ),
         IconMenuEntry(key="NewGame", label="New Game", icon_name="play"),
     ]
-    if ongoing_games:
-        entries.append(IconMenuEntry(key="Ongoing", label="Ongoing\nGames", icon_name="lichess"))
-    if has_challenges:
-        entries.append(IconMenuEntry(key="Challenges", label="Challenges", icon_name="lichess"))
-    entries.append(IconMenuEntry(key="Token", label="API Token", icon_name="lichess"))
+
+
+def build_lichess_account_picker_entries(choices):
+    """Radio rows for the Play account picker, plus Accounts last.
+
+    ``choices`` is ``(key, label, selected)`` from
+    :func:`lichess_account_picker_choices`. Unbound Default uses key ``""`` in
+    that list; the menu row uses :data:`DEFAULT_ACCOUNT_MENU_KEY` so the widget
+    has a non-empty key. Accounts is not a radio; it opens the credential
+    manager. The row is always present so an empty credential list can still
+    add a login.
+    """
+    entries = []
+    for key, label, selected in choices:
+        menu_key = DEFAULT_ACCOUNT_MENU_KEY if key == "" else key
+        entries.append(
+            IconMenuEntry(
+                key=menu_key,
+                label=label,
+                icon_name="lichess",
+                trailing_icon_name="radio_checked" if selected else "radio_empty",
+            )
+        )
+    entries.append(
+        IconMenuEntry(
+            key=ACCOUNTS_MENU_KEY,
+            label="Accounts",
+            icon_name="account",
+        )
+    )
     return entries
+
+
+def show_lichess_account_picker(menu_manager, choices):
+    """Show the account picker and return the selected slot value, or None.
+
+    The slot value is ``""`` for Default, otherwise the account id. Selecting
+    Accounts returns :data:`ACCOUNTS_MENU_KEY` so the caller can open the
+    credential manager without binding. BACK, SHUTDOWN, and HELP return None.
+    Break results are returned unchanged so Play can unwind.
+    """
+    entries = build_lichess_account_picker_entries(choices)
+    selected = next(
+        (
+            index
+            for index, entry in enumerate(entries)
+            if entry.trailing_icon_name == "radio_checked"
+        ),
+        0,
+    )
+    result = menu_manager.show_menu(entries, initial_index=selected)
+    if result.is_break:
+        return result
+    if result.is_exit():
+        return None
+    if result.key == DEFAULT_ACCOUNT_MENU_KEY:
+        return ""
+    return result.key
 
 
 def lichess_waiting_message(mode, seek=None) -> str:
@@ -200,6 +284,92 @@ def show_lichess_error(menu_manager, title: str, message: str, show_accounts_but
     return menu_manager.show_menu(entries)
 
 
+def confirm_lichess_seek(menu_manager) -> bool:
+    """Show a Seek/Cancel confirmation and return True only if Seek is chosen.
+
+    Used when setting the pieces back to the start would post a new Lichess
+    seek. PLAY, lobby New Game, and web New Game are explicit and skip this.
+    Defaults the highlight to Cancel so a stray TICK cannot register a seek;
+    any non-Seek outcome (Cancel, BACK, break) is a refusal.
+    """
+    entries = [
+        IconMenuEntry(
+            key="prompt",
+            label="Seek a\nnew game?",
+            icon_name="lichess",
+            enabled=True,
+            selectable=False,
+            font_size=12,
+        ),
+        IconMenuEntry(key="Seek", label="Seek", icon_name="play", enabled=True),
+        IconMenuEntry(key="Cancel", label="Cancel", icon_name="undo", enabled=True),
+    ]
+    result = menu_manager.show_menu(entries, initial_index=2)
+    key = result.key if hasattr(result, "key") else result
+    return key == "Seek"
+
+
+def board_reset_rebuild_action(menu_manager, *, is_lichess: bool) -> str:
+    """Decide whether a board-reset player rebuild may start.
+
+    Setting the pieces back to the start rebuilds a Lichess game through
+    ``_start_game_mode``, which posts a new seek. That gesture is not PLAY,
+    lobby New Game, or web New Game, so it needs confirmation. Cancel (or no
+    menu) returns ``menu`` so the caller leaves the game without seeking.
+    Engine/human rebuilds return ``rebuild`` without a prompt. Confirmed
+    Lichess returns ``seek`` so the caller stashes an explicit NEW join.
+    """
+    if not is_lichess:
+        return "rebuild"
+    if menu_manager is None or not confirm_lichess_seek(menu_manager):
+        return "menu"
+    return "seek"
+
+
+def explicit_lichess_seek_join() -> dict:
+    """Join stash that posts a new seek (PLAY, New Game, confirmed board-reset)."""
+    from .player import LichessGameMode
+
+    return {
+        "mode": LichessGameMode.NEW,
+        "game_id": "",
+        "challenge_id": "",
+        "challenge_direction": "in",
+    }
+
+
+def skip_unsolicited_lichess_start(*, is_lichess: bool, join, explicit_seek: bool) -> bool:
+    """True when a Lichess slot would start without PLAY / New Game / a join.
+
+    Piece lift, client connect, and boot piece events used to call
+    ``_enter_game`` with join None, which posted a seek. A lobby join or an
+    explicit PLAY/New Game must still start.
+    """
+    if not is_lichess:
+        return False
+    if join is not None:
+        return False
+    return not explicit_seek
+
+
+def show_lichess_help(menu_manager, title: str, body: str) -> None:
+    """Show how a Lichess Settings row works, then return to the caller.
+
+    Uses the same help dialog as the HELP key when MenuManager has a presenter.
+    Tests and a missing presenter fall back to the dismissible splash.
+    """
+    presenter = getattr(menu_manager, "_help_presenter", None)
+    if presenter is not None:
+        presenter(title, body)
+        return
+    board_mod = getattr(menu_manager, "_board", None)
+    panel = getattr(board_mod, "display_manager", None) if board_mod is not None else None
+    bind_keys = getattr(menu_manager, "_error_splash_binder", None)
+    from universalchess.epaper.splash_screen import show_dismissible_splash
+
+    show_dismissible_splash(panel, body, bind_keys=bind_keys)
+
+
 def _lichess_slot_settings(settings):
     """PlayerSettings for the Lichess slot, or None if neither slot is Lichess."""
     p1 = settings.player1
@@ -237,55 +407,108 @@ def lichess_client_from_settings(settings, log):
     return get_lichess_client(token, log, host_id=host_id)
 
 
-def ensure_token(
-    menu_manager,
-    keyboard_factory: Callable,
-    get_token: Callable[[], str],
-    set_token: Callable[[str], None],
-    log,
-    board,
-    set_active_keyboard: Callable[[object], None],
-    clear_active_keyboard: Callable[[], None],
-):
-    """Prompt for token entry.
+def ongoing_game_summaries(raw_games) -> list:
+    """Normalize ``GET /api/account/playing`` rows for board and web lobbies.
 
-    Registers the keyboard as the application's active keyboard widget so board
-    key presses (BACK/TICK/UP/DOWN/PLAY) and piece placements are routed to it,
-    mirroring the WiFi-password and player-name entry paths. Without this
-    registration the keyboard is unresponsive - keys and typing never reach it,
-    so even BACK does nothing (the "Back does not go back in Lichess" bug). The
-    active keyboard is cleared in a finally so a cancel or exception cannot leave
-    a stale keyboard swallowing later menu input.
-
-    Calls ``keyboard_factory`` positionally as ``(update_fn, title, max_length)``,
-    matching its documented contract and every other call site (e.g. wifi
-    password entry). Passing the limit by keyword previously broke here because
-    the app's factories name the parameter ``max_len``; positional invocation is
-    immune to that parameter-name drift.
+    Each item is ``id``, ``opponent``, ``rating``, ``color`` (``white``/``black``).
+    Rows without a game id are dropped so a truncated payload cannot be joined.
     """
-    board.display_manager.clear_widgets(addStatusBar=False)
-    keyboard = keyboard_factory(board.display_manager.update, "Lichess Token", 64)
-    keyboard.text = get_token() or ""
-    set_active_keyboard(keyboard)
-    promise = board.display_manager.add_widget(keyboard)
-    if promise:
-        try:
-            promise.result(timeout=5.0)
-        except Exception:  # noqa: S110 # nosec B110 - best-effort wait for the widget to render; input is still accepted below
-            pass
-    try:
-        result = keyboard.wait_for_input(timeout=300.0)
-        if result is not None:
-            set_token(result)
-            log.info(f"[Accounts] Lichess token saved ({len(result)} chars)")
-            board.beep(board.SOUND_GENERAL)
-        return result
-    finally:
-        clear_active_keyboard()
+    from .player import ongoing_game_id
+
+    rows = []
+    for game in raw_games or []:
+        game_id = ongoing_game_id(game)
+        if not game_id:
+            continue
+        opponent = game.get("opponent") or {}
+        rating = opponent.get("rating")
+        rows.append(
+            {
+                "id": game_id,
+                "opponent": opponent.get("username") or "Unknown",
+                "rating": "" if rating is None else rating,
+                "color": "white" if game.get("color") == "white" else "black",
+            }
+        )
+    return rows
+
+
+def challenge_summaries(payload) -> list:
+    """Normalize ``challenges.get_mine()`` into lobby rows.
+
+    Incoming first, then outgoing. Each item is ``id``, ``direction`` (``in``/
+    ``out``), ``name``, ``rating``. Rows without an id are dropped.
+    """
+    payload = payload or {}
+    rows = []
+    for challenge in payload.get("in") or []:
+        row = _challenge_summary(challenge, "in")
+        if row is not None:
+            rows.append(row)
+    for challenge in payload.get("out") or []:
+        row = _challenge_summary(challenge, "out")
+        if row is not None:
+            rows.append(row)
+    return rows
+
+
+def _challenge_summary(challenge: dict, direction: str) -> Optional[dict]:
+    challenge_id = (challenge or {}).get("id")
+    if not challenge_id:
+        return None
+    person = (
+        challenge.get("challenger") if direction == "in" else challenge.get("destUser")
+    ) or {}
+    rating = person.get("rating")
+    return {
+        "id": str(challenge_id),
+        "direction": direction,
+        "name": person.get("name") or person.get("username") or "Unknown",
+        "rating": "" if rating is None else rating,
+    }
+
+
+def lichess_join_from_web_params(params: dict) -> Optional[dict]:
+    """Parse a ``lichess_start`` board command into the ``_lichess_join`` stash.
+
+    ``mode`` is ``new``, ``ongoing``, or ``challenge``. Ongoing requires
+    ``game_id``; challenge requires ``challenge_id`` and ``in``/``out``.
+    Returns None when the payload cannot start a join, so the board ignores it
+    instead of seeking with a truncated id.
+    """
+    from .player import LichessGameMode
+
+    if not isinstance(params, dict):
+        return None
+    modes = {
+        "new": LichessGameMode.NEW,
+        "ongoing": LichessGameMode.ONGOING,
+        "challenge": LichessGameMode.CHALLENGE,
+    }
+    mode = modes.get(str(params.get("mode") or "").strip().lower())
+    if mode is None:
+        return None
+    game_id = str(params.get("game_id") or "").strip()
+    challenge_id = str(params.get("challenge_id") or "").strip()
+    direction = str(params.get("challenge_direction") or "in").strip().lower()
+    if mode is LichessGameMode.ONGOING and not game_id:
+        return None
+    if mode is LichessGameMode.CHALLENGE:
+        if not challenge_id or direction not in ("in", "out"):
+            return None
+    return {
+        "mode": mode,
+        "game_id": game_id,
+        "challenge_id": challenge_id,
+        "challenge_direction": direction if mode is LichessGameMode.CHALLENGE else "in",
+    }
 
 
 def show_lichess_ongoing_games(client, menu_manager, log) -> Optional[str]:
     """Show list of ongoing Lichess games and return selected game ID.
+
+    An empty list returns None without a splash: the caller already showed
+    how Ongoing Games work.
 
     Args:
         client: berserk Lichess client
@@ -293,27 +516,22 @@ def show_lichess_ongoing_games(client, menu_manager, log) -> Optional[str]:
         log: Logger instance
 
     Returns:
-        Game ID if selected, None if cancelled
+        Game ID if selected, None if cancelled or none exist
     """
     try:
         ongoing = client.games.get_ongoing(count=10)
+        summaries = ongoing_game_summaries(ongoing)
 
-        if not ongoing:
-            show_lichess_error(menu_manager, "No Games", "No ongoing\ngames found")
+        if not summaries:
             return None
 
         entries = []
-        for game in ongoing:
-            game_id = game.get("gameId", "")
-            opponent = game.get("opponent", {})
-            opponent_name = opponent.get("username", "Unknown")
-            opponent_rating = opponent.get("rating", "")
-            color = "W" if game.get("color") == "white" else "B"
-
-            label = f"{opponent_name}\n({opponent_rating}) {color}"
+        for row in summaries:
+            color = "W" if row["color"] == "white" else "B"
+            label = f"{row['opponent']}\n({row['rating']}) {color}"
             entries.append(
                 IconMenuEntry(
-                    key=game_id,
+                    key=row["id"],
                     label=label,
                     icon_name="lichess",
                     enabled=True,
@@ -355,13 +573,16 @@ def show_lichess_ongoing_games(client, menu_manager, log) -> Optional[str]:
 def show_lichess_challenges(client, menu_manager, log) -> Optional[dict]:
     """Show list of Lichess challenges and return selected challenge.
 
+    An empty list returns None without a splash: the caller already showed
+    how Challenges work.
+
     Args:
         client: berserk Lichess client
         menu_manager: Menu manager for displaying menu
         log: Logger instance
 
     Returns:
-        Dict with 'id' and 'direction' if selected, None if cancelled
+        Dict with 'id' and 'direction' if selected, None if cancelled or none exist
     """
     try:
         challenges_data = None
@@ -384,40 +605,18 @@ def show_lichess_challenges(client, menu_manager, log) -> Optional[dict]:
 
         incoming = list(challenges_data.get("in", []))
         outgoing = list(challenges_data.get("out", []))
+        summaries = challenge_summaries({"in": incoming, "out": outgoing})
 
-        if not incoming and not outgoing:
-            show_lichess_error(menu_manager, "No Challenges", "No pending\nchallenges")
+        if not summaries:
             return None
 
         entries = []
-
-        for challenge in incoming:
-            c_id = challenge.get("id", "")
-            challenger = challenge.get("challenger", {})
-            name = challenger.get("name", "Unknown")
-            rating = challenger.get("rating", "")
-
-            label = f"IN: {name}\n({rating})"
+        for row in summaries:
+            prefix = "IN" if row["direction"] == "in" else "OUT"
+            label = f"{prefix}: {row['name']}\n({row['rating']})"
             entries.append(
                 IconMenuEntry(
-                    key=f"in:{c_id}",
-                    label=label,
-                    icon_name="lichess",
-                    enabled=True,
-                    font_size=12,
-                )
-            )
-
-        for challenge in outgoing:
-            c_id = challenge.get("id", "")
-            dest = challenge.get("destUser", {})
-            name = dest.get("name", "Unknown")
-            rating = dest.get("rating", "")
-
-            label = f"OUT: {name}\n({rating})"
-            entries.append(
-                IconMenuEntry(
-                    key=f"out:{c_id}",
+                    key=f"{row['direction']}:{row['id']}",
                     label=label,
                     icon_name="lichess",
                     enabled=True,
@@ -459,32 +658,24 @@ def show_lichess_challenges(client, menu_manager, log) -> Optional[dict]:
 
 def handle_lichess_menu(
     get_lichess_client_fn: Callable,
-    get_settings_fn: Callable,
     menu_manager,
-    keyboard_factory: Callable,
     start_lichess_game_fn: Callable,
     handle_accounts_menu_fn: Callable,
-    centaur_module,
-    board,
     log,
-    set_active_keyboard: Callable,
-    clear_active_keyboard: Callable,
+    list_account_choices_fn: Optional[Callable] = None,
+    bind_account_fn: Optional[Callable] = None,
 ):
-    """Handle Lichess submenu with New Game, Ongoing, and Challenges options.
+    """Handle Lichess Settings: Account, Ongoing, Challenges, New Game.
 
     Args:
         get_lichess_client_fn: Callback to get (client, username, error) tuple
-        get_settings_fn: Callback to get AllSettings instance
         menu_manager: MenuManager instance
-        keyboard_factory: Factory for KeyboardWidget(update_fn, title, max_length)
         start_lichess_game_fn: Callback to start a Lichess game with config
-        handle_accounts_menu_fn: Callback to show accounts menu
-        centaur_module: Unused; kept so callers of this function need not change.
-        board: Board module
+        handle_accounts_menu_fn: Callback to show accounts menu (picker Accounts)
         log: Logger instance
-        set_active_keyboard: Register a keyboard widget as active so board input
-            is routed to it (forwarded to ensure_token for the Token entry).
-        clear_active_keyboard: Clear the active keyboard registration.
+        list_account_choices_fn: ``() -> [(key, label, selected), ...]`` for the
+            Account picker. Optional so start-only tests can omit it.
+        bind_account_fn: ``(account_id) -> None``; ``""`` means Default.
 
     Returns:
         ``"START_GAME"`` if a Lichess game was requested (join stashed; Settings
@@ -510,8 +701,6 @@ def handle_lichess_menu(
             handle_accounts_menu_fn()
         return None
 
-    entries = build_lichess_menu_entries(username, ongoing_games=True, has_challenges=True)
-
     # Track if game was started successfully
     game_started = False
 
@@ -533,20 +722,57 @@ def handle_lichess_menu(
             show_lichess_error(menu_manager, "Start Failed", "Could not start\nLichess game")
         return False
 
+    def refresh_client() -> None:
+        """Re-authenticate after an account bind so Account and lobby lists match."""
+        nonlocal client, username
+        new_client, new_username, new_error = get_lichess_client_fn()
+        if new_client is None:
+            log.warning(f"[Lichess] Account switch failed: {new_error}")
+            show_lichess_error(
+                menu_manager, "Account", "Could not sign in\nwith that account"
+            )
+            return
+        client = new_client
+        username = new_username
+
     def handle_selection(result: MenuSelection):
+        nonlocal client
+        if result.key == "Account":
+            while True:
+                choices = (
+                    list_account_choices_fn()
+                    if list_account_choices_fn is not None
+                    else []
+                )
+                picked = show_lichess_account_picker(menu_manager, choices)
+                if is_break_result(picked):
+                    return picked
+                if picked is None:
+                    return None
+                if picked == ACCOUNTS_MENU_KEY:
+                    handle_accounts_menu_fn()
+                    refresh_client()
+                    continue
+                if bind_account_fn is None:
+                    return None
+                bind_account_fn(picked)
+                refresh_client()
+                return None
         if result.key == "NewGame":
             config = LichessConfig(mode=LichessGameMode.NEW)
             if start_game(config):
                 return result
             return None
-        elif result.key == "Ongoing":
+        if result.key == "Ongoing":
+            show_lichess_help(menu_manager, "Ongoing Games", ONGOING_GAMES_HELP)
             game_id = show_lichess_ongoing_games(client, menu_manager, log)
             if game_id:
                 config = LichessConfig(mode=LichessGameMode.ONGOING, game_id=game_id)
                 if start_game(config):
                     return result
             return None
-        elif result.key == "Challenges":
+        if result.key == "Challenges":
+            show_lichess_help(menu_manager, "Challenges", CHALLENGES_HELP)
             challenge = show_lichess_challenges(client, menu_manager, log)
             if challenge:
                 config = LichessConfig(
@@ -557,38 +783,12 @@ def handle_lichess_menu(
                 if start_game(config):
                     return result
             return None
-        elif result.key == "Token":
-            from universalchess.services import account_store
-
-            account = active_lichess_account(get_settings_fn())
-            if account is None:
-                show_lichess_error(
-                    menu_manager,
-                    "No Account",
-                    "Add an account\nin Accounts",
-                )
-                return None
-
-            def get_token():
-                return account.get("api_token", "")
-
-            def set_token(value):
-                account.values["api_token"] = value
-                account_store.save_account(account)
-
-            ensure_token(
-                menu_manager=menu_manager,
-                keyboard_factory=keyboard_factory,
-                get_token=get_token,
-                set_token=set_token,
-                log=log,
-                board=board,
-                set_active_keyboard=set_active_keyboard,
-                clear_active_keyboard=clear_active_keyboard,
-            )
         return None
 
-    result = menu_manager.run_menu_loop(lambda: entries, handle_selection)
+    result = menu_manager.run_menu_loop(
+        lambda: build_lichess_menu_entries(username),
+        handle_selection,
+    )
 
     if is_break_result(result):
         return result

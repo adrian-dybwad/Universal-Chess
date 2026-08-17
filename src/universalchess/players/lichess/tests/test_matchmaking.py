@@ -10,8 +10,8 @@ but that seek stream often stays open. The player used to call get_ongoing only
 were never POSTed (no game id, state never READY).
 
 These tests pin: gameStart attaches immediately; an incoming challenge is
-accepted while seeking; get_ongoing is enough to attach while seek is still
-blocking; a second attach is ignored.
+offered (not accepted) while seeking; get_ongoing is enough to attach while
+seek is still blocking; a second attach is ignored.
 """
 
 from unittest.mock import MagicMock
@@ -60,28 +60,90 @@ def test_game_start_event_starts_stream_without_waiting_for_seek():
     player._start_game_stream.assert_called_once()
 
 
-def test_incoming_challenge_is_accepted_while_seeking():
-    """Clicking the account in the lobby sends a challenge, not a seek take.
+def test_incoming_challenge_is_offered_not_accepted():
+    """Clicking the account in the lobby sends a challenge on their terms.
 
-    Why: the waiting splash means the board wants a game. Ignoring challenge
-    events left the opponent in a live game (if Lichess created one) or waiting
-    on accept, while the board kept seeking.
+    Why: a seek is the board's clock/rated/color. Auto-accepting a challenge
+    started that game without the Human agreeing to the challenger's terms.
 
-    How the regression manifests: challenges.accept is never called for an
-    incoming challenge whose destUser is this account.
+    How the regression manifests: challenges.accept is called from the event
+    handler, or the offer callback is never invoked.
+    """
+    player = _player()
+    offered = []
+    player.set_challenge_offer_callback(
+        lambda offer, accept, decline: offered.append((offer, accept, decline))
+    )
+    player._handle_incoming_event(
+        {
+            "type": "challenge",
+            "challenge": {
+                "id": "ch-1",
+                "challenger": {"name": "Alice", "rating": 1500},
+                "destUser": {"id": "boardaccount", "name": "BoardAccount"},
+                "rated": False,
+                "color": "black",
+                "variant": {"key": "standard", "name": "Standard"},
+                "timeControl": {"type": "clock", "limit": 180, "increment": 0, "show": "3+0"},
+            },
+        }
+    )
+    player._client.challenges.accept.assert_not_called()
+    player._start_game_stream.assert_not_called()
+    assert len(offered) == 1
+    offer, accept, _decline = offered[0]
+    assert offer.challenge_id == "ch-1"
+    assert offer.challenger_name == "Alice"
+    assert offer.clock_label == "3+0"
+    accept()
+    player._client.challenges.accept.assert_called_once_with("ch-1")
+
+
+def test_incoming_challenge_decline_does_not_attach():
+    """Decline must tell Lichess and leave the seek running.
+
+    How the regression manifests: decline is never POSTed, or _begin_game
+    runs so the wait splash is replaced as if the game started.
+    """
+    player = _player()
+    offered = []
+    player.set_challenge_offer_callback(
+        lambda offer, accept, decline: offered.append((offer, accept, decline))
+    )
+    player._handle_incoming_event(
+        {
+            "type": "challenge",
+            "challenge": {
+                "id": "ch-dec",
+                "destUser": {"id": "boardaccount"},
+            },
+        }
+    )
+    _offer, _accept, decline = offered[0]
+    decline()
+    player._client.challenges.decline.assert_called_once_with("ch-dec")
+    player._client.challenges.accept.assert_not_called()
+    player._start_game_stream.assert_not_called()
+    assert player._game_id is None
+
+
+def test_incoming_challenge_without_callback_is_left_pending():
+    """No UI means do not accept. The Challenges menu can still pick it up.
+
+    How the regression manifests: accept() is called when the callback is unset.
     """
     player = _player()
     player._handle_incoming_event(
         {
             "type": "challenge",
             "challenge": {
-                "id": "ch-1",
-                "destUser": {"id": "boardaccount", "name": "BoardAccount"},
+                "id": "ch-pending",
+                "destUser": {"id": "boardaccount"},
             },
         }
     )
-    player._client.challenges.accept.assert_called_once_with("ch-1")
-    player._start_game_stream.assert_not_called()
+    player._client.challenges.accept.assert_not_called()
+    player._client.challenges.decline.assert_not_called()
 
 
 def test_outgoing_challenge_is_not_accepted():
@@ -139,12 +201,16 @@ def test_second_attach_does_not_restart_stream():
     player._start_game_stream.assert_called_once()
 
 
-def test_challenge_not_accepted_after_game_attached():
-    """Once a game exists, a later challenge must not be auto-accepted.
+def test_challenge_not_offered_after_game_attached():
+    """Once a game exists, a later challenge must not be prompted or accepted.
 
-    How the regression manifests: accept() is called after _game_id is set.
+    How the regression manifests: the offer callback runs after _game_id is set.
     """
     player = _player()
+    offered = []
+    player.set_challenge_offer_callback(
+        lambda offer, accept, decline: offered.append(offer)
+    )
     player._handle_incoming_event(
         {"type": "gameStart", "game": {"id": "live"}}
     )
@@ -158,3 +224,50 @@ def test_challenge_not_accepted_after_game_attached():
         }
     )
     player._client.challenges.accept.assert_not_called()
+    assert offered == []
+
+
+def test_accept_after_seek_attach_declines_the_challenge():
+    """If the posted seek is taken while the dialog is up, do not accept.
+
+    Why: the board already has a game on its own terms. Accepting would try to
+    start a second game.
+
+    How the regression manifests: accept() is called after _game_id is set.
+    """
+    player = _player()
+    offered = []
+    player.set_challenge_offer_callback(
+        lambda offer, accept, decline: offered.append((accept, decline))
+    )
+    player._handle_incoming_event(
+        {
+            "type": "challenge",
+            "challenge": {
+                "id": "ch-stale",
+                "destUser": {"id": "boardaccount"},
+            },
+        }
+    )
+    accept, _decline = offered[0]
+    player._handle_incoming_event(
+        {"type": "gameStart", "game": {"id": "from-seek"}}
+    )
+    accept()
+    player._client.challenges.accept.assert_not_called()
+    player._client.challenges.decline.assert_called_once_with("ch-stale")
+
+
+def test_attach_without_seek_does_not_start_seek_thread():
+    """Boot resume / omitted join must not call board.seek.
+
+    Why: ATTACH reconnects to an ongoing game. How the regression manifests:
+    _seek_thread is started and _seek_game_thread posts a lobby seek.
+    """
+    player = _player(LichessGameMode.ATTACH)
+    player._event_stream_thread = MagicMock()
+    player._match_poll_thread = MagicMock()
+    player._seek_game_thread = MagicMock()
+    assert player._attach_without_seek() is True
+    assert player._seek_thread is None
+    player._seek_game_thread.assert_not_called()

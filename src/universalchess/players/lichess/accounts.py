@@ -8,7 +8,7 @@ Identity is resolved against the credential's host (the token is fetched from
 that server). Org Alice and .dev Alice are two rows.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from universalchess.board.settings import Settings
 from universalchess.services import account_store
@@ -73,6 +73,62 @@ def username_of(account: Account) -> str:
 def label_of(account: Account) -> str:
     """Chooser label ``lichess.org:Alice``."""
     return credential_label(host_id_of(account), username_of(account) or account.id)
+
+
+def lichess_account_picker_choices(
+    bound_account_id: str,
+    other_type: str,
+    other_account: str,
+    *,
+    config=None,
+) -> List[Tuple[str, str, bool]]:
+    """Rows for the Play/slot account picker: Default (when allowed) plus each credential.
+
+    Same both-sides exclusion as the player-detail Account row: the account the
+    other Lichess slot resolves to is omitted, and Default is omitted when it
+    would resolve to that same account. Each item is ``(key, label, selected)``
+    where Default uses key ``""`` (the unbound slot value).
+    """
+    accounts = list_lichess_credentials(config=config)
+    taken = None
+    if other_type == ACCOUNT_TYPE_LICHESS:
+        other_id = other_account or ""
+        if other_id:
+            bound = get_lichess_credential(other_id, config=config)
+            taken = bound.id if bound is not None else other_id
+        elif accounts:
+            taken = accounts[0].id
+    default_id = accounts[0].id if accounts else None
+    default_allowed = taken is None or default_id != taken
+    bound = bound_account_id or ""
+    rows: List[Tuple[str, str, bool]] = []
+    if default_allowed:
+        rows.append(("", "Default account", bound == ""))
+    for account in accounts:
+        if account.id == taken:
+            continue
+        rows.append((account.id, label_of(account), bound == account.id))
+    return rows
+
+
+def lichess_play_account_choices(settings, *, config=None) -> List[Tuple[str, str, bool]]:
+    """Account picker rows for the lobby, bound to the Lichess Players slot.
+
+    Player 1's slot is used when both sides are Lichess, matching
+    :func:`lichess_client_from_settings`. With no Lichess slot the list is
+    unfiltered (nothing is taken).
+    """
+    p1 = settings.player1
+    p2 = settings.player2
+    if p1.type == "lichess":
+        return lichess_account_picker_choices(
+            p1.account or "", p2.type, p2.account or "", config=config
+        )
+    if p2.type == "lichess":
+        return lichess_account_picker_choices(
+            p2.account or "", p1.type, p1.account or "", config=config
+        )
+    return lichess_account_picker_choices("", "human", "", config=config)
 
 
 def list_lichess_credentials(*, config=None) -> List[Account]:

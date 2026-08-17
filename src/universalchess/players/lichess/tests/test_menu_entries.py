@@ -1,46 +1,104 @@
 #!/usr/bin/env python3
-"""The Lichess top menu omits empty sections instead of disabling them.
+"""The Lichess Settings menu is the lobby: Account first, then always-visible play rows.
 
 Why these tests exist
 ---------------------
-The menu previously used ``enabled=False`` to hide the Ongoing/Challenges rows
-when the account had none, and marked the username header ``enabled=False`` --
-which, under the old widget behavior, hid the header entirely (a latent bug: the
-"User\\n<name>" line never showed). Hiding a row must be done by omission, and a
-header must be a visible, non-selectable row. These tests pin both.
+Lichess Settings opens this list directly (no nested Play page). Account is the
+first row and opens the account picker. Ongoing Games and Challenges are always
+listed (selecting them shows how they work, then the live list). New Game is
+last on the lobby; Accounts (add/delete) is the last row of the picker, not a
+lobby sibling. These tests pin order and that Account can be activated.
 """
 
-from universalchess.players.lichess.lobby import build_lichess_menu_entries
+from universalchess.players.lichess.lobby import (
+    ACCOUNTS_MENU_KEY,
+    CHALLENGES_HELP,
+    DEFAULT_ACCOUNT_MENU_KEY,
+    ONGOING_GAMES_HELP,
+    build_lichess_account_picker_entries,
+    build_lichess_menu_entries,
+)
 
 
-def test_sections_present_when_account_has_them():
-    """With ongoing games and challenges, all five rows build in order.
+def test_lichess_settings_rows_are_always_in_order():
+    """Account, Ongoing, Challenges, New Game — ongoing/challenges stay listed.
 
-    Regression: dropping a row (or re-adding an enabled-based hide) changes the
-    key list, so the user cannot reach Ongoing/Challenges.
+    Why: those rows used to vanish when the account had none, so they could not
+    be opened to read how they work. Regression: a row drops, Play/Accounts
+    returns as a lobby sibling, or Token returns.
     """
-    entries = build_lichess_menu_entries("alice", ongoing_games=True, has_challenges=True)
-    assert [e.key for e in entries] == ["User", "NewGame", "Ongoing", "Challenges", "Token"]
+    entries = build_lichess_menu_entries("alice")
+    assert [e.key for e in entries] == [
+        "Account",
+        "Ongoing",
+        "Challenges",
+        "NewGame",
+    ]
 
 
-def test_empty_sections_are_omitted_not_disabled():
-    """With no ongoing games or challenges, those rows are absent (not greyed).
+def test_ongoing_and_challenges_carry_how_they_work_help():
+    """Ongoing and Challenges must expose help copy for the help screen.
 
-    Regression: if the rows are added disabled instead of omitted, they appear
-    greyed with nothing to open; if the header hide-bug returns, "User" vanishes.
+    Why: selecting either row (or HELP on it) shows how the feature works.
+    How a regression manifests: help is None or the copy changes silently.
     """
-    entries = build_lichess_menu_entries("alice", ongoing_games=False, has_challenges=False)
-    assert [e.key for e in entries] == ["User", "NewGame", "Token"]
+    by_key = {e.key: e for e in build_lichess_menu_entries("alice")}
+    assert by_key["Ongoing"].help == ONGOING_GAMES_HELP
+    assert by_key["Challenges"].help == CHALLENGES_HELP
+    assert by_key["Ongoing"].selectable is True
+    assert by_key["Challenges"].selectable is True
 
 
-def test_username_header_is_a_visible_nonselectable_row():
-    """The username header renders (enabled) but cannot be focused (selectable=False).
+def test_account_row_is_selectable_account_picker():
+    """Account is shown, focused, and activatable so it can open the picker.
 
-    Regression: marking it ``enabled=False`` hid it under the old widget rules;
-    this asserts it is a proper header -- shown, but skipped in navigation.
+    Why: a non-selectable header cannot open the picker. Regression: selectable
+    False (skipped in navigation), enabled False (hidden/greyed), or the label
+    dropping the username.
     """
-    header = build_lichess_menu_entries("alice", ongoing_games=True, has_challenges=True)[0]
-    assert header.key == "User"
-    assert header.label == "User\nalice"
-    assert header.enabled is True
-    assert header.selectable is False
+    account = next(
+        e
+        for e in build_lichess_menu_entries("alice")
+        if e.key == "Account"
+    )
+    assert account.label == "Account\nalice"
+    assert account.enabled is True
+    assert account.selectable is True
+
+
+def test_account_picker_marks_the_bound_choice_and_maps_default_key():
+    """The picker is a radio list plus Accounts; unbound Default uses a non-empty key.
+
+    Why: IconMenuEntry cannot use an empty key, but the slot stores Default as
+    "". Accounts is last and is not a radio (it opens the credential manager).
+    Regression: Default missing, radio on the wrong row, empty key, or Accounts
+    missing / treated as a bindable choice.
+    """
+    entries = build_lichess_account_picker_entries(
+        [
+            ("", "Default account", True),
+            ("org:bob", "lichess.org:Bob", False),
+        ]
+    )
+    assert [e.key for e in entries] == [
+        DEFAULT_ACCOUNT_MENU_KEY,
+        "org:bob",
+        ACCOUNTS_MENU_KEY,
+    ]
+    assert entries[0].label == "Default account"
+    assert entries[0].trailing_icon_name == "radio_checked"
+    assert entries[1].trailing_icon_name == "radio_empty"
+    assert entries[-1].label == "Accounts"
+    assert entries[-1].trailing_icon_name is None
+    assert all(e.selectable is True and e.enabled is True for e in entries)
+
+
+def test_account_picker_still_lists_accounts_when_there_are_no_credentials():
+    """An empty choice list must still offer Accounts so a login can be added.
+
+    Why: the picker used to return immediately with no rows. How a regression
+    manifests: the Accounts row is absent when choices is empty.
+    """
+    entries = build_lichess_account_picker_entries([])
+    assert [e.key for e in entries] == [ACCOUNTS_MENU_KEY]
+    assert entries[0].label == "Accounts"

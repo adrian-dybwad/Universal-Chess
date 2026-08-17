@@ -14,9 +14,11 @@
   },
   "common": {
     "cancel": "Cancel",
+    "confirm": "Confirm",
     "delete": "Delete",
     "retry": "Retry",
     "reload": "Reload",
+    "loading": "Loading…",
     "invalidCredentials": "Invalid credentials. Please try again.",
     "networkError": "Network error contacting the board.",
     "imagePreviewAlt": "{{label}} preview"
@@ -330,6 +332,16 @@
       "accountSignIn": "Sign in to see saved accounts.",
       "accountLoadFailed": "Could not load accounts. Check the connection and try again.",
       "hintsWillUse": "Hints will use <1>{{engine}}</1> (configured in Game Settings → Analysis Engine)"
+    },
+    "lichessLobby": {
+      "unknownUser": "Unknown",
+      "playAs": "Play as {{user}}",
+      "noOngoing": "No unfinished games for this account.",
+      "noChallenges": "No challenges for this account.",
+      "noToken": "Add a Lichess login under Accounts to list games and challenges.",
+      "boardOffline": "The board is not running.",
+      "startFailed": "Could not start that Lichess game.",
+      "confirmAbandon": "Abandon the game in progress and start this one on the board?"
     },
     "game": {
       "title": "Game Settings",

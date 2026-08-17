@@ -9,7 +9,11 @@ branches and break propagation are covered without the e-paper or a real game.
 
 import pytest
 
-from universalchess.menus.positions_menu import handle_positions_menu
+from universalchess.menus.positions_menu import (
+    POSITION_UNAVAILABLE_WITH_LICHESS,
+    handle_positions_menu,
+    position_unavailable_with_lichess,
+)
 
 
 POSITIONS = {
@@ -45,7 +49,16 @@ def _find_index(entries, key):
     return 0
 
 
-def _run(results, *, in_progress, started, aborted_calls, started_calls):
+def _run(
+    results,
+    *,
+    in_progress,
+    started,
+    aborted_calls,
+    started_calls,
+    lichess_as_player=False,
+    alerts=None,
+):
     """Drive the menu with scripted results and record callback invocations."""
     show_menu = _ScriptedShowMenu(results)
 
@@ -55,6 +68,10 @@ def _run(results, *, in_progress, started, aborted_calls, started_calls):
 
     def abort_game():
         aborted_calls.append(True)
+
+    def show_alert(message):
+        if alerts is not None:
+            alerts.append(message)
 
     return handle_positions_menu(
         load_positions_config=lambda: POSITIONS,
@@ -68,6 +85,8 @@ def _run(results, *, in_progress, started, aborted_calls, started_calls):
         last_position_category_ref=[None],
         is_game_in_progress=lambda: in_progress,
         abort_game=abort_game,
+        lichess_as_player=lambda: lichess_as_player,
+        show_alert=show_alert,
     )
 
 
@@ -157,5 +176,50 @@ def test_break_result_in_confirm_propagates_without_aborting():
     )
 
     assert result == "CLIENT_CONNECTED"
+    assert aborted == []
+    assert started == []
+
+
+@pytest.mark.parametrize(
+    "p1, p2, blocked",
+    [
+        ("human", "engine", False),
+        ("human", "human", False),
+        ("human", "lichess", True),
+        ("lichess", "human", True),
+        ("engine", "lichess", True),
+    ],
+)
+def test_position_unavailable_with_lichess_when_a_slot_is_lichess(p1, p2, blocked):
+    """A custom FEN cannot be a Lichess live game; any Lichess slot blocks setup.
+
+    Why: Lichess seek/challenge/ongoing always start from the opening. Starting
+    a position while a slot is Lichess would seek a different game than the
+    board shows. How a regression manifests: human/engine is blocked, or a
+    Lichess slot is allowed.
+    """
+    assert position_unavailable_with_lichess(p1, p2) is blocked
+
+
+def test_lichess_player_shows_alert_and_does_not_start():
+    """Selecting a position with Lichess as a player must alert and stay put.
+
+    Why: the Positions menu would otherwise call start_from_position, which
+    still builds a Lichess seek. How a regression manifests: start_from_position
+    runs, abort_game runs (if a game is in progress), or the alert copy changes.
+    """
+    aborted, started, alerts = [], [], []
+    result = _run(
+        ["test", "start_pos", "BACK"],
+        in_progress=True,
+        started=True,
+        aborted_calls=aborted,
+        started_calls=started,
+        lichess_as_player=True,
+        alerts=alerts,
+    )
+
+    assert result is False
+    assert alerts == [POSITION_UNAVAILABLE_WITH_LICHESS]
     assert aborted == []
     assert started == []

@@ -1,0 +1,65 @@
+.lichess-lobby-section {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-gray-200);
+}
+
+.lichess-lobby-section:first-of-type {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.lichess-lobby-heading {
+  font-size: var(--text-base);
+  font-weight: var(--font-semibold);
+  margin: 0 0 var(--space-2);
+}
+
+.lichess-lobby-help {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  white-space: pre-line;
+  margin: 0 0 var(--space-3);
+}
+
+.lichess-lobby-username {
+  font-weight: var(--font-medium);
+  margin: 0 0 var(--space-3);
+}
+
+.lichess-lobby-accounts {
+  margin-top: var(--space-3);
+}
+
+.lichess-lobby-accounts-body {
+  margin-top: var(--space-3);
+}
+
+.lichess-lobby-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.lichess-lobby-error {
+  color: var(--color-danger, #b42318);
+  font-size: var(--text-sm);
+  margin: 0 0 var(--space-3);
+}
+
+.lichess-lobby-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.lichess-lobby-confirm p {
+  margin: 0;
+  width: 100%;
+  font-size: var(--text-sm);
+}

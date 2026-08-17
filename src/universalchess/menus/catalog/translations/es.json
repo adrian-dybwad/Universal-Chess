@@ -197,14 +197,25 @@
       "help": "Conecta servicios externos como Lichess."
     },
     "players.lichess": {
-      "label": "Ajustes de Lichess",
-      "boardLabel": "Ajustes\nLichess",
-      "help": "Credenciales de Lichess y juego en línea. Cada cuenta es un servidor y usuario (lichess.org o lichess.dev). Jugar abre partida nueva, partidas en curso y desafíos."
+      "label": "Lobby de Lichess",
+      "boardLabel": "Lobby\nLichess",
+      "help": "Credenciales de Lichess y juego en línea. Cada cuenta es un servidor y usuario (lichess.org o lichess.dev). Abre el selector de cuenta, partidas en curso, desafíos y partida nueva."
     },
-    "players.lichess.play": {
-      "label": "Jugar",
-      "boardLabel": "Jugar",
-      "help": "Partida nueva, partidas en curso y desafíos en Lichess."
+    "lichess.account": {
+      "label": "Cuenta",
+      "help": "Qué inicio de Lichess usa esta plaza. El mismo selector que la fila Cuenta del jugador, incluida la exclusión entre bandos. Cuentas al final añade o borra inicios."
+    },
+    "lichess.ongoing": {
+      "label": "Partidas en curso",
+      "help": "Continúa una partida de Lichess que esta cuenta ya empezó, en este tablero, en la web o en otro dispositivo.\n\nSelecciona una partida para reanudarla aquí. El reloj y tu color salen de ese encuentro.\n\nSi no hay ninguna, esta cuenta no tiene partidas sin terminar. Usa Nueva partida para buscar rival."
+    },
+    "lichess.challenges": {
+      "label": "Desafíos",
+      "help": "Un desafío es una partida ofrecida a esta cuenta, o que esta cuenta ofreció a otra persona.\n\nEntrantes: selecciona uno para aceptarlo en este tablero. Un desafío que llega durante una búsqueda también muestra Aceptar o Rechazar.\n\nSalientes: esperando al otro jugador. Nueva partida publica una búsqueda pública en lugar de desafiar a una persona."
+    },
+    "lichess.new_game": {
+      "label": "Nueva partida",
+      "help": "Busca un rival en Lichess con esta cuenta. El control de tiempo y si es valorada salen de Partida y Jugadores."
     },
     "players.start": {
       "label": "Nueva\npartida",

@@ -49,6 +49,7 @@ def test_waiting_message_for_each_mode():
     """
     assert lichess_waiting_message(LichessGameMode.NEW) == "Waiting for game"
     assert lichess_waiting_message(LichessGameMode.ONGOING) == "Connecting..."
+    assert lichess_waiting_message(LichessGameMode.ATTACH) == "Connecting..."
     assert lichess_waiting_message(LichessGameMode.CHALLENGE) == "Loading\nChallenge..."
 
 
@@ -299,10 +300,6 @@ def test_lichess_menu_new_game_start_failure_does_not_kill_loop():
             shown.append(entries)
             return None
 
-    settings = MagicMock()
-    settings.player1.color = "white"
-    settings.game.time_control = 10
-
     def boom(_config):
         raise ModuleNotFoundError("universalchess.protocol")
 
@@ -310,16 +307,10 @@ def test_lichess_menu_new_game_start_failure_does_not_kill_loop():
 
     result = handle_lichess_menu(
         get_lichess_client_fn=lambda: (object(), "alice", None),
-        get_settings_fn=lambda: settings,
         menu_manager=Menu(),
-        keyboard_factory=lambda *a, **k: None,
         start_lichess_game_fn=boom,
         handle_accounts_menu_fn=lambda: None,
-        centaur_module=MagicMock(),
-        board=MagicMock(),
         log=log,
-        set_active_keyboard=lambda w: None,
-        clear_active_keyboard=lambda: None,
     )
 
     assert result is None
@@ -349,20 +340,315 @@ def test_lichess_menu_successful_start_returns_start_game_token():
 
     result = handle_lichess_menu(
         get_lichess_client_fn=lambda: (object(), "alice", None),
-        get_settings_fn=MagicMock(),
         menu_manager=Menu(),
-        keyboard_factory=lambda *a, **k: None,
         start_lichess_game_fn=lambda config: started.append(config) or True,
         handle_accounts_menu_fn=lambda: None,
-        centaur_module=MagicMock(),
-        board=MagicMock(),
         log=MagicMock(),
-        set_active_keyboard=lambda w: None,
-        clear_active_keyboard=lambda: None,
     )
 
     assert result == "START_GAME"
     assert started, "join must be stashed via start_lichess_game_fn"
+
+
+def test_lichess_menu_account_opens_account_picker_and_rebinds():
+    """Selecting Account must show the account picker and persist the choice.
+
+    Why: Account is the Play account picker, the same binding as the slot
+    Account row. How a regression manifests: bind is not called, the picker is
+    not shown, or BACK is treated as a bind.
+    """
+    from universalchess.managers.menu import MenuSelection
+    from universalchess.players.lichess.lobby import (
+        ACCOUNTS_MENU_KEY,
+        DEFAULT_ACCOUNT_MENU_KEY,
+        handle_lichess_menu,
+    )
+
+    bound = []
+    picker_keys = []
+    usernames = []
+    client_calls = [0]
+
+    class Menu:
+        def run_menu_loop(self, build_entries, handle_selection, **kwargs):
+            usernames.append(build_entries()[0].label)
+            handle_selection(MenuSelection.from_key("Account"))
+            usernames.append(build_entries()[0].label)
+            return None
+
+        def show_menu(self, entries, **kwargs):
+            picker_keys.append([e.key for e in entries])
+            return MenuSelection.from_key("org:bob")
+
+    def get_client():
+        client_calls[0] += 1
+        name = "bob" if bound == ["org:bob"] else "alice"
+        return object(), name, None
+
+    result = handle_lichess_menu(
+        get_lichess_client_fn=get_client,
+        menu_manager=Menu(),
+        start_lichess_game_fn=lambda _config: True,
+        handle_accounts_menu_fn=lambda: None,
+        log=MagicMock(),
+        list_account_choices_fn=lambda: [
+            ("", "Default account", True),
+            ("org:bob", "lichess.org:Bob", False),
+        ],
+        bind_account_fn=bound.append,
+    )
+
+    assert result is None
+    assert picker_keys == [
+        [DEFAULT_ACCOUNT_MENU_KEY, "org:bob", ACCOUNTS_MENU_KEY]
+    ]
+    assert bound == ["org:bob"]
+    assert usernames == ["Account\nalice", "Account\nbob"]
+    assert client_calls[0] >= 2
+
+
+def test_lichess_menu_account_picker_back_does_not_bind():
+    """BACK on the account picker must leave the bound account unchanged.
+
+    How a regression manifests: bind_account_fn is called with BACK or Default.
+    """
+    from universalchess.managers.menu import MenuSelection
+    from universalchess.players.lichess.lobby import handle_lichess_menu
+
+    bound = []
+
+    class Menu:
+        def run_menu_loop(self, build_entries, handle_selection, **kwargs):
+            handle_selection(MenuSelection.from_key("Account"))
+            return None
+
+        def show_menu(self, entries, **kwargs):
+            return MenuSelection.from_key("BACK")
+
+    result = handle_lichess_menu(
+        get_lichess_client_fn=lambda: (object(), "alice", None),
+        menu_manager=Menu(),
+        start_lichess_game_fn=lambda _config: True,
+        handle_accounts_menu_fn=lambda: None,
+        log=MagicMock(),
+        list_account_choices_fn=lambda: [("", "Default account", True)],
+        bind_account_fn=bound.append,
+    )
+
+    assert result is None
+    assert bound == []
+
+
+def test_lichess_menu_picker_accounts_opens_accounts_manager():
+    """Accounts on the account picker must open the credential manager.
+
+    Why: Accounts used to be a lobby sibling; add/delete now lives at the end
+    of the picker so it sits with the other account choices. How a regression
+    manifests: bind/start run instead, the accounts callback is never invoked,
+    or the picker does not reopen after the manager closes.
+    """
+    from universalchess.managers.menu import MenuSelection
+    from universalchess.players.lichess.lobby import (
+        ACCOUNTS_MENU_KEY,
+        handle_lichess_menu,
+    )
+
+    opened = []
+    picker_shows = []
+
+    class Menu:
+        def run_menu_loop(self, build_entries, handle_selection, **kwargs):
+            keys = [e.key for e in build_entries()]
+            assert "Accounts" not in keys
+            handle_selection(MenuSelection.from_key("Account"))
+            return None
+
+        def show_menu(self, entries, **kwargs):
+            picker_shows.append([e.key for e in entries])
+            if len(picker_shows) == 1:
+                return MenuSelection.from_key(ACCOUNTS_MENU_KEY)
+            return MenuSelection.from_key("BACK")
+
+    result = handle_lichess_menu(
+        get_lichess_client_fn=lambda: (object(), "alice", None),
+        menu_manager=Menu(),
+        start_lichess_game_fn=lambda _config: True,
+        handle_accounts_menu_fn=lambda: opened.append(True),
+        log=MagicMock(),
+        list_account_choices_fn=lambda: [("", "Default account", True)],
+        bind_account_fn=lambda _key: None,
+    )
+
+    assert result is None
+    assert opened == [True]
+    assert len(picker_shows) == 2
+    assert picker_shows[0][-1] == ACCOUNTS_MENU_KEY
+
+
+def test_selecting_ongoing_shows_help_then_the_game_list():
+    """OK on Ongoing Games must explain the feature, then list live games.
+
+    Why: the row is always listed; selecting it is how the user learns what
+    an ongoing game is and picks one. How a regression manifests: the list
+    opens with no help, or help shows and the list does not.
+    """
+    from types import SimpleNamespace
+
+    from universalchess.managers.menu import MenuSelection
+    from universalchess.players.lichess.lobby import (
+        ONGOING_GAMES_HELP,
+        handle_lichess_menu,
+    )
+
+    helps = []
+    lists = []
+
+    class Games:
+        def get_ongoing(self, count=10):
+            return [
+                {
+                    "gameId": "g1",
+                    "opponent": {"username": "Bob", "rating": 1500},
+                    "color": "white",
+                }
+            ]
+
+    class Menu:
+        def __init__(self):
+            self._help_presenter = lambda title, body: helps.append((title, body))
+
+        def run_menu_loop(self, build_entries, handle_selection, **kwargs):
+            handle_selection(MenuSelection.from_key("Ongoing"))
+            return None
+
+        def show_menu(self, entries, **kwargs):
+            lists.append([e.key for e in entries])
+            return MenuSelection.from_key("BACK")
+
+    result = handle_lichess_menu(
+        get_lichess_client_fn=lambda: (SimpleNamespace(games=Games()), "alice", None),
+        menu_manager=Menu(),
+        start_lichess_game_fn=lambda _config: True,
+        handle_accounts_menu_fn=lambda: None,
+        log=MagicMock(),
+    )
+
+    assert result is None
+    assert helps == [("Ongoing Games", ONGOING_GAMES_HELP)]
+    assert lists == [["g1"]]
+
+
+def test_selecting_empty_ongoing_shows_help_not_a_no_games_error(monkeypatch):
+    """With no unfinished games, Ongoing still shows help and must not error.
+
+    Why: an empty account used to hide the row or flash 'No ongoing games'.
+    How a regression manifests: show_lichess_error is called, or help is skipped.
+    """
+    from types import SimpleNamespace
+
+    from universalchess.managers.menu import MenuSelection
+    from universalchess.players.lichess import lobby as lobby_mod
+    from universalchess.players.lichess.lobby import (
+        ONGOING_GAMES_HELP,
+        handle_lichess_menu,
+    )
+
+    helps = []
+    errors = []
+    lists = []
+
+    monkeypatch.setattr(
+        lobby_mod,
+        "show_lichess_error",
+        lambda *args, **kwargs: errors.append(args) or None,
+    )
+
+    class Games:
+        def get_ongoing(self, count=10):
+            return []
+
+    class Menu:
+        def __init__(self):
+            self._help_presenter = lambda title, body: helps.append((title, body))
+
+        def run_menu_loop(self, build_entries, handle_selection, **kwargs):
+            handle_selection(MenuSelection.from_key("Ongoing"))
+            return None
+
+        def show_menu(self, entries, **kwargs):
+            lists.append([e.key for e in entries])
+            return MenuSelection.from_key("BACK")
+
+    result = handle_lichess_menu(
+        get_lichess_client_fn=lambda: (SimpleNamespace(games=Games()), "alice", None),
+        menu_manager=Menu(),
+        start_lichess_game_fn=lambda _config: True,
+        handle_accounts_menu_fn=lambda: None,
+        log=MagicMock(),
+    )
+
+    assert result is None
+    assert helps == [("Ongoing Games", ONGOING_GAMES_HELP)]
+    assert errors == []
+    assert lists == []
+
+
+def test_selecting_challenges_shows_help_then_the_challenge_list():
+    """OK on Challenges must explain incoming/outgoing, then list them.
+
+    How a regression manifests: the list opens with no help, or help shows
+    and the list does not.
+    """
+    from types import SimpleNamespace
+
+    from universalchess.managers.menu import MenuSelection
+    from universalchess.players.lichess.lobby import (
+        CHALLENGES_HELP,
+        handle_lichess_menu,
+    )
+
+    helps = []
+    lists = []
+
+    class Challenges:
+        def get_mine(self):
+            return {
+                "in": [
+                    {
+                        "id": "c1",
+                        "challenger": {"name": "Bob", "rating": 1500},
+                    }
+                ],
+                "out": [],
+            }
+
+    class Menu:
+        def __init__(self):
+            self._help_presenter = lambda title, body: helps.append((title, body))
+
+        def run_menu_loop(self, build_entries, handle_selection, **kwargs):
+            handle_selection(MenuSelection.from_key("Challenges"))
+            return None
+
+        def show_menu(self, entries, **kwargs):
+            lists.append([e.key for e in entries])
+            return MenuSelection.from_key("BACK")
+
+    result = handle_lichess_menu(
+        get_lichess_client_fn=lambda: (
+            SimpleNamespace(challenges=Challenges()),
+            "alice",
+            None,
+        ),
+        menu_manager=Menu(),
+        start_lichess_game_fn=lambda _config: True,
+        handle_accounts_menu_fn=lambda: None,
+        log=MagicMock(),
+    )
+
+    assert result is None
+    assert helps == [("Challenges", CHALLENGES_HELP)]
+    assert lists == [["in:c1"]]
 
 
 def test_started_splash_updates_existing_splash(monkeypatch):

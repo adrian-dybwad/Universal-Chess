@@ -27,7 +27,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from flask import Flask, render_template, Response, request, redirect, send_file, send_from_directory, abort, stream_with_context, url_for, jsonify
+from flask import Flask, render_template, Response, request, redirect, send_file, send_from_directory, abort, stream_with_context, url_for, jsonify, current_app
 from werkzeug.exceptions import NotFound
 from werkzeug.utils import secure_filename
 from universalchess.utils.safe_path import safe_under_base
@@ -3075,6 +3075,131 @@ def api_delete_account(type_id, account_id):
     return jsonify({"error": "not_found"}), 404
 
 
+def _lichess_ini_settings():
+    """Player slots as the lobby helpers expect them, read from centaur.ini."""
+    from types import SimpleNamespace
+
+    from universalchess.board.settings import Settings
+
+    def slot(section, default_type):
+        return SimpleNamespace(
+            type=Settings.read(section, "type", default_type),
+            account=Settings.read(section, "account", "") or "",
+        )
+
+    return SimpleNamespace(
+        player1=slot("PlayerOne", "human"),
+        player2=slot("PlayerTwo", "engine"),
+    )
+
+
+def _lichess_client_http_status(error):
+    """HTTP status for a failed ``lichess_client_from_settings`` error code."""
+    if error in ("no_token", "invalid_token"):
+        return 409
+    if error == "no_berserk":
+        return 503
+    return 502
+
+
+@app.route("/api/lichess/ongoing", methods=["GET"])
+@requires_auth
+def api_lichess_ongoing():
+    """List this account's unfinished Lichess games. Requires auth.
+
+    Same rows as the board lobby Ongoing Games list. Response:
+    ``{"games": [{"id", "opponent", "rating", "color"}]}``. 409 when no
+    credential is configured; 502 when Lichess cannot be reached.
+    """
+    from universalchess.players.lichess.lobby import (
+        lichess_client_from_settings,
+        ongoing_game_summaries,
+    )
+
+    log = current_app.logger
+    client, _username, error = lichess_client_from_settings(_lichess_ini_settings(), log)
+    if client is None:
+        return jsonify({"error": error or "unavailable", "games": []}), _lichess_client_http_status(
+            error
+        )
+    try:
+        raw = client.games.get_ongoing(count=10)
+    except Exception as e:
+        log.error("[Lichess] Error fetching ongoing games: %s", e)
+        return jsonify({"error": "fetch_failed", "games": []}), 502
+    return jsonify({"games": ongoing_game_summaries(raw)})
+
+
+@app.route("/api/lichess/challenges", methods=["GET"])
+@requires_auth
+def api_lichess_challenges():
+    """List incoming and outgoing Lichess challenges. Requires auth.
+
+    Same rows as the board lobby Challenges list. Response:
+    ``{"challenges": [{"id", "direction", "name", "rating"}]}``.
+    """
+    from universalchess.players.lichess.lobby import (
+        challenge_summaries,
+        lichess_client_from_settings,
+    )
+
+    log = current_app.logger
+    client, _username, error = lichess_client_from_settings(_lichess_ini_settings(), log)
+    if client is None:
+        return jsonify(
+            {"error": error or "unavailable", "challenges": []}
+        ), _lichess_client_http_status(error)
+    try:
+        payload = None
+        try:
+            payload = client.challenges.get_mine()
+        except AttributeError:
+            payload = client.challenges.list()
+    except Exception as e:
+        log.error("[Lichess] Error fetching challenges: %s", e)
+        return jsonify({"error": "fetch_failed", "challenges": []}), 502
+    return jsonify({"challenges": challenge_summaries(payload)})
+
+
+@app.route("/api/lichess/start", methods=["POST"])
+@requires_auth
+def api_lichess_start():
+    """Start a Lichess join on the board (New Game, Ongoing, or Challenge).
+
+    Body: ``{"mode": "new"|"ongoing"|"challenge", "game_id"?, "challenge_id"?,
+    "challenge_direction"?}``. Forwards ``lichess_start`` to the main process,
+    the same stash the board lobby uses. 400 when the body cannot form a join;
+    503 when the board is not running.
+    """
+    from universalchess.players.lichess.lobby import lichess_join_from_web_params
+    from universalchess.services.game_broadcast import send_board_command
+
+    body = request.get_json(silent=True) or {}
+    join = lichess_join_from_web_params(body)
+    if join is None:
+        return jsonify({"success": False, "error": "invalid_join"}), 400
+    from universalchess.players.lichess.player import LichessGameMode
+
+    mode_name = {
+        LichessGameMode.NEW: "new",
+        LichessGameMode.ONGOING: "ongoing",
+        LichessGameMode.CHALLENGE: "challenge",
+    }[join["mode"]]
+    params = {
+        "mode": mode_name,
+        "game_id": join["game_id"],
+        "challenge_id": join["challenge_id"],
+        "challenge_direction": join["challenge_direction"],
+    }
+    try:
+        sent = send_board_command("lichess_start", params)
+        if sent:
+            return jsonify({"success": True, "message": "Lichess game requested"})
+        return jsonify({"success": False, "error": "Board not running"}), 503
+    except Exception as e:
+        return _internal_error(e)
+
+
 def _broadcast_settings_changed():
     """Notify web clients and the board that persisted settings changed.
 
@@ -3347,7 +3472,10 @@ def api_board_setup_position():
     Validates the FEN, then asks the main process to abort any running game and
     set up the position. The web UI is responsible for confirming with the user
     when a game is in progress before calling this (the board records the
-    interrupted game as abandoned, result = "*").
+    interrupted game as abandoned, result = "*"). A Lichess slot cannot play a
+    custom FEN (seek/challenge/ongoing always start from the opening); that
+    returns 409 with "Unavailable with lichess as a player" and does not send
+    a board command.
 
     ``record`` opts the resulting game into the normal database history (used by
     "Play Game from here" on the review page, where the user plays a real game
@@ -3378,6 +3506,17 @@ def api_board_setup_position():
             chess.Board(fen)
         except ValueError:
             return jsonify({"success": False, "error": "Invalid FEN"}), 400
+
+        from universalchess.menus.positions_menu import (
+            POSITION_UNAVAILABLE_WITH_LICHESS,
+            position_unavailable_with_lichess,
+        )
+
+        player1, player2 = _read_player_dicts()
+        if position_unavailable_with_lichess(player1["type"], player2["type"]):
+            return jsonify(
+                {"success": False, "error": POSITION_UNAVAILABLE_WITH_LICHESS}
+            ), 409
 
         name = (body.get("name") or "Position").strip()
         hint = body.get("hint")

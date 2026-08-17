@@ -14,9 +14,11 @@
   },
   "common": {
     "cancel": "Annuler",
+    "confirm": "Confirmer",
     "delete": "Supprimer",
     "retry": "Réessayer",
     "reload": "Recharger",
+    "loading": "Chargement…",
     "invalidCredentials": "Identifiants incorrects. Veuillez réessayer.",
     "networkError": "Erreur réseau lors de la communication avec le plateau.",
     "imagePreviewAlt": "Aperçu de {{label}}"
@@ -330,6 +332,16 @@
       "accountSignIn": "Connectez-vous pour voir les comptes enregistrés.",
       "accountLoadFailed": "Impossible de charger les comptes. Vérifiez la connexion et réessayez.",
       "hintsWillUse": "Les indices utiliseront <1>{{engine}}</1> (configuré dans Paramètres de partie → Moteur d'analyse)"
+    },
+    "lichessLobby": {
+      "unknownUser": "Inconnu",
+      "playAs": "Jouer en tant que {{user}}",
+      "noOngoing": "Aucune partie inachevée pour ce compte.",
+      "noChallenges": "Aucun défi pour ce compte.",
+      "noToken": "Ajoutez un identifiant Lichess sous Comptes pour lister les parties et les défis.",
+      "boardOffline": "Le plateau n'est pas en cours d'exécution.",
+      "startFailed": "Impossible de démarrer cette partie Lichess.",
+      "confirmAbandon": "Abandonner la partie en cours et commencer celle-ci sur le plateau ?"
     },
     "game": {
       "title": "Paramètres de partie",

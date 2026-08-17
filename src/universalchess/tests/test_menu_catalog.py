@@ -557,6 +557,36 @@ def test_packaged_catalog_exposes_lichess_account_type():
     assert hosts["dev"]["baseUrl"] == "https://lichess.dev"
 
 
+def test_lichess_lobby_catalog_children_match_board_hierarchy():
+    """players.lichess children are the web lobby: Account, Ongoing, Challenges, New Game.
+
+    Why: the web Players card walks this list so it stays in lockstep with the
+    board lobby. Accounts is nested under Account, not a sibling. Regression: a
+    row drops, Play returns as a wrapper, or Accounts sits on the lobby itself.
+    """
+    from universalchess.players.lichess.lobby import (
+        CHALLENGES_HELP,
+        ONGOING_GAMES_HELP,
+    )
+
+    catalog = load_catalog()
+    node = catalog.get_node("players.lichess")
+    assert node["label"] == "Lichess Lobby"
+    assert node["boardLabel"] == "Lichess\nLobby"
+    assert catalog.child_ids("players.lichess") == [
+        "lichess.account",
+        "lichess.ongoing",
+        "lichess.challenges",
+        "lichess.new_game",
+    ]
+    assert catalog.child_ids("lichess.account") == ["players.accounts"]
+    assert catalog.get_node("lichess.ongoing")["help"] == ONGOING_GAMES_HELP
+    assert catalog.get_node("lichess.challenges")["help"] == CHALLENGES_HELP
+    assert catalog.get_node("lichess.account")["label"] == "Account"
+    assert catalog.get_node("players.accounts")["label"] == "Accounts"
+    assert "web" in catalog.get_node("players.accounts").get("platforms", ["board", "web"])
+
+
 def test_lichess_catalog_hosts_match_plugin():
     """Catalog host URLs must match the Lichess plugin's host list.
 

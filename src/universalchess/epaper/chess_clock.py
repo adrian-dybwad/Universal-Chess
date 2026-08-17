@@ -85,7 +85,8 @@ class ChessClockWidget(Widget):
             height: Widget height
             update_callback: Callback to trigger display updates. Must not be None.
             timed_mode: Whether to show times (True) or just turn indicator (False)
-            flip: If True, show Black on top (matching flipped board perspective)
+            flip: If True, show Black at the bottom (matching a board flipped
+                so Black's pieces are at the near edge)
             on_tick_refresh: Optional heartbeat callback invoked once per clock
                 tick to drive a single full-stack refresh (the Manager's
                 flush_now). When wired, the tick is the sole panel refresher

@@ -225,3 +225,21 @@ def test_skips_correction_when_physical_board_already_matches(patched_board):
     mgr.takeback_to_ply(1)
 
     mgr._enter_correction_mode.assert_not_called()
+
+
+def test_sync_move_count_pops_to_remaining_including_opening(patched_board):
+    """A remote takeback names how many plies remain, including zero.
+
+    Why: Lichess streams the shortened move list, not a move-list ply index.
+    takeback_to_ply(0) is a no-op (opening is not a highlighted move). Failure:
+    remaining 0 leaves e2e4 on the stack, or remaining 1 pops nothing.
+    """
+    mgr = _manager(OPENING_UCI)
+
+    assert mgr.sync_move_count(1) == 2
+    assert [m.uci() for m in mgr.chess_board.move_stack] == ["e2e4"]
+
+    mgr2 = _manager(OPENING_UCI)
+    assert mgr2.sync_move_count(0) == 3
+    assert [m.uci() for m in mgr2.chess_board.move_stack] == []
+

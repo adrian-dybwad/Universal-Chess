@@ -14,9 +14,11 @@
   },
   "common": {
     "cancel": "Cancelar",
+    "confirm": "Confirmar",
     "delete": "Eliminar",
     "retry": "Reintentar",
     "reload": "Recargar",
+    "loading": "Cargando…",
     "invalidCredentials": "Credenciales no válidas. Inténtalo de nuevo.",
     "networkError": "Error de red al contactar con el tablero.",
     "imagePreviewAlt": "Vista previa de {{label}}"
@@ -330,6 +332,16 @@
       "accountSignIn": "Inicia sesión para ver las cuentas guardadas.",
       "accountLoadFailed": "No se pudieron cargar las cuentas. Comprueba la conexión e inténtalo de nuevo.",
       "hintsWillUse": "Las pistas usarán <1>{{engine}}</1> (configurado en Ajustes de partida → Motor de análisis)"
+    },
+    "lichessLobby": {
+      "unknownUser": "Desconocido",
+      "playAs": "Jugar como {{user}}",
+      "noOngoing": "Esta cuenta no tiene partidas sin terminar.",
+      "noChallenges": "Esta cuenta no tiene desafíos.",
+      "noToken": "Añade un inicio de Lichess en Cuentas para listar partidas y desafíos.",
+      "boardOffline": "El tablero no está en marcha.",
+      "startFailed": "No se pudo empezar esa partida de Lichess.",
+      "confirmAbandon": "¿Abandonar la partida en curso y empezar esta en el tablero?"
     },
     "game": {
       "title": "Ajustes de partida",

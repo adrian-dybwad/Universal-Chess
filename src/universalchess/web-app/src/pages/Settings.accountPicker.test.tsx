@@ -106,6 +106,9 @@ function mockFetch(
     if (url === '/api/agents') return jsonResponse({ agents: [] });
     if (url === '/api/engines/status') return jsonResponse(idleEngineStatus);
     if (url.startsWith('/api/coaches')) return jsonResponse({ coaches: [], resolved: null });
+    if (url === '/api/lichess/ongoing') return jsonResponse({ games: [] });
+    if (url === '/api/lichess/challenges') return jsonResponse({ challenges: [] });
+    if (url === '/api/lichess/start' && method === 'POST') return jsonResponse({ success: true });
     if (url.startsWith('/api/coach/models')) return jsonResponse({ models: [] });
     return jsonResponse({});
   });
@@ -145,9 +148,9 @@ describe('Settings account picker for online player types', () => {
     renderSettings();
     const picker = await screen.findByLabelText('Account');
     expect(picker).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'lichess.org:MagnusC' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'lichess.org:SecondUser' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: /default account/i })).toBeInTheDocument();
+    expect(within(picker).getByRole('option', { name: 'lichess.org:MagnusC' })).toBeInTheDocument();
+    expect(within(picker).getByRole('option', { name: 'lichess.org:SecondUser' })).toBeInTheDocument();
+    expect(within(picker).getByRole('option', { name: /default account/i })).toBeInTheDocument();
   });
 
   it('lists org and .dev credentials of the same username as distinct options', async () => {
@@ -161,20 +164,21 @@ describe('Settings account picker for online player types', () => {
       ],
     });
     renderSettings();
-    await screen.findByLabelText('Account');
-    expect(screen.getByRole('option', { name: 'lichess.org:Alice' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'lichess.dev:Alice' })).toBeInTheDocument();
+    const picker = await screen.findByLabelText('Account');
+    expect(within(picker).getByRole('option', { name: 'lichess.org:Alice' })).toBeInTheDocument();
+    expect(within(picker).getByRole('option', { name: 'lichess.dev:Alice' })).toBeInTheDocument();
   });
 
-  it('shows Lichess Settings with credential management on the Players tab', async () => {
-    // Why: credentials live under Players → Lichess Settings, not Connectivity
-    // and not a Game host toggle. Human slots must still see the card so an
-    // account can be added before either side is Lichess. Failure: no Lichess
-    // Settings heading, the Use lichess.dev toggle returns, or the Add Account
-    // form is missing.
+  it('shows Lichess Lobby with credential management under Accounts', async () => {
+    // Why: credentials live under Players → Lichess Lobby → Account → Accounts,
+    // not Connectivity and not a Game host toggle. Human slots must still see
+    // the card so an account can be added before either side is Lichess.
+    // Failure: no Lichess Lobby heading, the Use lichess.dev toggle returns, or
+    // the Add Account form is missing after opening Accounts.
     mockFetch({ type: 'human' }, { type: 'human' });
     renderSettings();
-    expect(await screen.findByRole('heading', { name: 'Lichess Settings' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Lichess Lobby' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Accounts' }));
     expect(await screen.findByLabelText('Server')).toBeInTheDocument();
     expect(screen.getByLabelText(/API Token/i)).toBeInTheDocument();
     expect(screen.queryByLabelText('Use lichess.dev')).not.toBeInTheDocument();
@@ -263,9 +267,10 @@ describe('Settings account picker auth and load failures', () => {
     fireEvent.click(screen.getByRole('button', { name: /login/i }));
     fireEvent.click(await screen.findByTestId('login-submit'));
 
-    await waitFor(() => expect(screen.getByRole('option', { name: 'lichess.org:MagnusC' })).toBeInTheDocument());
-    expect(screen.getByRole('option', { name: 'lichess.org:SecondUser' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: /default account/i })).toBeInTheDocument();
+    await waitFor(() => expect(within(screen.getByLabelText('Account')).getByRole('option', { name: 'lichess.org:MagnusC' })).toBeInTheDocument());
+    const picker = screen.getByLabelText('Account');
+    expect(within(picker).getByRole('option', { name: 'lichess.org:SecondUser' })).toBeInTheDocument();
+    expect(within(picker).getByRole('option', { name: /default account/i })).toBeInTheDocument();
     expect(screen.queryByText(/sign in to see saved accounts/i)).not.toBeInTheDocument();
   });
 
@@ -296,7 +301,11 @@ describe('Settings account picker auth and load failures', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /retry/i }));
 
-    await waitFor(() => expect(screen.getByRole('option', { name: 'lichess.org:MagnusC' })).toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        within(screen.getByLabelText('Account')).getByRole('option', { name: 'lichess.org:MagnusC' }),
+      ).toBeInTheDocument(),
+    );
   });
 
   it('retries the account list when the navbar connection status becomes connected', async () => {
@@ -313,6 +322,10 @@ describe('Settings account picker auth and load failures', () => {
       useGameStore.setState({ connectionStatus: 'connected' });
     });
 
-    await waitFor(() => expect(screen.getByRole('option', { name: 'lichess.org:MagnusC' })).toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        within(screen.getByLabelText('Account')).getByRole('option', { name: 'lichess.org:MagnusC' }),
+      ).toBeInTheDocument(),
+    );
   });
 });

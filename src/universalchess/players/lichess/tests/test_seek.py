@@ -6,10 +6,12 @@ PLAY ignored the Game clock and always sought 10+5 casual random, while the
 e-paper Lichess menu sought minutes+0 and forced Human White. The unified
 helper is the single place seek color, clock, rated, rating range, and host
 are decided, so a board-reset new game and lobby New Game cannot drift.
+Color is random: White stays on player 1's physical side, and Lichess names
+the account's color after the pieces are already set.
 
 How a regression manifests
 --------------------------
-A wrong color seeks the opposite side; a delay/staged clock is sent as a
+A settings color seeks White or Black; a delay/staged clock is sent as a
 Fischer seek the local clock does not match; a lichess.dev lookup reads an
 org account's range; engine ELO leaks into rating_range.
 """
@@ -62,11 +64,11 @@ def _settings(p1, p2, game, rating_range=""):
     return SimpleNamespace(player1=p1, player2=p2, game=game), rating_range
 
 
-def test_seek_blitz_5_3_and_human_white():
-    """A 5+3 Game clock with Human White / Lichess Black seeks 5+3 white.
+def test_seek_blitz_5_3_and_random_color():
+    """A 5+3 Game clock seeks 5+3 random, not the Human slot's color.
 
-    Why: PLAY used dataclass 10+5 random regardless of settings. Failure: minutes
-    or increment is 10/5, or color is random/black.
+    Why: PLAY used dataclass 10+5 regardless of the Game clock. Failure: minutes
+    or increment is 10/5, or color is white/black from Players settings.
     """
     settings, rng = _settings(
         _player(type="human", color="white"),
@@ -77,7 +79,7 @@ def test_seek_blitz_5_3_and_human_white():
     seek = lichess_seek_from_settings(settings, rating_range=rng)
     assert seek.time_minutes == 5
     assert seek.increment_seconds == 3
-    assert seek.color == "white"
+    assert seek.color == "random"
     assert seek.rated is False
     assert seek.rating_range == "1000-1600"
     assert seek.account_id == "alice"
@@ -102,11 +104,48 @@ def test_seek_legacy_minutes_has_zero_increment():
     assert seek.increment_seconds == 0
 
 
-def test_seek_color_when_lichess_is_player_one():
-    """If Player 1 is Lichess (White), the human seeks Black.
+@pytest.mark.parametrize(
+    "p1, p2, account_id",
+    [
+        (
+            dict(type="human", color="white"),
+            dict(type="lichess", account="alice"),
+            "alice",
+        ),
+        (
+            dict(type="human", color="black"),
+            dict(type="lichess", account="alice"),
+            "alice",
+        ),
+        (
+            dict(type="lichess", color="white", account="bob"),
+            dict(type="human"),
+            "bob",
+        ),
+    ],
+)
+def test_seek_color_is_random_regardless_of_settings_color(p1, p2, account_id):
+    """A new seek must not encode White or Black from the Players color control.
 
-    Why: color is inferred from the Lichess slot, not a separate preference.
-    Failure: seek color stays white.
+    Why: White stays on player 1's physical side. Lichess names the account's
+    color after the pieces are set, too quickly to rotate them. Seeking the
+    Human slot's color would wait for a side the board cannot re-setup for.
+
+    How a regression manifests: color is white or black from player1.color or
+    from which slot is Human.
+    """
+    settings, rng = _settings(_player(**p1), _player(**p2), _game(time_control=10))
+    seek = lichess_seek_from_settings(settings, rating_range=rng)
+    assert seek.color == "random"
+    assert seek.account_id == account_id
+
+
+def test_seek_clock_when_lichess_is_player_one():
+    """Lichess in slot 1 still takes the Game clock and that slot's account.
+
+    Why: pairing looks up the Lichess credential on either row. Failure: minutes
+    stay on the dataclass 10+5, or account_id is empty because only player 2
+    is read.
     """
     settings, rng = _settings(
         _player(type="lichess", color="white", account="bob"),
@@ -114,21 +153,10 @@ def test_seek_color_when_lichess_is_player_one():
         _game(time_control_preset="rapid_10_5"),
     )
     seek = lichess_seek_from_settings(settings, rating_range=rng)
-    assert seek.color == "black"
     assert seek.account_id == "bob"
     assert seek.time_minutes == 10
     assert seek.increment_seconds == 5
-
-
-def test_seek_color_human_black():
-    """Player 1 Human Black / Player 2 Lichess seeks black."""
-    settings, rng = _settings(
-        _player(type="human", color="black"),
-        _player(type="lichess", account="alice"),
-        _game(time_control=10),
-    )
-    seek = lichess_seek_from_settings(settings, rating_range=rng)
-    assert seek.color == "black"
+    assert seek.color == "random"
 
 
 def test_seek_rated_and_dev_host():
@@ -186,7 +214,7 @@ def test_join_skips_clock_when_require_clock_false():
         settings, rating_range=rng, require_clock=False
     )
     assert seek.account_id == "alice"
-    assert seek.color == "white"
+    assert seek.color == "random"
 
 
 @pytest.mark.parametrize(
@@ -270,6 +298,7 @@ def test_waiting_and_started_splash_copy():
     """
     assert lichess_waiting_message(LichessGameMode.NEW) == "Waiting for game"
     assert lichess_waiting_message(LichessGameMode.ONGOING) == "Connecting..."
+    assert lichess_waiting_message(LichessGameMode.ATTACH) == "Connecting..."
     assert lichess_waiting_message(LichessGameMode.CHALLENGE) == "Loading\nChallenge..."
     seek = LichessSeek(
         time_minutes=15,
@@ -332,13 +361,13 @@ def test_lichess_player_from_seek_copies_seek_and_join():
     assert cfg.challenge_id == ""
 
 
-def test_lichess_player_from_seek_defaults_to_new_when_join_omitted():
-    """PLAY without a lobby stash seeks a new game as the bound account.
+def test_lichess_player_from_seek_omitted_join_does_not_seek():
+    """Piece lift, boot resume, and client connect omit join and must not seek.
 
-    Why: the join dict is only set from Ongoing/Challenge. Direct PLAY must
-    still bind the seek's credential.
+    Why: join None used to default to NEW, so setting up pieces or starting the
+    board posted a public seek. PLAY / New Game stash mode NEW explicitly.
 
-    Failure: mode is ONGOING or account_id is empty.
+    Failure: mode is NEW, so LichessPlayer.start() calls board.seek.
     """
     seek = LichessSeek(
         time_minutes=10,
@@ -349,6 +378,33 @@ def test_lichess_player_from_seek_defaults_to_new_when_join_omitted():
         account_id="org:alice",
     )
     player = lichess_player_from_seek(seek, color=chess.WHITE)
-    assert player._lichess_config.mode is LichessGameMode.NEW
+    assert player._lichess_config.mode is LichessGameMode.ATTACH
     assert player._lichess_config.account_id == "org:alice"
     assert player._lichess_config.game_id == ""
+
+
+def test_lichess_player_from_seek_new_join_still_seeks():
+    """PLAY and lobby New Game stash mode NEW so start() still posts a seek.
+
+    Why: omitting join no longer seeks. Failure: explicit NEW is treated as
+    ATTACH and board.seek is never called.
+    """
+    seek = LichessSeek(
+        time_minutes=10,
+        increment_seconds=0,
+        color="white",
+        rated=False,
+        rating_range="",
+        account_id="org:alice",
+    )
+    player = lichess_player_from_seek(
+        seek,
+        color=chess.WHITE,
+        join={
+            "mode": LichessGameMode.NEW,
+            "game_id": "",
+            "challenge_id": "",
+            "challenge_direction": "in",
+        },
+    )
+    assert player._lichess_config.mode is LichessGameMode.NEW

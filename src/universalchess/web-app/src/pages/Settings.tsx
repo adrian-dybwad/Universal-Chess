@@ -16,7 +16,8 @@ import { useRetryOnReconnect } from '../hooks/useRetryOnReconnect';
 import { MenuIcon } from '../components/MenuIcon';
 import { DeviceClockCard } from '../components/DeviceClockCard';
 import { OsUpgradePanel } from '../components/OsUpgradePanel';
-import { ConnectivityPanel, AccountsCard } from './Connectivity';
+import { ConnectivityPanel } from './Connectivity';
+import { LichessLobbyCard } from './LichessLobby';
 import type { EngineDefinition, EngineFailure, EngineRef, EngineRefsResponse, EngineTier } from '../types/game';
 import type { MenuCatalog, MenuOption } from '../types/menuCatalog';
 import { childrenOf, fieldById } from '../types/menuCatalog';
@@ -2160,16 +2161,50 @@ export function Settings() {
             {renderPlayerCard('player1', t('settingsPage.player1Title'))}
             {renderPlayerCard('player2', t('settingsPage.player2Title'))}
 
-            {/* Lichess plugin settings: credentials (server:user) live here.
-                Catalog-driven from players.lichess so the board submenu and
-                this card stay in sync; Play is board-only. */}
-            <Card className="mb-6">
-              <CardHeader title={fieldById(catalog, 'players.lichess')?.label ?? 'Lichess Settings'} />
-              {buildSections(catalog, 'players.lichess', gameMenuCtx.get).flatMap((section) =>
-                section.rows.map((node) => renderCatalogRow(node, gameMenuCtx)),
-              )}
-              <AccountsCard embedded />
-            </Card>
+            {/* Web twin of the board Lichess lobby. Catalog children of
+                players.lichess: Account (picker + nested Accounts), Ongoing
+                Games, Challenges, New Game. The board still opens this as an
+                action; the web walks the same hierarchy here. */}
+            {catalog && (
+              <LichessLobbyCard
+                catalog={catalog}
+                accounts={accounts}
+                accountsState={accountsState}
+                accountId={
+                  formSettings.player1.type === 'lichess'
+                    ? formSettings.player1.account
+                    : formSettings.player2.type === 'lichess'
+                      ? formSettings.player2.account
+                      : ''
+                }
+                otherType={
+                  formSettings.player1.type === 'lichess'
+                    ? formSettings.player2.type
+                    : formSettings.player1.type
+                }
+                otherAccount={
+                  formSettings.player1.type === 'lichess'
+                    ? formSettings.player2.account
+                    : formSettings.player1.account
+                }
+                canBind={
+                  formSettings.player1.type === 'lichess' ||
+                  formSettings.player2.type === 'lichess'
+                }
+                onAccountChange={(id) => {
+                  if (formSettings.player1.type === 'lichess') {
+                    updateFormSettings('player1', { account: id });
+                    return;
+                  }
+                  if (formSettings.player2.type === 'lichess') {
+                    updateFormSettings('player2', { account: id });
+                  }
+                }}
+                onAccountsChanged={() => {
+                  void fetchAccounts();
+                }}
+              />
+            )}
 
             {/* Hand+Brain Explanation */}
             {showHandBrainExplanation && (

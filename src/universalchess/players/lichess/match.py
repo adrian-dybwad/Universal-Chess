@@ -63,6 +63,105 @@ class LichessSeek:
         return self.host_id == HOST_DEV
 
 
+@dataclass(frozen=True)
+class LichessChallengeOffer:
+    """Incoming challenge terms, for Accept/Decline on the board.
+
+    A seek is the board's clock, rated flag, and color. This is the
+    challenger's. Empty ``challenge_id`` is not used; :func:`lichess_challenge_offer`
+    returns None instead.
+    """
+
+    challenge_id: str
+    challenger_name: str
+    challenger_rating: str
+    clock_label: str
+    rated: bool
+    our_color: str
+    variant_key: str
+    variant_name: str
+
+
+def lichess_challenge_offer(challenge: dict):
+    """Parse a Board API ``challenge`` object. None if it cannot be accepted."""
+    if not challenge:
+        return None
+    challenge_id = str(challenge.get("id") or "")
+    if not challenge_id:
+        return None
+    challenger = challenge.get("challenger") or {}
+    name = str(challenger.get("name") or challenger.get("id") or "Unknown")
+    rating = challenger.get("rating")
+    rating_str = "" if rating in (None, "") else str(rating)
+    variant = challenge.get("variant") or {}
+    variant_key = str(variant.get("key") or "standard").lower()
+    variant_name = str(variant.get("name") or variant_key)
+    color = str(challenge.get("color") or "random").lower()
+    if color == "white":
+        our_color = "black"
+    elif color == "black":
+        our_color = "white"
+    else:
+        our_color = "random"
+    return LichessChallengeOffer(
+        challenge_id=challenge_id,
+        challenger_name=name,
+        challenger_rating=rating_str,
+        clock_label=_challenge_clock_label(challenge.get("timeControl") or {}),
+        rated=bool(challenge.get("rated")),
+        our_color=our_color,
+        variant_key=variant_key,
+        variant_name=variant_name,
+    )
+
+
+def _challenge_clock_label(time_control: dict) -> str:
+    """E-paper clock copy from a Lichess ``timeControl`` object."""
+    shown = time_control.get("show")
+    if shown:
+        return str(shown)
+    ttype = str(time_control.get("type") or "")
+    if ttype == "unlimited":
+        return "Unlimited"
+    if ttype == "correspondence":
+        days = time_control.get("daysPerTurn")
+        if days is None:
+            return "Correspondence"
+        try:
+            n = int(days)
+        except (TypeError, ValueError):
+            return "Correspondence"
+        if n == 1:
+            return "1 day"
+        return f"{n} days"
+    limit = time_control.get("limit")
+    if limit is None:
+        return ""
+    try:
+        seconds = int(limit)
+        increment = int(time_control.get("increment") or 0)
+    except (TypeError, ValueError):
+        return ""
+    minutes, rem = divmod(seconds, 60)
+    if rem:
+        return f"{seconds}s+{increment}"
+    return f"{minutes}+{increment}"
+
+
+def lichess_challenge_terms_label(offer: LichessChallengeOffer) -> str:
+    """Two-line e-paper summary of who challenged and on what terms."""
+    rated = "rated" if offer.rated else "casual"
+    color = {"white": "White", "black": "Black"}.get(offer.our_color, "Random")
+    line1 = offer.challenger_name or "Unknown"
+    if offer.challenger_rating:
+        line1 = f"{line1} {offer.challenger_rating}"
+    bits = [offer.clock_label, rated, color]
+    if offer.variant_key and offer.variant_key != "standard":
+        bits.append(offer.variant_name or offer.variant_key)
+    line2 = " ".join(part for part in bits if part)
+    return f"{line1}\n{line2}"
+
+
 def lichess_base_url(host_id: str = DEFAULT_HOST_ID) -> str:
     """berserk ``base_url`` for a Lichess host id (``org`` / ``dev``)."""
     return get_host(host_id).base_url
@@ -91,7 +190,7 @@ def lichess_waiting_message(mode, seek=None) -> str:
     from .player import LichessGameMode
     from .hosts import credential_label, get_host, parse_credential_id
 
-    if mode == LichessGameMode.ONGOING:
+    if mode == LichessGameMode.ONGOING or mode == LichessGameMode.ATTACH:
         headline = "Connecting..."
         include_clock = False
     elif mode == LichessGameMode.CHALLENGE:
@@ -176,18 +275,21 @@ def lichess_seek_from_settings(
     ``require_clock`` is True for a NEW seek (Lichess ``board.seek`` needs a
     simple Fischer pair). Ongoing/challenge join already has a remote clock, so
     a local delay/staged/untimed control must not block connecting.
+
+    Color is always ``random``. White stays on player 1's physical side;
+    Lichess names the account's color after the pieces are set.
     """
     _human, lichess = _human_and_lichess(settings.player1, settings.player2)
     if require_clock:
         minutes, increment = _seek_clock(settings.game)
     else:
         minutes, increment = 10, 5
-    # Player 1's color is the color that slot plays. The human's color is the
-    # seek color (the Lichess account is the local user).
-    if settings.player1.type == "human":
-        color = settings.player1.color
-    else:
-        color = "black" if settings.player1.color == "white" else "white"
+    # White stays on player 1's physical side. Lichess names the account's
+    # color after the pieces are already set, so a new seek is random rather
+    # than the Players color control (which would wait for a side the board
+    # cannot re-setup for). Human sits White or Black after the stream
+    # connects; the e-paper rotates if they sit Black.
+    color = "random"
     account_id = getattr(lichess, "account", "") or ""
     host_id, _username = parse_credential_id(account_id)
     return LichessSeek(

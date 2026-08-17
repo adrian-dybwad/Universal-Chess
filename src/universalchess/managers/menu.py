@@ -223,6 +223,25 @@ class MenuManager:
     def is_loading(self) -> bool:
         """Check if a menu is currently loading (not yet ready for key events)."""
         return self._menu_loading
+
+    def handle_if_active(self, key_id) -> bool:
+        """Consume a key when this manager is showing a menu, including in a game.
+
+        Lichess takeback, draw, and challenge dialogs call ``show_menu`` while
+        ``app_state`` is GAME. Those keys must not fall through to the game:
+        TICK would full-refresh instead of Accept, BACK would open abort, PLAY
+        would suspend.
+
+        Returns True if the key was consumed (queued or delivered). An overlay
+        swallows keys the widget does not handle (PLAY) so they cannot reach
+        the GAME branch.
+        """
+        if self._menu_loading:
+            return self.queue_key(key_id)
+        if self._active_widget is None:
+            return False
+        self._active_widget.handle_key(key_id)
+        return True
     
     def queue_key(self, key_id) -> bool:
         """Queue a key press while menu is loading.

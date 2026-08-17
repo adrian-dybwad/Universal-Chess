@@ -35,7 +35,6 @@ from universalchess.players.lichess.lobby import (
     get_lichess_client,
     build_lichess_menu_entries,
     show_lichess_error,
-    ensure_token,
     lichess_waiting_message,
     show_lichess_waiting_splash,
 )
@@ -65,7 +64,6 @@ __all__ = [
     "get_lichess_client",
     "build_lichess_menu_entries",
     "show_lichess_error",
-    "ensure_token",
     "lichess_waiting_message",
     "show_lichess_waiting_splash",
     "_get_player_type_label",

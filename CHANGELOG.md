@@ -15,6 +15,14 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **Lichess Lobby on the web**: Settings → Players showed a credentials card
+  (add/delete logins) under the name Lichess Settings, while the board lobby
+  was Account, Ongoing Games, Challenges, and New Game. The Players card is
+  now that same hierarchy, labelled Lichess Lobby on both surfaces. Account
+  binds the Lichess slot (Accounts last, nested, for add/delete). Ongoing and
+  Challenges list the live games for the bound login; selecting one, or New
+  Game, starts it on the board through the same join the e-paper lobby uses.
+
 - **Display > Text Size on more of the board UI**: The setting previously
   scaled only the coach statement and the analysis move list. It now also
   scales game-over and setup-status copy, chess-clock labels and names, the
@@ -438,8 +446,10 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
     conforming parser or understate one side's budget.
 
 - **Lichess is one play path**: Human vs Lichess now starts the same way as
-  Human vs Engine (PLAY, or Lichess Settings → New Game). Seek color comes from
-  which slot is Human, the clock from the Game time control (whole minutes plus
+  Human vs Engine (PLAY, or Lichess Settings → New Game). A new seek is
+  random color -- White stays on player 1's physical side, Black on player 2,
+  because Lichess names the account's color after the pieces are already set.
+  The clock comes from the Game time control (whole minutes plus
   Fischer increment), rated from the Rated toggle, and the rating range from the
   bound account on the active host. A second launcher had forced Human White and
   minutes+0, skipped PLAY's game widgets, and froze the board when its imports
@@ -448,14 +458,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   server:user (`lichess.org:Alice`, `lichess.dev:Bob`). Org and .dev are hosts
   on the Lichess plugin, not a second account type and not a Game toggle;
   the bound credential's host is the server the token is sent to. Credentials
-  are managed under Players → Lichess Settings (with Play for the lobby). The
+  are managed under Players → Lichess Settings. The
   waiting splash
   lists the seek (clock, rated, color, host:user, rating range); when the stream accepts, the board remaps the human to
-  the stream's color, flips if they play Black, and shows "Game started / You play
+  the stream's color (White remains player 1, Black player 2), rotates the
+  e-paper if they play Black, and shows "Game started / You play
   White" (or Black) until the first move or five seconds. BACK during seek cancels;
   Abort is on the in-game BACK menu while abort is still legal; Resign still ends
-  on the game-over screen. The lobby Token row writes the active account's store,
-  not the legacy single `[lichess]` key. A leftover `[lichess]` token is
+  on the game-over screen. Credentials are managed under Players → Lichess
+  Settings → Accounts, not a Token row on Play. A leftover `[lichess]` token is
   promoted to a host:user credential on boot when the username is already
   cached (no network). `game.lichess_use_dev` selects `dev:` for that one
   copy, matching how player bindings already migrate. A token with no cached
@@ -603,14 +614,75 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   panel only comes back when Show Analysis is on.
 
 - **Lichess lobby accept left the board on the waiting splash**: After an
-  opponent took the board's seek (or challenged the account from the lobby),
-  Lichess already had a live game -- the web player sat on a board waiting for
-  the first move -- but the e-paper never left "Waiting for game" and Human
-  moves were never sent. ``board.seek`` holds an HTTP stream open until Lichess
-  closes it; after a match that stream often keeps sending keep-alives, and
-  the player only looked up the game once seek() returned. The Board API event
-  stream now attaches on ``gameStart``, incoming challenges are accepted while
-  seeking, and ongoing games are polled in parallel with the seek.
+  opponent took the board's seek, Lichess already had a live game -- the web
+  player sat on a board waiting for the first move -- but the e-paper never
+  left "Waiting for game" and Human moves were never sent. ``board.seek``
+  holds an HTTP stream open until Lichess closes it; after a match that stream
+  often keeps sending keep-alives, and the player only looked up the game once
+  seek() returned. The Board API event stream now attaches on ``gameStart``,
+  and ongoing games are polled in parallel with the seek.
+
+- **Lichess takeback left the board on the undone position**: Accepting
+  a takeback updated Lichess, but the stream only treated a new ``moves``
+  string as another last ply to replicate. The logical game, clocks, and
+  correction LEDs stayed on the pre-takeback position. A shorter (or
+  diverged) move list now pops to the remaining ply count and guides the
+  pieces.
+
+- **Lichess takeback Accept could not be chosen**: Opponent takeback (and
+  draw) offers paint Accept/Decline through ``MenuManager.show_menu`` while
+  the app is already in a game. Keys in that state went to the game, so TICK
+  full-refreshed the panel instead of Accept, BACK opened abort/resign, and
+  PLAY suspended. An in-game MenuManager overlay now receives those keys.
+
+- **A Lichess seek is posted only from PLAY or New Game**: Starting the board
+  with pieces on it, lifting a piece on the menu, connecting a BLE client, and
+  resuming after a reboot all entered game mode with a Lichess slot and called
+  ``board.seek`` even though the user never chose New Game. Those paths now
+  attach an ongoing game if one exists and do not list a new seek. PLAY, lobby
+  New Game, and web New Game still seek immediately. Returning the pieces to
+  the opening during a Lichess game asks Seek / Cancel (Cancel is the default);
+  Cancel returns to the menu without seeking.
+
+- **Incoming Lichess challenges during a seek ask before accepting**: A lobby
+  seek is the board's terms. Clicking the account in the lobby (rather than
+  taking the seek) sends a challenge on the opponent's clock, rated flag,
+  color, and variant. Auto-accepting those started a game the Human had not
+  agreed to. An incoming challenge now shows Accept/Decline with those terms;
+  Decline returns to the wait splash and the seek stays up. Taking the posted
+  seek still starts the game with no prompt.
+
+- **Lichess match color does not rotate the pieces**: Lichess can name White
+  or Black in the seconds after a match, faster than the physical board can
+  be turned. A new seek used the Players color control (Human in slot 1
+  sought White), and swapping that control built player 1 as Black. Pieces
+  stay on their physical sides: White is always player 1, Black player 2. A
+  new seek is random. After the stream names the account's color, Human sits
+  that slot and the e-paper rotates when they play Black.
+
+- **Lichess Lobby is the play menu on board and web**: User, Ongoing Games,
+  Challenges, and New Game sat behind Players → Lichess Settings → Play. That
+  extra Play page is gone. Players → Lichess Lobby opens those rows directly
+  (Account first, Ongoing Games and Challenges always listed, then New Game).
+  Selecting Ongoing or Challenges shows how that feature works, then the live
+  list (or back to the lobby when the account has none). Account selects which
+  saved Lichess login the slot uses -- the same picker as the player-slot
+  Account row, including the both-sides exclusion. Add or delete logins is
+  Accounts at the end of that picker. The web Players card uses the same
+  catalog children and can start a join on the board.
+
+- **Lichess Play no longer has an API Token row**: Accounts replaced that
+  editor. The Play lobby still offered Token and wrote the active credential
+  from there, a second place to change the same secret. Token is gone from
+  Play; add or edit a login under Players → Lichess Lobby → Account →
+  Accounts.
+
+- **Start from position is refused when a slot is Lichess**: A Lichess seek,
+  challenge, or ongoing game always starts from the opening. Loading a
+  catalog position or Play-from-here with Lichess as a player would put this
+  board on a different game than the remote opponent. Positions, the web
+  setup-position API, and New-game-from-this-ply now show "Unavailable with
+  lichess as a player" and leave the current game untouched.
 
 - **Cancelling shutdown no longer blanks a waiting splash**: Long-press PLAY
   during a Lichess seek (or any other modal) replaced "Waiting for game" with

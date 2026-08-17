@@ -21,6 +21,18 @@ CATEGORY_ICONS = {
     "custom": "positions_custom",
 }
 
+POSITION_UNAVAILABLE_WITH_LICHESS = "Unavailable with lichess as a player"
+
+
+def position_unavailable_with_lichess(player1_type: str, player2_type: str) -> bool:
+    """True when a custom FEN cannot be started because a slot is Lichess.
+
+    Lichess seek, challenge, and ongoing join always start from the opening.
+    A Positions setup or Play-from-here would put this board on a different
+    game than the remote opponent.
+    """
+    return player1_type == "lichess" or player2_type == "lichess"
+
 
 def build_category_entries(positions: Dict[str, Dict[str, Tuple[str, str]]]) -> List[IconMenuEntry]:
     """Build category menu entries."""
@@ -138,6 +150,8 @@ def handle_positions_menu(
     return_to_last_position: bool = False,
     is_game_in_progress: Optional[Callable[[], bool]] = None,
     abort_game: Optional[Callable[[], None]] = None,
+    lichess_as_player: Optional[Callable[[], bool]] = None,
+    show_alert: Optional[Callable[[str], None]] = None,
 ) -> Optional[bool]:
     """Handle the Positions submenu.
 
@@ -146,6 +160,9 @@ def handle_positions_menu(
     confirm the running game is recorded as aborted via ``abort_game`` (DB
     result = "*") before the new position is set up; on cancel the running game
     is left untouched and the menu stays open.
+
+    When ``lichess_as_player`` is true, selecting a position shows
+    :data:`POSITION_UNAVAILABLE_WITH_LICHESS` and does not start or abort.
     """
     positions = load_positions_config()
     if not positions:
@@ -199,6 +216,11 @@ def handle_positions_menu(
             display_name = position_result.replace("_", " ").title()
             last_position_category_ref[0] = category
             last_position_index_ref[0] = find_entry_index(position_entries, position_result)
+
+            if lichess_as_player is not None and lichess_as_player():
+                if show_alert is not None:
+                    show_alert(POSITION_UNAVAILABLE_WITH_LICHESS)
+                continue
 
             if is_game_in_progress is not None and is_game_in_progress():
                 confirm_result = _confirm_end_running_game(show_menu)
