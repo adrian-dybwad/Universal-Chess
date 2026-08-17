@@ -639,6 +639,13 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   screen and start() is still authenticating. BACK that arrives before
   GameManager exists is recorded so the seek is never posted.
 
+- **A random Lichess seek said nothing about colour**: The seek passed
+  ``color=None`` for a random game, and ``requests`` drops None form fields, so
+  the request reached Lichess with no colour at all and depended on the server
+  defaulting an absent parameter. ``random`` is a colour Lichess accepts in its
+  own right, and is now what the board sends, so the seek states what was
+  chosen rather than relying on an omission meaning the same thing.
+
 - **Game widgets could paint over the menu after leaving a Lichess game**:
   The started splash hands over to the board five seconds after a game
   connects, on a timer nothing cancelled. A game that ended inside those five

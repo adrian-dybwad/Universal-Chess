@@ -969,9 +969,11 @@ class LichessPlayer(Player):
             return
         try:
             rated = self._lichess_config.rated
-            color = self._lichess_config.color_preference.lower()
-            if color == 'random':
-                color = None
+            # 'random' is a colour Lichess accepts in its own right. Passing None
+            # for it instead dropped the field from the form entirely (requests
+            # omits None values), so the seek said nothing about colour and relied
+            # on the server's default for an absent parameter.
+            color = self._lichess_config.color_preference.lower() or 'random'
             rating_range = (
                 self._lichess_config.rating_range
                 or self._account_range

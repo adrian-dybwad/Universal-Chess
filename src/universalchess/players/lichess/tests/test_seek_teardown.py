@@ -88,7 +88,9 @@ def lobby_server():
     thread.join(timeout=TEARDOWN_DEADLINE_SECONDS)
 
 
-def _player_seeking_against(lobby_server) -> tuple[LichessPlayer, threading.Thread]:
+def _player_seeking_against(
+    lobby_server, color_preference: str = "random"
+) -> tuple[LichessPlayer, threading.Thread]:
     """A player whose real seek thread is blocked on a live seek connection.
 
     Uses the production client factory's session class and the player's own
@@ -100,6 +102,7 @@ def _player_seeking_against(lobby_server) -> tuple[LichessPlayer, threading.Thre
             name="Lichess",
             time_minutes=SEEK_MINUTES,
             increment_seconds=SEEK_INCREMENT,
+            color_preference=color_preference,
         )
     )
     session = abortable_token_session_class()("token")
@@ -181,5 +184,24 @@ def test_the_seek_posted_matches_the_configured_clock(lobby_server):
     try:
         assert f"time={SEEK_MINUTES}" in lobby_server.seek_body
         assert f"increment={SEEK_INCREMENT}" in lobby_server.seek_body
+    finally:
+        player.stop()
+
+
+@pytest.mark.parametrize("color_preference", ["random", "white", "black"])
+def test_the_seek_states_its_color_rather_than_omitting_it(
+    lobby_server, color_preference
+):
+    """Every seek must name its color on the wire, including a random one.
+
+    A random seek passed ``color=None``, and ``requests`` drops None form
+    fields, so the request left the board with no color at all and depended on
+    Lichess choosing random for an absent parameter. The colour the user picked
+    should be what is sent. A regression manifests as a body with no ``color``
+    field, which no longer states what the board asked for.
+    """
+    player, _ = _player_seeking_against(lobby_server, color_preference)
+    try:
+        assert f"color={color_preference}" in lobby_server.seek_body
     finally:
         player.stop()
