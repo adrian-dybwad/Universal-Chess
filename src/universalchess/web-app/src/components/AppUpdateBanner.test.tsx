@@ -15,7 +15,8 @@ import type { GameState } from '../types/game';
  */
 
 const mocks = vi.hoisted(() => ({
-  applyServiceWorkerUpdate: vi.fn(),
+  applyServiceWorkerUpdate: vi.fn(() => true),
+  blocked: false,
   captured: { onUpdateReady: null as null | (() => void) },
 }));
 
@@ -24,6 +25,8 @@ vi.mock('../utils/swRegistration', () => ({
     mocks.captured.onUpdateReady = onUpdateReady;
   },
   applyServiceWorkerUpdate: mocks.applyServiceWorkerUpdate,
+  subscribeAutoReloadBlocked: () => () => {},
+  getAutoReloadBlocked: () => mocks.blocked,
 }));
 
 import { AppUpdateBanner } from './AppUpdateBanner';
@@ -71,7 +74,9 @@ function setVisibility(state: 'visible' | 'hidden'): void {
 }
 
 beforeEach(() => {
-  mocks.applyServiceWorkerUpdate.mockClear();
+  mocks.applyServiceWorkerUpdate.mockReset();
+  mocks.applyServiceWorkerUpdate.mockReturnValue(true);
+  mocks.blocked = false;
   mocks.captured.onUpdateReady = null;
   useGameStore.setState({ gameState: null });
   setVisibility('visible');
@@ -113,8 +118,9 @@ describe('AppUpdateBanner', () => {
   });
 
   it('reloads when the user clicks Reload during a live game', () => {
-    // The explicit user-driven path from the prompt. Clicking must trigger
-    // exactly the same activation used by the auto path.
+    // The explicit user-driven path from the prompt. Clicking must pass
+    // userInitiated so apply reloads in the tap's call stack; the auto path
+    // waits for controllerchange and must not be used here.
     setGame(liveGame);
     render(<AppUpdateBanner />);
     signalUpdateReady();
@@ -122,6 +128,18 @@ describe('AppUpdateBanner', () => {
       screen.getByRole('button', { name: 'Reload' }).click();
     });
     expect(mocks.applyServiceWorkerUpdate).toHaveBeenCalledTimes(1);
+    expect(mocks.applyServiceWorkerUpdate).toHaveBeenCalledWith({ userInitiated: true });
+  });
+
+  it('shows Reload when auto-apply is blocked', () => {
+    // After a failed auto-reload the idle client would otherwise sit on the
+    // stale bundle with no prompt. The blocked flag is read from the SW
+    // module (not setState in an effect) so Reload stays reachable.
+    mocks.blocked = true;
+    render(<AppUpdateBanner />);
+    signalUpdateReady();
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+    expect(mocks.applyServiceWorkerUpdate).not.toHaveBeenCalled();
   });
 
   it('auto-reloads once a live game ends while the prompt is showing', () => {

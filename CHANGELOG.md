@@ -606,6 +606,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Web app Reload did nothing when a new version was waiting**: The "A new
+  version of the app is available" banner posted ``SKIP_WAITING`` to the
+  service worker and then waited for ``controllerchange`` before calling
+  ``location.reload()``. iOS Safari (and some kiosk Chromium builds) never
+  fire that event, or ignore reload outside a user gesture, so the button
+  appeared inert and a second tap was discarded by an in-flight flag. Reload
+  now navigates in the same tap. Auto-apply still waits for the new worker,
+  with a short fallback, and surfaces the banner if that reload is blocked.
+
 - **Move list appears with analysis off**: UP/DOWN during a game highlighted
   a played move in a list that lived inside the analysis widget, so turning
   Show Analysis or Live Analysis off hid or never created it and the arrows

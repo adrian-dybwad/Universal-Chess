@@ -67,3 +67,28 @@ describe('service worker precache', () => {
     expect(iconSources.filter((src) => !precached.has(src))).toEqual([]);
   });
 });
+
+describe('service worker skipWaiting', () => {
+  const source = readFileSync(swPath, 'utf-8');
+
+  it('keeps the worker alive until skipWaiting settles', () => {
+    // Why: a bare self.skipWaiting() in the message handler can be killed
+    // before the waiting worker activates, so Reload posts SKIP_WAITING and
+    // nothing happens. How a regression manifests: the SKIP_WAITING branch
+    // calls skipWaiting without event.waitUntil.
+    expect(source).toMatch(/type === 'SKIP_WAITING'[\s\S]*event\.waitUntil\(\s*self\.skipWaiting\(\)\s*\)/);
+  });
+
+  it('claims clients as part of activate waitUntil', () => {
+    // Why: clients.claim() outside waitUntil can run after the activate
+    // event is discarded, so controllerchange never fires for auto-apply.
+    // How a regression manifests: claim() appears after the waitUntil
+    // callback rather than chained inside it.
+    expect(source).toMatch(/event\.waitUntil\([\s\S]*self\.clients\.claim\(\)/);
+    const activateHandler = source.split("self.addEventListener('activate'")[1] ?? '';
+    const afterWaitUntil = activateHandler.split('event.waitUntil')[1] ?? '';
+    const waitUntilBlock = afterWaitUntil.split("self.addEventListener('fetch'")[0] ?? '';
+    const claimOutsideWaitUntil = /}\s*\);\s*self\.clients\.claim\(\)/.test(waitUntilBlock);
+    expect(claimOutsideWaitUntil).toBe(false);
+  });
+});

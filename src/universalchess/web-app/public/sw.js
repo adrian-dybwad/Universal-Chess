@@ -52,11 +52,9 @@ self.addEventListener('activate', (event) => {
             console.log('[SW] Deleting old cache:', name);
             return caches.delete(name);
           })
-      );
+      ).then(() => self.clients.claim());
     })
   );
-  // Take control of all clients immediately
-  self.clients.claim();
 });
 
 // Fetch event - network first, fallback to cache
@@ -141,7 +139,10 @@ function shouldCache(pathname) {
 // Listen for messages from the client
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
-    self.skipWaiting();
+    // waitUntil keeps this worker alive until skipWaiting settles. Without it
+    // the browser can terminate the worker before it becomes active, so the
+    // page's SKIP_WAITING message is lost and Reload appears to do nothing.
+    event.waitUntil(self.skipWaiting());
   }
 });
 
