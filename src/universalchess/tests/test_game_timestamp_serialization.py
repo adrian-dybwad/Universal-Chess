@@ -102,26 +102,28 @@ def test_format_date_rfc_is_gmt():
     assert webapp.format_date_rfc(ts) == "Fri, 10 Jul 2026 01:22:33 GMT"
 
 
-def test_pgn_headers_have_standard_utc_date_tags():
+def test_pgn_headers_have_standard_utc_date_tags(private_db_session):
     """build_chess_game_from_id emits [Date]/[UTCDate]/[UTCTime] in UTC.
 
     Why: PGN readers expect [Date "YYYY.MM.DD"], not a raw datetime string; the
     UTC tags record the exact instant unambiguously. How a regression manifests:
     [Date] carries the old 'YYYY-MM-DD HH:MM:SS...' string or the UTC tags are
     absent.
-    """
-    session = webapp.get_db_session()
-    try:
-        from universalchess.db import models
-        game = models.Game(source="local.py", white="W", black="B", result="1-0",
-                            created_at=datetime.datetime(2026, 7, 10, 1, 22, 33))
-        session.add(game)
-        session.commit()
-        gid = game.id
 
-        g = webapp.build_chess_game_from_id(session, gid)
-        assert g.headers["Date"] == "2026.07.10"
-        assert g.headers["UTCDate"] == "2026.07.10"
-        assert g.headers["UTCTime"] == "01:22:33"
-    finally:
-        session.close()
+    Uses ``private_db_session`` rather than ``webapp.get_db_session()``: the
+    shared engine is an in-memory SQLite whose schema lives only as long as the
+    connection that built it, so a preceding test that opened connections from
+    threads could evict it and fail this test with "no such table: game" for
+    reasons that have nothing to do with PGN headers.
+    """
+    from universalchess.db import models
+
+    game = models.Game(source="local.py", white="W", black="B", result="1-0",
+                        created_at=datetime.datetime(2026, 7, 10, 1, 22, 33))
+    private_db_session.add(game)
+    private_db_session.commit()
+
+    g = webapp.build_chess_game_from_id(private_db_session, game.id)
+    assert g.headers["Date"] == "2026.07.10"
+    assert g.headers["UTCDate"] == "2026.07.10"
+    assert g.headers["UTCTime"] == "01:22:33"
