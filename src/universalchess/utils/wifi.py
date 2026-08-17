@@ -11,19 +11,24 @@ from typing import Callable, List, Optional
 
 from universalchess.epaper import SplashScreen
 from universalchess.connectivity import wifi as wifi_core
+from universalchess.i18n import t
 
 
 def scan_wifi_networks(board, log) -> List[dict]:
     """Scan for WiFi networks, showing a board "Scanning..." splash first."""
     board.display_manager.clear_widgets(addStatusBar=False)
     promise = board.display_manager.add_widget(
-        SplashScreen(board.display_manager.update, message="Scanning...", leave_room_for_status_bar=False)
+        SplashScreen(board.display_manager.update, message=t("common.scanning"), leave_room_for_status_bar=False)
     )
     if promise:
         try:
             promise.result(timeout=5.0)
-        except Exception:
-            pass
+        except Exception as e:
+            # The wait only exists so the splash is seen before the scan starts;
+            # the scan does not depend on the render, so a slow or failed panel
+            # must not stop it. Logged rather than swallowed so a panel that
+            # never settles is visible in the journal.
+            log.debug("[WiFi] Scanning splash render wait failed (continuing): %s", e)
     return wifi_core.scan_networks(log)
 
 
@@ -41,13 +46,13 @@ def connect_to_wifi(board, log, ssid: str, password: Optional[str] = None) -> bo
     """
     board.display_manager.clear_widgets(addStatusBar=False)
     promise = board.display_manager.add_widget(
-        SplashScreen(board.display_manager.update, message="Connecting...", leave_room_for_status_bar=False)
+        SplashScreen(board.display_manager.update, message=t("common.connecting"), leave_room_for_status_bar=False)
     )
     if promise:
         try:
             promise.result(timeout=5.0)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("[WiFi] Connecting splash render wait failed (continuing): %s", e)
 
     success, message = wifi_core.connect_network(ssid, password, log)
     if success:
@@ -55,12 +60,12 @@ def connect_to_wifi(board, log, ssid: str, password: Optional[str] = None) -> bo
         return True
 
     # Re-wrap the single-line core message onto two lines for the small display.
-    _show_message(board, message.replace(" ", "\n", 1), hold_seconds=3.0)
+    _show_message(board, log, message.replace(" ", "\n", 1), hold_seconds=3.0)
     board.beep(board.SOUND_WRONG, event_type="error")
     return False
 
 
-def _show_message(board, message: str, hold_seconds: float = 0.0) -> None:
+def _show_message(board, log, message: str, hold_seconds: float = 0.0) -> None:
     """Show a full-screen status message, optionally holding it briefly."""
     board.display_manager.clear_widgets(addStatusBar=False)
     promise = board.display_manager.add_widget(
@@ -69,8 +74,8 @@ def _show_message(board, message: str, hold_seconds: float = 0.0) -> None:
     if promise:
         try:
             promise.result(timeout=2.0)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("[WiFi] Message splash render wait failed (continuing): %s", e)
     if hold_seconds > 0:
         time.sleep(hold_seconds)
 
@@ -86,14 +91,16 @@ def get_wifi_password_from_board(
     """Display keyboard widget to collect WiFi password."""
     log.info(f"[WiFi] Opening keyboard for password entry: {ssid}")
     board.display_manager.clear_widgets(addStatusBar=False)
-    keyboard = keyboard_factory(board.display_manager.update, f"Password: {ssid[:10]}", 64)
+    keyboard = keyboard_factory(
+        board.display_manager.update, t("wifi.password_prompt", ssid=ssid[:10]), 64
+    )
     set_active_keyboard(keyboard)
     promise = board.display_manager.add_widget(keyboard)
     if promise:
         try:
             promise.result(timeout=2.0)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("[WiFi] Keyboard render wait failed (continuing): %s", e)
     try:
         result = keyboard.wait_for_input(timeout=300.0)
         log.info(f"[WiFi] Keyboard input complete, got {'password' if result else 'cancelled'}")

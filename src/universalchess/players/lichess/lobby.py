@@ -94,7 +94,7 @@ def resolve_lichess_identity(token, log=None, host_id: str = "org"):
     from universalchess.services.account_store import ResolvedIdentity
 
     if not token or token == "tokenhere":  # noqa: S105 # nosec B105 - placeholder sentinel, not a secret
-        return ResolvedIdentity(error="no_token", message="No API token provided")
+        return ResolvedIdentity(error="no_token", message=t("lichess.identity.no_token"))
     connection = None
     try:
         from .match import create_lichess_connection
@@ -102,16 +102,16 @@ def resolve_lichess_identity(token, log=None, host_id: str = "org"):
         connection = create_lichess_connection(token, host_id=host_id)
         username = connection.client.account.get().get("username", "")
         if not username:
-            return ResolvedIdentity(error="auth_failed", message="Could not read Lichess account")
+            return ResolvedIdentity(error="auth_failed", message=t("lichess.identity.unreadable"))
         return ResolvedIdentity(identity=username)
     except ImportError:
         if log:
             log.error("[Lichess] berserk library not installed")
-        return ResolvedIdentity(error="no_berserk", message="Lichess client library not installed")
+        return ResolvedIdentity(error="no_berserk", message=t("lichess.identity.no_berserk"))
     except Exception as e:
         if log:
             log.error(f"[Lichess] Token verification failed: {e}")
-        return ResolvedIdentity(error="auth_failed", message="Could not verify token with Lichess")
+        return ResolvedIdentity(error="auth_failed", message=t("lichess.identity.unverified"))
     finally:
         if connection is not None:
             connection.close()
@@ -636,9 +636,9 @@ def show_lichess_ongoing_games(client, menu_manager, log) -> Optional[str]:
         entries = []
         for row in summaries:
             color = (
-                t("lichess.color.white_initial")
+                t("chess.color.white_initial")
                 if row["color"] == "white"
-                else t("lichess.color.black_initial")
+                else t("chess.color.black_initial")
             )
             label = f"{row['opponent']}\n({row['rating']}) {color}"
             entries.append(

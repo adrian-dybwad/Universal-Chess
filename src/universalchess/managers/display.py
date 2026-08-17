@@ -24,6 +24,7 @@ import chess.engine
 
 from universalchess.board import board
 from universalchess.board.logging import log
+from universalchess.i18n import t
 from universalchess.services import get_chess_clock_service
 from universalchess.services.engine_registry import get_engine_registry, EngineHandle
 from universalchess.state import get_chess_clock as get_clock_state
@@ -1317,10 +1318,10 @@ class DisplayManager:
         color_suffix = "w" if is_white else "b"
         
         entries = [
-            _IconMenuEntry(key="q", label="Queen", icon_name=f"Q{color_suffix}"),
-            _IconMenuEntry(key="r", label="Rook", icon_name=f"R{color_suffix}"),
-            _IconMenuEntry(key="b", label="Bishop", icon_name=f"B{color_suffix}"),
-            _IconMenuEntry(key="n", label="Knight", icon_name=f"N{color_suffix}"),
+            _IconMenuEntry(key="q", label=t("piece.queen"), icon_name=f"Q{color_suffix}"),
+            _IconMenuEntry(key="r", label=t("piece.rook"), icon_name=f"R{color_suffix}"),
+            _IconMenuEntry(key="b", label=t("piece.bishop"), icon_name=f"B{color_suffix}"),
+            _IconMenuEntry(key="n", label=t("piece.knight"), icon_name=f"N{color_suffix}"),
         ]
         
         # Selection synchronization
@@ -1434,7 +1435,7 @@ class DisplayManager:
                 log.warning(f"[DisplayManager] Draw offer resolver failed, accepting: {e}")
             if not accepted:
                 log.info("[DisplayManager] Draw offer declined by opponent - resuming game")
-                self.show_splash("Draw declined")
+                self.show_splash(t("game.draw_declined"))
                 time.sleep(self._DRAW_DECLINED_MESSAGE_SECONDS)
                 result = "cancel"
 
@@ -1492,19 +1493,19 @@ class DisplayManager:
             # White flag (white fill, black border) for white resigns
             # Black flag (black fill, white border) for black resigns
             entries = [
-                _IconMenuEntry(key="resign_white", label="White\nResigns", icon_name="resign_white"),
-                _IconMenuEntry(key="resign_black", label="Black\nResigns", icon_name="resign_black"),
-                _IconMenuEntry(key="draw", label="Draw", icon_name="draw"),
-                _IconMenuEntry(key="cancel", label="Cancel", icon_name="cancel"),
+                _IconMenuEntry(key="resign_white", label=t("game.resign_white"), icon_name="resign_white"),
+                _IconMenuEntry(key="resign_black", label=t("game.resign_black"), icon_name="resign_black"),
+                _IconMenuEntry(key="draw", label=t("game.draw"), icon_name="draw"),
+                _IconMenuEntry(key="cancel", label=t("common.cancel"), icon_name="cancel"),
             ]
         else:
             entries = [
-                _IconMenuEntry(key="resign", label="Resign", icon_name="resign"),
-                _IconMenuEntry(key="draw", label="Draw", icon_name="draw"),
-                _IconMenuEntry(key="cancel", label="Cancel", icon_name="cancel"),
+                _IconMenuEntry(key="resign", label=t("game.resign"), icon_name="resign"),
+                _IconMenuEntry(key="draw", label=t("game.draw"), icon_name="draw"),
+                _IconMenuEntry(key="cancel", label=t("common.cancel"), icon_name="cancel"),
             ]
             if allow_abort:
-                entries.insert(0, _IconMenuEntry(key="abort", label="Abort", icon_name="cancel"))
+                entries.insert(0, _IconMenuEntry(key="abort", label=t("game.abort"), icon_name="cancel"))
         
         # Create menu - default to Cancel (last item)
         back_menu = _IconMenuWidget(
@@ -1573,7 +1574,8 @@ class DisplayManager:
         """
 
         
-        color_name = "White" if king_color else "Black"
+        color_name = "white" if king_color else "black"
+        color_label = t("chess.color.white") if king_color else t("chess.color.black")
         # Use same resign icons as kings-in-center: resign_white for white, resign_black for black
         icon_name = "resign_white" if king_color else "resign_black"
         log.info(f"[DisplayManager] Showing king-lift resign menu for {color_name}")
@@ -1583,8 +1585,8 @@ class DisplayManager:
         self._pause_clock_for_menu()
 
         entries = [
-            _IconMenuEntry(key="resign", label=f"Resign\n{color_name}?", icon_name=icon_name),
-            _IconMenuEntry(key="cancel", label="No", icon_name="cancel"),
+            _IconMenuEntry(key="resign", label=t("game.resign_color", color=color_label), icon_name=icon_name),
+            _IconMenuEntry(key="cancel", label=t("common.no"), icon_name="cancel"),
         ]
         
         # Create menu - default to No (cancel)

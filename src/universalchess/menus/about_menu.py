@@ -11,6 +11,7 @@ rows" so the menu never crashes.
 from typing import Optional, List
 
 from universalchess.menus.engine import MenuRow
+from universalchess.i18n import t
 from universalchess.board.system_info import (
     SystemInfo,
     format_gibibytes,
@@ -44,10 +45,10 @@ def build_system_info_entries(system_info: Optional[SystemInfo]) -> List[MenuRow
     )
 
     return [
-        MenuRow(key="SysCpu", label=f"CPU\n{cpu_value} / {temp_value}", icon="engine", selectable=False),
-        MenuRow(key="SysMemory", label=f"Memory\n{memory_value}", icon="system", selectable=False),
-        MenuRow(key="SysDisk", label=f"Storage\n{disk_value}", icon="info", selectable=False),
-        MenuRow(key="SysUptime", label=f"Uptime\n{format_uptime(system_info.uptime_seconds)}", icon="timer", selectable=False),
+        MenuRow(key="SysCpu", label=t("about.cpu", value=f"{cpu_value} / {temp_value}"), icon="engine", selectable=False),
+        MenuRow(key="SysMemory", label=t("about.memory", value=memory_value), icon="system", selectable=False),
+        MenuRow(key="SysDisk", label=t("about.storage", value=disk_value), icon="info", selectable=False),
+        MenuRow(key="SysUptime", label=t("about.uptime", value=format_uptime(system_info.uptime_seconds)), icon="timer", selectable=False),
     ]
 
 

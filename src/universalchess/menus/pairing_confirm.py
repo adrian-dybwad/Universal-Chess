@@ -15,6 +15,7 @@ adapters over these helpers.
 """
 
 from typing import Callable, List, Optional
+from universalchess.i18n import t
 
 try:
     from universalchess.board.logging import log as _default_log
@@ -57,13 +58,13 @@ def build_pairing_confirm_entries(
     be a focusable target, so the default highlight can rest on Reject.
     """
     if passkey:
-        prompt = f"Pair device?\n{passkey}"
+        prompt = t("bluetooth.pair_device_passkey", passkey=passkey)
     else:
-        prompt = "Pair this\ndevice?"
+        prompt = t("bluetooth.pair_this_device")
     return [
         make_entry(INFO_KEY, prompt, "bluetooth", False),
-        make_entry(PAIR_KEY, "Pair", "play", True),
-        make_entry(REJECT_KEY, "Reject", "cancel", True),
+        make_entry(PAIR_KEY, t("bluetooth.pair"), "play", True),
+        make_entry(REJECT_KEY, t("bluetooth.reject"), "cancel", True),
     ]
 
 

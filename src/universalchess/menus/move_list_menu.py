@@ -9,6 +9,7 @@ a recorded game (the current game stays in history to resume later).
 from typing import List, Optional, Tuple
 
 from universalchess.epaper.icon_menu import IconMenuEntry
+from universalchess.i18n import t
 
 
 def players_support_takeback(player_manager) -> bool:
@@ -113,19 +114,19 @@ def build_move_list_action_entries(*, takeback_enabled: bool) -> List[IconMenuEn
     return [
         IconMenuEntry(
             key="takeback",
-            label="Take back to\nthis position",
+            label=t("move_list.take_back"),
             icon_name="undo",
             enabled=takeback_enabled,
         ),
         IconMenuEntry(
             key="new_game",
-            label="New game from\nthis position",
+            label=t("move_list.new_game_from"),
             icon_name="play",
             enabled=True,
         ),
         IconMenuEntry(
             key="cancel",
-            label="Cancel",
+            label=t("common.cancel"),
             icon_name="cancel",
             enabled=True,
         ),

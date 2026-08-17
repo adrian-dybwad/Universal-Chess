@@ -76,6 +76,33 @@ def private_db_session(tmp_path, monkeypatch):
 
 
 @pytest.fixture
+def spanish_board(monkeypatch):
+    """Run the board in Spanish, and leave no cached locale behind.
+
+    Both localizers -- the string bundle and the menu catalog -- memoise the
+    device language on first use, so a test that switched it without resetting
+    would decide the language of every test that ran after it. Spanish is the
+    language these tests read in because it differs from English in every string
+    under test, which an untranslated fallback cannot fake.
+    """
+    from universalchess import i18n
+    from universalchess.menus.catalog import loader
+
+    monkeypatch.setattr(
+        "universalchess.services.language_service.get_language", lambda: "es"
+    )
+    i18n._active_locale = None
+    i18n._bundles.clear()
+    loader._active_locale = None
+    i18n.refresh_active_language()
+    loader.refresh_active_language()
+    yield i18n
+    i18n._active_locale = None
+    i18n._bundles.clear()
+    loader._active_locale = None
+
+
+@pytest.fixture
 def mock_controller():
     """
     Provide a mock SyncCentaur controller for tests.

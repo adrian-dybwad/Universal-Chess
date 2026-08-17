@@ -3519,14 +3519,14 @@ def api_board_setup_position():
             return jsonify({"success": False, "error": "Invalid FEN"}), 400
 
         from universalchess.menus.positions_menu import (
-            POSITION_UNAVAILABLE_WITH_LICHESS,
+            position_unavailable_message,
             position_unavailable_with_lichess,
         )
 
         player1, player2 = _read_player_dicts()
         if position_unavailable_with_lichess(player1["type"], player2["type"]):
             return jsonify(
-                {"success": False, "error": POSITION_UNAVAILABLE_WITH_LICHESS}
+                {"success": False, "error": position_unavailable_message()}
             ), 409
 
         name = (body.get("name") or "Position").strip()

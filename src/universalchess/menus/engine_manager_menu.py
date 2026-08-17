@@ -25,6 +25,7 @@ from concurrent.futures import TimeoutError as RenderTimeoutError
 from typing import Any, Callable, Optional, List, Dict
 
 from universalchess.epaper.icon_menu import IconMenuEntry
+from universalchess.i18n import t
 from universalchess.epaper import SplashScreen
 from universalchess.managers.menu import MenuSelection, is_break_result
 from universalchess.services import install_resume
@@ -52,10 +53,10 @@ _RESUME_STORE = None
 # carry a grouping, so the group is stated in a row of its own; without it a
 # 1900-rated novelty engine reads as a peer of the strongest engine in the
 # catalog. Keyed by the tier the shared view assigns.
-TIER_HEADINGS = {
-    "top": "Top Tier",
-    "strong": "Strong",
-    "specialty": "Specialty",
+TIER_HEADING_KEYS = {
+    "top": "engine.tier_top",
+    "strong": "engine.tier_strong",
+    "specialty": "engine.tier_specialty",
 }
 
 # Operator-added engines get their own heading rather than joining a strength
@@ -131,7 +132,7 @@ def build_engine_list_entries(rows) -> List[IconMenuEntry]:
     current_group = None
 
     for row in rows:
-        group = CUSTOM_HEADING if row.is_custom else TIER_HEADINGS[row.tier]
+        group = CUSTOM_HEADING if row.is_custom else t(TIER_HEADING_KEYS[row.tier])
         if group != current_group:
             current_group = group
             entries.append(
@@ -194,11 +195,11 @@ def _status_line(row) -> str:
     Otherwise the engine's own summary, which is what the line normally carries.
     """
     if not row.supported:
-        return row.unsupported_reason or "Not supported on this device"
+        return row.unsupported_reason or t("engine.not_supported")
     if row.needs_repair:
-        return "Needs repair"
+        return t("engine.needs_repair")
     if row.resume_point is not None:
-        return f"Paused at {row.resume_point.percent}%"
+        return t("engine.paused_at", percent=row.resume_point.percent)
     return row.summary or ""
 
 
@@ -313,7 +314,7 @@ def show_engine_install_progress(
         # progress for a build that was never dispatched.
         log.warning(f"[EngineManager] {engine_name} install refused: {result.message}")
         board.beep(board.SOUND_GENERAL, event_type="error")
-        _show_splash(board, log, f"Cannot install\n{display_name}\n\n{result.message}",
+        _show_splash(board, log, t("engine.cannot_install", engine=display_name, error=result.message),
                      f"{display_name} refusal")
         time.sleep(_MESSAGE_DWELL_SECONDS)
         return False
@@ -354,8 +355,7 @@ def _watch_install(engine_name, display_name, estimated_minutes, board, log,
     """Render the shared install state until the install ends or the user leaves."""
     progress_splash = _show_splash(
         board, log,
-        f"Installing\n{display_name}\n\nMay take ~{estimated_minutes} min\n"
-        f"BACK leave running\nTICK options",
+        t("engine.installing_estimate", engine=display_name, minutes=estimated_minutes),
         f"{display_name} install",
     )
 
@@ -366,11 +366,11 @@ def _watch_install(engine_name, display_name, estimated_minutes, board, log,
         rendered = (status["percent"], status["message"])
         if rendered != last_rendered and not stop_requested:
             last_rendered = rendered
-            message = (status["message"] or "Working...")[:_PROGRESS_LINE_CHARS]
-            progress_splash.set_message(
-                f"Installing\n{display_name}...\n\n{status['percent']}%  {message}\n\n"
-                f"BACK leave running\nTICK options"
-            )
+            message = (status["message"] or t("engine.working"))[:_PROGRESS_LINE_CHARS]
+            progress_splash.set_message(t(
+                "engine.installing", engine=display_name,
+                percent=status["percent"], detail=message,
+            ))
 
         key = board.controller.get_next_key(timeout=0.0)
         if key == board.Key.BACK:
@@ -402,10 +402,10 @@ def _offer_stop(engine_name, display_name, board, log, *, menu_manager, control,
     reclaim finished work. It is offered once the install has actually stopped.
     """
     entries = [
-        IconMenuEntry(key="stop", label=f"Stop {display_name} install",
+        IconMenuEntry(key="stop", label=t("engine.stop_install", engine=display_name),
                       icon_name="cancel", enabled=True, selectable=True,
                       height_ratio=1.0, layout="horizontal", font_size=14),
-        IconMenuEntry(key="keep", label="Keep installing", icon_name="undo",
+        IconMenuEntry(key="keep", label=t("engine.keep_installing"), icon_name="undo",
                       enabled=True, selectable=True, height_ratio=1.0,
                       layout="horizontal", font_size=14),
     ]
@@ -415,11 +415,11 @@ def _offer_stop(engine_name, display_name, board, log, *, menu_manager, control,
 
     log.info(f"[EngineManager] Stop requested for the {engine_name} install")
     board.beep(board.SOUND_GENERAL)
-    splash.set_message(f"Stopping\n{display_name}...")
+    splash.set_message(t("engine.stopping", engine=display_name))
     result = control.stop()
     if not result.accepted:
         log.warning(f"[EngineManager] Stop refused: {result.message}")
-        splash.set_message(f"Could not stop\n{display_name}\n\n{result.message}")
+        splash.set_message(t("engine.could_not_stop", engine=display_name, error=result.message))
     return result.accepted
 
 
@@ -441,7 +441,7 @@ def _report_ending(engine_name, display_name, status, board, log, *, menu_manage
         # last failed install happened to leave behind.
         log.info(f"[EngineManager] Installation of {engine_name} stopped by the user")
         board.beep(board.SOUND_GENERAL)
-        splash.set_message(f"{display_name}\ninstall stopped\n\nat {status['percent']}%")
+        splash.set_message(t("engine.install_stopped", engine=display_name, percent=status["percent"]))
         _offer_discard(engine_name, display_name, board, log,
                        menu_manager=menu_manager, control=control, splash=splash)
         return False
@@ -449,14 +449,14 @@ def _report_ending(engine_name, display_name, status, board, log, *, menu_manage
     succeeded = bool((status["result"] or {}).get("success"))
     if succeeded:
         board.beep(board.SOUND_GENERAL)
-        splash.set_message(f"{display_name}\ninstalled!")
+        splash.set_message(t("engine.installed_splash", engine=display_name))
         time.sleep(1.5)
         return True
 
-    error = (status["result"] or {}).get("error") or status["message"] or "Unknown error"
+    error = (status["result"] or {}).get("error") or status["message"] or t("engine.unknown_error")
     log.error(f"[EngineManager] Installation of {engine_name} failed: {error}")
     board.beep(board.SOUND_GENERAL, event_type="error")
-    splash.set_message(f"Install failed\n\n{error[:_ERROR_LINE_CHARS]}")
+    splash.set_message(t("engine.install_failed", error=error[:_ERROR_LINE_CHARS]))
     time.sleep(_MESSAGE_DWELL_SECONDS)
     return False
 
@@ -475,10 +475,10 @@ def _offer_discard(engine_name, display_name, board, log, *, menu_manager, contr
     reach, exactly as the detail screen's prompt defaults to Cancel.
     """
     entries = [
-        IconMenuEntry(key="keep", label="Keep it (resume later)", icon_name="undo",
+        IconMenuEntry(key="keep", label=t("engine.keep_paused"), icon_name="undo",
                       enabled=True, selectable=True, height_ratio=1.0,
                       layout="horizontal", font_size=14),
-        IconMenuEntry(key="discard", label=f"Discard {display_name} build",
+        IconMenuEntry(key="discard", label=t("engine.discard_build", engine=display_name),
                       icon_name="cancel", enabled=True, selectable=True,
                       height_ratio=1.0, layout="horizontal", font_size=14),
     ]
@@ -489,8 +489,8 @@ def _offer_discard(engine_name, display_name, board, log, *, menu_manager, contr
     log.info(f"[EngineManager] Discarding the stopped {engine_name} install")
     result = control.discard(engine_name)
     splash.set_message(
-        f"{display_name}\nbuild discarded" if result.accepted
-        else f"Could not discard\n\n{result.message}"
+        t("engine.build_discarded", engine=display_name) if result.accepted
+        else t("engine.could_not_discard", error=result.message)
     )
     time.sleep(_MESSAGE_DWELL_SECONDS if not result.accepted else 1.5)
 
@@ -503,11 +503,12 @@ def confirm_discard_install(menu_manager, display_name: str = "") -> bool:
     highlight defaults to Cancel so a stray confirmation press cannot destroy the
     work the user meant to continue; any non-Discard outcome is a refusal.
     """
-    prompt = f"Discard paused\n{display_name} install?" if display_name else "Discard paused\ninstall?"
+    prompt = (t("engine.discard_paused_named", engine=display_name) if display_name
+              else t("engine.discard_paused_prompt"))
     entries = [
         IconMenuEntry(key="prompt", label=prompt, icon_name="cancel", enabled=True, selectable=False, font_size=12),
-        IconMenuEntry(key="Discard", label="Discard", icon_name="cancel", enabled=True),
-        IconMenuEntry(key="Cancel", label="Cancel", icon_name="undo", enabled=True),
+        IconMenuEntry(key="Discard", label=t("engine.discard"), icon_name="cancel", enabled=True),
+        IconMenuEntry(key="Cancel", label=t("common.cancel"), icon_name="undo", enabled=True),
     ]
     result = menu_manager.show_menu(entries, initial_index=2)
     key = getattr(result, "key", result)
@@ -607,7 +608,7 @@ def handle_engine_detail_menu(
                 entries.append(
                     IconMenuEntry(
                         key="uninstall",
-                        label="Uninstall",
+                        label=t("engine.uninstall"),
                         icon_name="cancel",
                         enabled=True,
                         selectable=True,
@@ -620,7 +621,7 @@ def handle_engine_detail_menu(
                 entries.append(
                     IconMenuEntry(
                         key="installed_permanent",
-                        label="Installed (required)",
+                        label=t("engine.installed_required"),
                         icon_name="checkbox_checked",
                         enabled=True,
                         selectable=False,
@@ -636,7 +637,7 @@ def handle_engine_detail_menu(
             entries.append(
                 IconMenuEntry(
                     key="view",
-                    label="View install progress",
+                    label=t("engine.view_progress"),
                     icon_name="download",
                     enabled=True,
                     selectable=True,
@@ -653,7 +654,7 @@ def handle_engine_detail_menu(
             entries.append(
                 IconMenuEntry(
                     key="resume",
-                    label=f"Resume install ({resume_point.percent}%)",
+                    label=t("engine.resume_install", percent=resume_point.percent),
                     icon_name="download",
                     enabled=True,
                     selectable=True,
@@ -665,7 +666,7 @@ def handle_engine_detail_menu(
             entries.append(
                 IconMenuEntry(
                     key="discard",
-                    label="Discard paused install",
+                    label=t("engine.discard_paused"),
                     icon_name="cancel",
                     enabled=True,
                     selectable=True,
@@ -675,7 +676,7 @@ def handle_engine_detail_menu(
                 )
             )
         else:
-            install_label = f"Install (~{est_minutes} min)"
+            install_label = t("engine.install_estimate", minutes=est_minutes)
             entries.append(
                 IconMenuEntry(
                     key="install",
@@ -733,7 +734,7 @@ def handle_engine_detail_menu(
                 # installing again from the web while this screen was open.
                 log.warning(f"[EngineManager] Discard refused: {discarded.message}")
                 board.beep(board.SOUND_GENERAL, event_type="error")
-                _show_splash(board, log, f"Could not discard\n\n{discarded.message}",
+                _show_splash(board, log, t("engine.could_not_discard", error=discarded.message),
                              f"{display_name} discard")
                 time.sleep(_MESSAGE_DWELL_SECONDS)
             return None
@@ -743,7 +744,7 @@ def handle_engine_detail_menu(
             board.display_manager.clear_widgets(addStatusBar=False)
             uninstall_splash = SplashScreen(
                 board.display_manager.update,
-                message=f"Uninstalling\n{display_name}...",
+                message=t("engine.uninstalling", engine=display_name),
                 leave_room_for_status_bar=False,
             )
             _wait_for_splash(
@@ -753,7 +754,7 @@ def handle_engine_detail_menu(
             )
 
             engine_manager.uninstall_engine(engine_name)
-            uninstall_splash.set_message(f"{display_name}\nuninstalled")
+            uninstall_splash.set_message(t("engine.uninstalled", engine=display_name))
             time.sleep(1)
             return MenuSelection("BACK", 0)
 

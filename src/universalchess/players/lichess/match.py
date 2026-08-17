@@ -246,9 +246,9 @@ def color_label(color) -> str:
     """
     normalized = str(color).strip().lower()
     if normalized == "white":
-        return t("lichess.color.white")
+        return t("chess.color.white")
     if normalized == "black":
-        return t("lichess.color.black")
+        return t("chess.color.black")
     return t("lichess.color.random")
 
 
@@ -261,7 +261,7 @@ def lichess_started_message(human_is_white: bool) -> str:
     """Copy after accept: the game exists and which side the human sits."""
     return t(
         "lichess.started",
-        color=t("lichess.color.white") if human_is_white else t("lichess.color.black"),
+        color=t("chess.color.white") if human_is_white else t("chess.color.black"),
     )
 
 

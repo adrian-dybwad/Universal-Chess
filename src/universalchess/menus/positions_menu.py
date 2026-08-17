@@ -3,6 +3,7 @@
 from typing import Dict, List, Callable, Optional, Tuple
 
 from universalchess.epaper.icon_menu import IconMenuEntry
+from universalchess.i18n import t
 from universalchess.managers.menu import MenuSelection, is_break_result
 
 # Maps a positions.ini section name to the icon shown for that category.
@@ -21,7 +22,9 @@ CATEGORY_ICONS = {
     "custom": "positions_custom",
 }
 
-POSITION_UNAVAILABLE_WITH_LICHESS = "Unavailable with lichess as a player"
+def position_unavailable_message() -> str:
+    """Why a stored position cannot be started, in the device language."""
+    return t("positions.unavailable_with_lichess")
 
 
 def position_unavailable_with_lichess(player1_type: str, player2_type: str) -> bool:
@@ -131,8 +134,8 @@ def _confirm_end_running_game(
     defaults to Cancel so an accidental confirm cannot silently discard a game.
     """
     entries = [
-        IconMenuEntry(key="confirm", label="End Game?", icon_name="exit", enabled=True),
-        IconMenuEntry(key="cancel", label="Cancel", icon_name="cancel", enabled=True),
+        IconMenuEntry(key="confirm", label=t("positions.end_game"), icon_name="exit", enabled=True),
+        IconMenuEntry(key="cancel", label=t("common.cancel"), icon_name="cancel", enabled=True),
     ]
     return show_menu(entries, initial_index=1)
 
@@ -162,7 +165,7 @@ def handle_positions_menu(
     is left untouched and the menu stays open.
 
     When ``lichess_as_player`` is true, selecting a position shows
-    :data:`POSITION_UNAVAILABLE_WITH_LICHESS` and does not start or abort.
+    :func:`position_unavailable_message` and does not start or abort.
     """
     positions = load_positions_config()
     if not positions:
@@ -219,7 +222,7 @@ def handle_positions_menu(
 
             if lichess_as_player is not None and lichess_as_player():
                 if show_alert is not None:
-                    show_alert(POSITION_UNAVAILABLE_WITH_LICHESS)
+                    show_alert(position_unavailable_message())
                 continue
 
             if is_game_in_progress is not None and is_game_in_progress():

@@ -36,24 +36,9 @@ SPANISH = "es"
 
 
 @pytest.fixture
-def spanish(monkeypatch):
-    """Run the board in Spanish, and leave no cached locale behind.
-
-    Both localizers memoise the device language, so a test that switched it
-    without resetting would decide the language of every test that followed.
-    """
-    monkeypatch.setattr(
-        "universalchess.services.language_service.get_language", lambda: SPANISH
-    )
-    i18n._active_locale = None
-    i18n._bundles.clear()
-    loader._active_locale = None
-    i18n.refresh_active_language()
-    loader.refresh_active_language()
-    yield
-    i18n._active_locale = None
-    i18n._bundles.clear()
-    loader._active_locale = None
+def spanish(spanish_board):
+    """The board in Spanish (see the ``spanish_board`` fixture in conftest)."""
+    return spanish_board
 
 
 def _seek() -> LichessSeek:
@@ -186,7 +171,7 @@ def test_waiting_splash_lists_the_seek_in_the_device_language(spanish):
 
     assert lines[0] == i18n.t("lichess.waiting.seeking")
     assert lines[1] == f"10+5 {i18n.t('lichess.seek.rated')}"
-    assert lines[2] == i18n.t("lichess.color.white")
+    assert lines[2] == i18n.t("chess.color.white")
     assert "Waiting" not in message
     assert "rated" not in message
 
@@ -207,7 +192,7 @@ def test_the_other_lichess_splashes_are_in_the_device_language(spanish):
     ) == i18n.t("lichess.waiting.challenge")
     assert lichess_cancelling_message() == i18n.t("lichess.waiting.exiting")
     assert lichess_started_message(True) == i18n.t(
-        "lichess.started", color=i18n.t("lichess.color.white")
+        "lichess.started", color=i18n.t("chess.color.white")
     )
     assert "Exiting" not in lichess_cancelling_message()
 
@@ -239,7 +224,7 @@ def test_in_game_offers_are_in_the_device_language(spanish):
     assert rows[1].label == i18n.t("lichess.offer.accept_challenge")
     assert rows[2].label == i18n.t("lichess.offer.decline")
     # The terms line under them names the colour and the rated state as words.
-    assert i18n.t("lichess.color.black") in rows[0].label
+    assert i18n.t("chess.color.black") in rows[0].label
     assert i18n.t("lichess.seek.casual") in rows[0].label
     assert "Accept" not in "".join(row.label for row in rows)
 

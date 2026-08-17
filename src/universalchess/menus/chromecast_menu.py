@@ -12,6 +12,7 @@ from typing import List, Callable, Optional
 from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.managers.menu import MenuSelection, is_break_result
 from universalchess.epaper import SplashScreen
+from universalchess.i18n import t
 
 # Key prefix for a per-device Stop entry; the device name follows the colon.
 _STOP_PREFIX = "STOP:"
@@ -68,8 +69,10 @@ def handle_chromecast_menu(
         if promise:
             try:
                 promise.result(timeout=2.0)
-            except Exception:
-                pass
+            except Exception as e:
+                # Best-effort: the wait only lets the user see the splash before
+                # the next step, which does not depend on the render.
+                log.debug("[Chromecast] Splash render wait failed (continuing): %s", e)
         if hold:
             time.sleep(hold)
 
@@ -77,7 +80,7 @@ def handle_chromecast_menu(
         use_live_board = bool(get_use_live_board())
         return IconMenuEntry(
             key=_SOURCE,
-            label="Stream Board Only",
+            label=t("chromecast.stream_board_only"),
             icon_name="checkbox_checked" if use_live_board else "checkbox_empty",
             enabled=True,
         )
@@ -85,24 +88,24 @@ def handle_chromecast_menu(
     def toggle_source() -> None:
         new_value = not bool(get_use_live_board())
         set_use_live_board(new_value)
-        label = "Board Only" if new_value else "Classic"
-        log.info(f"[Chromecast] Source set to {label}")
-        splash(f"Chromecast:\n{label}", hold=1.0)
+        source = t("chromecast.source_board_only") if new_value else t("chromecast.source_classic")
+        log.info(f"[Chromecast] Source set to board-only={new_value}")
+        splash(t("chromecast.set_source", source=source), hold=1.0)
 
     active = list(cc_service.active_devices)
     if active:
         entries = [source_entry()] + [
             IconMenuEntry(
                 key=f"{_STOP_PREFIX}{name}",
-                label=f"Stop: {_truncate(name)}",
+                label=t("chromecast.stop_device", name=_truncate(name)),
                 icon_name="cast",
                 enabled=True,
             )
             for name in active
         ]
-        entries.append(IconMenuEntry(key=_ADD, label="Add device", icon_name="cast", enabled=True))
+        entries.append(IconMenuEntry(key=_ADD, label=t("chromecast.add_device"), icon_name="cast", enabled=True))
         if len(active) > 1:
-            entries.append(IconMenuEntry(key=_STOP_ALL, label="Stop all", icon_name="cast", enabled=True))
+            entries.append(IconMenuEntry(key=_STOP_ALL, label=t("chromecast.stop_all"), icon_name="cast", enabled=True))
 
         result = show_menu(entries)
         if is_break_result(result):
@@ -115,21 +118,21 @@ def handle_chromecast_menu(
         if result == _STOP_ALL:
             cc_service.stop_streaming()
             log.info("[Chromecast] All streaming stopped by user")
-            splash("Streaming\nstopped", hold=1.0)
+            splash(t("chromecast.streaming_stopped"), hold=1.0)
             board.beep(board.SOUND_GENERAL)
             return None
         if result.startswith(_STOP_PREFIX):
             device = result[len(_STOP_PREFIX):]
             cc_service.stop_streaming(device)
             log.info(f"[Chromecast] Streaming stopped by user: {device}")
-            splash("Streaming\nstopped", hold=1.0)
+            splash(t("chromecast.streaming_stopped"), hold=1.0)
             board.beep(board.SOUND_GENERAL)
             return None
         # result == _ADD falls through to discovery below.
     else:
         entries = [
             source_entry(),
-            IconMenuEntry(key=_ADD, label="Find device", icon_name="cast", enabled=True),
+            IconMenuEntry(key=_ADD, label=t("chromecast.find_device"), icon_name="cast", enabled=True),
         ]
         result = show_menu(entries)
         if is_break_result(result):
@@ -140,18 +143,18 @@ def handle_chromecast_menu(
             toggle_source()
             return None
 
-    splash("Discovering\nChromecasts...")
+    splash(t("chromecast.discovering"))
 
     try:
         import pychromecast
         chromecasts, browser = pychromecast.get_chromecasts()
     except ImportError:
         log.error("[Chromecast] pychromecast library not installed")
-        splash("pychromecast\nnot installed", hold=2.0)
+        splash(t("chromecast.not_installed"), hold=2.0)
         return None
     except Exception as e:
         log.error(f"[Chromecast] Discovery failed: {e}")
-        splash("Discovery\nfailed", hold=2.0)
+        splash(t("chromecast.discovery_failed"), hold=2.0)
         return None
 
     active_set = set(active)
@@ -169,12 +172,14 @@ def handle_chromecast_menu(
 
     try:
         browser.stop_discovery()
-    except Exception:
-        pass
+    except Exception as e:
+        # The devices are already collected; a browser that cannot be stopped
+        # costs a background thread, not the list the user is about to see.
+        log.debug("[Chromecast] Stopping discovery failed (continuing): %s", e)
 
     if not cast_entries:
         log.info("[Chromecast] No additional Chromecast devices found")
-        splash("No Chromecasts\nfound", hold=2.0)
+        splash(t("chromecast.none_found"), hold=2.0)
         return None
 
     log.info(f"[Chromecast] Found {len(cast_entries)} device(s)")
@@ -184,13 +189,13 @@ def handle_chromecast_menu(
     if result in _EXIT_KEYS:
         return None
 
-    splash("Connecting...\nPlease wait")
+    splash(t("chromecast.connecting"))
     try:
         cc_service.start_streaming(result)
         log.info(f"[Chromecast] Streaming started on: {result}")
-        splash(f"Streaming to:\n{_truncate(result)}", hold=1.0)
+        splash(t("chromecast.streaming_to", name=_truncate(result)), hold=1.0)
         board.beep(board.SOUND_GENERAL)
     except Exception as e:
         log.error(f"[Chromecast] Streaming failed: {e}")
-        splash("Streaming\nfailed", hold=2.0)
+        splash(t("chromecast.streaming_failed"), hold=2.0)
     return None

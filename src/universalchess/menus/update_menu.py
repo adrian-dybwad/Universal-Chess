@@ -18,6 +18,7 @@ from typing import List, Tuple
 
 from universalchess.epaper import SplashScreen
 from universalchess.services.update_service import get_update_service
+from universalchess.i18n import t
 
 
 def updates_row_state_and_label(status: dict) -> Tuple[str, str]:
@@ -64,22 +65,22 @@ def check_for_updates_interactive(board, log) -> None:
     are caught and surfaced as a splash rather than crashing the menu loop.
     """
     update_service = get_update_service()
-    _show_update_splash(board, "Checking\nfor updates...")
+    _show_update_splash(board, t("update.checking"))
     try:
         release = update_service.check_for_updates()
         if release:
-            _show_update_splash(board, f"Update available\nv{release.version}")
+            _show_update_splash(board, t("update.available", version=release.version))
             time.sleep(2)
         else:
             # None is a completed "current" check. Fetch failures raise
             # UpdateCheckError (caught below) rather than returning None, so
             # this splash cannot claim "Up to date" when GitHub was unreachable.
             current = update_service.get_current_version()
-            _show_update_splash(board, f"Up to date\nv{current}")
+            _show_update_splash(board, t("update.up_to_date", version=current))
             time.sleep(2)
     except Exception as e:
         log.error(f"[Update] Check failed: {e}")
-        _show_update_splash(board, "Check failed\n\nNo network?")
+        _show_update_splash(board, t("update.check_failed"))
         time.sleep(2)
 
 
@@ -90,18 +91,18 @@ def download_update_interactive(board, log) -> None:
     a download error does not take down the menu.
     """
     update_service = get_update_service()
-    _show_update_splash(board, "Downloading\nupdate...")
+    _show_update_splash(board, t("update.downloading"))
     try:
         deb_path = update_service.download_update()
         if deb_path:
-            _show_update_splash(board, "Download\ncomplete!")
+            _show_update_splash(board, t("update.download_complete"))
             time.sleep(1)
         else:
-            _show_update_splash(board, "Download\nfailed")
+            _show_update_splash(board, t("update.download_failed"))
             time.sleep(2)
     except Exception as e:
         log.error(f"[Update] Download failed: {e}")
-        _show_update_splash(board, "Download\nfailed")
+        _show_update_splash(board, t("update.download_failed"))
         time.sleep(2)
 
 
@@ -113,14 +114,14 @@ def install_pending_interactive(board, log) -> None:
     the new version, so there is no manual restart here; the splash is held while
     the restart takes over.
     """
-    _show_update_splash(board, "Installing\nupdate...")
+    _show_update_splash(board, t("update.installing"))
     if get_update_service().install_pending_update():
-        _show_update_splash(board, "Installing...\nBoard will restart")
+        _show_update_splash(board, t("update.installing_restart"))
         # Hold the splash; the postinst restart terminates this process when the
         # new version takes over.
         time.sleep(30)
     else:
-        _show_update_splash(board, "Install\nfailed")
+        _show_update_splash(board, t("update.install_failed"))
         time.sleep(2)
 
 
@@ -137,16 +138,16 @@ def perform_local_deb_install(board, log, source_path: str) -> None:
     """
     if not source_path or not os.path.exists(source_path):
         log.error(f"[Update] .deb file not found: {source_path}")
-        _show_update_splash(board, "File not\nfound")
+        _show_update_splash(board, t("update.file_not_found"))
         time.sleep(2)
         return
 
-    _show_update_splash(board, "Installing...")
+    _show_update_splash(board, t("update.installing_short"))
     if get_update_service().install_local_deb(source_path):
-        _show_update_splash(board, "Installing...\nBoard will restart")
+        _show_update_splash(board, t("update.installing_restart"))
         time.sleep(30)
     else:
-        _show_update_splash(board, "Install\nfailed")
+        _show_update_splash(board, t("update.install_failed"))
         time.sleep(2)
 
 

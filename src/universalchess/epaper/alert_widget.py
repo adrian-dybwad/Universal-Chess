@@ -12,6 +12,7 @@ Uses TextWidget for all text rendering.
 from PIL import Image, ImageDraw
 from .framework.widget import Widget
 from .text import TextWidget, Justify
+from universalchess.i18n import t
 from typing import Callable, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -89,11 +90,11 @@ class AlertWidget(Widget):
         # Create TextWidgets - use parent handler for child updates
         # CHECK: single large centered text
         self._check_text = TextWidget(0, 0, width, height, self._handle_child_update,
-                                       text="CHECK", font_size=32,
+                                       text=t("alert.check"), font_size=32,
                                        justify=Justify.CENTER, transparent=True)
         # YOUR QUEEN: two lines centered - use wrap text
         self._queen_text = TextWidget(0, 0, width, height, self._handle_child_update,
-                                       text="YOUR\nQUEEN", font_size=18,
+                                       text=t("alert.your_queen"), font_size=18,
                                        justify=Justify.CENTER, wrapText=True,
                                        transparent=True)
     

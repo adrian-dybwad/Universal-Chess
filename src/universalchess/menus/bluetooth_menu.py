@@ -15,8 +15,10 @@ Pair action.
 import time
 from typing import List
 
+from universalchess.board.logging import log
 from universalchess.epaper import SplashScreen
 from universalchess.menus.engine import MenuRow
+from universalchess.i18n import t
 
 
 def _has_friendly_name(device: dict) -> bool:
@@ -55,8 +57,10 @@ def show_splash(board, message: str, hold_seconds: float = 0.0) -> None:
     if promise:
         try:
             promise.result(timeout=2.0)
-        except Exception:
-            pass
+        except Exception as e:
+            # The caller's next step does not depend on this refresh; the wait
+            # only keeps the status readable before it moves on.
+            log.debug("[Bluetooth] Splash refresh wait failed (continuing): %s", e)
     if hold_seconds > 0:
         time.sleep(hold_seconds)
 
@@ -88,7 +92,7 @@ def paired_device_rows(devices: List[dict]) -> List[MenuRow]:
         rows.append(MenuRow(key=dev["address"], label=name[:_DEVICE_LABEL_MAX_CHARS],
                             icon="bluetooth"))
     if not rows:
-        rows.append(MenuRow(key="__none__", label="No devices", icon="bluetooth",
+        rows.append(MenuRow(key="__none__", label=t("common.no_devices"), icon="bluetooth",
                             selectable=False))
     return rows
 
@@ -118,7 +122,7 @@ def keyboard_rows(named_devices: List[dict], scanning: bool) -> List[MenuRow]:
     if not rows:
         rows.append(MenuRow(
             key="__scanning__" if scanning else "__none__",
-            label="Scanning..." if scanning else "No devices",
+            label=t("common.scanning") if scanning else t("common.no_devices"),
             icon="bluetooth", selectable=False))
     return rows
 

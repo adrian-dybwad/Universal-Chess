@@ -14,6 +14,7 @@ import re
 from typing import Optional, Tuple, Callable, List
 
 from universalchess.paths import WIFI_ADMIN
+from universalchess.i18n import t
 
 try:
     from universalchess.board.logging import log
@@ -189,15 +190,15 @@ def format_status_label(status: dict) -> str:
             lines.append(status['ip_address'])
         
         if status['signal'] > 0:
-            lines.append(f"Signal: {status['signal']}%")
+            lines.append(t("wifi.signal", percent=status['signal']))
         
         if status['frequency']:
             lines.append(status['frequency'])
     elif status['enabled']:
-        lines.append("Not connected")
-        lines.append("WiFi enabled")
+        lines.append(t("common.not_connected"))
+        lines.append(t("wifi.enabled"))
     else:
-        lines.append("WiFi disabled")
+        lines.append(t("wifi.disabled"))
     
     return '\n'.join(lines)
 

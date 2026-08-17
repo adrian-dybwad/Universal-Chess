@@ -19,9 +19,10 @@ engine catalog, a build directory, or a board.
 
 import pytest
 
+from universalchess.i18n import t
 from universalchess.menus.engine_manager_menu import (
     CUSTOM_HEADING,
-    TIER_HEADINGS,
+    TIER_HEADING_KEYS,
     build_engine_list_entries,
 )
 from universalchess.services.engine_catalog_view import EngineRow
@@ -121,14 +122,14 @@ class TestTheListKeepsTheOrderAndGroupingItIsGiven:
         entries = build_engine_list_entries(rows)
 
         assert [e.label for e in entries] == [
-            TIER_HEADINGS["top"],
+            t(TIER_HEADING_KEYS["top"]),
             f"Reckless (~{INSTALL_MINUTES}m)\nRated 3600",
-            TIER_HEADINGS["strong"],
+            t(TIER_HEADING_KEYS["strong"]),
             f"Arasan (~{INSTALL_MINUTES}m)\nRated 3600",
-            TIER_HEADINGS["specialty"],
+            t(TIER_HEADING_KEYS["specialty"]),
             f"Claudia (~{INSTALL_MINUTES}m)\nRated 3600",
         ]
-        assert not any(e.selectable for e in entries if e.label in TIER_HEADINGS.values())
+        assert not any(e.selectable for e in entries if e.label in {t(key) for key in TIER_HEADING_KEYS.values()})
 
     def test_a_heading_appears_once_per_group_not_once_per_engine(self):
         """Consecutive engines in the same tier share one heading.
@@ -141,7 +142,7 @@ class TestTheListKeepsTheOrderAndGroupingItIsGiven:
         rows = [make_row(name=f"e{i}", tier="top") for i in range(3)]
         entries = build_engine_list_entries(rows)
 
-        assert [e.label for e in entries].count(TIER_HEADINGS["top"]) == 1
+        assert [e.label for e in entries].count(t(TIER_HEADING_KEYS["top"])) == 1
         assert len(entries) == 4
 
     def test_an_empty_catalog_renders_no_headings(self):

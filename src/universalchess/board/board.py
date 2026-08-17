@@ -45,6 +45,7 @@ from concurrent.futures import Future
 import threading
 
 from universalchess.board.logging import log, logging
+from universalchess.i18n import t
 
 # Inactivity timeout configuration
 INACTIVITY_TIMEOUT_DEFAULT = 900  # Default: 15 minutes of inactivity before shutdown
@@ -557,7 +558,7 @@ def shutdown_countdown(countdown_seconds: int = 3) -> bool:
     try:
         if display_manager is not None:
             from universalchess.epaper import SplashScreen
-            countdown_splash = SplashScreen(display_manager.update, message=f"Shutdown in\n  {countdown_seconds}",
+            countdown_splash = SplashScreen(display_manager.update, message=t("power.shutdown_in", seconds=countdown_seconds),
                                             leave_room_for_status_bar=False)
             splash_future = display_manager.add_widget(countdown_splash)
     except Exception as e:
@@ -589,7 +590,7 @@ def shutdown_countdown(countdown_seconds: int = 3) -> bool:
         # Update display
         try:
             if countdown_splash is not None:
-                countdown_splash.set_message(f"Shutdown in\n  {remaining}")
+                countdown_splash.set_message(t("power.shutdown_in", seconds=remaining))
         except Exception as e:
             log.debug(f"Failed to update countdown: {e}")
         
@@ -1212,7 +1213,7 @@ def eventsThread(keycallback, fieldcallback, tout):
                     try:
                         from universalchess.epaper import SplashScreen
                         inactivity_countdown_splash = SplashScreen(
-                            display_manager.update, message=f"Inactivity\nShutdown in\n{remaining_int} seconds...",
+                            display_manager.update, message=t("power.inactivity_shutdown_in", seconds=remaining_int),
                             leave_room_for_status_bar=False
                         )
                         future = display_manager.add_widget(inactivity_countdown_splash)
@@ -1231,7 +1232,7 @@ def eventsThread(keycallback, fieldcallback, tout):
                     try:
                         if inactivity_countdown_splash is not None:
                             inactivity_countdown_splash.set_message(
-                                f"Inactivity\nShutdown in\n{remaining_int} seconds..."
+                                t("power.inactivity_shutdown_in", seconds=remaining_int)
                             )
                             inactivity_last_displayed_seconds = remaining_int
                     except Exception as e:

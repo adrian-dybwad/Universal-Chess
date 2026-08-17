@@ -11,6 +11,7 @@ that server). Org Alice and .dev Alice are two rows.
 from typing import Dict, List, Optional, Tuple
 
 from universalchess.board.settings import Settings
+from universalchess.i18n import t
 from universalchess.services import account_store
 from universalchess.services.account_store import (
     Account,
@@ -87,7 +88,7 @@ def lichess_account_picker_choices(
     account, so there is no second slot whose account has to be held back.
     """
     chosen = chosen_account_id or ""
-    rows: List[Tuple[str, str, bool]] = [("", "Default account", chosen == "")]
+    rows: List[Tuple[str, str, bool]] = [("", t("accounts.default_account"), chosen == "")]
     for account in list_lichess_credentials(config=config):
         rows.append((account.id, label_of(account), chosen == account.id))
     return rows
@@ -156,25 +157,26 @@ def add_lichess_credential(
     """
     host_id = (fields.get("host") or DEFAULT_HOST_ID).strip().lower()
     if host_id not in HOST_BY_ID:
-        return AddAccountResult(None, "unknown_host", f"Unknown Lichess host {host_id}")
+        return AddAccountResult(None, "unknown_host", t("accounts.unknown_host", host=host_id))
     token = (fields.get("api_token") or "").strip()
     if not token:
-        return AddAccountResult(None, "missing_field", "API Token is required")
+        return AddAccountResult(None, "missing_field", t("accounts.token_required"))
     if resolver is None:
-        return AddAccountResult(None, "no_resolver", "Cannot verify this account type")
+        return AddAccountResult(None, "no_resolver", t("accounts.cannot_verify_type"))
     resolved = resolver({**fields, "host": host_id})
     if resolved.error:
         return AddAccountResult(
-            None, resolved.error, resolved.message or "Could not verify account"
+            None, resolved.error, resolved.message or t("accounts.could_not_verify")
         )
     identity = (resolved.identity or "").strip()
     if not identity:
-        return AddAccountResult(None, "missing_identity", "Account identifier is required")
+        return AddAccountResult(None, "missing_identity", t("accounts.identifier_required"))
 
     account_id = credential_id(host_id, identity)
     if get_account(ACCOUNT_TYPE_LICHESS, account_id, config=config) is not None:
         return AddAccountResult(
-            None, "duplicate", f"An account named {identity} already exists on {get_host(host_id).label}"
+            None, "duplicate",
+            t("accounts.duplicate", name=identity, host=get_host(host_id).label)
         )
 
     values: Dict[str, str] = {

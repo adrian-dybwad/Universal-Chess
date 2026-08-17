@@ -24,6 +24,7 @@ for _mod in ("serial", "serial.tools", "serial.tools.list_ports"):
 from universalchess.epaper.help_dialog import (  # noqa: E402 - after the serial stub above
     HelpDialogWidget,
 )
+from universalchess.i18n import t  # noqa: E402 - after the serial stub above
 from universalchess.epaper.icon_menu import (  # noqa: E402 - after the serial stub above
     IconMenuEntry,
     IconMenuWidget,
@@ -198,7 +199,7 @@ def test_a_short_tip_is_one_page_and_says_any_button_dismisses():
     widget = _dialog("Set up a position.")
 
     assert widget.page_count == 1
-    assert widget.instruction == HelpDialogWidget.SINGLE_PAGE_INSTRUCTION
+    assert widget.instruction == t("about.press_any_button")
 
 
 def test_a_long_tip_pages_instead_of_being_cut_off():
@@ -223,7 +224,7 @@ def test_a_long_tip_pages_instead_of_being_cut_off():
         seen.append(widget.page_text)
 
     assert " ".join(page.replace("\n", " ") for page in seen) == tip
-    assert widget.instruction == HelpDialogWidget.MULTI_PAGE_INSTRUCTION
+    assert widget.instruction == t("help.multi_page_instruction")
 
 
 def test_up_and_down_page_the_tip_and_wrap_like_the_rest_of_the_board():

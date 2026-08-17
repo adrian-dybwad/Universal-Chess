@@ -106,7 +106,7 @@ class KeyboardWidget(Widget):
         "        "  # Rank 1: spaces (reserved)
     )
     
-    def __init__(self, update_callback, title: str = "Enter Text", max_length: int = 64,
+    def __init__(self, update_callback, title: str = "", max_length: int = 64,
                  on_complete: Optional[Callable[[Optional[str]], None]] = None):
         """Initialize keyboard widget.
         
@@ -118,7 +118,7 @@ class KeyboardWidget(Widget):
         """
         super().__init__(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT, update_callback)
         
-        self.title = title
+        self.title = title or t("keyboard.default_title")
         self.max_length = max_length
         self.on_complete = on_complete
         

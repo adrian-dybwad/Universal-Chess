@@ -795,6 +795,32 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   On or Rated Off with a checkbox, and selecting it writes the opposite value
   and redraws, so the state is visible before the seek goes out.
 
+- **The rest of the board was English in every language**: localizing the
+  Lichess screens left every other screen that does not come from the menu
+  catalog still built from English literals, so a Spanish or French board read
+  in its own language until it did anything: the countdown a long PLAY hold
+  draws and the one an idle board shuts down on, the Shutting down, Rebooting,
+  Suspending and Press [▶] screens, the startup steps from Bluetooth through
+  Ready, the clock's White/Black and whose turn it is, CHECK and YOUR QUEEN, the
+  move list's header and every paged screen's Page x of y and Next, the
+  promotion pieces, the resign, draw and abort prompts including the one a
+  lifted king raises, the take-back and new-game-from-here actions, End Game,
+  the engine manager end to end (tier headings, an engine's status line, the
+  install and uninstall screens, the stop, discard and paused-install prompts),
+  the update screens, the Chromecast and Bluetooth screens with their pairing
+  confirmation, the About readings, the WiFi panel, the coach's key and model
+  rows, and the status and error text a Lichess game reports while connecting,
+  seeking or waiting for an opponent. All of it now comes from the string
+  bundle, translated into Spanish and French; roughly 130 strings in total.
+
+  Two tests keep it that way. One walks the modules that draw the board and
+  fails on any literal handed to a row, a widget or a splash, because a literal
+  is invisible in English and invisible in review -- which is how all of the
+  above survived the first pass; the strings that genuinely need no translation
+  are listed with the reason rather than scattered. The other reads six of the
+  screens in Spanish and checks the substitutions still land, since a scan can
+  see that a string is looked up but not that it is the right one.
+
 - **The board's Lichess screens were English in every language**: Players and
   its menus translate, but the lobby they open was built from English literals
   rather than from the catalog the web card reads, so choosing Español or

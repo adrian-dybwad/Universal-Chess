@@ -17,6 +17,7 @@ from PIL import Image, ImageDraw
 
 from .framework.widget import Widget
 from .text_scale import DEFAULT_TEXT_SIZE, scale_font
+from universalchess.i18n import t
 from universalchess.utils.chess_notation import (
     format_move_history,
     normalize_notation,
@@ -363,7 +364,7 @@ class MoveListWidget(Widget):
 
         font = get_font(self.MOVE_FONT_SIZE)
 
-        header = f"Move  {self.selected_ply()}/{self.num_plies()}"
+        header = t("move_list.header", current=self.selected_ply(), total=self.num_plies())
         draw.text((self.MOVE_MARGIN, self.MOVE_MARGIN), header, font=font, fill=0)
 
         selected_row = self.selected_row_index()

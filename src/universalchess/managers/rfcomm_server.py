@@ -9,6 +9,7 @@ import time
 from typing import Callable, Optional
 
 from universalchess.board.logging import log
+from universalchess.i18n import t
 
 
 class RfcommServer:
@@ -130,7 +131,7 @@ class RfcommServer:
             psutil = None
         
         if startup_splash:
-            startup_splash.set_message("RFCOMM...")
+            startup_splash.set_message(t("splash.rfcomm"))
         log.info("[RfcommServer] Starting initialization...")
         
         # Kill any existing rfcomm process holding the channel. The legacy

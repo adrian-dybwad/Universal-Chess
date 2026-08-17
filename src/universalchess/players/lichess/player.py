@@ -19,6 +19,7 @@ import chess
 
 from universalchess.board import board, centaur
 from universalchess.board.logging import log
+from universalchess.i18n import t
 from ..base import Player, PlayerConfig, PlayerState, PlayerType
 
 
@@ -346,13 +347,13 @@ class LichessPlayer(Player):
         if self._should_stop.is_set():
             return False
         self._set_state(PlayerState.INITIALIZING)
-        self._report_status("Connecting to Lichess...")
+        self._report_status(t("lichess.status.connecting"))
         
         # Resolve the API token (and rating range) from the bound account.
         self._token, self._account_range = self._resolve_account()
         if not self._token or self._token == "tokenhere":  # noqa: S105 # nosec B105 - placeholder sentinel, not a secret
             log.error("[LichessPlayer] No valid API token configured")
-            self._set_state(PlayerState.ERROR, "No API token configured")
+            self._set_state(PlayerState.ERROR, t("lichess.error.no_token_configured"))
             return False
         
         # Initialize berserk client
@@ -369,11 +370,11 @@ class LichessPlayer(Player):
             self._client = connection.client
         except ImportError:
             log.error("[LichessPlayer] berserk library not installed")
-            self._set_state(PlayerState.ERROR, "berserk not installed")
+            self._set_state(PlayerState.ERROR, t("lichess.error.berserk_missing"))
             return False
         except Exception as e:
             log.error(f"[LichessPlayer] Failed to create berserk client: {e}")
-            self._set_state(PlayerState.ERROR, "API client error")
+            self._set_state(PlayerState.ERROR, t("lichess.error.api_client"))
             return False
 
         # BACK can run on the key thread while this start() is still on the
@@ -394,7 +395,7 @@ class LichessPlayer(Player):
                 self._close_http_session()
                 return False
             log.error(f"[LichessPlayer] Authentication failed: {e}")
-            self._set_state(PlayerState.ERROR, "API token invalid")
+            self._set_state(PlayerState.ERROR, t("lichess.error.token_invalid"))
             return False
 
         if self._abandon_start():
@@ -997,7 +998,7 @@ class LichessPlayer(Player):
         except Exception as e:
             if not self._should_stop.is_set() and not self._game_id:
                 log.error(f"[LichessPlayer] Seek failed: {e}")
-                self._set_state(PlayerState.ERROR, "Seek failed")
+                self._set_state(PlayerState.ERROR, t("lichess.error.seek_failed"))
 
     def _start_ongoing_game(self) -> bool:
         """Resume an ongoing game."""
@@ -1028,18 +1029,18 @@ class LichessPlayer(Player):
             log.info(
                 f"[LichessPlayer] Waiting for challenge to be accepted: {challenge_id}"
             )
-            self._report_status("Waiting for opponent...")
+            self._report_status(t("lichess.status.waiting_opponent"))
             self._expected_game_id = challenge_id
             self._listen_for_match()
             return True
 
         log.info(f"[LichessPlayer] Accepting challenge: {challenge_id}")
-        self._report_status("Accepting challenge...")
+        self._report_status(t("lichess.status.accepting_challenge"))
         try:
             self._client.challenges.accept(challenge_id)
         except Exception as e:
             log.error(f"[LichessPlayer] Challenge handling failed: {e}")
-            self._set_state(PlayerState.ERROR, "Challenge failed")
+            self._set_state(PlayerState.ERROR, t("lichess.error.challenge_failed"))
             return False
         return self._begin_game(challenge_id)
     
@@ -1070,7 +1071,7 @@ class LichessPlayer(Player):
         except Exception as e:
             if not self._should_stop.is_set():
                 log.error(f"[LichessPlayer] Stream error: {e}")
-                self._set_state(PlayerState.ERROR, "Stream disconnected")
+                self._set_state(PlayerState.ERROR, t("lichess.error.stream_disconnected"))
         
         log.info("[LichessPlayer] Stream thread ended")
     

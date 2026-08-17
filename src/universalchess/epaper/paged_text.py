@@ -27,6 +27,7 @@ from typing import Callable
 from PIL import Image, ImageDraw
 
 from universalchess.resources import get_font
+from universalchess.i18n import t
 
 from .framework.widget import Widget
 from .text import Justify, TextWidget
@@ -158,7 +159,7 @@ class PagedTextWidget(Widget):
         """The footer's page indicator ("" when there is no text)."""
         if not self._pages:
             return ""
-        return f"Page {self.current_page} of {self.page_count}"
+        return t("common.page_of", current=self.current_page, total=self.page_count)
 
     def set_text(self, text: str) -> None:
         """Show ``text`` from its first page, re-paginating if it changed."""
@@ -250,7 +251,7 @@ class PagedTextWidget(Widget):
         draw.line([(check_left, center_y), vertex], fill=0, width=2)
         draw.line([vertex, (check_right, center_y - 4)], fill=0, width=2)
 
-        label = "Next"
+        label = t("common.next")
         label_width = int(draw.textlength(label, font=self._footer_font))
         draw.text((check_left - 4 - label_width, text_y), label, font=self._footer_font, fill=0)
 

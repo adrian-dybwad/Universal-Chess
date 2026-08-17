@@ -68,7 +68,6 @@ class SplashScreen(Widget):
     TEXT_HEIGHT = 110  # Height for 5 lines of text at font size 18 (296 - TEXT_Y)
     DISMISS_TEXT_HEIGHT = 72  # Leave a band at the bottom for "Press any button"
     INSTRUCTION_HEIGHT = 16
-    DISMISS_INSTRUCTION = "Press any button"
     DISMISS_TIMEOUT_SECONDS = 30.0
     # Optional byline shown under "UNIVERSAL" (only when a tagline is supplied,
     # i.e. the boot/idle and shutdown screens). When present the message is
@@ -155,7 +154,7 @@ class SplashScreen(Widget):
             self._instruction_text = TextWidget(
                 x=0, y=0, width=self.width, height=self.INSTRUCTION_HEIGHT,
                 update_callback=self._handle_child_update,
-                text=t("about.press_any_button") or self.DISMISS_INSTRUCTION,
+                text=t("about.press_any_button"),
                 font_size=12, justify=Justify.CENTER, transparent=True
             )
 

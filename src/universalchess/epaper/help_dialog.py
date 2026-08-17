@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Callable
 from PIL import Image
 
 from .framework.widget import Widget
+from universalchess.i18n import t
 from .paged_text import NavigationHint, PagedTextWidget
 from .text import Justify, Overflow, TextWidget
 from .text_scale import DEFAULT_TEXT_SIZE, normalize_text_size, scale_font
@@ -62,8 +63,6 @@ class HelpDialogWidget(Widget):
     BODY_FONT_SIZE = 12
     INSTRUCTION_FONT_SIZE = 10
 
-    SINGLE_PAGE_INSTRUCTION = "Press any button"
-    MULTI_PAGE_INSTRUCTION = "Any other button closes"
 
     # How long the dialog waits with no input before closing itself, so a board
     # left on a help screen returns to the menu. Measured from the last key, not
@@ -161,8 +160,8 @@ class HelpDialogWidget(Widget):
     def instruction(self) -> str:
         """The line at the foot of the panel, which depends on whether it pages."""
         if self.page_count > 1:
-            return self.MULTI_PAGE_INSTRUCTION
-        return self.SINGLE_PAGE_INSTRUCTION
+            return t("help.multi_page_instruction")
+        return t("about.press_any_button")
 
     def next_page(self) -> bool:
         """Show the next page, cycling to the first after the last."""

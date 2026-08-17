@@ -24,6 +24,7 @@ except ImportError:
 from universalchess.state import get_chess_clock as get_clock_state
 from universalchess.state import get_chess_game as get_game_state
 from universalchess.state.players import get_players_state
+from universalchess.i18n import t
 from universalchess.state.time_control import DelayMode, TimeControl
 
 
@@ -135,7 +136,7 @@ class ChessClockWidget(Widget):
         # Create TextWidgets for timed mode - use parent handler for child updates
         # White label (left aligned, after indicator)
         self._white_label = TextWidget(20, 0, 40, label_font + 6, self._handle_child_update,
-                                        text="White", font_size=label_font,
+                                        text=t("chess.color.white"), font_size=label_font,
                                         justify=Justify.LEFT, transparent=True,
                                         overflow=Overflow.FIT, min_font_size=8)
         # White player name (smaller, under the label)
@@ -150,7 +151,7 @@ class ChessClockWidget(Widget):
                                            overflow=Overflow.SHRINK, min_font_size=10)
         # Black label
         self._black_label = TextWidget(20, 0, 40, label_font + 6, self._handle_child_update,
-                                       text="Black", font_size=label_font,
+                                       text=t("chess.color.black"), font_size=label_font,
                                        justify=Justify.LEFT, transparent=True,
                                        overflow=Overflow.FIT, min_font_size=8)
         # Black player name (smaller, under the label)
@@ -178,7 +179,7 @@ class ChessClockWidget(Widget):
         # Create TextWidgets for compact mode
         # Turn indicator text (color)
         self._turn_text = TextWidget(0, 0, width, turn_font + 4, self._handle_child_update,
-                                     text="White's Turn", font_size=turn_font,
+                                     text=t("clock.turn_white"), font_size=turn_font,
                                      justify=Justify.CENTER, transparent=True,
                                      overflow=Overflow.FIT, min_font_size=10)
         # Player name text (below turn indicator)
@@ -645,11 +646,11 @@ class ChessClockWidget(Widget):
         
         # Determine text and player name
         if active_color == 'black':
-            turn_text = "Black's Turn"
+            turn_text = t("clock.turn_black")
             player_name = black_name
         else:
             # Default to white if None or 'white'
-            turn_text = "White's Turn"
+            turn_text = t("clock.turn_white")
             player_name = white_name
 
         # Compact move-history layout: DisplayManager has shrunk the widget, so

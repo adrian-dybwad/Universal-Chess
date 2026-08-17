@@ -10,7 +10,7 @@ branches and break propagation are covered without the e-paper or a real game.
 import pytest
 
 from universalchess.menus.positions_menu import (
-    POSITION_UNAVAILABLE_WITH_LICHESS,
+    position_unavailable_message,
     handle_positions_menu,
     position_unavailable_with_lichess,
 )
@@ -220,6 +220,6 @@ def test_lichess_player_shows_alert_and_does_not_start():
     )
 
     assert result is False
-    assert alerts == [POSITION_UNAVAILABLE_WITH_LICHESS]
+    assert alerts == [position_unavailable_message()]
     assert aborted == []
     assert started == []

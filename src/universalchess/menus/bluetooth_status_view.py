@@ -17,6 +17,7 @@ can double as the enable/disable toggle.
 from typing import List, Optional
 
 from universalchess.managers.ble_advertising_status import failure_label
+from universalchess.i18n import t
 from universalchess.managers.bluetooth_status_state import (
     ADV_ADVERTISING,
     ADV_FAILED,
@@ -89,17 +90,17 @@ def bluetooth_status_menu_rows(
     icon = "bluetooth"
 
     if adv_state == ADV_RADIO_OFF:
-        lines.append("Disabled")
+        lines.append(t("common.disabled"))
     elif adv_state == ADV_FAILED:
         icon = "cancel"
-        detail = failure_label(snapshot.get("advertising") or {}) or "BLE advertising failed"
-        lines.append("Apps can't find board")
+        detail = failure_label(snapshot.get("advertising") or {}) or t("bluetooth.adv_failed")
+        lines.append(t("bluetooth.apps_cant_find"))
         lines.append(detail)
         lines.extend(names)
     elif adv_state == ADV_HEALING:
         heal = snapshot.get("heal") or {}
-        lines.append("Fixing Bluetooth")
-        lines.append(heal.get("label") or "Repairing advertising...")
+        lines.append(t("bluetooth.fixing"))
+        lines.append(heal.get("label") or t("bluetooth.repairing"))
         lines.extend(names)
     elif adv_state == ADV_PAUSED_CONNECTED:
         # A BLE central is connected; LE advertising pauses. The connection line
@@ -107,10 +108,10 @@ def bluetooth_status_menu_rows(
         # names) is added -- claiming "Broadcasting" here would be false.
         pass
     elif adv_state == ADV_ADVERTISING:
-        lines.append("Broadcasting:")
+        lines.append(t("bluetooth.broadcasting"))
         lines.extend(names)
     elif adv_state == ADV_UNKNOWN:
-        lines.append("Starting Bluetooth")
+        lines.append(t("bluetooth.starting"))
         lines.extend(names)
     else:
         raise ValueError(f"Unhandled Bluetooth adv_state: {adv_state!r}")

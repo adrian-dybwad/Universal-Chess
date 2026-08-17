@@ -506,7 +506,7 @@ _import_start = _import_time.time()
 
 try:
     if _startup_splash:
-        _startup_splash.set_message("Bluetooth...")
+        _startup_splash.set_message(t("splash.bluetooth"))
     log.info("[Startup] Importing bluetooth...")
     import bluetooth
     log.debug(f"[Import timing] bluetooth: {(_import_time.time() - _import_start)*1000:.0f}ms"); _import_start = _import_time.time()
@@ -516,7 +516,7 @@ except Exception as e:
 
 try:
     if _startup_splash:
-        _startup_splash.set_message("GLib...")
+        _startup_splash.set_message(t("splash.glib"))
     log.info("[Startup] Importing GLib...")
     from gi.repository import GLib
     log.debug(f"[Import timing] GLib: {(_import_time.time() - _import_start)*1000:.0f}ms"); _import_start = _import_time.time()
@@ -3273,7 +3273,7 @@ def _suspend_game():
         # splash so the button press gets instant on-screen feedback while the
         # main loop builds and renders the (slower) full menu over it.
         display_manager.suspend()
-        display_manager.show_splash("Suspending")
+        display_manager.show_splash(t("power.suspending"))
     app_state = AppState.MENU
     # Record the paused-game-behind-menu state: the game stays resumable (its id
     # is kept) but the menu is what shows, so a restart reopens the menu with the
@@ -5104,8 +5104,8 @@ def _build_game_menu_context():
         from universalchess.menus.engine import MenuRow
 
         rows = [
-            MenuRow(key=coaches.OFF, label="Disabled", icon="settings"),
-            MenuRow(key=coaches.AUTO, label="Auto", icon="engine"),
+            MenuRow(key=coaches.OFF, label=t("common.disabled"), icon="settings"),
+            MenuRow(key=coaches.AUTO, label=t("common.auto"), icon="engine"),
         ]
         rows.extend(
             MenuRow(key=info["id"], label=f"{info['name']} ({info['elo']})", icon="engine")
@@ -5241,7 +5241,7 @@ def _build_agents_menu_context():
             rows.append(
                 MenuRow(
                     key=info["id"],
-                    label=f"{info['name']}\n{'Set' if has_key else 'Not set'}",
+                    label=f"{info['name']}\n" + (t("common.set") if has_key else t("common.not_set")),
                     icon="agents",
                 )
             )
@@ -5258,7 +5258,7 @@ def _build_agents_menu_context():
             model=_agent_value(coach_settings.MODEL_BASE),
             base_url=_agent_value(coach_settings.BASE_URL_BASE),
         )
-        rows = [MenuRow(key="", label="Default", icon="settings")]
+        rows = [MenuRow(key="", label=t("common.default"), icon="settings")]
         rows.extend(
             MenuRow(key=model_id, label=model_id, icon="engine")
             for model_id in get_models_or_fallback(config)
@@ -5305,21 +5305,21 @@ def _build_agents_menu_context():
     # the key itself (the web renders it in a password input).
     ctx.register_value(
         "agent_key_status",
-        lambda node: "Set" if _agent_value(coach_settings.API_KEY_BASE) else "Not set",
+        lambda node: t("common.set") if _agent_value(coach_settings.API_KEY_BASE) else t("common.not_set"),
     )
     # Blank model reads as "Default" (the agent default) rather than an empty line.
     ctx.register_value(
         "agent_model_label",
-        lambda node: _agent_value(coach_settings.MODEL_BASE) or "Default",
+        lambda node: _agent_value(coach_settings.MODEL_BASE) or t("common.default"),
     )
     ctx.register_value(
         "agent_base_url_label",
-        lambda node: _agent_value(coach_settings.BASE_URL_BASE) or "Not set",
+        lambda node: _agent_value(coach_settings.BASE_URL_BASE) or t("common.not_set"),
     )
     ctx.register_action("agent_select", agent_select)
-    ctx.register_action("edit_agent_api_key", lambda: _prompt_agent_text(coach_settings.API_KEY_BASE, "API Key"))
-    ctx.register_action("edit_agent_model", lambda: _prompt_agent_text(coach_settings.MODEL_BASE, "Model", max_length=60))
-    ctx.register_action("edit_agent_base_url", lambda: _prompt_agent_text(coach_settings.BASE_URL_BASE, "Base URL"))
+    ctx.register_action("edit_agent_api_key", lambda: _prompt_agent_text(coach_settings.API_KEY_BASE, t("coach.api_key")))
+    ctx.register_action("edit_agent_model", lambda: _prompt_agent_text(coach_settings.MODEL_BASE, t("coach.model"), max_length=60))
+    ctx.register_action("edit_agent_base_url", lambda: _prompt_agent_text(coach_settings.BASE_URL_BASE, t("coach.base_url")))
     ctx.register_action("clear_agent_api_key", clear_agent_api_key)
     return ctx
 
@@ -5486,7 +5486,7 @@ def _build_updates_context():
         """
         deb_files = find_local_deb_files()
         if not deb_files:
-            _show_update_splash(board, "No .deb\nfound")
+            _show_update_splash(board, t("update.no_deb_found"))
             time.sleep(2)
             return None
         local_deb["path"] = deb_files[0]
@@ -5982,12 +5982,12 @@ def _build_bluetooth_context():
     def device_connect():
         mgr = _bluez()
         address, name = device["address"], device["name"]
-        show_splash(board, f"Connecting\n{name[:14]}...")
+        show_splash(board, t("bluetooth.connecting_device", name=name[:14]))
         status_fn = getattr(mgr, "connect_device_status", None)
         status = (status_fn(address) if status_fn is not None
                   else ("ok" if mgr.connect_device(address) else "failed"))
         if status == "ok":
-            show_splash(board, "Connected", hold_seconds=2.0)
+            show_splash(board, t("common.connected"), hold_seconds=2.0)
             device["connected"] = True
             return None
         if status == "auth_failed":
@@ -5999,31 +5999,31 @@ def _build_bluetooth_context():
                 return "BACK"
             device["connected"] = False
             return None
-        show_splash(board, "Connect failed", hold_seconds=2.0)
+        show_splash(board, t("bluetooth.connect_failed"), hold_seconds=2.0)
         device["connected"] = False
         return None
 
     def device_disconnect():
         mgr = _bluez()
-        show_splash(board, f"Disconnecting\n{device['name'][:14]}...")
+        show_splash(board, t("bluetooth.disconnecting", name=device['name'][:14]))
         ok = mgr.disconnect_device(device["address"])
-        show_splash(board, "Disconnected" if ok else "Disconnect failed", hold_seconds=2.0)
+        show_splash(board, t("bluetooth.disconnected") if ok else t("bluetooth.disconnect_failed"), hold_seconds=2.0)
         # A successful disconnect clears the link; a failure leaves it up.
         device["connected"] = not ok
         return None
 
     def device_forget():
         mgr = _bluez()
-        show_splash(board, f"Forgetting\n{device['name'][:14]}...")
+        show_splash(board, t("bluetooth.forgetting", name=device['name'][:14]))
         ok = mgr.forget_device(device["address"])
-        show_splash(board, "Forgotten" if ok else "Forget failed", hold_seconds=2.0)
+        show_splash(board, t("bluetooth.forgotten") if ok else t("bluetooth.forget_failed"), hold_seconds=2.0)
         return "BACK" if ok else None  # gone -> pop detail to the re-queried list
 
     def device_remove_pairing():
         mgr = _bluez()
-        show_splash(board, f"Forgetting\n{device['name'][:14]}...")
+        show_splash(board, t("bluetooth.forgetting", name=device['name'][:14]))
         ok = mgr.forget_device(device["address"])
-        show_splash(board, "Pairing removed" if ok else "Forget failed", hold_seconds=2.0)
+        show_splash(board, t("bluetooth.pairing_removed") if ok else t("bluetooth.forget_failed"), hold_seconds=2.0)
         pairing["removed"] = ok
         return "BACK"  # exit the stale-pairing confirm
 
@@ -6063,9 +6063,9 @@ def _build_bluetooth_context():
             stop.set()
         if thread is not None:
             thread.join(timeout=6.0)
-        show_splash(board, f"Pairing\n{selected['name'][:14]}...")
+        show_splash(board, t("bluetooth.pairing", name=selected['name'][:14]))
         ok = _pair_keyboard_board_initiated(address)
-        show_splash(board, "Keyboard paired" if ok else "Pairing failed", hold_seconds=2.0)
+        show_splash(board, t("bluetooth.keyboard_paired") if ok else t("bluetooth.pairing_failed"), hold_seconds=2.0)
         return "BACK"
 
     def pair_keyboard_flow():
@@ -6142,7 +6142,7 @@ def _build_bluetooth_context():
     ctx.register_value(
         "bt_device_status",
         lambda node: f"{device['name'][:18]}\n"
-        + ("Connected" if device["connected"] else "Not connected"),
+        + (t("common.connected") if device["connected"] else t("common.not_connected")),
     )
     ctx.register_action("bluetooth_device_select", device_select)
     ctx.register_action("bluetooth_connect", device_connect)
@@ -6438,7 +6438,7 @@ def _handle_accounts_menu():
                 log.info("[Accounts] Added Lichess account '%s'", result.account.id)
                 board.beep(board.SOUND_GENERAL)
                 return True, ""
-            return False, result.message or "Could not add account"
+            return False, result.message or t("accounts.could_not_add")
 
         run_add_account_flow(
             definition["fields"],
@@ -6533,7 +6533,7 @@ def _run_centaur():
     """
     # Show loading screen (full screen, no status bar)
     board.display_manager.clear_widgets(addStatusBar=False)
-    promise = board.display_manager.add_widget(SplashScreen(board.display_manager.update, message="Loading", leave_room_for_status_bar=False))
+    promise = board.display_manager.add_widget(SplashScreen(board.display_manager.update, message=t("splash.loading"), leave_room_for_status_bar=False))
     if promise:
         try:
             promise.result(timeout=10.0)
@@ -6632,7 +6632,7 @@ def _run_centaur_translate():
         log.error(f"Centaur display shim unavailable; aborting translate launch: {e}")
         board.display_manager.clear_widgets(addStatusBar=False)
         err = board.display_manager.add_widget(
-            SplashScreen(board.display_manager.update, message="Shim build failed",
+            SplashScreen(board.display_manager.update, message=t("splash.shim_build_failed"),
                          leave_room_for_status_bar=False))
         if err:
             try:
@@ -6644,7 +6644,7 @@ def _run_centaur_translate():
 
     board.display_manager.clear_widgets(addStatusBar=False)
     promise = board.display_manager.add_widget(
-        SplashScreen(board.display_manager.update, message="Loading",
+        SplashScreen(board.display_manager.update, message=t("splash.loading"),
                      leave_room_for_status_bar=False))
     if promise:
         try:
@@ -6922,8 +6922,8 @@ def _show_ble_connection_confirm(client_type: str):
         from universalchess.epaper.text_scale import read_text_size
         
         entries = [
-            _IconMenuEntry(key="new_game", label="New Game\n(abandon)", icon_name="play"),
-            _IconMenuEntry(key="cancel", label="Cancel", icon_name="cancel"),
+            _IconMenuEntry(key="new_game", label=t("game.new_game_abandon"), icon_name="play"),
+            _IconMenuEntry(key="cancel", label=t("common.cancel"), icon_name="cancel"),
         ]
         
         confirm_menu = _IconMenuWidget(
@@ -7094,7 +7094,9 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
         # (potentially several-second) subsystem teardown below. The pending-update
         # and final shutdown stages replace this with their own splashes.
         if system_shutdown:
-            _show_shutdown_splash("Rebooting" if reboot else "Shutting down", timeout=10.0)
+            _show_shutdown_splash(
+                t("power.rebooting") if reboot else t("power.shutting_down"), timeout=10.0
+            )
 
         # Stop an engine install before the Pi goes down, so an hour of build
         # survives as a resume point instead of a part-written tree. Done here,
@@ -7218,7 +7220,7 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
         if system_shutdown and not reboot:
             # Display shutdown splash screen
             log.info("[Cleanup] Displaying shutdown splash screen...")
-            _show_shutdown_splash("Press [\u25b6]", timeout=5.0, show_battery=True, tagline=t("splash.tagline"))
+            _show_shutdown_splash(t("power.press_play"), timeout=5.0, show_battery=True, tagline=t("splash.tagline"))
             
             # Play power off beep
             log.info("[Cleanup] Playing power off beep...")
@@ -7974,7 +7976,7 @@ def main():
         # Create splash screen if early init didn't work (full screen, no status bar)
         if startup_splash is None:
             board.display_manager.clear_widgets(addStatusBar=False)
-            startup_splash = SplashScreen(board.display_manager.update, message="Starting...", leave_room_for_status_bar=False, tagline=t("splash.tagline"))
+            startup_splash = SplashScreen(board.display_manager.update, message=t("splash.starting"), leave_room_for_status_bar=False, tagline=t("splash.tagline"))
             promise = board.display_manager.add_widget(startup_splash)
             if promise:
                 try:
@@ -8013,7 +8015,7 @@ def main():
     try:
         log.info("[Main] Subscribing to board events...")
         if startup_splash:
-            startup_splash.set_message("Events...")
+            startup_splash.set_message(t("splash.events"))
         board.subscribeEvents(key_callback, field_callback)  # Uses INACTIVITY_TIMEOUT_SECONDS default
         log.info("[Main] Board events subscribed")
     except Exception as e:
@@ -8030,7 +8032,7 @@ def main():
     try:
         log.info("[Main] Starting services...")
         if startup_splash:
-            startup_splash.set_message("Services...")
+            startup_splash.set_message(t("splash.services"))
         
         # Start system polling service (battery, wifi, bluetooth)
         from universalchess.services import get_system_service
@@ -8081,7 +8083,7 @@ def main():
     if not args.no_ble and _bluetooth_capable:
         try:
             if startup_splash:
-                startup_splash.set_message("BLE...")
+                startup_splash.set_message(t("splash.ble"))
             log.info("[Main] Initializing BLE manager...")
             ble_manager = BleManager(
                 device_name=args.device_name,
@@ -8213,7 +8215,7 @@ def main():
     # Connect to shadow target if relay mode
     if relay_mode:
         if startup_splash:
-            startup_splash.set_message("Relay...")
+            startup_splash.set_message(t("splash.relay"))
         log.info("=" * 60)
         log.info(f"RELAY MODE - Connecting to {shadow_target_name}")
         log.info("=" * 60)
@@ -8318,7 +8320,7 @@ def main():
 
     if plan.resume_game and resume_target is not None:
         if startup_splash:
-            startup_splash.set_message("Resuming...")
+            startup_splash.set_message(t("splash.resuming"))
             time.sleep(0.5)
         if _resume_game(resume_target):
             log.info("[App] Successfully resumed game")
@@ -8336,7 +8338,7 @@ def main():
             app_state = AppState.MENU
     else:
         if startup_splash:
-            startup_splash.set_message("Ready!")
+            startup_splash.set_message(t("splash.ready"))
             time.sleep(0.3)
         app_state = AppState.MENU
 
