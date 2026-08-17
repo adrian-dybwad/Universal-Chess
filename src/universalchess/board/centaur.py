@@ -38,7 +38,7 @@ def get_lichess_api():
     target of the former single credential), falling back to the legacy
     ``[lichess]`` token for a board that predates migration or has no accounts
     yet. This is the single back-compat shim the older single-account consumers
-    (accounts display, ``get_lichess_client``) route through.
+    (accounts display, ``get_lichess_connection``) route through.
     """
     from universalchess.players.lichess.accounts import default_lichess_credential
 

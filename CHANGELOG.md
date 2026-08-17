@@ -626,10 +626,18 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   called stop, but ``board.seek`` is a streamed POST that Lichess treats as
   the live seek until the connection closes. stop() only set a flag and
   joined that thread, so the socket stayed open and the lobby still showed
-  the seek. The HTTP session is closed first so the POST drops. BACK is also
-  wired before players start, so the key is not swallowed while the splash
-  is already on screen and start() is still authenticating. BACK that arrives
-  before GameManager exists is recorded so the seek is never posted.
+  the seek. Two later attempts to close it did nothing either: closing the
+  ``requests`` session only clears connections sitting idle in the pool, never
+  the seek connection that is checked out and blocked in a read, and the
+  client the close was asked of exposes no session at all -- berserk keeps it
+  on a private requestor, so the call resolved to nothing. Closing the
+  response object instead deadlocks against the blocked read. stop() now shuts
+  down the sockets of the streams it opened, which both wakes the reading
+  threads and sends FIN so Lichess drops the seek; the session is kept
+  alongside the client so teardown can find it. BACK is also wired before
+  players start, so the key is not swallowed while the splash is already on
+  screen and start() is still authenticating. BACK that arrives before
+  GameManager exists is recorded so the seek is never posted.
 
 - **Game widgets could paint over the menu after leaving a Lichess game**:
   The started splash hands over to the board five seconds after a game
@@ -638,6 +646,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   returned to the menu when the timer fired, and the board and info overlay
   were drawn over it. Game teardown now cancels that timer, and a timer that
   had already started firing no longer paints.
+
+- **Lichess lobby views held their connections open until collected**: The
+  Lichess Settings menu, the Ongoing and Challenges web endpoints, and Add
+  Account token verification each authenticate their own HTTP session and left
+  it for the garbage collector, so every menu visit, poll and token check
+  stacked another idle socket to lichess.org on a board that runs for weeks.
+  Each of those now closes the connection when the view it serves is done,
+  including an account switch closing the connection it replaces and a failed
+  sign-in closing the one it opened.
 
 - **Lichess lobby accept left the board on the waiting splash**: After an
   opponent took the board's seek, Lichess already had a live game -- the web

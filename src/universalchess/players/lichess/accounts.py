@@ -115,7 +115,7 @@ def lichess_play_account_choices(settings, *, config=None) -> List[Tuple[str, st
     """Account picker rows for the lobby, bound to the Lichess Players slot.
 
     Player 1's slot is used when both sides are Lichess, matching
-    :func:`lichess_client_from_settings`. With no Lichess slot the list is
+    :func:`lichess_connection_from_settings`. With no Lichess slot the list is
     unfiltered (nothing is taken).
     """
     p1 = settings.player1

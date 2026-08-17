@@ -3094,7 +3094,7 @@ def _lichess_ini_settings():
 
 
 def _lichess_client_http_status(error):
-    """HTTP status for a failed ``lichess_client_from_settings`` error code."""
+    """HTTP status for a failed ``lichess_connection_from_settings`` error code."""
     if error in ("no_token", "invalid_token"):
         return 409
     if error == "no_berserk":
@@ -3112,21 +3112,27 @@ def api_lichess_ongoing():
     credential is configured; 502 when Lichess cannot be reached.
     """
     from universalchess.players.lichess.lobby import (
-        lichess_client_from_settings,
+        lichess_connection_from_settings,
         ongoing_game_summaries,
     )
 
     log = current_app.logger
-    client, _username, error = lichess_client_from_settings(_lichess_ini_settings(), log)
-    if client is None:
+    connection, _username, error = lichess_connection_from_settings(
+        _lichess_ini_settings(), log
+    )
+    if connection is None:
         return jsonify({"error": error or "unavailable", "games": []}), _lichess_client_http_status(
             error
         )
+    # The connection serves this request only: a poll every few seconds would
+    # otherwise leave one idle Lichess socket per request until it is collected.
     try:
-        raw = client.games.get_ongoing(count=10)
+        raw = connection.client.games.get_ongoing(count=10)
     except Exception as e:
         log.error("[Lichess] Error fetching ongoing games: %s", e)
         return jsonify({"error": "fetch_failed", "games": []}), 502
+    finally:
+        connection.close()
     return jsonify({"games": ongoing_game_summaries(raw)})
 
 
@@ -3140,24 +3146,29 @@ def api_lichess_challenges():
     """
     from universalchess.players.lichess.lobby import (
         challenge_summaries,
-        lichess_client_from_settings,
+        lichess_connection_from_settings,
     )
 
     log = current_app.logger
-    client, _username, error = lichess_client_from_settings(_lichess_ini_settings(), log)
-    if client is None:
+    connection, _username, error = lichess_connection_from_settings(
+        _lichess_ini_settings(), log
+    )
+    if connection is None:
         return jsonify(
             {"error": error or "unavailable", "challenges": []}
         ), _lichess_client_http_status(error)
+    # As with ongoing: this connection answers one request and is then done.
     try:
         payload = None
         try:
-            payload = client.challenges.get_mine()
+            payload = connection.client.challenges.get_mine()
         except AttributeError:
-            payload = client.challenges.list()
+            payload = connection.client.challenges.list()
     except Exception as e:
         log.error("[Lichess] Error fetching challenges: %s", e)
         return jsonify({"error": "fetch_failed", "challenges": []}), 502
+    finally:
+        connection.close()
     return jsonify({"challenges": challenge_summaries(payload)})
 
 

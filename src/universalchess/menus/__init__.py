@@ -32,7 +32,7 @@ from .update_menu import (
     install_pending_interactive,
 )
 from universalchess.players.lichess.lobby import (
-    get_lichess_client,
+    get_lichess_connection,
     build_lichess_menu_entries,
     show_lichess_error,
     lichess_waiting_message,
@@ -61,7 +61,7 @@ __all__ = [
     "check_for_updates_interactive",
     "download_update_interactive",
     "install_pending_interactive",
-    "get_lichess_client",
+    "get_lichess_connection",
     "build_lichess_menu_entries",
     "show_lichess_error",
     "lichess_waiting_message",

@@ -6296,11 +6296,13 @@ def _handle_lichess_menu():
     """Handle Lichess submenu - delegates to service."""
     from universalchess.players.lichess.lobby import (
         handle_lichess_menu,
-        lichess_client_from_settings,
+        lichess_connection_from_settings,
     )
 
     return handle_lichess_menu(
-        get_lichess_client_fn=lambda: lichess_client_from_settings(_get_settings(), log),
+        get_lichess_connection_fn=lambda: lichess_connection_from_settings(
+            _get_settings(), log
+        ),
         menu_manager=_menu_manager,
         start_lichess_game_fn=_start_lichess_game,
         handle_accounts_menu_fn=_handle_accounts_menu,
@@ -6314,7 +6316,7 @@ def _lichess_play_account_choices():
     """Account picker rows for Play User, bound to the Lichess Players slot.
 
     Player 1's slot is used when both sides are Lichess, matching
-    :func:`lichess_client_from_settings`. With no Lichess slot the list is
+    :func:`lichess_connection_from_settings`. With no Lichess slot the list is
     unfiltered (nothing is taken).
     """
     from universalchess.players.lichess.accounts import lichess_play_account_choices

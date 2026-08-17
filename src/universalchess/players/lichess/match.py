@@ -167,16 +167,24 @@ def lichess_base_url(host_id: str = DEFAULT_HOST_ID) -> str:
     return get_host(host_id).base_url
 
 
-def create_berserk_client(token: str, host_id: str = DEFAULT_HOST_ID):
-    """berserk Client pointed at the credential's host.
+def create_lichess_connection(token: str, host_id: str = DEFAULT_HOST_ID):
+    """berserk client for the credential's host, paired with its session.
 
     ``base_url`` is required: the library defaults to lichess.org, which would
     send a lichess.dev token (or an org token in reverse) to the wrong server.
+
+    The session can abort its own streams, and is returned alongside the client
+    because berserk keeps it out of reach on a private requestor. Without both,
+    nothing can close the ``board.seek`` connection Lichess keeps a lobby seek
+    alive for (see :mod:`~universalchess.players.lichess.http_session`).
     """
     import berserk
 
-    session = berserk.TokenSession(token)
-    return berserk.Client(session=session, base_url=lichess_base_url(host_id))
+    from .http_session import LichessConnection, abortable_token_session_class
+
+    session = abortable_token_session_class()(token)
+    client = berserk.Client(session=session, base_url=lichess_base_url(host_id))
+    return LichessConnection(client=client, session=session)
 
 
 def lichess_waiting_message(mode, seek=None) -> str:

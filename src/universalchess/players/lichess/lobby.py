@@ -30,44 +30,58 @@ def _lichess_permission_panel_message(error_msg: str, fallback: str) -> Optional
     return None
 
 
-def get_lichess_client(token, log, host_id: str = "org"):
-    """Get a berserk client and username, with error classification."""
+def get_lichess_connection(token, log, host_id: str = "org"):
+    """Authenticate a stored token for a lobby view, with error classification.
+
+    Returns ``(connection, username, error)``. The connection owns an HTTP
+    session and its pooled socket, so the caller closes it when the view it
+    feeds is done. A failure closes it here and returns None in its place, so no
+    caller has to unwind a connection it was never given.
+    """
     if not token or token == "tokenhere":  # noqa: S105 # nosec B105 - placeholder sentinel, not a secret
         log.warning("[Lichess] No valid API token configured")
         return None, None, "no_token"
+    connection = None
     try:
-        from .match import create_berserk_client
+        from .match import create_lichess_connection
 
-        client = create_berserk_client(token, host_id=host_id)
-        user_info = client.account.get()
+        connection = create_lichess_connection(token, host_id=host_id)
+        user_info = connection.client.account.get()
         username = user_info.get("username", "")
         log.info(f"[Lichess] Authenticated as: {username}")
-        return client, username, None
+        return connection, username, None
     except ImportError:
         log.error("[Lichess] berserk library not installed")
-        return None, None, "no_berserk"
+        error = "no_berserk"
     except Exception as e:
         log.error(f"[Lichess] Failed to connect to Lichess: {e}")
-        return None, None, "network"
+        error = "network"
+    if connection is not None:
+        connection.close()
+    return None, None, error
 
 
 def resolve_lichess_identity(token, log=None, host_id: str = "org"):
     """Authenticate an explicit Lichess token and return its account identity.
 
-    Unlike :func:`get_lichess_client`, which uses a stored token, this
+    Unlike :func:`get_lichess_connection`, which uses a stored token, this
     verifies a token supplied for a *new* credential (before it is saved) so
     the plugin can key it as ``org:alice``. ``host_id`` selects which Lichess
     server to ask. Returns a :class:`account_store.ResolvedIdentity`.
+
+    The connection is closed on every path: this asks one question and keeps
+    nothing, so holding its socket open past the answer serves no one.
     """
     from universalchess.services.account_store import ResolvedIdentity
 
     if not token or token == "tokenhere":  # noqa: S105 # nosec B105 - placeholder sentinel, not a secret
         return ResolvedIdentity(error="no_token", message="No API token provided")
+    connection = None
     try:
-        from .match import create_berserk_client
+        from .match import create_lichess_connection
 
-        client = create_berserk_client(token, host_id=host_id)
-        username = client.account.get().get("username", "")
+        connection = create_lichess_connection(token, host_id=host_id)
+        username = connection.client.account.get().get("username", "")
         if not username:
             return ResolvedIdentity(error="auth_failed", message="Could not read Lichess account")
         return ResolvedIdentity(identity=username)
@@ -79,6 +93,9 @@ def resolve_lichess_identity(token, log=None, host_id: str = "org"):
         if log:
             log.error(f"[Lichess] Token verification failed: {e}")
         return ResolvedIdentity(error="auth_failed", message="Could not verify token with Lichess")
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 DEFAULT_ACCOUNT_MENU_KEY = "Default"
@@ -404,8 +421,11 @@ def active_lichess_account(settings):
     return default_lichess_credential()
 
 
-def lichess_client_from_settings(settings, log):
-    """Authenticate the bound credential for lobby Ongoing/Challenges lists."""
+def lichess_connection_from_settings(settings, log):
+    """Authenticate the bound credential for lobby Ongoing/Challenges lists.
+
+    Returns ``(connection, username, error)``; the caller closes the connection.
+    """
     from .player import LichessPlayer, LichessPlayerConfig
 
     ps = _lichess_slot_settings(settings)
@@ -413,7 +433,7 @@ def lichess_client_from_settings(settings, log):
     player = LichessPlayer(LichessPlayerConfig(account_id=account_id))
     token, _range = player._resolve_account()
     host_id = getattr(player, "_host_id", "org")
-    return get_lichess_client(token, log, host_id=host_id)
+    return get_lichess_connection(token, log, host_id=host_id)
 
 
 def ongoing_game_summaries(raw_games) -> list:
@@ -666,7 +686,7 @@ def show_lichess_challenges(client, menu_manager, log) -> Optional[dict]:
 
 
 def handle_lichess_menu(
-    get_lichess_client_fn: Callable,
+    get_lichess_connection_fn: Callable,
     menu_manager,
     start_lichess_game_fn: Callable,
     handle_accounts_menu_fn: Callable,
@@ -676,8 +696,13 @@ def handle_lichess_menu(
 ):
     """Handle Lichess Settings: Account, Ongoing, Challenges, New Game.
 
+    Owns the connection it is given for as long as the menu is on screen, and
+    closes it on the way out -- including the one an account switch replaces. A
+    game started from here does not use it; the player opens its own.
+
     Args:
-        get_lichess_client_fn: Callback to get (client, username, error) tuple
+        get_lichess_connection_fn: Callback for a (connection, username, error)
+            tuple, where the connection carries the berserk client
         menu_manager: MenuManager instance
         start_lichess_game_fn: Callback to start a Lichess game with config
         handle_accounts_menu_fn: Callback to show accounts menu (picker Accounts)
@@ -694,8 +719,8 @@ def handle_lichess_menu(
     from .player import LichessPlayerConfig as LichessConfig, LichessGameMode
     from universalchess.managers.menu import MenuSelection
 
-    client, username, error = get_lichess_client_fn()
-    if client is None:
+    connection, username, error = get_lichess_connection_fn()
+    if connection is None:
         if error == "no_token":
             result = show_lichess_error(menu_manager, "No API Token", "Configure in\nSystem > Accounts", True)
         elif error == "invalid_token":
@@ -732,20 +757,25 @@ def handle_lichess_menu(
         return False
 
     def refresh_client() -> None:
-        """Re-authenticate after an account bind so Account and lobby lists match."""
-        nonlocal client, username
-        new_client, new_username, new_error = get_lichess_client_fn()
-        if new_client is None:
+        """Re-authenticate after an account bind so Account and lobby lists match.
+
+        The connection being replaced is closed: it authenticated the account the
+        user just switched away from, and nothing will ask it anything again.
+        A failed switch keeps the working connection rather than closing it.
+        """
+        nonlocal connection, username
+        new_connection, new_username, new_error = get_lichess_connection_fn()
+        if new_connection is None:
             log.warning(f"[Lichess] Account switch failed: {new_error}")
             show_lichess_error(
                 menu_manager, "Account", "Could not sign in\nwith that account"
             )
             return
-        client = new_client
+        connection.close()
+        connection = new_connection
         username = new_username
 
     def handle_selection(result: MenuSelection):
-        nonlocal client
         if result.key == "Account":
             while True:
                 choices = (
@@ -774,7 +804,7 @@ def handle_lichess_menu(
             return None
         if result.key == "Ongoing":
             show_lichess_help(menu_manager, "Ongoing Games", ONGOING_GAMES_HELP)
-            game_id = show_lichess_ongoing_games(client, menu_manager, log)
+            game_id = show_lichess_ongoing_games(connection.client, menu_manager, log)
             if game_id:
                 config = LichessConfig(mode=LichessGameMode.ONGOING, game_id=game_id)
                 if start_game(config):
@@ -782,7 +812,7 @@ def handle_lichess_menu(
             return None
         if result.key == "Challenges":
             show_lichess_help(menu_manager, "Challenges", CHALLENGES_HELP)
-            challenge = show_lichess_challenges(client, menu_manager, log)
+            challenge = show_lichess_challenges(connection.client, menu_manager, log)
             if challenge:
                 config = LichessConfig(
                     mode=LichessGameMode.CHALLENGE,
@@ -794,10 +824,16 @@ def handle_lichess_menu(
             return None
         return None
 
-    result = menu_manager.run_menu_loop(
-        lambda: build_lichess_menu_entries(username),
-        handle_selection,
-    )
+    try:
+        result = menu_manager.run_menu_loop(
+            lambda: build_lichess_menu_entries(username),
+            handle_selection,
+        )
+    finally:
+        # Leaving the menu ends the only thing this connection existed for. What
+        # follows -- including a game start -- never asks it anything: the player
+        # opens its own connection once the menus unwind.
+        connection.close()
 
     if is_break_result(result):
         return result

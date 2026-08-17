@@ -277,6 +277,23 @@ def test_start_lichess_game_service_is_removed():
     assert not hasattr(service, "LichessStartResult")
 
 
+class _FakeConnection:
+    """Stands in for LichessConnection: the client, plus the close the menu owes.
+
+    A bare client is not enough for these tests: the menu owns the connection's
+    HTTP session for as long as it is on screen, so what it does with close() is
+    part of the behaviour under test.
+    """
+
+    def __init__(self, client=None):
+        self.client = client if client is not None else object()
+        self.closes = 0
+
+    def close(self) -> int:
+        self.closes += 1
+        return 0
+
+
 def test_lichess_menu_new_game_start_failure_does_not_kill_loop():
     """New Game must not let start_lichess_game_fn exceptions escape.
 
@@ -306,7 +323,7 @@ def test_lichess_menu_new_game_start_failure_does_not_kill_loop():
     log = MagicMock()
 
     result = handle_lichess_menu(
-        get_lichess_client_fn=lambda: (object(), "alice", None),
+        get_lichess_connection_fn=lambda: (_FakeConnection(), "alice", None),
         menu_manager=Menu(),
         start_lichess_game_fn=boom,
         handle_accounts_menu_fn=lambda: None,
@@ -339,7 +356,7 @@ def test_lichess_menu_successful_start_returns_start_game_token():
             return handle_selection(MenuSelection.from_key("NewGame"))
 
     result = handle_lichess_menu(
-        get_lichess_client_fn=lambda: (object(), "alice", None),
+        get_lichess_connection_fn=lambda: (_FakeConnection(), "alice", None),
         menu_manager=Menu(),
         start_lichess_game_fn=lambda config: started.append(config) or True,
         handle_accounts_menu_fn=lambda: None,
@@ -383,10 +400,10 @@ def test_lichess_menu_account_opens_account_picker_and_rebinds():
     def get_client():
         client_calls[0] += 1
         name = "bob" if bound == ["org:bob"] else "alice"
-        return object(), name, None
+        return _FakeConnection(), name, None
 
     result = handle_lichess_menu(
-        get_lichess_client_fn=get_client,
+        get_lichess_connection_fn=get_client,
         menu_manager=Menu(),
         start_lichess_game_fn=lambda _config: True,
         handle_accounts_menu_fn=lambda: None,
@@ -405,6 +422,145 @@ def test_lichess_menu_account_opens_account_picker_and_rebinds():
     assert bound == ["org:bob"]
     assert usernames == ["Account\nalice", "Account\nbob"]
     assert client_calls[0] >= 2
+
+
+def test_lichess_menu_closes_its_connection_when_it_exits():
+    """Leaving the menu must release the Lichess socket it authenticated on.
+
+    The menu holds an HTTP session for as long as it is on screen. Left to the
+    garbage collector, every visit to Lichess Settings stacked another idle
+    connection to lichess.org on a board that runs for weeks. A regression
+    manifests as closes staying at 0 after the menu returns.
+    """
+    from universalchess.managers.menu import MenuSelection
+    from universalchess.players.lichess.lobby import handle_lichess_menu
+
+    connection = _FakeConnection()
+
+    class Menu:
+        def run_menu_loop(self, build_entries, handle_selection, **kwargs):
+            build_entries()
+            return None
+
+        def show_menu(self, entries, **kwargs):
+            return MenuSelection.from_key("BACK")
+
+    handle_lichess_menu(
+        get_lichess_connection_fn=lambda: (connection, "alice", None),
+        menu_manager=Menu(),
+        start_lichess_game_fn=lambda _config: True,
+        handle_accounts_menu_fn=lambda: None,
+        log=MagicMock(),
+    )
+
+    assert connection.closes == 1
+
+
+def test_lichess_menu_closes_its_connection_when_starting_a_game():
+    """A game start still ends the menu's own connection.
+
+    The game does not inherit it -- the player authenticates its own -- so the
+    lobby's would otherwise stay open for the whole game. A regression
+    manifests as closes staying at 0 on the START_GAME path.
+    """
+    from universalchess.managers.menu import MenuSelection
+    from universalchess.players.lichess.lobby import handle_lichess_menu
+
+    connection = _FakeConnection()
+
+    class Menu:
+        def run_menu_loop(self, build_entries, handle_selection, **kwargs):
+            return handle_selection(MenuSelection.from_key("NewGame"))
+
+    result = handle_lichess_menu(
+        get_lichess_connection_fn=lambda: (connection, "alice", None),
+        menu_manager=Menu(),
+        start_lichess_game_fn=lambda _config: True,
+        handle_accounts_menu_fn=lambda: None,
+        log=MagicMock(),
+    )
+
+    assert result == "START_GAME"
+    assert connection.closes == 1
+
+
+def test_account_switch_closes_the_connection_it_replaces():
+    """Re-authenticating for a new account must not strand the old connection.
+
+    The switch opens a second connection for the newly bound account; the first
+    is finished at that moment. A regression manifests as the replaced
+    connection never being closed (closes == 0) while a new one is in use, so
+    each switch leaks one socket, or as the live connection being closed too.
+    """
+    from universalchess.managers.menu import MenuSelection
+    from universalchess.players.lichess.lobby import handle_lichess_menu
+
+    connections = [_FakeConnection(), _FakeConnection()]
+    handed_out = []
+    bound = []
+
+    class Menu:
+        def run_menu_loop(self, build_entries, handle_selection, **kwargs):
+            handle_selection(MenuSelection.from_key("Account"))
+            return None
+
+        def show_menu(self, entries, **kwargs):
+            return MenuSelection.from_key("org:bob")
+
+    def get_connection():
+        connection = connections[len(handed_out)]
+        handed_out.append(connection)
+        return connection, "alice", None
+
+    handle_lichess_menu(
+        get_lichess_connection_fn=get_connection,
+        menu_manager=Menu(),
+        start_lichess_game_fn=lambda _config: True,
+        handle_accounts_menu_fn=lambda: None,
+        log=MagicMock(),
+        list_account_choices_fn=lambda: [("org:bob", "lichess.org:Bob", False)],
+        bind_account_fn=bound.append,
+    )
+
+    assert handed_out == connections, "the switch must re-authenticate"
+    assert [c.closes for c in connections] == [1, 1]
+
+
+def test_a_failed_account_switch_keeps_the_working_connection_open():
+    """A switch that cannot sign in must leave the menu still usable.
+
+    The menu carries on with the account it already had, so closing that
+    connection would break Ongoing and Challenges for the rest of the visit. A
+    regression manifests as the surviving connection being closed twice: once
+    by the failed switch and once on exit.
+    """
+    from universalchess.managers.menu import MenuSelection
+    from universalchess.players.lichess.lobby import handle_lichess_menu
+
+    connection = _FakeConnection()
+    results = [(connection, "alice", None), (None, None, "network")]
+    bound = []
+
+    class Menu:
+        def run_menu_loop(self, build_entries, handle_selection, **kwargs):
+            handle_selection(MenuSelection.from_key("Account"))
+            return None
+
+        def show_menu(self, entries, **kwargs):
+            return MenuSelection.from_key("org:bob")
+
+    handle_lichess_menu(
+        get_lichess_connection_fn=lambda: results.pop(0),
+        menu_manager=Menu(),
+        start_lichess_game_fn=lambda _config: True,
+        handle_accounts_menu_fn=lambda: None,
+        log=MagicMock(),
+        list_account_choices_fn=lambda: [("org:bob", "lichess.org:Bob", False)],
+        bind_account_fn=bound.append,
+    )
+
+    assert results == [], "the failed switch must have been attempted"
+    assert connection.closes == 1
 
 
 def test_lichess_menu_account_picker_back_does_not_bind():
@@ -426,7 +582,7 @@ def test_lichess_menu_account_picker_back_does_not_bind():
             return MenuSelection.from_key("BACK")
 
     result = handle_lichess_menu(
-        get_lichess_client_fn=lambda: (object(), "alice", None),
+        get_lichess_connection_fn=lambda: (_FakeConnection(), "alice", None),
         menu_manager=Menu(),
         start_lichess_game_fn=lambda _config: True,
         handle_accounts_menu_fn=lambda: None,
@@ -470,7 +626,7 @@ def test_lichess_menu_picker_accounts_opens_accounts_manager():
             return MenuSelection.from_key("BACK")
 
     result = handle_lichess_menu(
-        get_lichess_client_fn=lambda: (object(), "alice", None),
+        get_lichess_connection_fn=lambda: (_FakeConnection(), "alice", None),
         menu_manager=Menu(),
         start_lichess_game_fn=lambda _config: True,
         handle_accounts_menu_fn=lambda: opened.append(True),
@@ -526,7 +682,11 @@ def test_selecting_ongoing_shows_help_then_the_game_list():
             return MenuSelection.from_key("BACK")
 
     result = handle_lichess_menu(
-        get_lichess_client_fn=lambda: (SimpleNamespace(games=Games()), "alice", None),
+        get_lichess_connection_fn=lambda: (
+            _FakeConnection(SimpleNamespace(games=Games())),
+            "alice",
+            None,
+        ),
         menu_manager=Menu(),
         start_lichess_game_fn=lambda _config: True,
         handle_accounts_menu_fn=lambda: None,
@@ -580,7 +740,11 @@ def test_selecting_empty_ongoing_shows_help_not_a_no_games_error(monkeypatch):
             return MenuSelection.from_key("BACK")
 
     result = handle_lichess_menu(
-        get_lichess_client_fn=lambda: (SimpleNamespace(games=Games()), "alice", None),
+        get_lichess_connection_fn=lambda: (
+            _FakeConnection(SimpleNamespace(games=Games())),
+            "alice",
+            None,
+        ),
         menu_manager=Menu(),
         start_lichess_game_fn=lambda _config: True,
         handle_accounts_menu_fn=lambda: None,
@@ -635,8 +799,8 @@ def test_selecting_challenges_shows_help_then_the_challenge_list():
             return MenuSelection.from_key("BACK")
 
     result = handle_lichess_menu(
-        get_lichess_client_fn=lambda: (
-            SimpleNamespace(challenges=Challenges()),
+        get_lichess_connection_fn=lambda: (
+            _FakeConnection(SimpleNamespace(challenges=Challenges())),
             "alice",
             None,
         ),

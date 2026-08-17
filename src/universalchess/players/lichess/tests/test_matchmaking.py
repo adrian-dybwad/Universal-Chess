@@ -17,7 +17,26 @@ seek is still blocking; a second attach is ignored.
 from unittest.mock import MagicMock
 
 from universalchess.players.lichess import LichessGameMode, LichessPlayer, LichessPlayerConfig
+from universalchess.players.lichess.http_session import LichessConnection
 from universalchess.players.lichess.player import ongoing_game_id
+
+
+class _RecordingSession:
+    """Session fake that records teardown calls in the order they arrive.
+
+    A fake rather than a MagicMock so a call the production code does not make
+    cannot be silently invented by attribute auto-creation.
+    """
+
+    def __init__(self):
+        self.calls = []
+
+    def abort_streams(self) -> int:
+        self.calls.append("abort_streams")
+        return 1
+
+    def close(self) -> None:
+        self.calls.append("close")
 
 
 def _player(mode=LichessGameMode.NEW):
@@ -273,23 +292,34 @@ def test_attach_without_seek_does_not_start_seek_thread():
     player._seek_game_thread.assert_not_called()
 
 
-def test_stop_closes_http_session_so_the_lobby_seek_is_cancelled():
-    """BACK must drop the POST /api/board/seek connection, not only set a flag.
+def test_stop_aborts_streams_before_closing_the_session():
+    """BACK must abort in-flight streams, and abort before closing the session.
 
-    Why: Lichess keeps a public seek until that streamed POST closes. stop()
-    joined the seek thread, but berserk.board.seek reads until Lichess closes
-    the stream, so join timed out and the seek stayed in the lobby.
+    Why: Lichess keeps a public seek until that streamed POST closes.
+    ``Session.close()`` only clears idle pooled connections, so on its own it
+    left the checked-out seek connection -- and the lobby seek -- alive.
 
-    How the regression manifests: session.close is not called, so the seek
-    remains listed after BACK on "Waiting for game".
+    A recording fake is used rather than MagicMock deliberately: the previous
+    version of this test asserted ``close`` on a ``MagicMock(session=...)``,
+    which auto-created a ``session`` attribute that the real berserk client does
+    not have. The assertion passed while production closed nothing. That the
+    socket really closes is covered in test_seek_teardown.py.
+
+    How the regression manifests: a missing abort_streams call (the seek stays
+    listed after BACK), or close before abort (pool cleared while the seek
+    connection is still held).
     """
     player = LichessPlayer()
-    session = MagicMock()
-    player._client = MagicMock(session=session)
+    session = _RecordingSession()
+    player._connection = LichessConnection(client=MagicMock(), session=session)
+    player._client = player._connection.client
+
     player.stop()
-    session.close.assert_called_once()
+
+    assert session.calls == ["abort_streams", "close"]
     assert player._should_stop.is_set()
     assert player._client is None
+    assert player._connection is None
 
 
 def test_start_does_not_seek_if_stopped_before_client_exists(monkeypatch):
@@ -306,18 +336,21 @@ def test_start_does_not_seek_if_stopped_before_client_exists(monkeypatch):
     player._start_new_game = MagicMock(return_value=True)
     created = []
 
-    def create_client(*_args, **_kwargs):
-        session = MagicMock()
-        client = MagicMock(session=session)
-        created.append(client)
-        player._should_stop.set()
-        return client
+    def create_connection(*_args, **_kwargs):
+        session = _RecordingSession()
+        created.append(session)
+        # A full stop(), not just the flag: BACK on the key thread runs the whole
+        # teardown while start() is still building the client, and the connection
+        # born after that teardown must still be closed by start() itself.
+        player.stop()
+        return LichessConnection(client=MagicMock(), session=session)
 
     monkeypatch.setattr(
-        "universalchess.players.lichess.match.create_berserk_client",
-        create_client,
+        "universalchess.players.lichess.match.create_lichess_connection",
+        create_connection,
     )
     assert player.start() is False
     player._start_new_game.assert_not_called()
-    assert created[0].session.close.called
+    assert created[0].calls == ["abort_streams", "close"]
     assert player._client is None
+    assert player._connection is None

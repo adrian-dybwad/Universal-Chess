@@ -118,7 +118,7 @@ def test_resolve_falls_back_to_legacy_token_when_no_accounts(config_files):
 def test_get_lichess_api_prefers_account_then_legacy(config_files):
     """centaur.get_lichess_api is account-aware: default account first, else legacy.
 
-    Back-compat consumers (accounts display, get_lichess_client) route through
+    Back-compat consumers (accounts display, get_lichess_connection) route through
     this, so after migration it must return the account token, and before
     migration the legacy token. A regression returns the stale legacy value even
     when an account exists.

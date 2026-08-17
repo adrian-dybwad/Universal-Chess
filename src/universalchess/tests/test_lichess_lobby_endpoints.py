@@ -59,24 +59,44 @@ class _FakeChallenges:
         }
 
 
+class _FakeConnection:
+    """Stands in for LichessConnection, counting the close the endpoint owes."""
+
+    def __init__(self):
+        self.client = SimpleNamespace(games=_FakeGames(), challenges=_FakeChallenges())
+        self.closes = 0
+
+    def close(self) -> int:
+        self.closes += 1
+        return 0
+
+
+_opened_connections = []
+
+
 def _fake_ok_client(_settings, _log):
-    return (
-        SimpleNamespace(games=_FakeGames(), challenges=_FakeChallenges()),
-        "alice",
-        None,
+    connection = _FakeConnection()
+    _opened_connections.append(connection)
+    return connection, "alice", None
+
+
+@pytest.fixture
+def lichess_connections(monkeypatch):
+    """Serve the lobby endpoints a fake connection and expose the ones opened."""
+    _opened_connections.clear()
+    monkeypatch.setattr(
+        "universalchess.players.lichess.lobby.lichess_connection_from_settings",
+        _fake_ok_client,
     )
+    return _opened_connections
 
 
-def test_ongoing_returns_summaries(client, monkeypatch):
+def test_ongoing_returns_summaries(client, lichess_connections):
     """GET /api/lichess/ongoing must return the board lobby's game rows.
 
     Why: the web list posts each id as a join. How a regression manifests: the
     payload shape changes, or Lichess is contacted (this fake would not be used).
     """
-    monkeypatch.setattr(
-        "universalchess.players.lichess.lobby.lichess_client_from_settings",
-        _fake_ok_client,
-    )
     resp = client.get("/api/lichess/ongoing")
     assert resp.status_code == 200
     assert json.loads(resp.data) == {
@@ -86,16 +106,12 @@ def test_ongoing_returns_summaries(client, monkeypatch):
     }
 
 
-def test_challenges_returns_incoming_then_outgoing(client, monkeypatch):
+def test_challenges_returns_incoming_then_outgoing(client, lichess_connections):
     """GET /api/lichess/challenges must return IN then OUT summaries.
 
     Why: selecting a row posts direction+id. Regression: order flips or a field
     is renamed so the web card cannot start the join.
     """
-    monkeypatch.setattr(
-        "universalchess.players.lichess.lobby.lichess_client_from_settings",
-        _fake_ok_client,
-    )
     resp = client.get("/api/lichess/challenges")
     assert resp.status_code == 200
     assert json.loads(resp.data) == {
@@ -106,6 +122,43 @@ def test_challenges_returns_incoming_then_outgoing(client, monkeypatch):
     }
 
 
+@pytest.mark.parametrize("endpoint", ["/api/lichess/ongoing", "/api/lichess/challenges"])
+def test_lobby_endpoints_close_the_connection_they_opened(
+    client, lichess_connections, endpoint
+):
+    """Each request must release its Lichess connection before responding.
+
+    The lobby cards poll these endpoints, so a connection left to the garbage
+    collector means an idle socket to lichess.org per poll. A regression
+    manifests as closes staying at 0 while the response still looks correct.
+    """
+    assert client.get(endpoint).status_code == 200
+
+    assert [connection.closes for connection in lichess_connections] == [1]
+
+
+def test_a_lichess_failure_still_closes_the_connection(
+    client, lichess_connections, monkeypatch
+):
+    """A 502 must not keep the connection the failed request opened.
+
+    Lichess being unreachable is exactly when polling retries most, so the
+    error path is where leaked connections would accumulate fastest. A
+    regression manifests as closes staying at 0 on the failure path.
+    """
+
+    def _unreachable(_self, count=10):
+        raise RuntimeError("lichess is down")
+
+    monkeypatch.setattr(_FakeGames, "get_ongoing", _unreachable)
+
+    resp = client.get("/api/lichess/ongoing")
+
+    assert resp.status_code == 502
+    assert json.loads(resp.data)["error"] == "fetch_failed"
+    assert [connection.closes for connection in lichess_connections] == [1]
+
+
 def test_ongoing_no_token_is_409(client, monkeypatch):
     """No credential must be 409 with error no_token, not an empty success.
 
@@ -113,7 +166,7 @@ def test_ongoing_no_token_is_409(client, monkeypatch):
     Accounts still needs a token. How a regression manifests: 200 with games [].
     """
     monkeypatch.setattr(
-        "universalchess.players.lichess.lobby.lichess_client_from_settings",
+        "universalchess.players.lichess.lobby.lichess_connection_from_settings",
         lambda _s, _l: (None, None, "no_token"),
     )
     resp = client.get("/api/lichess/ongoing")

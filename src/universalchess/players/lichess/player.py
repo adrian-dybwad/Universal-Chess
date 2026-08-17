@@ -119,8 +119,10 @@ class LichessPlayer(Player):
         super().__init__(config or LichessPlayerConfig())
         self._lichess_config: LichessPlayerConfig = self._config
         
-        # Lichess API client (berserk)
+        # Lichess API client (berserk) and the connection that owns its session,
+        # kept so stop() can abort streams berserk holds out of reach.
         self._client = None
+        self._connection = None
         self._token = None
         # Rating range resolved from the bound account (used for matchmaking when
         # the config does not override it).
@@ -359,10 +361,16 @@ class LichessPlayer(Player):
         
         # Initialize berserk client
         try:
-            from .match import create_berserk_client
-            self._client = create_berserk_client(
+            from .match import create_lichess_connection
+            # Published from a local: stop() runs on the key thread and clears
+            # both attributes, so reading self._connection back here could find
+            # the None it just wrote and fail the start as an API error rather
+            # than the cancel it is.
+            connection = create_lichess_connection(
                 self._token, host_id=getattr(self, "_host_id", "org")
             )
+            self._connection = connection
+            self._client = connection.client
         except ImportError:
             log.error("[LichessPlayer] berserk library not installed")
             self._set_state(PlayerState.ERROR, "berserk not installed")
@@ -411,9 +419,10 @@ class LichessPlayer(Player):
     def stop(self) -> None:
         """Stop the Lichess connection and cleanup.
 
-        Closes the HTTP session first so a streamed ``board.seek`` drops. Lichess
-        keeps a lobby seek alive until that POST connection closes; joining the
-        seek thread does not close the socket.
+        Aborts the in-flight Board API streams before joining their threads.
+        Lichess keeps a lobby seek alive until the streamed ``board.seek`` POST
+        connection closes, and those threads are blocked reading it, so joining
+        first would simply time out and leave the seek listed.
         """
         log.info("[LichessPlayer] Stopping Lichess player")
         self._should_stop.set()
@@ -433,15 +442,21 @@ class LichessPlayer(Player):
         log.info("[LichessPlayer] Lichess player stopped")
 
     def _close_http_session(self) -> None:
-        """Abort in-flight Board API streams (seek and event)."""
-        client = self._client
+        """Abort in-flight Board API streams (seek, events, game), then close.
+
+        Aborting is what cancels the seek. ``Session.close()`` alone only clears
+        idle pooled connections, so the streamed ``POST /api/board/seek`` -- which
+        is checked out and blocked in a read on the seek thread -- survived it and
+        Lichess kept listing the seek after BACK.
+        """
+        connection = self._connection
+        self._connection = None
         self._client = None
-        if client is None:
+        if connection is None:
             return
-        session = getattr(client, "session", None)
-        if session is None or not hasattr(session, "close"):
-            return
-        session.close()
+        aborted = connection.close()
+        if aborted:
+            log.info(f"[LichessPlayer] Aborted {aborted} in-flight Lichess stream(s)")
 
     def _abandon_start(self) -> bool:
         """True when stop() ran during start(); drop any client created after.
