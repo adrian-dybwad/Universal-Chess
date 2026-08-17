@@ -52,6 +52,11 @@ jobs:
           # TLS/CA endpoints use cryptography at runtime (PEM->DER for the iOS
           # mobileconfig); install it so the tls and ca-endpoint tests run.
           pip install cryptography
+          # segno renders the /ca.pem?qr=1 QR code phones scan to install the
+          # CA. Without it that test skipped here as well as locally, so the
+          # endpoint had no coverage anywhere and a broken assertion in it went
+          # unnoticed.
+          pip install segno
           # System telemetry (board.system_info) reads CPU/memory/disk/uptime
           # via psutil; install it so the system_info and About/stats tests run
           # (including the real-collection smoke test).

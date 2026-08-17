@@ -164,14 +164,25 @@ class TestCaDownload:
         assert resp.status_code == 404
 
     def test_qr_format(self, client, ca_cert_dir, monkeypatch):
-        """QR code generation should return SVG (if segno is available).
-        Regression: broken QR would prevent mobile users from downloading CA.
+        """?qr=1 serves an SVG QR code pointing at this board's own /ca.pem.
+
+        Regression: a broken QR would prevent mobile users from downloading the
+        CA, which is the only practical way to install it on a phone.
+
+        The media type is compared without its parameters: Werkzeug appends
+        ``charset=utf-8`` to any ``+xml`` mimetype, so asserting the whole
+        Content-Type header failed on a correct response. The body is checked
+        for drawn modules as well as an SVG root, because a 200 carrying the PEM
+        text, or an image with nothing rendered in it, would otherwise pass. The
+        encoded URL cannot be asserted without decoding the QR, so it is not.
         """
         monkeypatch.setattr("universalchess.web.app.CONFIG_DIR", str(ca_cert_dir))
-        try:
-            import segno  # noqa: F401
-        except ImportError:
-            pytest.skip("segno not installed")
+        pytest.importorskip("segno")
+
         resp = client.get("/ca.pem?qr=1")
+
         assert resp.status_code == 200
-        assert resp.content_type == "image/svg+xml"
+        assert resp.mimetype == "image/svg+xml"
+        body = resp.data.decode()
+        assert "<svg" in body
+        assert "<path" in body
