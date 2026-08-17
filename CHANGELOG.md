@@ -255,6 +255,25 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   it sets rather than repeating the heading. The board's menu is unaffected --
   it has never shown both.
 
+- **Dutch UI**: Nederlands is now offered in Settings > Language and translates
+  the board menus, e-paper widgets, and the web app. Unlike the four languages
+  before it, Dutch was not already on the list: the selector held the ten
+  most-spoken languages, so adding it meant registering the locale itself --
+  the supported set, the selector label, and the plain-English name the AI coach
+  is instructed with -- as well as writing the three bundles. It sits after the
+  other ten because it is there on a different basis: the hardware is a DGT
+  board, made in the Netherlands, so its home market reads Dutch.
+  - The copy is informal (je, not u), matching how Dutch consumer products and
+    Lichess's own Dutch interface address the reader.
+  - Lengths were measured rather than judged by eye: every string was rendered
+    through the widget that draws it, at the panel's real 120-pixel column, and
+    compared against the English it replaces. `scripts/measure_locale_fit.py`
+    keeps that check available for the next language. The board's font already
+    draws every character Dutch adds.
+  - RESUME on the Play tile reads VERDER rather than the literal HERVATTEN,
+    which measured too wide for the tile at full size and would have been shrunk
+    to fit; the tile's help quotes the word the tile actually shows.
+
 - **German UI**: Selecting Deutsch now translates the board menus, e-paper
   widgets, and the web app. Deutsch was already in the language selector and the
   coach already wrote in German, but no UI bundle existed, so the board itself
@@ -628,6 +647,17 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   was also a stray way to power the board off.
 
 ### Fixed
+
+- **Settings > Language pointed at a Coach Language setting that does not
+  exist**: the help read "The AI coach's remarks use the separate Coach Language
+  setting", sending the user to look for a screen that is not in the menu -- and
+  stating the opposite of how the board works. The coach follows this very
+  setting: both the board and the web API derive the coach's language from the
+  device locale, and the catalog has only one language node. The help now says
+  so, in English and in all three translations, which had faithfully carried the
+  false statement into Spanish, French and German. A test now holds the
+  behaviour the corrected help promises, so the claim cannot drift from the code
+  again.
 
 - **Translated help quoted words the screen never shows**: Alerts > Queen Threat
   explains the warning by quoting what the panel draws, and the panel drew

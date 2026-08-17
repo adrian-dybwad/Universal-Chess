@@ -441,7 +441,7 @@
     "system.language": {
       "label": "Idioma",
       "boardLabel": "Idioma\n{value}",
-      "help": "Idioma de los menús del tablero, la pantalla y la app web. Las observaciones del entrenador de IA usan el ajuste independiente Idioma del entrenador."
+      "help": "Idioma de los menús del tablero, la pantalla y la app web. El entrenador de IA también escribe sus observaciones en este idioma; no hay un ajuste de idioma independiente para el entrenador."
     },
     "system.updates": {
       "label": "Actualizaciones",

@@ -38,8 +38,13 @@ _KEY = "ui_language"
 # code here plus its label and coach name below; UI translation bundles/overlays
 # are optional (missing ones fall back to English), but the coach can already
 # write in the new language from its :func:`coach_language_name`.
+#
+# The first ten are the world's most-spoken languages, in that order. Dutch is
+# listed after them on a different basis: the hardware this runs on is a DGT
+# board, made in the Netherlands, so its home market reads Dutch even though the
+# language is nowhere near the top ten by speakers.
 DEFAULT = "en"
-SUPPORTED = {"en", "es", "zh", "hi", "ar", "fr", "ru", "pt", "de", "ja"}
+SUPPORTED = {"en", "es", "zh", "hi", "ar", "fr", "ru", "pt", "de", "ja", "nl"}
 
 # Display labels for the selector, in presentation order. Written as endonyms (in
 # the language they name) so a speaker recognises their own language regardless of
@@ -55,8 +60,9 @@ _LABELS: Dict[str, str] = {
     "pt": "Português",
     "de": "Deutsch",
     "ja": "日本語",
+    "nl": "Nederlands",
 }
-_ORDER: List[str] = ["en", "es", "zh", "hi", "ar", "fr", "ru", "pt", "de", "ja"]
+_ORDER: List[str] = ["en", "es", "zh", "hi", "ar", "fr", "ru", "pt", "de", "ja", "nl"]
 
 # Plain-English language name for each locale, used to instruct the coach LLM
 # ("Write your entire response in <name>"). English by design (the model reads the
@@ -73,6 +79,7 @@ _COACH_NAMES: Dict[str, str] = {
     "pt": "Portuguese",
     "de": "German",
     "ja": "Japanese",
+    "nl": "Dutch",
 }
 
 

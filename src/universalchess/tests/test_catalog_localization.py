@@ -208,7 +208,7 @@ def test_missing_overlay_falls_back_to_english(base_menu):
 # -- real overlays: drift guard ----------------------------------------------
 
 
-@pytest.mark.parametrize("locale", ["es", "fr", "de"])
+@pytest.mark.parametrize("locale", ["es", "fr", "de", "nl"])
 def test_overlay_keys_reference_real_catalog_entries(base_menu, locale):
     """Every id/name in translations/<locale>.json resolves to a real catalog entry.
 
@@ -297,6 +297,25 @@ def test_get_localized_catalog_german_reflects_overlay_without_mutating_base():
     german = get_localized_catalog("de")
     assert german.get_node("power.shutdown")["label"] == "Herunterfahren"
     assert german.option_label("player_type", "human") == "Mensch"
+
+    assert get_localized_catalog("en").get_node("power.shutdown")["label"] == "Shutdown"
+    assert english.option_label("player_type", "human") == english_players_before == "Human"
+
+
+def test_get_localized_catalog_dutch_reflects_overlay_without_mutating_base():
+    """get_localized_catalog("nl") is Dutch; the English base is unaffected.
+
+    Why: Dutch is the first locale that had to be added to the selector as well
+    as given an overlay -- the others were already offered by the language
+    service. A regression in either half (an unregistered code, or an overlay
+    the loader never applies) shows English on a Dutch device.
+    """
+    english = load_catalog()
+    english_players_before = english.option_label("player_type", "human")
+
+    dutch = get_localized_catalog("nl")
+    assert dutch.get_node("power.shutdown")["label"] == "Afsluiten"
+    assert dutch.option_label("player_type", "human") == "Mens"
 
     assert get_localized_catalog("en").get_node("power.shutdown")["label"] == "Shutdown"
     assert english.option_label("player_type", "human") == english_players_before == "Human"

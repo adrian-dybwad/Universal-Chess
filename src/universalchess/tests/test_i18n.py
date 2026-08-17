@@ -84,6 +84,19 @@ def test_returns_german_when_locale_is_german(monkeypatch):
     assert i18n.t("game_over.result.white_wins") == "Weiß gewinnt"
 
 
+def test_returns_dutch_when_locale_is_dutch(monkeypatch):
+    """t() returns the Dutch string when the active locale is Dutch.
+
+    Why: Dutch was the first locale added to the selector itself rather than
+    just given a bundle -- the other four were already offered. A regression in
+    that registration (a code missing from the supported set, or a bundle the
+    loader cannot find) shows up here as English text.
+    """
+    _set_locale(monkeypatch, "nl")
+    assert i18n.t("common.enabled") == "Ingeschakeld"
+    assert i18n.t("game_over.result.white_wins") == "Wit wint"
+
+
 def test_interpolates_named_placeholders():
     """t() fills {name} placeholders from kwargs via str.format.
 
@@ -117,7 +130,7 @@ def test_missing_key_returns_key_itself():
     assert i18n.t("does.not.exist") == "does.not.exist"
 
 
-@pytest.mark.parametrize("locale", ["es", "fr", "de"])
+@pytest.mark.parametrize("locale", ["es", "fr", "de", "nl"])
 def test_translated_bundle_covers_every_english_key(locale):
     """Every key in en.json has a translation in each shipped locale bundle.
 

@@ -90,7 +90,8 @@ def test_language_is_part_of_cache_key_and_reaches_request():
     # The same hint requested in a different language must regenerate (language is
     # in the cache key) and the request must carry that language so the prompt asks
     # for it. Regression: omitting language from the key would serve an English
-    # remark after the user switched the Coach Language, or vice versa.
+    # remark after the user switched Settings > Language, or vice versa. That one
+    # setting is what the coach follows; there is no coach language of its own.
     seen = []
 
     def fake_generate(config, request):

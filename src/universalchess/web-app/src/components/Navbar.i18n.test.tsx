@@ -65,6 +65,19 @@ describe('Navbar localization', () => {
     expect(menu.getAllByText('Einstellungen').length).toBeGreaterThan(0);
   });
 
+  it('renders Dutch nav labels when the language is Dutch', async () => {
+    // Why: Dutch is the first locale that had to be added to the language
+    // service as well as given a bundle, so it has two places to be left out of.
+    // A regression in either leaves the navbar English on a Dutch device while
+    // every other case here still passes.
+    await i18n.changeLanguage('nl');
+    const { container } = renderNavbar();
+    const menu = within(container);
+    expect(menu.getAllByText('Bord').length).toBeGreaterThan(0);
+    expect(menu.getAllByText('Partijen').length).toBeGreaterThan(0);
+    expect(menu.getAllByText('Instellingen').length).toBeGreaterThan(0);
+  });
+
   it('renders French nav labels when the language is French', async () => {
     // Why: French is a shipped UI locale; a regression that only wired Spanish
     // would leave the navbar in English when the device language is French.

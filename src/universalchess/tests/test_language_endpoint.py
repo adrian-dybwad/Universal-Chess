@@ -130,3 +130,26 @@ def test_post_invalid_language_is_400(client, authed, monkeypatch):
     resp = client.post("/api/system/language", json={"language": "fr"})
     assert resp.status_code == 400
     assert notified["count"] == 0
+
+
+def test_the_coach_writes_in_the_device_locale(monkeypatch):
+    """The coach is asked for the device's language, not a setting of its own.
+
+    Why: Settings > Language told the user the coach used "the separate Coach
+    Language setting", which has not existed for some time -- this helper, and
+    the board's copy of it, both derive the coach's language from the device
+    locale, so the help pointed at a screen the user could never find. The help
+    now says the coach follows this setting, and this holds the behaviour that
+    claim rests on. Dutch is used because it was added last, so a mapping that
+    covers only the older languages fails here. How a regression manifests: the
+    helper returns "English" on a Dutch board and the coach writes in English.
+
+    The board's copy lives in ``main``, which starts the board at import and so
+    cannot be imported by a test; both are one-line delegations to the language
+    service, whose mapping is covered in ``test_language_service``.
+    """
+    from universalchess.services import language_service
+
+    monkeypatch.setattr(language_service, "get_language", lambda: "nl")
+
+    assert webapp._read_coach_language() == "Dutch"

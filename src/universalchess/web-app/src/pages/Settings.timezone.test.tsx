@@ -168,9 +168,10 @@ describe('System tab language selector', () => {
     // Defaults to English (the payload omits ui_language -> "en" fallback).
     expect(select.value).toBe('en');
     const values = Array.from(select.options).map((o) => o.value);
-    // The full launch set: English/Spanish plus the languages the coach can write
-    // in (the selector now drives both UI and coach language).
-    expect(values).toEqual(['en', 'es', 'zh', 'hi', 'ar', 'fr', 'ru', 'pt', 'de', 'ja']);
+    // The ten most-spoken languages, which the selector drives for both the UI
+    // and the coach, followed by Dutch -- listed for the board's home market
+    // rather than by speaker count, so it sits after them.
+    expect(values).toEqual(['en', 'es', 'zh', 'hi', 'ar', 'fr', 'ru', 'pt', 'de', 'ja', 'nl']);
   });
 
   it('POSTs to /api/system/language (not /api/settings) when changed', async () => {

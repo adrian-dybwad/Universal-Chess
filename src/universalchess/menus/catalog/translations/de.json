@@ -440,7 +440,7 @@
     "system.language": {
       "label": "Sprache",
       "boardLabel": "Sprache\n{value}",
-      "help": "Sprache für die Brettmenüs, die Anzeige und die Web-App. Die Kommentare des KI-Coachs verwenden die eigene Einstellung Coach-Sprache."
+      "help": "Sprache für die Brettmenüs, die Anzeige und die Web-App. Der KI-Coach schreibt seine Kommentare ebenfalls in dieser Sprache; eine eigene Coach-Sprache gibt es nicht."
     },
     "system.updates": {
       "label": "Updates",

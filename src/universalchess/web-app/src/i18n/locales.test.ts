@@ -3,6 +3,7 @@ import de from './locales/de.json';
 import en from './locales/en.json';
 import es from './locales/es.json';
 import fr from './locales/fr.json';
+import nl from './locales/nl.json';
 
 /**
  * Holds the shipped locale bundles to the same key set.
@@ -42,8 +43,10 @@ function placeholdersOf(bundle: Bundle, path: string): Set<string> {
   );
 }
 
-const LOCALES = { en: en as Bundle, es: es as Bundle, fr: fr as Bundle, de: de as Bundle };
-const TRANSLATED = ['es', 'fr', 'de'] as const;
+const LOCALES = {
+  en: en as Bundle, es: es as Bundle, fr: fr as Bundle, de: de as Bundle, nl: nl as Bundle,
+};
+const TRANSLATED = ['es', 'fr', 'de', 'nl'] as const;
 
 describe('shipped locale bundles', () => {
   it.each(TRANSLATED)('translate exactly the same set of keys as English (%s)', (code) => {

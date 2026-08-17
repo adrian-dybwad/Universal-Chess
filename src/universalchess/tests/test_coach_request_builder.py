@@ -143,7 +143,8 @@ def test_language_defaults_to_english_and_propagates_when_set():
     # The response language must default to English (no directive downstream) and
     # reach the request when a caller supplies one, so the coach's language
     # selection actually shapes the prompt. Regression: dropping the language here
-    # would ignore the user's Coach Language setting for every caller.
+    # would ignore Settings > Language, the one setting the coach follows, for
+    # every caller.
     default = build_coach_request(STARTPOS, "e2e4")
     assert default is not None
     assert default.language == "English"

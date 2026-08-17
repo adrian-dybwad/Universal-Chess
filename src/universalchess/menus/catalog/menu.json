@@ -163,7 +163,8 @@
       { "value": "ru", "label": "\u0420\u0443\u0441\u0441\u043a\u0438\u0439" },
       { "value": "pt", "label": "Portugu\u00eas" },
       { "value": "de", "label": "Deutsch" },
-      { "value": "ja", "label": "\u65e5\u672c\u8a9e" }
+      { "value": "ja", "label": "\u65e5\u672c\u8a9e" },
+      { "value": "nl", "label": "Nederlands" }
     ],
     "timezones_common": [
       { "value": "UTC", "label": "UTC" },
@@ -1084,7 +1085,7 @@
       "optionSet": "ui_language",
       "label": "Language",
       "boardLabel": "Language\n{value}",
-      "help": "Language for the board menus, display, and web app. The AI coach's remarks use the separate Coach Language setting.",
+      "help": "Language for the board menus, display, and web app. The AI coach writes its remarks in this language too; there is no separate coach language setting.",
       "bind": { "store": "system", "key": "ui_language" },
       "icon": "settings",
       "platforms": ["board", "web"]

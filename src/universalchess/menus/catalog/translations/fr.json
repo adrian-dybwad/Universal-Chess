@@ -441,7 +441,7 @@
     "system.language": {
       "label": "Langue",
       "boardLabel": "Langue\n{value}",
-      "help": "Langue des menus du plateau, de l'écran et de l'application web. Les remarques de l'entraîneur d'IA utilisent le réglage indépendant Langue de l'entraîneur."
+      "help": "Langue des menus du plateau, de l'écran et de l'application web. L'entraîneur d'IA rédige aussi ses remarques dans cette langue ; il n'y a pas de réglage de langue distinct pour l'entraîneur."
     },
     "system.updates": {
       "label": "Mises à jour",

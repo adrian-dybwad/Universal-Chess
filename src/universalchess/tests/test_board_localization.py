@@ -31,7 +31,7 @@ from universalchess.menus.catalog.loader import get_localized_catalog
 from universalchess.menus.engine_manager_menu import confirm_discard_install
 
 COUNTDOWN_SECONDS = 3
-SHIPPED_LOCALES = ("en", "es", "fr", "de")
+SHIPPED_LOCALES = ("en", "es", "fr", "de", "nl")
 
 
 def _with_locale(monkeypatch, locale, read):

@@ -1,0 +1,754 @@
+{
+  "_comment": "Dutch (nl) translation overlay for menu.json. Keyed by node id / optionSet name / section id. Only translated strings are listed; anything omitted falls back to the English source in menu.json. Language names in the 'ui_language' optionSet are intentionally left untranslated (endonyms). The register is informal (je/jouw), matching i18n/locale/nl.json and Lichess's own Dutch UI; boardLabel values are broken with an explicit newline rather than abbreviated, so a long Dutch word does not shrink its row on the 128px panel.",
+  "sections": {
+    "players": "Spelers",
+    "game": "Partij",
+    "agents": "Agenten",
+    "display": "Weergave",
+    "sound": "Geluid",
+    "connectivity": "Verbindingen",
+    "accounts": "Accounts",
+    "engines": "Motoren",
+    "system": "Systeem"
+  },
+  "optionSets": {
+    "color": {
+      "white": "Wit",
+      "black": "Zwart"
+    },
+    "player_type": {
+      "human": "Mens",
+      "engine": "Motor",
+      "hand_brain": "Hand + Brein",
+      "lichess": "Lichess"
+    },
+    "hand_brain_mode": {
+      "normal": "Normaal (Motor = Brein)",
+      "reverse": "Omgekeerd (Mens = Brein)"
+    },
+    "time_control": {
+      "1": "1 min (Bullet)",
+      "3": "3 min (Blitz)",
+      "5": "5 min (Blitz)",
+      "10": "10 min (Rapid)",
+      "15": "15 min (Rapid)",
+      "30": "30 min (Klassiek)",
+      "60": "60 min (Klassiek)",
+      "90": "90 min (Klassiek)"
+    },
+    "tc_increment": {
+      "0": "Geen",
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s",
+      "10": "10 s",
+      "15": "15 s",
+      "30": "30 s",
+      "60": "60 s"
+    },
+    "tc_delay": {
+      "0": "Geen",
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s",
+      "10": "10 s"
+    },
+    "tc_delay_mode": {
+      "none": "Geen",
+      "simple": "Simple (VS)",
+      "bronstein": "Bronstein"
+    },
+    "engine_move_delay": {
+      "0": "Geen",
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s"
+    },
+    "think_time": {
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s",
+      "10": "10 s",
+      "15": "15 s",
+      "20": "20 s",
+      "30": "30 s",
+      "60": "60 s"
+    },
+    "update_channel": {
+      "stable": "Stabiel (aanbevolen)",
+      "nightly": "Nightly (ontwikkeling)"
+    },
+    "sleep_timer": {
+      "0": "Uit",
+      "300": "5 min",
+      "600": "10 min",
+      "900": "15 min",
+      "1800": "30 min",
+      "3600": "1 uur"
+    },
+    "usb_gadget_mode": {
+      "off": {
+        "label": "Off",
+        "description": "USB-Ethernet staat uit.{wifi_or_ethernet_reach: Het schaakbord is dan alleen via Wi-Fi of Ethernet bereikbaar.}"
+      },
+      "auto": {
+        "label": "Auto",
+        "description": "Het schaakbord kiest zelf Client of Shared — Client wanneer de hostcomputer via de kabel een netwerk aanbiedt, Shared wanneer dat niet zo is — en schakelt mee zodra dat verandert. Client en Shared blijven juist vast staan. Het bord is in beide gevallen bereikbaar op {mdns_url}, en op http://10.12.194.1/ zolang het in Shared staat. Omdat de modus van zichzelf kan wisselen, kan het gewone internet van de hostcomputer (Wi-Fi of Ethernet) stoppen met werken zodra het bord naar Shared overschakelt."
+      },
+      "client": {
+        "label": "Client",
+        "description": "De hostcomputer deelt zijn internet via USB met het schaakbord. Het bord is bereikbaar op {mdns_url}. Vereist internetverbinding delen (of ICS) op de hostcomputer."
+      },
+      "shared": {
+        "label": "Shared",
+        "description": "Het schaakbord beheert het USB-netwerk. Open http://10.12.194.1/ of {mdns_url}. Zet internetverbinding delen uit op de hostcomputer — op macOS zet je ook de schakelaar voor \"Universal Chess USB Gadget\" in de lijst Delen uit (de hoofdschakelaar alleen is niet genoeg; anders houdt de Mac een zelftoegekend adres). Waarschuwing: zolang de kabel is aangesloten, kan het gewone internet van de hostcomputer (Wi-Fi of Ethernet) stoppen met werken. Het schaakbord deelt zijn internetverbinding met de computer als het zelf al online is via Wi-Fi."
+      }
+    },
+    "analysis_time": {
+      "quick": "Snel (0,3 s)",
+      "standard": "Standaard (0,8 s)",
+      "deep": "Diep (2 s)"
+    },
+    "coach_multipv": {
+      "1": "1 (uit)"
+    },
+    "notation": {
+      "figurine": "Figuren (♘f3)",
+      "san": "Standaard (Nf3)",
+      "lan": "Lang (Ng1-f3)",
+      "uci": "Coördinaten (g1f3)"
+    },
+    "text_size": {
+      "small": "Klein",
+      "medium": "Middel",
+      "large": "Groot"
+    },
+    "timezones_common": {
+      "Europe/London": "Londen",
+      "Europe/Paris": "Parijs",
+      "Europe/Berlin": "Berlijn",
+      "Europe/Moscow": "Moskou",
+      "America/New_York": "New York",
+      "America/Los_Angeles": "Los Angeles",
+      "Asia/Dubai": "Dubai",
+      "Asia/Kolkata": "Calcutta",
+      "Asia/Shanghai": "Shanghai",
+      "Asia/Tokyo": "Tokio",
+      "Australia/Sydney": "Sydney"
+    }
+  },
+  "accountTypes": {
+    "lichess": {
+      "fields": {
+        "api_token": {
+          "label": "API-token",
+          "help": "Maak een token aan op de gekozen Lichess-server met de rechten board:play, challenge:read en challenge:write"
+        },
+        "range": {
+          "label": "Ratingbereik",
+          "help": "Gewenst ratingbereik van tegenstanders bij het zoeken naar een partij"
+        }
+      }
+    }
+  },
+  "nodes": {
+    "main": {
+      "label": "Hoofdmenu"
+    },
+    "main.play": {
+      "label": "SPELEN",
+      "label_in_progress": "VERDER",
+      "help": "Start een nieuwe partij. Als een partij onderbroken is, staat hier VERDER en wordt die voortgezet."
+    },
+    "main.positions": {
+      "label": "Stellingen",
+      "help": "Zet een vaste stelling op het bord op om te oefenen of te analyseren."
+    },
+    "main.centaur": {
+      "label": "Originele\nCentaur",
+      "help": "Schakelt terug naar de originele DGT Centaur-software."
+    },
+    "main.settings": {
+      "label": "Instellingen",
+      "help": "Stelt spelers, bedenktijd, weergave, verbindingen en systeemopties in."
+    },
+    "settings": {
+      "label": "Instellingen"
+    },
+    "settings.players": {
+      "label": "Spelers",
+      "help": "Stelt spelersnamen, spelertypen, motoren en Lichess in."
+    },
+    "players.player1": {
+      "label": "Speler 1\n{fn:player1_summary}",
+      "help": "Stelt speler 1 in (de speler die de gekozen kleur heeft)."
+    },
+    "players.player2": {
+      "label": "Speler 2\n{fn:player2_summary}",
+      "help": "Stelt speler 2 in."
+    },
+    "players.accounts": {
+      "label": "Accounts",
+      "help": "Verbindt een Lichess-token. Elk account staat in de lijst als server:gebruiker."
+    },
+    "players.lichess": {
+      "label": "Lichess-lobby",
+      "boardLabel": "Lichess\nLobby",
+      "help": "Lichess-gegevens en online spelen. Elke aanmelding bestaat uit een server en een gebruiker (lichess.org of lichess.dev). Opent de accountkeuze, Gewaardeerd, lopende partijen, uitdagingen en Nieuwe partij zoeken."
+    },
+    "lichess.account": {
+      "label": "Account",
+      "boardLabel": "Account",
+      "help": "Met welke opgeslagen Lichess-aanmelding dit bord speelt en rondkijkt, wat er ook bij Spelers staat. Accounts onderaan voegt aanmeldingen toe of verwijdert ze."
+    },
+    "lichess.ongoing": {
+      "label": "Lopende partijen",
+      "boardLabel": "Lopende\npartijen",
+      "help": "Zet een Lichess-partij voort die dit account al is begonnen, op dit bord, op de website of op een ander apparaat.\n\nKies een partij om die hier voort te zetten. De klok en je kleur komen uit die partij.\n\nStaat er niets in de lijst, dan heeft dit account geen onafgemaakte partijen. Gebruik Nieuwe partij zoeken om een nieuwe tegenstander te zoeken."
+    },
+    "lichess.challenges": {
+      "label": "Uitdagingen",
+      "boardLabel": "Uit-\ndagingen",
+      "help": "Een uitdaging is een partij die aan dit account is aangeboden, of die dit account aan iemand anders heeft aangeboden.\n\nInkomend: kies er een om die op dit bord aan te nemen. Komt er tijdens het zoeken een uitdaging binnen, dan staan daar ook Aannemen en Weigeren.\n\nUitgaand: wacht nog op de andere speler. Kies er een om hier te wachten; de partij opent op dit bord zodra hij aanneemt.\n\nNieuwe partij zoeken plaatst een openbare zoekopdracht in plaats van één bepaalde persoon uit te dagen."
+    },
+    "lichess.new_game": {
+      "label": "Nieuwe partij zoeken",
+      "boardLabel": "Partij\nzoeken",
+      "help": "Zoekt met dit account een nieuwe tegenstander op Lichess, wat er ook bij Spelers staat. Gewaardeerd is de regel erboven en de bedenktijd komt uit de instellingen bij Partij; de gekozen kleur geldt alleen wanneer een speler op Lichess staat."
+    },
+    "players.start": {
+      "label": "Nieuwe\npartij",
+      "help": "Start een nieuwe partij met de huidige spelersinstellingen. Beëindigt een partij die op dat moment loopt."
+    },
+    "settings.player_detail": {
+      "label": "Speler",
+      "help": "Stelt één speler in."
+    },
+    "settings.game": {
+      "label": "Partij",
+      "help": "Bedenktijd en live-analyse van de stelling."
+    },
+    "settings.agents": {
+      "label": "Agenten",
+      "help": "Stelt de AI-agenten (diensten) in die functies zoals de coach aandrijven: API-sleutel, model en endpoint."
+    },
+    "settings.notation": {
+      "label": "Zetnotatie",
+      "boardLabel": "Notatie\n{value}",
+      "help": "Schaaknotatie voor de zettenlijst op het bord en op het web."
+    },
+    "settings.chess960": {
+      "help": "Start elke nieuwe partij vanuit een willekeurige Chess960-stelling (Fischer Random). De doelstelling wordt op de weergave getoond; zet de stukken zo neer."
+    },
+    "settings.timecontrol": {
+      "label": "Basisminuten",
+      "boardLabel": "Basisminuten\n{fn:time_control}",
+      "help": "Minuten per speler voor een eenvoudige klok zonder tijdtoevoeging (geen increment en geen vertraging)."
+    },
+    "settings.timecontrol.engine_move_delay": {
+      "label": "Vertraging motorzet",
+      "boardLabel": "Motorvertraging\n{value}",
+      "help": "In partijen met klok tegen de motor stopt de klok van de motor zodra die zijn zet toont; jouw klok start pas na deze vertraging (terwijl je zijn stuk verzet)."
+    },
+    "settings.timecontrol.preset": {
+      "label": "Voorinstelling",
+      "boardLabel": "Voorinstelling\n{fn:time_control_preset_label}",
+      "help": "Kies een kant-en-klare bedenktijd: zonder tijdtoevoeging, met increment, met vertraging of een toernooitempo. Kies Aangepast om de eigen klok te gebruiken."
+    },
+    "timecontrol.custom.base": {
+      "label": "Basistijd",
+      "boardLabel": "Basistijd\n{value}",
+      "help": "Starttijd op de klok van elke speler."
+    },
+    "timecontrol.custom.increment": {
+      "label": "Increment",
+      "boardLabel": "Increment\n{value}",
+      "help": "Seconden die na elke zet bij de klok van de speler aan zet worden opgeteld (Fischer-increment)."
+    },
+    "timecontrol.custom.delay": {
+      "label": "Vertraging",
+      "boardLabel": "Vertraging\n{value}",
+      "help": "Seconden vertraging per zet, toegepast volgens de instelling Vertragingsmodus."
+    },
+    "timecontrol.custom.mode": {
+      "label": "Vertragingsmodus",
+      "boardLabel": "Modus\n{value}",
+      "help": "Geen: geen vertraging. Simple: de klok wacht voordat hij gaat aftellen. Bronstein: de gebruikte tijd wordt teruggegeven, tot maximaal de vertraging."
+    },
+    "timecontrol.custom.asymmetric": {
+      "label": "Verschillend per kleur",
+      "boardLabel": "Asymmetrisch\n{value}",
+      "help": "Geeft wit en zwart verschillende tijden (tijdvoorgift). Als dit aan staat, stel je hieronder de basistijd en het increment van zwart in."
+    },
+    "timecontrol.custom.black_base": {
+      "label": "Basistijd zwart",
+      "boardLabel": "Basistijd zwart\n{value}",
+      "help": "Starttijd op de klok van zwart wanneer er per kleur verschillende tijden worden gebruikt."
+    },
+    "timecontrol.custom.black_increment": {
+      "label": "Increment zwart",
+      "boardLabel": "Increment zwart\n{value}",
+      "help": "Seconden die na elke zet bij de klok van zwart worden opgeteld wanneer er per kleur verschillende tijden worden gebruikt."
+    },
+    "settings.display": {
+      "label": "Weergave",
+      "help": "Bepaalt wat er op het e-paperscherm en op de leds verschijnt."
+    },
+    "settings.sound": {
+      "label": "Geluid",
+      "help": "Bepaalt de geluidssignalen en piepjes."
+    },
+    "settings.connectivity": {
+      "label": "Verbindingen",
+      "help": "Netwerk, randapparatuur, USB-Ethernet en schermspiegeling."
+    },
+    "settings.engines": {
+      "label": "Motoren",
+      "help": "Installeert en beheert schaakmotoren om mee te spelen en te analyseren."
+    },
+    "settings.system": {
+      "label": "Systeem",
+      "help": "Onderhoud, software-updates en energie."
+    },
+    "connectivity": {
+      "label": "Verbindingen"
+    },
+    "connectivity.wifi": {
+      "help": "Verbindt het bord met een draadloos netwerk."
+    },
+    "connectivity.bluetooth": {
+      "help": "Koppelt een Bluetooth-toetsenbord aan het bord."
+    },
+    "connectivity.usb_gadget": {
+      "label": "USB-gadget",
+      "boardLabel": "USB-gadget\n{value}",
+      "help": "USB-Ethernet via een kabel naar de hostcomputer. De kabel gaat naar de USB-datapoort van de Pi Zero binnen in het bord, niet naar de oplaadpoort van de Centaur. Van modus wisselen terwijl de verbinding actief is, kan de sessie verbreken. Om de kabel opnieuw te verbinden, trek je hem los aan het bord (of aan een USB-A-koppelstuk): opnieuw insteken in de USB-C-poort van de computer herstelt de verbinding niet altijd, en de computer ziet daarna soms helemaal geen apparaat meer."
+    },
+    "connectivity.chromecast": {
+      "help": "Spiegelt het bord naar een Chromecast-apparaat."
+    },
+    "wifi": {
+      "label": "WiFi",
+      "help": "WiFi-status, netwerken zoeken en de radio aan- of uitzetten."
+    },
+    "wifi.scan": {
+      "label": "Zoeken",
+      "help": "Zoekt beschikbare draadloze netwerken en maakt verbinding."
+    },
+    "wifi.networks": {
+      "label": "Netwerken",
+      "help": "Draadloze netwerken die bij het laatste zoeken zijn gevonden."
+    },
+    "wifi.networks.list": {
+      "help": "Kies een netwerk om verbinding te maken; beveiligde netwerken vragen om een wachtwoord."
+    },
+    "wifi.status": {
+      "help": "Huidige status en signaalsterkte van de WiFi-verbinding."
+    },
+    "wifi.enabled": {
+      "help": "Status van de WiFi-verbinding. Kies dit om de WiFi-radio aan of uit te zetten."
+    },
+    "bluetooth": {
+      "label": "Bluetooth",
+      "help": "Bluetooth-status, uitzenden en gekoppelde apparaten."
+    },
+    "bluetooth.status": {
+      "help": "Huidige status van de Bluetooth-verbinding en het BLE-uitzenden."
+    },
+    "bluetooth.enabled": {
+      "help": "Status van de Bluetooth-verbinding en het uitzenden. Kies dit om de Bluetooth-radio aan of uit te zetten."
+    },
+    "bluetooth.devices": {
+      "label": "Apparaten",
+      "help": "Koppel een nieuw toetsenbord en bekijk of beheer gekoppelde Bluetooth-apparaten."
+    },
+    "bluetooth.pair": {
+      "label": "Toetsenbord koppelen",
+      "help": "Zoekt een Bluetooth-toetsenbord en koppelt het."
+    },
+    "bluetooth.devices.list": {
+      "label": "Apparaten",
+      "help": "Kies een gekoppeld apparaat om te verbinden, de verbinding te verbreken of het te vergeten, of koppel een nieuw toetsenbord."
+    },
+    "bluetooth.devices.list.items": {
+      "help": "Kies een gekoppeld apparaat om het te beheren."
+    },
+    "bluetooth.device.detail": {
+      "label": "Apparaat",
+      "help": "Verbindt het gekozen Bluetooth-apparaat, verbreekt de verbinding of vergeet het."
+    },
+    "bluetooth.device.info": {
+      "help": "Het gekozen apparaat en de status van de verbinding."
+    },
+    "bluetooth.device.connect": {
+      "label": "Verbinden",
+      "help": "Verbinding maken met dit apparaat."
+    },
+    "bluetooth.device.disconnect": {
+      "label": "Verbreken",
+      "help": "De verbinding met dit apparaat verbreken."
+    },
+    "bluetooth.device.forget": {
+      "label": "Vergeten",
+      "help": "Verwijdert de koppeling van dit apparaat."
+    },
+    "bluetooth.device.stale": {
+      "label": "Koppeling geweigerd",
+      "help": "Het apparaat heeft de opgeslagen koppeling geweigerd; verwijder die of houd die."
+    },
+    "bluetooth.device.stale.remove": {
+      "label": "Koppeling\nvergeten",
+      "help": "Vergeet de geweigerde koppeling, zodat er opnieuw gekoppeld kan worden."
+    },
+    "bluetooth.device.stale.keep": {
+      "label": "Koppeling\nhouden",
+      "help": "Houdt de bestaande koppeling en gaat terug."
+    },
+    "bluetooth.keyboards": {
+      "label": "Toetsenbord koppelen",
+      "help": "Gevonden Bluetooth-toetsenborden; kies er een om te koppelen."
+    },
+    "bluetooth.keyboards.list": {
+      "help": "Kies een toetsenbord om te koppelen; als het nodig is wordt er een koppelcode getoond."
+    },
+    "system": {
+      "label": "Systeem"
+    },
+    "group.system.device": {
+      "label": "Apparaat",
+      "help": "Voorkeuren voor slaapstand, klok en taal van dit bord."
+    },
+    "system.inactivity": {
+      "label": "Slaaptimer",
+      "boardLabel": "Slaaptimer\n{value}",
+      "help": "Zet het bord automatisch in de slaapstand na een tijd zonder gebruik."
+    },
+    "system.timezone": {
+      "label": "Tijdzone",
+      "boardLabel": "Tijdzone\n{value}",
+      "help": "Stelt de tijdzone van de klok van het apparaat in. Opgeslagen partijtijden blijven in UTC; dit geldt voor de klok op het bord."
+    },
+    "system.ntp": {
+      "label": "Netwerktijd",
+      "boardLabel": "Netwerktijd",
+      "help": "Houdt de klok automatisch goed via internet. Het bord heeft geen klok met batterij, dus als dit uit staat -- of als er geen netwerk is -- gaat de tijd afwijken en moet die met de hand worden gezet via de webinstellingen."
+    },
+    "system.language": {
+      "label": "Taal",
+      "boardLabel": "Taal\n{value}",
+      "help": "Taal voor de bordmenu's, de weergave en de webapp. De AI-coach schrijft zijn opmerkingen ook in deze taal; er is geen aparte taalinstelling voor de coach."
+    },
+    "system.updates": {
+      "label": "Updates",
+      "boardLabel": "Updates\n{fn:updates_status}",
+      "help": "Zoekt naar software-updates en installeert ze."
+    },
+    "system.reset": {
+      "label": "Instellingen\nterugzetten",
+      "help": "Zet alle instellingen terug naar de standaardwaarden."
+    },
+    "system.about": {
+      "label": "Over",
+      "help": "Versie- en ondersteuningsinformatie."
+    },
+    "system.power": {
+      "label": "Energie",
+      "help": "Zet het bord uit of start het opnieuw op."
+    },
+    "system.reset.confirm": {
+      "label": "Instellingen terugzetten",
+      "help": "Bevestigt dat alle instellingen naar de standaardwaarden worden teruggezet."
+    },
+    "system.reset.confirm.yes": {
+      "label": "Alles terug-\nzetten?",
+      "help": "Wist alle partij- en spelersinstellingen en zet de standaardwaarden terug."
+    },
+    "system.reset.confirm.no": {
+      "label": "Annuleren",
+      "help": "Gaat terug zonder instellingen te wijzigen."
+    },
+    "analysis.enabled": {
+      "label": "Live-analyse",
+      "help": "Toont tijdens de partij de beoordeling van de huidige stelling door de motor."
+    },
+    "analysis.engine": {
+      "label": "Analysemotor",
+      "boardLabel": "Motor\n{value}",
+      "help": "Motor voor de stellinganalyse (het beste tussen twee partijen wisselen)."
+    },
+    "analysis.time": {
+      "label": "Analysetijd",
+      "boardLabel": "Analyse\n{value}",
+      "help": "Hoe lang de motor van het bord elke stelling analyseert voor zijn beoordeling. Langer is nauwkeuriger (dichter bij het getal op het web), maar kost meer CPU en accu."
+    },
+    "analysis.deep": {
+      "label": "Diepe analyse (browser)",
+      "help": "Analyseert de stelling die je bekijkt in je browser met Stockfish 16 NNUE, een veel sterkere motor dan die van het bord. Downloadt de eerste keer ongeveer 39 MB."
+    },
+    "coach.id": {
+      "label": "Coach",
+      "boardLabel": "Coach\n{fn:coach_selected_label}",
+      "help": "Persoonlijkheid en stijl van de coach. Automatisch past de coach aan op de rating van de tegenstander; dit staat los van de agent die hem aandrijft."
+    },
+    "coach.provider": {
+      "label": "Agent",
+      "boardLabel": "Agent\n{value}",
+      "help": "Welke AI-agent de coach aandrijft. Alleen agenten met een API-sleutel en alle vereiste instellingen staan in de lijst; stel ze in via Instellingen > Agenten. Grijs zolang de coach uit staat."
+    },
+    "coach.multipv": {
+      "label": "Kandidaatvarianten",
+      "boardLabel": "Varianten\n{value}",
+      "help": "Het aantal kandidaatzetten van de motor dat de coach voor een zet bekijkt. Hogere waarden laten hem alternatieven voorstellen, maar kosten extra analyse; 1 zet alternatieven uit."
+    },
+    "game.ponder": {
+      "label": "Permanent nadenken",
+      "boardLabel": "Permanent\nnadenken",
+      "help": "Laat motortegenstanders in jouw tijd nadenken. Verbetert het spel van de motor, maar houdt continu een apart motorproces aan de gang en gebruikt meer CPU en stroom (het beste met het bord op netstroom, niet op accu)."
+    },
+    "alerts.queen_threat": {
+      "label": "Waarschuwing eigen dame",
+      "boardLabel": "Je dame",
+      "help": "Waarschuwt wanneer je eigen dame wordt aangevallen: JE DAME op de weergave, een ledflits van het aanvallende stuk naar je dame en een waarschuwing op het webbord. Schaak wordt altijd getoond en kan niet worden uitgezet."
+    },
+    "group.game.clock": {
+      "label": "Schaakklok"
+    },
+    "group.game.variant": {
+      "label": "Variant"
+    },
+    "group.game.alerts": {
+      "label": "Waarschuwingen in de partij"
+    },
+    "group.game.analysis": {
+      "label": "Analyse"
+    },
+    "group.game.pondering": {
+      "label": "Permanent nadenken"
+    },
+    "group.game.coach": {
+      "label": "Coach"
+    },
+    "group.game.history": {
+      "label": "Zettenlijst"
+    },
+    "group.display.epaper": {
+      "label": "E-paperscherm"
+    },
+    "group.display.leds": {
+      "label": "Leds"
+    },
+    "agents.list.items": {
+      "help": "Kies een agent om de API-sleutel, het model en het endpoint in te stellen."
+    },
+    "agents.detail": {
+      "label": "Agent",
+      "help": "Stelt de gekozen agent in: API-sleutel, model en endpoint."
+    },
+    "agents.detail.clear_key": {
+      "label": "API-sleutel wissen",
+      "boardLabel": "API-sleutel\nwissen",
+      "help": "Verwijdert de opgeslagen API-sleutel van deze agent. Wordt alleen getoond als er een sleutel is ingesteld."
+    },
+    "agents.detail.api_key": {
+      "label": "API-sleutel",
+      "boardLabel": "API-sleutel\n{fn:agent_key_status}",
+      "help": "API-sleutel voor deze AI-agent."
+    },
+    "agents.detail.model": {
+      "label": "Model",
+      "boardLabel": "Model\n{fn:agent_model_label}",
+      "help": "Model voor deze agent (live opgehaald; leeg gebruikt de standaard van de agent)."
+    },
+    "agents.detail.model_custom": {
+      "label": "Model",
+      "boardLabel": "Model\n{fn:agent_model_label}",
+      "help": "Model-id voor dit endpoint (leeg gebruikt de standaard van de agent)."
+    },
+    "agents.detail.base_url": {
+      "label": "Basis-URL",
+      "boardLabel": "Basis-URL\n{fn:agent_base_url_label}",
+      "help": "Basis-URL voor dit OpenAI-compatibele agent-endpoint."
+    },
+    "power": {
+      "label": "Energie"
+    },
+    "power.shutdown": {
+      "label": "Afsluiten",
+      "help": "Zet het bord uit."
+    },
+    "power.reboot": {
+      "label": "Herstarten",
+      "help": "Start het bord opnieuw op."
+    },
+    "about": {
+      "label": "Over",
+      "help": "Versie en live systeemtelemetrie."
+    },
+    "about.version": {
+      "label": "Versie",
+      "boardLabel": "Versie\n{value}",
+      "valueDefault": "Onbekend",
+      "help": "Geïnstalleerde softwareversie."
+    },
+    "about.telemetry": {
+      "help": "Live systeemtelemetrie (CPU, geheugen, opslag, actieve tijd)."
+    },
+    "updates": {
+      "label": "Updates",
+      "help": "Automatisch downloaden, releasekanaal en het installeren van updates."
+    },
+    "updates.auto": {
+      "label": "Updates automatisch downloaden",
+      "boardLabel": "Auto-download\n{fn:auto_update_state}",
+      "help": "Downloadt nieuwe versies automatisch op de achtergrond, zodat ze klaarstaan. Updates worden nooit van zichzelf geïnstalleerd; jij kiest wanneer je installeert."
+    },
+    "updates.channel": {
+      "label": "Updatekanaal",
+      "boardLabel": "Kanaal\n{value}",
+      "help": "Stabiele versies worden aanbevolen. Nightly-builds kunnen fouten bevatten."
+    },
+    "updates.check": {
+      "label": "Updates\nzoeken",
+      "help": "Vraagt nu bij de updateserver naar een nieuwere versie."
+    },
+    "updates.install_pending": {
+      "label": "Update\ninstalleren",
+      "boardLabel": "Installeren\nv{value}",
+      "help": "Installeert de gedownloade update; het bord start opnieuw op met de nieuwe versie."
+    },
+    "updates.download": {
+      "label": "Update downloaden",
+      "boardLabel": "Downloaden\nv{value}",
+      "help": "Downloadt de beschikbare update."
+    },
+    "updates.install_local": {
+      "label": "Lokale .deb\ninstalleren",
+      "help": "Installeert een .deb-pakket uit de homemap."
+    },
+    "updates.install_local.confirm": {
+      "label": "Lokale .deb installeren",
+      "help": "Bevestigt het installeren van het gevonden .deb-pakket."
+    },
+    "updates.install_local.confirm.yes": {
+      "label": "{value} installeren?",
+      "boardLabel": "Installeren\n{value}?",
+      "help": "Installeert het gevonden pakket; het bord start opnieuw op met de nieuwe versie."
+    },
+    "updates.install_local.confirm.no": {
+      "label": "Annuleren",
+      "help": "Gaat terug zonder te installeren."
+    },
+    "field.player.color": {
+      "label": "Kleur",
+      "boardLabel": "Kleur\n{value}",
+      "help": "Welke kleur deze speler heeft"
+    },
+    "field.player.type": {
+      "label": "Spelertype",
+      "boardLabel": "Type\n{value}",
+      "help": "Mens, Motor, Hand+Brein of Lichess"
+    },
+    "field.player.name": {
+      "label": "Spelersnaam",
+      "boardLabel": "Naam\n{fn:player_name}",
+      "help": "Optionele naam voor de PGN-kopregels"
+    },
+    "field.player.hand_brain_mode": {
+      "label": "Hand+Brein-modus",
+      "boardLabel": "Omgekeerd",
+      "help": "Hoe de mens en de motor samenwerken"
+    },
+    "field.player.engine": {
+      "label": "Motor",
+      "boardLabel": "Motor\n{value}",
+      "help": "Te gebruiken schaakmotor"
+    },
+    "field.player.think_time": {
+      "label": "Denktijd",
+      "boardLabel": "Denktijd\n{value}",
+      "help": "Hoe lang de motor per zet mag nadenken"
+    },
+    "field.player.elo": {
+      "label": "ELO / stijl",
+      "boardLabel": "ELO\n{value}",
+      "help": "Sterkte of persoonlijkheid van de motor"
+    },
+    "field.display.show_board": {
+      "label": "Bord tonen",
+      "help": "Toont het schaakbord op de weergave"
+    },
+    "field.display.sprites": {
+      "label": "Stukkenset",
+      "help": "Sprite-set waarmee de stukken op het e-paperbord worden getekend"
+    },
+    "field.display.text_size": {
+      "label": "Tekstgrootte",
+      "boardLabel": "Tekstgrootte\n{value}",
+      "help": "Grootte van de tekst op het e-paperscherm: menu's, opmerkingen van de coach, de zettenlijst, de klok en de schermen voor partij-einde, opstellen en hulp. Grotere tekst laat minder regels en rijen per scherm zien."
+    },
+    "field.display.show_clock": {
+      "label": "Klok tonen",
+      "boardLabel": "Klok",
+      "help": "Toont de partijklok en wie aan zet is"
+    },
+    "field.display.show_analysis": {
+      "label": "Analyse tonen",
+      "help": "Toont het analysevenster van de motor"
+    },
+    "field.display.show_graph": {
+      "label": "Beoordelingsgrafiek tonen",
+      "boardLabel": "Grafiek",
+      "help": "Toont de grafiek met het verloop van de beoordeling"
+    },
+    "field.display.led_brightness": {
+      "label": "Helderheid leds",
+      "boardLabel": "LED: {value}",
+      "help": "Helderheidsniveau van de leds op het bord"
+    },
+    "field.display.pegasus_override_brightness": {
+      "label": "Helderheid van Pegasus overschrijven",
+      "help": "De DGT Chess-app stuurt een vaste ledhelderheid. Als dit aan staat, geldt voor de leds van Pegasus de instelling Helderheid leds hierboven."
+    },
+    "field.sound.enabled": {
+      "label": "Geluid aan",
+      "help": "Hoofdschakelaar voor alle geluidseffecten"
+    },
+    "field.sound.piece_events": {
+      "label": "Stukgeluid",
+      "help": "Piept wanneer stukken worden opgepakt of neergezet"
+    },
+    "field.sound.game_events": {
+      "label": "Partijgeluid",
+      "help": "Piept bij schaak, schaakmat en andere gebeurtenissen in de partij"
+    },
+    "field.sound.errors": {
+      "label": "Fouten",
+      "help": "Piept bij fouten"
+    },
+    "field.sound.key_press": {
+      "label": "Toetsdruk",
+      "help": "Piept wanneer er op knoppen wordt gedrukt"
+    },
+    "field.lichess.rated": {
+      "label": "Gewaardeerd",
+      "boardLabel": "Gewaar-\ndeerd",
+      "help": "Gewaardeerde partijen tellen mee voor de Lichess-rating van dit account, ongewaardeerde niet.\n\nGeldt voor elke zoekopdracht die dit bord plaatst, ook voor een uit de lobby zonder speler op Lichess."
+    },
+    "field.lichess.api_token": {
+      "label": "API-token",
+      "help": "Maak een token aan op de gekozen Lichess-server met de rechten board:play, challenge:read en challenge:write"
+    },
+    "field.lichess.range": {
+      "label": "Ratingbereik",
+      "help": "Gewenst ratingbereik van tegenstanders bij het zoeken naar een partij"
+    },
+    "field.system.database_uri": {
+      "label": "Database-URI",
+      "help": "Laat leeg voor de standaard SQLite. Ondersteunt elke URI die met SQLAlchemy werkt."
+    }
+  }
+}
