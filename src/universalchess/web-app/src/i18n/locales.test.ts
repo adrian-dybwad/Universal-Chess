@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import de from './locales/de.json';
 import en from './locales/en.json';
 import es from './locales/es.json';
 import fr from './locales/fr.json';
@@ -41,8 +42,8 @@ function placeholdersOf(bundle: Bundle, path: string): Set<string> {
   );
 }
 
-const LOCALES = { en: en as Bundle, es: es as Bundle, fr: fr as Bundle };
-const TRANSLATED = ['es', 'fr'] as const;
+const LOCALES = { en: en as Bundle, es: es as Bundle, fr: fr as Bundle, de: de as Bundle };
+const TRANSLATED = ['es', 'fr', 'de'] as const;
 
 describe('shipped locale bundles', () => {
   it.each(TRANSLATED)('translate exactly the same set of keys as English (%s)', (code) => {

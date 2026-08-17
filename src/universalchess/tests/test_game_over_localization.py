@@ -81,3 +81,18 @@ def test_french_result_and_termination(monkeypatch):
     widget.set_result(result="1-0", termination="CHECKMATE")
     assert widget.winner == "Les blancs gagnent"
     assert widget.termination == "Mat"
+
+
+def test_german_result_and_termination(monkeypatch):
+    """In German, the same ending renders German winner/termination.
+
+    Why: German is the newest shipped UI locale, so it is the one a bundle gap
+    would strand. How a regression manifests: the German bundle misses these
+    keys and the widget falls back to English while the Spanish and French tests
+    still pass.
+    """
+    _set_locale(monkeypatch, "de")
+    widget = _widget()
+    widget.set_result(result="1-0", termination="CHECKMATE")
+    assert widget.winner == "Weiß gewinnt"
+    assert widget.termination == "Schachmatt"

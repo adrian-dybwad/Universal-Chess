@@ -208,7 +208,7 @@ def test_missing_overlay_falls_back_to_english(base_menu):
 # -- real overlays: drift guard ----------------------------------------------
 
 
-@pytest.mark.parametrize("locale", ["es", "fr"])
+@pytest.mark.parametrize("locale", ["es", "fr", "de"])
 def test_overlay_keys_reference_real_catalog_entries(base_menu, locale):
     """Every id/name in translations/<locale>.json resolves to a real catalog entry.
 
@@ -279,6 +279,24 @@ def test_get_localized_catalog_french_reflects_overlay_without_mutating_base():
     french = get_localized_catalog("fr")
     assert french.get_node("power.shutdown")["label"] == "Éteindre"
     assert french.option_label("player_type", "human") == "Humain"
+
+    assert get_localized_catalog("en").get_node("power.shutdown")["label"] == "Shutdown"
+    assert english.option_label("player_type", "human") == english_players_before == "Human"
+
+
+def test_get_localized_catalog_german_reflects_overlay_without_mutating_base():
+    """get_localized_catalog("de") is German; the English base is unaffected.
+
+    Why: German is a shipped UI locale added after Spanish and French. A
+    regression that applied only the older overlays, or mutated the English base
+    while deriving German, would show English on a German device.
+    """
+    english = load_catalog()
+    english_players_before = english.option_label("player_type", "human")
+
+    german = get_localized_catalog("de")
+    assert german.get_node("power.shutdown")["label"] == "Herunterfahren"
+    assert german.option_label("player_type", "human") == "Mensch"
 
     assert get_localized_catalog("en").get_node("power.shutdown")["label"] == "Shutdown"
     assert english.option_label("player_type", "human") == english_players_before == "Human"

@@ -72,6 +72,18 @@ def test_returns_french_when_locale_is_french(monkeypatch):
     assert i18n.t("game_over.result.white_wins") == "Les blancs gagnent"
 
 
+def test_returns_german_when_locale_is_german(monkeypatch):
+    """t() returns the German string when the active locale is German.
+
+    Why: German is a shipped UI locale with its own bundle, added after Spanish
+    and French. A regression that wired only the first two would keep showing
+    English here.
+    """
+    _set_locale(monkeypatch, "de")
+    assert i18n.t("common.enabled") == "Aktiviert"
+    assert i18n.t("game_over.result.white_wins") == "Weiß gewinnt"
+
+
 def test_interpolates_named_placeholders():
     """t() fills {name} placeholders from kwargs via str.format.
 
@@ -105,7 +117,7 @@ def test_missing_key_returns_key_itself():
     assert i18n.t("does.not.exist") == "does.not.exist"
 
 
-@pytest.mark.parametrize("locale", ["es", "fr"])
+@pytest.mark.parametrize("locale", ["es", "fr", "de"])
 def test_translated_bundle_covers_every_english_key(locale):
     """Every key in en.json has a translation in each shipped locale bundle.
 

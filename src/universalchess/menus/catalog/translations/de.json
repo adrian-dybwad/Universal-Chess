@@ -1,0 +1,754 @@
+{
+  "_comment": "German (de) translation overlay for menu.json. Keyed by node id / optionSet name / section id. Only translated strings are listed; anything omitted falls back to the English source in menu.json. Language names in the 'ui_language' optionSet are intentionally left untranslated (endonyms).",
+  "sections": {
+    "players": "Spieler",
+    "game": "Partie",
+    "agents": "Agenten",
+    "display": "Anzeige",
+    "sound": "Ton",
+    "connectivity": "Verbindungen",
+    "accounts": "Konten",
+    "engines": "Engines",
+    "system": "System"
+  },
+  "optionSets": {
+    "color": {
+      "white": "Weiß",
+      "black": "Schwarz"
+    },
+    "player_type": {
+      "human": "Mensch",
+      "engine": "Engine",
+      "hand_brain": "Hand + Gehirn",
+      "lichess": "Lichess"
+    },
+    "hand_brain_mode": {
+      "normal": "Normal (Engine = Gehirn)",
+      "reverse": "Umgekehrt (Mensch = Gehirn)"
+    },
+    "time_control": {
+      "1": "1 Min. (Bullet)",
+      "3": "3 Min. (Blitz)",
+      "5": "5 Min. (Blitz)",
+      "10": "10 Min. (Schnell)",
+      "15": "15 Min. (Schnell)",
+      "30": "30 Min. (Klassisch)",
+      "60": "60 Min. (Klassisch)",
+      "90": "90 Min. (Klassisch)"
+    },
+    "tc_increment": {
+      "0": "Ohne",
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s",
+      "10": "10 s",
+      "15": "15 s",
+      "30": "30 s",
+      "60": "60 s"
+    },
+    "tc_delay": {
+      "0": "Ohne",
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s",
+      "10": "10 s"
+    },
+    "tc_delay_mode": {
+      "none": "Ohne",
+      "simple": "Simple (USA)",
+      "bronstein": "Bronstein"
+    },
+    "engine_move_delay": {
+      "0": "Ohne",
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s"
+    },
+    "think_time": {
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s",
+      "10": "10 s",
+      "15": "15 s",
+      "20": "20 s",
+      "30": "30 s",
+      "60": "60 s"
+    },
+    "update_channel": {
+      "stable": "Stabil (empfohlen)",
+      "nightly": "Nightly (Entwicklung)"
+    },
+    "sleep_timer": {
+      "0": "Aus",
+      "300": "5 Min.",
+      "600": "10 Min.",
+      "900": "15 Min.",
+      "1800": "30 Min.",
+      "3600": "1 Stunde"
+    },
+    "usb_gadget_mode": {
+      "off": {
+        "label": "Off",
+        "description": "USB-Ethernet ist ausgeschaltet.{wifi_or_ethernet_reach: Das Schachbrett ist nur über Wi-Fi oder Ethernet erreichbar.}"
+      },
+      "auto": {
+        "label": "Auto",
+        "description": "Das Schachbrett wählt Client oder Shared selbst — Client, wenn der Host-Computer über das Kabel ein Netzwerk anbietet, Shared, wenn nicht — und wechselt mit, sobald sich das ändert. Client und Shared bleiben dagegen fest eingestellt. Das Brett ist in beiden Fällen unter {mdns_url} erreichbar, im Modus Shared zusätzlich unter http://10.12.194.1/. Da der Modus von selbst wechseln kann, funktioniert das gewohnte Internet des Host-Computers (Wi-Fi oder Ethernet) unter Umständen nicht mehr, sobald das Brett auf Shared umschaltet."
+      },
+      "client": {
+        "label": "Client",
+        "description": "Der Host-Computer teilt sein Internet über USB mit dem Schachbrett. Das Brett ist unter {mdns_url} erreichbar. Erfordert die Internetfreigabe (bzw. ICS) auf dem Host-Computer."
+      },
+      "shared": {
+        "label": "Shared",
+        "description": "Das Schachbrett betreibt das USB-Netzwerk. http://10.12.194.1/ oder {mdns_url} öffnen. Die Internetfreigabe auf dem Host-Computer ausschalten — unter macOS zusätzlich den Schalter für \"Universal Chess USB Gadget\" in der Freigabeliste ausschalten (der Hauptschalter allein genügt nicht; sonst behält der Mac eine selbst zugewiesene Adresse). Warnung: Solange das Kabel angeschlossen ist, funktioniert das gewohnte Internet des Host-Computers (Wi-Fi oder Ethernet) unter Umständen nicht mehr. Das Schachbrett teilt seine Internetverbindung mit dem Computer, wenn es bereits über Wi-Fi online ist."
+      }
+    },
+    "analysis_time": {
+      "quick": "Schnell (0,3 s)",
+      "standard": "Standard (0,8 s)",
+      "deep": "Tief (2 s)"
+    },
+    "coach_multipv": {
+      "1": "1 (aus)"
+    },
+    "notation": {
+      "figurine": "Figurinen (♘f3)",
+      "san": "Standard (Nf3)",
+      "lan": "Lang (Ng1-f3)",
+      "uci": "Koordinaten (g1f3)"
+    },
+    "text_size": {
+      "small": "Klein",
+      "medium": "Mittel",
+      "large": "Groß"
+    },
+    "timezones_common": {
+      "Europe/London": "London",
+      "Europe/Paris": "Paris",
+      "Europe/Berlin": "Berlin",
+      "Europe/Moscow": "Moskau",
+      "America/New_York": "New York",
+      "America/Los_Angeles": "Los Angeles",
+      "Asia/Dubai": "Dubai",
+      "Asia/Kolkata": "Kalkutta",
+      "Asia/Shanghai": "Shanghai",
+      "Asia/Tokyo": "Tokio",
+      "Australia/Sydney": "Sydney"
+    }
+  },
+  "accountTypes": {
+    "lichess": {
+      "fields": {
+        "api_token": {
+          "label": "API-Token",
+          "help": "Ein Token auf dem gewählten Lichess-Server mit den Rechten board:play, challenge:read und challenge:write erstellen"
+        },
+        "range": {
+          "label": "Wertungsbereich",
+          "help": "Bevorzugter Wertungsbereich der Gegner für die Partiesuche"
+        }
+      }
+    }
+  },
+  "nodes": {
+    "main": {
+      "label": "Hauptmenü"
+    },
+    "main.play": {
+      "label": "SPIELEN",
+      "label_in_progress": "WEITER",
+      "help": "Startet eine neue Partie. Ist eine Partie unterbrochen, steht hier WEITER und sie wird fortgesetzt."
+    },
+    "main.positions": {
+      "label": "Stellungen",
+      "help": "Stellt eine vorgegebene Stellung auf dem Brett auf, zum Üben oder Analysieren."
+    },
+    "main.centaur": {
+      "label": "Original\nCentaur",
+      "help": "Wechselt zurück zur originalen DGT-Centaur-Software."
+    },
+    "main.settings": {
+      "label": "Einstellungen",
+      "help": "Konfiguriert Spieler, Bedenkzeit, Anzeige, Verbindungen und Systemoptionen."
+    },
+    "settings": {
+      "label": "Einstellungen"
+    },
+    "settings.players": {
+      "label": "Spieler",
+      "help": "Konfiguriert Spielernamen, Spielertypen, Engines und Lichess."
+    },
+    "players.player1": {
+      "label": "Spieler 1\n{fn:player1_summary}",
+      "help": "Konfiguriert Spieler 1 (den Spieler, der die gewählte Farbe führt)."
+    },
+    "players.player2": {
+      "label": "Spieler 2\n{fn:player2_summary}",
+      "help": "Konfiguriert Spieler 2."
+    },
+    "players.accounts": {
+      "label": "Konten",
+      "help": "Verbindet ein Lichess-Token. Jedes Konto wird als Server:Benutzer aufgeführt."
+    },
+    "players.lichess": {
+      "label": "Lichess-Lobby",
+      "boardLabel": "Lichess\nLobby",
+      "help": "Lichess-Zugangsdaten und Onlinespiel. Jede Anmeldung besteht aus Server und Benutzer (lichess.org oder lichess.dev). Öffnet die Kontoauswahl, Gewertet, laufende Partien, Herausforderungen und Neue Partie suchen."
+    },
+    "lichess.account": {
+      "label": "Konto",
+      "boardLabel": "Konto",
+      "help": "Mit welcher gespeicherten Lichess-Anmeldung dieses Brett spielt und stöbert, unabhängig von den Spieler-Einstellungen. Konten am Ende legt Anmeldungen an oder löscht sie."
+    },
+    "lichess.ongoing": {
+      "label": "Laufende Partien",
+      "boardLabel": "Laufende\nPartien",
+      "help": "Setzt eine Lichess-Partie fort, die dieses Konto bereits begonnen hat — auf diesem Brett, auf der Website oder auf einem anderen Gerät.\n\nEine Partie auswählen, um sie hier fortzusetzen. Uhr und eigene Farbe stammen aus dieser Begegnung.\n\nWird keine aufgeführt, hat dieses Konto keine unbeendeten Partien. Über Neue Partie suchen einen neuen Gegner suchen."
+    },
+    "lichess.challenges": {
+      "label": "Herausforderungen",
+      "boardLabel": "Herausford.",
+      "help": "Eine Herausforderung ist eine Partie, die diesem Konto angeboten wurde oder die dieses Konto jemand anderem angeboten hat.\n\nEingehend: eine auswählen, um sie auf diesem Brett anzunehmen. Trifft während einer Partiesuche eine Herausforderung ein, erscheinen dort ebenfalls Annehmen und Ablehnen.\n\nAusgehend: wartet noch auf den anderen Spieler. Eine auswählen, um hier zu warten; die Partie öffnet sich auf diesem Brett, sobald er annimmt.\n\nNeue Partie suchen veröffentlicht eine öffentliche Suche, statt eine bestimmte Person herauszufordern."
+    },
+    "lichess.new_game": {
+      "label": "Neue Partie suchen",
+      "boardLabel": "Partie\nsuchen",
+      "help": "Sucht mit diesem Konto einen neuen Gegner auf Lichess, unabhängig von den Spieler-Einstellungen. Gewertet ist die Zeile darüber, die Bedenkzeit stammt aus den Partie-Einstellungen; die gewählte Farbe gilt nur, wenn ein Spieler auf Lichess gesetzt ist."
+    },
+    "players.start": {
+      "label": "Neue\nPartie",
+      "help": "Startet eine neue Partie mit der aktuellen Spielerkonfiguration. Beendet eine gerade laufende Partie."
+    },
+    "settings.player_detail": {
+      "label": "Spieler",
+      "help": "Konfiguriert einen einzelnen Spieler."
+    },
+    "settings.game": {
+      "label": "Partie",
+      "help": "Bedenkzeit und Live-Analyse der Stellung."
+    },
+    "settings.agents": {
+      "label": "Agenten",
+      "help": "Konfiguriert die KI-Agenten (Dienste), die Funktionen wie den Coach antreiben: API-Schlüssel, Modell und Endpunkt."
+    },
+    "settings.notation": {
+      "label": "Zugnotation",
+      "boardLabel": "Notation\n{value}",
+      "help": "Schachnotation für die Zugliste auf dem Brett und im Web."
+    },
+    "settings.chess960": {
+      "help": "Startet jede neue Partie aus einer zufälligen Chess960-Stellung (Fischer-Random). Die Zielstellung wird auf der Anzeige gezeigt; die Figuren entsprechend aufstellen."
+    },
+    "settings.timecontrol": {
+      "label": "Grundzeit (Min.)",
+      "boardLabel": "Grundzeit\n{fn:time_control}",
+      "help": "Minuten pro Spieler für eine einfache Uhr ohne Zeitzugabe (kein Inkrement, keine Verzögerung)."
+    },
+    "settings.timecontrol.engine_move_delay": {
+      "label": "Engine-Zugverzögerung",
+      "boardLabel": "Engine-Verz.\n{value}",
+      "help": "In Partien mit Uhr gegen die Engine hält deren Uhr an, sobald sie ihren Zug anzeigt; die eigene Uhr startet erst nach dieser Verzögerung (während die Figur der Engine gezogen wird)."
+    },
+    "settings.timecontrol.preset": {
+      "label": "Voreinstellung",
+      "boardLabel": "Voreinst.\n{fn:time_control_preset_label}",
+      "help": "Wählt eine fertige Bedenkzeit: ohne Zeitzugabe, mit Inkrement, mit Verzögerung oder eine Turnierbedenkzeit. Für die eigene Uhr Benutzerdefiniert wählen."
+    },
+    "timecontrol.custom.base": {
+      "label": "Grundzeit",
+      "boardLabel": "Grundzeit\n{value}",
+      "help": "Startzeit auf der Uhr jedes Spielers."
+    },
+    "timecontrol.custom.increment": {
+      "label": "Inkrement",
+      "boardLabel": "Inkrement\n{value}",
+      "help": "Sekunden, die nach jedem Zug zur Uhr des Ziehenden addiert werden (Fischer-Inkrement)."
+    },
+    "timecontrol.custom.delay": {
+      "label": "Verzögerung",
+      "boardLabel": "Verzög.\n{value}",
+      "help": "Sekunden Verzögerung je Zug, angewendet gemäß der Einstellung Verzögerungsmodus."
+    },
+    "timecontrol.custom.mode": {
+      "label": "Verzögerungsmodus",
+      "boardLabel": "Modus\n{value}",
+      "help": "Ohne: keine Verzögerung. Simple: Die Uhr wartet, bevor sie herunterzählt. Bronstein: Die verbrauchte Zeit wird bis zur Höhe der Verzögerung zurückgegeben."
+    },
+    "timecontrol.custom.asymmetric": {
+      "label": "Je Seite verschieden",
+      "boardLabel": "Asymmetrisch\n{value}",
+      "help": "Gibt Weiß und Schwarz unterschiedliche Zeiten (Zeitvorgabe). Wenn aktiviert, unten Grundzeit und Inkrement für Schwarz festlegen."
+    },
+    "timecontrol.custom.black_base": {
+      "label": "Grundzeit Schwarz",
+      "boardLabel": "Grundz. Schw.\n{value}",
+      "help": "Startzeit auf der Uhr von Schwarz, wenn je Seite unterschiedliche Zeiten verwendet werden."
+    },
+    "timecontrol.custom.black_increment": {
+      "label": "Inkrement Schwarz",
+      "boardLabel": "Inkr. Schwarz\n{value}",
+      "help": "Sekunden, die nach jedem Zug zur Uhr von Schwarz addiert werden, wenn je Seite unterschiedliche Zeiten verwendet werden."
+    },
+    "settings.display": {
+      "label": "Anzeige",
+      "help": "Steuert, was auf der E-Paper-Anzeige und auf den LEDs erscheint."
+    },
+    "settings.sound": {
+      "label": "Ton",
+      "help": "Steuert Tonrückmeldungen und Signaltöne."
+    },
+    "settings.connectivity": {
+      "label": "Verbindungen",
+      "help": "Netzwerk, Peripheriegeräte, USB-Ethernet und Bildschirmübertragung."
+    },
+    "settings.engines": {
+      "label": "Engines",
+      "help": "Installiert und verwaltet Schach-Engines zum Spielen und Analysieren."
+    },
+    "settings.system": {
+      "label": "System",
+      "help": "Wartung, Software-Updates und Energie."
+    },
+    "connectivity": {
+      "label": "Verbindungen"
+    },
+    "connectivity.wifi": {
+      "help": "Verbindet das Brett mit einem Drahtlosnetzwerk."
+    },
+    "connectivity.bluetooth": {
+      "help": "Koppelt eine Bluetooth-Tastatur mit dem Brett."
+    },
+    "connectivity.usb_gadget": {
+      "label": "USB-Gadget",
+      "boardLabel": "USB-Gadget\n{value}",
+      "help": "USB-Ethernet über ein Kabel zum Host-Computer. Das Kabel gehört an den USB-Datenport des Pi Zero im Inneren des Bretts, nicht an den Ladeport des Centaur. Ein Moduswechsel bei bestehender Verbindung kann die Sitzung abbrechen. Zum erneuten Verbinden das Kabel am Brett abziehen (oder an einer USB-A-Kupplung): Erneutes Einstecken am USB-C-Anschluss des Computers stellt die Verbindung nicht immer wieder her, und der Computer erkennt danach unter Umständen gar kein Gerät mehr."
+    },
+    "connectivity.chromecast": {
+      "help": "Überträgt das Brett auf ein Chromecast-Gerät."
+    },
+    "wifi": {
+      "label": "WiFi",
+      "help": "WiFi-Status, Suche nach Netzwerken sowie Ein- und Ausschalten des Funkmoduls."
+    },
+    "wifi.scan": {
+      "label": "Suchen",
+      "help": "Sucht verfügbare Drahtlosnetzwerke und stellt eine Verbindung her."
+    },
+    "wifi.networks": {
+      "label": "Netzwerke",
+      "help": "Bei der letzten Suche gefundene Drahtlosnetzwerke."
+    },
+    "wifi.networks.list": {
+      "help": "Ein Netzwerk zum Verbinden auswählen; gesicherte Netzwerke fragen nach einem Passwort."
+    },
+    "wifi.status": {
+      "help": "Aktueller Status der WiFi-Verbindung und Signalstärke."
+    },
+    "wifi.enabled": {
+      "help": "Status der WiFi-Verbindung. Auswählen, um das WiFi-Funkmodul ein- oder auszuschalten."
+    },
+    "bluetooth": {
+      "label": "Bluetooth",
+      "help": "Bluetooth-Status, Sichtbarkeit und gekoppelte Geräte."
+    },
+    "bluetooth.status": {
+      "help": "Aktueller Status der Bluetooth-Verbindung und der BLE-Aussendung."
+    },
+    "bluetooth.enabled": {
+      "help": "Status der Bluetooth-Verbindung und der Aussendung. Auswählen, um das Bluetooth-Funkmodul ein- oder auszuschalten."
+    },
+    "bluetooth.devices": {
+      "label": "Geräte",
+      "help": "Eine neue Tastatur koppeln sowie gekoppelte Bluetooth-Geräte ansehen oder verwalten."
+    },
+    "bluetooth.pair": {
+      "label": "Tastatur koppeln",
+      "help": "Sucht eine Bluetooth-Tastatur und koppelt sie."
+    },
+    "bluetooth.devices.list": {
+      "label": "Geräte",
+      "help": "Ein gekoppeltes Gerät auswählen, um es zu verbinden, zu trennen oder zu entfernen, oder eine neue Tastatur koppeln."
+    },
+    "bluetooth.devices.list.items": {
+      "help": "Ein gekoppeltes Gerät auswählen, um es zu verwalten."
+    },
+    "bluetooth.device.detail": {
+      "label": "Gerät",
+      "help": "Verbindet oder trennt das ausgewählte Bluetooth-Gerät oder entfernt es."
+    },
+    "bluetooth.device.info": {
+      "help": "Das ausgewählte Gerät und sein Verbindungsstatus."
+    },
+    "bluetooth.device.connect": {
+      "label": "Verbinden",
+      "help": "Mit diesem Gerät verbinden."
+    },
+    "bluetooth.device.disconnect": {
+      "label": "Trennen",
+      "help": "Dieses Gerät trennen."
+    },
+    "bluetooth.device.forget": {
+      "label": "Entfernen",
+      "help": "Entfernt die Kopplung dieses Geräts."
+    },
+    "bluetooth.device.stale": {
+      "label": "Kopplung abgelehnt",
+      "help": "Das Gerät hat die gespeicherte Kopplung abgelehnt; entfernen oder behalten."
+    },
+    "bluetooth.device.stale.remove": {
+      "label": "Kopplung\nentfernen",
+      "help": "Entfernt die abgelehnte Kopplung, damit neu gekoppelt werden kann."
+    },
+    "bluetooth.device.stale.keep": {
+      "label": "Kopplung\nbehalten",
+      "help": "Behält die vorhandene Kopplung bei und kehrt zurück."
+    },
+    "bluetooth.keyboards": {
+      "label": "Tastatur koppeln",
+      "help": "Gefundene Bluetooth-Tastaturen; eine zum Koppeln auswählen."
+    },
+    "bluetooth.keyboards.list": {
+      "help": "Eine Tastatur zum Koppeln auswählen; falls nötig wird ein Kopplungscode angezeigt."
+    },
+    "system": {
+      "label": "System"
+    },
+    "group.system.device": {
+      "label": "Gerät",
+      "help": "Einstellungen für Ruhezustand, Uhr und Sprache dieses Bretts."
+    },
+    "system.inactivity": {
+      "label": "Ruhezustand",
+      "boardLabel": "Ruhezustand\n{value}",
+      "help": "Versetzt das Brett nach einer Zeit ohne Bedienung automatisch in den Ruhezustand."
+    },
+    "system.timezone": {
+      "label": "Zeitzone",
+      "boardLabel": "Zeitzone\n{value}",
+      "help": "Legt die Zeitzone der Geräteuhr fest. Gespeicherte Partiezeiten bleiben in UTC; dies betrifft die Uhranzeige des Bretts."
+    },
+    "system.ntp": {
+      "label": "Netzwerkzeit",
+      "boardLabel": "Netzwerkzeit",
+      "help": "Hält die Uhr automatisch über das Internet korrekt. Das Brett hat keine batteriegepufferte Uhr; ist dies ausgeschaltet -- oder ist kein Netzwerk erreichbar --, läuft seine Zeit auseinander und muss in den Web-Einstellungen von Hand gestellt werden."
+    },
+    "system.language": {
+      "label": "Sprache",
+      "boardLabel": "Sprache\n{value}",
+      "help": "Sprache für die Brettmenüs, die Anzeige und die Web-App. Die Kommentare des KI-Coachs verwenden die eigene Einstellung Coach-Sprache."
+    },
+    "system.updates": {
+      "label": "Updates",
+      "boardLabel": "Updates\n{fn:updates_status}",
+      "help": "Sucht nach Software-Updates und installiert sie."
+    },
+    "system.reset": {
+      "label": "Einstellungen\nzurücksetzen",
+      "help": "Setzt alle Einstellungen auf die Standardwerte zurück."
+    },
+    "system.about": {
+      "label": "Über",
+      "help": "Version und Support-Informationen."
+    },
+    "system.power": {
+      "label": "Energie",
+      "help": "Fährt das Brett herunter oder startet es neu."
+    },
+    "system.reset.confirm": {
+      "label": "Einstellungen zurücksetzen",
+      "help": "Bestätigt das Zurücksetzen aller Einstellungen auf die Standardwerte."
+    },
+    "system.reset.confirm.yes": {
+      "label": "Alles zurück-\nsetzen?",
+      "help": "Löscht alle Partie- und Spielereinstellungen und stellt die Standardwerte wieder her."
+    },
+    "system.reset.confirm.no": {
+      "label": "Abbrechen",
+      "help": "Kehrt zurück, ohne Einstellungen zu ändern."
+    },
+    "analysis.enabled": {
+      "label": "Live-Analyse",
+      "help": "Zeigt während der Partie die Engine-Bewertung der aktuellen Stellung."
+    },
+    "analysis.engine": {
+      "label": "Analyse-Engine",
+      "boardLabel": "Engine\n{value}",
+      "help": "Engine für die Stellungsanalyse (am besten zwischen zwei Partien wechseln)."
+    },
+    "analysis.time": {
+      "label": "Analysezeit",
+      "boardLabel": "Analyse\n{value}",
+      "help": "Wie lange die Engine des Bretts jede Stellung für ihre Bewertung analysiert. Länger ist genauer (näher am Wert im Web), verbraucht aber mehr CPU und Akku."
+    },
+    "analysis.deep": {
+      "label": "Tiefenanalyse (Browser)",
+      "help": "Analysiert die gerade betrachtete Stellung im Browser mit Stockfish 16 NNUE, einer weit stärkeren Engine als der des Bretts. Lädt beim ersten Mal etwa 39 MB herunter."
+    },
+    "coach.id": {
+      "label": "Coach",
+      "boardLabel": "Coach\n{fn:coach_selected_label}",
+      "help": "Persönlichkeit und Stil des Coachs. Auto passt den Coach an die Wertung des Gegners an; unabhängig vom Agenten, der ihn antreibt."
+    },
+    "coach.provider": {
+      "label": "Agent",
+      "boardLabel": "Agent\n{value}",
+      "help": "Welcher KI-Agent den Coach antreibt. Aufgeführt werden nur Agenten mit API-Schlüssel und allen nötigen Einstellungen; einzurichten unter Einstellungen > Agenten. Ausgegraut, solange der Coach deaktiviert ist."
+    },
+    "coach.multipv": {
+      "label": "Kandidatenvarianten",
+      "boardLabel": "Varianten\n{value}",
+      "help": "Anzahl der Kandidatenzüge der Engine, die der Coach für einen Zug betrachtet. Höhere Werte erlauben Vorschläge für Alternativen, kosten aber zusätzliche Analyse; 1 schaltet Alternativen ab."
+    },
+    "game.ponder": {
+      "label": "Permanentes Denken",
+      "boardLabel": "Perm. Denken",
+      "help": "Lässt Engine-Gegner während der eigenen Bedenkzeit rechnen. Verbessert das Spiel der Engine, hält aber dauerhaft einen eigenen Engine-Prozess am Laufen und verbraucht mehr CPU und Strom (am besten am Netz betrieben, nicht im Akkubetrieb)."
+    },
+    "alerts.queen_threat": {
+      "label": "Warnung eigene Dame",
+      "boardLabel": "Eigene Dame",
+      "help": "Warnt, wenn die eigene Dame angegriffen ist: YOUR QUEEN auf der Anzeige, ein LED-Blitz von der angreifenden Figur zur eigenen Dame und eine Warnung auf dem Web-Brett. Schach wird immer angezeigt und lässt sich nicht abschalten."
+    },
+    "group.game.clock": {
+      "label": "Schachuhr"
+    },
+    "group.game.variant": {
+      "label": "Variante"
+    },
+    "group.game.alerts": {
+      "label": "Warnungen in der Partie"
+    },
+    "group.game.analysis": {
+      "label": "Analyse"
+    },
+    "group.game.pondering": {
+      "label": "Permanentes Denken"
+    },
+    "group.game.coach": {
+      "label": "Coach"
+    },
+    "group.game.history": {
+      "label": "Zugliste"
+    },
+    "group.display.epaper": {
+      "label": "E-Paper-Anzeige"
+    },
+    "group.display.leds": {
+      "label": "LEDs"
+    },
+    "agents.list.items": {
+      "help": "Einen Agenten auswählen, um API-Schlüssel, Modell und Endpunkt zu konfigurieren."
+    },
+    "agents.detail": {
+      "label": "Agent",
+      "help": "Konfiguriert den ausgewählten Agenten: API-Schlüssel, Modell und Endpunkt."
+    },
+    "agents.detail.clear_key": {
+      "label": "API-Schlüssel löschen",
+      "boardLabel": "API-Schl. löschen",
+      "help": "Entfernt den gespeicherten API-Schlüssel dieses Agenten. Wird nur angezeigt, wenn ein Schlüssel hinterlegt ist."
+    },
+    "agents.detail.api_key": {
+      "label": "API-Schlüssel",
+      "boardLabel": "API-Schlüssel\n{fn:agent_key_status}",
+      "help": "API-Schlüssel für diesen KI-Agenten."
+    },
+    "agents.detail.model": {
+      "label": "Modell",
+      "boardLabel": "Modell\n{fn:agent_model_label}",
+      "help": "Modell für diesen Agenten (live abgerufen; leer verwendet die Vorgabe des Agenten)."
+    },
+    "agents.detail.model_custom": {
+      "label": "Modell",
+      "boardLabel": "Modell\n{fn:agent_model_label}",
+      "help": "Modell-ID für diesen Endpunkt (leer verwendet die Vorgabe des Agenten)."
+    },
+    "agents.detail.base_url": {
+      "label": "Basis-URL",
+      "boardLabel": "Basis-URL\n{fn:agent_base_url_label}",
+      "help": "Basis-URL für diesen OpenAI-kompatiblen Agenten-Endpunkt."
+    },
+    "power": {
+      "label": "Energie"
+    },
+    "power.shutdown": {
+      "label": "Herunterfahren",
+      "help": "Schaltet das Brett aus."
+    },
+    "power.reboot": {
+      "label": "Neustart",
+      "help": "Startet das Brett neu."
+    },
+    "about": {
+      "label": "Über",
+      "help": "Version und Live-Systemtelemetrie."
+    },
+    "about.version": {
+      "label": "Version",
+      "boardLabel": "Version\n{value}",
+      "valueDefault": "Unbekannt",
+      "help": "Installierte Softwareversion."
+    },
+    "about.telemetry": {
+      "help": "Live-Systemtelemetrie (CPU, Arbeitsspeicher, Massenspeicher, Laufzeit)."
+    },
+    "updates": {
+      "label": "Updates",
+      "help": "Automatischer Download, Release-Kanal und Installation von Updates."
+    },
+    "updates.auto": {
+      "label": "Updates automatisch laden",
+      "boardLabel": "Auto-Download\n{fn:auto_update_state}",
+      "help": "Lädt neue Versionen automatisch im Hintergrund herunter, damit sie bereitstehen. Updates werden nie von selbst installiert; der Zeitpunkt der Installation wird selbst gewählt."
+    },
+    "updates.channel": {
+      "label": "Update-Kanal",
+      "boardLabel": "Kanal\n{value}",
+      "help": "Stabile Versionen werden empfohlen. Nightly-Builds können Fehler enthalten."
+    },
+    "updates.check": {
+      "label": "Updates\nsuchen",
+      "help": "Fragt jetzt beim Update-Server nach einer neueren Version."
+    },
+    "updates.install_pending": {
+      "label": "Update\ninstallieren",
+      "boardLabel": "Installieren\nv{value}",
+      "help": "Installiert das heruntergeladene Update; das Brett startet mit der neuen Version neu."
+    },
+    "updates.download": {
+      "label": "Update herunterladen",
+      "boardLabel": "Laden\nv{value}",
+      "help": "Lädt das verfügbare Update herunter."
+    },
+    "updates.install_local": {
+      "label": "Lokale .deb\ninstallieren",
+      "help": "Installiert ein .deb-Paket aus dem Home-Verzeichnis."
+    },
+    "updates.install_local.confirm": {
+      "label": "Lokale .deb installieren",
+      "help": "Bestätigt die Installation des gefundenen .deb-Pakets."
+    },
+    "updates.install_local.confirm.yes": {
+      "label": "{value} installieren?",
+      "boardLabel": "Installieren\n{value}?",
+      "help": "Installiert das gefundene Paket; das Brett startet mit der neuen Version neu."
+    },
+    "updates.install_local.confirm.no": {
+      "label": "Abbrechen",
+      "help": "Kehrt zurück, ohne zu installieren."
+    },
+    "field.player.color": {
+      "label": "Farbe",
+      "boardLabel": "Farbe\n{value}",
+      "help": "Welche Farbe dieser Spieler führt"
+    },
+    "field.player.type": {
+      "label": "Spielertyp",
+      "boardLabel": "Typ\n{value}",
+      "help": "Mensch, Engine, Hand+Gehirn oder Lichess"
+    },
+    "field.player.name": {
+      "label": "Spielername",
+      "boardLabel": "Name\n{fn:player_name}",
+      "help": "Optionaler Name für die PGN-Kopfzeilen"
+    },
+    "field.player.hand_brain_mode": {
+      "label": "Hand+Gehirn-Modus",
+      "boardLabel": "Umgekehrt",
+      "help": "Wie Mensch und Engine zusammenarbeiten"
+    },
+    "field.player.engine": {
+      "label": "Engine",
+      "boardLabel": "Engine\n{value}",
+      "help": "Zu verwendende Schach-Engine"
+    },
+    "field.player.think_time": {
+      "label": "Rechenzeit",
+      "boardLabel": "Rechenzeit\n{value}",
+      "help": "Wie lange die Engine je Zug rechnen darf"
+    },
+    "field.player.elo": {
+      "label": "ELO / Stil",
+      "boardLabel": "ELO\n{value}",
+      "help": "Spielstärke oder Persönlichkeit der Engine"
+    },
+    "field.display.show_board": {
+      "label": "Brett anzeigen",
+      "help": "Zeigt das Schachbrett auf der Anzeige"
+    },
+    "field.display.sprites": {
+      "label": "Figurensatz",
+      "help": "Grafiksatz, mit dem die Figuren auf dem E-Paper-Brett gezeichnet werden"
+    },
+    "field.display.text_size": {
+      "label": "Textgröße",
+      "boardLabel": "Textgröße\n{value}",
+      "help": "Größe des Textes auf der E-Paper-Anzeige: Menüs, Coach-Kommentare, Zugliste, Uhr sowie die Bildschirme für Partieende, Aufstellung und Hilfe. Größerer Text zeigt weniger Zeilen und Reihen je Bildschirm."
+    },
+    "field.display.show_clock": {
+      "label": "Uhr anzeigen",
+      "boardLabel": "Uhr",
+      "help": "Zeigt die Partieuhr und die Zuganzeige"
+    },
+    "field.display.show_analysis": {
+      "label": "Analyse anzeigen",
+      "help": "Zeigt das Analyse-Widget der Engine"
+    },
+    "field.display.show_graph": {
+      "label": "Bewertungsgrafik anzeigen",
+      "boardLabel": "Grafik",
+      "help": "Zeigt den Verlauf der Bewertung als Grafik"
+    },
+    "field.display.led_brightness": {
+      "label": "LED-Helligkeit",
+      "boardLabel": "LED: {value}",
+      "help": "Helligkeitsstufe der Brett-LEDs"
+    },
+    "field.display.pegasus_override_brightness": {
+      "label": "Pegasus-Helligkeit überschreiben",
+      "help": "Die App DGT Chess sendet eine feste LED-Helligkeit. Wenn aktiviert, gilt für die Pegasus-LEDs stattdessen die Einstellung LED-Helligkeit oben."
+    },
+    "field.sound.enabled": {
+      "label": "Ton aktiviert",
+      "help": "Hauptschalter für alle Toneffekte"
+    },
+    "field.sound.piece_events": {
+      "label": "Figurenereignisse",
+      "help": "Signalton beim Anheben oder Absetzen von Figuren"
+    },
+    "field.sound.game_events": {
+      "label": "Partieereignisse",
+      "help": "Signalton bei Schach, Schachmatt und anderen Ereignissen der Partie"
+    },
+    "field.sound.errors": {
+      "label": "Fehler",
+      "help": "Signalton bei Fehlern"
+    },
+    "field.sound.key_press": {
+      "label": "Tastendruck",
+      "help": "Signalton beim Drücken von Tasten"
+    },
+    "field.lichess.rated": {
+      "label": "Gewertet",
+      "boardLabel": "Gewertet",
+      "help": "Gewertete Partien zählen für die Lichess-Wertung dieses Kontos, ungewertete nicht.\n\nGilt für jede Partiesuche, die dieses Brett veröffentlicht, auch für eine aus der Lobby ohne einen auf Lichess gesetzten Spieler."
+    },
+    "field.lichess.api_token": {
+      "label": "API-Token",
+      "help": "Ein Token auf dem gewählten Lichess-Server mit den Rechten board:play, challenge:read und challenge:write erstellen"
+    },
+    "field.lichess.range": {
+      "label": "Wertungsbereich",
+      "help": "Bevorzugter Wertungsbereich der Gegner für die Partiesuche"
+    },
+    "field.system.database_uri": {
+      "label": "Datenbank-URI",
+      "help": "Leer lassen für das standardmäßige SQLite. Unterstützt jede SQLAlchemy-kompatible URI."
+    }
+  }
+}

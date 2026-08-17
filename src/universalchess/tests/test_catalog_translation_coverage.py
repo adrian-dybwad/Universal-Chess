@@ -37,7 +37,7 @@ from universalchess.menus.catalog.loader import (
 TRANSLATIONS_DIR = Path(__file__).resolve().parents[1] / "menus" / "catalog" / "translations"
 
 # Locales with an overlay file. English is the authored source and has none.
-SHIPPED_LOCALES = ("es", "fr")
+SHIPPED_LOCALES = ("es", "fr", "de")
 
 # Runtime substitutions -- ``{fn:play_label}``, ``{value}``. A string made only
 # of these carries no words to translate.
@@ -55,7 +55,7 @@ SAME_IN_EVERY_SHIPPED_LOCALE = {
     "connectivity.bluetooth.label": "Bluetooth is a trademark, not a translated word",
     "connectivity.chromecast.label": "Chromecast is a trademark, not a translated word",
     "field.display.pegasus_override_brightness.boardLabel": (
-        "DGT Pegasus is a product name and LED is the same initialism in es/fr"
+        "DGT Pegasus is a product name and LED is the same initialism in es/fr/de"
     ),
     "accountType:lichess.label": "Lichess is the service's name in every language",
     # An example value shown in an empty input, not prose.
@@ -65,14 +65,15 @@ SAME_IN_EVERY_SHIPPED_LOCALE = {
     "optionSet:ui_language": (
         "each language is named in itself (Espanol, Francais), which is the point"
     ),
-    "optionSet:tc_base": "minutes abbreviate to 'min' in Spanish and French too",
-    # Place names spelt identically in Spanish and French. The rest of the set
-    # is translated (London -> Londres), so these are listed one by one.
+    "optionSet:tc_base": "'min' is the SI symbol for minute, spelt so in every shipped locale",
+    # Place names spelt identically in every shipped locale. The rest of the set
+    # is translated (London -> Londres, Moscow -> Moskau), so these are listed
+    # one by one.
     "optionSet:timezones_common[UTC]": "an acronym",
-    "optionSet:timezones_common[America/Chicago]": "spelt the same in es/fr",
-    "optionSet:timezones_common[America/Denver]": "spelt the same in es/fr",
-    "optionSet:timezones_common[America/Sao_Paulo]": "spelt the same in es/fr",
-    "optionSet:timezones_common[Pacific/Auckland]": "spelt the same in es/fr",
+    "optionSet:timezones_common[America/Chicago]": "spelt the same in es/fr/de",
+    "optionSet:timezones_common[America/Denver]": "spelt the same in es/fr/de",
+    "optionSet:timezones_common[America/Sao_Paulo]": "spelt the same in es/fr/de",
+    "optionSet:timezones_common[Pacific/Auckland]": "spelt the same in es/fr/de",
 }
 
 
@@ -191,10 +192,10 @@ def test_shipped_locales_match_the_overlay_files_on_disk():
 
     Why: coverage is only checked for the locales listed here, so a new overlay
     file would otherwise be exempt from every check above, and the reasons in
-    SAME_IN_EVERY_SHIPPED_LOCALE -- which speak for Spanish and French -- would
-    silently speak for a language nobody re-read them against. How the
-    regression manifests: an overlay file with no entry here, or an entry with
-    no file.
+    SAME_IN_EVERY_SHIPPED_LOCALE -- which speak for the locales they were read
+    against -- would silently speak for a language nobody re-read them against.
+    How the regression manifests: an overlay file with no entry here, or an
+    entry with no file.
     """
     on_disk = sorted(path.stem for path in TRANSLATIONS_DIR.glob("*.json"))
     assert on_disk == sorted(SHIPPED_LOCALES)

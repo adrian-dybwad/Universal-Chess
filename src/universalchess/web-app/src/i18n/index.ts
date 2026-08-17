@@ -20,11 +20,12 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 
+import de from './locales/de.json';
 import en from './locales/en.json';
 import es from './locales/es.json';
 import fr from './locales/fr.json';
 
-export const SUPPORTED_LANGUAGES = ['en', 'es', 'fr'] as const;
+export const SUPPORTED_LANGUAGES = ['en', 'es', 'fr', 'de'] as const;
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 
 export const DEFAULT_LANGUAGE: SupportedLanguage = 'en';
@@ -34,6 +35,7 @@ void i18n.use(initReactI18next).init({
     en: { translation: en },
     es: { translation: es },
     fr: { translation: fr },
+    de: { translation: de },
   },
   lng: DEFAULT_LANGUAGE,
   fallbackLng: DEFAULT_LANGUAGE,

@@ -64,6 +64,17 @@ describe('useDeviceLanguage', () => {
     expect(document.documentElement.lang).toBe('fr');
   });
 
+  it('adopts German when the device language is German', () => {
+    // Why: German shipped after Spanish and French, and a bundle can exist on
+    // disk while SUPPORTED_LANGUAGES still gates it out. A regression that left
+    // "de" off that list renders English on a German device, which every other
+    // test here would pass.
+    setDeviceLanguage('de');
+    const { getByTestId } = render(<Probe />);
+    expect(getByTestId('lang').textContent).toBe('de');
+    expect(document.documentElement.lang).toBe('de');
+  });
+
   it('switches language live when the device setting changes', () => {
     // Why: a change made on the board (or another tab) arrives via a store refresh
     // and must switch the SPA. A regression that only read the value once (no

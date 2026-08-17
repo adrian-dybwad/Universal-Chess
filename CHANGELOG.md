@@ -255,6 +255,26 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   it sets rather than repeating the heading. The board's menu is unaffected --
   it has never shown both.
 
+- **German UI**: Selecting Deutsch now translates the board menus, e-paper
+  widgets, and the web app. Deutsch was already in the language selector and the
+  coach already wrote in German, but no UI bundle existed, so the board itself
+  stayed English. All three bundles now ship a complete German set -- the board
+  strings, the menu-catalog overlay, and the web app -- and the SPA treats `de`
+  as a supported locale so it follows the device.
+  - German runs about a third longer than English, and the panel is 128 pixels
+    wide, so the copy was measured through the widgets that draw it rather than
+    written to length by eye. One string overflowed and was reworded; the rest
+    fit, including the game-over headline at every Display > Text Size.
+  - The German uses the chess vocabulary a German player expects (Partie, Zug,
+    Remis, Schachmatt, Dame and Springer) and Lichess's own German wording for
+    the lobby (Gewertet, Herausforderung, Konto), so the board reads like the
+    site it connects to.
+  - The exemption list that records which catalog strings need no translation
+    was re-read against German rather than inherited: the time controls stay
+    exempt because `min` is the SI symbol for minute in German too, while the
+    time zones German renames (Moscow becomes Moskau) are translated like any
+    other string.
+
 - **French UI**: Selecting Français now translates the board menus, e-paper
   widgets, and the web app, not only the AI coach's remarks. English and Spanish
   already shipped translation bundles; French was listed in the language selector
