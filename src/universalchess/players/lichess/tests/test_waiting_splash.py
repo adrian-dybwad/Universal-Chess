@@ -670,10 +670,8 @@ def test_selecting_ongoing_shows_help_then_the_game_list():
     from types import SimpleNamespace
 
     from universalchess.managers.menu import MenuSelection
-    from universalchess.players.lichess.lobby import (
-        ONGOING_GAMES_HELP,
-        handle_lichess_menu,
-    )
+    from universalchess.menus.catalog.loader import load_catalog
+    from universalchess.players.lichess.lobby import handle_lichess_menu
 
     helps = []
     lists = []
@@ -713,7 +711,7 @@ def test_selecting_ongoing_shows_help_then_the_game_list():
     )
 
     assert result is None
-    assert helps == [("Ongoing Games", ONGOING_GAMES_HELP)]
+    assert helps == [("Ongoing Games", load_catalog().get_node("lichess.ongoing")["help"])]
     assert lists == [["g1"]]
 
 
@@ -727,10 +725,8 @@ def test_selecting_empty_ongoing_shows_help_not_a_no_games_error(monkeypatch):
 
     from universalchess.managers.menu import MenuSelection
     from universalchess.players.lichess import lobby as lobby_mod
-    from universalchess.players.lichess.lobby import (
-        ONGOING_GAMES_HELP,
-        handle_lichess_menu,
-    )
+    from universalchess.menus.catalog.loader import load_catalog
+    from universalchess.players.lichess.lobby import handle_lichess_menu
 
     helps = []
     errors = []
@@ -771,7 +767,7 @@ def test_selecting_empty_ongoing_shows_help_not_a_no_games_error(monkeypatch):
     )
 
     assert result is None
-    assert helps == [("Ongoing Games", ONGOING_GAMES_HELP)]
+    assert helps == [("Ongoing Games", load_catalog().get_node("lichess.ongoing")["help"])]
     assert errors == []
     assert lists == []
 
@@ -785,10 +781,8 @@ def test_selecting_challenges_shows_help_then_the_challenge_list():
     from types import SimpleNamespace
 
     from universalchess.managers.menu import MenuSelection
-    from universalchess.players.lichess.lobby import (
-        CHALLENGES_HELP,
-        handle_lichess_menu,
-    )
+    from universalchess.menus.catalog.loader import load_catalog
+    from universalchess.players.lichess.lobby import handle_lichess_menu
 
     helps = []
     lists = []
@@ -830,7 +824,7 @@ def test_selecting_challenges_shows_help_then_the_challenge_list():
     )
 
     assert result is None
-    assert helps == [("Challenges", CHALLENGES_HELP)]
+    assert helps == [("Challenges", load_catalog().get_node("lichess.challenges")["help"])]
     assert lists == [["in:c1"]]
 
 

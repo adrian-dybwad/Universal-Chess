@@ -11,6 +11,7 @@ from typing import Callable, Optional
 
 from universalchess.board.logging import log
 from universalchess.epaper.icon_menu import IconMenuEntry
+from universalchess.i18n import t
 
 from .match import (
     LichessChallengeOffer,
@@ -30,8 +31,10 @@ def challenge_menu_entries(offer: LichessChallengeOffer):
             selectable=False,
             font_size=12,
         ),
-        IconMenuEntry(key="accept", label="Accept\nChallenge", icon_name="play"),
-        IconMenuEntry(key="decline", label="Decline", icon_name="cancel"),
+        IconMenuEntry(
+            key="accept", label=t("lichess.offer.accept_challenge"), icon_name="play"
+        ),
+        IconMenuEntry(key="decline", label=t("lichess.offer.decline"), icon_name="cancel"),
     ]
 
 
@@ -273,8 +276,8 @@ class LichessPlaySession:
         if self._beep is not None:
             self._beep()
         entries = [
-            IconMenuEntry(key="accept", label="Accept\nTakeback", icon_name="undo"),
-            IconMenuEntry(key="decline", label="Decline", icon_name="cancel"),
+            IconMenuEntry(key="accept", label=t("lichess.offer.accept_takeback"), icon_name="undo"),
+            IconMenuEntry(key="decline", label=t("lichess.offer.decline"), icon_name="cancel"),
         ]
         result = self._menu_manager.show_menu(entries)
         if hasattr(result, "key") and result.key == "accept":
@@ -288,8 +291,8 @@ class LichessPlaySession:
         if self._beep is not None:
             self._beep()
         entries = [
-            IconMenuEntry(key="accept", label="Accept\nDraw", icon_name="draw"),
-            IconMenuEntry(key="decline", label="Decline", icon_name="cancel"),
+            IconMenuEntry(key="accept", label=t("lichess.offer.accept_draw"), icon_name="draw"),
+            IconMenuEntry(key="decline", label=t("lichess.offer.decline"), icon_name="cancel"),
         ]
         result = self._menu_manager.show_menu(entries)
         if hasattr(result, "key") and result.key == "accept":

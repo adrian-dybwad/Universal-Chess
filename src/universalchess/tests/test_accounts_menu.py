@@ -342,3 +342,46 @@ def test_confirm_delete_defaults_highlight_to_cancel():
     manager = _ScriptedMenuManager(show_results=[MenuSelection.from_key("Cancel")])
     confirm_delete_account(manager, "MagnusC")
     assert manager.show_initial_indexes == [2]
+
+
+def test_accounts_rows_are_drawn_in_the_device_language(monkeypatch):
+    """Add Account and the delete confirmation follow the device language.
+
+    Why: the Accounts screens are reached from the Lichess lobby's Account row,
+    so English rows here put a language change in the middle of one journey.
+    The account rows themselves carry a type label and a username, which are
+    names rather than words, and stay as they are.
+
+    How the regression manifests: a row reads the English literal while the
+    menu that opened it is Spanish -- or a prompt loses the identity it is
+    asking about, which would be a confirmation for no particular account.
+    """
+    from universalchess import i18n
+
+    monkeypatch.setattr(
+        "universalchess.services.language_service.get_language", lambda: "es"
+    )
+    i18n._active_locale = None
+    i18n._bundles.clear()
+    i18n.refresh_active_language()
+    try:
+        rows = account_list_entries([LICHESS])
+        assert rows[-1].label == i18n.t("accounts.add")
+        assert rows[-1].label != "Add\nAccount"
+
+        manager = _ScriptedMenuManager(show_results=[MenuSelection.from_key("Cancel")])
+        confirm_delete_account(manager, "MagnusC")
+        labels = [entry.label for entry in manager.shown[0]]
+        assert labels == [
+            i18n.t("accounts.confirm_named", identity="MagnusC"),
+            i18n.t("accounts.delete"),
+            i18n.t("common.cancel"),
+        ]
+        assert "MagnusC" in labels[0]
+
+        unnamed = _ScriptedMenuManager(show_results=[MenuSelection.from_key("Cancel")])
+        confirm_delete_account(unnamed)
+        assert unnamed.shown[0][0].label == i18n.t("accounts.confirm_unnamed")
+    finally:
+        i18n._active_locale = None
+        i18n._bundles.clear()

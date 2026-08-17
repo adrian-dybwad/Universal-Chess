@@ -10,11 +10,10 @@ last on the lobby; Accounts (add/delete) is the last row of the picker, not a
 lobby sibling. These tests pin order and that Account can be activated.
 """
 
+from universalchess.menus.catalog.loader import load_catalog
 from universalchess.players.lichess.lobby import (
     ACCOUNTS_MENU_KEY,
-    CHALLENGES_HELP,
     DEFAULT_ACCOUNT_MENU_KEY,
-    ONGOING_GAMES_HELP,
     build_lichess_account_picker_entries,
     build_lichess_menu_entries,
 )
@@ -41,12 +40,16 @@ def test_lichess_settings_rows_are_always_in_order():
 def test_ongoing_and_challenges_carry_how_they_work_help():
     """Ongoing and Challenges must expose help copy for the help screen.
 
-    Why: selecting either row (or HELP on it) shows how the feature works.
-    How a regression manifests: help is None or the copy changes silently.
+    Why: selecting either row (or HELP on it) shows how the feature works. The
+    copy is the catalog's, which the web card also renders, so the board cannot
+    drift from it or keep an untranslated second version. How a regression
+    manifests: help is None, or it is a copy of the text rather than the node's.
     """
+    catalog = load_catalog()
     by_key = {e.key: e for e in build_lichess_menu_entries("alice")}
-    assert by_key["Ongoing"].help == ONGOING_GAMES_HELP
-    assert by_key["Challenges"].help == CHALLENGES_HELP
+    assert by_key["Ongoing"].help == catalog.get_node("lichess.ongoing")["help"]
+    assert by_key["Challenges"].help == catalog.get_node("lichess.challenges")["help"]
+    assert by_key["Rated"].help == catalog.get_node("field.lichess.rated")["help"]
     assert by_key["Ongoing"].selectable is True
     assert by_key["Challenges"].selectable is True
 

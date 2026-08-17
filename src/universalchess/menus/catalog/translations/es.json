@@ -199,23 +199,27 @@
     "players.lichess": {
       "label": "Lobby de Lichess",
       "boardLabel": "Lobby\nLichess",
-      "help": "Credenciales de Lichess y juego en línea. Cada cuenta es un servidor y usuario (lichess.org o lichess.dev). Abre el selector de cuenta, partidas en curso, desafíos y partida nueva."
+      "help": "Credenciales de Lichess y juego en línea. Cada cuenta es un servidor y usuario (lichess.org o lichess.dev). Abre el selector de cuenta, Clasificada, partidas en curso, desafíos y Buscar partida nueva."
     },
     "lichess.account": {
       "label": "Cuenta",
+      "boardLabel": "Cuenta",
       "help": "Con qué inicio de Lichess guardado juega y navega este tablero, sea cual sea la configuración de los jugadores. Cuentas al final añade o borra inicios."
     },
     "lichess.ongoing": {
       "label": "Partidas en curso",
-      "help": "Continúa una partida de Lichess que esta cuenta ya empezó, en este tablero, en la web o en otro dispositivo.\n\nSelecciona una partida para reanudarla aquí. El reloj y tu color salen de ese encuentro.\n\nSi no hay ninguna, esta cuenta no tiene partidas sin terminar. Usa Nueva partida para buscar rival."
+      "boardLabel": "Partidas\nen curso",
+      "help": "Continúa una partida de Lichess que esta cuenta ya empezó, en este tablero, en la web o en otro dispositivo.\n\nSelecciona una partida para reanudarla aquí. El reloj y tu color salen de ese encuentro.\n\nSi no hay ninguna, esta cuenta no tiene partidas sin terminar. Usa Buscar partida nueva para buscar un rival."
     },
     "lichess.challenges": {
       "label": "Desafíos",
-      "help": "Un desafío es una partida ofrecida a esta cuenta, o que esta cuenta ofreció a otra persona.\n\nEntrantes: selecciona uno para aceptarlo en este tablero. Un desafío que llega durante una búsqueda también muestra Aceptar o Rechazar.\n\nSalientes: todavía esperando al otro jugador. Selecciona uno para esperar aquí; la partida se abre en este tablero cuando acepte.\n\nNueva partida publica una búsqueda pública en lugar de desafiar a una persona."
+      "boardLabel": "Desafíos",
+      "help": "Un desafío es una partida ofrecida a esta cuenta, o que esta cuenta ofreció a otra persona.\n\nEntrantes: selecciona uno para aceptarlo en este tablero. Un desafío que llega durante una búsqueda también muestra Aceptar o Rechazar.\n\nSalientes: todavía esperando al otro jugador. Selecciona uno para esperar aquí; la partida se abre en este tablero cuando acepte.\n\nBuscar partida nueva publica una búsqueda pública en lugar de desafiar a una persona."
     },
     "lichess.new_game": {
-      "label": "Nueva partida",
-      "help": "Busca un rival en Lichess con esta cuenta. El control de tiempo y si es valorada salen de Partida y Jugadores."
+      "label": "Buscar partida nueva",
+      "boardLabel": "Buscar\npartida",
+      "help": "Busca un rival nuevo en Lichess con esta cuenta, sea cual sea la configuración de los jugadores. Clasificada es la fila de arriba y el control de tiempo sale de los ajustes de Partida; el color es el que elegiste solo cuando un jugador está puesto en Lichess."
     },
     "players.start": {
       "label": "Nueva\npartida",
@@ -670,7 +674,7 @@
     "field.display.text_size": {
       "label": "Tamaño del texto",
       "boardLabel": "Texto\n{value}",
-      "help": "Tamaño del texto del entrenador y de la lista de jugadas en la pantalla de tinta electrónica."
+      "help": "Tamaño del texto en la pantalla de tinta electrónica: menús, comentarios del entrenador, lista de jugadas, reloj y las pantallas de fin de partida, colocación de piezas y ayuda. Un texto más grande muestra menos líneas y filas por pantalla."
     },
     "field.display.show_clock": {
       "label": "Mostrar reloj",
@@ -714,6 +718,11 @@
     "field.sound.key_press": {
       "label": "Pulsación de botón",
       "help": "Pita cuando se pulsan botones"
+    },
+    "field.lichess.rated": {
+      "label": "Clasificada",
+      "boardLabel": "Clasificada",
+      "help": "Las partidas clasificadas cuentan para la puntuación de esta cuenta en Lichess; las amistosas no.\n\nSe aplica a todas las búsquedas que publica este tablero, incluidas las del lobby sin ningún jugador puesto en Lichess."
     },
     "field.lichess.api_token": {
       "label": "Token de API",

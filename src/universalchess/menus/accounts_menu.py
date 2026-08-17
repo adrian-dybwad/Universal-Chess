@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 
 from universalchess.epaper.icon_menu import IconMenuEntry
+from universalchess.i18n import t
 from universalchess.managers.menu import MenuSelection, is_break_result
 from universalchess.utils.token_display import mask_token  # re-exported for callers
 
@@ -81,7 +82,7 @@ def account_list_entries(accounts: List[AccountView]) -> List[IconMenuEntry]:
             )
         )
     entries.append(
-        IconMenuEntry(key="ADD", label="Add\nAccount", icon_name="account", enabled=True)
+        IconMenuEntry(key="ADD", label=t("accounts.add"), icon_name="account", enabled=True)
     )
     return entries
 
@@ -92,11 +93,15 @@ def confirm_delete_account(menu_manager, identity: str = "") -> bool:
     Defaults the highlight to Cancel so a stray confirmation press cannot delete a
     credential; any non-Delete outcome (Cancel, BACK, break) is a refusal.
     """
-    prompt = f"Delete\n{identity}?" if identity else "Delete\naccount?"
+    prompt = (
+        t("accounts.confirm_named", identity=identity)
+        if identity
+        else t("accounts.confirm_unnamed")
+    )
     entries = [
         IconMenuEntry(key="prompt", label=prompt, icon_name="cancel", enabled=True, selectable=False, font_size=12),
-        IconMenuEntry(key="Delete", label="Delete", icon_name="cancel", enabled=True),
-        IconMenuEntry(key="Cancel", label="Cancel", icon_name="undo", enabled=True),
+        IconMenuEntry(key="Delete", label=t("accounts.delete"), icon_name="cancel", enabled=True),
+        IconMenuEntry(key="Cancel", label=t("common.cancel"), icon_name="undo", enabled=True),
     ]
     result = menu_manager.show_menu(entries, initial_index=2)
     key = result.key if hasattr(result, "key") else result
@@ -179,7 +184,7 @@ def handle_account_detail(
             selectable=False,
             font_size=12,
         ),
-        IconMenuEntry(key="Delete", label="Delete\nAccount", icon_name="cancel", enabled=True),
+        IconMenuEntry(key="Delete", label=t("accounts.delete_account"), icon_name="cancel", enabled=True),
     ]
     result = menu_manager.show_menu(entries, initial_index=1)
     key = result.key if hasattr(result, "key") else result

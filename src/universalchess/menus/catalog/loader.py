@@ -134,6 +134,18 @@ _TRANSLATIONS_DIR = _CATALOG_DIR / "translations"
 # a hard dependency on the service for the common (English) path.
 _SOURCE_LOCALE = "en"
 
+# The node keys an overlay may translate. ``label_in_progress`` (the board's
+# RESUME text) and ``valueDefault`` (the placeholder shown for an unset bound
+# value, e.g. an unnamed human) both render to the user, so they travel with the
+# label. Public because the coverage test measures the overlays against exactly
+# the keys this module applies -- a key added here must be translated, not
+# silently left English.
+TRANSLATABLE_NODE_KEYS = ("label", "boardLabel", "help", "label_in_progress", "valueDefault")
+
+# The per-field keys an ``accountTypes`` overlay may translate (the Add Account
+# form's rows). Public for the same reason as :data:`TRANSLATABLE_NODE_KEYS`.
+TRANSLATABLE_ACCOUNT_FIELD_KEYS = ("label", "help", "placeholder")
+
 # Web control types a node's optional ``webType`` may name. ``webType`` overrides
 # the board ``type`` for the web renderer only -- used where the same node is an
 # imperative ``action`` on the board (e.g. the chained engine -> ELO picker) but a
@@ -653,10 +665,7 @@ def localize_catalog(menu_data: dict, locale: str, *, overlay: Optional[dict] = 
         strings = node_overlay.get(node.get("id"))
         if not strings:
             continue
-        # ``label_in_progress`` (the board's RESUME text) and ``valueDefault``
-        # (the placeholder shown for an unset bound value, e.g. an unnamed human)
-        # both render to the user, so they are translated alongside the label.
-        for key in ("label", "boardLabel", "help", "label_in_progress", "valueDefault"):
+        for key in TRANSLATABLE_NODE_KEYS:
             if key in strings:
                 node[key] = strings[key]
 
@@ -699,7 +708,7 @@ def localize_catalog(menu_data: dict, locale: str, *, overlay: Optional[dict] = 
             field_strings = field_labels.get(field_def.get("key"))
             if not field_strings:
                 continue
-            for key in ("label", "help", "placeholder"):
+            for key in TRANSLATABLE_ACCOUNT_FIELD_KEYS:
                 if key in field_strings:
                     field_def[key] = field_strings[key]
 

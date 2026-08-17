@@ -31,7 +31,9 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   on a tall button wrap into the extra space instead of clipping. Medium
   remains the identity scale, so existing layouts are unchanged until the
   setting is moved. The Text Size picker still previews Small/Medium/Large
-  at 13/16/20 rather than scaling those preview sizes a second time.
+  at 13/16/20 rather than scaling those preview sizes a second time. Its help
+  named only the coach text and the move list, which had been the whole of it,
+  and now names everything the setting reaches.
 
 - **Windows PowerShell troubleshooting on Original Centaur**: Importing from an
   SD card on Windows is blocked by two PowerShell errors that the download
@@ -792,6 +794,38 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   the web, beside the account whose rating it stakes. The board row reads Rated
   On or Rated Off with a checkbox, and selecting it writes the opposite value
   and redraws, so the state is visible before the seek goes out.
+
+- **The board's Lichess screens were English in every language**: Players and
+  its menus translate, but the lobby they open was built from English literals
+  rather than from the catalog the web card reads, so choosing Español or
+  Français gave a Spanish menu leading to an English lobby: its five rows, the
+  help behind Rated, Ongoing Games and Challenges, the seek screen with its
+  clock and colour, Connecting and Exiting, the accept prompts a challenge, a
+  takeback or a draw offer interrupts a game with, the prompt after setting the
+  pieces back to the start, and the errors for a missing scope, an expired
+  token or an unreachable server. The rows and their help now come from the
+  catalog nodes the web renders, which also ends the board's second copy of the
+  Ongoing Games and Challenges text; the rest comes from the board string
+  bundle, translated into both languages. Add Account and the delete
+  confirmation followed, because the lobby's Account row is how they are
+  reached. The Rated help the board had -- which says what a rated game costs
+  and that it governs every seek, where the catalog only said Casual when off
+  -- is now the one both surfaces show.
+
+- **The Lichess lobby was part English on a Spanish or French board**: Rated
+  arrived in the lobby without a Spanish or French entry, and a menu string a
+  translation omits falls back to English with nothing raised or logged, so the
+  row simply read Rated in both. The row that seeks was still called Nueva
+  partida / Nouvelle partie, the name it carried before it was separated from
+  the New Game that starts whichever players Settings describes, and its help
+  still sent the reader to Players for the rated flag that now sits one row
+  above it -- as did the English it was translated from. All three are
+  corrected. Every translatable string in the menu catalog is now measured
+  against each translation, so one added on the English side and forgotten on
+  the other fails there instead of shipping as an English row in a Spanish
+  menu; strings that read the same in both languages (Chess960, Bluetooth, each
+  language named in itself) are listed as such with the reason, rather than
+  going unnoticed among the gaps.
 
 - **Lichess Lobby is the play menu on board and web**: User, Ongoing Games,
   Challenges, and New Game sat behind Players → Lichess Settings → Play. That

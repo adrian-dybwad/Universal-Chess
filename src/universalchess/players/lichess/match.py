@@ -9,6 +9,7 @@ lichess.dev is never chosen by a game-level toggle.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from universalchess.i18n import t
 from universalchess.state.time_control import DelayMode, build_time_control
 from .hosts import (
     ACCOUNT_TYPE_LICHESS,
@@ -150,9 +151,9 @@ def _challenge_clock_label(time_control: dict) -> str:
 
 def lichess_challenge_terms_label(offer: LichessChallengeOffer) -> str:
     """Two-line e-paper summary of who challenged and on what terms."""
-    rated = "rated" if offer.rated else "casual"
-    color = {"white": "White", "black": "Black"}.get(offer.our_color, "Random")
-    line1 = offer.challenger_name or "Unknown"
+    rated = t("lichess.seek.rated") if offer.rated else t("lichess.seek.casual")
+    color = color_label(offer.our_color)
+    line1 = offer.challenger_name or t("common.unknown")
     if offer.challenger_rating:
         line1 = f"{line1} {offer.challenger_rating}"
     bits = [offer.clock_label, rated, color]
@@ -203,13 +204,17 @@ def lichess_waiting_message(mode, seek=None, *, awaiting_opponent: bool = False)
     from .hosts import credential_label, get_host, parse_credential_id
 
     if mode == LichessGameMode.ONGOING or mode == LichessGameMode.ATTACH:
-        headline = "Connecting..."
+        headline = t("lichess.waiting.connecting")
         include_clock = False
     elif mode == LichessGameMode.CHALLENGE:
-        headline = "Waiting for\nopponent..." if awaiting_opponent else "Loading\nChallenge..."
+        headline = (
+            t("lichess.waiting.opponent")
+            if awaiting_opponent
+            else t("lichess.waiting.challenge")
+        )
         include_clock = False
     else:
-        headline = "Waiting for game"
+        headline = t("lichess.waiting.seeking")
         include_clock = True
 
     if seek is None:
@@ -217,9 +222,9 @@ def lichess_waiting_message(mode, seek=None, *, awaiting_opponent: bool = False)
 
     lines = [headline]
     if include_clock:
-        rated = "rated" if seek.rated else "casual"
+        rated = t("lichess.seek.rated") if seek.rated else t("lichess.seek.casual")
         lines.append(f"{seek.time_minutes}+{seek.increment_seconds} {rated}")
-        lines.append(str(seek.color).capitalize())
+        lines.append(color_label(seek.color))
     host_id, username = parse_credential_id(seek.account_id)
     if not username:
         host_id = seek.host_id
@@ -232,15 +237,32 @@ def lichess_waiting_message(mode, seek=None, *, awaiting_opponent: bool = False)
     return "\n".join(lines)
 
 
+def color_label(color) -> str:
+    """The side's name in the device's language, for a seek or a game screen.
+
+    Anything that is not white or black is the random seek, which asks Lichess
+    to choose. An unknown value falls through to that rather than printing a
+    raw setting value at the player.
+    """
+    normalized = str(color).strip().lower()
+    if normalized == "white":
+        return t("lichess.color.white")
+    if normalized == "black":
+        return t("lichess.color.black")
+    return t("lichess.color.random")
+
+
 def lichess_cancelling_message() -> str:
     """Copy while BACK tears down a seek that has not been accepted yet."""
-    return "Exiting..."
+    return t("lichess.waiting.exiting")
 
 
 def lichess_started_message(human_is_white: bool) -> str:
     """Copy after accept: the game exists and which side the human sits."""
-    side = "White" if human_is_white else "Black"
-    return f"Game started\nYou play {side}"
+    return t(
+        "lichess.started",
+        color=t("lichess.color.white") if human_is_white else t("lichess.color.black"),
+    )
 
 
 def _human_and_lichess(player1, player2):
@@ -250,7 +272,7 @@ def _human_and_lichess(player1, player2):
         return player1, player2
     if types == ("lichess", "human"):
         return player2, player1
-    raise LichessSeekError("pairing", "Need Human vs\nLichess")
+    raise LichessSeekError("pairing", t("lichess.error.pairing"))
 
 
 def lichess_account_id(settings) -> str:
@@ -330,10 +352,10 @@ def _seek_clock(game) -> tuple[int, int]:
         or control.delay_seconds
         or len(control.white_stages) != 1
     ):
-        raise LichessSeekError("clock", "Lichess needs a\nsimple clock")
+        raise LichessSeekError("clock", t("lichess.error.clock"))
     stage = control.white_stages[0]
     if stage.base_seconds <= 0 or stage.base_seconds % 60 != 0:
-        raise LichessSeekError("clock", "Lichess needs a\nsimple clock")
+        raise LichessSeekError("clock", t("lichess.error.clock"))
     return stage.base_seconds // 60, int(stage.increment_seconds)
 
 

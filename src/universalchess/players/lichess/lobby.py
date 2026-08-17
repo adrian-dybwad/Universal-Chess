@@ -5,11 +5,27 @@ import re
 from typing import Optional, Callable
 
 from universalchess.epaper.icon_menu import IconMenuEntry
+from universalchess.i18n import t
 from universalchess.managers.menu import is_break_result, is_play_start
 
 from .match import has_lichess_slot, lichess_account_id
 
 _MISSING_SCOPE = re.compile(r"Missing scope:\s*([a-z0-9:_-]+)", re.IGNORECASE)
+
+
+def _row(node_id: str, key: str) -> str:
+    """Return a catalog string for a lobby row in the device's language.
+
+    The lobby is hand-built (its rows carry live state: the signed-in user, the
+    Rated value, lists fetched on selection), but its wording is the same
+    wording the web card renders from these nodes. Reading them here keeps one
+    source for both surfaces and one place to translate -- the board used to
+    hold English copies of both the labels and the help, so a translated board
+    showed an English lobby.
+    """
+    from universalchess.menus.catalog.loader import get_catalog
+
+    return get_catalog().get_node(node_id)[key]
 
 
 def _lichess_permission_panel_message(error_msg: str, fallback: str) -> Optional[str]:
@@ -21,7 +37,7 @@ def _lichess_permission_panel_message(error_msg: str, fallback: str) -> Optional
     """
     match = _MISSING_SCOPE.search(error_msg)
     if match:
-        return f"Token needs\n{match.group(1)}"
+        return t("lichess.error.token_scope", scope=match.group(1))
     lowered = error_msg.lower()
     if (
         "401" in error_msg
@@ -104,34 +120,6 @@ def resolve_lichess_identity(token, log=None, host_id: str = "org"):
 DEFAULT_ACCOUNT_MENU_KEY = "Default"
 ACCOUNTS_MENU_KEY = "Accounts"
 
-ONGOING_GAMES_HELP = (
-    "Continue a Lichess game this account already started, on this board, "
-    "the website, or another device.\n\n"
-    "Select a game to resume it here. The clock and your color come from "
-    "that match.\n\n"
-    "If none are listed, this account has no unfinished games. Use Seek New "
-    "Game to seek a new opponent."
-)
-
-CHALLENGES_HELP = (
-    "A challenge is a game offered to this account, or that this account "
-    "offered to someone else.\n\n"
-    "Incoming: select one to accept it on this board. A challenge that "
-    "arrives during a seek also shows Accept or Decline.\n\n"
-    "Outgoing: still waiting for the other player. Select one to wait here; "
-    "the game opens on this board when they accept.\n\n"
-    "Seek New Game posts a public seek instead of challenging one person."
-)
-
-
-RATED_HELP = (
-    "Rated games count towards this account's Lichess rating; casual games do "
-    "not.\n\n"
-    "Applies to every seek this board posts, including one from the lobby with "
-    "no player set to Lichess."
-)
-
-
 def build_lichess_menu_entries(username: Optional[str], rated: bool = False):
     """Build Lichess Settings rows (the lobby, not a nested Play page).
 
@@ -146,29 +134,43 @@ def build_lichess_menu_entries(username: Optional[str], rated: bool = False):
     That last row says Seek because it always posts a seek, whatever the Players
     slots are set to, unlike the New Game elsewhere that starts whichever game
     those slots describe.
+
+    Labels and help come from the catalog nodes the web card renders, so the row
+    reads the same on both surfaces and in the device's language.
     """
-    account_label = f"Account\n{username}" if username else "Account\nUnknown"
+    account = username or t("common.unknown")
     return [
-        IconMenuEntry(key="Account", label=account_label, icon_name="lichess"),
+        IconMenuEntry(
+            key="Account",
+            label=f"{_row('lichess.account', 'boardLabel')}\n{account}",
+            icon_name="lichess",
+        ),
         IconMenuEntry(
             key="Rated",
-            label="Rated\nOn" if rated else "Rated\nOff",
+            label=(
+                f"{_row('field.lichess.rated', 'boardLabel')}\n"
+                f"{t('common.on') if rated else t('common.off')}"
+            ),
             icon_name="checkbox_checked" if rated else "checkbox_empty",
-            help=RATED_HELP,
+            help=_row("field.lichess.rated", "help"),
         ),
         IconMenuEntry(
             key="Ongoing",
-            label="Ongoing\nGames",
+            label=_row("lichess.ongoing", "boardLabel"),
             icon_name="lichess",
-            help=ONGOING_GAMES_HELP,
+            help=_row("lichess.ongoing", "help"),
         ),
         IconMenuEntry(
             key="Challenges",
-            label="Challenges",
+            label=_row("lichess.challenges", "boardLabel"),
             icon_name="lichess",
-            help=CHALLENGES_HELP,
+            help=_row("lichess.challenges", "help"),
         ),
-        IconMenuEntry(key="NewGame", label="Seek New\nGame", icon_name="play"),
+        IconMenuEntry(
+            key="NewGame",
+            label=_row("lichess.new_game", "boardLabel"),
+            icon_name="play",
+        ),
     ]
 
 
@@ -196,7 +198,7 @@ def build_lichess_account_picker_entries(choices):
     entries.append(
         IconMenuEntry(
             key=ACCOUNTS_MENU_KEY,
-            label="Accounts",
+            label=_row("players.accounts", "label"),
             icon_name="account",
         )
     )
@@ -342,19 +344,27 @@ def choose_lichess_reset_action(menu_manager) -> str:
     entries = [
         IconMenuEntry(
             key="prompt",
-            label="Seek a\nnew game?",
+            label=t("lichess.reset.prompt"),
             icon_name="lichess",
             enabled=True,
             selectable=False,
             font_size=12,
         ),
         IconMenuEntry(
-            key="Lobby", label="Lichess\nLobby", icon_name="lichess", enabled=True
+            key="Lobby",
+            label=_row("players.lichess", "boardLabel"),
+            icon_name="lichess",
+            enabled=True,
         ),
         IconMenuEntry(
-            key="Seek", label="Seek New\nGame", icon_name="play", enabled=True
+            key="Seek",
+            label=_row("lichess.new_game", "boardLabel"),
+            icon_name="play",
+            enabled=True,
         ),
-        IconMenuEntry(key="Cancel", label="Cancel", icon_name="undo", enabled=True),
+        IconMenuEntry(
+            key="Cancel", label=t("common.cancel"), icon_name="undo", enabled=True
+        ),
     ]
     result = menu_manager.show_menu(entries, initial_index=3)
     key = result.key if hasattr(result, "key") else result
@@ -625,7 +635,11 @@ def show_lichess_ongoing_games(client, menu_manager, log) -> Optional[str]:
 
         entries = []
         for row in summaries:
-            color = "W" if row["color"] == "white" else "B"
+            color = (
+                t("lichess.color.white_initial")
+                if row["color"] == "white"
+                else t("lichess.color.black_initial")
+            )
             label = f"{row['opponent']}\n({row['rating']}) {color}"
             entries.append(
                 IconMenuEntry(
@@ -646,25 +660,23 @@ def show_lichess_ongoing_games(client, menu_manager, log) -> Optional[str]:
 
     except AttributeError as e:
         log.error(f"[Lichess] berserk API method not found: {e}")
-        show_lichess_error(
-            menu_manager,
-            "API Not Supported",
-            "Ongoing games API\nnot available.\nUpdate berserk:\npip install -U berserk",
-        )
+        show_lichess_error(menu_manager, "API Not Supported", t("lichess.error.ongoing_api"))
         return None
     except Exception as e:
         error_msg = str(e)
         log.error(f"[Lichess] Error fetching ongoing games: {e}")
         permission = _lichess_permission_panel_message(
-            error_msg, "Token does not have\nboard:play permission"
+            error_msg, t("lichess.error.board_scope")
         )
         if permission:
             show_lichess_error(menu_manager, "Auth Error", permission)
         elif "network" in error_msg.lower() or "connection" in error_msg.lower():
-            show_lichess_error(menu_manager, "Network Error", "Could not connect\nto Lichess")
+            show_lichess_error(menu_manager, "Network Error", t("lichess.error.network"))
         else:
             short_error = error_msg[:40] + "..." if len(error_msg) > 40 else error_msg
-            show_lichess_error(menu_manager, "Error", f"Games failed:\n{short_error}")
+            show_lichess_error(
+                menu_manager, "Error", t("lichess.error.games_failed", error=short_error)
+            )
         return None
 
 
@@ -695,9 +707,7 @@ def show_lichess_challenges(client, menu_manager, log) -> Optional[dict]:
         if challenges_data is None:
             log.error("[Lichess] berserk library does not support challenges API")
             show_lichess_error(
-                menu_manager,
-                "API Not Supported",
-                "Challenges require\nberserk >= 0.13\nUpdate with:\npip install -U berserk",
+                menu_manager, "API Not Supported", t("lichess.error.challenges_api")
             )
             return None
 
@@ -710,7 +720,11 @@ def show_lichess_challenges(client, menu_manager, log) -> Optional[dict]:
 
         entries = []
         for row in summaries:
-            prefix = "IN" if row["direction"] == "in" else "OUT"
+            prefix = (
+                t("lichess.challenge.incoming")
+                if row["direction"] == "in"
+                else t("lichess.challenge.outgoing")
+            )
             label = f"{prefix}: {row['name']}\n({row['rating']})"
             entries.append(
                 IconMenuEntry(
@@ -732,25 +746,23 @@ def show_lichess_challenges(client, menu_manager, log) -> Optional[dict]:
 
     except AttributeError as e:
         log.error(f"[Lichess] berserk API method not found: {e}")
-        show_lichess_error(
-            menu_manager,
-            "API Not Supported",
-            "Challenges require\nberserk >= 0.13\nUpdate with:\npip install -U berserk",
-        )
+        show_lichess_error(menu_manager, "API Not Supported", t("lichess.error.challenges_api"))
         return None
     except Exception as e:
         error_msg = str(e)
         log.error(f"[Lichess] Error fetching challenges: {e}")
         permission = _lichess_permission_panel_message(
-            error_msg, "Token does not have\nchallenge permissions"
+            error_msg, t("lichess.error.challenge_scope")
         )
         if permission:
             show_lichess_error(menu_manager, "Auth Error", permission)
         elif "network" in error_msg.lower() or "connection" in error_msg.lower():
-            show_lichess_error(menu_manager, "Network Error", "Could not connect\nto Lichess")
+            show_lichess_error(menu_manager, "Network Error", t("lichess.error.network"))
         else:
             short_error = error_msg[:40] + "..." if len(error_msg) > 40 else error_msg
-            show_lichess_error(menu_manager, "Error", f"Challenges failed:\n{short_error}")
+            show_lichess_error(
+                menu_manager, "Error", t("lichess.error.challenges_failed", error=short_error)
+            )
         return None
 
 
@@ -796,14 +808,20 @@ def handle_lichess_menu(
     connection, username, error = get_lichess_connection_fn()
     if connection is None:
         if error == "no_token":
-            result = show_lichess_error(menu_manager, "No API Token", "Configure in\nSystem > Accounts", True)
+            result = show_lichess_error(
+                menu_manager, "No API Token", t("lichess.error.no_token"), True
+            )
         elif error == "invalid_token":
-            result = show_lichess_error(menu_manager, "Invalid Token", "Token expired or\nrevoked", True)
+            result = show_lichess_error(
+                menu_manager, "Invalid Token", t("lichess.error.invalid_token"), True
+            )
         elif error == "no_berserk":
-            show_lichess_error(menu_manager, "Missing Library", "berserk package\nnot installed")
+            show_lichess_error(menu_manager, "Missing Library", t("lichess.error.no_berserk"))
             result = None
         else:
-            show_lichess_error(menu_manager, "Connection Error", "Could not reach\nLichess server")
+            show_lichess_error(
+                menu_manager, "Connection Error", t("lichess.error.unreachable")
+            )
             result = None
         if result == "accounts":
             handle_accounts_menu_fn()
@@ -827,7 +845,7 @@ def handle_lichess_menu(
                 return True
         except Exception as e:
             log.error(f"[Lichess] Failed to start game: {e}", exc_info=True)
-            show_lichess_error(menu_manager, "Start Failed", "Could not start\nLichess game")
+            show_lichess_error(menu_manager, "Start Failed", t("lichess.error.start_failed"))
         return False
 
     def refresh_client() -> None:
@@ -842,7 +860,7 @@ def handle_lichess_menu(
         if new_connection is None:
             log.warning(f"[Lichess] Account switch failed: {new_error}")
             show_lichess_error(
-                menu_manager, "Account", "Could not sign in\nwith that account"
+                menu_manager, "Account", t("lichess.error.account_switch")
             )
             return
         connection.close()
@@ -887,7 +905,11 @@ def handle_lichess_menu(
                 return result
             return None
         if result.key == "Ongoing":
-            show_lichess_help(menu_manager, "Ongoing Games", ONGOING_GAMES_HELP)
+            show_lichess_help(
+                menu_manager,
+                _row("lichess.ongoing", "label"),
+                _row("lichess.ongoing", "help"),
+            )
             game_id = show_lichess_ongoing_games(connection.client, menu_manager, log)
             if game_id:
                 config = LichessConfig(mode=LichessGameMode.ONGOING, game_id=game_id)
@@ -895,7 +917,11 @@ def handle_lichess_menu(
                     return result
             return None
         if result.key == "Challenges":
-            show_lichess_help(menu_manager, "Challenges", CHALLENGES_HELP)
+            show_lichess_help(
+                menu_manager,
+                _row("lichess.challenges", "label"),
+                _row("lichess.challenges", "help"),
+            )
             challenge = show_lichess_challenges(connection.client, menu_manager, log)
             if challenge:
                 config = LichessConfig(

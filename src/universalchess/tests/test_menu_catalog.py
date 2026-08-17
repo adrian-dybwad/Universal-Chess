@@ -567,10 +567,7 @@ def test_lichess_lobby_catalog_children_match_board_hierarchy():
     slot could not hold it. Regression: a row drops, Play returns as a wrapper,
     Accounts sits on the lobby itself, or Rated goes back to the player card.
     """
-    from universalchess.players.lichess.lobby import (
-        CHALLENGES_HELP,
-        ONGOING_GAMES_HELP,
-    )
+    from universalchess.players.lichess.lobby import build_lichess_menu_entries
 
     catalog = load_catalog()
     node = catalog.get_node("players.lichess")
@@ -590,8 +587,17 @@ def test_lichess_lobby_catalog_children_match_board_hierarchy():
     # No player-scoped visibility: the lobby has no slot in context, and the
     # setting applies to every seek the board posts.
     assert "visibleWhen" not in rated
-    assert catalog.get_node("lichess.ongoing")["help"] == ONGOING_GAMES_HELP
-    assert catalog.get_node("lichess.challenges")["help"] == CHALLENGES_HELP
+    # The board lobby draws these very nodes, so a row's label and help are the
+    # catalog's rather than a second copy of them that can drift or stay English.
+    rows = {entry.key: entry for entry in build_lichess_menu_entries("alice")}
+    for key, node_id in (
+        ("Ongoing", "lichess.ongoing"),
+        ("Challenges", "lichess.challenges"),
+        ("NewGame", "lichess.new_game"),
+    ):
+        assert rows[key].label == catalog.get_node(node_id)["boardLabel"]
+    assert rows["Ongoing"].help == catalog.get_node("lichess.ongoing")["help"]
+    assert rows["Challenges"].help == catalog.get_node("lichess.challenges")["help"]
     assert catalog.get_node("lichess.account")["label"] == "Account"
     assert catalog.get_node("players.accounts")["label"] == "Accounts"
     assert "web" in catalog.get_node("players.accounts").get("platforms", ["board", "web"])

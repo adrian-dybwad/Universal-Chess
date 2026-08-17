@@ -199,23 +199,27 @@
     "players.lichess": {
       "label": "Lobby Lichess",
       "boardLabel": "Lobby\nLichess",
-      "help": "Identifiants Lichess et jeu en ligne. Chaque compte est un serveur et un utilisateur (lichess.org ou lichess.dev). Ouvre le sélecteur de compte, les parties en cours, les défis et une nouvelle partie."
+      "help": "Identifiants Lichess et jeu en ligne. Chaque compte est un serveur et un utilisateur (lichess.org ou lichess.dev). Ouvre le sélecteur de compte, Classée, les parties en cours, les défis et Chercher une partie."
     },
     "lichess.account": {
       "label": "Compte",
+      "boardLabel": "Compte",
       "help": "Quel identifiant Lichess enregistré ce plateau utilise pour jouer et naviguer, quels que soient les réglages des joueurs. Comptes à la fin ajoute ou supprime des identifiants."
     },
     "lichess.ongoing": {
       "label": "Parties en cours",
-      "help": "Reprendre une partie Lichess déjà commencée par ce compte, sur ce plateau, le site, ou un autre appareil.\n\nSélectionnez une partie pour la reprendre ici. L'horloge et votre couleur viennent de cette rencontre.\n\nSi aucune n'est listée, ce compte n'a pas de partie inachevée. Utilisez Nouvelle partie pour chercher un adversaire."
+      "boardLabel": "Parties\nen cours",
+      "help": "Reprendre une partie Lichess déjà commencée par ce compte, sur ce plateau, le site, ou un autre appareil.\n\nSélectionnez une partie pour la reprendre ici. L'horloge et votre couleur viennent de cette rencontre.\n\nSi aucune n'est listée, ce compte n'a pas de partie inachevée. Utilisez Chercher une partie pour trouver un adversaire."
     },
     "lichess.challenges": {
       "label": "Défis",
-      "help": "Un défi est une partie proposée à ce compte, ou que ce compte a proposée à quelqu'un d'autre.\n\nEntrants : sélectionnez-en un pour l'accepter sur ce plateau. Un défi qui arrive pendant une recherche affiche aussi Accepter ou Refuser.\n\nSortants : toujours en attente de l'autre joueur. Sélectionnez-en un pour attendre ici ; la partie s'ouvre sur ce plateau dès qu'il accepte.\n\nNouvelle partie publie une recherche publique au lieu de défier une personne."
+      "boardLabel": "Défis",
+      "help": "Un défi est une partie proposée à ce compte, ou que ce compte a proposée à quelqu'un d'autre.\n\nEntrants : sélectionnez-en un pour l'accepter sur ce plateau. Un défi qui arrive pendant une recherche affiche aussi Accepter ou Refuser.\n\nSortants : toujours en attente de l'autre joueur. Sélectionnez-en un pour attendre ici ; la partie s'ouvre sur ce plateau dès qu'il accepte.\n\nChercher une partie publie une recherche publique au lieu de défier une personne."
     },
     "lichess.new_game": {
-      "label": "Nouvelle partie",
-      "help": "Chercher un adversaire sur Lichess avec ce compte. Le rythme et le classé viennent des réglages Partie et Joueurs."
+      "label": "Chercher une partie",
+      "boardLabel": "Chercher\nune partie",
+      "help": "Cherche un nouvel adversaire sur Lichess avec ce compte, quels que soient les réglages des joueurs. Classée est la ligne au-dessus et la cadence vient des réglages Partie ; la couleur est celle que vous avez choisie seulement lorsqu'un joueur est réglé sur Lichess."
     },
     "players.start": {
       "label": "Nouvelle\npartie",
@@ -670,7 +674,7 @@
     "field.display.text_size": {
       "label": "Taille du texte",
       "boardLabel": "Texte\n{value}",
-      "help": "Taille du texte de l'entraîneur et de la liste des coups sur l'écran à encre électronique."
+      "help": "Taille du texte sur l'écran à encre électronique : menus, commentaires de l'entraîneur, liste des coups, pendule, ainsi que les écrans de fin de partie, de mise en place et d'aide. Un texte plus grand affiche moins de lignes et de rangées par écran."
     },
     "field.display.show_clock": {
       "label": "Afficher la pendule",
@@ -714,6 +718,11 @@
     "field.sound.key_press": {
       "label": "Pression de bouton",
       "help": "Émet un bip lorsque des boutons sont pressés"
+    },
+    "field.lichess.rated": {
+      "label": "Classée",
+      "boardLabel": "Classée",
+      "help": "Les parties classées comptent pour le classement Lichess de ce compte ; les parties amicales non.\n\nS'applique à toutes les recherches publiées par ce plateau, y compris celles du lobby sans aucun joueur réglé sur Lichess."
     },
     "field.lichess.api_token": {
       "label": "Jeton d'API",
