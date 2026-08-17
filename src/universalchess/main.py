@@ -644,6 +644,10 @@ _active_player_signature: Optional[tuple] = None
 # and boot resume leave it None (ATTACH, no seek). Consumed at start so a
 # failed start cannot reuse a stale game id.
 _lichess_join: Optional[dict] = None
+# The in-game Lichess session for the game being played, so _cleanup_game can
+# close it. It holds the started-splash timer, which would otherwise fire after
+# the game ended and paint game widgets over the menu that replaced it.
+_lichess_session: Optional[object] = None
 # BACK on the waiting splash can arrive before ProtocolManager exists. The
 # events thread sets this; _start_game_mode checks it on the main thread so
 # teardown does not run while DisplayManager is still being constructed.
@@ -2384,7 +2388,7 @@ def _start_game_mode(
     """
     global app_state, protocol_manager, display_manager, controller_manager, _is_position_game
     global _active_player_signature, _pending_player_rebuild, _pending_layout_rebuild
-    global _lichess_join, _cancel_game_start
+    global _lichess_join, _cancel_game_start, _lichess_session
 
     log.info(f"[App] Transitioning to GAME mode (position_game={is_position_game})")
 
@@ -2562,6 +2566,7 @@ def _start_game_mode(
     # Check for special modes
     is_two_player = (p1.type == 'human' and p2.type == 'human')
     lichess_session = LichessPlaySession.from_players(white_player, black_player)
+    _lichess_session = lichess_session
 
     # Get analysis engine path if analysis mode is enabled
     # The engine registry handles sharing - if a player engine uses the same binary,
@@ -3116,9 +3121,20 @@ def _cleanup_game():
     Used when exiting a game, whether returning to menu or positions menu.
     """
     global protocol_manager, display_manager, controller_manager, _pending_piece_events, _is_position_game
-    
+    global _lichess_session
+
     # Clear position game flag
     _is_position_game = False
+
+    # Release the Lichess session's timers before the display it would draw on
+    # goes away, so a started splash pending from a game that ended within five
+    # seconds cannot paint game widgets over the menu.
+    if _lichess_session is not None:
+        try:
+            _lichess_session.close()
+        except Exception as e:
+            log.debug(f"Error closing Lichess session: {e}")
+        _lichess_session = None
     
     # Clear any stale pending piece events from previous game
     _pending_piece_events.clear()

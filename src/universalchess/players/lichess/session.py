@@ -48,6 +48,8 @@ class LichessPlaySession:
         self._splash_seconds = 5.0
         self._show_started_splash = None
         self._rewind_to_move_count = None
+        self._splash_timer = None
+        self._closed = False
 
     @classmethod
     def from_players(cls, white_player, black_player) -> Optional["LichessPlaySession"]:
@@ -99,9 +101,24 @@ class LichessPlaySession:
         self._remote.set_remote_takeback_callback(self._on_remote_takeback)
         self._remote.set_info_message_callback(self._on_info_message)
 
+    def close(self) -> None:
+        """Release the session when the game is torn down.
+
+        Cancels the started-splash timer. A game that ends inside the splash
+        delay -- an opponent aborting, or BACK into the back menu -- otherwise
+        left it pending, and it then drew the game widgets over whatever screen
+        had replaced the game. Cancelling alone loses to a timer already firing,
+        so dismissal is refused after close as well.
+        """
+        self._closed = True
+        timer = self._splash_timer
+        self._splash_timer = None
+        if timer is not None:
+            timer.cancel()
+
     def dismiss_started_splash(self) -> None:
         """Show game widgets once the started splash is done."""
-        if not self._started_splash_held:
+        if self._closed or not self._started_splash_held:
             return
         self._started_splash_held = False
         if self._game_display is not None:
@@ -161,6 +178,7 @@ class LichessPlaySession:
             self._show_started_splash(self._panel, human_is_white)
         timer = threading.Timer(self._splash_seconds, self.dismiss_started_splash)
         timer.daemon = True
+        self._splash_timer = timer
         timer.start()
 
     def _on_challenge_offer(self, offer, accept_fn, decline_fn) -> None:

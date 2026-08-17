@@ -267,6 +267,110 @@ def test_dismiss_started_splash_shows_game_widgets_once():
     panel.add_widget.assert_called_once_with(overlay)
 
 
+class _FakeTimer:
+    """Records what the session scheduled, and whether it was cancelled."""
+
+    created = []
+
+    def __init__(self, seconds, callback):
+        self.seconds = seconds
+        self.callback = callback
+        self.cancelled = False
+        self.daemon = False
+        self.started = False
+        _FakeTimer.created.append(self)
+
+    def start(self):
+        self.started = True
+
+    def cancel(self):
+        self.cancelled = True
+
+
+def _connected_session(monkeypatch):
+    """A session that has connected, so its started-splash timer is pending."""
+    _FakeTimer.created = []
+    monkeypatch.setattr(
+        "universalchess.players.lichess.session.threading.Timer", _FakeTimer
+    )
+    remote = LichessPlayer()
+    remote._player_is_white = True
+    human = HumanPlayer()
+    session = LichessPlaySession.from_players(human, remote)
+    display = MagicMock()
+    panel = MagicMock()
+    session.attach(
+        player_manager=PlayerManager(human, remote),
+        game_display=display,
+        panel=panel,
+        info_overlay=object(),
+        menu_manager=MagicMock(),
+        beep=lambda *_: None,
+        set_game_result=lambda *_: None,
+        splash_seconds=5.0,
+        show_started_splash=lambda *_: None,
+    )
+    session._on_connected()
+    assert len(_FakeTimer.created) == 1, "connect must schedule the splash timer"
+    return session, display, panel, _FakeTimer.created[0]
+
+
+def test_close_cancels_the_pending_started_splash_timer(monkeypatch):
+    """A game torn down inside the splash delay must not paint the board later.
+
+    The started splash hands over to the game widgets five seconds after the
+    game connects. A game that ends inside those five seconds -- an opponent
+    aborting, or BACK into the back menu -- left that timer running, so it drew
+    the board and the info overlay over whatever screen had replaced the game.
+
+    A regression manifests as the timer never being cancelled, which on the
+    board shows as the game widgets reappearing over the menu seconds after
+    leaving the game.
+    """
+    session, _display, _panel, timer = _connected_session(monkeypatch)
+
+    session.close()
+
+    assert timer.cancelled is True
+
+
+def test_a_splash_timer_that_already_fired_cannot_paint_after_close(monkeypatch):
+    """Cancelling loses to a timer already running, so dismissal must also stop.
+
+    ``Timer.cancel`` only helps while the timer is still waiting. If it fired
+    just before teardown, its callback is already on its way into
+    ``dismiss_started_splash``. A regression manifests as show_game_widgets
+    being called after close -- the same stale board over the menu that
+    cancelling is meant to prevent.
+    """
+    session, display, panel, timer = _connected_session(monkeypatch)
+
+    session.close()
+    timer.callback()
+
+    display.show_game_widgets.assert_not_called()
+    panel.add_widget.assert_not_called()
+
+
+def test_close_is_safe_before_a_game_ever_connects(monkeypatch):
+    """Teardown runs for cancelled seeks too, where no timer was scheduled.
+
+    BACK on "Waiting for game" tears the session down without a connect, so
+    there is nothing to cancel. A regression manifests as an exception escaping
+    cleanup, which would abandon the rest of the game teardown.
+    """
+    _FakeTimer.created = []
+    monkeypatch.setattr(
+        "universalchess.players.lichess.session.threading.Timer", _FakeTimer
+    )
+    session = LichessPlaySession.from_players(HumanPlayer(), LichessPlayer())
+
+    session.close()
+    session.close()
+
+    assert _FakeTimer.created == []
+
+
 def _offer():
     from universalchess.players.lichess.match import LichessChallengeOffer
 

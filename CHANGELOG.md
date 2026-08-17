@@ -631,6 +631,14 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   is already on screen and start() is still authenticating. BACK that arrives
   before GameManager exists is recorded so the seek is never posted.
 
+- **Game widgets could paint over the menu after leaving a Lichess game**:
+  The started splash hands over to the board five seconds after a game
+  connects, on a timer nothing cancelled. A game that ended inside those five
+  seconds -- an opponent aborting, or BACK into the back menu -- had already
+  returned to the menu when the timer fired, and the board and info overlay
+  were drawn over it. Game teardown now cancels that timer, and a timer that
+  had already started firing no longer paints.
+
 - **Lichess lobby accept left the board on the waiting splash**: After an
   opponent took the board's seek, Lichess already had a live game -- the web
   player sat on a board waiting for the first move -- but the e-paper never
