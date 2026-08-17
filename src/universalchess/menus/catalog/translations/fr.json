@@ -203,7 +203,7 @@
     },
     "lichess.account": {
       "label": "Compte",
-      "help": "Quel identifiant Lichess enregistré le poste utilise. Le même sélecteur que la ligne Compte du joueur, y compris l'exclusion des deux camps. Comptes à la fin ajoute ou supprime des identifiants."
+      "help": "Quel identifiant Lichess enregistré ce plateau utilise pour jouer et naviguer, quels que soient les réglages des joueurs. Comptes à la fin ajoute ou supprime des identifiants."
     },
     "lichess.ongoing": {
       "label": "Parties en cours",
@@ -211,7 +211,7 @@
     },
     "lichess.challenges": {
       "label": "Défis",
-      "help": "Un défi est une partie proposée à ce compte, ou que ce compte a proposée à quelqu'un d'autre.\n\nEntrants : sélectionnez-en un pour l'accepter sur ce plateau. Un défi qui arrive pendant une recherche affiche aussi Accepter ou Refuser.\n\nSortants : en attente de l'autre joueur. Nouvelle partie publie une recherche publique au lieu de défier une personne."
+      "help": "Un défi est une partie proposée à ce compte, ou que ce compte a proposée à quelqu'un d'autre.\n\nEntrants : sélectionnez-en un pour l'accepter sur ce plateau. Un défi qui arrive pendant une recherche affiche aussi Accepter ou Refuser.\n\nSortants : toujours en attente de l'autre joueur. Sélectionnez-en un pour attendre ici ; la partie s'ouvre sur ce plateau dès qu'il accepte.\n\nNouvelle partie publie une recherche publique au lieu de défier une personne."
     },
     "lichess.new_game": {
       "label": "Nouvelle partie",
@@ -658,11 +658,6 @@
       "label": "ELO / Style",
       "boardLabel": "ELO\n{value}",
       "help": "Force ou personnalité du moteur"
-    },
-    "field.player.account": {
-      "label": "Compte",
-      "boardLabel": "Compte\n{fn:player_account}",
-      "help": "Avec quel compte enregistré ce joueur joue"
     },
     "field.display.show_board": {
       "label": "Afficher l'échiquier",

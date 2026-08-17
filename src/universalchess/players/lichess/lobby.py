@@ -1,10 +1,13 @@
 """Lichess service wrappers to orchestrate client, menus, and game start."""
 
+import copy
 import re
 from typing import Optional, Callable
 
 from universalchess.epaper.icon_menu import IconMenuEntry
-from universalchess.managers.menu import is_break_result
+from universalchess.managers.menu import is_break_result, is_play_start
+
+from .match import has_lichess_slot, lichess_account_id
 
 _MISSING_SCOPE = re.compile(r"Missing scope:\s*([a-z0-9:_-]+)", re.IGNORECASE)
 
@@ -106,8 +109,8 @@ ONGOING_GAMES_HELP = (
     "the website, or another device.\n\n"
     "Select a game to resume it here. The clock and your color come from "
     "that match.\n\n"
-    "If none are listed, this account has no unfinished games. Use New Game "
-    "to seek a new opponent."
+    "If none are listed, this account has no unfinished games. Use Seek New "
+    "Game to seek a new opponent."
 )
 
 CHALLENGES_HELP = (
@@ -115,22 +118,44 @@ CHALLENGES_HELP = (
     "offered to someone else.\n\n"
     "Incoming: select one to accept it on this board. A challenge that "
     "arrives during a seek also shows Accept or Decline.\n\n"
-    "Outgoing: waiting for the other player. New Game posts a public seek "
-    "instead of challenging one person."
+    "Outgoing: still waiting for the other player. Select one to wait here; "
+    "the game opens on this board when they accept.\n\n"
+    "Seek New Game posts a public seek instead of challenging one person."
 )
 
 
-def build_lichess_menu_entries(username: Optional[str]):
+RATED_HELP = (
+    "Rated games count towards this account's Lichess rating; casual games do "
+    "not.\n\n"
+    "Applies to every seek this board posts, including one from the lobby with "
+    "no player set to Lichess."
+)
+
+
+def build_lichess_menu_entries(username: Optional[str], rated: bool = False):
     """Build Lichess Settings rows (the lobby, not a nested Play page).
 
-    Account is first and selectable: it opens the account picker for the
-    Lichess slot. Ongoing Games and Challenges are always listed; selecting
-    either shows how it works, then the live list. New Game is last. Add or
-    delete logins is Accounts on the picker, not a lobby sibling.
+    Account is first and selectable: it opens the account picker. Rated follows
+    it, because it decides what the account's rating is exposed to and applies
+    to every seek this board posts -- a player slot could not hold it, since a
+    lobby seek runs from a pairing no saved slot describes. Ongoing Games and
+    Challenges are always listed; selecting either shows how it works, then the
+    live list. Seek New Game is last. Add or delete logins is Accounts on the
+    picker, not a lobby sibling.
+
+    That last row says Seek because it always posts a seek, whatever the Players
+    slots are set to, unlike the New Game elsewhere that starts whichever game
+    those slots describe.
     """
     account_label = f"Account\n{username}" if username else "Account\nUnknown"
     return [
         IconMenuEntry(key="Account", label=account_label, icon_name="lichess"),
+        IconMenuEntry(
+            key="Rated",
+            label="Rated\nOn" if rated else "Rated\nOff",
+            icon_name="checkbox_checked" if rated else "checkbox_empty",
+            help=RATED_HELP,
+        ),
         IconMenuEntry(
             key="Ongoing",
             label="Ongoing\nGames",
@@ -143,7 +168,7 @@ def build_lichess_menu_entries(username: Optional[str]):
             icon_name="lichess",
             help=CHALLENGES_HELP,
         ),
-        IconMenuEntry(key="NewGame", label="New Game", icon_name="play"),
+        IconMenuEntry(key="NewGame", label="Seek New\nGame", icon_name="play"),
     ]
 
 
@@ -205,11 +230,11 @@ def show_lichess_account_picker(menu_manager, choices):
     return result.key
 
 
-def lichess_waiting_message(mode, seek=None) -> str:
+def lichess_waiting_message(mode, seek=None, *, awaiting_opponent: bool = False) -> str:
     """Copy shown on the panel while a Lichess game is being found or joined."""
     from .match import lichess_waiting_message as _waiting
 
-    return _waiting(mode, seek=seek)
+    return _waiting(mode, seek=seek, awaiting_opponent=awaiting_opponent)
 
 
 def lichess_cancelling_message() -> str:
@@ -219,7 +244,9 @@ def lichess_cancelling_message() -> str:
     return _cancelling()
 
 
-def show_lichess_waiting_splash(panel_manager, mode, seek=None) -> bool:
+def show_lichess_waiting_splash(
+    panel_manager, mode, seek=None, *, awaiting_opponent: bool = False
+) -> bool:
     """Paint the Lichess waiting splash and wait until it reaches the e-paper.
 
     Uses :func:`show_fullscreen_splash` so the frame is on the panel before the
@@ -230,7 +257,8 @@ def show_lichess_waiting_splash(panel_manager, mode, seek=None) -> bool:
     from universalchess.epaper.splash_screen import show_fullscreen_splash
 
     return show_fullscreen_splash(
-        panel_manager, lichess_waiting_message(mode, seek=seek)
+        panel_manager,
+        lichess_waiting_message(mode, seek=seek, awaiting_opponent=awaiting_opponent),
     )
 
 
@@ -396,15 +424,45 @@ def show_lichess_help(menu_manager, title: str, body: str) -> None:
     show_dismissible_splash(panel, body, bind_keys=bind_keys)
 
 
-def _lichess_slot_settings(settings):
-    """PlayerSettings for the Lichess slot, or None if neither slot is Lichess."""
-    p1 = settings.player1
-    p2 = settings.player2
-    if p1.type == "lichess":
-        return p1
-    if p2.type == "lichess":
-        return p2
-    return None
+def effective_lichess_players(player1, player2, *, lobby_start: bool):
+    """Player slots a start runs with, substituting a pairing for a lobby start.
+
+    The Lichess lobby's buttons are an explicit request for a Lichess game, so
+    they must not depend on the Players slots naming one: with no Lichess slot,
+    Seek New Game used to build a local game from settings and post no seek at
+    all. A lobby start therefore runs Human vs Lichess whatever the slots say.
+
+    The human is kept wherever it already sits, so the player does not change
+    sides; with no human at all, slot 1 takes it, because White stays on player
+    1's physical side of the board. Which account the substituted slot plays as
+    is not its business: the lobby holds that (:func:`lichess_account_id`).
+
+    Copies are returned: these objects are the live settings centaur.ini is
+    written from, and the pairing lasts for this game only.
+    """
+    if not lobby_start or has_lichess_slot(player1, player2):
+        return (player1, player2)
+    slot1_is_human = getattr(player1, "type", "") == "human"
+    slot2_is_human = getattr(player2, "type", "") == "human"
+    if slot2_is_human and not slot1_is_human:
+        return (_as_lichess_slot(player1), player2)
+    if slot1_is_human:
+        return (player1, _as_lichess_slot(player2))
+    return (_as_human_slot(player1), _as_lichess_slot(player2))
+
+
+def _as_lichess_slot(player):
+    """Copy of a slot switched to Lichess."""
+    substitute = copy.copy(player)
+    substitute.type = "lichess"
+    return substitute
+
+
+def _as_human_slot(player):
+    """Copy of a slot switched to human."""
+    substitute = copy.copy(player)
+    substitute.type = "human"
+    return substitute
 
 
 def active_lichess_account(settings):
@@ -414,8 +472,7 @@ def active_lichess_account(settings):
         get_lichess_credential,
     )
 
-    ps = _lichess_slot_settings(settings)
-    account_id = getattr(ps, "account", "") if ps is not None else ""
+    account_id = lichess_account_id(settings)
     if account_id:
         return get_lichess_credential(account_id)
     return default_lichess_credential()
@@ -428,9 +485,7 @@ def lichess_connection_from_settings(settings, log):
     """
     from .player import LichessPlayer, LichessPlayerConfig
 
-    ps = _lichess_slot_settings(settings)
-    account_id = getattr(ps, "account", "") if ps is not None else ""
-    player = LichessPlayer(LichessPlayerConfig(account_id=account_id))
+    player = LichessPlayer(LichessPlayerConfig(account_id=lichess_account_id(settings)))
     token, _range = player._resolve_account()
     host_id = getattr(player, "_host_id", "org")
     return get_lichess_connection(token, log, host_id=host_id)
@@ -693,6 +748,8 @@ def handle_lichess_menu(
     log,
     list_account_choices_fn: Optional[Callable] = None,
     bind_account_fn: Optional[Callable] = None,
+    rated_fn: Optional[Callable] = None,
+    set_rated_fn: Optional[Callable] = None,
 ):
     """Handle Lichess Settings: Account, Ongoing, Challenges, New Game.
 
@@ -710,6 +767,9 @@ def handle_lichess_menu(
         list_account_choices_fn: ``() -> [(key, label, selected), ...]`` for the
             Account picker. Optional so start-only tests can omit it.
         bind_account_fn: ``(account_id) -> None``; ``""`` means Default.
+        rated_fn: ``() -> bool``, the stored Rated setting. Read on every
+            redraw so the row shows what the next seek will be.
+        set_rated_fn: ``(bool) -> None``, persists a Rated change.
 
     Returns:
         ``"START_GAME"`` if a Lichess game was requested (join stashed; Settings
@@ -775,6 +835,10 @@ def handle_lichess_menu(
         connection = new_connection
         username = new_username
 
+    def _rated() -> bool:
+        """Stored Rated setting; False when the caller wired no reader."""
+        return bool(rated_fn()) if rated_fn is not None else False
+
     def handle_selection(result: MenuSelection):
         if result.key == "Account":
             while True:
@@ -797,6 +861,12 @@ def handle_lichess_menu(
                 bind_account_fn(picked)
                 refresh_client()
                 return None
+        if result.key == "Rated":
+            # Returning None keeps the loop, which rebuilds the rows through
+            # rated_fn, so the checkbox shows the value that was just written.
+            if set_rated_fn is not None:
+                set_rated_fn(not _rated())
+            return None
         if result.key == "NewGame":
             config = LichessConfig(mode=LichessGameMode.NEW)
             if start_game(config):
@@ -826,7 +896,7 @@ def handle_lichess_menu(
 
     try:
         result = menu_manager.run_menu_loop(
-            lambda: build_lichess_menu_entries(username),
+            lambda: build_lichess_menu_entries(username, _rated()),
             handle_selection,
         )
     finally:
@@ -835,6 +905,15 @@ def handle_lichess_menu(
         # opens its own connection once the menus unwind.
         connection.close()
 
+    if is_play_start(result):
+        # PLAY pressed in the lobby is the lobby's own start, so it seeks like
+        # Seek New Game rather than unwinding to a game built from the Players
+        # slots -- which, with no Lichess slot set, was a local engine game
+        # started from inside the Lichess menu. A start that fails still returns
+        # the break, because PLAY is also how the user leaves.
+        if start_game(LichessConfig(mode=LichessGameMode.NEW)):
+            return "START_GAME"
+        return result
     if is_break_result(result):
         return result
     if game_started:

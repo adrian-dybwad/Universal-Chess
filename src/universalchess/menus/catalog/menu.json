@@ -324,14 +324,14 @@
       "section": "players",
       "platforms": ["board", "web"],
       "epaper": { "font_size": 12, "height_ratio": 0.8 },
-      "children": ["lichess.account", "lichess.ongoing", "lichess.challenges", "lichess.new_game"]
+      "children": ["lichess.account", "field.lichess.rated", "lichess.ongoing", "lichess.challenges", "lichess.new_game"]
     },
     {
       "id": "lichess.account",
       "type": "select",
       "label": "Account",
       "icon": "lichess",
-      "help": "Which saved Lichess login the slot uses. The same picker as the player-slot Account row, including the both-sides exclusion. Accounts at the end adds or deletes logins.",
+      "help": "Which saved Lichess login this board plays and browses as, whatever the Players slots are set to. Accounts at the end adds or deletes logins.",
       "section": "players",
       "children": ["players.accounts"]
     },
@@ -340,7 +340,7 @@
       "type": "action",
       "label": "Ongoing Games",
       "icon": "lichess",
-      "help": "Continue a Lichess game this account already started, on this board, the website, or another device.\n\nSelect a game to resume it here. The clock and your color come from that match.\n\nIf none are listed, this account has no unfinished games. Use New Game to seek a new opponent.",
+      "help": "Continue a Lichess game this account already started, on this board, the website, or another device.\n\nSelect a game to resume it here. The clock and your color come from that match.\n\nIf none are listed, this account has no unfinished games. Use Seek New Game to seek a new opponent.",
       "section": "players"
     },
     {
@@ -348,15 +348,15 @@
       "type": "action",
       "label": "Challenges",
       "icon": "lichess",
-      "help": "A challenge is a game offered to this account, or that this account offered to someone else.\n\nIncoming: select one to accept it on this board. A challenge that arrives during a seek also shows Accept or Decline.\n\nOutgoing: waiting for the other player. New Game posts a public seek instead of challenging one person.",
+      "help": "A challenge is a game offered to this account, or that this account offered to someone else.\n\nIncoming: select one to accept it on this board. A challenge that arrives during a seek also shows Accept or Decline.\n\nOutgoing: still waiting for the other player. Select one to wait here; the game opens on this board when they accept.\n\nSeek New Game posts a public seek instead of challenging one person.",
       "section": "players"
     },
     {
       "id": "lichess.new_game",
       "type": "action",
-      "label": "New Game",
+      "label": "Seek New Game",
       "icon": "play",
-      "help": "Seek a new opponent on Lichess with this account. Time control and rated come from Game and Players settings.",
+      "help": "Seek a new opponent on Lichess with this account, whatever the Players slots are set to. Time control and rated come from Game and Players settings; color is the one you chose only when a player is set to Lichess.",
       "section": "players"
     },
     {
@@ -391,8 +391,6 @@
         "field.player.color",
         "field.player.type",
         "field.player.name",
-        "field.player.account",
-        "field.player.lichess_rated",
         "field.player.hand_brain_mode",
         "field.player.engine",
         "field.player.elo",
@@ -1617,26 +1615,14 @@
       "platforms": ["board", "web"]
     },
     {
-      "id": "field.player.account",
-      "type": "select",
-      "provider": "player_accounts",
-      "label": "Account",
-      "boardLabel": "Account\n{fn:player_account}",
-      "help": "Which saved account this player plays as",
-      "bind": { "store": "player", "key": "account" },
-      "icon": "lichess",
-      "visibleWhen": { "store": "player", "key": "type", "equals": "lichess" },
-      "platforms": ["board", "web"]
-    },
-    {
-      "id": "field.player.lichess_rated",
+      "id": "field.lichess.rated",
       "type": "toggle",
       "label": "Rated",
       "boardLabel": "Rated",
-      "help": "Seek a rated Lichess game. Casual when off.",
+      "help": "Seek rated games with this account, putting its rating at stake. Casual when off.",
       "bind": { "store": "game", "key": "lichess_rated" },
       "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
-      "visibleWhen": { "store": "player", "key": "type", "equals": "lichess" },
+      "section": "players",
       "platforms": ["board", "web"]
     },
     {

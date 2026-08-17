@@ -564,6 +564,7 @@ try:
         MenuSelection,
         WebCommandInterrupt,
         is_break_result,
+        is_play_start,
         is_refresh_result,
         find_entry_index,
         ConnectionManager,
@@ -1190,9 +1191,8 @@ def default_player_name(player_num: int) -> str:
     shared catalog as a single ``valueDefault`` literal (one node serves both
     slots). It is derived here from the player's slot number and supplied to the
     game (the PGN name) and to the board's Name row via the per-slot detail
-    context's ``{fn:player_name}`` compute -- mirroring how the Account row's
-    value is the per-slot ``{fn:player_account}``. The web supplies the same
-    text as the Name field's placeholder from its per-slot context.
+    context's ``{fn:player_name}`` compute. The web supplies the same text as the
+    Name field's placeholder from its per-slot context.
     """
     return f"Player {player_num}"
 # Menu navigation (path/indices) and the session view-state snapshot share one
@@ -2403,6 +2403,7 @@ def _start_game_mode(
     )
     from universalchess.players.lichess.lobby import (
         active_lichess_account,
+        effective_lichess_players,
         show_lichess_error,
     )
     from universalchess.players.lichess.session import LichessPlaySession
@@ -2411,8 +2412,14 @@ def _start_game_mode(
     _lichess_join = None
     _cancel_game_start = False
     settings = _get_settings()
-    p1 = settings.player1
-    p2 = settings.player2
+    # A stashed join is the Lichess lobby (or its web equivalent) asking for a
+    # Lichess game outright, so the pairing it runs with is derived rather than
+    # read from the Players slots: those buttons must not start a local game
+    # because neither slot happens to be set to Lichess.
+    lobby_start = join is not None
+    p1, p2 = effective_lichess_players(
+        settings.player1, settings.player2, lobby_start=lobby_start
+    )
     is_lichess = (p1.type == "lichess" or p2.type == "lichess")
     lichess_seek = None
     if is_lichess:
@@ -2424,6 +2431,7 @@ def _start_game_mode(
                 settings,
                 rating_range=rating_range,
                 require_clock=(join_mode == LichessGameMode.NEW),
+                lobby_seek=lobby_start,
             )
         except LichessSeekError as e:
             log.warning(f"[App] Lichess start refused ({e.code}): {e.message}")
@@ -2456,10 +2464,13 @@ def _start_game_mode(
     # Position games are practice and should not be saved
     save_to_database = not is_position_game
     
-    # Get player settings
+    # Get player settings. The lobby pairing is derived again from the settings
+    # read here, so a reload during teardown cannot leave the game built from
+    # slots that were replaced in the meantime.
     settings = _get_settings()
-    p1 = settings.player1
-    p2 = settings.player2
+    p1, p2 = effective_lichess_players(
+        settings.player1, settings.player2, lobby_start=lobby_start
+    )
 
     # Record the player config this game is built from, and clear any pending
     # rebuild request (this start already reflects the latest settings). A later
@@ -2474,8 +2485,8 @@ def _start_game_mode(
     # Player 1 is at the bottom of the board (White's physical side).
     # Lichess names the account's color after the pieces are already set, so a
     # Lichess pairing never swaps those sides from the Players color control.
-    # Human as Black rotates the e-paper instead of the pieces: White stays
-    # player 1, Black player 2.
+    # A color other than the one that control names rotates the e-paper instead
+    # of the pieces: White stays player 1, Black player 2.
     lichess_pairing = p1.type == "lichess" or p2.type == "lichess"
     player1_is_white = True if lichess_pairing else (p1.color == "white")
 
@@ -2632,7 +2643,10 @@ def _start_game_mode(
     if lichess_session is not None:
         from universalchess.players.lichess.lobby import show_lichess_waiting_splash
         show_lichess_waiting_splash(
-            board.display_manager, lichess_session.waiting_mode, seek=lichess_seek
+            board.display_manager,
+            lichess_session.waiting_mode,
+            seek=lichess_seek,
+            awaiting_opponent=lichess_session.awaiting_opponent,
         )
 
     display_manager = DisplayManager(
@@ -2880,6 +2894,7 @@ def _start_game_mode(
             set_game_result=_set_lichess_result,
             splash_seconds=START_PLAYING_SPLASH_SECONDS,
             rewind_to_move_count=game_manager.sync_move_count,
+            player1_color=p1.color,
         )
 
     # BACK on the waiting splash must cancel before players start. start()
@@ -3371,20 +3386,42 @@ def _on_move_list_action(result: str, ply: int) -> None:
 
 def _is_play_start(result) -> bool:
     """True when the menu result is PLAY (button) or the main-menu PLAY row."""
-    if result in ("PLAY", "Universal"):
-        return True
-    key = getattr(result, "key", None)
-    return key in ("PLAY", "Universal")
+    return is_play_start(result)
 
 
-def _stash_explicit_lichess_seek() -> None:
-    """Mark the next ``_start_game_mode`` as an explicit new Lichess seek."""
+def _live_game_is_remote() -> bool:
+    """True when the running game has a player attached to an external game.
+
+    Answers a different question from ``_lichess_is_a_player``, which reports
+    what the saved Players slots say. A game started from the Lichess lobby runs
+    with a pairing derived for that game alone, which those slots do not name,
+    so only the live players can say whether the board is in a remote game.
+    """
+    player_manager = getattr(protocol_manager, "player_manager", None)
+    return bool(getattr(player_manager, "requires_rebuild_on_new_game", False))
+
+
+def _stash_lichess_seek() -> None:
+    """Mark the next ``_start_game_mode`` as a new Lichess seek."""
     global _lichess_join
-    if not _lichess_is_a_player() or _lichess_join is not None:
+    if _lichess_join is not None:
         return
     from universalchess.players.lichess.lobby import explicit_lichess_seek_join
 
     _lichess_join = explicit_lichess_seek_join()
+
+
+def _stash_explicit_lichess_seek() -> None:
+    """Stash a new seek for PLAY / New Game when a Players slot is Lichess.
+
+    The slots are what gates it: PLAY on a Human vs Engine board must start that
+    game rather than seek. The Lichess lobby's own buttons do not come through
+    here -- they stash their join directly, which is what lets them seek
+    whatever the slots are set to.
+    """
+    if not _lichess_is_a_player():
+        return
+    _stash_lichess_seek()
 
 
 def _enter_game(*, explicit_lichess_seek: bool = False):
@@ -4570,12 +4607,10 @@ def _build_player_detail_context(player_num: int):
 
     if player_num == 1:
         settings_dict = _player1_settings_dict
-        other_settings_dict = _player2_settings_dict
         save_setting = _save_player1_setting
         has_color = True
     else:
         settings_dict = _player2_settings_dict
-        other_settings_dict = _player1_settings_dict
         save_setting = _save_player2_setting
         has_color = False
 
@@ -4621,62 +4656,10 @@ def _build_player_detail_context(player_num: int):
             for level in _get_engine_elo_levels(settings_dict()["engine"])
         ]
 
-    def player_accounts():
-        """Rows for the Account select: 'Default account' plus each saved account.
-
-        Scoped to the account type matching the player's (online) type -- a
-        Lichess player can only bind a Lichess account. The empty-key "Default
-        account" row leaves the slot unbound so it uses the default account
-        (back-compat). Returns no rows for a non-online type, so the row hides.
-
-        Enforces "one online account cannot play both sides": the account the
-        other slot resolves to is excluded, and the "Default account" row is
-        dropped when Default would resolve to that same account -- so a colliding
-        account can never be picked here (the same exclusion the web dropdown
-        applies, both from account_store.selectable_accounts_for_slot).
-        """
-        from universalchess.menus.catalog import get_catalog
-        from universalchess.menus.engine import MenuRow
-        from universalchess.players.lichess.accounts import lichess_account_picker_choices
-
-        catalog = get_catalog()
-        type_id = settings_dict()["type"]
-        if type_id != "lichess" or not catalog.has_account_type(type_id):
-            return []
-        icon = catalog.account_type(type_id).get("icon", "account")
-        other = other_settings_dict()
-        return [
-            MenuRow(key=key, label=label, icon=icon)
-            for key, label, _selected in lichess_account_picker_choices(
-                settings_dict().get("account", "") or "",
-                other.get("type", ""),
-                other.get("account", "") or "",
-            )
-        ]
-
-    def player_account_label(_node):
-        """Computed label for the Account row: the bound account's identity.
-
-        Shows 'Default' when the slot is unbound or the bound account no longer
-        exists (deleted), so the row never advertises a stale/missing account.
-        """
-        from universalchess.players.lichess.accounts import get_lichess_credential, label_of
-
-        settings = settings_dict()
-        account_id = settings.get("account", "")
-        if settings.get("type") != "lichess" or not account_id:
-            return "Default"
-        account = get_lichess_credential(account_id)
-        if account is None:
-            return "Default"
-        return label_of(account)
-
     ctx = BoardMenuContext()
     ctx.register_store("player", player_get, player_set)
     ctx.register_provider("installed_engines", installed_engines)
     ctx.register_provider("engine_levels", engine_levels)
-    ctx.register_provider("player_accounts", player_accounts)
-    ctx.register_value("player_account", player_account_label)
     # Name row display: the stored name, or the per-slot default ("Player N")
     # when unset. Computed (not a static valueDefault) because the default is
     # per-slot; the value store stays truthful (an unset name reads as "") so
@@ -6309,29 +6292,27 @@ def _handle_lichess_menu():
         log=log,
         list_account_choices_fn=_lichess_play_account_choices,
         bind_account_fn=_bind_lichess_play_account,
+        rated_fn=lambda: bool(_get_settings().game.lichess_rated),
+        set_rated_fn=lambda rated: _save_game_setting("lichess_rated", rated),
     )
 
 
 def _lichess_play_account_choices():
-    """Account picker rows for Play User, bound to the Lichess Players slot.
-
-    Player 1's slot is used when both sides are Lichess, matching
-    :func:`lichess_connection_from_settings`. With no Lichess slot the list is
-    unfiltered (nothing is taken).
-    """
+    """Account picker rows for the lobby's Account row."""
     from universalchess.players.lichess.accounts import lichess_play_account_choices
 
     return lichess_play_account_choices(_get_settings())
 
 
 def _bind_lichess_play_account(account_id: str) -> None:
-    """Persist the Play User pick onto the Lichess Players slot."""
-    settings = _get_settings()
-    if settings.player1.type == "lichess":
-        _save_player1_setting("account", account_id)
-        return
-    if settings.player2.type == "lichess":
-        _save_player2_setting("account", account_id)
+    """Persist the lobby's account pick.
+
+    Stored with the game settings rather than on a Players slot, which is where
+    it used to go: with neither slot set to Lichess there was no slot to write
+    to, so the pick was dropped and everything -- the lobby lists and the seek
+    alike -- carried on as the default credential.
+    """
+    _save_game_setting("lichess_account", account_id)
 
 
 def _start_lichess_game(lichess_config) -> bool:
@@ -8573,16 +8554,23 @@ def main():
                             board_reset_rebuild_action,
                         )
 
+                        # The live players decide, not the saved slots: a game
+                        # started from the lobby runs with a Lichess pairing the
+                        # slots do not name, and rebuilding it without asking
+                        # would drop a game in progress for a local one.
                         action = board_reset_rebuild_action(
                             _menu_manager,
-                            is_lichess=_lichess_is_a_player(),
+                            is_lichess=_lichess_is_a_player() or _live_game_is_remote(),
                         )
                         if action == "menu":
                             log.info("[App] Lichess seek after board reset declined")
                             _return_to_menu("Lichess seek declined")
                             continue
                         if action == "seek":
-                            _stash_explicit_lichess_seek()
+                            # Unconditional: the prompt above already decided,
+                            # and the slots that gate _stash_explicit_lichess_seek
+                            # may not name Lichess for a lobby-started game.
+                            _stash_lichess_seek()
                         log.info("[App] Rebuilding game with updated player settings (new engine/players)")
                         _cleanup_game()
                         _start_game_mode()

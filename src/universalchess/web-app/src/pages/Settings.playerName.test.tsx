@@ -135,8 +135,9 @@ describe('Player Name field is collected for human players only', () => {
     renderSettings();
     await waitFor(() => expect(screen.getByLabelText('Player Name')).toBeInTheDocument());
     expect(screen.getAllByLabelText('Player Name')).toHaveLength(1);
-    // The Lichess slot shows the Account picker in place of a Name field.
-    expect(screen.getByLabelText('Account')).toBeInTheDocument();
+    // The identity a Lichess slot carries is the lobby's account, so the slot
+    // itself offers no account control to stand in for the Name field.
+    expect(screen.queryByLabelText('Account')).not.toBeInTheDocument();
   });
 
   it('shows a Name field for each of two human slots', async () => {

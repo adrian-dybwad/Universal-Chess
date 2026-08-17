@@ -21,15 +21,17 @@ from universalchess.players.lichess.lobby import (
 
 
 def test_lichess_settings_rows_are_always_in_order():
-    """Account, Ongoing, Challenges, New Game — ongoing/challenges stay listed.
+    """Account, Rated, Ongoing, Challenges, New Game — none of them vanish.
 
-    Why: those rows used to vanish when the account had none, so they could not
-    be opened to read how they work. Regression: a row drops, Play/Accounts
+    Why: ongoing/challenges used to vanish when the account had none, so they
+    could not be opened to read how they work, and Rated was only reachable
+    through a player slot set to Lichess. Regression: a row drops, Play/Accounts
     returns as a lobby sibling, or Token returns.
     """
     entries = build_lichess_menu_entries("alice")
     assert [e.key for e in entries] == [
         "Account",
+        "Rated",
         "Ongoing",
         "Challenges",
         "NewGame",

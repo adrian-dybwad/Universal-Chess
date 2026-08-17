@@ -56,7 +56,6 @@ def _player_state(**overrides):
         "elo": "1500",
         "think_time": 5,
         "hand_brain_mode": "normal",
-        "account": "",
     }
     base.update(overrides)
     return base
@@ -103,17 +102,6 @@ def _detail_ctx(state, *, has_color=True, calls=None):
             MenuRow(key="Default", label="Default", icon="elo"),
             MenuRow(key="1500", label="1500", icon="elo"),
         ],
-    )
-    ctx.register_provider(
-        "player_accounts",
-        lambda: [
-            MenuRow(key="", label="Default account", icon="lichess"),
-            MenuRow(key="magnusc", label="MagnusC", icon="lichess"),
-        ],
-    )
-    ctx.register_value(
-        "player_account",
-        lambda node: "MagnusC" if state.get("account") == "magnusc" else "Default",
     )
     # Mirror main._build_player_detail_context: the Name row shows the stored
     # name, or the per-slot default ("Player N") when unset. has_color marks
@@ -234,53 +222,45 @@ def test_hand_brain_shows_mode_row_with_checkbox_icon():
     assert normal["field.player.hand_brain_mode"].icon == "checkbox_empty"
 
 
-def test_lichess_shows_color_type_account_and_rated():
-    """A Lichess player exposes Color, Type, the Account picker, and Rated.
+def test_lichess_shows_only_color_and_type_on_the_slot():
+    """A Lichess player exposes Color and Type -- no account, no Rated.
 
-    Why this test exists: an online (Lichess) slot binds to a specific saved
-    account via the account picker (``field.player.account``), which is gated to
-    online player types. Host/dev and the Lichess lobby are not per-slot: they
-    live under Players → Lichess Settings. How a regression manifests: the
-    engine/ELO/name rows (non-Lichess) leak in, the account picker is hidden
-    for an online player, or lichess.dev / Lichess Settings reappear on the slot.
+    Why this test exists: the slot used to carry both the saved account and the
+    Rated toggle, so each existed only while a slot was set to Lichess. Both
+    govern seeks the lobby posts from any pairing, so both are the lobby's now
+    (Players → Lichess Lobby). How a regression manifests: the engine/ELO/name
+    rows (non-Lichess) leak in, or an Account or Rated row reappears on the slot
+    and reintroduces a second place to set it -- one the lobby's own seek would
+    ignore.
     """
     ids = [r.node["id"] for r in _detail_rows(_player_state(type="lichess"))]
     assert ids == [
         "field.player.color",
         "field.player.type",
-        "field.player.account",
-        "field.player.lichess_rated",
     ]
 
 
-def test_account_row_shows_bound_account_identity_via_compute():
-    """The Account row's board label resolves to the bound account's identity.
+def test_no_player_row_binds_an_account():
+    """No catalog node writes an account onto a player slot, on either surface.
 
-    Why: the picker stores the account id, but the row must show the human
-    identity (or "Default" when unbound) so a user recognises which account the
-    slot plays as. How a regression manifests: the row shows the raw id, an empty
-    string, or "Default" even when an account is bound.
+    Why this test exists: the board and the web build their player rows from the
+    same catalog, so a node left bound to ``player.account`` would put the old
+    picker back on one or both. The binding no longer has a reader, so a row
+    that still wrote it would store a choice nothing acts on.
+
+    How a regression manifests: a node binds store ``player`` key ``account``.
     """
-    bound = next(
-        r for r in _detail_rows(_player_state(type="lichess", account="magnusc"))
-        if r.node["id"] == "field.player.account"
-    )
-    assert bound.label == "Account\nMagnusC"
-    unbound = next(
-        r for r in _detail_rows(_player_state(type="lichess", account=""))
-        if r.node["id"] == "field.player.account"
-    )
-    assert unbound.label == "Account\nDefault"
-
-
-def test_account_row_hidden_for_offline_player():
-    """The account picker is hidden for a non-online (human) player.
-
-    How a regression manifests: ``field.player.account`` appears for a human/
-    engine slot, offering an account binding that has no meaning offline.
-    """
-    ids = [r.node["id"] for r in _detail_rows(_player_state(type="human"))]
-    assert "field.player.account" not in ids
+    nodes = load_catalog().raw_menu().get("nodes", [])
+    bound = [
+        node["id"]
+        for node in nodes
+        if (node.get("bind") or {}).get("store") == "player"
+        and (node.get("bind") or {}).get("key") == "account"
+    ]
+    assert bound == []
+    # Guards the test itself: a lookup that finds no player binds at all would
+    # pass whatever the catalog said.
+    assert any((node.get("bind") or {}).get("store") == "player" for node in nodes)
 
 
 def test_player2_detail_hides_color_row():

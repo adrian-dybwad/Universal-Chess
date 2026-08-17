@@ -5,7 +5,7 @@ Each saved online account (e.g. a Lichess login) is persisted as one INI section
 from the catalog's ``accountTypes`` definition; ``<id>`` is the account's
 normalized identity (for Lichess, the lowercased username). This replaces the
 former single global ``[lichess]`` credential so a board can hold several
-accounts and a player slot can bind to a specific one.
+accounts and play as whichever one the lobby names.
 
 Design:
 - Reads are pure over a ``configparser.ConfigParser`` (injectable for tests);
@@ -150,92 +150,6 @@ def default_account(type_id: str, *, config=None) -> Optional[Account]:
     """Return the first account of ``type_id`` (used by back-compat single-token reads)."""
     accounts = list_accounts(type_id, config=config)
     return accounts[0] if accounts else None
-
-
-def resolve_account_id(type_id: str, account_id: str, *, config=None) -> Optional[str]:
-    """Resolve the concrete account id a player slot binds to for an online type.
-
-    Mirrors :meth:`LichessPlayer._resolve_account`'s account selection so the
-    collision rule judges the *same* account the game will actually use: an
-    explicit, still-existing ``account_id`` resolves to itself; an empty id, or
-    one whose account was deleted, falls back to the default (first) account of
-    the type. Returns None when the type has no accounts at all -- an online slot
-    with nothing to bind can never collide with the other slot.
-
-    The legacy single-``[lichess]``-token fallback the player also has is
-    intentionally not modelled here: it carries no account id and is migrated to
-    a real account on startup, so it is irrelevant to id-based collision
-    detection.
-    """
-    if account_id:
-        account = get_account(type_id, account_id, config=config)
-        if account is not None:
-            return account.id
-    default = default_account(type_id, config=config)
-    return default.id if default else None
-
-
-def accounts_conflict(
-    type_a: str, account_a: str, type_b: str, account_b: str, *, config=None
-) -> Optional[str]:
-    """Return the shared account id when two slots would use one online account.
-
-    Two player slots collide when they are the same online account type and
-    resolve (via :func:`resolve_account_id`, so a ``'Default'`` empty binding ->
-    first account counts) to the same concrete account. One online account may
-    not play both sides of a game, so a non-None return is the id both slots
-    would drive; the pickers exclude it and drop a ``'Default'`` option that would
-    resolve to it. Different types, or either slot resolving to no account, never
-    collide (returns None).
-    """
-    if type_a != type_b:
-        return None
-    resolved_a = resolve_account_id(type_a, account_a, config=config)
-    if resolved_a is None:
-        return None
-    resolved_b = resolve_account_id(type_b, account_b, config=config)
-    return resolved_a if resolved_a == resolved_b else None
-
-
-@dataclass
-class SlotAccountChoices:
-    """Accounts a player slot may bind for an online type, after applying the
-    both-sides rule against the other slot.
-
-    ``default_allowed`` is whether the 'Default account' (empty) binding may be
-    offered: False when the default (first) account is the one the other slot has
-    taken, so choosing 'Default' cannot silently put one account on both sides.
-    ``accounts`` are the concrete accounts still selectable (the other slot's
-    resolved account removed).
-    """
-
-    default_allowed: bool
-    accounts: List[Account]
-
-
-def selectable_accounts_for_slot(
-    type_id: str, other_type: str, other_account: str, *, config=None
-) -> SlotAccountChoices:
-    """Accounts this slot may bind, excluding the one the other slot uses.
-
-    One online account may not play both sides of a game. This removes the
-    account the other slot resolves to (via :func:`resolve_account_id`, so a
-    ``'Default'`` other-slot binding excludes the first account too) and forbids a
-    ``'Default'`` choice here that would resolve to that same account. When the
-    other slot is a different type (or offline), nothing is excluded. Both the
-    board Account picker rows and the web dropdown are built from this, so the two
-    platforms exclude the same option -- the colliding account never appears.
-    """
-    accounts = list_accounts(type_id, config=config)
-    taken = (
-        resolve_account_id(type_id, other_account, config=config)
-        if other_type == type_id
-        else None
-    )
-    default_id = accounts[0].id if accounts else None
-    default_allowed = taken is None or default_id != taken
-    selectable = [account for account in accounts if account.id != taken]
-    return SlotAccountChoices(default_allowed=default_allowed, accounts=selectable)
 
 
 def save_account(account: Account) -> None:

@@ -130,6 +130,10 @@ class LichessPlayer(Player):
         
         # Game state
         self._game_id: Optional[str] = None
+        # The only game id that may be attached, when the start named one game
+        # (an outgoing challenge waiting to be accepted). Empty lets a seek take
+        # or a resume attach whatever game the account is playing.
+        self._expected_game_id: str = ''
         self._player_is_white: Optional[bool] = None  # Is the LOCAL human white?
         self._current_turn_is_white: bool = True
         
@@ -159,9 +163,6 @@ class LichessPlayer(Player):
         self._match_thread: Optional[threading.Thread] = None
         self._state_lock = threading.Lock()
         
-        # Board orientation
-        self._board_flip: bool = False
-        
         # Callbacks for game events
         self._on_game_connected: Optional[Callable] = None
         self._clock_callback: Optional[Callable[[int, int], None]] = None
@@ -189,11 +190,6 @@ class LichessPlayer(Player):
     def pending_move(self) -> Optional[chess.Move]:
         """The move from Lichess server waiting to be executed on the board."""
         return self._pending_move
-    
-    @property
-    def board_flip(self) -> bool:
-        """Whether board display should be flipped (True if local player is black)."""
-        return self._board_flip
     
     @property
     def game_id(self) -> Optional[str]:
@@ -817,8 +813,16 @@ class LichessPlayer(Player):
         return True
 
     def _begin_game(self, game_id: str) -> bool:
-        """Attach ``game_id`` and start the game stream at most once."""
+        """Attach ``game_id`` and start the game stream at most once.
+
+        While waiting for one chosen challenge, any other game the account is
+        already playing (correspondence, a game running on the phone) is not
+        the game the Human picked, so it is left alone rather than pulled onto
+        the board.
+        """
         if not game_id:
+            return False
+        if self._expected_game_id and game_id != self._expected_game_id:
             return False
         with self._state_lock:
             if self._game_id or self._should_stop.is_set():
@@ -1007,27 +1011,37 @@ class LichessPlayer(Player):
         return True
     
     def _start_challenge(self) -> bool:
-        """Accept or wait for a challenge."""
+        """Join a challenge picked in the lobby: accept an incoming one, wait for an outgoing one.
+
+        A challenge the board sent is not a game until the opponent accepts it,
+        so streaming its id got ``404 No such game``, the stream thread ended,
+        and the board was left playing locally against nothing. Waiting is what
+        joining one means: an accepted challenge keeps its id, so the event
+        stream and the ongoing poll attach that id once the opponent accepts.
+        """
         challenge_id = self._lichess_config.challenge_id
         if not challenge_id:
             log.error("[LichessPlayer] No challenge_id provided")
             return False
-        
-        log.info(f"[LichessPlayer] Handling challenge: {challenge_id}")
-        self._report_status("Accepting challenge...")
-        
-        try:
-            if self._lichess_config.challenge_direction == 'in':
-                self._client.challenges.accept(challenge_id)
-            
-            self._game_id = challenge_id
-            self._start_game_stream()
+
+        if self._lichess_config.challenge_direction != 'in':
+            log.info(
+                f"[LichessPlayer] Waiting for challenge to be accepted: {challenge_id}"
+            )
+            self._report_status("Waiting for opponent...")
+            self._expected_game_id = challenge_id
+            self._listen_for_match()
             return True
-            
+
+        log.info(f"[LichessPlayer] Accepting challenge: {challenge_id}")
+        self._report_status("Accepting challenge...")
+        try:
+            self._client.challenges.accept(challenge_id)
         except Exception as e:
             log.error(f"[LichessPlayer] Challenge handling failed: {e}")
             self._set_state(PlayerState.ERROR, "Challenge failed")
             return False
+        return self._begin_game(challenge_id)
     
     def _start_game_stream(self):
         """Start the game state streaming thread."""
@@ -1192,12 +1206,10 @@ class LichessPlayer(Player):
         
         if self._white_player == self._username:
             self._player_is_white = True
-            self._board_flip = False
             # This player represents the remote opponent (Black)
             self._color = chess.BLACK
         else:
             self._player_is_white = False
-            self._board_flip = True
             # This player represents the remote opponent (White)
             self._color = chess.WHITE
         

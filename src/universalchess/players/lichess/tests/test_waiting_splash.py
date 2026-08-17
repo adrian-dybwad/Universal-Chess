@@ -53,6 +53,25 @@ def test_waiting_message_for_each_mode():
     assert lichess_waiting_message(LichessGameMode.CHALLENGE) == "Loading\nChallenge..."
 
 
+def test_waiting_message_says_who_is_being_waited_for_on_an_outgoing_challenge():
+    """An outgoing challenge waits for the opponent, it does not load a game.
+
+    Why: the board cannot join a challenge it sent until the other player
+    accepts, and that wait is open-ended. "Loading Challenge..." reads as a
+    join in progress and made an unanswered challenge look like a hang.
+
+    How the regression manifests: the outgoing wait shows the same copy as an
+    incoming accept, so the two paths are indistinguishable on the panel.
+    """
+    incoming = lichess_waiting_message(LichessGameMode.CHALLENGE)
+    outgoing = lichess_waiting_message(
+        LichessGameMode.CHALLENGE, awaiting_opponent=True
+    )
+    assert incoming == "Loading\nChallenge..."
+    assert "opponent" in outgoing.lower()
+    assert "Loading" not in outgoing
+
+
 def test_waiting_message_lists_seek_parameters():
     """The wait splash must name the seek the board is actually posting.
 

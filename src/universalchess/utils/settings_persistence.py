@@ -96,6 +96,17 @@ def _coerce(raw: str, default: Any) -> Any:
     return raw
 
 
+def has_setting(section: str, key: str) -> bool:
+    """Whether the key is written in the section at all.
+
+    Distinct from reading it and testing for empty: a key that is present and
+    empty is a stored choice ("Default account"), while an absent key means the
+    setting has never been written and a migration may still supply it.
+    """
+    Settings = _get_settings_module()
+    return Settings.get_config().has_option(section, key)
+
+
 def load_section(section: str, defaults: Dict[str, Any]) -> Dict[str, Any]:
     """Load all settings from a section using defaults for type inference and missing values.
 

@@ -76,14 +76,12 @@ _PLAYER_DEFINING_CHANGES = [
     ("p1", {"elo": "1500"}),
     ("p1", {"hand_brain_mode": "reverse"}),
     ("p1", {"think_time": 10}),
-    ("p1", {"account": "alice"}),
     ("p2", {"type": "human"}),
     ("p2", {"color": "white"}),
     ("p2", {"engine": "ct800"}),
     ("p2", {"elo": "1500"}),
     ("p2", {"hand_brain_mode": "reverse"}),
     ("p2", {"think_time": 10}),
-    ("p2", {"account": "bob"}),
 ]
 
 

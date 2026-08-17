@@ -12,7 +12,6 @@ import { BoardUnreachableCard } from '../components/BoardUnreachableCard';
 import type { FieldValue } from '../components/CatalogField';
 import { useLoginRetry } from '../components/useLoginRetry';
 import { useRadioCapability } from '../hooks/useRadioCapability';
-import { useRetryOnReconnect } from '../hooks/useRetryOnReconnect';
 import { MenuIcon } from '../components/MenuIcon';
 import { DeviceClockCard } from '../components/DeviceClockCard';
 import { OsUpgradePanel } from '../components/OsUpgradePanel';
@@ -26,7 +25,6 @@ import { formatDateTime } from '../utils/datetime';
 import { externalLinkHref } from '../utils/externalLink';
 import { parseConfigBool } from '../utils/configBool';
 import type { AccountRecord } from '../types/accounts';
-import { selectableAccountsForSlot } from '../utils/accountSlots';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useGameStore } from '../stores/gameStore';
 import './Settings.css';
@@ -218,9 +216,6 @@ interface PlayerSettings {
   elo: string;
   hand_brain_mode: string;
   think_time: number;
-  // For an online player type, the id of the saved account this slot plays as
-  // (must match the player type). Empty uses the default (first) account.
-  account: string;
 }
 
 interface FormSettings {
@@ -256,6 +251,11 @@ interface FormSettings {
     chess960: boolean;
     lichess_rated: boolean;
     lichess_use_dev: boolean;
+    // The saved Lichess credential this board plays and browses as, chosen in
+    // the Lichess lobby. Empty uses the default (first) account. Not a player
+    // setting: a lobby seek runs with a pairing no saved slot describes, so a
+    // per-slot binding had nowhere to live when neither slot was Lichess.
+    lichess_account: string;
     // Show the YOUR QUEEN warning when the side to move's own queen is attacked.
     // On by default; the CHECK warning has no equivalent flag because it cannot be
     // turned off (see GameSettings.alert_queen_threat).
@@ -301,8 +301,8 @@ interface FormSettings {
 }
 
 const defaultFormSettings: FormSettings = {
-  player1: { type: 'human', name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal', think_time: 5, account: '' },
-  player2: { type: 'engine', name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal', think_time: 5, account: '' },
+  player1: { type: 'human', name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal', think_time: 5 },
+  player2: { type: 'engine', name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal', think_time: 5 },
   game: {
     time_control: '0',
     time_control_preset: '',
@@ -321,6 +321,7 @@ const defaultFormSettings: FormSettings = {
     chess960: false,
     lichess_rated: false,
     lichess_use_dev: false,
+    lichess_account: '',
     alert_queen_threat: true,
     show_board: true,
     show_clock: true,
@@ -381,7 +382,6 @@ function parseRawSettings(data: SettingsData): FormSettings {
       elo: data.PlayerOne?.elo || 'Default',
       hand_brain_mode: data.PlayerOne?.hand_brain_mode || 'normal',
       think_time: parseThinkTime(data.PlayerOne?.think_time),
-      account: data.PlayerOne?.account || '',
     },
     player2: {
       type: data.PlayerTwo?.type || 'engine',
@@ -390,7 +390,6 @@ function parseRawSettings(data: SettingsData): FormSettings {
       elo: data.PlayerTwo?.elo || 'Default',
       hand_brain_mode: data.PlayerTwo?.hand_brain_mode || 'normal',
       think_time: parseThinkTime(data.PlayerTwo?.think_time),
-      account: data.PlayerTwo?.account || '',
     },
     game: {
       time_control: data.game?.time_control || '0',
@@ -410,6 +409,7 @@ function parseRawSettings(data: SettingsData): FormSettings {
       chess960: parseConfigBool(data.game?.chess960, false),
       lichess_rated: parseConfigBool(data.game?.lichess_rated, false),
       lichess_use_dev: parseConfigBool(data.game?.lichess_use_dev, false),
+      lichess_account: data.game?.lichess_account || '',
       alert_queen_threat: parseConfigBool(data.game?.alert_queen_threat, true),
       show_board: parseConfigBool(data.game?.show_board, true),
       show_clock: parseConfigBool(data.game?.show_clock, true),
@@ -557,36 +557,6 @@ interface AgentEdit {
 }
 
 /**
- * Account picker stand-in when GET /api/accounts failed. Retry also runs when
- * the navbar connection status turns green, matching the page-level unreachable
- * card: a reboot should not leave this row up until the user clicks.
- */
-function AccountLoadFailed({
-  label,
-  help,
-  onRetry,
-}: {
-  label: string;
-  help?: string;
-  onRetry: () => void;
-}) {
-  const { t } = useTranslation();
-  useRetryOnReconnect(onRetry);
-  return (
-    <FormRow label={label} help={help}>
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.5rem' }}>
-        <p className="text-muted" style={{ margin: 0, fontSize: '0.875rem' }}>
-          {t('settingsPage.players.accountLoadFailed')}
-        </p>
-        <Button variant="secondary" size="sm" onClick={onRetry}>
-          {t('common.retry')}
-        </Button>
-      </div>
-    </FormRow>
-  );
-}
-
-/**
  * Settings page with tabbed navigation matching the Flask version.
  */
 export function Settings() {
@@ -671,11 +641,9 @@ export function Settings() {
   // Retry-after-login for every auth-gated write on this page: the settings
   // save, the timezone and language applies (each has its own endpoint), engine
   // install/uninstall/repair, adding a custom engine, resetting profiles,
-  // dismissing a failure notice, and clearing a stuck install. Also used by the
-  // Players Account row's Sign-in control (`promptLogin`) when the account list
-  // is unauthorized. Each queues a closure recapturing its own arguments, so
-  // they need no shared shape.
-  const { requireLogin, promptLogin, loginDialog } = useLoginRetry();
+  // dismissing a failure notice, and clearing a stuck install. Each queues a
+  // closure recapturing its own arguments, so they need no shared shape.
+  const { requireLogin, loginDialog } = useLoginRetry();
   // Busy/error for the custom-engine add forms. URL installs hand off to the
   // shared install-status watcher; uploads complete in-request and refresh.
   const [customEngineBusy, setCustomEngineBusy] = useState(false);
@@ -1809,17 +1777,6 @@ export function Settings() {
     return engine?.display_name || engineName;
   };
 
-  // Online account types from the catalog (a player type is "online" iff it has
-  // a matching accountTypes entry). Backs the per-slot `player_accounts` provider
-  // (below), which the catalog's field.player.account renders as its select.
-  // A player's PGN name is not collected for online (or engine) types -- online
-  // players carry their own account identity and engines auto-name -- so the Name
-  // field, and any account-name defaulting, applies to human players only.
-  const accountTypes = catalog?.accountTypes ?? [];
-  const isOnlineType = (type: string): boolean =>
-    accountTypes.some((t) => t.id === type || t.playerType === type);
-  const accountsForType = (type: string): AccountRecord[] => accounts.filter((a) => a.type === type);
-
   // Tabs, labels, icons and order all come from the shared catalog, so the board
   // menu and this page present the same sections in the same sequence.
   const tabs: { id: SettingsTab; label: string; icon?: string }[] = [
@@ -2044,26 +2001,6 @@ export function Settings() {
       () =>
         engineLevels[formSettings[playerKey].engine] ?? [{ value: 'Default', label: t('settingsPage.players.defaultLevel') }],
     );
-    // Account options for this slot: "Default account" plus each saved account of
-    // the slot's online type, with the one-account-per-side exclusion applied (the
-    // account the other slot resolves to is dropped, and Default withheld when it
-    // would resolve to that same account) -- the web twin of the board's
-    // player_accounts provider. Non-online types get no rows, so the catalog's
-    // field.player.account (visibleWhen type == lichess) renders nothing. Options
-    // are only produced when the list read succeeded (`ready`): unauthorized and
-    // failed loads are handled by a Sign-in / Retry row in renderPlayerCard so
-    // they never look like an empty authenticated store.
-    ctx.registerProvider('player_accounts', () => {
-      const ps = formSettings[playerKey];
-      if (!isOnlineType(ps.type) || accountsState !== 'ready') return [];
-      const list = accountsForType(ps.type);
-      const other = formSettings[playerKey === 'player1' ? 'player2' : 'player1'];
-      const choices = selectableAccountsForSlot(list, other.type === ps.type, other.account);
-      return [
-        ...(choices.defaultAllowed ? [{ value: '', label: t('settingsPage.players.defaultAccount') }] : []),
-        ...choices.accounts.map((a) => ({ value: a.id, label: a.label ?? a.identity })),
-      ];
-    });
     return ctx;
   };
 
@@ -2073,43 +2010,7 @@ export function Settings() {
   const renderPlayerCard = (playerKey: 'player1' | 'player2', title: string) => {
     const ctx = buildPlayerCtx(playerKey);
     const rows = buildSections(catalog, 'settings.player_detail', ctx.get).flatMap((section) =>
-      section.rows.map((node) => {
-        // Account list is auth-gated. Replace the select with Sign in / Retry
-        // until a successful read; otherwise a 401/500 collapses to Default-only
-        // and looks like no accounts are saved.
-        if (node.id === 'field.player.account') {
-          if (accountsState === 'loading') return null;
-          if (accountsState === 'unauthorized') {
-            return (
-              <FormRow key={node.id} label={node.label ?? 'Account'} help={node.help}>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.5rem' }}>
-                  <p className="text-muted" style={{ margin: 0, fontSize: '0.875rem' }}>
-                    {t('settingsPage.players.accountSignIn')}
-                  </p>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => promptLogin(async () => { await fetchAccounts(); })}
-                  >
-                    {t('login.login')}
-                  </Button>
-                </div>
-              </FormRow>
-            );
-          }
-          if (accountsState === 'failed') {
-            return (
-              <AccountLoadFailed
-                key={node.id}
-                label={node.label ?? 'Account'}
-                help={node.help}
-                onRetry={() => void fetchAccounts()}
-              />
-            );
-          }
-        }
-        return renderCatalogRow(node, ctx);
-      }),
+      section.rows.map((node) => renderCatalogRow(node, ctx)),
     );
     return (
       <Card className="mb-6">
@@ -2162,46 +2063,24 @@ export function Settings() {
             {renderPlayerCard('player2', t('settingsPage.player2Title'))}
 
             {/* Web twin of the board Lichess lobby. Catalog children of
-                players.lichess: Account (picker + nested Accounts), Ongoing
-                Games, Challenges, New Game. The board still opens this as an
-                action; the web walks the same hierarchy here. */}
+                players.lichess: Account (picker + nested Accounts), Rated,
+                Ongoing Games, Challenges, Seek New Game. The board still opens
+                this as an action; the web walks the same hierarchy here. */}
             {catalog && (
               <LichessLobbyCard
                 catalog={catalog}
                 accounts={accounts}
                 accountsState={accountsState}
-                accountId={
-                  formSettings.player1.type === 'lichess'
-                    ? formSettings.player1.account
-                    : formSettings.player2.type === 'lichess'
-                      ? formSettings.player2.account
-                      : ''
-                }
-                otherType={
-                  formSettings.player1.type === 'lichess'
-                    ? formSettings.player2.type
-                    : formSettings.player1.type
-                }
-                otherAccount={
-                  formSettings.player1.type === 'lichess'
-                    ? formSettings.player2.account
-                    : formSettings.player1.account
-                }
-                canBind={
-                  formSettings.player1.type === 'lichess' ||
-                  formSettings.player2.type === 'lichess'
-                }
+                accountId={formSettings.game.lichess_account}
                 onAccountChange={(id) => {
-                  if (formSettings.player1.type === 'lichess') {
-                    updateFormSettings('player1', { account: id });
-                    return;
-                  }
-                  if (formSettings.player2.type === 'lichess') {
-                    updateFormSettings('player2', { account: id });
-                  }
+                  updateFormSettings('game', { lichess_account: id });
                 }}
                 onAccountsChanged={() => {
                   void fetchAccounts();
+                }}
+                rated={formSettings.game.lichess_rated}
+                onRatedChange={(value) => {
+                  updateFormSettings('game', { lichess_rated: value });
                 }}
               />
             )}

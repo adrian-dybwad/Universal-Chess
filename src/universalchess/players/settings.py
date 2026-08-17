@@ -16,7 +16,12 @@ from universalchess.managers.game.coach_settings import (
     resolve_effective,
     writes_for_effective,
 )
-from universalchess.utils.settings_persistence import load_section, save_setting, clear_section
+from universalchess.utils.settings_persistence import (
+    clear_section,
+    has_setting,
+    load_section,
+    save_setting,
+)
 
 # Effective coach fields the board menu binds to. Setting one of these writes to
 # the active provider's namespaced slot (see GameSettings.set); reading one
@@ -95,9 +100,13 @@ class PlayerSettings:
         think_time: Seconds the engine may think per move (engine type). Integer
             seconds because the settings loader infers type from the default and
             has no float branch; a float would round-trip as a string.
-        account: For an online player type, the id of the saved account this slot
-            plays as (matching the player type, e.g. a ``lichess`` account for a
-            ``lichess`` player). Empty falls back to the default account.
+
+    A slot does not name an online account. The Lichess account belongs to the
+    lobby (``GameSettings.lichess_account``) because it must exist whether or
+    not a slot is set to Lichess -- a lobby seek runs with a pairing derived for
+    that game, which no saved slot describes. Upgraded configs keep a legacy
+    ``account`` key in the player section; :meth:`AllSettings.load` reads it once
+    to seed the lobby setting and nothing else consults it.
     """
 
     section: str
@@ -108,7 +117,6 @@ class PlayerSettings:
     elo: str = "Default"
     hand_brain_mode: str = "normal"
     think_time: int = 5
-    account: str = ""
     _log: Optional[Any] = field(default=None, repr=False)
 
     def save(self, key: str) -> None:
@@ -158,7 +166,6 @@ class PlayerSettings:
             "elo": self.elo,
             "hand_brain_mode": self.hand_brain_mode,
             "think_time": self.think_time,
-            "account": self.account,
         }
 
     @classmethod
@@ -197,7 +204,6 @@ class PlayerSettings:
             elo=data["elo"],
             hand_brain_mode=data["hand_brain_mode"],
             think_time=data["think_time"],
-            account=data["account"],
             _log=log,
         )
 
@@ -342,6 +348,7 @@ class GameSettings:
     chess960: bool = False
     lichess_rated: bool = False
     lichess_use_dev: bool = False
+    lichess_account: str = ""
     alert_queen_threat: bool = True
     show_board: bool = True
     show_clock: bool = True
@@ -447,6 +454,7 @@ class GameSettings:
             "chess960": self.chess960,
             "lichess_rated": self.lichess_rated,
             "lichess_use_dev": self.lichess_use_dev,
+            "lichess_account": self.lichess_account,
             "alert_queen_threat": self.alert_queen_threat,
             "show_board": self.show_board,
             "show_clock": self.show_clock,
@@ -531,6 +539,7 @@ class GameSettings:
             chess960=data["chess960"],
             lichess_rated=data["lichess_rated"],
             lichess_use_dev=data["lichess_use_dev"],
+            lichess_account=data["lichess_account"],
             alert_queen_threat=data["alert_queen_threat"],
             show_board=data["show_board"],
             show_clock=data["show_clock"],
@@ -578,6 +587,40 @@ class GameSettings:
             )
 
 
+LEGACY_PLAYER_ACCOUNT_KEY = "account"
+
+
+def _adopt_legacy_lichess_account(player1, player2, game, game_section: str) -> None:
+    """Seed the lobby account from a pre-lobby config's Lichess player slot.
+
+    The Lichess account used to be stored on whichever player slot was set to
+    Lichess. Boards upgrading from that layout must keep playing as the account
+    they were bound to rather than silently falling back to the first
+    credential, so the slot's value is read once here.
+
+    Only an absent ``lichess_account`` is seeded. The legacy key is left in the
+    player section rather than deleted, so treating an empty stored value as
+    "unset" would resurrect the old account on every load and undo a user who
+    has since chosen Default. Player 1 is preferred, matching the slot the lobby
+    authenticated as when both were Lichess, and a value left behind on a slot
+    that is no longer Lichess is ignored as stale.
+
+    In-memory only, like the coach key migration: the value persists the next
+    time the setting is written.
+    """
+    if has_setting(game_section, "lichess_account"):
+        return
+    for player in (player1, player2):
+        if player.type != "lichess":
+            continue
+        legacy = load_section(
+            player.section, {LEGACY_PLAYER_ACCOUNT_KEY: ""}
+        ).get(LEGACY_PLAYER_ACCOUNT_KEY, "")
+        if legacy:
+            game.lichess_account = legacy
+            return
+
+
 @dataclass
 class AllSettings:
     """Container for all game settings.
@@ -621,6 +664,7 @@ class AllSettings:
         player1 = PlayerSettings.load(player1_section, player1_defaults, log)
         player2 = PlayerSettings.load(player2_section, player2_defaults, log)
         game = GameSettings.load(game_section, game_defaults, log)
+        _adopt_legacy_lichess_account(player1, player2, game, game_section)
 
         return cls(player1=player1, player2=player2, game=game)
 
@@ -636,8 +680,8 @@ class AllSettings:
         """
         p1, p2 = self.player1, self.player2
         return (
-            p1.type, p1.color, p1.engine, p1.elo, p1.hand_brain_mode, p1.think_time, p1.account,
-            p2.type, p2.color, p2.engine, p2.elo, p2.hand_brain_mode, p2.think_time, p2.account,
+            p1.type, p1.color, p1.engine, p1.elo, p1.hand_brain_mode, p1.think_time,
+            p2.type, p2.color, p2.engine, p2.elo, p2.hand_brain_mode, p2.think_time,
         )
 
     def log_summary(self) -> None:

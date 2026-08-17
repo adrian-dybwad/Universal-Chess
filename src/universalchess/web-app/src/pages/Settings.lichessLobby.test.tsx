@@ -8,12 +8,12 @@ import menuSchemaFixture from '../test/fixtures/menuSchema';
 
 /**
  * The Players Lichess card must follow the board lobby hierarchy: Account
- * (picker + Accounts last), Ongoing Games, Challenges, New Game. Selecting a
- * game or New Game posts /api/lichess/start, not /api/board/new-game.
+ * (picker + Accounts last), Ongoing Games, Challenges, Seek New Game. Selecting
+ * a game or Seek New Game posts /api/lichess/start, not /api/board/new-game.
  *
  * Why: the web card used to be credentials-only (AccountsCard). A regression
- * drops a lobby section, keeps Accounts as a sibling of New Game, or starts a
- * local game instead of a Lichess join.
+ * drops a lobby section, keeps Accounts as a sibling of Seek New Game, or
+ * starts a local game instead of a Lichess join.
  */
 
 vi.mock('../components/LoginDialog', () => ({
@@ -124,7 +124,7 @@ describe('Settings Lichess lobby card', () => {
     vi.clearAllMocks();
   });
 
-  it('renders Account, Ongoing, Challenges, New Game in catalog order', async () => {
+  it('renders Account, Ongoing, Challenges, Seek New Game in catalog order', async () => {
     mockLobbyFetch();
     renderPlayers();
     expect(await screen.findByRole('heading', { name: 'Lichess Lobby' })).toBeInTheDocument();
@@ -137,10 +137,44 @@ describe('Settings Lichess lobby card', () => {
       'Account',
       'Ongoing Games',
       'Challenges',
-      'New Game',
+      'Seek New Game',
     ]);
     expect(screen.getByRole('button', { name: 'Accounts' })).toBeInTheDocument();
     expect(screen.queryByLabelText('Server')).not.toBeInTheDocument();
+  });
+
+  it('offers Rated in the lobby and not on the player card', async () => {
+    // Rated decides whether a seek puts the account's rating at stake, so it
+    // belongs with the account rather than on a player slot: a lobby seek runs
+    // from a pairing the slots need not describe, and the toggle was then
+    // unreachable. A regression puts the checkbox back inside a player card
+    // (or drops it entirely), so the setting governing every seek cannot be
+    // changed unless a slot happens to be set to Lichess.
+    mockLobbyFetch();
+    renderPlayers();
+    // PlayerOne is a Lichess slot in this fixture, which is exactly where the
+    // toggle used to be drawn, so a single control inside the lobby fails both
+    // ways: an extra copy on the player card, or the only copy still there.
+    const rated = await screen.findByLabelText('Rated');
+    expect(screen.getAllByLabelText('Rated')).toHaveLength(1);
+    expect(document.querySelector('.lichess-lobby')!.contains(rated)).toBe(true);
+  });
+
+  it('saves the lobby Rated toggle to the game settings', async () => {
+    // The seek reads game.lichess_rated, so the toggle must write that key.
+    // A regression writes a player-scoped key (or nothing), and the board keeps
+    // seeking casual games while the web shows Rated on.
+    const { fetchMock } = mockLobbyFetch();
+    renderPlayers();
+    fireEvent.click(await screen.findByLabelText('Rated'));
+    await waitFor(() => {
+      const save = fetchMock.mock.calls.find(
+        (call) => call[0] === '/api/settings' && (call[1] as RequestInit | undefined)?.method === 'POST',
+      );
+      expect(save).toBeTruthy();
+      const body = JSON.parse(String((save![1] as RequestInit).body));
+      expect(body.game.lichess_rated).toBe(true);
+    });
   });
 
   it('lists ongoing games and challenges and starts the selected join', async () => {
@@ -163,10 +197,13 @@ describe('Settings Lichess lobby card', () => {
     });
   });
 
-  it('New Game posts mode new to /api/lichess/start', async () => {
+  it('Seek New Game posts mode new to /api/lichess/start', async () => {
     const { fetchMock } = mockLobbyFetch();
     renderPlayers();
-    const newGame = await screen.findByRole('button', { name: 'New Game' });
+    // The label comes from the catalog, so this also fails if the board and the
+    // web drift: the row that always posts a seek is named Seek New Game on
+    // both, distinct from the New Game that starts whatever Players describes.
+    const newGame = await screen.findByRole('button', { name: 'Seek New Game' });
     fireEvent.click(newGame);
     await waitFor(() => {
       const start = fetchMock.mock.calls.find(

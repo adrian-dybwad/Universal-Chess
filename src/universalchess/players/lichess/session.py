@@ -12,8 +12,12 @@ from typing import Callable, Optional
 from universalchess.board.logging import log
 from universalchess.epaper.icon_menu import IconMenuEntry
 
-from .match import LichessChallengeOffer, lichess_challenge_terms_label
-from .player import LichessPlayer
+from .match import (
+    LichessChallengeOffer,
+    epaper_is_flipped,
+    lichess_challenge_terms_label,
+)
+from .player import LichessGameMode, LichessPlayer
 
 
 def challenge_menu_entries(offer: LichessChallengeOffer):
@@ -50,6 +54,7 @@ class LichessPlaySession:
         self._rewind_to_move_count = None
         self._splash_timer = None
         self._closed = False
+        self._player1_color = "white"
 
     @classmethod
     def from_players(cls, white_player, black_player) -> Optional["LichessPlaySession"]:
@@ -64,6 +69,20 @@ class LichessPlaySession:
         """Seek vs join vs challenge, for the waiting splash."""
         return self._remote._lichess_config.mode
 
+    @property
+    def awaiting_opponent(self) -> bool:
+        """True when the wait is for the opponent to accept a challenge we sent.
+
+        Every other start joins a game that exists (or a seek someone can take);
+        an outgoing challenge does not become a game until the other player
+        accepts, so the splash says so instead of claiming to be loading it.
+        """
+        config = self._remote._lichess_config
+        return (
+            config.mode == LichessGameMode.CHALLENGE
+            and config.challenge_direction != "in"
+        )
+
     def attach(
         self,
         *,
@@ -77,8 +96,14 @@ class LichessPlaySession:
         splash_seconds: float,
         show_started_splash: Optional[Callable] = None,
         rewind_to_move_count: Optional[Callable[[int], None]] = None,
+        player1_color: str = "white",
     ) -> None:
-        """Wire stream callbacks onto the remote player."""
+        """Wire stream callbacks onto the remote player.
+
+        ``player1_color`` is the side the Players color control names, which is
+        the side the human took when setting the pieces up. It decides whether
+        the assigned color turns the display around (:func:`epaper_is_flipped`).
+        """
         self._player_manager = player_manager
         self._game_display = game_display
         self._panel = panel
@@ -88,6 +113,7 @@ class LichessPlaySession:
         self._set_game_result = set_game_result
         self._splash_seconds = splash_seconds
         self._rewind_to_move_count = rewind_to_move_count
+        self._player1_color = player1_color
         if show_started_splash is None:
             from .lobby import show_lichess_started_splash
 
@@ -151,6 +177,8 @@ class LichessPlaySession:
         # Physical White is always player 1, Black player 2. The stream only
         # decides which of those slots the Human occupies. Flip is display-only
         # (e-paper from Black's side) so the pieces do not have to be rotated.
+        # It follows the disagreement between the color that was chosen and the
+        # one the match assigned, not the assigned color on its own.
         human_is_white = (
             True if self._remote.player_is_white is None else self._remote.player_is_white
         )
@@ -173,7 +201,9 @@ class LichessPlaySession:
         if self._menu_manager is not None:
             self._menu_manager.cancel_selection("BACK")
         if self._game_display is not None:
-            self._game_display.set_flip_board(not human_is_white)
+            self._game_display.set_flip_board(
+                epaper_is_flipped(self._player1_color, human_is_white)
+            )
         if self._show_started_splash is not None:
             self._show_started_splash(self._panel, human_is_white)
         timer = threading.Timer(self._splash_seconds, self.dismiss_started_splash)
@@ -225,7 +255,12 @@ class LichessPlaySession:
             account_id=str(cfg.account_id or ""),
             host_id=getattr(self._remote, "_host_id", None) or DEFAULT_HOST_ID,
         )
-        show_lichess_waiting_splash(self._panel, self.waiting_mode, seek=seek)
+        show_lichess_waiting_splash(
+            self._panel,
+            self.waiting_mode,
+            seek=seek,
+            awaiting_opponent=self.awaiting_opponent,
+        )
 
     def _on_remote_takeback(self, remaining_plies: int) -> None:
         """Pop the live game to the ply count Lichess now has."""

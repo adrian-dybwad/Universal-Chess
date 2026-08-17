@@ -203,7 +203,7 @@
     },
     "lichess.account": {
       "label": "Cuenta",
-      "help": "Qué inicio de Lichess usa esta plaza. El mismo selector que la fila Cuenta del jugador, incluida la exclusión entre bandos. Cuentas al final añade o borra inicios."
+      "help": "Con qué inicio de Lichess guardado juega y navega este tablero, sea cual sea la configuración de los jugadores. Cuentas al final añade o borra inicios."
     },
     "lichess.ongoing": {
       "label": "Partidas en curso",
@@ -211,7 +211,7 @@
     },
     "lichess.challenges": {
       "label": "Desafíos",
-      "help": "Un desafío es una partida ofrecida a esta cuenta, o que esta cuenta ofreció a otra persona.\n\nEntrantes: selecciona uno para aceptarlo en este tablero. Un desafío que llega durante una búsqueda también muestra Aceptar o Rechazar.\n\nSalientes: esperando al otro jugador. Nueva partida publica una búsqueda pública en lugar de desafiar a una persona."
+      "help": "Un desafío es una partida ofrecida a esta cuenta, o que esta cuenta ofreció a otra persona.\n\nEntrantes: selecciona uno para aceptarlo en este tablero. Un desafío que llega durante una búsqueda también muestra Aceptar o Rechazar.\n\nSalientes: todavía esperando al otro jugador. Selecciona uno para esperar aquí; la partida se abre en este tablero cuando acepte.\n\nNueva partida publica una búsqueda pública en lugar de desafiar a una persona."
     },
     "lichess.new_game": {
       "label": "Nueva partida",
@@ -658,11 +658,6 @@
       "label": "ELO / Estilo",
       "boardLabel": "ELO\n{value}",
       "help": "Fuerza o personalidad del motor"
-    },
-    "field.player.account": {
-      "label": "Cuenta",
-      "boardLabel": "Cuenta\n{fn:player_account}",
-      "help": "Con qué cuenta guardada juega este jugador"
     },
     "field.display.show_board": {
       "label": "Mostrar tablero",

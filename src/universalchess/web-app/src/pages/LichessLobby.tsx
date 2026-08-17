@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button, Card, CardHeader, Select } from '../components/ui';
+import { CatalogField } from '../components/CatalogField';
 import { useAuthedAction } from '../components/useAuthedAction';
 import type { AccountRecord } from '../types/accounts';
 import { childrenOf, fieldById, type MenuCatalog, type MenuNode } from '../types/menuCatalog';
-import { selectableAccountsForSlot } from '../utils/accountSlots';
 import { apiFetch } from '../utils/api';
+import { useRetryOnReconnect } from '../hooks/useRetryOnReconnect';
 import { useGameStore } from '../stores/gameStore';
 import { AccountsCard } from './Connectivity';
 import './LichessLobby.css';
@@ -30,30 +31,29 @@ interface LichessLobbyCardProps {
   catalog: MenuCatalog;
   accounts: AccountRecord[];
   accountsState: 'loading' | 'ready' | 'failed' | 'unauthorized';
-  /** Bound account id on the Lichess slot (empty = Default). */
+  /** The account this board plays and browses Lichess as (empty = Default). */
   accountId: string;
-  otherType: string;
-  otherAccount: string;
-  /** False when neither player slot is Lichess; the picker is shown but disabled. */
-  canBind: boolean;
   onAccountChange: (accountId: string) => void;
   onAccountsChanged: () => void;
+  /** Whether seeks put the account's rating at stake (game.lichess_rated). */
+  rated: boolean;
+  onRatedChange: (rated: boolean) => void;
 }
 
 /**
  * Web twin of the board Lichess lobby. Catalog children of ``players.lichess``
- * are Account (picker + nested Accounts), Ongoing Games, Challenges, New Game.
+ * are Account (picker + nested Accounts), Rated, Ongoing Games, Challenges,
+ * Seek New Game.
  */
 export function LichessLobbyCard({
   catalog,
   accounts,
   accountsState,
   accountId,
-  otherType,
-  otherAccount,
-  canBind,
   onAccountChange,
   onAccountsChanged,
+  rated,
+  onRatedChange,
 }: LichessLobbyCardProps) {
   const { t } = useTranslation();
   const { dialog, onUnauthorized } = useAuthedAction();
@@ -71,11 +71,10 @@ export function LichessLobbyCard({
   const sections = childrenOf(catalog, 'players.lichess');
   const byId = Object.fromEntries(sections.map((node) => [node.id, node]));
 
+  // Every saved credential is on offer: one board plays as one account, so
+  // there is no second slot whose account has to be held back.
   const lichessAccounts = accounts.filter((a) => a.type === 'lichess');
-  const choices =
-    accountsState === 'ready'
-      ? selectableAccountsForSlot(lichessAccounts, otherType === 'lichess', otherAccount)
-      : { defaultAllowed: true, accounts: [] };
+  const selectableAccounts = accountsState === 'ready' ? lichessAccounts : [];
 
   const fetchOngoing = useCallback(async () => {
     setOngoingState('loading');
@@ -178,10 +177,8 @@ export function LichessLobbyCard({
   );
 
   const selectOptions = [
-    ...(choices.defaultAllowed
-      ? [{ value: '', label: t('settingsPage.players.defaultAccount') }]
-      : []),
-    ...choices.accounts.map((a) => ({ value: a.id, label: a.label ?? a.identity })),
+    { value: '', label: t('settingsPage.players.defaultAccount') },
+    ...selectableAccounts.map((a) => ({ value: a.id, label: a.label ?? a.identity })),
   ];
 
   const username =
@@ -197,15 +194,24 @@ export function LichessLobbyCard({
 
       <LobbySection node={byId['lichess.account']}>
         <p className="lichess-lobby-username">{username}</p>
-        {accountsState === 'ready' && (
+        {/* The account list is behind auth, and this picker is the only place
+            it is chosen, so a 401 or a failed read offers Sign in / Retry
+            rather than collapsing to a Default-only select that looks like an
+            empty store. */}
+        <LobbyListState
+          state={accountsState}
+          onRetry={onAccountsChanged}
+          onSignIn={() => onUnauthorized(() => onAccountsChanged())}
+          emptyLabel={t('connectivity.accounts.none')}
+          count={selectableAccounts.length}
+        >
           <Select
             aria-label={t('settingsPage.lichessLobby.playAs', { user: username })}
             value={accountId}
             options={selectOptions}
-            disabled={!canBind}
             onChange={(e) => onAccountChange(e.target.value)}
           />
-        )}
+        </LobbyListState>
         <div className="lichess-lobby-accounts">
           <Button
             variant="secondary"
@@ -221,6 +227,17 @@ export function LichessLobbyCard({
           )}
         </div>
       </LobbySection>
+
+      {/* Rated has no list behind it, so it renders as the plain catalog
+          control rather than a titled section: the toggle carries its own
+          label and help. */}
+      {byId['field.lichess.rated'] && (
+        <CatalogField
+          node={byId['field.lichess.rated']}
+          value={rated}
+          onChange={(value) => onRatedChange(Boolean(value))}
+        />
+      )}
 
       <LobbySection node={byId['lichess.ongoing']}>
         <LobbyListState
@@ -302,7 +319,7 @@ export function LichessLobbyCard({
 
       <LobbySection node={byId['lichess.new_game']}>
         <ConfirmableRow
-          label={byId['lichess.new_game']?.label ?? 'New Game'}
+          label={byId['lichess.new_game']?.label ?? 'Seek New Game'}
           busy={busyKey === 'new'}
           confirm={confirmKey === 'new'}
           confirmLabel={t('settingsPage.lichessLobby.confirmAbandon')}
@@ -324,6 +341,22 @@ function LobbySection({ node, children }: { node?: MenuNode; children: ReactNode
       {node.help && <p className="lichess-lobby-help">{node.help}</p>}
       {children}
     </section>
+  );
+}
+
+/**
+ * Retry control for a lobby list (or the account picker) the board could not
+ * serve. Also retries when the navbar connection status turns green: the board
+ * being unreachable is what put this on screen, so clicking after a reboot or a
+ * brief outage is redundant.
+ */
+function LobbyRetry({ onRetry }: { onRetry: () => void }) {
+  const { t } = useTranslation();
+  useRetryOnReconnect(onRetry);
+  return (
+    <Button variant="secondary" size="sm" onClick={onRetry}>
+      {t('common.retry')}
+    </Button>
   );
 }
 
@@ -357,11 +390,7 @@ function LobbyListState({
     return <p className="text-muted">{t('settingsPage.lichessLobby.noToken')}</p>;
   }
   if (state === 'failed') {
-    return (
-      <Button variant="secondary" size="sm" onClick={onRetry}>
-        {t('common.retry')}
-      </Button>
-    );
+    return <LobbyRetry onRetry={onRetry} />;
   }
   if (count === 0) {
     return <p className="text-muted">{emptyLabel}</p>;

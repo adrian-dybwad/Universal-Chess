@@ -8,20 +8,20 @@ import menuSchemaFixture from '../test/fixtures/menuSchema';
 import { useGameStore } from '../stores/gameStore';
 
 /**
- * Guards the Settings account picker: an online player type (Lichess) exposes a
- * picker scoped to accounts of the matching type; offline types (human) show no
- * picker and keep an editable Name field. Online/engine players collect no name
- * field (they carry their own identity / auto-name), which the sibling
- * name-visibility suite asserts. The picker is the catalog's field.player.account
- * rendered from settings.player_detail (accessible name "Account"), not a bespoke
- * control. Drives the real <Settings> against a mocked API so the
- * fetch -> render -> select path is exercised end to end.
+ * Guards the Lichess account picker, which belongs to the Lichess Lobby card.
+ *
+ * It used to be a per-slot row (the catalog's field.player.account), so it only
+ * existed while a Players slot was set to Lichess: with neither slot online
+ * there was nowhere to choose an account and nowhere to store one, and every
+ * seek and lobby list authenticated as whichever credential sorted first. The
+ * picker is now the lobby's, is shown whatever the slots are, and writes
+ * game.lichess_account. Drives the real <Settings> against a mocked API so the
+ * fetch -> render -> select -> save path is exercised end to end.
  *
  * Auth on the list: GET /api/accounts requires credentials. A 401 must not look
  * like an empty store (only "Default account") -- that hid real accounts and gave
- * no way to sign in from Players. A true empty authenticated list still shows
- * Default; unauthorized shows a Sign-in control that opens LoginDialog and
- * refetches.
+ * no way to sign in. A true empty authenticated list says so; unauthorized shows
+ * a Sign-in control that opens LoginDialog and refetches.
  */
 
 // Stands in for the real login form: one button that reports success, which is
@@ -35,13 +35,12 @@ const menuSchema: unknown = menuSchemaFixture;
 
 interface PlayerSeed {
   type: string;
-  account?: string;
 }
 
-const buildSettingsPayload = (p1: PlayerSeed, p2: PlayerSeed) => ({
-  PlayerOne: { type: p1.type, name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal', account: p1.account ?? '' },
-  PlayerTwo: { type: p2.type, name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal', account: p2.account ?? '' },
-  game: { time_control: '0', analysis_mode: 'True', analysis_engine: 'stockfish', notation: 'figurine', coach_provider: 'none', coach_id: 'off' },
+const buildSettingsPayload = (p1: PlayerSeed, p2: PlayerSeed, lichessAccount = '') => ({
+  PlayerOne: { type: p1.type, name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal' },
+  PlayerTwo: { type: p2.type, name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal' },
+  game: { time_control: '0', analysis_mode: 'True', analysis_engine: 'stockfish', notation: 'figurine', coach_provider: 'none', coach_id: 'off', lichess_account: lichessAccount },
   lichess: { api_token: '', range: '', username: '' },
   sound: {},
   system: { inactivity_timeout: '900' },
@@ -85,13 +84,14 @@ function mockFetch(
   p1: PlayerSeed,
   p2: PlayerSeed,
   accounts: unknown = accountsPayload,
-  opts?: { accountsStatus?: number },
+  opts?: { accountsStatus?: number; lichessAccount?: string },
 ) {
   let accountsGets = 0;
   const fetchMock = vi.fn(async (url: string, init?: RequestInit): Promise<JsonResponseLike> => {
     const method = ((init?.method as string) ?? 'GET').toUpperCase();
     if (url === '/api/menu-schema') return jsonResponse(menuSchema);
-    if (url === '/api/settings' && method === 'GET') return jsonResponse(buildSettingsPayload(p1, p2));
+    if (url === '/api/settings' && method === 'GET')
+      return jsonResponse(buildSettingsPayload(p1, p2, opts?.lichessAccount ?? ''));
     if (url === '/api/settings' && method === 'POST') return jsonResponse({ success: true });
     if (url === '/api/accounts') {
       accountsGets += 1;
@@ -133,24 +133,68 @@ function renderSettings() {
   );
 }
 
-describe('Settings account picker for online player types', () => {
+/** The lobby's account picker, whose accessible name is "Play as <user>". */
+function findAccountPicker() {
+  return screen.findByLabelText(/^Play as /);
+}
+
+describe('Lichess lobby account picker', () => {
   beforeEach(() => {
     cleanup();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
   });
 
-  it('shows a type-scoped account picker for a Lichess player', async () => {
-    // The picker must list the accounts of the matching type plus a Default
-    // option. A regression (no picker, or listing accounts of another type)
+  it('lists every saved Lichess credential plus Default', async () => {
+    // The picker must offer each saved credential and Default. A regression
+    // (no picker, or a credential held back by the old both-sides exclusion)
     // shows as a missing option here.
     mockFetch({ type: 'lichess' }, { type: 'human' });
     renderSettings();
-    const picker = await screen.findByLabelText('Account');
-    expect(picker).toBeInTheDocument();
+    const picker = await findAccountPicker();
     expect(within(picker).getByRole('option', { name: 'lichess.org:MagnusC' })).toBeInTheDocument();
     expect(within(picker).getByRole('option', { name: 'lichess.org:SecondUser' })).toBeInTheDocument();
     expect(within(picker).getByRole('option', { name: /default account/i })).toBeInTheDocument();
+  });
+
+  it('offers the picker when neither player slot is set to Lichess', async () => {
+    // Why this test exists: the picker used to be a per-slot row and was
+    // disabled unless a slot was Lichess, so the account a lobby seek would
+    // play as could not be chosen at all -- Seek New Game went out on whichever
+    // credential sorted first. The lobby always owns the choice now.
+    //
+    // How a regression manifests: the picker is absent or disabled when no
+    // slot is set to Lichess.
+    mockFetch({ type: 'human' }, { type: 'human' });
+    renderSettings();
+    const picker = await findAccountPicker();
+    expect(picker).toBeEnabled();
+    expect(within(picker).getByRole('option', { name: 'lichess.org:SecondUser' })).toBeInTheDocument();
+  });
+
+  it('saves the chosen account as the lobby account, not onto a player slot', async () => {
+    // Why this test exists: the pick was written to whichever slot was Lichess
+    // and dropped when there was none, which is what made the seek authenticate
+    // as the wrong account. It must persist somewhere the slots do not reach.
+    //
+    // How a regression manifests: the POST carries an account under PlayerOne /
+    // PlayerTwo, or no lichess_account at all, so the choice is lost on reload.
+    const { fetchMock } = mockFetch({ type: 'human' }, { type: 'human' });
+    renderSettings();
+    const picker = await findAccountPicker();
+
+    fireEvent.change(picker, { target: { value: 'org:second' } });
+
+    await waitFor(() => {
+      const saves = fetchMock.mock.calls.filter(
+        ([url, init]) => url === '/api/settings' && (init?.method ?? 'GET').toUpperCase() === 'POST',
+      );
+      expect(saves.length).toBeGreaterThan(0);
+      const body = JSON.parse(String(saves[saves.length - 1][1]?.body));
+      expect(body.game.lichess_account).toBe('org:second');
+      expect(body.PlayerOne.account).toBeUndefined();
+      expect(body.PlayerTwo.account).toBeUndefined();
+    });
   });
 
   it('lists org and .dev credentials of the same username as distinct options', async () => {
@@ -164,7 +208,7 @@ describe('Settings account picker for online player types', () => {
       ],
     });
     renderSettings();
-    const picker = await screen.findByLabelText('Account');
+    const picker = await findAccountPicker();
     expect(within(picker).getByRole('option', { name: 'lichess.org:Alice' })).toBeInTheDocument();
     expect(within(picker).getByRole('option', { name: 'lichess.dev:Alice' })).toBeInTheDocument();
   });
@@ -184,56 +228,21 @@ describe('Settings account picker for online player types', () => {
     expect(screen.queryByLabelText('Use lichess.dev')).not.toBeInTheDocument();
   });
 
-  it('shows no account picker for offline (human) player types', async () => {
-    // Offline types must not get an account picker and must keep their Name field.
-    // A regression shows as an "Account" control appearing for a human player.
-    // Both slots human -> two Name fields and no Account control anywhere.
-    mockFetch({ type: 'human' }, { type: 'human' });
+  it('gives a player slot no account control of its own', async () => {
+    // Why this test exists: two places to choose an account is one too many --
+    // the slot's row could name a different credential from the lobby's, and
+    // only one of them could win. A Lichess slot must expose no Account row.
+    //
+    // How a regression manifests: an "Account" control appears on a player
+    // card, alongside the lobby's "Play as" picker.
+    mockFetch({ type: 'lichess' }, { type: 'human' });
     renderSettings();
-    await waitFor(() => expect(screen.getAllByLabelText('Player Name')).toHaveLength(2));
+    await findAccountPicker();
     expect(screen.queryByLabelText('Account')).not.toBeInTheDocument();
   });
 });
 
-describe('Settings account picker excludes the other slot (both-sides rule)', () => {
-  beforeEach(() => {
-    cleanup();
-    vi.unstubAllGlobals();
-    vi.clearAllMocks();
-  });
-
-  it("removes each slot's account from the other slot's picker", async () => {
-    // One online account may not play both sides. With both slots Lichess and
-    // bound to distinct credentials (P1=org:magnusc, P2=org:second), each picker
-    // must omit the account the *other* slot uses so it can never be chosen twice:
-    //  - P2's picker excludes 'lichess.org:MagnusC' AND 'Default account' (Default
-    //    resolves to the first account 'org:magnusc', which is taken), leaving
-    //    only lichess.org:SecondUser.
-    //  - P1's picker excludes 'lichess.org:SecondUser'; Default (-> org:magnusc,
-    //    its own) stays.
-    // A regression (no exclusion, or comparing only raw ids so 'Default' slips
-    // through) shows as the forbidden option reappearing in a picker below.
-    mockFetch({ type: 'lichess', account: 'org:magnusc' }, { type: 'lichess', account: 'org:second' });
-    renderSettings();
-    const pickers = await screen.findAllByLabelText('Account');
-    expect(pickers).toHaveLength(2);
-    const [p1Picker, p2Picker] = pickers;
-
-    // P2 (bound 'org:second') must not offer P1's org MagnusC, nor Default
-    // (=> first account org:magnusc).
-    expect(within(p2Picker).queryByRole('option', { name: 'lichess.org:MagnusC' })).not.toBeInTheDocument();
-    expect(within(p2Picker).queryByRole('option', { name: /default account/i })).not.toBeInTheDocument();
-    expect(within(p2Picker).getByRole('option', { name: 'lichess.org:SecondUser' })).toBeInTheDocument();
-
-    // P1 (bound 'org:magnusc') must not offer P2's second, but keeps its own +
-    // Default (which resolves to org:magnusc, not the taken second).
-    expect(within(p1Picker).queryByRole('option', { name: 'lichess.org:SecondUser' })).not.toBeInTheDocument();
-    expect(within(p1Picker).getByRole('option', { name: 'lichess.org:MagnusC' })).toBeInTheDocument();
-    expect(within(p1Picker).getByRole('option', { name: /default account/i })).toBeInTheDocument();
-  });
-});
-
-describe('Settings account picker auth and load failures', () => {
+describe('Lichess lobby account picker auth and load failures', () => {
   beforeEach(() => {
     cleanup();
     vi.unstubAllGlobals();
@@ -250,7 +259,6 @@ describe('Settings account picker auth and load failures', () => {
     renderSettings();
 
     await waitFor(() => expect(screen.getByRole('button', { name: /login/i })).toBeInTheDocument());
-    expect(screen.getByText(/sign in to see saved accounts/i)).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: /default account/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'lichess.org:MagnusC' })).not.toBeInTheDocument();
   });
@@ -267,24 +275,26 @@ describe('Settings account picker auth and load failures', () => {
     fireEvent.click(screen.getByRole('button', { name: /login/i }));
     fireEvent.click(await screen.findByTestId('login-submit'));
 
-    await waitFor(() => expect(within(screen.getByLabelText('Account')).getByRole('option', { name: 'lichess.org:MagnusC' })).toBeInTheDocument());
-    const picker = screen.getByLabelText('Account');
+    const picker = await findAccountPicker();
+    await waitFor(() =>
+      expect(within(picker).getByRole('option', { name: 'lichess.org:MagnusC' })).toBeInTheDocument(),
+    );
     expect(within(picker).getByRole('option', { name: 'lichess.org:SecondUser' })).toBeInTheDocument();
     expect(within(picker).getByRole('option', { name: /default account/i })).toBeInTheDocument();
-    expect(screen.queryByText(/sign in to see saved accounts/i)).not.toBeInTheDocument();
   });
 
-  it('still shows Default account when the authenticated list is genuinely empty', async () => {
-    // Distinguishes a true empty store from the 401 path above. Suppressing
-    // every empty picker would hide the legitimate Default-only control. The
-    // regression manifests as a Sign-in prompt (or blank Account row) when
-    // GET /api/accounts returns [].
+  it('says the store is empty when the authenticated list is genuinely empty', async () => {
+    // Distinguishes a true empty store from the 401 path above: a board with no
+    // credentials must be told to add one rather than offered a Default that
+    // resolves to nothing, and must not be asked to sign in when it already is.
+    // The regression manifests as a Sign-in prompt, or a picker offering
+    // Default only, when GET /api/accounts returns [].
     mockFetch({ type: 'lichess' }, { type: 'human' }, { accounts: [] });
     renderSettings();
 
-    const picker = await screen.findByLabelText('Account');
-    expect(within(picker).getByRole('option', { name: /default account/i })).toBeInTheDocument();
-    expect(screen.queryByText(/sign in to see saved accounts/i)).not.toBeInTheDocument();
+    expect(await screen.findByText(/no accounts yet/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Play as /)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /login/i })).not.toBeInTheDocument();
   });
 
   it('does not claim Default-only when the account list fails to load', async () => {
@@ -297,13 +307,12 @@ describe('Settings account picker auth and load failures', () => {
 
     await waitFor(() => expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument());
     expect(screen.queryByRole('option', { name: /default account/i })).not.toBeInTheDocument();
-    expect(screen.queryByText(/sign in to see saved accounts/i)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /retry/i }));
 
     await waitFor(() =>
       expect(
-        within(screen.getByLabelText('Account')).getByRole('option', { name: 'lichess.org:MagnusC' }),
+        within(screen.getByLabelText(/^Play as /)).getByRole('option', { name: 'lichess.org:MagnusC' }),
       ).toBeInTheDocument(),
     );
   });
@@ -324,7 +333,7 @@ describe('Settings account picker auth and load failures', () => {
 
     await waitFor(() =>
       expect(
-        within(screen.getByLabelText('Account')).getByRole('option', { name: 'lichess.org:MagnusC' }),
+        within(screen.getByLabelText(/^Play as /)).getByRole('option', { name: 'lichess.org:MagnusC' }),
       ).toBeInTheDocument(),
     );
   });

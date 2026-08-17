@@ -16,6 +16,7 @@ BACK during seek does not stop players; first-move dismiss never shows widgets.
 from unittest.mock import MagicMock
 
 import chess
+import pytest
 
 from universalchess.players.human import HumanPlayer
 from universalchess.players.lichess import LichessGameMode, LichessPlayer, LichessPlayerConfig
@@ -50,6 +51,33 @@ def test_waiting_mode_follows_player_config():
     player = LichessPlayer(LichessPlayerConfig(mode=LichessGameMode.ONGOING))
     session = LichessPlaySession.from_players(HumanPlayer(), player)
     assert session.waiting_mode is LichessGameMode.ONGOING
+
+
+def test_awaiting_opponent_only_for_a_challenge_the_board_sent():
+    """The splash must separate accepting a challenge from waiting on one.
+
+    Why: an outgoing challenge cannot be joined until the other player accepts,
+    so that wait is open-ended, while every other start is joining a game that
+    already exists.
+
+    Failure: a seek, a resume, or an incoming challenge reports that it is
+    waiting for an opponent to accept, or the outgoing one does not.
+    """
+    def session_for(**config):
+        return LichessPlaySession.from_players(
+            HumanPlayer(), LichessPlayer(LichessPlayerConfig(**config))
+        )
+
+    outgoing = session_for(
+        mode=LichessGameMode.CHALLENGE, challenge_id="c1", challenge_direction="out"
+    )
+    incoming = session_for(
+        mode=LichessGameMode.CHALLENGE, challenge_id="c1", challenge_direction="in"
+    )
+    assert outgoing.awaiting_opponent is True
+    assert incoming.awaiting_opponent is False
+    assert session_for(mode=LichessGameMode.NEW).awaiting_opponent is False
+    assert session_for(mode=LichessGameMode.ONGOING).awaiting_opponent is False
 
 
 def test_connect_remaps_slots_when_account_sits_black(monkeypatch):
@@ -165,6 +193,57 @@ def test_connect_moves_human_to_white_when_started_as_black(monkeypatch):
     assert human.color is chess.WHITE
     assert remote.color is chess.BLACK
     display.set_flip_board.assert_called_once_with(False)
+
+
+@pytest.mark.parametrize(
+    "player1_color,human_is_white,expect_flip",
+    [
+        ("white", True, False),
+        ("white", False, True),
+        ("black", False, False),
+        ("black", True, True),
+    ],
+)
+def test_the_epaper_turns_around_when_lichess_hands_the_other_color(
+    monkeypatch, player1_color, human_is_white, expect_flip
+):
+    """Flip is the disagreement between the chosen color and the assigned one.
+
+    The pieces are set up and the player has sat down before Lichess names a
+    color, and the side they took is the one the Players color control
+    describes. Being handed the other color puts their pieces at the far edge,
+    so the display turns around with them -- and being handed the color they
+    chose leaves it alone, even when that color is Black.
+
+    How a regression manifests: flip is read from the assigned color alone
+    ("Black always flips"), so a player who set up as Black and was assigned
+    Black reads a display facing their opponent, while the same player assigned
+    White reads one facing away from the pieces they are playing.
+    """
+    monkeypatch.setattr(
+        "universalchess.players.lichess.session.threading.Timer",
+        lambda *_args, **_kwargs: MagicMock(),
+    )
+    remote = LichessPlayer()
+    remote._player_is_white = human_is_white
+    human = HumanPlayer()
+    display = MagicMock()
+    session = LichessPlaySession.from_players(human, remote)
+    session.attach(
+        player_manager=PlayerManager(human, remote),
+        game_display=display,
+        panel=MagicMock(),
+        info_overlay=MagicMock(),
+        menu_manager=MagicMock(),
+        beep=lambda *_: None,
+        set_game_result=lambda *_: None,
+        splash_seconds=5.0,
+        show_started_splash=lambda *_: None,
+        player1_color=player1_color,
+    )
+    session._on_connected()
+
+    display.set_flip_board.assert_called_once_with(expect_flip)
 
 
 def test_back_during_seek_stops_players():
@@ -433,7 +512,9 @@ def test_challenge_offer_decline_restores_wait_splash(monkeypatch):
     restored = []
     monkeypatch.setattr(
         "universalchess.players.lichess.lobby.show_lichess_waiting_splash",
-        lambda panel, mode, seek=None: restored.append((panel, mode, seek)),
+        lambda panel, mode, seek=None, awaiting_opponent=False: restored.append(
+            (panel, mode, seek, awaiting_opponent)
+        ),
     )
     remote = LichessPlayer()
     session = LichessPlaySession.from_players(HumanPlayer(), remote)
@@ -456,6 +537,9 @@ def test_challenge_offer_decline_restores_wait_splash(monkeypatch):
     assert declined == [True]
     assert len(restored) == 1
     assert restored[0][0] is panel
+    # This wait is the board's own seek, still posted after the decline, not a
+    # challenge the board is waiting on someone to accept.
+    assert restored[0][3] is False
 
 
 def test_challenge_offer_skipped_when_game_already_connected():

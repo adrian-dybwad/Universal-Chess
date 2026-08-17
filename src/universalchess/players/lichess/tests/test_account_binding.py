@@ -133,10 +133,10 @@ def test_get_lichess_api_prefers_account_then_legacy(config_files):
 
 
 def test_picker_choices_unbound_selects_default_and_lists_every_account(config_files):
-    """The Play/slot picker offers Default plus each credential when nothing is taken.
+    """The lobby picker offers Default plus each credential.
 
-    Why: User on Play opens this list. Regression: Default missing, a credential
-    dropped, or Default not marked selected when the slot is unbound.
+    Why: the lobby's Account row opens this list. Regression: Default missing, a
+    credential dropped, or Default not marked selected when nothing is chosen.
     """
     from universalchess.players.lichess.accounts import (
         label_of,
@@ -146,28 +146,70 @@ def test_picker_choices_unbound_selects_default_and_lists_every_account(config_f
 
     _seed_two_accounts()
     accounts = list_lichess_credentials()
-    assert lichess_account_picker_choices("", "human", "") == [
+    assert lichess_account_picker_choices("") == [
         ("", "Default account", True),
         *[(account.id, label_of(account), False) for account in accounts],
     ]
 
 
-def test_picker_choices_excludes_the_other_lichess_slot(config_files):
-    """The other Lichess slot's account is not offered (both-sides rule).
+def _settings_with(lichess_account, *, player1_type="human", player2_type="lichess"):
+    """AllSettings-like object: the lobby account plus two player slots."""
+    from types import SimpleNamespace
 
-    Why: one credential cannot play both sides. How a regression manifests:
-    the taken id is listed, or Default stays when it would resolve to that id.
+    return SimpleNamespace(
+        player1=SimpleNamespace(type=player1_type, account="org:stale"),
+        player2=SimpleNamespace(type=player2_type, account="org:stale"),
+        game=SimpleNamespace(lichess_account=lichess_account),
+    )
+
+
+def test_the_picker_marks_the_lobby_account_whatever_the_slots_hold(config_files):
+    """The selected row is the lobby's account, not a slot's leftover binding.
+
+    Why this test exists: the picker used to read the account off whichever slot
+    was Lichess, so with no such slot nothing was ever marked and the pick had
+    nowhere to be stored. The list must now reflect the one account the lobby
+    holds, for every pairing -- including two engines.
+
+    How a regression manifests: no row is selected, or the row selected is the
+    one named by a slot's stale ``account`` value.
     """
     from universalchess.players.lichess.accounts import (
-        label_of,
-        lichess_account_picker_choices,
+        lichess_play_account_choices,
         list_lichess_credentials,
     )
 
     _seed_two_accounts()
+    chosen = list_lichess_credentials()[1].id
+
+    for pairing in (("human", "lichess"), ("engine", "engine")):
+        choices = lichess_play_account_choices(
+            _settings_with(chosen, player1_type=pairing[0], player2_type=pairing[1])
+        )
+        selected = [key for key, _label, is_selected in choices if is_selected]
+        assert selected == [chosen]
+        # Every credential stays on offer: with one account for the board there
+        # is no other slot whose account has to be held back.
+        assert len(choices) == len(list_lichess_credentials()) + 1
+
+
+def test_the_active_account_is_the_lobby_account(config_files):
+    """Games and lobby lists authenticate as the account the lobby names.
+
+    Why this test exists: this resolves the credential the seek, the ongoing
+    list, and the challenge list all use. Reading it from a player slot is what
+    made a lobby seek go out on the first credential rather than the chosen one.
+
+    How a regression manifests: the returned credential is the default while the
+    lobby names another, or a slot's stale id is honoured over an unset lobby
+    account.
+    """
+    from universalchess.players.lichess.accounts import list_lichess_credentials
+    from universalchess.players.lichess.lobby import active_lichess_account
+
+    _seed_two_accounts()
     accounts = list_lichess_credentials()
-    taken = accounts[0].id
-    other = accounts[1]
-    choices = lichess_account_picker_choices("", "lichess", "")
-    assert choices == [(other.id, label_of(other), False)]
-    assert taken not in [key for key, _label, _selected in choices]
+
+    assert active_lichess_account(_settings_with(accounts[1].id)).id == accounts[1].id
+    # Unset means Default, even though both slots still carry an old binding.
+    assert active_lichess_account(_settings_with("")).id == accounts[0].id

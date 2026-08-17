@@ -596,6 +596,17 @@ def is_break_result(result: Union[str, MenuSelection, None]) -> bool:
     return MenuSelection.from_key(result).is_break
 
 
+def is_play_start(result: Union[str, MenuSelection, None]) -> bool:
+    """True when the menu result is PLAY (the button) or the main-menu PLAY row.
+
+    Both unwind the menus to start a game, and both the app loop and the Lichess
+    lobby have to recognise one, so the two keys are named in a single place.
+    """
+    if result in ("PLAY", "Universal"):
+        return True
+    return getattr(result, "key", None) in ("PLAY", "Universal")
+
+
 def is_refresh_result(result: Union[str, MenuSelection, None]) -> bool:
     """Check if a result indicates the menu should refresh.
     

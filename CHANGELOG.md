@@ -129,8 +129,8 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   using. The web status readout uses the same Connected/Disconnected wording
   and shows the Address (usb0 IPv4). Online
   account management moved
-  from Connectivity to Players so credentials sit next to the per-slot account
-  picker.
+  from Connectivity to Players so credentials sit next to the account picker
+  that uses them.
 
 - **Auto USB gadget mode**: Client and Shared each require the user to know what
   the host computer is doing -- Client needs Internet Sharing on, Shared needs it
@@ -446,9 +446,10 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
     conforming parser or understate one side's budget.
 
 - **Lichess is one play path**: Human vs Lichess now starts the same way as
-  Human vs Engine (PLAY, or Lichess Settings → New Game). A new seek is
-  random color -- White stays on player 1's physical side, Black on player 2,
-  because Lichess names the account's color after the pieces are already set.
+  Human vs Engine (PLAY, or Lichess Lobby → Seek New Game). A new seek asks for
+  the side the Players color control did not give the human -- White stays on
+  player 1's physical side, Black on player 2, and the e-paper rotates rather
+  than the pieces when the match assigns a color other than the one chosen.
   The clock comes from the Game time control (whole minutes plus
   Fischer increment), rated from the Rated toggle, and the rating range from the
   bound account on the active host. A second launcher had forced Human White and
@@ -690,7 +691,7 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   resuming after a reboot all entered game mode with a Lichess slot and called
   ``board.seek`` even though the user never chose New Game. Those paths now
   attach an ongoing game if one exists and do not list a new seek. PLAY, lobby
-  New Game, and web New Game still seek immediately. Returning the pieces to
+  Seek New Game, and web New Game still seek immediately. Returning the pieces to
   the opening during a Lichess game asks Seek / Cancel (Cancel is the default);
   Cancel returns to the menu without seeking.
 
@@ -702,13 +703,92 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   Decline returns to the wait splash and the seek stays up. Taking the posted
   seek still starts the game with no prompt.
 
+- **A challenge picked in the lobby did not join its game**: Selecting a row in
+  Challenges streamed the challenge id as though it were already a game. That
+  holds for an incoming challenge, which keeps its id once accepted, but a
+  challenge the board sent is not a game until the other player accepts it:
+  Lichess answered ``404 No such game``, the stream thread ended, and the board
+  was left in a local game whose moves never reached Lichess. An outgoing
+  challenge now waits for it to be accepted -- the panel says so instead of
+  reading Loading Challenge -- and joins the game the moment it starts. While
+  that wait is up only that challenge may be joined, so another game the account
+  has running is not pulled onto the board in its place. BACK leaves the
+  challenge standing on Lichess; the board did not create it.
+
 - **Lichess match color does not rotate the pieces**: Lichess can name White
   or Black in the seconds after a match, faster than the physical board can
-  be turned. A new seek used the Players color control (Human in slot 1
-  sought White), and swapping that control built player 1 as Black. Pieces
-  stay on their physical sides: White is always player 1, Black player 2. A
-  new seek is random. After the stream names the account's color, Human sits
-  that slot and the e-paper rotates when they play Black.
+  be turned. Swapping the Players color control built player 1 as Black.
+  Pieces stay on their physical sides: White is always player 1, Black player
+  2. After the stream names the account's color, Human sits that slot and the
+  e-paper rotates when that color is not the one the Players control chose.
+
+- **The e-paper turned around for the wrong games**: The display flipped
+  whenever the human was assigned Black, which is only right for a board set up
+  to play White. A player who chose Black had already taken Black's side before
+  the seek went out, so being assigned Black -- the color asked for -- turned
+  the display to face their opponent, and being assigned White left it facing
+  away from the pieces they were playing. Flip is now the disagreement between
+  the chosen color and the assigned one: the display turns around when, and
+  only when, Lichess hands over the other color. Chosen White and assigned
+  Black flips, as before; chosen Black and assigned Black does not.
+
+- **A Lichess seek asked for no color even when one was chosen**: Every seek was
+  posted as random, because the color a match names arrives faster than the
+  pieces can be turned around. Rotating the e-paper instead of the pieces
+  settled that, so the choice can be honored: a pairing with exactly one slot
+  set to Lichess now seeks the side the human did not pick. ``color`` on a seek
+  names the side the *seeking account* wants, and that account is the opponent,
+  so a human who chose White posts a seek for Black and is paired as White. A
+  pairing that names no Lichess slot -- a lobby Seek New Game over two engines,
+  say -- has no side anyone chose for it and still seeks random, taking whoever
+  answers first.
+
+- **The Lichess lobby's New Game could start a local game instead of seeking**:
+  The lobby's New Game row, PLAY pressed inside the lobby, and the web lobby's
+  card all stashed a join and left the game to be built from the Players slots.
+  With neither slot set to Lichess that built exactly what those slots described
+  -- pressing New Game inside the Lichess menu started Player 1 against Drawfish
+  and posted no seek at all -- because the seek helper refused a pairing with no
+  Lichess slot, so the join was quietly dropped. A start from the lobby now
+  derives its own Human vs Lichess pairing for that game alone: the human stays
+  in the slot it already occupies, an absent one takes slot 1 (White's physical
+  side), and the substituted Lichess slot plays as the account the lobby names.
+  The saved Players settings are not written, so the next local game is the one
+  that was configured. Those rows read Seek New Game on
+  the board and on the web, separating them from the New Game that starts
+  whichever players Settings describes. Returning the pieces to the opening
+  during such a game asks Seek / Cancel like any other Lichess game: that prompt
+  used to read the saved slots, which a lobby game's pairing does not appear in,
+  so a reset would have abandoned the game in progress for a local one without
+  asking.
+
+- **The lobby's chosen account did not post the seek**: The account picked in
+  the Lichess Lobby was written to whichever Players slot was set to Lichess,
+  and read back from that slot at seek time. A lobby Seek New Game with no slot
+  set to Lichess therefore had nowhere to store the choice and nowhere to read
+  it from, so it authenticated with the first saved credential -- signed in and
+  listed in the lobby as one account, seeking as another. The account is now a
+  property of the lobby (``game.lichess_account``) rather than of a player, so
+  the same credential answers the lobby, the account picker and every seek no
+  matter how the slots are configured. The per-player Account row is gone from
+  the board's Players menu and from the web Players card, and the picker moved
+  to the lobby on both. A configuration that bound an account to a slot adopts
+  it as the lobby account on first load -- player 1 first, which is the slot the
+  lobby signed in as when both were Lichess, and never from a slot that is no
+  longer Lichess. Adoption only happens while the config file names no lobby
+  account at all, so an upgrade keeps playing as the account it was bound to
+  while a lobby account since set back to Default stays Default.
+
+- **Rated could not be reached without a Lichess player slot**: Rated has always
+  been stored once for the board (``game.lichess_rated``) but was drawn as a row
+  on the player card, shown only while that slot was set to Lichess. Seek New
+  Game posts a seek from a pairing the saved slots need not describe, so with
+  neither slot online the toggle deciding whether that seek put the account's
+  rating at stake was on no screen at all, and whatever it was last left at
+  stood. Rated is now a lobby row directly under Account, on the board and on
+  the web, beside the account whose rating it stakes. The board row reads Rated
+  On or Rated Off with a checkbox, and selecting it writes the opposite value
+  and redraws, so the state is visible before the seek goes out.
 
 - **Lichess Lobby is the play menu on board and web**: User, Ongoing Games,
   Challenges, and New Game sat behind Players → Lichess Settings → Play. That
@@ -716,9 +796,8 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   (Account first, Ongoing Games and Challenges always listed, then New Game).
   Selecting Ongoing or Challenges shows how that feature works, then the live
   list (or back to the lobby when the account has none). Account selects which
-  saved Lichess login the slot uses -- the same picker as the player-slot
-  Account row, including the both-sides exclusion. Add or delete logins is
-  Accounts at the end of that picker. The web Players card uses the same
+  saved Lichess login the board plays as. Add or delete logins is Accounts at
+  the end of that picker. The web Players card uses the same
   catalog children and can start a join on the board.
 
 - **Lichess Play no longer has an API Token row**: Accounts replaced that

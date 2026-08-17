@@ -187,13 +187,17 @@ def create_lichess_connection(token: str, host_id: str = DEFAULT_HOST_ID):
     return LichessConnection(client=client, session=session)
 
 
-def lichess_waiting_message(mode, seek=None) -> str:
+def lichess_waiting_message(mode, seek=None, *, awaiting_opponent: bool = False) -> str:
     """Copy shown while seeking or joining, before the stream accepts.
 
     ``seek`` is the posted (or join) parameters. NEW lists clock, rated,
     color, host:user, and rating range so the wait screen matches the seek.
     Ongoing/challenge join fills a dummy 10+5 on ``LichessSeek``; that clock
     is not the remote game's and is omitted. Host:user is still shown.
+
+    ``awaiting_opponent`` is a challenge the board sent: there is no game to
+    load until the other player accepts, and that wait is open-ended, so it
+    must not read as a join already under way.
     """
     from .player import LichessGameMode
     from .hosts import credential_label, get_host, parse_credential_id
@@ -202,7 +206,7 @@ def lichess_waiting_message(mode, seek=None) -> str:
         headline = "Connecting..."
         include_clock = False
     elif mode == LichessGameMode.CHALLENGE:
-        headline = "Loading\nChallenge..."
+        headline = "Waiting for\nopponent..." if awaiting_opponent else "Loading\nChallenge..."
         include_clock = False
     else:
         headline = "Waiting for game"
@@ -249,6 +253,68 @@ def _human_and_lichess(player1, player2):
     raise LichessSeekError("pairing", "Need Human vs\nLichess")
 
 
+def lichess_account_id(settings) -> str:
+    """The saved Lichess credential the board plays and browses as.
+
+    Chosen in the lobby's Account row and stored in the game settings rather
+    than on a player slot: a lobby Seek New Game runs with a pairing derived for
+    that game, which no saved slot describes, so a per-slot binding had nowhere
+    to live and the pick was discarded. Empty means the default credential.
+    """
+    return getattr(settings.game, "lichess_account", "") or ""
+
+
+def has_lichess_slot(player1, player2) -> bool:
+    """Whether either Players slot is configured to play on Lichess.
+
+    Says nothing about which account plays: that is the lobby's, and one board
+    plays as one account whichever slot the remote player occupies.
+    """
+    return any(getattr(player, "type", "") == "lichess" for player in (player1, player2))
+
+
+def seek_color_from_settings(player1, player2) -> str:
+    """Color a new seek asks Lichess for: the account's side, not the human's.
+
+    Lichess reads ``color`` as the side the *seeking* account wants, and the
+    account is the human's opponent, so a human who chose White seeks Black.
+    Player 1 owns the color control, so its value is the account's color when
+    Lichess sits in slot 1 and the opposite when it sits in slot 2.
+
+    Only a pairing with exactly one Lichess slot states a color. Anything else
+    -- a lobby Seek New Game over two engines, two humans, or two Lichess slots
+    -- was never configured as a Lichess game, so no side was chosen for it and
+    it seeks ``random`` rather than waiting for a color nobody asked for.
+    """
+    slots = [p for p in (player1, player2) if getattr(p, "type", "") == "lichess"]
+    if len(slots) != 1:
+        return "random"
+    lichess = slots[0]
+    player1_color = (getattr(player1, "color", "") or "").lower()
+    if player1_color not in ("white", "black"):
+        return "random"
+    if lichess is player1:
+        return player1_color
+    return "black" if player1_color == "white" else "white"
+
+
+def epaper_is_flipped(player1_color: str, human_is_white: bool) -> bool:
+    """Whether the e-paper draws the board from Black's side.
+
+    The pieces are set up and the player has taken a side before Lichess names
+    a color, and the side taken is the one the Players color control describes
+    (player 1's). A match that hands the human the *other* color puts the pieces
+    they are playing at the far edge of the board, so the display turns around
+    with them rather than the pieces being re-set. Being handed the color that
+    was chosen -- Black included -- leaves the display as it was.
+
+    Only Lichess can produce that disagreement: a local game's human plays the
+    color the control names, so nothing there ever flips.
+    """
+    player1_is_white = (player1_color or "white").strip().lower() != "black"
+    return player1_is_white != human_is_white
+
+
 def _seek_clock(game) -> tuple[int, int]:
     """Map Game time control to Lichess (minutes, increment).
 
@@ -272,33 +338,40 @@ def _seek_clock(game) -> tuple[int, int]:
 
 
 def lichess_seek_from_settings(
-    settings, rating_range: str = "", *, require_clock: bool = True
+    settings,
+    rating_range: str = "",
+    *,
+    require_clock: bool = True,
+    lobby_seek: bool = False,
 ) -> LichessSeek:
     """Build a seek from AllSettings-like player/game objects plus account range.
 
-    ``rating_range`` is the bound credential's range (empty = unrestricted).
-    Engine ``elo`` is not consulted. Host comes from the Lichess slot's
-    ``account`` id (``dev:bob`` → lichess.dev), not from Game settings.
+    ``rating_range`` is the chosen credential's range (empty = unrestricted).
+    Engine ``elo`` is not consulted. The account is the lobby's
+    (``game.lichess_account``) and the host follows from its id (``dev:bob`` →
+    lichess.dev), not from a player slot or a Game toggle.
 
     ``require_clock`` is True for a NEW seek (Lichess ``board.seek`` needs a
     simple Fischer pair). Ongoing/challenge join already has a remote clock, so
     a local delay/staged/untimed control must not block connecting.
 
-    Color is always ``random``. White stays on player 1's physical side;
-    Lichess names the account's color after the pieces are set.
+    ``lobby_seek`` marks a start the Lichess lobby asked for outright. Those
+    buttons seek whatever the Players slots say, so the Human vs Lichess pairing
+    the other paths require is not demanded of them; the caller runs the game
+    with the pairing ``effective_lichess_players`` derives. Color still comes
+    from the saved slots, so a lobby seek over a pairing that names no Lichess
+    slot has no color preference.
     """
-    _human, lichess = _human_and_lichess(settings.player1, settings.player2)
+    if not lobby_seek:
+        # Validation only: raises unless the slots are exactly Human vs Lichess.
+        # The account no longer comes from the slot it returns.
+        _human_and_lichess(settings.player1, settings.player2)
     if require_clock:
         minutes, increment = _seek_clock(settings.game)
     else:
         minutes, increment = 10, 5
-    # White stays on player 1's physical side. Lichess names the account's
-    # color after the pieces are already set, so a new seek is random rather
-    # than the Players color control (which would wait for a side the board
-    # cannot re-setup for). Human sits White or Black after the stream
-    # connects; the e-paper rotates if they sit Black.
-    color = "random"
-    account_id = getattr(lichess, "account", "") or ""
+    color = seek_color_from_settings(settings.player1, settings.player2)
+    account_id = lichess_account_id(settings)
     host_id, _username = parse_credential_id(account_id)
     return LichessSeek(
         time_minutes=minutes,

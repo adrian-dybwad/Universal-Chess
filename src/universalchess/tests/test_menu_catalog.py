@@ -558,11 +558,14 @@ def test_packaged_catalog_exposes_lichess_account_type():
 
 
 def test_lichess_lobby_catalog_children_match_board_hierarchy():
-    """players.lichess children are the web lobby: Account, Ongoing, Challenges, New Game.
+    """players.lichess children: Account, Rated, Ongoing, Challenges, New Game.
 
     Why: the web Players card walks this list so it stays in lockstep with the
-    board lobby. Accounts is nested under Account, not a sibling. Regression: a
-    row drops, Play returns as a wrapper, or Accounts sits on the lobby itself.
+    board lobby. Accounts is nested under Account, not a sibling, and Rated sits
+    under the account whose rating the seek puts at stake -- it governs every
+    seek, including one from a pairing no Lichess slot describes, so a player
+    slot could not hold it. Regression: a row drops, Play returns as a wrapper,
+    Accounts sits on the lobby itself, or Rated goes back to the player card.
     """
     from universalchess.players.lichess.lobby import (
         CHALLENGES_HELP,
@@ -575,11 +578,18 @@ def test_lichess_lobby_catalog_children_match_board_hierarchy():
     assert node["boardLabel"] == "Lichess\nLobby"
     assert catalog.child_ids("players.lichess") == [
         "lichess.account",
+        "field.lichess.rated",
         "lichess.ongoing",
         "lichess.challenges",
         "lichess.new_game",
     ]
     assert catalog.child_ids("lichess.account") == ["players.accounts"]
+    rated = catalog.get_node("field.lichess.rated")
+    assert rated["type"] == "toggle"
+    assert rated["bind"] == {"store": "game", "key": "lichess_rated"}
+    # No player-scoped visibility: the lobby has no slot in context, and the
+    # setting applies to every seek the board posts.
+    assert "visibleWhen" not in rated
     assert catalog.get_node("lichess.ongoing")["help"] == ONGOING_GAMES_HELP
     assert catalog.get_node("lichess.challenges")["help"] == CHALLENGES_HELP
     assert catalog.get_node("lichess.account")["label"] == "Account"
