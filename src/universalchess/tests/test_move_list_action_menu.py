@@ -69,6 +69,7 @@ def _bare_display_manager():
     """DisplayManager with only the attributes the methods under test use."""
     manager = object.__new__(DisplayManager)
     manager.analysis_widget = None
+    manager.move_list_widget = None
     manager._clock = MagicMock()
     manager._clock_paused_for_menu = False
     manager._menu_active = False
@@ -272,7 +273,7 @@ def test_move_review_active_when_a_ply_is_highlighted():
     never opens the overlay.
     """
     manager = _bare_display_manager()
-    manager.analysis_widget = _FakeAnalysis(ply=3)
+    manager.move_list_widget = _FakeAnalysis(ply=3)
     assert manager.is_move_review_active() is True
 
 
@@ -285,19 +286,19 @@ def test_move_review_inactive_on_the_analysis_view():
     None.
     """
     manager = _bare_display_manager()
-    manager.analysis_widget = _FakeAnalysis(ply=None)
+    manager.move_list_widget = _FakeAnalysis(ply=None)
     assert manager.is_move_review_active() is False
 
 
-def test_move_review_inactive_without_analysis_widget():
+def test_move_review_inactive_without_move_list_widget():
     """Layouts without a move list have no review mode.
 
     Why: a clock-only or board-only layout must not claim a highlighted ply.
     How a regression manifests: is_move_review_active raises or returns True
-    when analysis_widget is None.
+    when move_list_widget is None.
     """
     manager = _bare_display_manager()
-    manager.analysis_widget = None
+    manager.move_list_widget = None
     assert manager.is_move_review_active() is False
 
 

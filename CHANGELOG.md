@@ -595,6 +595,13 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Move list appears with analysis off**: UP/DOWN during a game highlighted
+  a played move in a list that lived inside the analysis widget, so turning
+  Show Analysis or Live Analysis off hid or never created it and the arrows
+  did nothing. The move list is now its own widget, always built for a game,
+  and UP/DOWN always pages it. Wrapping home restores the board; the eval
+  panel only comes back when Show Analysis is on.
+
 - **Lichess lobby accept left the board on the waiting splash**: After an
   opponent took the board's seek (or challenged the account from the lobby),
   Lichess already had a live game -- the web player sat on a board waiting for

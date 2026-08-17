@@ -24,6 +24,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "BallWidget": ("universalchess.epaper.ball", "BallWidget"),
     "ChessBoardWidget": ("universalchess.epaper.chess_board", "ChessBoardWidget"),
     "GameAnalysisWidget": ("universalchess.epaper.game_analysis", "GameAnalysisWidget"),
+    "MoveListWidget": ("universalchess.epaper.move_list", "MoveListWidget"),
     "CheckerboardWidget": ("universalchess.epaper.checkerboard", "CheckerboardWidget"),
     "BackgroundWidget": ("universalchess.epaper.background", "BackgroundWidget"),
     "SplashScreen": ("universalchess.epaper.splash_screen", "SplashScreen"),

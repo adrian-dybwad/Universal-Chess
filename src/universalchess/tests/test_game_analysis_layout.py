@@ -13,7 +13,6 @@ import unittest
 from PIL import Image
 
 from universalchess.epaper.game_analysis import GameAnalysisWidget
-from universalchess.state.chess_game import ChessGameState
 from universalchess.utils.accuracy import AccuracySummary
 
 
@@ -53,8 +52,6 @@ def _widget(summary, *, bottom_color="white", history=None, score=0.0,
         bottom_color=bottom_color,
         show_graph=True,
         analysis_state=_FakeAnalysis(summary, history, score, is_mate, mate_in),
-        game_state=ChessGameState(),
-        sprites=None,
     )
 
 

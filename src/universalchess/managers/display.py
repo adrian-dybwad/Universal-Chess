@@ -9,7 +9,7 @@ Note: This is distinct from the lower-level epaper Manager class which handles
 framebuffer rendering. This DisplayManager orchestrates game-specific widgets.
 
 Responsibilities:
-- Create and manage ChessBoardWidget, GameAnalysisWidget
+- Create and manage ChessBoardWidget, GameAnalysisWidget, MoveListWidget
 - Handle promotion menu display and selection
 - Handle back button menu (resign/draw/cancel)
 - Restore display after menu interactions
@@ -37,6 +37,7 @@ from universalchess.epaper.text_scale import DEFAULT_TEXT_SIZE, read_text_size
 _widgets_loaded = False
 _ChessBoardWidget = None
 _GameAnalysisWidget = None
+_MoveListWidget = None
 _ChessClockWidget = None
 _IconMenuWidget = None
 _IconMenuEntry = None
@@ -49,7 +50,8 @@ _CoachTextWidget = None
 
 def _load_widgets():
     """Lazily load widget classes."""
-    global _widgets_loaded, _ChessBoardWidget, _GameAnalysisWidget, _ChessClockWidget
+    global _widgets_loaded, _ChessBoardWidget, _GameAnalysisWidget, _MoveListWidget
+    global _ChessClockWidget
     global _IconMenuWidget, _IconMenuEntry, _SplashScreen
     global _GameOverWidget, _AlertWidget, _SetupStatusWidget, _CoachTextWidget
     
@@ -57,7 +59,7 @@ def _load_widgets():
         return
     
     from universalchess.epaper import (
-        ChessBoardWidget, GameAnalysisWidget, ChessClockWidget,
+        ChessBoardWidget, GameAnalysisWidget, MoveListWidget, ChessClockWidget,
         IconMenuWidget, IconMenuEntry, SplashScreen,
         AlertWidget, SetupStatusWidget
     )
@@ -65,6 +67,7 @@ def _load_widgets():
     from universalchess.epaper.coach_text import CoachTextWidget
     _ChessBoardWidget = ChessBoardWidget
     _GameAnalysisWidget = GameAnalysisWidget
+    _MoveListWidget = MoveListWidget
     _ChessClockWidget = ChessClockWidget
     _IconMenuWidget = IconMenuWidget
     _IconMenuEntry = IconMenuEntry
@@ -99,6 +102,7 @@ class DisplayManager:
         chess_board_widget: The chess board display widget
         clock_widget: The chess clock / turn indicator widget
         analysis_widget: The game analysis/evaluation widget
+        move_list_widget: The paged move-history scoresheet
         analysis_engine: UCI engine for position analysis
     """
 
@@ -135,7 +139,9 @@ class DisplayManager:
             show_board: If True, show the chess board widget
             show_clock: If True, show the clock/turn indicator widget
             show_graph: If True, show the history graph in analysis widget
-            analysis_mode: If True, create analysis engine/widget (may be hidden by show_analysis)
+            analysis_mode: If True, create the analysis engine and eval widget
+                (may be hidden by show_analysis). The move-list widget is always
+                created.
             led_from_to_hint_callback: LED callback (from_sq, to_sq, repeat) for hint-style
                                        LEDs (slow speed, dim intensity). Used for check/queen alerts.
             led_off_callback: LED callback () to turn off all LEDs. Used for pause.
@@ -187,7 +193,7 @@ class DisplayManager:
         # the tip is dismissed, rather than only the board.
         self._review_coach_text = ""
         self._game_state.on_alert_clear(self._on_hint_alert_cleared)
-        # Move-history notation for the analysis widget's paged move list;
+        # Move-history notation for the move-list widget;
         # refreshed from settings in _reload_display_settings before each rebuild.
         self._notation = "figurine"
         # Display text size (small/medium/large) scaling the coach panel and
@@ -199,6 +205,7 @@ class DisplayManager:
         self.chess_board_widget = None
         self.clock_widget = None
         self.analysis_widget = None
+        self.move_list_widget = None
         self.coach_text_widget = None
         self._analysis_engine_handle = None  # EngineHandle from registry
         # A ``?`` press awaiting the analysis of a specific position, as
@@ -371,7 +378,9 @@ class DisplayManager:
         
         Widget creation rules:
         - Clock widget: Always created if time_control > 0, hidden if show_clock=False
-        - Analysis widget: Always created if analysis mode enabled, hidden if show_analysis=False
+        - Analysis widget: Created if analysis mode enabled, hidden if show_analysis=False
+        - Move-list widget: Always created (hidden until UP/DOWN selects a ply)
+        - Coach-text widget: Always created (hidden until a ply is selected)
         - Board widget: Always created, hidden if show_board=False
         """
         # Reload settings from config in case they changed (e.g., via display menu)
@@ -490,9 +499,6 @@ class DisplayManager:
                 0, analysis_y, 128, analysis_height if analysis_height > 0 else 80, board.display_manager.update,
                 bottom_color=bottom_color,
                 show_graph=self._show_graph,
-                notation=self._notation,
-                game_state=self._game_state,
-                text_size=self._text_size,
             )
             
             if not self._show_analysis:
@@ -500,29 +506,41 @@ class DisplayManager:
             
             board.display_manager.add_widget(self.analysis_widget)
             log.info(f"[DisplayManager] Analysis widget initialized (visible={self._show_analysis}, graph={self._show_graph})")
-
-            # Coach-text widget occupies the board area; shown while a move is
-            # selected (board hidden) and hidden on the analysis view. Created
-            # alongside the analysis widget so the selection callback can swap
-            # them. Starts hidden.
-            self.coach_text_widget = _CoachTextWidget(
-                0, 16, 128, 128, board.display_manager.update,
-                text_size=self._text_size,
-            )
-            board.display_manager.add_widget(self.coach_text_widget)
-
-            # A move-history selection shrinks the clock and grows the analysis
-            # widget (compact layout), hides the board, and shows the coach text
-            # for the selected ply; the analysis view (selection 0) restores the
-            # full layout and the board. Both widgets are recreated together on a
-            # settings rebuild, so this wires the current pair each time.
-            self.analysis_widget.set_selection_change_callback(
-                self._on_analysis_selection_change
-            )
         else:
             self.analysis_widget = None
-            self.coach_text_widget = None
             log.info("[DisplayManager] Analysis mode disabled - no analysis widget created")
+
+        # Move list is independent of analysis: always created so UP/DOWN can
+        # page the scoresheet even when the eval panel is off or never built.
+        # Occupies the same slot as analysis when that panel is shown; compact
+        # layout repositions it into the space reclaimed from the clock.
+        move_list_height = analysis_height if analysis_height > 0 else 80
+        self.move_list_widget = _MoveListWidget(
+            0, analysis_y, 128, move_list_height, board.display_manager.update,
+            notation=self._notation,
+            game_state=self._game_state,
+            text_size=self._text_size,
+        )
+        board.display_manager.add_widget(self.move_list_widget)
+        log.info("[DisplayManager] Move-list widget initialized (hidden until a ply is selected)")
+
+        # Coach-text widget occupies the board area; shown while a move is
+        # selected (board hidden) and hidden on the home/board view. Always
+        # created with the move list so review works with analysis off.
+        self.coach_text_widget = _CoachTextWidget(
+            0, 16, 128, 128, board.display_manager.update,
+            text_size=self._text_size,
+        )
+        board.display_manager.add_widget(self.coach_text_widget)
+
+        # A move-history selection shrinks the clock and grows the move list
+        # (compact layout), hides the board, and shows the coach text for the
+        # selected ply; home (selection 0) restores the full layout and the
+        # board. Recreated together on a settings rebuild, so this wires the
+        # current pair each time.
+        self.move_list_widget.set_selection_change_callback(
+            self._on_analysis_selection_change
+        )
         
         # Create alert widget for CHECK/QUEEN warnings (y=144, overlays clock widget)
         # Alert widget is hidden by default and shown when check or queen threat occurs
@@ -785,8 +803,8 @@ class DisplayManager:
             return
         self._hint_coach_active = False
         review_active = (
-            self.analysis_widget is not None
-            and self.analysis_widget.selected_ply() is not None
+            self.move_list_widget is not None
+            and self.move_list_widget.selected_ply() is not None
         )
         if review_active:
             # Restore the review comment that the tip interrupted; the review owns
@@ -830,14 +848,16 @@ class DisplayManager:
         self.hide_hint_coach()
 
     def step_analysis_selection(self, direction: int) -> bool:
-        """Step the analysis widget's move selection via the UP/DOWN keys.
+        """Step the move-list widget's ply selection via the UP/DOWN keys.
 
-        Selection 0 is the eval/graph view; 1..N select an individual played move
-        (ply), whose row is highlighted while the board area is replaced by that
-        move's coach statement. UP (direction -1) and DOWN (direction +1) wrap
-        around, so stepping past the last move returns to the analysis view and
-        restores the board. No-op (returns False) when there is no analysis
-        widget or it is hidden, so the caller can fall back to normal key routing.
+        Selection 0 is the board (and eval panel, if shown); 1..N select an
+        individual played move (ply), whose row is highlighted while the board
+        area is replaced by that move's coach statement. UP (direction -1) and
+        DOWN (direction +1) wrap around, so stepping past the last move returns
+        home and restores the board. No-op (returns False) when there is no
+        move-list widget, so the caller can fall back to normal key routing.
+        The list is independent of the analysis widget: UP/DOWN still consume
+        the key when Show Analysis or Live Analysis is off.
 
         Args:
             direction: -1 to step up, +1 to step down.
@@ -845,9 +865,9 @@ class DisplayManager:
         Returns:
             True if the key was consumed by the selection, False otherwise.
         """
-        if self.analysis_widget is None or not self.analysis_widget.visible:
+        if self.move_list_widget is None:
             return False
-        self.analysis_widget.step_selection(direction)
+        self.move_list_widget.step_selection(direction)
         return True
 
     def select_analysis_ply(self, ply: int) -> bool:
@@ -857,39 +877,40 @@ class DisplayManager:
         coach-statement fetch via the selection-change callback -- but from a
         saved value rather than a key press. Used to bring the game screen back
         up on the exact move the user was reviewing after a restart. No-op
-        (returns False) when there is no analysis widget.
+        (returns False) when there is no move-list widget.
 
         Args:
             ply: 1-based ply to select; 0 (or less) selects the board view.
 
         Returns:
-            True if applied, False when there is no analysis widget.
+            True if applied, False when there is no move-list widget.
         """
-        if self.analysis_widget is None:
+        if self.move_list_widget is None:
             return False
-        self.analysis_widget.select_ply(ply)
+        self.move_list_widget.select_ply(ply)
         return True
 
     def current_analysis_selection(self) -> int:
-        """Return the current analysis/coach selection (0 = board view; N = ply).
+        """Return the current move-list selection (0 = board view; N = ply).
 
         Used to persist the reviewed move so a restart reopens the same coach
-        panel. Returns 0 when there is no analysis widget.
+        panel. Returns 0 when there is no move-list widget.
         """
-        if self.analysis_widget is None:
+        if self.move_list_widget is None:
             return 0
-        return self.analysis_widget.selection
+        return self.move_list_widget.selection
 
     def is_move_review_active(self) -> bool:
-        """True when a played move is highlighted in the analysis move list.
+        """True when a played move is highlighted in the move list.
 
-        UP/DOWN review selects a ply (1..N); selection 0 is the eval/board view.
-        A long-press OK opens the takeback/new-game overlay only while this is
-        True, so a short OK on the board view still pages coach text or refreshes.
+        UP/DOWN review selects a ply (1..N); selection 0 is the board (and eval
+        panel, if shown). A long-press OK opens the takeback/new-game overlay
+        only while this is True, so a short OK on the board view still pages
+        coach text or refreshes.
         """
         return (
-            self.analysis_widget is not None
-            and self.analysis_widget.selected_ply() is not None
+            self.move_list_widget is not None
+            and self.move_list_widget.selected_ply() is not None
         )
 
     def set_coach_selection_callback(self, callback) -> None:
@@ -902,24 +923,36 @@ class DisplayManager:
         self._coach_selection_callback = callback
 
     def _on_analysis_selection_change(self, selection: int) -> None:
-        """Swap board/coach and clock layout when the analysis selection changes.
+        """Swap board/coach, eval panel, and clock layout when the ply changes.
 
-        selection 0 (analysis view): restore the full clock layout and the chess
-        board, hide the coach text. A selected ply: shrink the clock / grow the
-        move list, hide the board, show the coach-text panel, and notify the
-        coach coordinator so it resolves the statement for that ply.
+        selection 0 (home): restore the full clock layout and the chess board,
+        hide the move list and coach text, and show the eval panel only when
+        Show Analysis is on. A selected ply: shrink the clock / grow the move
+        list, hide the eval panel and board, show the coach-text panel, and
+        notify the coach coordinator so it resolves the statement for that ply.
         """
-        self._apply_compact_layout(selection != 0)
+        reviewing = selection != 0
+        self._apply_compact_layout(reviewing)
 
-        ply = self.analysis_widget.selected_ply() if self.analysis_widget else None
+        ply = self.move_list_widget.selected_ply() if self.move_list_widget else None
         coach = self.coach_text_widget
         if ply is None:
+            if self.move_list_widget is not None:
+                self.move_list_widget.hide()
+            if self._show_analysis and self.analysis_widget is not None:
+                self.analysis_widget.show()
+            elif self.analysis_widget is not None:
+                self.analysis_widget.hide()
             if coach is not None:
                 coach.hide()
             # Only restore the board if the board is enabled in settings.
             if self._show_board and self.chess_board_widget is not None:
                 self.chess_board_widget.show()
         else:
+            if self.analysis_widget is not None:
+                self.analysis_widget.hide()
+            if self.move_list_widget is not None:
+                self.move_list_widget.show()
             if self.chess_board_widget is not None:
                 self.chess_board_widget.hide()
             if coach is not None:
@@ -944,22 +977,23 @@ class DisplayManager:
             self.coach_text_widget.set_text(text)
 
     def _apply_compact_layout(self, compact: bool) -> None:
-        """Resize the clock and analysis widgets for the compact page layout.
+        """Resize the clock and move-list widgets for the compact page layout.
 
-        Called on every analysis page change: when a move-history page is shown
-        (compact=True) the clock shrinks and the analysis widget grows into the
-        reclaimed space so more moves fit; the analysis page (compact=False)
-        restores the full layout.
+        Called on every move-list selection change: when a ply is highlighted
+        (compact=True) the clock shrinks and the move-list widget grows into the
+        reclaimed space so more moves fit; home (compact=False) restores the
+        full clock. The eval panel keeps its normal geometry and is only
+        shown/hidden -- it is never the compact-layout target.
 
         Only geometry is mutated here and caches are invalidated -- no refresh is
-        requested. The refresh is driven by the analysis widget's own
-        page-change update (turn_page/clamp call invalidate_and_update right
-        after this callback), so paging performs a single coordinated redraw that
-        re-renders both resized widgets.
+        requested. The refresh is driven by the move-list widget's own
+        selection-change update (step_selection/select_ply call
+        invalidate_and_update right after this callback), so paging performs a
+        single coordinated redraw that re-renders both resized widgets.
         """
         clock = self.clock_widget
-        analysis = self.analysis_widget
-        if clock is None or analysis is None:
+        move_list = self.move_list_widget
+        if clock is None:
             return
 
         layout = compute_clock_analysis_layout(
@@ -974,13 +1008,17 @@ class DisplayManager:
             clock.height = layout.clock_height
             clock.invalidate_cache()
 
-        if analysis.y != layout.analysis_y or analysis.height != layout.analysis_height:
-            analysis.y = layout.analysis_y
-            analysis.height = layout.analysis_height
-            analysis.invalidate_cache()
+        # Compact grows the list into the reclaimed clock space. Home leaves the
+        # (hidden) list alone: applying the non-compact analysis slot would set
+        # its height to 0 when Show Analysis is off.
+        if compact and move_list is not None:
+            if move_list.y != layout.analysis_y or move_list.height != layout.analysis_height:
+                move_list.y = layout.analysis_y
+                move_list.height = layout.analysis_height
+                move_list.invalidate_cache()
 
         # Untimed clock also drops its indicator circle when compact. Suppress its
-        # own refresh; the analysis page-change update repaints both widgets.
+        # own refresh; the move-list selection update repaints both widgets.
         clock.set_hide_turn_indicator(compact, refresh=False)
 
     def set_clock_times(self, white_seconds: int, black_seconds: int) -> None:
@@ -1769,6 +1807,13 @@ class DisplayManager:
                 log.info("[DisplayManager] Analysis widget cleaned up")
             except Exception as e:
                 log.debug(f"[DisplayManager] Error cleaning up analysis widget: {e}")
+
+        if self.move_list_widget:
+            try:
+                self.move_list_widget.cleanup()
+                log.info("[DisplayManager] Move-list widget cleaned up")
+            except Exception as e:
+                log.debug(f"[DisplayManager] Error cleaning up move-list widget: {e}")
         
         # Unsubscribe the hint-coach alert-clear observer so a rebuilt manager
         # does not accumulate stale observers on the game-state singleton.

@@ -1,7 +1,7 @@
 """Coach statement widget shown in the chess-board area.
 
 Occupies the same 128x128 region as the chess board (x=0, y=16). While a move is
-selected in the analysis widget the board is hidden and this widget shows the
+selected in the move-list widget the board is hidden and this widget shows the
 AI coach statement for that move; on the analysis view the board is restored and
 this widget is hidden. Hidden by default so it never draws until a move is
 selected.

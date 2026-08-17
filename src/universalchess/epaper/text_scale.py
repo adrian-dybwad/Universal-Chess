@@ -1,8 +1,8 @@
 """Text-size scaling for e-paper widgets.
 
 A single Display > Text Size setting (``small`` / ``medium`` / ``large``) scales
-the font sizes of widgets that opt in: the coach statement panel, the analysis
-move list, game-over and setup status, the chess clock labels, the help dialog,
+the font sizes of widgets that opt in: the coach statement panel, the move
+list, game-over and setup status, the chess clock labels, the help dialog,
 info overlays, and icon menus (which also raise their minimum row height so
 Large can use extra space on the buttons).
 

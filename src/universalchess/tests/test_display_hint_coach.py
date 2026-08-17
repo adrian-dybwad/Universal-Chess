@@ -79,7 +79,8 @@ def _manager(*, show_board=True, review_ply=None):
     manager.coach_text_widget = _FakeWidget()
     manager.chess_board_widget = _FakeWidget()
     manager.chess_board_widget.visible = True  # board is up during play
-    manager.analysis_widget = _FakeAnalysis(review_ply)
+    manager.analysis_widget = None
+    manager.move_list_widget = _FakeAnalysis(review_ply)
     manager._show_board = show_board
     manager._hint_coach_active = False
     manager._review_coach_text = ""
@@ -191,7 +192,7 @@ def test_review_taking_over_restores_review_comment_on_hide():
     manager = _manager()
     manager.show_hint_coach("Center control.")
     manager._review_coach_text = "Review: solid development."
-    manager.analysis_widget = _FakeAnalysis(ply=2)  # review selected a ply meanwhile
+    manager.move_list_widget = _FakeAnalysis(ply=2)  # review selected a ply meanwhile
     manager.hide_hint_coach()
     assert manager._hint_coach_active is False
     assert manager.chess_board_widget.visible is False

@@ -1,7 +1,7 @@
 """Tests for the Display > Text Size scaling helper.
 
 Guards the single source of truth mapping a text-size name to pixel font sizes,
-shared by the coach panel and analysis move list. The key invariant is that
+shared by the coach panel and move list. The key invariant is that
 ``medium`` is the identity factor, so adopting the setting cannot silently change
 the existing (unscaled) e-paper layouts.
 """

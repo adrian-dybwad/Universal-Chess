@@ -2,7 +2,7 @@
 
 Why these tests exist
 ---------------------
-Both the analysis move list and the hint alert draw moves in the selected
+Both the move list and the hint alert draw moves in the selected
 notation, compositing piece sprites for figurine glyphs (the e-paper font has
 none). This pins the width math used for centering and the two draw paths
 (sprite present vs. letter fallback) so a regression -- a wrong advance that

@@ -7273,9 +7273,12 @@ def key_callback(key_id):
                 takeback_is_available,
             )
             reviewing = display_manager.is_move_review_active()
-            if should_open_move_list_action_menu(reviewing=reviewing, long_tick=True):
-                ply = display_manager.analysis_widget.selected_ply()
-                num_plies = display_manager.analysis_widget.num_plies()
+            if (
+                should_open_move_list_action_menu(reviewing=reviewing, long_tick=True)
+                and display_manager.move_list_widget is not None
+            ):
+                ply = display_manager.move_list_widget.selected_ply()
+                num_plies = display_manager.move_list_widget.num_plies()
                 player_manager = None
                 if protocol_manager is not None and protocol_manager.game_manager is not None:
                     player_manager = protocol_manager.game_manager.player_manager
@@ -7436,15 +7439,15 @@ def key_callback(key_id):
             return
 
         if key_id in (board.Key.UP, board.Key.DOWN) and display_manager:
-            # UP/DOWN step the analysis widget's move selection (selection 0 = the
-            # eval/graph view with the board shown, 1..N select a played move and
-            # replace the board with that move's coach statement), wrapping
-            # around. Only consume the key when the analysis widget is visible;
-            # otherwise fall through so the arrows still reach the game manager.
+            # UP/DOWN step the move-list widget's ply selection (selection 0 = the
+            # board, with the eval panel shown if analysis is on; 1..N select a
+            # played move and replace the board with that move's coach statement),
+            # wrapping around. Always consume the key when the move list exists,
+            # including when analysis is off.
             direction = -1 if key_id == board.Key.UP else 1
             if display_manager.step_analysis_selection(direction):
                 # Persist the reviewed move so a restart reopens the same coach
-                # panel (or the board when back on the analysis view).
+                # panel (or the board when back on home).
                 _record_session_view(
                     VIEW_GAME,
                     analysis_selection=display_manager.current_analysis_selection(),

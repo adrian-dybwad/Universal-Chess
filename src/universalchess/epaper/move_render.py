@@ -3,7 +3,7 @@
 The bundled e-paper font has no figurine piece glyphs (U+2654..2658), so any
 widget that shows a move in figurine notation composites the board's piece
 sprites in place of the glyphs. This module centralizes that layout so the
-analysis move list and the hint alert render figurine identically. Non-figurine
+move list and the hint alert render figurine identically. Non-figurine
 notations (SAN/LAN/UCI) contain no glyphs and draw as a single text run.
 """
 
