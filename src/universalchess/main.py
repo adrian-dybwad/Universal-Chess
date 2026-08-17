@@ -8566,6 +8566,21 @@ def main():
                             log.info("[App] Lichess seek after board reset declined")
                             _return_to_menu("Lichess seek declined")
                             continue
+                        if action == "lobby":
+                            # The pieces are back at the start and the lobby was
+                            # asked for, so the game is over either way: leave it
+                            # before the lobby is drawn, then start whatever the
+                            # lobby stashes (ongoing game, challenge, or seek).
+                            log.info("[App] Lichess lobby opened after board reset")
+                            _return_to_menu("Lichess lobby")
+                            lobby_result = _handle_lichess_menu()
+                            if is_break_result(lobby_result):
+                                _enter_game(
+                                    explicit_lichess_seek=_is_play_start(lobby_result)
+                                )
+                            elif _signal_from(lobby_result) == "START_GAME":
+                                _start_game_mode()
+                            continue
                         if action == "seek":
                             # Unconditional: the prompt above already decided,
                             # and the slots that gate _stash_explicit_lichess_seek

@@ -692,8 +692,11 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   ``board.seek`` even though the user never chose New Game. Those paths now
   attach an ongoing game if one exists and do not list a new seek. PLAY, lobby
   Seek New Game, and web New Game still seek immediately. Returning the pieces to
-  the opening during a Lichess game asks Seek / Cancel (Cancel is the default);
-  Cancel returns to the menu without seeking.
+  the opening during a Lichess game asks what to do -- Lichess Lobby, Seek New
+  Game, or Cancel, with Cancel highlighted. Cancel returns to the menu without
+  seeking, and Lichess Lobby opens the lobby, because a board set back to the
+  opening is as often the start of resuming an ongoing game or answering a
+  challenge as it is of posting another seek.
 
 - **Incoming Lichess challenges during a seek ask before accepting**: A lobby
   seek is the board's terms. Clicking the account in the lobby (rather than
@@ -757,7 +760,7 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   that was configured. Those rows read Seek New Game on
   the board and on the web, separating them from the New Game that starts
   whichever players Settings describes. Returning the pieces to the opening
-  during such a game asks Seek / Cancel like any other Lichess game: that prompt
+  during such a game asks the same question as any other Lichess game: that prompt
   used to read the saved slots, which a lobby game's pairing does not appear in,
   so a reset would have abandoned the game in progress for a local one without
   asking.

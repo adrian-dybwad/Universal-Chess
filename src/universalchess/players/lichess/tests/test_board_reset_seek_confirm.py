@@ -1,19 +1,21 @@
-"""Board-reset during a Lichess game must confirm before posting a new seek.
+"""Board-reset during a Lichess game must ask before posting a new seek.
 
 Why these tests exist
 ---------------------
 PLAY, lobby New Game, and web New Game are explicit and seek immediately.
 Setting the pieces back to the start is not: it rebuilds through
 ``_start_game_mode`` with no join stash, which posts a new seek. That
-implicit path must ask Seek/Cancel (Cancel default) and leave the game
-without seeking when the user declines.
+implicit path must ask what to do (Cancel default) and leave the game without
+seeking when the user declines. Seeking is not the only thing wanted there --
+an ongoing game, a challenge, or a different account are all in the lobby --
+so the lobby is offered beside it.
 """
 
 from universalchess.managers.menu import MenuSelection
 from universalchess.players.lichess.lobby import (
     back_cancels_unready_game_start,
     board_reset_rebuild_action,
-    confirm_lichess_seek,
+    choose_lichess_reset_action,
     explicit_lichess_seek_join,
     skip_unsolicited_lichess_start,
 )
@@ -34,34 +36,45 @@ class _ScriptedMenuManager:
         return self.show_results.pop(0)
 
 
-def test_confirm_lichess_seek_true_only_on_seek_choice():
-    """Only the explicit Seek row posts a seek; Cancel and BACK do not.
+def test_reset_action_follows_the_row_that_was_chosen():
+    """Each row means one thing; BACK means the same as Cancel.
 
-    Why: a stray TICK on the confirmation must not register a Lichess seek.
-    How the regression manifests: Cancel or BACK is treated as confirmation.
+    Why: a stray TICK on the prompt must not register a Lichess seek, and the
+    lobby row must not be read as one either. How the regression manifests:
+    Cancel, BACK, or Lobby returns seek, or Lobby is answered as a cancel so
+    the lobby never opens.
     """
-    assert confirm_lichess_seek(
-        _ScriptedMenuManager(show_results=[MenuSelection.from_key("Seek")])
-    ) is True
-    assert confirm_lichess_seek(
-        _ScriptedMenuManager(show_results=[MenuSelection.from_key("Cancel")])
-    ) is False
-    assert confirm_lichess_seek(
-        _ScriptedMenuManager(show_results=[MenuSelection.from_key("BACK")])
-    ) is False
+    for key, expected in (
+        ("Lobby", "lobby"),
+        ("Seek", "seek"),
+        ("Cancel", "cancel"),
+        ("BACK", "cancel"),
+    ):
+        assert choose_lichess_reset_action(
+            _ScriptedMenuManager(show_results=[MenuSelection.from_key(key)])
+        ) == expected
 
 
-def test_confirm_lichess_seek_defaults_highlight_to_cancel():
-    """The confirmation highlights Cancel (index 2 of prompt/Seek/Cancel).
+def test_reset_prompt_lists_lobby_then_seek_then_cancel_and_highlights_cancel():
+    """The lobby comes first, the seek second, Cancel last and highlighted.
 
-    Why: posting a seek is not the default for an accidental TICK.
-    How the regression manifests: the initial index points at Seek.
+    Why: resetting the pieces most often means picking up something else --
+    an ongoing game or a challenge -- and posting a seek is never what an
+    accidental TICK should do. How the regression manifests: the rows come
+    back in another order, the lobby row is missing, the prompt becomes
+    selectable, or the highlight lands on a row that acts.
     """
     manager = _ScriptedMenuManager(show_results=[MenuSelection.from_key("Cancel")])
-    confirm_lichess_seek(manager)
-    assert manager.show_initial_indexes == [2]
-    keys = [e.key for e in manager.shown[0]]
-    assert keys == ["prompt", "Seek", "Cancel"]
+    choose_lichess_reset_action(manager)
+    entries = manager.shown[0]
+    assert [e.key for e in entries] == ["prompt", "Lobby", "Seek", "Cancel"]
+    assert [e.label.replace("\n", " ") for e in entries[1:]] == [
+        "Lichess Lobby",
+        "Seek New Game",
+        "Cancel",
+    ]
+    assert entries[0].selectable is False
+    assert manager.show_initial_indexes == [3]
 
 
 def test_board_reset_rebuild_skips_confirm_when_not_lichess():
@@ -79,12 +92,15 @@ def test_board_reset_rebuild_seeks_only_after_seek_choice():
     """A Lichess board-reset rebuilds only when Seek is chosen.
 
     Why: setting the pieces to start used to seek with no prompt. How the
-    regression manifests: Cancel still returns seek, so a new seek is posted.
+    regression manifests: Cancel still returns seek, so a new seek is posted,
+    or the lobby choice seeks instead of opening the lobby.
     """
     seek = _ScriptedMenuManager(show_results=[MenuSelection.from_key("Seek")])
     cancel = _ScriptedMenuManager(show_results=[MenuSelection.from_key("Cancel")])
+    lobby = _ScriptedMenuManager(show_results=[MenuSelection.from_key("Lobby")])
     assert board_reset_rebuild_action(seek, is_lichess=True) == "seek"
     assert board_reset_rebuild_action(cancel, is_lichess=True) == "menu"
+    assert board_reset_rebuild_action(lobby, is_lichess=True) == "lobby"
 
 
 def test_board_reset_rebuild_without_menu_does_not_seek():

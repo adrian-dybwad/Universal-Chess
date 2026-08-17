@@ -329,13 +329,15 @@ def show_lichess_error(menu_manager, title: str, message: str, show_accounts_but
     return menu_manager.show_menu(entries)
 
 
-def confirm_lichess_seek(menu_manager) -> bool:
-    """Show a Seek/Cancel confirmation and return True only if Seek is chosen.
+def choose_lichess_reset_action(menu_manager) -> str:
+    """Ask what setting the pieces back to the start should do: ``lobby``, ``seek`` or ``cancel``.
 
-    Used when setting the pieces back to the start would post a new Lichess
-    seek. PLAY, lobby New Game, and web New Game are explicit and skip this.
-    Defaults the highlight to Cancel so a stray TICK cannot register a seek;
-    any non-Seek outcome (Cancel, BACK, break) is a refusal.
+    Used when that gesture would otherwise post a new Lichess seek. PLAY, lobby
+    Seek New Game, and web New Game are explicit and skip this. Seeking is only
+    one of the things wanted at that moment -- an ongoing game, a challenge, a
+    different account or a rated change are all in the lobby -- so the lobby is
+    offered first. Cancel is highlighted so a stray TICK cannot register a seek,
+    and anything that is not a row (BACK, break) is a refusal.
     """
     entries = [
         IconMenuEntry(
@@ -346,29 +348,41 @@ def confirm_lichess_seek(menu_manager) -> bool:
             selectable=False,
             font_size=12,
         ),
-        IconMenuEntry(key="Seek", label="Seek", icon_name="play", enabled=True),
+        IconMenuEntry(
+            key="Lobby", label="Lichess\nLobby", icon_name="lichess", enabled=True
+        ),
+        IconMenuEntry(
+            key="Seek", label="Seek New\nGame", icon_name="play", enabled=True
+        ),
         IconMenuEntry(key="Cancel", label="Cancel", icon_name="undo", enabled=True),
     ]
-    result = menu_manager.show_menu(entries, initial_index=2)
+    result = menu_manager.show_menu(entries, initial_index=3)
     key = result.key if hasattr(result, "key") else result
-    return key == "Seek"
+    if key == "Lobby":
+        return "lobby"
+    if key == "Seek":
+        return "seek"
+    return "cancel"
 
 
 def board_reset_rebuild_action(menu_manager, *, is_lichess: bool) -> str:
-    """Decide whether a board-reset player rebuild may start.
+    """Decide what a board-reset player rebuild does.
 
     Setting the pieces back to the start rebuilds a Lichess game through
     ``_start_game_mode``, which posts a new seek. That gesture is not PLAY,
-    lobby New Game, or web New Game, so it needs confirmation. Cancel (or no
-    menu) returns ``menu`` so the caller leaves the game without seeking.
-    Engine/human rebuilds return ``rebuild`` without a prompt. Confirmed
-    Lichess returns ``seek`` so the caller stashes an explicit NEW join.
+    lobby Seek New Game, or web New Game, so it asks first. Cancel (or no menu)
+    returns ``menu`` so the caller leaves the game without seeking, ``lobby``
+    asks for the Lichess lobby instead, and ``seek`` means the caller stashes an
+    explicit NEW join. Engine/human rebuilds return ``rebuild`` without a prompt.
     """
     if not is_lichess:
         return "rebuild"
-    if menu_manager is None or not confirm_lichess_seek(menu_manager):
+    if menu_manager is None:
         return "menu"
-    return "seek"
+    choice = choose_lichess_reset_action(menu_manager)
+    if choice == "cancel":
+        return "menu"
+    return choice
 
 
 def explicit_lichess_seek_join() -> dict:
