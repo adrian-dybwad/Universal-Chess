@@ -627,6 +627,30 @@ def is_refresh_result(result: Union[str, MenuSelection, None]) -> bool:
     return result == "REFRESH"
 
 
+def signal_from(result) -> Optional[str]:
+    """Map a board sub-handler result to a menu-engine action signal.
+
+    Sub-handlers (engine/ELO lists, Lichess) return None on normal completion, a
+    break result when PLAY/client/piece must unwind every menu, or ``START_GAME``
+    when the Lichess lobby has stashed a join. The engine's action loop exits on
+    any non-None signal. ``START_GAME`` is forwarded so nested Lichess Settings
+    cannot redraw Players over the board; a bare ``True`` is treated the same
+    (the lobby used to return that). Normal completion returns None to stay and
+    redraw.
+    """
+    if result is None:
+        return None
+    if isinstance(result, MenuSelection):
+        if result.is_break or result.key == "START_GAME":
+            return result.key
+        return None
+    if is_break_result(result):
+        return result
+    if result is True or result == "START_GAME":
+        return "START_GAME"
+    return None
+
+
 def find_entry_index(entries: List[IconMenuEntry], key: str) -> int:
     """Find the index of an entry by its key.
     

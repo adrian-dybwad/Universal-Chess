@@ -659,6 +659,39 @@ def seed_config(
     return path
 
 
+def strength_display_for_engine(engine_name: str, section: str) -> str:
+    """Resolve a stored strength ``section`` to the strength the engine plays.
+
+    A player's strength is persisted as the raw section name (e.g. ``Default``),
+    but the game card and the PGN must state what the engine actually plays: an
+    uncapped ``Default`` as ``Unlimited``, and a net-selected ``Default`` (Maia)
+    as the concrete rung it copies (``1500 ELO``). The stored value stays
+    ``Default`` either way, so it keeps tracking the engine's own default.
+
+    Seeds the engine's writable config first (a cheap no-op once the file
+    exists) and delegates to
+    :func:`~universalchess.services.engine_profiles.strength_section_display`.
+    If the config cannot be produced -- an unprobeable or missing binary -- the
+    stored section is returned unchanged, because inventing a strength would
+    name a rung the engine may not have.
+
+    Args:
+        engine_name: Engine whose config holds the strength sections.
+        section: The stored section name.
+
+    Returns:
+        The display strength, or ``section`` if the config is unavailable.
+    """
+    from universalchess.services.engine_profiles import strength_section_display
+
+    try:
+        config_path = seed_config(engine_name)
+    except Exception as e:
+        log.warning("[uci_schema] Cannot resolve strength label for %s: %s", engine_name, e)
+        return section
+    return strength_section_display(config_path, section)
+
+
 def reset_config(
     engine_name: str,
     *,

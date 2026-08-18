@@ -30,6 +30,7 @@ from dataclasses import asdict, dataclass
 from flask import Flask, render_template, Response, request, redirect, send_file, send_from_directory, abort, stream_with_context, url_for, jsonify, current_app
 from werkzeug.exceptions import NotFound
 from werkzeug.utils import secure_filename
+from universalchess.board import display_settings
 from universalchess.utils.safe_path import safe_under_base
 from universalchess.utils.timeutils import to_utc_iso
 from universalchess.db import models
@@ -2750,22 +2751,6 @@ def _read_notation():
     return normalize_notation(Settings.read("game", "notation", DEFAULT_NOTATION))
 
 
-def _read_coach_language():
-    """Return the coach's response language name from the device UI locale.
-
-    Derived from the single device-wide [system] ui_language (mapped to a
-    plain-English language name) rather than a separate coach-language setting, so
-    the coach writes in whatever language the device is set to. English yields
-    "English", which adds no prompt directive.
-
-    Shared by the coach endpoints so web and board ask the AI to respond in the
-    same language. English (the default) adds no prompt instruction.
-    """
-    from universalchess.services import language_service
-
-    return language_service.coach_language_name(language_service.get_language())
-
-
 def _read_player_dicts():
     """Read both players' type/color/elo from centaur.ini for coach selection.
 
@@ -3816,20 +3801,6 @@ def api_set_debug_serial():
         return _internal_error(e)
 
 
-def _read_display_flag(name: str, default: bool = False) -> bool:
-    """Return whether a [display] boolean flag is enabled (tolerant of spellings).
-
-    Shared reader for [display] on/off settings (the high_contrast override, the
-    three_color switch, the update-batching option) so they parse stored values
-    identically to the board process. ``default`` is the value when the key is
-    absent, so an un-configured board reports the intended shipped state (e.g.
-    batching on).
-    """
-    from universalchess.board.settings import Settings
-    value = Settings.read('display', name, 'True' if default else 'False')
-    return str(value).strip().lower() in ('1', 'true', 'on', 'yes')
-
-
 # Map the board-reported active controller (display_selection.CONTROLLER_*) to
 # the waveform-profile family the web layer filters on. Kept as a plain table so
 # the web process needs no import from the RPi.GPIO-dependent driver modules.
@@ -3861,10 +3832,8 @@ def _read_selected_profile_key(controller=None) -> str:
     a panel swap -- resolves to the active controller's verified default, so the
     UI never shows an unknown selection and the board never runs with no waveform.
     """
-    from universalchess.board.settings import Settings
     from universalchess.epaper.framework.waveshare import waveform_profiles as wp
-    key = str(Settings.read('display', 'waveform_profile', '')).strip()
-    return wp.get_profile(key, controller).key
+    return wp.get_profile(display_settings.read_waveform_profile_key(), controller).key
 
 
 def _display_tuning_available() -> bool:
@@ -3898,18 +3867,18 @@ def api_get_display_tuning():
             "active_controller": controller,
             "profiles": wp.profiles_metadata(controller),
             "selected": _read_selected_profile_key(controller),
-            "high_contrast": _read_display_flag("high_contrast"),
+            "high_contrast": display_settings.read_flag("high_contrast"),
             # Three-color (red/white/black) mode. Both the UC8151D (V2) and SSD1680
             # (V1) drivers can drive tri-color BWR panels, so the toggle is offered
             # whenever a panel is active; tri-color is a property of the physical
             # panel, not the controller family.
-            "three_color": _read_display_flag("three_color"),
+            "three_color": display_settings.read_flag("three_color"),
             "three_color_supported": controller is not None,
             # Update batching (default on): coalesce a rapid burst of refreshes to
             # one refresh of the final frame so the panel does not lag behind when
             # updates arrive faster than it can draw. Applies to every panel, so
             # it is reported whenever the card is available.
-            "batch_updates": _read_display_flag("batch_updates", default=True),
+            "batch_updates": display_settings.read_flag("batch_updates", default=True),
         })
     except Exception as e:
         return _internal_error(e)
@@ -3958,16 +3927,16 @@ def api_set_display_tuning():
         from universalchess.services.game_broadcast import send_board_command
         applied_live = send_board_command("display_profile", {
             "profile": _read_selected_profile_key(controller),
-            "high_contrast": _read_display_flag("high_contrast"),
+            "high_contrast": display_settings.read_flag("high_contrast"),
         })
 
         return jsonify({
             "success": True,
             "applied_live": bool(applied_live),
             "selected": _read_selected_profile_key(controller),
-            "high_contrast": _read_display_flag("high_contrast"),
-            "three_color": _read_display_flag("three_color"),
-            "batch_updates": _read_display_flag("batch_updates", default=True),
+            "high_contrast": display_settings.read_flag("high_contrast"),
+            "three_color": display_settings.read_flag("three_color"),
+            "batch_updates": display_settings.read_flag("batch_updates", default=True),
         })
     except Exception as e:
         return _internal_error(e)

@@ -52,6 +52,23 @@ def build_system_info_entries(system_info: Optional[SystemInfo]) -> List[MenuRow
     ]
 
 
+def build_shutdown_warning_entries(shutdown_was_incomplete: bool) -> List[MenuRow]:
+    """Build the row that reports a previous shutdown that lost filesystem state.
+
+    The verdict comes from the boot-time audit (``board/boot_report.py``), which
+    reads the OS logs for evidence that power was cut before the filesystem
+    finished unmounting -- what happens when the controller sleeps while the Pi
+    is still shutting down.
+
+    Non-selectable, like the telemetry rows: it reports, it does not act.
+    """
+    if not shutdown_was_incomplete:
+        return []
+
+    return [MenuRow(key="SysShutdown", label=t("about.incomplete_shutdown"),
+                    icon="info", selectable=False)]
+
+
 def read_system_info_safely(log=None) -> Optional[SystemInfo]:
     """Collect telemetry, returning ``None`` on any failure.
 

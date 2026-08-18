@@ -1,6 +1,11 @@
 """Menu helper exports."""
 
-from .settings_menu import _get_player_type_label, _get_players_summary
+from .settings_menu import (
+    _get_player_type_label,
+    _get_players_summary,
+    engine_picker_label,
+    player_summary,
+)
 from .positions_menu import handle_positions_menu
 from .chromecast_menu import handle_chromecast_menu
 from .wifi_menu import wifi_status_icon, wifi_signal_icon, wifi_network_rows
@@ -41,6 +46,8 @@ from universalchess.players.lichess.lobby import (
 
 __all__ = [
     "_get_players_summary",
+    "engine_picker_label",
+    "player_summary",
     "handle_positions_menu",
     "handle_chromecast_menu",
     "wifi_status_icon",

@@ -663,6 +663,20 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
     from a variable captured at startup, so a panel that only came up on the
     late-initialization path is tuned as well.
 
+- **The labels and readings the two apps share are computed in one place**: the
+  board and the web each had their own copy of the `[display]` settings reader
+  and of the coach's language reader, byte for byte, so a change to one was a
+  silent divergence between the screen and the browser. Both now call one
+  function -- `board/display_settings.py` and
+  `language_service.current_coach_language_name()`. The labels the board draws
+  from its own settings (the two Time Control rows, the engine picker row, the
+  player summaries, a player's default name and the strength an engine's stored
+  section actually plays) moved out of the application module to the modules
+  that own the data, taking their settings as arguments instead of reading a
+  singleton, and are tested directly for the first time. Telling both players
+  that a side resigned is now the player manager's `on_resign`, beside
+  `on_takeback`, rather than a closure written out once per resign gesture.
+
 ### Removed
 
 - **Deprecated Engines**: Fire, Laser (x86-only, incompatible with ARM)
@@ -676,8 +690,35 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
-- **Settings > Language pointed at a Coach Language setting that does not
-  exist**: the help read "The AI coach's remarks use the separate Coach Language
+- **The unclean-shutdown warning was drawn on a screen nobody could reach**:
+  every boot audits the OS logs for evidence that power was cut before the
+  filesystem finished unmounting, and the verdict was displayed by an About
+  *widget* that the menu never opened -- the About screen has been menu-driven
+  for some time, and the widget survived as the only runtime importer of the
+  entry point. The warning now appears where the audit's readers look, as a row
+  under About beneath the telemetry, translated in all five languages, and the
+  orphaned widget is gone.
+
+- **The WiFi, Bluetooth and Chromecast menus could not open**: three of the
+  board's menus reached their status modules through a hand-written
+  `__import__("DGTCentaurMods.epaper.wifi_info", ...)`, naming the package as it
+  was called before the rename. A string import is invisible to every tool that
+  follows imports, so the rename left them behind and nothing reported it: the
+  menus raised `ModuleNotFoundError` the moment they were opened. They import
+  their modules directly now, and the WiFi and Bluetooth status rows have tests,
+  which is what would have caught this. No string imports remain in the
+  application module.
+
+- **Engines were named inconsistently, and sometimes not by their name**: the
+  Settings > Players row derived an engine's label by capitalising its id, and
+  the per-player row showed the id raw, so the same engine read as `Ct800` on
+  one screen and `ct800` on the next -- neither of which is its name, which is
+  `CT800`. An engine added by the operator had no name on either screen. Both
+  rows now ask for the engine's display name, from the catalog or from the
+  custom-engine registry, and share one summary function so they cannot drift
+  apart again.
+
+: the help read "The AI coach's remarks use the separate Coach Language
   setting", sending the user to look for a screen that is not in the menu -- and
   stating the opposite of how the board works. The coach follows this very
   setting: both the board and the web API derive the coach's language from the

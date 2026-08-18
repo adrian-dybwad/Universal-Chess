@@ -64,6 +64,19 @@ def analysis_time_seconds(preset: str) -> float:
     return ANALYSIS_TIME_PRESETS.get(preset, ANALYSIS_TIME_PRESETS[ANALYSIS_TIME_DEFAULT])
 
 
+def default_player_name(player_num: int) -> str:
+    """Slot-specific default display name for an unnamed human player.
+
+    The default is per-slot ("Player 1"/"Player 2"), so it cannot live in the
+    shared catalog as a single ``valueDefault`` literal (one node serves both
+    slots). It is derived here from the player's slot number and supplied to the
+    game (the PGN name) and to the board's Name row via the per-slot detail
+    context's ``{fn:player_name}`` compute. The web supplies the same text as the
+    Name field's placeholder from its per-slot context.
+    """
+    return f"Player {player_num}"
+
+
 def _field_defaults(cls) -> Dict[str, Any]:
     """Default value for every persisted field of a settings dataclass.
 

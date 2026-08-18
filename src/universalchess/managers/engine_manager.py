@@ -1650,6 +1650,30 @@ def engine_binary_subpath(engine_name: str) -> Optional[str]:
     return None
 
 
+def engine_display_name(engine_id: str) -> str:
+    """Return the human-readable name for an engine id.
+
+    Engine ids are filesystem-safe tokens (``ct800``, ``stockfish``) because
+    they name a binary; the name to show is carried separately, by the catalog
+    entry or by the operator-added engine's registry record.
+
+    An id with neither -- a custom engine that was removed, or a stale setting
+    -- returns the id itself. Deriving a prettier name from the token would
+    invent one (``ct800`` capitalises to ``Ct800``, which is no engine's name)
+    and would hide which id is actually configured.
+    """
+    engine = ENGINES.get(engine_id)
+    if engine is not None:
+        return engine.display_name
+
+    from universalchess.services.custom_engine_registry import CUSTOM_ENGINE_STORE
+
+    for custom in CUSTOM_ENGINE_STORE.list():
+        if custom.id == engine_id:
+            return custom.display_name
+    return engine_id
+
+
 class EngineManager:
     """Manages installation and removal of chess engines.
     

@@ -19,7 +19,6 @@ Each test states the regression it guards and how it would surface.
 from unittest.mock import MagicMock
 
 import pytest
-from PIL import Image
 
 from universalchess.board import boot_report
 
@@ -105,29 +104,23 @@ def test_an_unreadable_dmesg_leaves_the_verdict_clean(monkeypatch):
 
 
 def test_the_about_screen_warns_only_when_the_audit_found_damage(monkeypatch):
-    """The About widget draws the warning from the audit, not from ``main``.
+    """The About screen reports the verdict, and only when there is one.
 
-    Why: the widget used to read ``main.incomplete_shutdown``, importing the
-    entry point mid-render; importing it boots the board. This renders the real
-    widget and inspects the warning row of the panel, so it proves the text
-    reaches the screen from the new source. How a regression manifests: the row
-    is blank on a damaged boot (the warning was lost with the import), or marked
-    on a clean one (the verdict is being defaulted rather than read).
+    Why: the verdict is written at boot and read much later, by a screen in
+    another package. It used to be read by importing the entry point mid-render
+    -- which boots the board -- from a full-screen widget that lost its only
+    caller when the Support QR button was removed, so the warning had not
+    reached a user in months. How a regression manifests: the About list is
+    missing the row after a power cut, or shows it on every healthy board.
     """
-    from universalchess.epaper.about_widget import AboutWidget
-
-    def warning_row_is_marked():
-        widget = AboutWidget(MagicMock(), version="2.0.0")
-        sprite = Image.new("L", (128, 296), 255)
-        widget.render(sprite)
-        # The text is centred on WARNING_Y, so the band either side of it holds
-        # the warning and nothing else on this screen.
-        band = sprite.crop((0, AboutWidget.WARNING_Y - 8, 128, AboutWidget.WARNING_Y + 8))
-        darkest, _ = band.getextrema()
-        return darkest < 255
+    from universalchess.app import board_app
 
     monkeypatch.setattr(boot_report, "shutdown_was_incomplete", lambda: False)
-    assert warning_row_is_marked() is False
+    clean = [row.key for row in board_app._system_telemetry_rows()]
 
     monkeypatch.setattr(boot_report, "shutdown_was_incomplete", lambda: True)
-    assert warning_row_is_marked() is True
+    damaged = [row.key for row in board_app._system_telemetry_rows()]
+
+    assert "SysShutdown" not in clean
+    assert damaged[-1] == "SysShutdown"
+    assert damaged[:-1] == clean

@@ -103,6 +103,20 @@ def coach_language_name(code: str) -> str:
     return _COACH_NAMES.get(code, _COACH_NAMES[DEFAULT])
 
 
+def current_coach_language_name() -> str:
+    """Return the language name the AI coach should write in, right now.
+
+    Composes the device's current locale with :func:`coach_language_name`. There
+    is no separate coach-language setting: the coach writes in whatever language
+    the device is set to. English yields ``"English"``, which adds no prompt
+    directive (the model's native default).
+
+    Both the board and the web coach call this, so the two surfaces cannot ask
+    for different languages.
+    """
+    return coach_language_name(get_language())
+
+
 def get_language() -> str:
     """Return the device's current UI locale as a supported code.
 

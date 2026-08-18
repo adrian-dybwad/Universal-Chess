@@ -14,6 +14,7 @@ handshake that follow.
 import os
 from typing import Optional, Tuple
 
+from universalchess.board.display_settings import read_flag, read_selection
 from universalchess.board.logging import log
 from universalchess.epaper import Manager, SplashScreen
 from universalchess.i18n import t
@@ -63,37 +64,6 @@ def on_display_refresh(image, red_image=None):
         broadcast_epaper_changed(os.stat(path).st_mtime)
     except Exception as e:
         log.debug(f"Failed to write epaper.jpg: {e}")
-
-
-def read_display_flag(name: str, default: bool = False) -> bool:
-    """Return whether a [display] boolean opt-in is set.
-
-    Used for the experimental high_contrast drive-voltage override (default off)
-    and the navigation-batching option (default on). high_contrast does not gate
-    any driver selection -- it only adjusts how the active driver drives the
-    panel (SSD1680 source/VCOM push, or UC8151D VCOM_DC bump). ``default`` is the
-    value when the key is absent, so a never-configured board gets the intended
-    shipped behavior (e.g. batching on).
-    """
-    from universalchess.board.settings import Settings
-    value = Settings.read('display', name, 'True' if default else 'False')
-    return str(value).strip().lower() in ('1', 'true', 'on', 'yes')
-
-
-def read_display_selection() -> Tuple[str, bool]:
-    """Return ``(waveform_profile_key, high_contrast)`` from the [display] settings.
-
-    Returns the raw stored key (resolved to a concrete profile only later, per
-    the active controller). One key is shared across both controllers; each
-    driver resolves it against its own family via
-    ``waveform_profiles.get_profile(key, controller)``, falling back to that
-    controller's verified default when the stored key belongs to the other
-    controller (e.g. after a panel swap) -- so a working panel is never left
-    without a waveform.
-    """
-    from universalchess.board.settings import Settings
-    key = str(Settings.read('display', 'waveform_profile', '')).strip()
-    return key, read_display_flag('high_contrast')
 
 
 def attempt_display_init(epd, batch_updates: bool = True):
@@ -175,9 +145,9 @@ def init_display() -> Tuple[Optional[Manager], Optional[SplashScreen]]:
     from universalchess.board import hardware_info
     from universalchess.board import display_selection as ds
 
-    key, high_contrast = read_display_selection()
-    three_color = read_display_flag('three_color')
-    batch_updates = read_display_flag('batch_updates', default=True)
+    key, high_contrast = read_selection()
+    three_color = read_flag('three_color')
+    batch_updates = read_flag('batch_updates', default=True)
 
     prior = hardware_info.read_display_status()
     hint = ds.hint_from_status(prior)

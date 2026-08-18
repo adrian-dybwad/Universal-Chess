@@ -48,7 +48,9 @@ from universalchess.epaper import Manager, SplashScreen, IconMenuWidget, IconMen
 from universalchess.epaper.status_bar import STATUS_BAR_HEIGHT
 from universalchess.menus import (
     _get_player_type_label,
+    engine_picker_label,
     _get_players_summary,
+    player_summary,
     handle_positions_menu,
     handle_chromecast_menu,
     wifi_status_icon,
@@ -85,14 +87,16 @@ from universalchess.utils.session_state import (
     plan_startup,
 )
 from universalchess.managers.game.resume_policy import choose_resume_target
+from universalchess.menus.time_control_presets import preset_label, time_control_label
 from universalchess.players.settings import (
     PlayerSettings,
     GameSettings,
     AllSettings,
+    default_player_name,
 )
 
-from universalchess.app import display_boot, startup_splash
-from universalchess.board import board
+from universalchess.app import startup_splash
+from universalchess.board import board, display_settings
 
 # Slow imports follow, reported on the startup splash the bootstrap put on the
 # panel. Each note is a no-op when this module is imported without one (tests,
@@ -156,6 +160,7 @@ try:
         WebCommandInterrupt,
         is_break_result,
         is_play_start,
+        signal_from,
         is_refresh_result,
         find_entry_index,
         ConnectionManager,
@@ -757,9 +762,6 @@ def _handle_web_chromecast_command(command: str, parsed: dict) -> None:
         _broadcast_chromecast_state()
 
 
-# About widget state (for support QR screen)
-_active_about_widget = None
-
 # Help dialog state. Set while the focused menu entry's help tip is shown as a
 # modal (HELP key in a menu). Any key dismisses it (see _handle_key), and the
 # MenuManager help presenter blocks on it until dismissed.
@@ -778,17 +780,6 @@ PLAYER1_SECTION = 'PlayerOne'
 PLAYER2_SECTION = 'PlayerTwo'
 
 
-def default_player_name(player_num: int) -> str:
-    """Slot-specific default display name for an unnamed human player.
-
-    The default is per-slot ("Player 1"/"Player 2"), so it cannot live in the
-    shared catalog as a single ``valueDefault`` literal (one node serves both
-    slots). It is derived here from the player's slot number and supplied to the
-    game (the PGN name) and to the board's Name row via the per-slot detail
-    context's ``{fn:player_name}`` compute. The web supplies the same text as the
-    Name field's placeholder from its per-slot context.
-    """
-    return f"Player {player_num}"
 # Menu navigation (path/indices) and the session view-state snapshot share one
 # section: menu position is part of "the state the app was in", so it is stored
 # alongside the rest of the session rather than in a separate [MenuState] block.
@@ -1836,33 +1827,6 @@ def _get_installed_engines() -> List[str]:
     return _load_available_engines()
 
 
-def _format_engine_label_with_compat(engine_name: str, is_selected: bool, show_compat: bool = True) -> str:
-    """Format an engine label with optional root_moves compatibility info.
-    
-    For engines that have been tested in Reverse Hand+Brain mode, appends
-    the percentage of times the engine respected root_moves constraints.
-    This helps users choose engines that work well with Reverse mode.
-    
-    Args:
-        engine_name: Name of the engine.
-        is_selected: Whether this engine is currently selected (adds * prefix).
-        show_compat: Whether to show compatibility info (True for Reverse H+B context).
-        
-    Returns:
-        Formatted label string.
-    """
-    label = f"* {engine_name}" if is_selected else engine_name
-    
-    if show_compat:
-        from universalchess.players.hand_brain import get_root_moves_compatibility
-        compat = get_root_moves_compatibility(engine_name)
-        if compat is not None:
-            # Show compatibility percentage
-            label = f"{label} ({compat:.0f}%)"
-    
-    return label
-
-
 def _get_engine_elo_levels(engine_name: str) -> List[dict]:
     """Get the selectable strength sections for an engine as picker rows.
 
@@ -1909,31 +1873,8 @@ def _get_engine_elo_levels(engine_name: str) -> List[dict]:
     return levels
 
 
-def _elo_display_label(engine_name: str, elo_section: str) -> str:
-    """Resolve a player's stored strength section to its display strength.
-
-    The player's ``elo`` is persisted as the raw section name (e.g. ``Default``),
-    but the game card / PGN must show what the engine actually plays: an uncapped
-    ``Default`` as ``Unlimited`` and a net-selected ``Default`` (Maia) as the
-    concrete rung it copies (``1500 ELO``), while the stored value stays
-    ``Default`` so it keeps tracking. Delegates to ``strength_section_display``,
-    reading the engine's writable ``.uci`` (seeded on first use; the call is a
-    cheap no-op once the file exists). Falls back to the raw section if the config
-    cannot be produced (unprobed/missing binary), so the name is always defined.
-    """
-    from universalchess.services import uci_schema
-    from universalchess.services.engine_profiles import strength_section_display
-
-    try:
-        config_path = uci_schema.seed_config(engine_name)
-    except Exception as e:
-        log.warning(f"[Settings] Cannot resolve strength label for {engine_name}: {e}")
-        return elo_section
-    return strength_section_display(config_path, elo_section)
-
-
 # ============================================================================
-# Menu Functions (moved to DGTCentaurMods.menus helpers)
+# Menu Functions (moved to universalchess.menus helpers)
 # ============================================================================
 
 
@@ -2092,13 +2033,7 @@ def _start_game_mode(
         HandBrainPlayer, HandBrainConfig, HandBrainMode
     )
     from universalchess.players.settings import PlayerSettings
-    from universalchess.managers.engine_manager import ENGINES
-
-    def get_engine_display_name(engine_name: str) -> str:
-        """Get the display name for an engine, falling back to the raw name."""
-        if engine_name in ENGINES:
-            return ENGINES[engine_name].display_name
-        return engine_name
+    from universalchess.managers.engine_manager import engine_display_name
 
     def create_player(ps: PlayerSettings, color: chess.Color):
         """Create a player based on PlayerSettings and color.
@@ -2116,11 +2051,11 @@ def _start_game_mode(
             )
             return HumanPlayer(config)
         elif ps.type == 'engine':
-            engine_display = get_engine_display_name(ps.engine)
+            engine_display = engine_display_name(ps.engine)
             # Use custom name if provided, otherwise use engine display name with
             # the picker's strength label (an uncapped "Default" -> "Unlimited")
             # so the game card / PGN never show a bare "(Default)".
-            elo_label = _elo_display_label(ps.engine, ps.elo)
+            elo_label = uci_schema.strength_display_for_engine(ps.engine, ps.elo)
             name = ps.name if ps.name else f"{engine_display} ({elo_label})"
             config = EnginePlayerConfig(
                 name=name,
@@ -2143,7 +2078,7 @@ def _start_game_mode(
         elif ps.type == 'hand_brain':
             mode = HandBrainMode.NORMAL if ps.hand_brain_mode == 'normal' else HandBrainMode.REVERSE
             mode_str = 'N' if mode == HandBrainMode.NORMAL else 'R'
-            engine_display = get_engine_display_name(ps.engine)
+            engine_display = engine_display_name(ps.engine)
             # Use custom name if provided, otherwise use H+B format with engine display name
             name = ps.name if ps.name else f"H+B {mode_str} ({engine_display})"
             config = HandBrainConfig(
@@ -2284,6 +2219,18 @@ def _start_game_mode(
     if _abort_cancelled_game_start():
         return
 
+    def _resign(color: chess.Color) -> None:
+        """Record a resignation by ``color`` and tell both players about it.
+
+        The two steps always go together: recording alone ends the game on the
+        board while a Lichess opponent's game stays open on the server. Every
+        resign gesture -- BACK menu, kings-in-center, king lift -- goes through
+        here so none of them can do one without the other.
+        """
+        game_manager.handle_resign(color)
+        if player_manager:
+            player_manager.on_resign(color)
+
     # Back menu result handler
     def _on_back_menu_result(result: str):
         """Handle result from back menu (resign/draw/cancel/exit).
@@ -2301,23 +2248,14 @@ def _start_game_mode(
         # Reset the kings-in-center menu flag (in case this was triggered by that menu)
         game_manager.reset_kings_in_center_menu()
         
-        def _notify_players_resign(resign_color):
-            """Notify players of resignation."""
-            if player_manager:
-                player_manager.white_player.on_resign(resign_color)
-                player_manager.black_player.on_resign(resign_color)
-        
         if result == "resign":
             from universalchess.state import get_chess_game
             resign_color = get_chess_game().turn
-            game_manager.handle_resign(resign_color)
-            _notify_players_resign(resign_color)
+            _resign(resign_color)
         elif result == "resign_white":
-            game_manager.handle_resign(chess.WHITE)
-            _notify_players_resign(chess.WHITE)
+            _resign(chess.WHITE)
         elif result == "resign_black":
-            game_manager.handle_resign(chess.BLACK)
-            _notify_players_resign(chess.BLACK)
+            _resign(chess.BLACK)
         elif result == "draw":
             game_manager.handle_draw()
         elif result == "abort":
@@ -2558,24 +2496,16 @@ def _start_game_mode(
         # Reset the menu flag
         game_manager.reset_king_lift_resign_menu()
         
-        def _notify_players_resign(resign_color):
-            """Notify players of resignation."""
-            if player_manager:
-                player_manager.white_player.on_resign(resign_color)
-                player_manager.black_player.on_resign(resign_color)
-        
         if result == "resign":
             # Get the color of the king that was lifted
             king_color = game_manager.move_state.king_lifted_color
             if king_color is not None:
-                game_manager.handle_resign(king_color)
-                _notify_players_resign(king_color)
+                _resign(king_color)
             else:
                 # Fallback - shouldn't happen but handle gracefully
                 from universalchess.state import get_chess_game
                 resign_color = get_chess_game().turn
-                game_manager.handle_resign(resign_color)
-                _notify_players_resign(resign_color)
+                _resign(resign_color)
         # cancel is handled by DisplayManager (restores display)
     
     def _on_king_lift_resign(king_color):
@@ -3230,7 +3160,7 @@ def _process_pending_display_profile() -> None:
     if manager is None:
         return
     from universalchess.epaper.framework.waveshare import waveform_profiles as wp
-    key, high_contrast = display_boot.read_display_selection()
+    key, high_contrast = display_settings.read_selection()
     # Resolve for whichever controller actually drove the panel. The EPD driver
     # exposes its family via CONTROLLER; fall back to the UC8151D default family
     # if a driver predates that attribute.
@@ -3243,7 +3173,7 @@ def _process_pending_display_profile() -> None:
     # Three-color (red) mode is toggled through the same display-tuning settings,
     # so apply it on the same live path. Only when it actually changed, to avoid a
     # second ~12-15s full refresh when only the waveform/contrast was edited.
-    desired_three_color = display_boot.read_display_flag('three_color')
+    desired_three_color = display_settings.read_flag('three_color')
     current_three_color = bool(getattr(manager.epd, "three_color", False))
     if desired_three_color != current_three_color:
         log.info(f"[App] Applying three-color mode live: {desired_three_color}")
@@ -3252,7 +3182,7 @@ def _process_pending_display_profile() -> None:
     # Update batching is part of the same display-tuning settings. It only
     # changes how the scheduler folds future request bursts (no panel re-init or
     # full refresh), so apply it unconditionally -- the setter is idempotent.
-    batch_updates = display_boot.read_display_flag('batch_updates', default=True)
+    batch_updates = display_settings.read_flag('batch_updates', default=True)
     log.info(f"[App] Applying update batching live: {batch_updates}")
     manager.set_batch_updates(batch_updates)
 
@@ -3626,50 +3556,6 @@ def _handle_settings(initial_selection: str = None):
 # that player and flags has_color so the Color row shows only for Player 1.
 # ============================================================================
 
-def _player_summary(player_settings: Dict[str, Any], *, with_color: bool) -> str:
-    """Compose the one-line summary shown under a player on the Players menu.
-
-    Mirrors the prior board summary: engine players show the engine name,
-    Hand+Brain shows ``H+B N``/``H+B R``, and everything else shows the catalog
-    player-type label. Player 1 appends its color in parentheses; Player 2 does
-    not (it always plays the opposite color).
-    """
-    player_type = player_settings["type"]
-    summary = _get_player_type_label(player_type)
-    if player_type == "engine":
-        summary = player_settings["engine"]
-    elif player_type == "hand_brain":
-        mode = "N" if player_settings["hand_brain_mode"] == "normal" else "R"
-        summary = f"H+B {mode}"
-    if with_color:
-        return f"{summary} ({player_settings['color'].capitalize()})"
-    return summary
-
-
-def _signal_from(result) -> Optional[str]:
-    """Map a board sub-handler result to a menu-engine action signal.
-
-    Sub-handlers (engine/ELO lists, Lichess) return None on normal completion, a
-    break result when PLAY/client/piece must unwind every menu, or ``START_GAME``
-    when the Lichess lobby has stashed a join. The engine's action loop exits on
-    any non-None signal. ``START_GAME`` is forwarded so nested Lichess Settings
-    cannot redraw Players over the board; a bare ``True`` is treated the same
-    (the lobby used to return that). Normal completion returns None to stay and
-    redraw.
-    """
-    if result is None:
-        return None
-    if isinstance(result, MenuSelection):
-        if result.is_break or result.key == "START_GAME":
-            return result.key
-        return None
-    if is_break_result(result):
-        return result
-    if result is True or result == "START_GAME":
-        return "START_GAME"
-    return None
-
-
 def _prompt_player_name(player_num: int) -> None:
     """Open the on-board keyboard to edit a player's name, then persist it.
 
@@ -3678,7 +3564,7 @@ def _prompt_player_name(player_num: int) -> None:
     via a text input). Saving an empty string clears the name; the menu then
     shows the per-slot default ("Player N") via the player_name compute.
     """
-    label = f"Player {player_num}"
+    label = default_player_name(player_num)
     save_setting = _save_player1_setting if player_num == 1 else _save_player2_setting
     settings_dict = _player1_settings_dict if player_num == 1 else _player2_settings_dict
 
@@ -3771,20 +3657,6 @@ def _coach_config():
         base_url=g.get("coach_base_url", ""),
         enabled=g.get("coach_id", coaches.AUTO) != coaches.OFF,
     )
-
-
-def _coach_language():
-    """Return the language name the AI coach should respond in.
-
-    Derived from the single device UI locale ([system] ui_language) rather than a
-    separate coach setting: the coach writes in whatever language the device is
-    set to. The locale code is mapped to the plain-English language name the coach
-    prompt expects (e.g. "es" -> "Spanish"); an English locale yields "English",
-    which adds no prompt directive (the model's native default).
-    """
-    from universalchess.services import language_service
-
-    return language_service.coach_language_name(language_service.get_language())
 
 
 def _agent_is_configured(agent_id, game):
@@ -3914,7 +3786,9 @@ def _build_coach_request(ply: int):
     # same way the board move list does. An illegal move (corrupt stack) falls back
     # to UCI rather than dropping the request.
     notation = _game_settings_dict().get("notation", "figurine")
-    language = _coach_language()
+    from universalchess.services import language_service
+
+    language = language_service.current_coach_language_name()
     fen_before = position.fen()
     move_uci = move.uci()
     try:
@@ -4140,7 +4014,9 @@ def _show_hint_coach_async(display_manager, fen_before: str, move_uci: str) -> N
         return
 
     notation = _game_settings_dict().get("notation", "figurine")
-    language = _coach_language()
+    from universalchess.services import language_service
+
+    language = language_service.current_coach_language_name()
     # A hint is a move the player is considering, so it always uses the player-move
     # persona. Include the coach id in the cache key so switching coach regenerates.
     import chess
@@ -4188,12 +4064,12 @@ def _build_players_context():
     ctx = BoardMenuContext()
     ctx.register_store("player1", lambda key: _player1_settings_dict()[key], _save_player1_setting)
     ctx.register_store("player2", lambda key: _player2_settings_dict()[key], _save_player2_setting)
-    ctx.register_value("player1_summary", lambda node: _player_summary(_player1_settings_dict(), with_color=True))
-    ctx.register_value("player2_summary", lambda node: _player_summary(_player2_settings_dict(), with_color=False))
+    ctx.register_value("player1_summary", lambda node: player_summary(_player1_settings_dict(), with_color=True))
+    ctx.register_value("player2_summary", lambda node: player_summary(_player2_settings_dict(), with_color=False))
     ctx.register_action("open_player1", lambda: _open_player_detail(1))
     ctx.register_action("open_player2", lambda: _open_player_detail(2))
-    ctx.register_action("open_accounts", lambda: _signal_from(_handle_accounts_menu()))
-    ctx.register_action("lichess", lambda: _signal_from(_handle_lichess_menu()))
+    ctx.register_action("open_accounts", lambda: signal_from(_handle_accounts_menu()))
+    ctx.register_action("lichess", lambda: signal_from(_handle_lichess_menu()))
     ctx.register_action("start_game", lambda: "START_GAME")
     ctx.register_store(
         "game",
@@ -4255,7 +4131,7 @@ def _build_player_detail_context(player_num: int):
         return [
             MenuRow(
                 key=engine,
-                label=_format_engine_label_with_compat(engine, is_selected=False, show_compat=is_reverse_hb),
+                label=engine_picker_label(engine, is_selected=False, show_compat=is_reverse_hb),
                 icon="engine",
             )
             for engine in _get_installed_engines()
@@ -4389,38 +4265,6 @@ def _build_game_context():
     ctx = BoardMenuContext()
     ctx.register_store("game", game_get, game_set)
     return ctx
-
-
-def _time_control_label() -> str:
-    """Concise Time Control label for the board: the resolved control summary.
-
-    Resolves the full control (preset / custom / legacy minutes) and returns its
-    ``describe()`` (e.g. "Untimed", "5 min", "5 min + 3 sec", "40 moves/90 min,
-    then 30 min + 30 sec"), so the board row reflects increment/delay/stages and
-    asymmetric times rather than just the legacy minutes.
-    """
-    from universalchess.state.time_control import build_time_control
-
-    return build_time_control(_get_settings().game).describe()
-
-
-def _time_control_preset_label() -> str:
-    """Short label for the currently selected time-control preset.
-
-    Maps ``game.time_control_preset`` to its short name from the shared preset
-    builder (``Basic`` / a preset's name / ``Custom``) so the board's Preset row
-    shows which preset is active without repeating the resolved-timing summary
-    the base-minutes row already shows. An unknown/legacy key falls back to
-    ``Basic``, matching ``build_time_control`` (which treats an unrecognized
-    preset as no preset and resolves the legacy base minutes).
-    """
-    from universalchess.menus.time_control_presets import preset_options
-
-    current = str(_get_settings().game.time_control_preset or "")
-    for option in preset_options():
-        if option["value"] == current:
-            return option["label"]
-    return "Basic"
 
 
 def _build_settings_context():
@@ -4770,8 +4614,8 @@ def _build_game_menu_context():
     ctx.register_provider("coaches", coaches_rows)
     ctx.register_provider("agents_choices", agents_choices)
     ctx.register_provider("time_control_presets", time_control_presets)
-    ctx.register_value("time_control", lambda node: _time_control_label())
-    ctx.register_value("time_control_preset_label", lambda node: _time_control_preset_label())
+    ctx.register_value("time_control", lambda node: time_control_label(_get_settings().game))
+    ctx.register_value("time_control_preset_label", lambda node: preset_label(_get_settings().game))
     # Show which coach persona is active: for Auto, the Elo-resolved coach in
     # parentheses; for an explicit pick, that coach's name (falling back to the id).
     ctx.register_value("coach_selected_label", lambda node: _coach_selected_label())
@@ -4890,7 +4734,7 @@ def _build_agents_menu_context():
         editing["name"] = agent.name
         editing["model_kind"] = agent.model_field_kind
         editing["requires_base_url"] = agent.requires_base_url
-        return _signal_from(run_engine_menu("agents.detail", ctx, _menu_manager))
+        return signal_from(run_engine_menu("agents.detail", ctx, _menu_manager))
 
     def _prompt_agent_text(base, title, max_length=200):
         """Edit a namespaced credential field for the agent being edited."""
@@ -4983,15 +4827,22 @@ def _update_status_state_and_label():
 
 
 def _system_telemetry_rows():
-    """Provide the About telemetry rows (CPU/Memory/Storage/Uptime) as engine rows.
+    """Provide the About rows: CPU/Memory/Storage/Uptime, then any boot warning.
 
     Reuses the tested ``build_system_info_entries`` formatters and the safe
     telemetry read, which degrades to no rows when a sensor read fails. Re-read on
-    each rebuild so the values stay current.
+    each rebuild so the values stay current. The shutdown warning is appended
+    last, and only on a board whose boot audit found filesystem damage.
     """
-    from universalchess.menus.about_menu import build_system_info_entries, read_system_info_safely
+    from universalchess.board import boot_report
+    from universalchess.menus.about_menu import (
+        build_shutdown_warning_entries,
+        build_system_info_entries,
+        read_system_info_safely,
+    )
 
-    return build_system_info_entries(read_system_info_safely(log))
+    return (build_system_info_entries(read_system_info_safely(log))
+            + build_shutdown_warning_entries(boot_report.shutdown_was_incomplete()))
 
 
 def _build_about_context():
@@ -5104,7 +4955,7 @@ def _build_updates_context():
             time.sleep(2)
             return None
         local_deb["path"] = deb_files[0]
-        return _signal_from(
+        return signal_from(
             run_engine_menu("updates.install_local.confirm", ctx, _menu_manager)
         )
 
@@ -5263,8 +5114,8 @@ def _build_system_context():
     ctx = BoardMenuContext()
     ctx.register_store("system", system_get, system_set)
     ctx.register_value("updates_status", lambda node: _update_status_state_and_label()[1])
-    ctx.register_action("open_updates", lambda: _signal_from(_run_update_menu()))
-    ctx.register_action("about", lambda: _signal_from(_run_about_menu()))
+    ctx.register_action("open_updates", lambda: signal_from(_run_update_menu()))
+    ctx.register_action("about", lambda: signal_from(_run_about_menu()))
     ctx.register_action("reset_confirm", _reset_settings_confirmed)
     ctx.register_action("cancel", lambda: "BACK")
     ctx.register_action("shutdown", do_shutdown)
@@ -5303,7 +5154,7 @@ def _wifi_status_rows():
     from universalchess.menus.engine import MenuRow
     from universalchess.menus.catalog.loader import get_catalog
 
-    wifi_info = __import__("DGTCentaurMods.epaper.wifi_info", fromlist=["get_wifi_status"])
+    from universalchess.epaper import wifi_info
     status = wifi_info.get_wifi_status()
     enabled = bool(status["enabled"])
     return [
@@ -5349,7 +5200,7 @@ def _build_wifi_context():
     """
     from universalchess.menus.board_context import BoardMenuContext, run_engine_menu
 
-    wifi_info = __import__("DGTCentaurMods.epaper.wifi_info", fromlist=["get_wifi_status"])
+    from universalchess.epaper import wifi_info
 
     # Last scan result, keyed for the provider/connect action. Cached so the
     # network list redraws (e.g. after a connect attempt) without re-scanning;
@@ -5380,7 +5231,7 @@ def _build_wifi_context():
         if not networks:
             _wifi_no_networks_splash()
             return None
-        return _signal_from(run_engine_menu("wifi.networks", ctx, _menu_manager))
+        return signal_from(run_engine_menu("wifi.networks", ctx, _menu_manager))
 
     def wifi_connect(ssid):
         """Connect to the selected SSID, prompting for a password if it is secured."""
@@ -5422,7 +5273,7 @@ def _run_wifi_settings_menu():
     """
     from universalchess.menus.board_context import run_engine_menu
 
-    wifi_info = __import__("DGTCentaurMods.epaper.wifi_info", fromlist=["get_wifi_status"])
+    from universalchess.epaper import wifi_info
 
     def _on_wifi_status_change(status: dict):
         if _menu_manager.active_widget is not None:
@@ -5470,10 +5321,7 @@ def _bluetooth_status_rows():
     )
     from universalchess.connectivity import bluetooth as _bt_conn
 
-    bt_status_mod = __import__(
-        "DGTCentaurMods.epaper.bluetooth_status",
-        fromlist=["get_bluetooth_status"],
-    )
+    from universalchess.epaper import bluetooth_status as bt_status_mod
     device_name = _args.device_name if _args else "DGT PEGASUS"
     bt = bt_status_mod.get_bluetooth_status(
         device_name=device_name,
@@ -5531,10 +5379,7 @@ def _build_bluetooth_context():
     )
     from universalchess.connectivity import bluetooth as _bt_conn
 
-    bt_status_mod = __import__(
-        "DGTCentaurMods.epaper.bluetooth_status",
-        fromlist=["get_bluetooth_status"],
-    )
+    from universalchess.epaper import bluetooth_status as bt_status_mod
 
     # The device the detail screen acts on, set when a list row is selected and
     # mutated in place as connect/disconnect change its state (the loop redraws,
@@ -5589,7 +5434,7 @@ def _build_bluetooth_context():
         device["address"] = chosen["address"]
         device["name"] = str(chosen.get("name") or chosen["address"])
         device["connected"] = bool(chosen.get("connected", False))
-        return _signal_from(
+        return signal_from(
             run_engine_menu("bluetooth.device.detail", ctx, _menu_manager)
         )
 
@@ -5736,7 +5581,7 @@ def _build_bluetooth_context():
         log.info("[BTKeyboard] starting continuous keyboard discovery...")
         scan_thread.start()
         try:
-            return _signal_from(
+            return signal_from(
                 run_engine_menu("bluetooth.keyboards", ctx, _menu_manager)
             )
         finally:
@@ -5814,11 +5659,13 @@ def _run_chromecast_menu():
     Invoked as the ``open_chromecast`` action of the data-driven Connectivity
     menu.
     """
+    from universalchess.services import get_chromecast_service
+
     return handle_chromecast_menu(
         show_menu=_show_menu,
         board=board,
         log=log,
-        get_chromecast_service=lambda: __import__("universalchess.services", fromlist=["get_chromecast_service"]).get_chromecast_service(),
+        get_chromecast_service=get_chromecast_service,
     )
 
 
@@ -5868,9 +5715,9 @@ def _build_connectivity_context():
     ctx = BoardMenuContext()
     ctx.register_store("hardware", hardware_get, hardware_set)
     ctx.register_store("system", system_get, system_set)
-    ctx.register_action("open_wifi", lambda: _signal_from(_run_wifi_settings_menu()))
-    ctx.register_action("open_bluetooth", lambda: _signal_from(_run_bluetooth_settings_menu()))
-    ctx.register_action("open_chromecast", lambda: _signal_from(_run_chromecast_menu()))
+    ctx.register_action("open_wifi", lambda: signal_from(_run_wifi_settings_menu()))
+    ctx.register_action("open_bluetooth", lambda: signal_from(_run_bluetooth_settings_menu()))
+    ctx.register_action("open_chromecast", lambda: signal_from(_run_chromecast_menu()))
     return ctx
 
 
@@ -6986,7 +6833,7 @@ def key_callback(key_id):
     too many unhandled keys (indicating a broken state), the app forces
     recovery by returning to the main menu.
     """
-    global running, kill, display_manager, app_state, _menu_manager, _active_keyboard_widget, _active_about_widget, _active_error_splash, _cancel_game_start
+    global running, kill, display_manager, app_state, _menu_manager, _active_keyboard_widget, _active_error_splash, _cancel_game_start
     
     log.info(f"[App] Key event received: {key_id}, app_state={app_state}")
     
@@ -7061,20 +6908,14 @@ def key_callback(key_id):
         _reset_unhandled_key_count()
         return
 
-    # Priority 1: Active about widget - any key dismisses it
-    if _active_about_widget is not None:
-        _active_about_widget.dismiss()
-        _reset_unhandled_key_count()
-        return
-    
-    # Priority 2: Active keyboard widget gets key events
+    # Priority 1: Active keyboard widget gets key events
     if _active_keyboard_widget is not None:
         handled = _active_keyboard_widget.handle_key(key_id)
         if handled:
             _reset_unhandled_key_count()
             return
 
-    # Priority 3: Incoming-pairing confirmation overlay consumes all keys until
+    # Priority 2: Incoming-pairing confirmation overlay consumes all keys until
     # the user accepts or rejects, so a pairing cannot be confirmed by accident
     # nor leak keys to the menu/game underneath.
     if _active_pairing_confirm is not None:
@@ -8202,7 +8043,7 @@ def main():
                                 _enter_game(
                                     explicit_lichess_seek=_is_play_start(lobby_result)
                                 )
-                            elif _signal_from(lobby_result) == "START_GAME":
+                            elif signal_from(lobby_result) == "START_GAME":
                                 _start_game_mode()
                             continue
                         if action == "seek":

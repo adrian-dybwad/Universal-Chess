@@ -283,6 +283,20 @@ class PlayerManager:
         self._white_player.leave_remote_game()
         self._black_player.leave_remote_game()
     
+    def on_resign(self, color: chess.Color) -> None:
+        """Notify both players that ``color`` resigned.
+
+        Every resign gesture (BACK menu, kings-in-center, king lift) must reach
+        both players: the resigning side's own player stops, and a remote
+        opponent resigns the server's game so it does not stay open after the
+        board shows the result.
+
+        Args:
+            color: The side that resigned.
+        """
+        self._white_player.on_resign(color)
+        self._black_player.on_resign(color)
+
     def on_takeback(self, board: chess.Board) -> None:
         """Notify both players of takeback.
         

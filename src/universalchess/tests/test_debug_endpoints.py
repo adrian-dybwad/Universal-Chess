@@ -32,9 +32,11 @@ try:
     if "universalchess.web.app" in sys.modules:
         webapp = importlib.reload(sys.modules["universalchess.web.app"])
     else:
-        import universalchess.web.app as webapp  # noqa: E402
+        import universalchess.web.app as webapp
 finally:
     Image.open = _orig_image_open
+
+from universalchess.board import display_settings  # noqa: E402
 
 
 @pytest.fixture
@@ -247,7 +249,7 @@ def test_get_display_tuning_reports_profiles_and_selection(client, monkeypatch):
                         lambda controller=None: "uc8151d_waveshare")
     # Stub honors the per-flag default so the endpoint's default=True for
     # batch_updates is exercised (high_contrast stays an explicit on here).
-    monkeypatch.setattr(webapp, "_read_display_flag",
+    monkeypatch.setattr(display_settings, "read_flag",
                         lambda name, default=False: True if name == "high_contrast" else default)
 
     resp = client.get("/api/system/display-tuning")
@@ -291,7 +293,7 @@ def test_set_display_tuning_persists_and_applies_live(client, monkeypatch):
     monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
     monkeypatch.setattr(webapp, "_read_selected_profile_key",
                         lambda controller=None: "uc8151d_t5d")
-    monkeypatch.setattr(webapp, "_read_display_flag",
+    monkeypatch.setattr(display_settings, "read_flag",
                         lambda name, default=False: True if name == "high_contrast" else default)
     import universalchess.services.game_broadcast as gb
     monkeypatch.setattr(gb, "send_board_command",
@@ -329,7 +331,7 @@ def test_set_display_tuning_persists_batch_updates(client, monkeypatch):
     monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
     monkeypatch.setattr(webapp, "_read_selected_profile_key",
                         lambda controller=None: "uc8151d_waveshare")
-    monkeypatch.setattr(webapp, "_read_display_flag",
+    monkeypatch.setattr(display_settings, "read_flag",
                         lambda name, default=False: default)
     import universalchess.services.game_broadcast as gb
     monkeypatch.setattr(gb, "send_board_command",

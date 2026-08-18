@@ -36,7 +36,8 @@ could be tested.
 |--------|-------|
 | `main.py` | `python -m universalchess.main`: `boot()`, then run the app |
 | `app/bootstrap.py` | The bring-up sequence, in the order the hardware requires |
-| `app/display_boot.py` | Controller probe, panel init, `[display]` settings |
+| `app/display_boot.py` | Controller probe and panel init |
+| `board/display_settings.py` | The `[display]` settings, read the same way by both apps |
 | `app/startup_splash.py` | The startup splash, shared with the slow imports |
 | `app/board_app.py` | The application: menus, game modes, the main loop |
 
@@ -644,6 +645,7 @@ main.py (Entry Point)
     +-- board/ (Hardware Abstraction)
     |     +-- board.py (LED, sounds, state reading)
     |     +-- centaur.py (Settings, updates)
+    |     +-- display_settings.py ([display] settings, shared with web/)
     |     +-- SyncCentaur/AsyncCentaur (Serial communication)
     |
     +-- managers/ (Coordination Layer)

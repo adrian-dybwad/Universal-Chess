@@ -79,3 +79,48 @@ def preset_options() -> List[Dict[str, str]]:
         {"value": CUSTOM_PRESET_KEY, "label": "Custom", "description": _CUSTOM_DESCRIPTION}
     )
     return options
+
+
+def preset_label(game_settings) -> str:
+    """Short label for the preset selected in ``game_settings``.
+
+    Maps ``time_control_preset`` to its short name from :func:`preset_options`
+    (``Basic`` / a preset's name / ``Custom``) so the Preset row shows which
+    preset is active without repeating the resolved-timing summary that
+    :func:`time_control_label` shows.
+
+    An unknown or legacy key falls back to ``Basic``, matching
+    ``build_time_control``, which treats an unrecognized preset as no preset and
+    resolves the legacy base minutes. Naming the stale key instead would show a
+    preset that no longer governs the clock.
+
+    Args:
+        game_settings: The ``[game]`` settings section.
+
+    Returns:
+        The selected preset's short label.
+    """
+    current = str(game_settings.time_control_preset or "")
+    for option in preset_options():
+        if option["value"] == current:
+            return option["label"]
+    return "Basic"
+
+
+def time_control_label(game_settings) -> str:
+    """Concise summary of the clock ``game_settings`` resolves to.
+
+    Resolves the full control (preset / custom / legacy minutes) and returns its
+    ``describe()`` -- "Untimed", "5 min", "5 min + 3 sec", "40 moves/90 min, then
+    30 min + 30 sec" -- so the row reflects increment, delay, stages and
+    asymmetric times rather than just the legacy base minutes.
+
+    Args:
+        game_settings: The ``[game]`` settings section.
+
+    Returns:
+        The resolved control's description.
+    """
+    from universalchess.state.time_control import build_time_control
+
+    return build_time_control(game_settings).describe()

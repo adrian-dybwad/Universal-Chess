@@ -66,6 +66,34 @@ class TestBuildSystemInfoEntries:
         ]
 
 
+class TestBuildShutdownWarningEntries:
+
+    def test_a_clean_shutdown_adds_no_row(self):
+        """A board that shut down cleanly says nothing about it.
+
+        Why: the warning means the filesystem was damaged by a power cut, so it
+        has to be rare enough to be believed. How a regression manifests: the
+        row appears on every board and stops meaning anything.
+        """
+        assert about_menu.build_shutdown_warning_entries(False) == []
+
+    def test_an_incomplete_shutdown_adds_one_non_selectable_row(self):
+        """The warning reaches the screen the user actually opens.
+
+        Why: this warning was drawn by a full-screen About widget behind a
+        Support QR button, and when that button was removed in December the
+        widget lost its only caller -- so a board that lost power mid-shutdown
+        had no way to say so. It is now a row in the About list, beside the
+        telemetry. How a regression manifests: the row is selectable (it is
+        informational, like the telemetry rows), or it is missing again.
+        """
+        rows = about_menu.build_shutdown_warning_entries(True)
+
+        assert [r.key for r in rows] == ["SysShutdown"]
+        assert rows[0].label == "Incomplete shutdown"
+        assert rows[0].selectable is False
+
+
 class TestReadSystemInfoSafely:
 
     def test_returns_none_when_collection_raises(self, monkeypatch):
