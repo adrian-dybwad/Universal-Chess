@@ -677,6 +677,25 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   that a side resigned is now the player manager's `on_resign`, beside
   `on_takeback`, rather than a closure written out once per resign gesture.
 
+- **A board key that was handled could still count towards recovery**: five
+  consecutive presses that reach nothing mean the board has stopped routing keys,
+  so it tears down the game and returns to the main menu on its own. The counter
+  was cleared in nineteen separate branches of the key router, and a branch that
+  handled a key without clearing it let the count climb through presses that were
+  working -- so the fifth one abandoned a game that was playing perfectly. Handling
+  a key and recording it are now one step, and the priority order the router
+  follows (shutdown, held OK, overlays, then the screen) is stated once instead of
+  being the order of nineteen blocks.
+
+- **A subsystem that refused to stop could cost the battery**: shutdown released
+  eleven subsystems, each with its own copy of "call the teardown, log whatever it
+  raised". The steps after a failure include putting the controller to sleep, and a
+  controller left awake keeps drawing from the battery for as long as the board is
+  off -- a board that will not start days later, with nothing on screen to say why.
+  Every step now runs regardless of the ones before it, the sleep command is
+  reached even when the power-off beep or the LED cascade fails, and every failure
+  is reported rather than only the first.
+
 - **A game's handles are discarded together or not at all**: the protocol,
   display, controller, coach and Lichess session that exist only while a game is
   being played were five module-level names, released by a teardown that cleared

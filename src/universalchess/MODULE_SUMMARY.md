@@ -42,6 +42,7 @@ could be tested.
 | `app/pending_work.py` | Work requested off the main loop and performed on it |
 | `app/game_runtime.py` | The running game's handles, and the order they close in |
 | `app/session.py` | Which screen is showing, and where the menu resumes |
+| `app/shutdown.py` | Releasing the subsystems, and quiescing the controller |
 | `app/modals.py` | The overlays that consume board keys, in priority order |
 | `app/lifecycle.py` | Whether the board keeps running, and how it stops |
 | `app/key_recovery.py` | Noticing that the board has stopped routing keys |
@@ -649,6 +650,7 @@ main.py (Entry Point)
     |     +-- pending_work.py (cross-thread work handoff)
     |     +-- game_runtime.py (the running game's handles)
     |     +-- session.py (which screen is showing)
+    |     +-- shutdown.py (releasing the subsystems)
     |     +-- modals.py, lifecycle.py, key_recovery.py (app state)
     |     +-- board_app.py (menus, game modes, main loop)
     |

@@ -101,6 +101,11 @@ from universalchess.app.lifecycle import Lifecycle
 from universalchess.app.modals import Modals
 from universalchess.app.pending_work import PendingWork
 from universalchess.app.session import AppState, Session
+from universalchess.app.shutdown import (
+    quiesce_controller,
+    released_by,
+    run_teardown,
+)
 from universalchess.board import board, display_settings
 
 # Slow imports follow, reported on the startup splash the bootstrap put on the
@@ -6305,6 +6310,18 @@ def _show_shutdown_splash(message: str, timeout: float = 5.0, show_battery: bool
                            show_battery=show_battery, tagline=tagline)
 
 
+def _stop_system_polling() -> None:
+    """Stop the background poller for battery, WiFi and temperature."""
+    from universalchess.services import get_system_service
+    get_system_service().stop()
+
+
+def _shutdown_engine_registry() -> None:
+    """Close every loaded engine process."""
+    from universalchess.services.engine_registry import get_engine_registry
+    get_engine_registry().shutdown()
+
+
 def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False, reboot: bool = False, exit_code: int = 0):
     """Clean up connections and resources, then exit the process.
     
@@ -6329,10 +6346,6 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
             bring the board back after Original Centaur on a stock (no
             passwordless-sudo) board. See services.power.restart_exit_code.
     """
-    global mainloop
-    global rfcomm_server, ble_manager, relay_manager
-    global bt_keyboard_manager
-
     # Reached from the signal handler and from the main loop's finally block.
     if not _lifecycle.begin_cleanup():
         log.debug(f"Cleanup already done, skipping: {reason}")
@@ -6376,177 +6389,48 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
             except Exception as e:
                 log.error(f"[Cleanup] Error stopping engine install: {e}", exc_info=True)
         
-        # Stop RFCOMM server (handles pairing manager, sockets, and threads)
-        log.info("[Cleanup] Stopping RFCOMM server...")
-        if rfcomm_server is not None:
-            try:
-                rfcomm_server.stop()
-                log.info("[Cleanup] RFCOMM server stopped")
-            except Exception as e:
-                log.error(f"[Cleanup] Error stopping rfcomm_server: {e}", exc_info=True)
-        else:
-            log.info("[Cleanup] RFCOMM server was None")
-        
-        # Stop Bluetooth keyboard manager (evdev reader thread)
-        if bt_keyboard_manager is not None:
-            try:
-                bt_keyboard_manager.stop()
-                log.info("[Cleanup] Bluetooth keyboard manager stopped")
-            except Exception as e:
-                log.error(f"[Cleanup] Error stopping bt_keyboard_manager: {e}", exc_info=True)
-        
-        # Stop relay manager (shadow target connection)
-        log.info("[Cleanup] Stopping relay manager...")
-        if relay_manager is not None:
-            try:
-                relay_manager.stop()
-                log.info("[Cleanup] Relay manager stopped")
-            except Exception as e:
-                log.error(f"[Cleanup] Error stopping relay_manager: {e}", exc_info=True)
-        else:
-            log.info("[Cleanup] Relay manager was None")
-        
-        # Clean up controller manager
-        log.info("[Cleanup] Cleaning up controller manager...")
-        if _game.controller is not None:
-            try:
-                _game.controller.cleanup()
-                log.info("[Cleanup] Controller manager cleaned up")
-            except Exception as e:
-                log.error(f"[Cleanup] Error cleaning up controller manager: {e}", exc_info=True)
-        else:
-            log.info("[Cleanup] Controller manager was None")
-        
-        # Clean up game handler (stops game manager thread and closes standalone engine)
-        log.info("[Cleanup] Cleaning up protocol manager...")
-        if _game.protocol is not None:
-            try:
-                _game.protocol.cleanup()
-                log.info("[Cleanup] Protocol manager cleaned up")
-            except Exception as e:
-                log.error(f"[Cleanup] Error cleaning up protocol manager: {e}", exc_info=True)
-        else:
-            log.info("[Cleanup] Protocol manager was None")
-        
-        # Stop services
-        log.info("[Cleanup] Stopping services...")
-        try:
-            from universalchess.services import get_system_service
-            get_system_service().stop()
-            log.info("[Cleanup] SystemPollingService stopped")
-        except Exception as e:
-            log.error(f"[Cleanup] Error stopping system service: {e}", exc_info=True)
-        
-        # Shutdown all engines via registry
-        log.info("[Cleanup] Shutting down engine registry...")
-        try:
-            from universalchess.services.engine_registry import get_engine_registry
-            get_engine_registry().shutdown()
-            log.info("[Cleanup] Engine registry shut down")
-        except Exception as e:
-            log.error(f"[Cleanup] Error shutting down engine registry: {e}", exc_info=True)
-        
-        # NOTE: Display manager cleanup is deferred until after shutdown splash/LEDs
-        # so the display can show the shutdown message
-        
-        # Stop BLE manager
-        log.info("[Cleanup] Stopping BLE manager...")
-        if ble_manager is not None:
-            try:
-                ble_manager.stop()
-                log.info("[Cleanup] BLE manager stopped")
-            except Exception as e:
-                log.error(f"[Cleanup] Error stopping BLE manager: {e}", exc_info=True)
-        else:
-            log.info("[Cleanup] BLE manager was None")
-        
-        # Quit GLib mainloop
-        log.info("[Cleanup] Quitting mainloop...")
-        if mainloop:
-            try:
-                mainloop.quit()
-                log.info("[Cleanup] Mainloop quit")
-            except Exception as e:
-                log.error(f"[Cleanup] Error quitting mainloop: {e}")
-        else:
-            log.info("[Cleanup] Mainloop was None")
-        
-        # For system shutdown (not reboot), display splash, call board.shutdown()
-        # for visual feedback (beep, LEDs) and send the sleep command to the
-        # controller. This prevents battery drain. For reboot, we skip the sleep
-        # command as the board will restart anyway. For SIGINT/normal exit, we
-        # don't shutdown the controller.
+        # Everything that can go before the panel is needed for the power-off
+        # message. run_teardown isolates each step, so one subsystem refusing to
+        # stop cannot cost the controller its sleep command below.
+        run_teardown([
+            ("RFCOMM server", released_by(rfcomm_server, "stop")),
+            ("Bluetooth keyboard manager", released_by(bt_keyboard_manager, "stop")),
+            ("relay manager", released_by(relay_manager, "stop")),
+            ("controller manager", released_by(_game.controller, "cleanup")),
+            ("protocol manager", released_by(_game.protocol, "cleanup")),
+            ("system polling service", _stop_system_polling),
+            ("engine registry", _shutdown_engine_registry),
+            ("BLE manager", released_by(ble_manager, "stop")),
+            ("GLib mainloop", released_by(mainloop, "quit")),
+        ])
+
+        # For system shutdown (not reboot), display splash, put the controller to
+        # sleep for visual feedback (beep, LEDs) and to stop battery drain. For
+        # reboot, the sleep command is skipped as the board will restart anyway.
+        # For SIGINT/normal exit, the controller is left running.
         #
         # Updates are never installed here: auto-update stages a build at startup
         # and the user installs it explicitly from Settings -> System (which runs
         # the detached install and restarts onto the new version). Shutdown stays
         # a pure power-down path.
+        #
+        # The fallback hook is not disarmed here. It is a oneshot pulled in by
+        # shutdown.target, so stopping it while inactive is a no-op and it runs
+        # at shutdown regardless; sleep_controller instead records the sleep so
+        # the hook sees it and skips (see board.CONTROLLER_SLEPT_STAMP).
         if system_shutdown and not reboot:
-            # Display shutdown splash screen
             log.info("[Cleanup] Displaying shutdown splash screen...")
             _show_shutdown_splash(t("power.press_play"), timeout=5.0, show_battery=True, tagline=t("splash.tagline"))
-            
-            # Play power off beep
-            log.info("[Cleanup] Playing power off beep...")
-            try:
-                board.beep(board.SOUND_POWER_OFF)
-            except Exception as e:
-                log.debug(f"[Cleanup] Failed to play power off beep: {e}")
-            
-            # LED cascade pattern h8→h1 (squares 7 down to 0)
-            log.info("[Cleanup] Performing LED cascade...")
-            try:
-                import time as _time
-                from universalchess.utils.led import LED_SPEED_NORMAL, LED_INTENSITY_DEFAULT
-                for i in range(7, -1, -1):
-                    board.led(i, intensity=LED_INTENSITY_DEFAULT,
-                              speed=LED_SPEED_NORMAL, repeat=1)
-                    _time.sleep(0.2)
-            except Exception as e:
-                log.error(f"[Cleanup] LED pattern failed: {e}")
-            
-            # The fallback hook is not disarmed here. It is a oneshot pulled in by
-            # shutdown.target, so stopping it while inactive is a no-op and it runs
-            # at shutdown regardless; sleep_controller instead records the sleep so
-            # the hook sees it and skips (see board.CONTROLLER_SLEPT_STAMP).
-            log.info("[Cleanup] Sending sleep command to controller...")
-            try:
-                success = board.sleep_controller()
-                if success:
-                    log.info("[Cleanup] Controller acknowledged sleep command")
-                else:
-                    log.error("[Cleanup] Controller did not acknowledge sleep command - battery may drain")
-            except Exception as e:
-                log.error(f"[Cleanup] Error sending sleep command: {e}")
-        
-        # Clean up display manager (analysis engine and widgets) - do this after
-        # shutdown splash/LEDs so the display can show the shutdown message
-        log.info("[Cleanup] Cleaning up display manager...")
-        if _game.display is not None:
-            try:
-                _game.display.cleanup(for_shutdown=True)
-                log.info("[Cleanup] Display manager cleaned up")
-            except Exception as e:
-                log.error(f"[Cleanup] Error cleaning up display manager: {e}", exc_info=True)
-        else:
-            log.info("[Cleanup] Display manager was None")
-        
-        # Pause board events
-        log.info("[Cleanup] Pausing board events...")
-        try:
-            board.pauseEvents()
-            log.info("[Cleanup] Board events paused")
-        except Exception as e:
-            log.error(f"[Cleanup] Error pausing events: {e}", exc_info=True)
-        
-        # Clean up board (serial port, etc) - do this last
-        log.info("[Cleanup] Cleaning up board...")
-        try:
-            board.cleanup(leds_off=True)
-            log.info("[Cleanup] Board cleaned up")
-        except Exception as e:
-            log.error(f"[Cleanup] Error cleaning up board: {e}", exc_info=True)
-        
+            quiesce_controller(board)
+
+        # The display goes after the shutdown splash and LEDs so the panel can
+        # still show them, and the serial port goes last of all.
+        run_teardown([
+            ("display manager", released_by(_game.display, "cleanup", for_shutdown=True)),
+            ("board events", board.pauseEvents),
+            ("board", released_by(board, "cleanup", leds_off=True)),
+        ])
+
         log.info("[Cleanup] Cleanup completed successfully")
         
         # If system shutdown requested, trigger poweroff/reboot at the end
@@ -6574,11 +6458,6 @@ def signal_handler(signum, frame):
 # Consecutive unhandled key presses, and the point at which they mean the board
 # has stopped routing keys and must be recovered. See app/key_recovery.py.
 _key_recovery = KeyRecovery()
-
-
-def _reset_unhandled_key_count():
-    """Note that a key reached something, so the board is answering its keys."""
-    _key_recovery.record_handled()
 
 
 def _handle_unhandled_key(key_id, reason: str):
@@ -6620,270 +6499,289 @@ def _handle_unhandled_key(key_id, reason: str):
 
 
 def key_callback(key_id):
-    """Handle key press events from the board.
-    
-    Behavior depends on current app state:
-    - MENU: Keys are routed to the active menu widget
-    - GAME: GameManager handles most keys, this receives passthrough
-    
-    This callback receives:
-    - BACK: In game mode (no game or after resign/draw), returns to menu
-    - HELP: Toggle game analysis widget visibility (game mode only)
-    - LONG_PLAY: Shutdown system
-    - LONG_TICK: In game move-list review, open take-back / new-game overlay
-    
-    If keys fall through without being handled, an error is logged. After
-    too many unhandled keys (indicating a broken state), the app forces
-    recovery by returning to the main menu.
+    """Handle a key press from the board.
+
+    Offers the key to each consumer in priority order and records whether one of
+    them took it. The bookkeeping is here rather than in each branch: it used to
+    be repeated nineteen times, and a branch that handled a key but forgot it left
+    the recovery counter climbing on keys that were working, until the board
+    abandoned the game for the main menu after five of them.
     """
-    global _menu_manager
-    
-    log.info(f"[App] Key event received: {key_id}, app_state={_session.state}")
-    
-    # Always handle LONG_PLAY for shutdown
+    log.info(f"[App] Key event received: {key_id}, screen={_session.state.name}")
+
+    if _route_key(key_id):
+        _key_recovery.record_handled()
+    else:
+        _handle_unhandled_key(key_id, _unhandled_key_reason())
+
+
+def _route_key(key_id) -> bool:
+    """Offer the key to each consumer in priority order; True when one took it.
+
+    Shutdown and the held OK come first because they must work from any screen. An
+    overlay (help tip, error splash, keyboard, pairing confirmation) comes next, in
+    the order app/modals.py states; only the keyboard lets a key it has no use for
+    continue past it. What remains is dispatched by screen.
+    """
     if key_id == board.Key.LONG_PLAY:
-        log.info("[App] LONG_PLAY key event received - setting shutdown flags")
-        # Set flags to trigger clean shutdown from main thread
-        # Don't call cleanup_and_exit here - it runs in events thread and sys.exit()
-        # would only exit this thread, not the main thread
-        _lifecycle.request_shutdown("LONG_PLAY")
-        _reset_unhandled_key_count()
-        # Cancel any active menu so the main loop can check the shutdown flag
-        if _menu_manager is not None and _menu_manager.active_widget is not None:
-            _menu_manager.cancel_selection("SHUTDOWN")
-        return
+        _request_shutdown_from_key()
+        return True
 
-    # LONG_TICK is a held OK. In move-list review it opens take-back / new-game;
-    # everywhere else it is a no-op (short OK is unchanged). Consumed here so it
-    # never counts as an unhandled key.
     if key_id == board.Key.LONG_TICK:
-        if (
-            _session.in_game
-            and _game.display
-            and not _game.display.is_menu_active()
-            and not (
-                _menu_manager is not None and _menu_manager.active_widget is not None
-            )
-        ):
-            from universalchess.menus.move_list_menu import (
-                players_support_takeback,
-                should_open_move_list_action_menu,
-                takeback_is_available,
-            )
-            reviewing = _game.display.is_move_review_active()
-            if (
-                should_open_move_list_action_menu(reviewing=reviewing, long_tick=True)
-                and _game.display.move_list_widget is not None
-            ):
-                ply = _game.display.move_list_widget.selected_ply()
-                num_plies = _game.display.move_list_widget.num_plies()
-                player_manager = None
-                if _game.protocol is not None and _game.protocol.game_manager is not None:
-                    player_manager = _game.protocol.game_manager.player_manager
-                supports = players_support_takeback(player_manager)
-                _game.display.show_move_list_action_menu(
-                    lambda result, selected_ply=ply: _on_move_list_action(result, selected_ply),
-                    takeback_enabled=takeback_is_available(
-                        selected_ply=ply,
-                        num_plies=num_plies,
-                        supports_takeback=supports,
-                    ),
-                )
-        _reset_unhandled_key_count()
-        return
-    
-    # Priority 0: an overlay on screen (help tip, error splash, keyboard,
-    # pairing confirmation) gets the key before the menu or the game does, in
-    # the order app/modals.py states. Only the keyboard lets a key it has no use
-    # for continue past it.
+        _open_move_list_actions()
+        return True
+
     if _modals.handle_key(key_id):
-        _reset_unhandled_key_count()
-        return
-    
-    # Route based on app state
+        return True
+
     if _session.showing_menu:
-        # PLAY in the menu starts a new game or resumes a suspended one. Cancel
-        # the blocking menu with "PLAY"; is_break_result("PLAY") lets it bubble
-        # up from nested Settings submenus to the main loop, which routes it
-        # through _enter_game(). (LONG_PLAY for shutdown is handled above.)
-        if key_id == board.Key.PLAY:
-            if _menu_manager is not None and _menu_manager.active_widget is not None:
-                _capture_menu_for_resume()
-                _menu_manager.cancel_selection("PLAY")
-            _reset_unhandled_key_count()
-            return
-        
-        # Check if menu is loading - queue keys for replay after load completes
-        if _menu_manager is not None and _menu_manager.is_loading:
-            if _menu_manager.queue_key(key_id):
-                _reset_unhandled_key_count()
-                return
-        
-        # Route to active menu widget via MenuManager
+        return _route_menu_key(key_id)
+
+    if _session.in_game:
+        return _route_game_key(key_id)
+
+    return False
+
+
+def _unhandled_key_reason() -> str:
+    """Why no consumer took the key, for the log the recovery leaves behind."""
+    if _session.showing_menu:
+        return f"No active menu widget in {_session.state.name}"
+    if _session.in_game:
+        return "No controller or protocol handler in GAME mode"
+    return f"Unknown screen or no handler: {_session.state}"
+
+
+def _request_shutdown_from_key() -> None:
+    """Ask the main loop to shut down, and let go of any blocking menu.
+
+    The shutdown itself cannot happen here: this runs on the board events thread,
+    where ``sys.exit()`` would end only that thread and leave the board running.
+    """
+    log.info("[App] LONG_PLAY key event received - setting shutdown flags")
+    _lifecycle.request_shutdown("LONG_PLAY")
+    if _menu_manager is not None and _menu_manager.active_widget is not None:
+        _menu_manager.cancel_selection("SHUTDOWN")
+
+
+def _open_move_list_actions() -> None:
+    """Open the take-back / new-game overlay, if a reviewed move can take one.
+
+    A held OK means this only during move-list review with no other menu on
+    screen; everywhere else it does nothing. Always treated as handled by the
+    router, so holding OK never counts towards recovery.
+    """
+    if not (
+        _session.in_game
+        and _game.display
+        and not _game.display.is_menu_active()
+        and not (_menu_manager is not None and _menu_manager.active_widget is not None)
+    ):
+        return
+
+    from universalchess.menus.move_list_menu import (
+        players_support_takeback,
+        should_open_move_list_action_menu,
+        takeback_is_available,
+    )
+    reviewing = _game.display.is_move_review_active()
+    if not (
+        should_open_move_list_action_menu(reviewing=reviewing, long_tick=True)
+        and _game.display.move_list_widget is not None
+    ):
+        return
+
+    ply = _game.display.move_list_widget.selected_ply()
+    num_plies = _game.display.move_list_widget.num_plies()
+    player_manager = None
+    if _game.protocol is not None and _game.protocol.game_manager is not None:
+        player_manager = _game.protocol.game_manager.player_manager
+    _game.display.show_move_list_action_menu(
+        lambda result, selected_ply=ply: _on_move_list_action(result, selected_ply),
+        takeback_enabled=takeback_is_available(
+            selected_ply=ply,
+            num_plies=num_plies,
+            supports_takeback=players_support_takeback(player_manager),
+        ),
+    )
+
+
+def _route_menu_key(key_id) -> bool:
+    """Offer the key to the menu on screen; True when it took it."""
+    # PLAY in the menu starts a new game or resumes a suspended one. Cancel the
+    # blocking menu with "PLAY"; is_break_result("PLAY") lets it bubble up from
+    # nested Settings submenus to the main loop, which routes it through
+    # _enter_game(). (LONG_PLAY for shutdown is handled before this.)
+    if key_id == board.Key.PLAY:
         if _menu_manager is not None and _menu_manager.active_widget is not None:
-            handled = _menu_manager.active_widget.handle_key(key_id)
-            if handled:
-                _reset_unhandled_key_count()
-                return
-        
-        # Key not handled in MENU/SETTINGS - this should not happen
-        _handle_unhandled_key(key_id, f"No active menu widget in {_session.state.name}")
+            _capture_menu_for_resume()
+            _menu_manager.cancel_selection("PLAY")
+        return True
+
+    # A menu still building replays the keys pressed during the load, so they are
+    # handled rather than lost.
+    if _menu_manager is not None and _menu_manager.is_loading:
+        if _menu_manager.queue_key(key_id):
+            return True
+
+    if _menu_manager is not None and _menu_manager.active_widget is not None:
+        return bool(_menu_manager.active_widget.handle_key(key_id))
+
+    return False
+
+
+def _route_game_key(key_id) -> bool:
+    """Offer the key to the game screen's consumers; True when one took it.
+
+    Priority: the display manager's own menu (resign/draw, promotion), then a
+    MenuManager overlay (Lichess takeback/draw/challenge), then the app's own
+    keys, then the game itself. Takeback Accept is a MenuManager.show_menu during
+    a game; without its place here, OK would full-refresh the panel and BACK would
+    open abort instead of selecting Accept.
+    """
+    if _game.display and _game.display.is_menu_active():
+        _game.display.handle_key(key_id)
+        return True
+
+    if _menu_manager is not None and _menu_manager.handle_if_active(key_id):
+        return True
+
+    if key_id == board.Key.HELP:
+        _show_move_hint()
+        return True
+
+    if key_id == board.Key.TICK:
+        _page_coach_text_or_refresh()
+        return True
+
+    if key_id == board.Key.PLAY:
+        # Suspend the game back to the full menu (clock paused, LEDs off, managers
+        # kept alive). PLAY from the menu later resumes it.
+        _suspend_game()
+        return True
+
+    if key_id in (board.Key.UP, board.Key.DOWN) and _game.display:
+        # UP/DOWN step the move-list widget's ply selection (selection 0 = the
+        # board, with the eval panel shown if analysis is on; 1..N select a played
+        # move and replace the board with that move's coach statement), wrapping
+        # around. Consumed whenever the move list took the step; otherwise the key
+        # continues to the game below.
+        direction = -1 if key_id == board.Key.UP else 1
+        if _game.display.step_analysis_selection(direction):
+            # Persist the reviewed move so a restart reopens the same coach panel
+            # (or the board when back on home).
+            _record_session_view(
+                VIEW_GAME,
+                analysis_selection=_game.display.current_analysis_selection(),
+            )
+            return True
+
+    if _game.controller:
+        _game.controller.on_key_event(key_id)
+    elif _game.protocol:
+        _game.protocol.receive_key(key_id)
+    else:
+        from universalchess.players.lichess.lobby import back_cancels_unready_game_start
+        if (
+            key_id == board.Key.BACK
+            and back_cancels_unready_game_start(has_game_managers=False)
+        ):
+            _pending.cancel_game_start.request()
+            return True
+        return False
+
+    if key_id == board.Key.BACK:
+        _leave_game_on_back()
+    return True
+
+
+def _show_move_hint() -> None:
+    """Show (or dismiss) the hint for the side to move.
+
+    Pressing ? while a hint is displayed toggles it off, so the same key both
+    shows and dismisses the tip. A Hand+Brain player answers the key itself;
+    otherwise the tip reuses the background analysis for this position and may
+    arrive after this returns, because ? pressed before the search finishes is
+    held by request_hint and called back once the result lands.
+    """
+    if _game.display and _game.display.is_hint_showing():
+        _game.display.hide_hint()
         return
-    
-    elif _session.in_game:
-        # Priority: DisplayManager menu (resign/draw, promotion) > MenuManager
-        # overlay (Lichess takeback/draw/challenge) > app keys > game.
-        # Takeback Accept is a MenuManager.show_menu during GAME; without this
-        # TICK full-refreshes and BACK opens abort instead of selecting Accept.
-        if _game.display and _game.display.is_menu_active():
-            _game.display.handle_key(key_id)
-            _reset_unhandled_key_count()
-            return
 
-        if _menu_manager is not None and _menu_manager.handle_if_active(key_id):
-            _reset_unhandled_key_count()
-            return
-        
-        # Handle app-level keys
-        if key_id == board.Key.HELP:
-            # Pressing ? while a hint is already displayed toggles it off, so the
-            # same key both shows and dismisses the tip.
-            if _game.display and _game.display.is_hint_showing():
-                _game.display.hide_hint()
-                _reset_unhandled_key_count()
-                return
-
-            # Show move hint - behavior depends on game mode
-            if _game.display and _game.protocol and _game.protocol.game_manager:
-                from universalchess.state import get_chess_game
-                game_board = get_chess_game().board
-                hint_move = None
-                
-                # Check if current player is a Hand+Brain player
-                player_manager = _game.protocol.game_manager.player_manager
-                if player_manager:
-                    current_player = player_manager.get_current_player(game_board)
-                    help_result = current_player.help_key_result(game_board)
-                    if help_result is not None:
-                        if help_result.show_move is not None:
-                            _game.display.show_hint(help_result.show_move)
-                            log.info(f"[App] Player hint: {help_result.show_move.uci()}")
-                            _show_hint_coach_async(
-                                _game.display, game_board.fen(), help_result.show_move.uci()
-                            )
-                        _reset_unhandled_key_count()
-                        return
-                
-                # Standard hint, reusing the background analysis for this
-                # position. The tip may arrive after this handler returns: when
-                # ? is pressed before the search for the current position has
-                # finished, request_hint holds the request and calls back once
-                # the result lands.
-                hint_fen = game_board.fen()
-
-                def _on_hint_ready(hint_move):
-                    _game.display.show_hint(hint_move)
-                    log.info(f"[App] Hint: {hint_move.uci()}")
-                    # Add the AI coach's remark about the recommended move.
-                    _show_hint_coach_async(_game.display, hint_fen, hint_move.uci())
-
-                _game.display.request_hint(game_board, _on_hint_ready)
-            _reset_unhandled_key_count()
-            return
-        
-        if key_id == board.Key.TICK:
-            # OK while a coach statement or hint tip is on screen pages through it
-            # (wrapping to the first page after the last) instead of refreshing, so
-            # the reader can read a long statement one page at a time.
-            if _game.display and _game.display.page_coach_text():
-                _reset_unhandled_key_count()
-                return
-            # Otherwise OK during a game forces a full e-paper refresh to clear
-            # ghosting. In menus TICK means "select" and is handled by the menu
-            # widget, not this branch. This replaces the old (hidden)
-            # long-press-any-key refresh at the board layer.
-            if board.display_manager:
-                board.display_manager.update(full=True)
-            _reset_unhandled_key_count()
-            return
-        
-        if key_id == board.Key.PLAY:
-            # Suspend the game back to the full menu (clock paused, LEDs off,
-            # managers kept alive). PLAY from the menu later resumes it.
-            _suspend_game()
-            _reset_unhandled_key_count()
-            return
-
-        if key_id in (board.Key.UP, board.Key.DOWN) and _game.display:
-            # UP/DOWN step the move-list widget's ply selection (selection 0 = the
-            # board, with the eval panel shown if analysis is on; 1..N select a
-            # played move and replace the board with that move's coach statement),
-            # wrapping around. Always consume the key when the move list exists,
-            # including when analysis is off.
-            direction = -1 if key_id == board.Key.UP else 1
-            if _game.display.step_analysis_selection(direction):
-                # Persist the reviewed move so a restart reopens the same coach
-                # panel (or the board when back on home).
-                _record_session_view(
-                    VIEW_GAME,
-                    analysis_selection=_game.display.current_analysis_selection(),
-                )
-                _reset_unhandled_key_count()
-                return
-        
-        # Route through the controller, or the protocol handler directly
-        if _game.controller:
-            _game.controller.on_key_event(key_id)
-            _reset_unhandled_key_count()
-        elif _game.protocol:
-            _game.protocol.receive_key(key_id)
-            _reset_unhandled_key_count()
-        else:
-            from universalchess.players.lichess.lobby import back_cancels_unready_game_start
-            if (
-                key_id == board.Key.BACK
-                and back_cancels_unready_game_start(has_game_managers=False)
-            ):
-                _pending.cancel_game_start.request()
-                _reset_unhandled_key_count()
-                return
-            # No controller or protocol handler in GAME mode - should not happen
-            _handle_unhandled_key(key_id, "No controller or protocol handler in GAME mode")
-            return
-            
-        # Check if we should exit to menu:
-        # - BACK after game over (checkmate, stalemate, resign, time forfeit)
-        # - BACK with no game in progress (no moves made)
-        if key_id == board.Key.BACK:
-            from universalchess.state import get_chess_game
-            game_state = get_chess_game()
-            if game_state.is_game_over:
-                log.info("[App] BACK after game over - returning to menu")
-                _return_to_menu("Game over - BACK pressed")
-            elif not game_state.is_game_in_progress:
-                # A remote seek/session owns BACK at ply 0 (cancel / abort menu).
-                # Returning to the menu here would dismiss that handler — and
-                # during player start it tore down the game runtime while
-                # _start_game_mode was still wiring callbacks.
-                pm = (
-                    _game.protocol.player_manager
-                    if _game.protocol is not None
-                    else None
-                )
-                if pm is not None and pm.requires_rebuild_on_new_game:
-                    gm = _game.protocol.game_manager
-                    if gm is not None and gm.on_back_pressed is None:
-                        # Handler is wired just before activate_local. BACK in
-                        # that window must still cancel the seek that start()
-                        # is about to post.
-                        _pending.cancel_game_start.request()
-                    return
-                log.info("[App] BACK with no game - returning to menu")
-                _return_to_menu("BACK pressed")
+    if not (_game.display and _game.protocol and _game.protocol.game_manager):
         return
-    
-    # Unknown app_state or fell through all handlers
-    _handle_unhandled_key(key_id, f"Unknown app_state or no handler: {_session.state}")
+
+    from universalchess.state import get_chess_game
+    game_board = get_chess_game().board
+
+    player_manager = _game.protocol.game_manager.player_manager
+    if player_manager:
+        current_player = player_manager.get_current_player(game_board)
+        help_result = current_player.help_key_result(game_board)
+        if help_result is not None:
+            if help_result.show_move is not None:
+                _game.display.show_hint(help_result.show_move)
+                log.info(f"[App] Player hint: {help_result.show_move.uci()}")
+                _show_hint_coach_async(
+                    _game.display, game_board.fen(), help_result.show_move.uci()
+                )
+            return
+
+    hint_fen = game_board.fen()
+
+    def _on_hint_ready(hint_move):
+        _game.display.show_hint(hint_move)
+        log.info(f"[App] Hint: {hint_move.uci()}")
+        # Add the AI coach's remark about the recommended move.
+        _show_hint_coach_async(_game.display, hint_fen, hint_move.uci())
+
+    _game.display.request_hint(game_board, _on_hint_ready)
+
+
+def _page_coach_text_or_refresh() -> None:
+    """Page through the coach statement on screen, or refresh the panel.
+
+    OK while a coach statement or hint tip is showing pages through it (wrapping
+    to the first page after the last) so a long statement can be read a page at a
+    time. Otherwise OK forces a full e-paper refresh to clear ghosting. In menus
+    OK means "select" and never reaches here.
+    """
+    if _game.display and _game.display.page_coach_text():
+        return
+    if board.display_manager:
+        board.display_manager.update(full=True)
+
+
+def _leave_game_on_back() -> None:
+    """Return to the menu if BACK ends the game, rather than acting within it.
+
+    BACK leaves after a game is over (checkmate, stalemate, resign, time forfeit)
+    or before it has begun. A remote seek owns BACK at ply 0 for its cancel/abort
+    menu, so leaving here would dismiss that handler -- and during player start it
+    tore down the game runtime while _start_game_mode was still wiring callbacks.
+    """
+    from universalchess.state import get_chess_game
+    game_state = get_chess_game()
+
+    if game_state.is_game_over:
+        log.info("[App] BACK after game over - returning to menu")
+        _return_to_menu("Game over - BACK pressed")
+        return
+
+    if game_state.is_game_in_progress:
+        return
+
+    pm = _game.protocol.player_manager if _game.protocol is not None else None
+    if pm is not None and pm.requires_rebuild_on_new_game:
+        gm = _game.protocol.game_manager
+        if gm is not None and gm.on_back_pressed is None:
+            # The handler is wired just before activate_local. BACK in that window
+            # must still cancel the seek that start() is about to post.
+            _pending.cancel_game_start.request()
+        return
+
+    log.info("[App] BACK with no game - returning to menu")
+    _return_to_menu("BACK pressed")
 
 
 # Pending piece events for menu -> game transition
