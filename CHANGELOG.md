@@ -825,6 +825,14 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   only when, Lichess hands over the other color. Chosen White and assigned
   Black flips, as before; chosen Black and assigned Black does not.
 
+- **In-game Lichess menus stayed upright after the display turned around**:
+  Flip remapped the chess squares and clock rows, but abort, takeback, draw,
+  and the next-game offer (Lobby / Seek / Cancel) still painted for the
+  original seat, so they were upside down from the far end. The panel now
+  rotates the whole framebuffer 180 when that flip is on, and restores the
+  mounting orientation when the game ends so the main menu is not left
+  inverted.
+
 - **A Lichess seek asked for no color even when one was chosen**: Every seek was
   posted as random, because the color a match names arrives faster than the
   pieces can be turned around. Rotating the e-paper instead of the pieces

@@ -10,7 +10,7 @@ when the stream connects.
 """
 
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -85,3 +85,23 @@ def test_defer_widgets_skips_init_until_show_game_widgets(display_manager_factor
     init.assert_not_called()
     dm.show_game_widgets()
     init.assert_called_once()
+
+
+def test_flip_board_rotates_the_whole_panel_180(display_manager_factory, monkeypatch):
+    """When the seated player is at the far end, menus must turn with the board.
+
+    Why: set_flip_board only remapped chess squares and clock rows. Abort,
+    takeback, and next-game menus still painted for the original seat.
+    How the regression manifests: set_flip_board(True) never asks the panel
+    for content rotation 180, or leaving the game leaves it at 180.
+    """
+    import universalchess.managers.display as display_module
+
+    panel = MagicMock()
+    monkeypatch.setattr(display_module.board, "display_manager", panel)
+    dm, _ = display_manager_factory(defer_widgets=True)
+    panel.set_content_rotation.assert_called_with(0)
+    dm.set_flip_board(True)
+    panel.set_content_rotation.assert_called_with(180)
+    dm.set_flip_board(False)
+    panel.set_content_rotation.assert_called_with(0)

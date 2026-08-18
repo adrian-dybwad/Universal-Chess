@@ -109,6 +109,47 @@ def test_display_frame_forwards_red_plane_for_three_color():
     assert kwargs["red_image"] is red
 
 
+def test_content_rotation_cancels_mounting_180():
+    """A far-end seat turns the panel another 180, so mounting plus content is 0.
+
+    Why: square remapping only turned the chess diagram. Menus kept using
+    mounting rotation alone, so abort/takeback/next-game were upside down.
+    How the regression manifests: (0, 0) still moves to (127, 295).
+    """
+    manager, _ = _manager_with_mock_scheduler()
+    manager.set_content_rotation(180)
+    img = Image.new("1", (128, 296), 255)
+    img.putpixel((0, 0), 0)
+
+    with patch("universalchess.epaper.framework.manager.epdconfig.ROTATION", 180):
+        manager.display_frame(img)
+
+    submitted = manager._scheduler.submit.call_args.kwargs["image"]
+    assert submitted.getpixel((0, 0)) == 0
+
+
+def test_widget_snapshot_uses_mounting_plus_content_rotation():
+    """Menus paint through snapshot(), not display_frame().
+
+    How the regression manifests: snapshot is called with mounting 180 after
+    content 180, so the abort menu is still upright for the original seat.
+    """
+    manager, _ = _manager_with_mock_scheduler()
+    manager._epd.three_color = False
+    captured = []
+
+    def _snapshot(rotation=0):
+        captured.append(rotation)
+        return Image.new("1", (128, 296), 255)
+
+    manager._framebuffer.snapshot = _snapshot
+    manager._framebuffer.get_canvas = lambda: Image.new("1", (128, 296), 255)
+    manager.set_content_rotation(180)
+    with patch("universalchess.epaper.framework.manager.epdconfig.ROTATION", 180):
+        manager._do_update()
+    assert captured == [0]
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])

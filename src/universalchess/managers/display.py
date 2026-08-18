@@ -161,6 +161,7 @@ class DisplayManager:
         self._led_off = led_off_callback
         
         self._flip_board = flip_board
+        self._sync_panel_content_rotation()
         self._show_analysis = show_analysis
         self._analysis_mode = analysis_mode  # Whether to create analysis engine/widget at all
         self._on_exit = on_exit
@@ -279,12 +280,28 @@ class DisplayManager:
         self._init_widgets()
 
     def set_flip_board(self, flip: bool) -> None:
-        """Show the board from Black's side when the local human is Black.
+        """Turn the e-paper around when the seated player is at the far end.
 
-        Must be set before :meth:`show_game_widgets` so the first paint matches
-        the Lichess stream's colors. Does not rebuild widgets by itself.
+        Square remapping (Black at the bottom of the diagram) is not enough:
+        abort, takeback, and next-game menus paint through the panel snapshot,
+        so the whole framebuffer rotates 180 as well. Must be set before
+        :meth:`show_game_widgets` so the first board paint matches. Does not
+        rebuild chess widgets by itself.
         """
         self._flip_board = bool(flip)
+        self._sync_panel_content_rotation()
+
+    def _sync_panel_content_rotation(self) -> None:
+        """Point the panel at the seated player, or restore the menu orientation.
+
+        The epaper Manager is longer-lived than this game DisplayManager. Leaving
+        content rotation at 180 after the game would draw the main menu upside
+        down.
+        """
+        panel = getattr(board, "display_manager", None)
+        if panel is None or not hasattr(panel, "set_content_rotation"):
+            return
+        panel.set_content_rotation(180 if self._flip_board else 0)
     
     def _init_analysis_engine_async(self, engine_path: str):
         """Initialize the UCI analysis engine asynchronously via registry.
@@ -1759,6 +1776,8 @@ class DisplayManager:
             for_shutdown: If True, skip creating new widgets (faster shutdown)
         """
         log.info(f"[DisplayManager] Starting cleanup (for_shutdown={for_shutdown})...")
+        self._flip_board = False
+        self._sync_panel_content_rotation()
         
         # Wait for engine init thread if still running (brief wait)
         log.info("[DisplayManager] Checking engine init thread...")

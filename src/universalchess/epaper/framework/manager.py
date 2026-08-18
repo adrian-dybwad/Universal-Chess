@@ -66,7 +66,27 @@ class Manager:
         self._dirty = False  # a routine update is waiting to be rendered
         self._dirty_full = False  # a waiting update needs a full refresh
         self._flush_scheduled = False  # a coalesced flush is already queued
+        # Extra rotation on top of epdconfig.ROTATION (the panel mount). 180 turns
+        # every screen -- menus included -- to face a player seated at the far
+        # end. Square remapping alone left abort/takeback/next-game upright for
+        # the original seat.
+        self._content_rotation = 0
         log.debug(f"Manager.__init__() completed - Manager id: {id(self)}, EPD id: {id(self._epd)}")
+
+    def set_content_rotation(self, degrees: int) -> None:
+        """Rotate drawn content on top of the panel's mounting rotation.
+
+        180 turns the whole screen around when the seated player is at the far
+        end of the board (Lichess handed them the other color). Menus, game-over,
+        and the status bar use this path; square remapping alone left them facing
+        the original seat. 0 restores the mounting-only orientation after the
+        game ends so the main menu is not left upside down.
+        """
+        self._content_rotation = int(degrees) % 360
+
+    def output_rotation(self) -> int:
+        """Degrees logical content is rotated onto the panel."""
+        return (int(epdconfig.ROTATION) + int(self._content_rotation)) % 360
     
     def initialize(self) -> None:
         """Initialize the display hardware.
@@ -544,7 +564,7 @@ class Manager:
         # CRITICAL: Capture snapshot of framebuffer state at this exact moment
         # This ensures each update request carries its own image state, so rapid
         # updates display all intermediate states, not just the final one
-        snapshot = self._framebuffer.snapshot(rotation=epdconfig.ROTATION)
+        snapshot = self._framebuffer.snapshot(rotation=self.output_rotation())
 
         # Three-color mode: composite a parallel RED plane from the same widget
         # stack. Built only when the active driver reports three_color so a mono
@@ -585,9 +605,10 @@ class Manager:
                     continue
                 widget.draw_red_on(red_canvas, widget.x, widget.y)
 
-        if epdconfig.ROTATION == 0:
+        rotation = self.output_rotation()
+        if rotation == 0:
             return red_canvas
-        return red_canvas.rotate(-epdconfig.ROTATION, expand=False)
+        return red_canvas.rotate(-rotation, expand=False)
     
     def display_frame(self, image: Image.Image, red_image: Image.Image = None) -> Future:
         """Render an externally-produced frame, bypassing the widget stack.
@@ -623,7 +644,7 @@ class Manager:
         Returns:
             The refresh ``Future`` from the scheduler, so callers can await paint.
         """
-        rotation = epdconfig.ROTATION
+        rotation = self.output_rotation()
         frame = image if rotation == 0 else image.rotate(-rotation, expand=False)
         red = red_image
         if red is not None and rotation != 0:
