@@ -2759,16 +2759,17 @@ def _read_player_dicts():
     resolve identically on web and board.
     """
     from universalchess.board.settings import Settings
+    from universalchess.players.settings import PLAYER1_SECTION, PLAYER2_SECTION
 
     player1 = {
-        "type": Settings.read("PlayerOne", "type", "human"),
-        "color": Settings.read("PlayerOne", "color", "white"),
-        "elo": Settings.read("PlayerOne", "elo", "Default"),
+        "type": Settings.read(PLAYER1_SECTION, "type", "human"),
+        "color": Settings.read(PLAYER1_SECTION, "color", "white"),
+        "elo": Settings.read(PLAYER1_SECTION, "elo", "Default"),
     }
     player2 = {
-        "type": Settings.read("PlayerTwo", "type", "engine"),
-        "color": Settings.read("PlayerTwo", "color", "black"),
-        "elo": Settings.read("PlayerTwo", "elo", "Default"),
+        "type": Settings.read(PLAYER2_SECTION, "type", "engine"),
+        "color": Settings.read(PLAYER2_SECTION, "color", "black"),
+        "elo": Settings.read(PLAYER2_SECTION, "elo", "Default"),
     }
     return player1, player2
 
@@ -3065,6 +3066,7 @@ def _lichess_ini_settings():
     from types import SimpleNamespace
 
     from universalchess.board.settings import Settings
+    from universalchess.players.settings import PLAYER1_SECTION, PLAYER2_SECTION
 
     def slot(section, default_type):
         return SimpleNamespace(
@@ -3073,8 +3075,8 @@ def _lichess_ini_settings():
         )
 
     return SimpleNamespace(
-        player1=slot("PlayerOne", "human"),
-        player2=slot("PlayerTwo", "engine"),
+        player1=slot(PLAYER1_SECTION, "human"),
+        player2=slot(PLAYER2_SECTION, "engine"),
     )
 
 

@@ -677,6 +677,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   that a side resigned is now the player manager's `on_resign`, beside
   `on_takeback`, rather than a closure written out once per resign gesture.
 
+- **The two player slots were named by three separate copies of the same
+  string**: `"PlayerOne"` and `"PlayerTwo"` name the sections every board's
+  `centaur.ini` stores its players in, and the board, the web app and the Lichess
+  account store each spelled them out for themselves. A rename would have reached
+  some readers and not others, which reads on the board as players that revert to
+  defaults. They now live beside the dataclass that reads them, with a test
+  asserting the literals rather than only the symbols, because the text is the
+  contract with configs already on disk.
+
 - **A board key that was handled could still count towards recovery**: five
   consecutive presses that reach nothing mean the board has stopped routing keys,
   so it tears down the game and returns to the main menu on its own. The counter
@@ -721,7 +730,13 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   set only `kill`. The unanswered-key counter that recovers a wedged board is
   `app/key_recovery.py`. Which engines can be played and how strong each can be
   set moved to the engine modules that own them, cache included, so the web can
-  ask the same questions. Which screen is showing is one more: "a menu is on
+  ask the same questions. Turning a player slot's settings into a player is
+  another: it was a closure inside the 750-line game builder, so nothing checked
+  that an unnamed engine carries its strength label into the PGN, that a novelty
+  engine such as Worstfish runs its policy over the shared Stockfish instead of
+  starting a second one, or that a player type left behind by a downgrade still
+  yields a player rather than a side that can never move. It is `players/factory.py`
+  with eighteen tests. Which screen is showing is one more: "a menu is on
   screen" was written eight times as `state == MENU or state == SETTINGS`, so a
   screen added without being added there reads as "in game" and sends board keys
   and piece lifts to a game that is not showing. Named once in `app/session.py`,

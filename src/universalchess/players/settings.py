@@ -64,6 +64,14 @@ def analysis_time_seconds(preset: str) -> float:
     return ANALYSIS_TIME_PRESETS.get(preset, ANALYSIS_TIME_PRESETS[ANALYSIS_TIME_DEFAULT])
 
 
+# Section names for the two player slots in centaur.ini. Held here, beside the
+# dataclass that reads them, because the board, the web app and the Lichess
+# account store all address the same two sections: three copies of the literal
+# meant a rename could reach some readers and not others.
+PLAYER1_SECTION = "PlayerOne"
+PLAYER2_SECTION = "PlayerTwo"
+
+
 def default_player_name(player_num: int) -> str:
     """Slot-specific default display name for an unnamed human player.
 
@@ -131,6 +139,18 @@ class PlayerSettings:
     hand_brain_mode: str = "normal"
     think_time: int = 5
     _log: Optional[Any] = field(default=None, repr=False)
+
+    @property
+    def slot(self) -> int:
+        """Which player slot this is: 1 for the bottom of the board, else 2.
+
+        The slot number is what the default name and the board's Name row are
+        derived from, and it is only recoverable from the section this was loaded
+        from. Anything that is not player one's section is player two, so an
+        unrecognised section reads as slot 2 rather than raising on the game
+        thread.
+        """
+        return 1 if self.section == PLAYER1_SECTION else 2
 
     def save(self, key: str) -> None:
         """Save a single setting to config file.

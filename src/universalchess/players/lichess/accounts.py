@@ -34,7 +34,9 @@ from .hosts import (
     parse_credential_id,
 )
 
-_PLAYER_SECTIONS = ("PlayerOne", "PlayerTwo")
+from universalchess.players.settings import PLAYER1_SECTION, PLAYER2_SECTION
+
+_PLAYER_SECTIONS = (PLAYER1_SECTION, PLAYER2_SECTION)
 _LEGACY_USE_DEV = ("1", "true", "yes", "on")
 
 

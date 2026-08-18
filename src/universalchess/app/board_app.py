@@ -88,6 +88,8 @@ from universalchess.utils.session_state import (
 from universalchess.managers.game.resume_policy import choose_resume_target
 from universalchess.menus.time_control_presets import preset_label, time_control_label
 from universalchess.players.settings import (
+    PLAYER1_SECTION,
+    PLAYER2_SECTION,
     PlayerSettings,
     GameSettings,
     AllSettings,
@@ -721,10 +723,10 @@ def _handle_web_chromecast_command(command: str, parsed: dict) -> None:
 # Args (stored globally after parsing for access in callbacks)
 _args = None
 
-# Settings section names in centaur.ini
+# Settings section names in centaur.ini. The player sections live beside the
+# dataclass that reads them (players/settings.py), so a rename reaches the board,
+# the web app and the Lichess account store together.
 SETTINGS_SECTION = 'game'
-PLAYER1_SECTION = 'PlayerOne'
-PLAYER2_SECTION = 'PlayerTwo'
 
 
 # Menu navigation (path/indices) and the session view-state snapshot share one
@@ -1884,77 +1886,21 @@ def _start_game_mode(
     lichess_pairing = p1.type == "lichess" or p2.type == "lichess"
     player1_is_white = True if lichess_pairing else (p1.color == "white")
 
-    # Create players based on settings
-    from universalchess.players import (
-        HumanPlayer, HumanPlayerConfig, EnginePlayer, EnginePlayerConfig,
-        HandBrainPlayer, HandBrainConfig, HandBrainMode
-    )
-    from universalchess.players.settings import PlayerSettings
-    from universalchess.managers.engine_manager import engine_display_name
+    # Create White and Black players. Ponder is a game setting rather than a slot
+    # setting, and the Lichess seek/join belong to this start, so all three are
+    # supplied here; every other decision is the slot's own (see players/factory).
+    from universalchess.players.factory import build_player
 
-    def create_player(ps: PlayerSettings, color: chess.Color):
-        """Create a player based on PlayerSettings and color.
+    def create_player(ps, color: chess.Color):
+        """The player for one slot, playing ``color`` in this game."""
+        return build_player(
+            ps,
+            color,
+            ponder=settings.game.ponder,
+            lichess_seek=lichess_seek,
+            lichess_join=join,
+        )
 
-        Args:
-            ps: PlayerSettings object with type, name, engine, elo, hand_brain_mode
-            color: chess.WHITE or chess.BLACK
-        """
-        if ps.type == 'human':
-            slot = 1 if ps.section == PLAYER1_SECTION else 2
-            name = ps.name if ps.name else default_player_name(slot)
-            config = HumanPlayerConfig(
-                name=name, color=color,
-                engine=ps.engine, elo=ps.elo
-            )
-            return HumanPlayer(config)
-        elif ps.type == 'engine':
-            from universalchess.services import uci_schema
-
-            engine_display = engine_display_name(ps.engine)
-            # Use custom name if provided, otherwise use engine display name with
-            # the picker's strength label (an uncapped "Default" -> "Unlimited")
-            # so the game card / PGN never show a bare "(Default)".
-            elo_label = uci_schema.strength_display_for_engine(ps.engine, ps.elo)
-            name = ps.name if ps.name else f"{engine_display} ({elo_label})"
-            config = EnginePlayerConfig(
-                name=name,
-                color=color,
-                engine_name=ps.engine,
-                elo_section=ps.elo,
-                time_limit_seconds=float(ps.think_time),
-                ponder=settings.game.ponder,
-            )
-            # Derived novelty engines (Worstfish/Drawfish) run their selection
-            # policy in-process on the shared pooled Stockfish instead of a
-            # separate UCI subprocess that would spawn a second Stockfish.
-            from universalchess.services.derived_engines.spec import SPECS
-            if ps.engine in SPECS:
-                from universalchess.players.policy_engine import PolicyEnginePlayer
-                return PolicyEnginePlayer(config, SPECS[ps.engine])
-            return EnginePlayer(config)
-        elif ps.type == 'lichess':
-            return lichess_player_from_seek(lichess_seek, color=color, join=join)
-        elif ps.type == 'hand_brain':
-            mode = HandBrainMode.NORMAL if ps.hand_brain_mode == 'normal' else HandBrainMode.REVERSE
-            mode_str = 'N' if mode == HandBrainMode.NORMAL else 'R'
-            engine_display = engine_display_name(ps.engine)
-            # Use custom name if provided, otherwise use H+B format with engine display name
-            name = ps.name if ps.name else f"H+B {mode_str} ({engine_display})"
-            config = HandBrainConfig(
-                name=name,
-                color=color,
-                mode=mode,
-                engine_name=ps.engine,
-                elo_section=ps.elo,
-                time_limit_seconds=float(ps.think_time)
-            )
-            return HandBrainPlayer(config)
-        else:
-            log.warning(f"[App] Unknown player type: {ps.type}, defaulting to human")
-            slot = 1 if ps.section == PLAYER1_SECTION else 2
-            return HumanPlayer(HumanPlayerConfig(name=default_player_name(slot), color=color))
-    
-    # Create White and Black players
     if player1_is_white:
         white_player = create_player(p1, chess.WHITE)
         black_player = create_player(p2, chess.BLACK)
