@@ -677,6 +677,18 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   that a side resigned is now the player manager's `on_resign`, beside
   `on_takeback`, rather than a closure written out once per resign gesture.
 
+- **A game's handles are discarded together or not at all**: the protocol,
+  display, controller, coach and Lichess session that exist only while a game is
+  being played were five module-level names, released by a teardown that cleared
+  each one separately. Nothing checked that it reached all of them, and a handle
+  it missed survived into the next game -- drawing on a display that game does not
+  own, or routing board events into a game that has already ended. The order also
+  mattered and was recorded nowhere: the Lichess session holds the started-splash
+  timer, so a game that ended within five seconds of starting could paint game
+  widgets over the menu that replaced it. Both are now stated once, and the
+  handles return to their defaults even when a component's own cleanup raises,
+  which previously abandoned everything after it.
+
 - **The application's own state has owners, and each one is tested**: the board
   held its state as seventy module-level names, so behaviour that existed only as
   a rule about them -- which overlay gets a key first, that a stop must set two
@@ -690,7 +702,11 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   set only `kill`. The unanswered-key counter that recovers a wedged board is
   `app/key_recovery.py`. Which engines can be played and how strong each can be
   set moved to the engine modules that own them, cache included, so the web can
-  ask the same questions.
+  ask the same questions. Which screen is showing is one more: "a menu is on
+  screen" was written eight times as `state == MENU or state == SETTINGS`, so a
+  screen added without being added there reads as "in game" and sends board keys
+  and piece lifts to a game that is not showing. Named once in `app/session.py`,
+  with a test that fails if a screen is left unclassified.
 
 ### Removed
 

@@ -40,6 +40,8 @@ could be tested.
 | `board/display_settings.py` | The `[display]` settings, read the same way by both apps |
 | `app/startup_splash.py` | The startup splash, shared with the slow imports |
 | `app/pending_work.py` | Work requested off the main loop and performed on it |
+| `app/game_runtime.py` | The running game's handles, and the order they close in |
+| `app/session.py` | Which screen is showing, and where the menu resumes |
 | `app/modals.py` | The overlays that consume board keys, in priority order |
 | `app/lifecycle.py` | Whether the board keeps running, and how it stops |
 | `app/key_recovery.py` | Noticing that the board has stopped routing keys |
@@ -645,6 +647,8 @@ main.py (Entry Point)
     |     +-- bootstrap.py (boot sequence)
     |     +-- display_boot.py (panel bring-up)
     |     +-- pending_work.py (cross-thread work handoff)
+    |     +-- game_runtime.py (the running game's handles)
+    |     +-- session.py (which screen is showing)
     |     +-- modals.py, lifecycle.py, key_recovery.py (app state)
     |     +-- board_app.py (menus, game modes, main loop)
     |
