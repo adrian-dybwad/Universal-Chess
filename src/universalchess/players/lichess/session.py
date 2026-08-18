@@ -58,6 +58,7 @@ class LichessPlaySession:
         self._splash_timer = None
         self._closed = False
         self._player1_color = "white"
+        self._on_unfinished_game = None
 
     @classmethod
     def from_players(cls, white_player, black_player) -> Optional["LichessPlaySession"]:
@@ -100,12 +101,15 @@ class LichessPlaySession:
         show_started_splash: Optional[Callable] = None,
         rewind_to_move_count: Optional[Callable[[int], None]] = None,
         player1_color: str = "white",
+        on_unfinished_game: Optional[Callable[[], None]] = None,
     ) -> None:
         """Wire stream callbacks onto the remote player.
 
         ``player1_color`` is the side the Players color control names, which is
         the side the human took when setting the pieces up. It decides whether
         the assigned color turns the display around (:func:`epaper_is_flipped`).
+        ``on_unfinished_game`` runs when the opponent aborts (or never starts)
+        so the main loop can offer Lobby / Seek / Cancel.
         """
         self._player_manager = player_manager
         self._game_display = game_display
@@ -117,6 +121,7 @@ class LichessPlaySession:
         self._splash_seconds = splash_seconds
         self._rewind_to_move_count = rewind_to_move_count
         self._player1_color = player1_color
+        self._on_unfinished_game = on_unfinished_game
         if show_started_splash is None:
             from .lobby import show_lichess_started_splash
 
@@ -317,6 +322,11 @@ class LichessPlaySession:
             self._game_display.stop_clock()
         if self._set_game_result is not None:
             self._set_game_result(result, termination)
+        if (
+            termination in ("ABORTED", "NOSTART")
+            and self._on_unfinished_game is not None
+        ):
+            self._on_unfinished_game()
 
     def _on_info_message(self, message: str) -> None:
         if self._info_overlay is not None:

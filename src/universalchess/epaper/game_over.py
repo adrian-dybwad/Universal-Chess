@@ -213,6 +213,8 @@ class GameOverWidget(Widget):
                 self.winner = t("game_over.result.black_wins")
             elif result == "1/2-1/2":
                 self.winner = t("game_over.result.draw")
+            elif result == "*":
+                self.winner = t("game_over.result.aborted")
             else:
                 self.winner = result
         
@@ -296,6 +298,8 @@ class GameOverWidget(Widget):
             "TIMEOUT": "game_over.termination.timeout",
             "TIME_FORFEIT": "game_over.termination.time_forfeit",
             "ABANDONED": "game_over.termination.abandoned",
+            "ABORTED": "game_over.termination.aborted",
+            "NOSTART": "game_over.termination.aborted",
         }
 
         key = termination_keys.get(term.upper())

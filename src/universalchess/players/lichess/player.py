@@ -90,6 +90,87 @@ def server_move_list_delta(previous: str, current: str):
     return len(prev) - i, curr[i:]
 
 
+_TERMINAL_STATUS = frozenset({
+    "mate",
+    "resign",
+    "draw",
+    "stalemate",
+    "aborted",
+    "nostart",
+    "outoftime",
+    "timeout",
+    "unknownfinish",
+    "cheat",
+    "variantend",
+})
+_UNFINISHED_STATUS = frozenset({"aborted", "nostart"})
+_TERMINATION_BY_STATUS = {
+    "mate": "CHECKMATE",
+    "resign": "RESIGN",
+    "draw": "DRAW",
+    "stalemate": "STALEMATE",
+    "aborted": "ABORTED",
+    "nostart": "NOSTART",
+    "outoftime": "TIMEOUT",
+    "timeout": "TIMEOUT",
+    "unknownfinish": "UNKNOWNFINISH",
+    "cheat": "CHEAT",
+    "variantend": "VARIANTEND",
+}
+
+
+def lichess_status_name(status) -> str:
+    """Lowercase Lichess GameStatus name.
+
+    Board API NDJSON sends a string. Converters may emit ``{name, id}`` or an
+    object with ``name``. A dict stringified into a repr is not in the terminal
+    set, which is how abort used to be ignored.
+    """
+    if status is None:
+        return ""
+    if isinstance(status, dict):
+        return str(status.get("name") or status.get("id") or "").lower()
+    name = getattr(status, "name", None)
+    if name is not None and not isinstance(status, (str, bytes)):
+        return str(name).lower()
+    return str(status).lower()
+
+
+def lichess_terminal_result(status, winner=None):
+    """PGN result and termination for a Lichess status, or ``(None, None)``.
+
+    Abort and noStart use ``*`` (unfinished). Returning None for those skipped
+    the game-over callback, so the board stayed in a live game.
+    """
+    name = lichess_status_name(status)
+    if name not in _TERMINAL_STATUS:
+        return None, None
+    termination = _TERMINATION_BY_STATUS.get(name, name.upper())
+    if name in _UNFINISHED_STATUS:
+        return "*", termination
+    if name in ("draw", "stalemate"):
+        return "1/2-1/2", termination
+    side = str(winner).lower() if winner else ""
+    if side == "white":
+        return "1-0", termination
+    if side == "black":
+        return "0-1", termination
+    if name == "unknownfinish":
+        return "*", termination
+    return "1/2-1/2", termination
+
+
+def lichess_event_status_and_winner(event: dict):
+    """Status and winner from a Board API ``gameFull`` or ``gameState``.
+
+    ``gameFull`` nests both on ``state``; a later ``gameState`` has them at
+    the top level. Winner on the outer gameFull object is not the game result.
+    """
+    inner = event.get("state") if isinstance(event, dict) else None
+    payload = inner if isinstance(inner, dict) else event
+    return payload.get("status", ""), payload.get("winner")
+
+
 class LichessPlayer(Player):
     """A player that connects to Lichess for online games.
     
@@ -1096,11 +1177,11 @@ class LichessPlayer(Player):
         if 'white' in state and 'black' in state:
             self._extract_player_info(state)
         
-        # Extract moves and status
+        # Extract moves and status from the payload that actually carries them.
+        # gameFull nests both on ``state``; a later gameState has them at the top.
         if 'state' in state:
             inner_state = state['state']
             moves = inner_state.get('moves', '')
-            status = inner_state.get('status', '')
             self._process_time_update(inner_state)
             # Check for takeback/draw offers in nested state
             if 'wtakeback' in inner_state or 'btakeback' in inner_state:
@@ -1109,7 +1190,6 @@ class LichessPlayer(Player):
                 self._handle_draw_state(inner_state)
         else:
             moves = state.get('moves', '')
-            status = state.get('status', '')
             self._process_time_update(state)
             # Check for takeback/draw offers
             if 'wtakeback' in state or 'btakeback' in state:
@@ -1122,8 +1202,8 @@ class LichessPlayer(Player):
         if moves != self._remote_moves:
             self._sync_server_moves(moves)
         
-        # Check game status
-        self._check_game_status(status, state)
+        status, winner = lichess_event_status_and_winner(state)
+        self._check_game_status(status, winner)
     
     def _handle_text_message(self, message: str):
         """Handle text messages from Lichess (takeback, draw offers).
@@ -1323,63 +1403,39 @@ class LichessPlayer(Player):
         except Exception as e:
             log.error(f"[LichessPlayer] Invalid move from Lichess: {last_move}: {e}")
     
-    def _check_game_status(self, status: str, state: dict):
+    def _check_game_status(self, status, winner=None):
         """Check game status and handle game end conditions.
         
         Fires game over callback with result, termination type, and winner.
+        Abort and noStart use result ``*`` so the board ends; skipping the
+        callback left clocks running and never offered Seek / Cancel.
         """
-        status = str(status).lower()
-        
-        terminal_states = ['mate', 'resign', 'draw', 'aborted', 'outoftime', 'timeout', 'stalemate']
-        
-        if status in terminal_states:
-            log.info(f"[LichessPlayer] Game ended: {status}")
-            
-            # Extract winner from state
-            winner = state.get('winner')
-            if winner:
-                winner = str(winner).lower()
-            
-            # Determine result string
-            if status == 'draw' or status == 'stalemate':
-                result = "1/2-1/2"
-            elif winner == 'white':
-                result = "1-0"
-            elif winner == 'black':
-                result = "0-1"
-            else:
-                # Aborted or unclear - treat as draw
-                result = "1/2-1/2" if status != 'aborted' else None
-            
-            # Map status to termination type
-            termination_map = {
-                'mate': 'CHECKMATE',
-                'resign': 'RESIGN',
-                'draw': 'DRAW',
-                'aborted': 'ABORTED',
-                'outoftime': 'TIMEOUT',
-                'timeout': 'TIMEOUT',
-                'stalemate': 'STALEMATE',
-            }
-            termination = termination_map.get(status, status.upper())
-            
-            log.info(f"[LichessPlayer] Game result: {result}, termination: {termination}, winner: {winner}")
-            
-            # Play sound effect
+        result, termination = lichess_terminal_result(status, winner)
+        if result is None:
+            return
+        if self._state == PlayerState.STOPPED:
+            return
+
+        log.info(f"[LichessPlayer] Game ended: {lichess_status_name(status)}")
+        side = str(winner).lower() if winner else None
+        log.info(
+            f"[LichessPlayer] Game result: {result}, "
+            f"termination: {termination}, winner: {side}"
+        )
+
+        try:
+            from universalchess.board import board
+            board.beep(board.SOUND_WRONG_MOVE)
+        except Exception:  # noqa: S110 # nosec B110 - the game-over sound is cosmetic; a beep failure must not block the game-over callback
+            pass
+
+        if self._game_over_callback:
             try:
-                from universalchess.board import board
-                board.beep(board.SOUND_WRONG_MOVE)
-            except Exception:  # noqa: S110 # nosec B110 - the game-over sound is cosmetic; a beep failure must not block the game-over callback
-                pass
-            
-            # Fire game over callback
-            if self._game_over_callback and result:
-                try:
-                    self._game_over_callback(result, termination, winner)
-                except Exception as e:
-                    log.error(f"[LichessPlayer] Error in game_over_callback: {e}")
-            
-            self._set_state(PlayerState.STOPPED)
+                self._game_over_callback(result, termination, side)
+            except Exception as e:
+                log.error(f"[LichessPlayer] Error in game_over_callback: {e}")
+
+        self._set_state(PlayerState.STOPPED)
 
 
 def create_lichess_player(

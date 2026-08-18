@@ -709,6 +709,13 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   screen and start() is still authenticating. BACK that arrives before
   GameManager exists is recorded so the seek is never posted.
 
+- **A remote Lichess abort left the board in a live game**: When the opponent
+  aborted, the Board API streamed status ``aborted``. The player treated that
+  as no PGN result and skipped the game-over callback, so the clocks kept
+  running and the Lobby / Seek New Game / Cancel menu never appeared. Abort
+  (and noStart) now end the game with result ``*`` and offer that menu, the
+  same one a board-reset during a Lichess game already uses.
+
 - **A random Lichess seek said nothing about colour**: The seek passed
   ``color=None`` for a random game, and ``requests`` drops None form fields, so
   the request reached Lichess with no colour at all and depended on the server

@@ -2895,6 +2895,7 @@ def _start_game_mode(
             splash_seconds=START_PLAYING_SPLASH_SECONDS,
             rewind_to_move_count=game_manager.sync_move_count,
             player1_color=p1.color,
+            on_unfinished_game=_schedule_lichess_after_unfinished,
         )
 
     # BACK on the waiting splash must cancel before players start. start()
@@ -3399,6 +3400,17 @@ def _live_game_is_remote() -> bool:
     """
     player_manager = getattr(protocol_manager, "player_manager", None)
     return bool(getattr(player_manager, "requires_rebuild_on_new_game", False))
+
+
+def _schedule_lichess_after_unfinished() -> None:
+    """Offer Lobby / Seek / Cancel after the opponent aborts.
+
+    Sets the same flag as a board-reset during remote play so the main loop
+    shows ``board_reset_rebuild_action``. The stream thread must not open that
+    menu itself.
+    """
+    global _pending_player_rebuild
+    _pending_player_rebuild = True
 
 
 def _stash_lichess_seek() -> None:
