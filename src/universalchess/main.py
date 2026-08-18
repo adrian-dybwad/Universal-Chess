@@ -639,6 +639,10 @@ _pending_settings_reload = False  # Flag: web changed settings, rebuild live gam
 # records the running game's player config so a settings change can be detected;
 # see _player_config_signature.
 _pending_player_rebuild = False
+# Why the next-game Lichess menu is showing: None is board-reset (the user put
+# the pieces back). ABORTED / NOSTART are a remote end, so the header must name
+# that instead of asking "Seek a new game?".
+_pending_lichess_next_reason: Optional[str] = None
 _active_player_signature: Optional[tuple] = None
 # Lobby Ongoing/Challenge stashes join ids here for the next _start_game_mode.
 # PLAY and New Game stash mode NEW (explicit seek). Piece lift, client connect,
@@ -2388,6 +2392,7 @@ def _start_game_mode(
     """
     global app_state, protocol_manager, display_manager, controller_manager, _is_position_game
     global _active_player_signature, _pending_player_rebuild, _pending_layout_rebuild
+    global _pending_lichess_next_reason
     global _lichess_join, _cancel_game_start, _lichess_session
 
     log.info(f"[App] Transitioning to GAME mode (position_game={is_position_game})")
@@ -2477,6 +2482,7 @@ def _start_game_mode(
     # board-reset new game compares against this to detect a settings change.
     _active_player_signature = settings.player_config_signature()
     _pending_player_rebuild = False
+    _pending_lichess_next_reason = None
     # A fresh start rebuilds the DisplayManager and its layout from current
     # settings, so any layout rebuild an interrupted new game had scheduled is
     # already satisfied here.
@@ -3402,15 +3408,17 @@ def _live_game_is_remote() -> bool:
     return bool(getattr(player_manager, "requires_rebuild_on_new_game", False))
 
 
-def _schedule_lichess_after_unfinished() -> None:
-    """Offer Lobby / Seek / Cancel after the opponent aborts.
+def _schedule_lichess_after_unfinished(termination: str) -> None:
+    """Offer Lobby / Seek / Cancel after a remote Lichess game ends.
 
     Sets the same flag as a board-reset during remote play so the main loop
-    shows ``board_reset_rebuild_action``. The stream thread must not open that
-    menu itself.
+    shows ``board_reset_rebuild_action``. ``termination`` selects the header
+    (resign, abort, mate, ...) instead of the board-reset question. The stream
+    thread must not open that menu itself.
     """
-    global _pending_player_rebuild
+    global _pending_player_rebuild, _pending_lichess_next_reason
     _pending_player_rebuild = True
+    _pending_lichess_next_reason = termination
 
 
 def _stash_lichess_seek() -> None:
@@ -7737,6 +7745,7 @@ def main():
     global mainloop, relay_mode, protocol_manager, relay_manager, app_state, _args
     global _pending_piece_events, _return_to_positions_menu, _switch_to_normal_game, _menu_manager
     global _pending_settings_reload, _pending_player_rebuild, _pending_layout_rebuild
+    global _pending_lichess_next_reason
     
     try:
         log.info("[Main] Parsing arguments...")
@@ -8564,6 +8573,8 @@ def main():
                     # tears down the stale players and re-reads the current settings.
                     elif _pending_player_rebuild:
                         _pending_player_rebuild = False
+                        next_reason = _pending_lichess_next_reason
+                        _pending_lichess_next_reason = None
                         from universalchess.players.lichess.lobby import (
                             board_reset_rebuild_action,
                         )
@@ -8575,17 +8586,24 @@ def main():
                         action = board_reset_rebuild_action(
                             _menu_manager,
                             is_lichess=_lichess_is_a_player() or _live_game_is_remote(),
+                            reason=next_reason,
                         )
                         if action == "menu":
-                            log.info("[App] Lichess seek after board reset declined")
+                            log.info(
+                                "[App] Lichess next-game prompt declined"
+                                f" (reason={next_reason})"
+                            )
                             _return_to_menu("Lichess seek declined")
                             continue
                         if action == "lobby":
-                            # The pieces are back at the start and the lobby was
-                            # asked for, so the game is over either way: leave it
+                            # The pieces are back at the start (or the remote game
+                            # already ended) and the lobby was asked for, so leave
                             # before the lobby is drawn, then start whatever the
                             # lobby stashes (ongoing game, challenge, or seek).
-                            log.info("[App] Lichess lobby opened after board reset")
+                            log.info(
+                                "[App] Lichess lobby opened after next-game prompt"
+                                f" (reason={next_reason})"
+                            )
                             _return_to_menu("Lichess lobby")
                             lobby_result = _handle_lichess_menu()
                             if is_break_result(lobby_result):

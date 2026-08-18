@@ -1,16 +1,18 @@
-"""A remote abort must end the board game and offer Seek / Lobby / Cancel.
+"""A remote abort or resign must end the board game and offer Seek / Lobby / Cancel.
 
 Why these tests exist
 ---------------------
 Lichess streams status ``aborted`` (and ``noStart``) when the opponent aborts
 before the game counts. ``_check_game_status`` treated abort as no PGN result
 and skipped the game-over callback, so the clocks kept running and the Seek
-New Game menu never appeared.
+New Game menu never appeared. Resign did fire game-over, but only painted
+GameOverWidget and never opened that menu.
 
 How a regression manifests
 --------------------------
 ``lichess_terminal_result('aborted')`` is None; ``_process_game_state`` does
-not call the game-over callback; the session does not notify unfinished.
+not call the game-over callback; the session does not notify unfinished on
+abort or resign.
 """
 
 from unittest.mock import MagicMock
@@ -146,22 +148,24 @@ def test_session_abort_asks_what_to_do_next():
         ),
         splash_seconds=5.0,
         show_started_splash=lambda *_: None,
-        on_unfinished_game=lambda: unfinished.append(True),
+        on_unfinished_game=lambda termination: unfinished.append(termination),
     )
     session._on_game_over("*", "ABORTED", None)
     assert results == [("*", "ABORTED")]
-    assert unfinished == [True]
+    assert unfinished == ["ABORTED"]
 
 
-def test_session_resign_does_not_offer_the_unfinished_menu():
-    """Mate and resign keep the game-over screen; only abort asks for a new seek.
+def test_session_resign_asks_what_to_do_next():
+    """Opponent resign must offer Lobby / Seek / Cancel, headed with the reason.
 
-    How the regression manifests: unfinished runs on resign and the Seek menu
-    covers the result.
+    Why: abort already opened that menu; resign only painted GameOverWidget, so
+    the next-game menu never appeared. How the regression manifests: unfinished
+    stays empty on RESIGN.
     """
     remote = LichessPlayer()
     session = LichessPlaySession.from_players(HumanPlayer(), remote)
     unfinished = []
+    results = []
     session.attach(
         player_manager=PlayerManager(HumanPlayer(), remote),
         game_display=MagicMock(),
@@ -169,10 +173,13 @@ def test_session_resign_does_not_offer_the_unfinished_menu():
         info_overlay=MagicMock(),
         menu_manager=MagicMock(),
         beep=lambda *_: None,
-        set_game_result=lambda *_: None,
+        set_game_result=lambda result, termination: results.append(
+            (result, termination)
+        ),
         splash_seconds=5.0,
         show_started_splash=lambda *_: None,
-        on_unfinished_game=lambda: unfinished.append(True),
+        on_unfinished_game=lambda termination: unfinished.append(termination),
     )
     session._on_game_over("0-1", "RESIGN", "black")
-    assert unfinished == []
+    assert results == [("0-1", "RESIGN")]
+    assert unfinished == ["RESIGN"]

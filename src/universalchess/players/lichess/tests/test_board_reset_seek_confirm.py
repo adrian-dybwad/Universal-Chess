@@ -17,6 +17,7 @@ from universalchess.players.lichess.lobby import (
     board_reset_rebuild_action,
     choose_lichess_reset_action,
     explicit_lichess_seek_join,
+    lichess_next_game_prompt_key,
     skip_unsolicited_lichess_start,
 )
 from universalchess.players.lichess.player import LichessGameMode
@@ -75,6 +76,67 @@ def test_reset_prompt_lists_lobby_then_seek_then_cancel_and_highlights_cancel():
     ]
     assert entries[0].selectable is False
     assert manager.show_initial_indexes == [3]
+
+
+def test_next_game_prompt_names_why_the_game_stopped():
+    """The header must say abort when the opponent aborted, not ask to seek.
+
+    Why: abort reused the board-reset prompt, so the info row only asked
+    "Seek a new game?" and never said the game had ended. Board-reset still
+    asks that question because the user put the pieces back.
+
+    How the regression manifests: ABORTED, NOSTART, or RESIGN map to the reset
+    prompt, or a board-reset starts using the abort copy.
+    """
+    assert lichess_next_game_prompt_key(None) == "lichess.reset.prompt"
+    assert lichess_next_game_prompt_key("ABORTED") == "lichess.unfinished.aborted"
+    assert lichess_next_game_prompt_key("NOSTART") == "lichess.unfinished.nostart"
+    assert lichess_next_game_prompt_key("RESIGN") == "lichess.unfinished.resign"
+    assert lichess_next_game_prompt_key("CHECKMATE") == "lichess.unfinished.checkmate"
+    assert lichess_next_game_prompt_key("TIMEOUT") == "lichess.unfinished.timeout"
+    assert lichess_next_game_prompt_key("TIME_FORFEIT") == "lichess.unfinished.timeout"
+    assert lichess_next_game_prompt_key("DRAW") == "lichess.unfinished.draw"
+    assert lichess_next_game_prompt_key("STALEMATE") == "lichess.unfinished.stalemate"
+    assert lichess_next_game_prompt_key("UNKNOWNFINISH") == "lichess.unfinished.ended"
+
+
+def test_abort_prompt_is_the_header_when_the_reason_is_aborted():
+    """The next-game menu's info row must read that the opponent aborted.
+
+    How the regression manifests: the header is still Seek a new game.
+    """
+    from universalchess.i18n import t
+
+    manager = _ScriptedMenuManager(show_results=[MenuSelection.from_key("Cancel")])
+    choose_lichess_reset_action(manager, reason="ABORTED")
+    assert manager.shown[0][0].label == t("lichess.unfinished.aborted")
+    assert "Seek" not in manager.shown[0][0].label
+
+
+def test_resign_prompt_is_the_header_when_the_reason_is_resign():
+    """The next-game menu's info row must read that the opponent resigned.
+
+    How the regression manifests: the header is still Seek a new game, or the
+    abort copy is reused so a resign looks like an abort.
+    """
+    from universalchess.i18n import t
+
+    manager = _ScriptedMenuManager(show_results=[MenuSelection.from_key("Cancel")])
+    choose_lichess_reset_action(manager, reason="RESIGN")
+    assert manager.shown[0][0].label == t("lichess.unfinished.resign")
+    assert "Seek" not in manager.shown[0][0].label
+
+
+def test_board_reset_rebuild_uses_the_reason_for_its_header():
+    """board_reset_rebuild_action must pass the abort reason through.
+
+    How the regression manifests: reason is ignored and the reset prompt shows.
+    """
+    from universalchess.i18n import t
+
+    manager = _ScriptedMenuManager(show_results=[MenuSelection.from_key("Cancel")])
+    board_reset_rebuild_action(manager, is_lichess=True, reason="ABORTED")
+    assert manager.shown[0][0].label == t("lichess.unfinished.aborted")
 
 
 def test_board_reset_rebuild_skips_confirm_when_not_lichess():

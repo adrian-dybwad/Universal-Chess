@@ -716,6 +716,20 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   (and noStart) now end the game with result ``*`` and offer that menu, the
   same one a board-reset during a Lichess game already uses.
 
+- **The next-game menu after a Lichess abort asked to seek**: That shared menu
+  always used the board-reset header "Seek a new game?", so an abort looked
+  like a prompt to start another game and never said why the current one
+  stopped. Abort now heads the menu with Game aborted, noStart with Never
+  started. Setting the pieces back to the start still asks to seek, because
+  that gesture is the user's.
+
+- **A remote Lichess resign left the next-game menu closed**: Abort already
+  opened Lobby / Seek / Cancel with the reason on the top row. Resign (and
+  mate, timeout, draw) only painted the game-over overlay, so after the
+  opponent resigned the board sat on that overlay with no way to seek or open
+  the lobby. Those endings now offer the same menu, headed Opponent resigned /
+  Checkmate / Out of time / Game drawn.
+
 - **A random Lichess seek said nothing about colour**: The seek passed
   ``color=None`` for a random game, and ``requests`` drops None form fields, so
   the request reached Lichess with no colour at all and depended on the server

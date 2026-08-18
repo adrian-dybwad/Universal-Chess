@@ -158,6 +158,40 @@ def test_board_reset_prompt_is_in_the_device_language(spanish):
     assert "Cancel" not in labels
 
 
+def test_abort_prompt_is_in_the_device_language(spanish):
+    """When the opponent aborts, the header must say so in Spanish.
+
+    Why: abort reused the board-reset prompt, which only asked to seek.
+    How the regression manifests: the header is still Seek a new game, or
+    English Game aborted on a Spanish board.
+    """
+    manager = _ScriptedMenuManager("Cancel")
+    choose_lichess_reset_action(manager, reason="ABORTED")
+    labels = _labels(manager.shown[0])
+
+    assert labels[0] == i18n.t("lichess.unfinished.aborted")
+    assert i18n.t("lichess.reset.prompt") not in labels
+    assert "Seek" not in labels[0]
+    assert "Aborted" not in labels[0]
+
+
+def test_resign_prompt_is_in_the_device_language(spanish):
+    """When the opponent resigns, the header must say so in Spanish.
+
+    Why: resign never opened this menu, so there was no translated header.
+    How the regression manifests: the header is still Seek a new game, or
+    English Opponent resigned on a Spanish board.
+    """
+    manager = _ScriptedMenuManager("Cancel")
+    choose_lichess_reset_action(manager, reason="RESIGN")
+    labels = _labels(manager.shown[0])
+
+    assert labels[0] == i18n.t("lichess.unfinished.resign")
+    assert i18n.t("lichess.reset.prompt") not in labels
+    assert "Seek" not in labels[0]
+    assert "Resign" not in labels[0]
+
+
 def test_waiting_splash_lists_the_seek_in_the_device_language(spanish):
     """The seek the board is waiting on is described in Spanish.
 

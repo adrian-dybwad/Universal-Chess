@@ -101,15 +101,16 @@ class LichessPlaySession:
         show_started_splash: Optional[Callable] = None,
         rewind_to_move_count: Optional[Callable[[int], None]] = None,
         player1_color: str = "white",
-        on_unfinished_game: Optional[Callable[[], None]] = None,
+        on_unfinished_game: Optional[Callable[[str], None]] = None,
     ) -> None:
         """Wire stream callbacks onto the remote player.
 
         ``player1_color`` is the side the Players color control names, which is
         the side the human took when setting the pieces up. It decides whether
         the assigned color turns the display around (:func:`epaper_is_flipped`).
-        ``on_unfinished_game`` runs when the opponent aborts (or never starts)
-        so the main loop can offer Lobby / Seek / Cancel.
+        ``on_unfinished_game`` is called with the termination when the remote
+        game ends (abort, resign, mate, timeout, draw), so the main loop can
+        offer Lobby / Seek / Cancel with that reason in the header.
         """
         self._player_manager = player_manager
         self._game_display = game_display
@@ -184,9 +185,11 @@ class LichessPlaySession:
         self.game_connected = True
         # Physical White is always player 1, Black player 2. The stream only
         # decides which of those slots the Human occupies. Flip is display-only
-        # (e-paper from Black's side) so the pieces do not have to be rotated.
-        # It follows the disagreement between the color that was chosen and the
-        # one the match assigned, not the assigned color on its own.
+        # so the pieces do not have to be rotated: the chess diagram is remapped
+        # and the whole panel turns 180 (menus included) when the seated player
+        # is at the far end. It follows the disagreement between the color that
+        # was chosen and the one the match assigned, not the assigned color on
+        # its own.
         human_is_white = (
             True if self._remote.player_is_white is None else self._remote.player_is_white
         )
@@ -322,11 +325,8 @@ class LichessPlaySession:
             self._game_display.stop_clock()
         if self._set_game_result is not None:
             self._set_game_result(result, termination)
-        if (
-            termination in ("ABORTED", "NOSTART")
-            and self._on_unfinished_game is not None
-        ):
-            self._on_unfinished_game()
+        if self._on_unfinished_game is not None and termination:
+            self._on_unfinished_game(termination)
 
     def _on_info_message(self, message: str) -> None:
         if self._info_overlay is not None:

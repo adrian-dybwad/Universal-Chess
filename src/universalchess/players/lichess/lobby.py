@@ -331,20 +331,46 @@ def show_lichess_error(menu_manager, title: str, message: str, show_accounts_but
     return menu_manager.show_menu(entries)
 
 
-def choose_lichess_reset_action(menu_manager) -> str:
-    """Ask what setting the pieces back to the start should do: ``lobby``, ``seek`` or ``cancel``.
+_NEXT_GAME_PROMPT_KEYS = {
+    "ABORTED": "lichess.unfinished.aborted",
+    "NOSTART": "lichess.unfinished.nostart",
+    "RESIGN": "lichess.unfinished.resign",
+    "CHECKMATE": "lichess.unfinished.checkmate",
+    "TIMEOUT": "lichess.unfinished.timeout",
+    "TIME_FORFEIT": "lichess.unfinished.timeout",
+    "DRAW": "lichess.unfinished.draw",
+    "STALEMATE": "lichess.unfinished.stalemate",
+}
 
-    Used when that gesture would otherwise post a new Lichess seek. PLAY, lobby
-    Seek New Game, and web New Game are explicit and skip this. Seeking is only
-    one of the things wanted at that moment -- an ongoing game, a challenge, a
-    different account or a rated change are all in the lobby -- so the lobby is
-    offered first. Cancel is highlighted so a stray TICK cannot register a seek,
-    and anything that is not a row (BACK, break) is a refusal.
+
+def lichess_next_game_prompt_key(reason: Optional[str] = None) -> str:
+    """i18n key for the next-game menu header.
+
+    Board-reset asks whether to seek, because the user put the pieces back.
+    A remote end must name why the game stopped; reusing the reset prompt left
+    the header as "Seek a new game?" after the opponent walked away, and
+    resign never opened this menu at all.
+    """
+    if not reason:
+        return "lichess.reset.prompt"
+    return _NEXT_GAME_PROMPT_KEYS.get(reason, "lichess.unfinished.ended")
+
+
+def choose_lichess_reset_action(menu_manager, *, reason: Optional[str] = None) -> str:
+    """Ask what to do next: ``lobby``, ``seek`` or ``cancel``.
+
+    Used when a Lichess game ended without an explicit PLAY / Seek New Game
+    (board-reset to the start, or the opponent aborted). Seeking is only one
+    of the things wanted -- an ongoing game, a challenge, a different account
+    or a rated change are all in the lobby -- so the lobby is offered first.
+    Cancel is highlighted so a stray TICK cannot register a seek, and anything
+    that is not a row (BACK, break) is a refusal. ``reason`` selects the
+    header: resign names that the opponent resigned; omitted is board-reset.
     """
     entries = [
         IconMenuEntry(
             key="prompt",
-            label=t("lichess.reset.prompt"),
+            label=t(lichess_next_game_prompt_key(reason)),
             icon_name="lichess",
             enabled=True,
             selectable=False,
@@ -375,21 +401,25 @@ def choose_lichess_reset_action(menu_manager) -> str:
     return "cancel"
 
 
-def board_reset_rebuild_action(menu_manager, *, is_lichess: bool) -> str:
-    """Decide what a board-reset player rebuild does.
+def board_reset_rebuild_action(
+    menu_manager, *, is_lichess: bool, reason: Optional[str] = None
+) -> str:
+    """Decide what a Lichess next-game prompt does.
 
-    Setting the pieces back to the start rebuilds a Lichess game through
-    ``_start_game_mode``, which posts a new seek. That gesture is not PLAY,
-    lobby Seek New Game, or web New Game, so it asks first. Cancel (or no menu)
+    Setting the pieces back to the start, or a remote abort, rebuilds through
+    ``_start_game_mode``, which posts a new seek. Those paths are not PLAY,
+    lobby Seek New Game, or web New Game, so they ask first. Cancel (or no menu)
     returns ``menu`` so the caller leaves the game without seeking, ``lobby``
     asks for the Lichess lobby instead, and ``seek`` means the caller stashes an
     explicit NEW join. Engine/human rebuilds return ``rebuild`` without a prompt.
+    ``reason`` is the remote termination (``RESIGN``, ``ABORTED``, ...) when
+    the opponent ended the game.
     """
     if not is_lichess:
         return "rebuild"
     if menu_manager is None:
         return "menu"
-    choice = choose_lichess_reset_action(menu_manager)
+    choice = choose_lichess_reset_action(menu_manager, reason=reason)
     if choice == "cancel":
         return "menu"
     return choice
