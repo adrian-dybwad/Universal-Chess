@@ -12,7 +12,7 @@ from typing import Callable, Optional, Sequence
 
 from universalchess.board.logging import log
 from universalchess.state.chess_game import ChessGameState
-from .starting_position import is_starting_position_state
+from .starting_position import interpret_physical_start
 
 def handle_field_event_in_correction_mode(
     *,
@@ -31,7 +31,10 @@ def handle_field_event_in_correction_mode(
     Behavior preserved from prior inline implementation:
     - On PLACE events, delays briefly to let sensors settle (sliding pieces).
     - Reads current physical state.
-    - If starting position is detected, abandons current game and resets.
+    - If starting position is detected and the live game has left start,
+      abandons the current game and resets. Physical start that already matches
+      the live game (a Lichess seek that connected before the pieces were set)
+      exits correction instead.
     - Recomputes expected logical state from the authoritative chess board.
     - If physical matches expected, exits correction mode.
     - Otherwise updates guidance LEDs.
@@ -54,16 +57,6 @@ def handle_field_event_in_correction_mode(
 
     current_physical_state = board_module.getChessState()
 
-    # New game detection: starting position while correcting implies abandon and restart.
-    if is_starting_position_state(current_state=current_physical_state, board_size=board_size):
-        log.warning(
-            "[GameManager._handle_field_event_in_correction_mode] Starting position detected during "
-            "correction mode - abandoning current game and starting new game"
-        )
-        reset_game_fn()
-        return
-
-    # Always use current logical board state as authority (it may have changed).
     expected_state = chess_board_to_state_fn(chess_board)
     if expected_state is None:
         log.error(
@@ -81,6 +74,23 @@ def handle_field_event_in_correction_mode(
         )
         board_module.beep(board_module.SOUND_GENERAL, event_type="game_event")
         exit_correction_mode_fn()
+        return
+
+    # Physical start that does not match the live game is a new-game gesture.
+    # Matching start is handled above so a Lichess ply-0 setup is not abandoned.
+    if (
+        interpret_physical_start(
+            current_state=current_physical_state,
+            board_size=board_size,
+            expected_logical_state=expected_state,
+        )
+        == "abandon"
+    ):
+        log.warning(
+            "[GameManager._handle_field_event_in_correction_mode] Starting position detected during "
+            "correction mode - abandoning current game and starting new game"
+        )
+        reset_game_fn()
         return
 
     # Still incorrect → update guidance LEDs based on latest logical state.

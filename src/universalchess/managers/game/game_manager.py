@@ -72,7 +72,7 @@ from universalchess.services.analysis import get_analysis_service
 from universalchess.services.pgn_time import pgn_time_control_tag
 from .post_move import handle_game_end, validate_physical_board_after_move
 from .correction_flow import handle_field_event_in_correction_mode
-from .starting_position import is_starting_position_state
+from .starting_position import interpret_physical_start
 from .field_events import FieldEventContext, process_field_event
 from .player_moves import (
     PlayerMoveContext,
@@ -928,15 +928,27 @@ class GameManager:
             field: The square where the piece was placed.
         """
         current_state = board.getChessState()
-        
-        # Check for starting position
-        if is_starting_position_state(current_state=current_state, board_size=BOARD_SIZE):
+        expected_state = self._chess_board_to_state(self.chess_board)
+
+        # Board catching up to a live start (Lichess connected before the pieces
+        # were set) must not look like a new-game abandon.
+        start_action = interpret_physical_start(
+            current_state=current_state,
+            board_size=BOARD_SIZE,
+            expected_logical_state=expected_state,
+        )
+        if start_action == "continue":
+            log.info(
+                "[GameManager._handle_piece_event_without_player] "
+                "Starting setup matches the live game"
+            )
+            self.led.off()
+            return
+        if start_action == "abandon":
             log.info("[GameManager._handle_piece_event_without_player] Starting position detected")
             self._reset_game()
             return
-        
-        # Check if board matches current game state
-        expected_state = self._chess_board_to_state(self.chess_board)
+
         if expected_state is not None and current_state is not None:
             if ChessGameState.states_match(current_state, expected_state):
                 log.debug("[GameManager._handle_piece_event_without_player] Board matches game state")
@@ -1215,13 +1227,24 @@ class GameManager:
             return
         
         if error_type == "place_without_lift":
-            # Check for starting position first
             current_state = board.getChessState()
-            if is_starting_position_state(current_state=current_state, board_size=BOARD_SIZE):
+            expected_state = self._chess_board_to_state(self.chess_board)
+            start_action = interpret_physical_start(
+                current_state=current_state,
+                board_size=BOARD_SIZE,
+                expected_logical_state=expected_state,
+            )
+            if start_action == "continue":
+                log.info(
+                    "[GameManager._on_player_error] Starting setup matches the live game"
+                )
+                self.led.off()
+                return
+            if start_action == "abandon":
                 log.info("[GameManager._on_player_error] Starting position detected - resetting game")
                 self._reset_game()
                 return
-            
+
             # Check for takeback (board matches previous position)
             if len(self.chess_board.move_stack) > 0:
                 is_takeback = self._check_takeback()

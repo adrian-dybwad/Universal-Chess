@@ -1282,6 +1282,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   is no longer allowed) and rebuilds through `_start_game_mode`, which seeks a
   new opponent and shows "Waiting for game".
 
+- **Setting up start after a Lichess seek connected cancelled the remote game**:
+  The opponent can join while the pieces are still unset. Completing the
+  starting setup then matched the live ply-0 position, but starting-position
+  detection ran before that match and treated it as a board-reset new game:
+  the remote game was abandoned and a local one started in its place.
+  Physical start that already matches the live occupancy now continues that
+  game (correction exits, clocks stay). Start while the live game has moved
+  is still a new-game gesture.
+
 - The screen went blank between the boot splash and the main menu, and again on
   entering a game, which looked like a fault rather than a transition. Every
   screen change clears the old contents and adds the new, but clearing also drew
