@@ -677,7 +677,29 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   that a side resigned is now the player manager's `on_resign`, beside
   `on_takeback`, rather than a closure written out once per resign gesture.
 
+- **The application's own state has owners, and each one is tested**: the board
+  held its state as seventy module-level names, so behaviour that existed only as
+  a rule about them -- which overlay gets a key first, that a stop must set two
+  flags, that five unanswered presses mean the board is stuck -- could only be
+  read by reading the 8,000-line application and could not be tested at all. The
+  overlays that consume keys (help tip, error splash, keyboard, pairing prompt)
+  are now `app/modals.py`, with their priority order stated once instead of being
+  the order of four `if` blocks. `running` and `kill` become
+  `app/lifecycle.py`, one flag with a reason, which also carries whether the stop
+  was a power-off and guards teardown against running twice; one caller used to
+  set only `kill`. The unanswered-key counter that recovers a wedged board is
+  `app/key_recovery.py`. Which engines can be played and how strong each can be
+  set moved to the engine modules that own them, cache included, so the web can
+  ask the same questions.
+
 ### Removed
+
+- **Dead `GET /api/engines`**: superseded by `/api/engines/all`, which the web app
+  actually calls, and unused by anything for long enough that it still listed
+  every catalog engine while omitting operator-added ones. Its failure path
+  returned a hand-written Stockfish entry, reporting an engine as installed
+  without having checked -- exactly the fabricated fallback that is worse than an
+  error.
 
 - **Deprecated Engines**: Fire, Laser (x86-only, incompatible with ARM)
 - **Legacy CI**: Docker-based cron CI system (moved to `.github/legacy-ci/`)
@@ -689,6 +711,18 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   was also a stray way to power the board off.
 
 ### Fixed
+
+- **A request made from the board's serial, Bluetooth or web thread could be
+  silently dropped**: eleven kinds of work are deferred from those threads to the
+  main loop, because only the main loop may rebuild widgets or restart players.
+  Each was a module-level flag the loop tested and then cleared as two separate
+  statements, so a request that arrived between them was erased -- the work never
+  ran, and nothing recorded that it had been asked for. From the board it looked
+  like a press or a web change that was simply ignored: a settings change made
+  while a game rebuilt, a rebuild requested during another one, a BACK on the
+  Lichess waiting splash. Testing and clearing is now one locked operation, so a
+  request either belongs to that pass of the loop or waits for the next, and a
+  test holds the interleaving that used to lose it.
 
 - **The unclean-shutdown warning was drawn on a screen nobody could reach**:
   every boot audits the OS logs for evidence that power was cut before the

@@ -659,6 +659,67 @@ def seed_config(
     return path
 
 
+_strength_sections: Dict[str, List[dict]] = {}
+
+# Always offered, whatever the probe returned: Default is the stored strength of
+# a freshly configured player, so a list without it cannot render the current
+# selection.
+_DEFAULT_SECTION = {"value": "Default", "label": "Default"}
+
+
+def strength_sections_for_engine(engine_name: str) -> List[dict]:
+    """Return an engine's selectable strength sections as picker rows.
+
+    Sections come from the engine's writable ``config/engines/<name>.uci``,
+    generated on first use by probing the binary (:func:`seed_config`) -- no
+    ``.uci`` files are shipped. Rows are built by
+    :func:`~universalchess.services.engine_profiles.strength_level_choices`, the
+    same builder the web editor and the ``/levels`` endpoint use, so the
+    on-device picker cannot drift from them.
+
+    An engine that cannot be probed -- a missing binary, or one that will not
+    launch -- yields the Default row alone. Listing rungs the engine may not
+    support would be worse than listing the one that always resolves, and the
+    picker has to render rather than raise on the menu thread.
+
+    Cached for the life of the process, per engine.
+
+    Args:
+        engine_name: Engine whose config holds the sections.
+
+    Returns:
+        Ordered ``{"value", "label"}`` rows. ``value`` is the section name
+        persisted as the player's strength; ``label`` is the display text (an
+        uncapped ``Default`` shows as ``"Default (Unlimited)"``).
+    """
+    if engine_name in _strength_sections:
+        return _strength_sections[engine_name]
+
+    from universalchess.services.engine_profiles import strength_level_choices
+
+    levels: List[dict] = [dict(_DEFAULT_SECTION)]
+    try:
+        config_path = seed_config(engine_name)
+        choices = strength_level_choices(config_path)
+        if choices:
+            levels = choices
+        if not any(level["value"] == "Default" for level in levels):
+            levels.insert(0, dict(_DEFAULT_SECTION))
+        log.debug("[uci_schema] Engine %s levels: %s", engine_name, levels)
+    except EngineProbeError as e:
+        log.warning("[uci_schema] Cannot probe %s for levels: %s", engine_name, e)
+    except Exception as e:  # noqa: BLE001 - the picker must still render
+        log.warning("[uci_schema] Error loading levels for %s: %s", engine_name, e)
+
+    _strength_sections[engine_name] = levels
+    return levels
+
+
+def forget_strength_sections() -> None:
+    """Drop the cached sections so the next call re-reads the engine configs."""
+    _strength_sections.clear()
+
+
 def strength_display_for_engine(engine_name: str, section: str) -> str:
     """Resolve a stored strength ``section`` to the strength the engine plays.
 

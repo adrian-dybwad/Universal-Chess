@@ -96,6 +96,10 @@ from universalchess.players.settings import (
 )
 
 from universalchess.app import startup_splash
+from universalchess.app.key_recovery import KeyRecovery
+from universalchess.app.lifecycle import Lifecycle
+from universalchess.app.modals import Modals
+from universalchess.app.pending_work import PendingWork
 from universalchess.board import board, display_settings
 
 # Slow imports follow, reported on the startup splash the bootstrap put on the
@@ -193,8 +197,10 @@ from universalchess.paths import CENTAUR_SOFTWARE
 
 
 # Global state
-running = True
-kill = 0
+# Whether the board keeps running, how it stops, and the teardown guard. See
+# app/lifecycle.py; this replaced a `running` flag and a `kill` int that every
+# stop had to set together.
+_lifecycle = Lifecycle()
 app_state = AppState.MENU  # Current application state
 protocol_manager = None  # ProtocolManager instance
 display_manager = None  # DisplayManager for game UI widgets
@@ -216,29 +222,13 @@ _coach_coordinator = None
 
 # Menu state - managed by MenuManager singleton
 _menu_manager: Optional[MenuManager] = None  # Initialized in main()
-_return_to_positions_menu = False  # Flag to signal return to positions menu from game
 _is_position_game = False  # Flag to track if current game is a position (practice) game
-_switch_to_normal_game = False  # Flag to signal switch from position game to normal game
-_pending_ble_client_type: str = None  # Flag for BLE connection when between menus
-_pending_settings_reload = False  # Flag: web changed settings, rebuild live game display
-# A board-reset new game (pieces returned to the start position) restarts play
-# in place, reusing the current player objects. Those objects were built from the
-# settings in effect when the game started, so if player-defining settings changed
-# since (e.g. the engine was changed from the web), the reused players are stale.
-# A Lichess player is also stale on board-reset: it is still attached to the
-# remote game, and in-place reuse would not seek a new opponent or show
-# "Waiting for game". This flag, set when such a new game is detected, defers a
-# full game rebuild to the main thread (game/display mutation must not run on the
-# event/subscriber thread). A Lichess rebuild asks before posting a seek; PLAY,
-# lobby New Game, and web New Game do not use this flag. _active_player_signature
-# records the running game's player config so a settings change can be detected;
-# see _player_config_signature.
-_pending_player_rebuild = False
-# Why the next-game Lichess menu is showing: None is board-reset (the user put
-# the pieces back). ABORTED / NOSTART are a remote end, so the header must name
-# that instead of asking "Seek a new game?".
-_pending_lichess_next_reason: Optional[str] = None
 _active_player_signature: Optional[tuple] = None
+# Work requested on the serial, Bluetooth and web threads and performed on the
+# main loop, which must be the only thread that mutates the game or the display.
+# Each of these was a bare module flag whose test-and-clear could drop a request
+# that arrived between the two statements; see app/pending_work.py.
+_pending = PendingWork()
 # Lobby Ongoing/Challenge stashes join ids here for the next _start_game_mode.
 # PLAY and New Game stash mode NEW (explicit seek). Piece lift, client connect,
 # and boot resume leave it None (ATTACH, no seek). Consumed at start so a
@@ -248,29 +238,6 @@ _lichess_join: Optional[dict] = None
 # close it. It holds the started-splash timer, which would otherwise fire after
 # the game ended and paint game widgets over the menu that replaced it.
 _lichess_session: Optional[object] = None
-# BACK on the waiting splash can arrive before ProtocolManager exists. The
-# events thread sets this; _start_game_mode checks it on the main thread so
-# teardown does not run while DisplayManager is still being constructed.
-_cancel_game_start = False
-# A board-reset / setup-mode new game reuses the current DisplayManager and its
-# widgets. When a layout-affecting setting changed since the widgets were built
-# (in practice a deferred time-control change that flips timed<->untimed), the
-# reused widgets no longer match the new game. This flag, set when EVENT_NEW_GAME
-# detects that mismatch, defers the layout rebuild (_init_widgets) to the main
-# thread -- widget teardown must not run on the event/subscriber thread. Keeps
-# every new-game start consistent with a full _start_game_mode start.
-_pending_layout_rebuild = False
-# Board-control command pushed from the web app (set up a position / abort the
-# game) over the settings socket. Set on the subscriber thread and applied on
-# the main thread (see _process_pending_board_command), since it rebuilds the
-# live game display. None means "no command pending".
-_pending_board_command = None
-# Web-initiated live waveform-profile change (no reboot). Set on the subscriber
-# thread by _on_board_command and applied on the main thread by
-# _process_pending_display_profile (it re-inits the panel and forces a full
-# refresh, which is display work that must run on the main thread). None means
-# "no change pending".
-_pending_display_profile = None
 # Menu navigation path captured when entering a game from the menu, so suspending
 # (PLAY) returns the full menu to that exact submenu position. None means "no
 # captured position"; it is cleared when a game truly ends (see _return_to_menu).
@@ -284,20 +251,22 @@ _positions_category_index_ref: List[int] = [0]
 _positions_index_ref: List[int] = [0]
 _positions_category_ref: List[Optional[str]] = [None]
 
-# Keyboard state (for WiFi password entry etc.)
-_active_keyboard_widget = None
+# The overlays that consume board keys before the menu or the game sees them,
+# in the order they are offered one. See app/modals.py.
+_modals = Modals()
 
 
 def _set_active_keyboard_widget(widget) -> None:
-    """Track the currently active keyboard widget."""
-    global _active_keyboard_widget
-    _active_keyboard_widget = widget
+    """Route board keys to a text-entry widget, or stop routing them there."""
+    if widget is None:
+        _modals.keyboard.hide()
+    else:
+        _modals.keyboard.show(widget)
 
 
 def _clear_active_keyboard_widget() -> None:
-    """Clear the active keyboard widget reference."""
-    global _active_keyboard_widget
-    _active_keyboard_widget = None
+    """Stop routing board keys to the text-entry widget."""
+    _modals.keyboard.hide()
 
 
 def _present_menu_help(title: str, body: "Optional[str]") -> None:
@@ -305,7 +274,7 @@ def _present_menu_help(title: str, body: "Optional[str]") -> None:
 
     Registered with MenuManager as the help presenter. Runs on the menu thread
     (the thread blocked in show_menu); the events thread feeds keys to the dialog
-    via the ``_active_help_widget`` check in ``_handle_key``, where UP/DOWN page a
+    via the help overlay in ``_handle_key``, where UP/DOWN page a
     tip that needs more than one panel and any other key dismisses it. When there
     is no help text for the focused entry, the menu is simply re-displayed
     (no modal), so HELP never exits the menu.
@@ -314,8 +283,6 @@ def _present_menu_help(title: str, body: "Optional[str]") -> None:
         title: Focused entry label (used as the dialog heading).
         body: Help tip text, or None when the entry has no tip.
     """
-    global _active_help_widget
-
     if not body:
         return
     # The board's framework display manager owns widget add/remove and modal
@@ -330,12 +297,12 @@ def _present_menu_help(title: str, body: "Optional[str]") -> None:
 
     widget = HelpDialogWidget(fdm.update, title=title, body=body,
                               text_size=read_text_size())
-    _active_help_widget = widget
+    _modals.help_dialog.show(widget)
     try:
         fdm.add_widget(widget)
         widget.wait_for_dismiss()
     finally:
-        _active_help_widget = None
+        _modals.help_dialog.hide()
         try:
             fdm.remove_widget(widget)
         except Exception as e:  # noqa: BLE001
@@ -349,18 +316,19 @@ def _bind_error_splash(widget) -> None:
     and with ``None`` when it is removed, so a failed render cannot leave keys
     swallowed.
     """
-    global _active_error_splash
-    _active_error_splash = widget
+    if widget is None:
+        _modals.error_splash.hide()
+    else:
+        _modals.error_splash.show(widget)
 
 
 # Bluetooth keyboard state
 bt_keyboard_manager = None  # BluetoothKeyboardManager, started in main()
 _active_passkey_widget = None  # Modal passkey widget shown during keyboard pairing
 
-# Incoming-pairing confirmation state. The modal overlay shows the numeric code
-# and Pair/Reject options when a phone/app pairs to the board; the lock ensures
-# only one confirmation runs at a time.
-_active_pairing_confirm = None
+# Incoming-pairing confirmation state. The modal overlay (see _modals) shows the
+# numeric code and Pair/Reject options when a phone/app pairs to the board; the
+# lock ensures only one confirmation runs at a time.
 _pairing_confirm_lock = threading.Lock()
 PAIRING_CONFIRM_TIMEOUT_SECONDS = 30.0
 
@@ -373,7 +341,7 @@ def _get_keyboard_text_sink():
     or ignored. Only widgets that accept characters (expose ``handle_char``)
     qualify; the navigation key mappings are applied regardless.
     """
-    widget = _active_keyboard_widget
+    widget = _modals.keyboard.widget
     if widget is not None and hasattr(widget, "handle_char"):
         return widget
     return None
@@ -425,8 +393,6 @@ def _confirm_pairing_on_board(passkey) -> bool:
     rather than clobbering the first prompt. Keys reach the overlay via the
     high-priority hook in ``key_callback`` regardless of menu/game state.
     """
-    global _active_pairing_confirm
-
     display_mgr = getattr(board, "display_manager", None)
     if display_mgr is None:
         return False  # No display to ask on - refuse.
@@ -455,7 +421,7 @@ def _confirm_pairing_on_board(passkey) -> bool:
         # (menu or game) was underneath without rebuilding it here.
         confirm_menu.is_modal = True
 
-        _active_pairing_confirm = confirm_menu
+        _modals.pairing_confirm.show(confirm_menu)
         # Mirror the prompt to the web UI so it can show the code and let the
         # user accept/reject there too (resolved via _resolve_web_pairing_confirm).
         _broadcast_bt_event("bt_pair_request", {"passkey": passkey, "active": True})
@@ -483,15 +449,15 @@ def _confirm_pairing_on_board(passkey) -> bool:
         log.info(f"[App] Pairing confirm result={result} accepted={accepted}")
         return accepted
     finally:
-        if _active_pairing_confirm is not None:
+        if _modals.pairing_confirm.showing:
             try:
-                display_mgr.remove_widget(_active_pairing_confirm)
+                display_mgr.remove_widget(_modals.pairing_confirm.widget)
                 # Match the show path with a full refresh so the restored
                 # screen underneath redraws crisply rather than faded.
                 display_mgr.update(full=True, immediate=True)
             except Exception as e:  # noqa: BLE001
                 log.error(f"[App] Failed to remove pairing confirm widget: {e}")
-            _active_pairing_confirm = None
+            _modals.pairing_confirm.hide()
         # Tell the web UI the prompt is gone so it can dismiss its mirror.
         _broadcast_bt_event("bt_pair_request", {"active": False})
         _pairing_confirm_lock.release()
@@ -579,7 +545,7 @@ def _resolve_web_pairing_confirm(accept: bool) -> None:
     Pair or Reject key, so whichever surface acts first decides. A no-op if no
     prompt is currently active (e.g. it already timed out).
     """
-    widget = _active_pairing_confirm
+    widget = _modals.pairing_confirm.widget
     if widget is None:
         log.debug("[App] Web pairing confirm with no active prompt; ignoring")
         return
@@ -762,15 +728,6 @@ def _handle_web_chromecast_command(command: str, parsed: dict) -> None:
         _broadcast_chromecast_state()
 
 
-# Help dialog state. Set while the focused menu entry's help tip is shown as a
-# modal (HELP key in a menu). Any key dismisses it (see _handle_key), and the
-# MenuManager help presenter blocks on it until dismissed.
-_active_help_widget = None
-
-# Dismissible error splash (Lichess token/scope/start failures). Any key
-# dismisses it; MenuManager.bind routes keys here while the splash is up.
-_active_error_splash = None
-
 # Args (stored globally after parsing for access in callbacks)
 _args = None
 
@@ -821,8 +778,6 @@ PLAYER2_DEFAULTS = {
 _settings: Optional[AllSettings] = None
 
 # Cached engine data
-_available_engines: List[str] = []
-_engine_elo_levels: dict = {}  # engine_name -> list of {"value","label"} picker rows
 
 
 # ============================================================================
@@ -1776,101 +1731,20 @@ def _play_from_history(
 # Engine/Settings Helpers
 # ============================================================================
 
-def _load_available_engines() -> List[str]:
-    """Return engines selectable for play: available catalog engines + custom.
-
-    Discovery no longer depends on shipped .uci files (there are none). The
-    catalog (``managers.engine_manager.ENGINES``) plus the operator-added custom
-    store are the source of truth for which engines exist; a catalog engine is
-    offered when :meth:`EngineManager.is_available` (system package or installed
-    binary), and a custom engine when its binary is present. ELO/option sections
-    are generated lazily per engine by ``services.uci_schema.seed_config`` at
-    first use, not enumerated from files on disk.
-
-    Returns:
-        Sorted list of selectable engine names.
-    """
-    global _available_engines
-
-    if _available_engines:
-        return _available_engines
-
-    from universalchess.managers.engine_manager import ENGINES, get_engine_manager
-    from universalchess.services.custom_engine_registry import CUSTOM_ENGINE_STORE
-    from universalchess.paths import get_engine_path
-
-    engine_manager = get_engine_manager()
-    names = {name for name in ENGINES if engine_manager.is_available(name)}
-
-    for custom in CUSTOM_ENGINE_STORE.list():
-        # Custom engines are not in the catalog; a present binary is what makes
-        # one selectable (mirroring is_installed for catalog single-binaries).
-        if get_engine_path(custom.id):
-            names.add(custom.id)
-
-    _available_engines = sorted(names)
-    log.info(f"[Settings] Available engines ({len(_available_engines)}): {_available_engines}")
-    return _available_engines
-
-
 def _get_installed_engines() -> List[str]:
     """Get list of engines available for selection.
 
-    :func:`_load_available_engines` already applies the selectability rule
-    (catalog engines that are a system package or installed, plus custom engines
-    whose binary is present), so this returns that set directly. Kept as the
-    named entry point the board picker and callers use.
+    :func:`~universalchess.managers.engine_manager.playable_engines` applies the
+    selectability rule (catalog engines that are a system package or installed,
+    plus custom engines whose binary is present), so this returns that set
+    directly. Kept as the named entry point the board picker and callers use.
 
     Returns:
         List of selectable engine names, sorted alphabetically.
     """
-    return _load_available_engines()
+    from universalchess.managers.engine_manager import playable_engines
 
-
-def _get_engine_elo_levels(engine_name: str) -> List[dict]:
-    """Get the selectable strength sections for an engine as picker rows.
-
-    Sections come from the engine's writable ``config/engines/<name>.uci``,
-    which is generated on first use by probing the binary
-    (``uci_schema.seed_config``) -- no ``.uci`` files are shipped. Rows are built
-    via the shared ``strength_level_choices`` (same ``[DEFAULT]`` exclusion the
-    web editor and ``/levels`` endpoint use) so the on-device picker never drifts
-    from them. A ``Default`` entry is always guaranteed so the default setting
-    resolves, and the result is cached for the process lifetime.
-
-    Args:
-        engine_name: Name of the engine
-
-    Returns:
-        Ordered ``{"value", "label"}`` rows. ``value`` is the section name
-        persisted as the player's ``elo``; ``label`` is the display text (an
-        uncapped ``Default`` shows as ``"Default (Unlimited)"``), e.g.
-        ``[{"value": "Default", "label": "Default (Unlimited)"}, {"value": "1400 ELO", ...}]``.
-    """
-    global _engine_elo_levels
-
-    if engine_name in _engine_elo_levels:
-        return _engine_elo_levels[engine_name]
-
-    from universalchess.services import uci_schema
-    from universalchess.services.engine_profiles import strength_level_choices
-
-    levels: List[dict] = [{'value': 'Default', 'label': 'Default'}]
-    try:
-        config_path = uci_schema.seed_config(engine_name)
-        choices = strength_level_choices(config_path)
-        if choices:
-            levels = choices
-        if not any(level['value'] == 'Default' for level in levels):
-            levels.insert(0, {'value': 'Default', 'label': 'Default'})
-        log.debug(f"[Settings] Engine {engine_name} levels: {levels}")
-    except uci_schema.EngineProbeError as e:
-        log.warning(f"[Settings] Cannot probe {engine_name} for levels: {e}")
-    except Exception as e:
-        log.warning(f"[Settings] Error loading levels for {engine_name}: {e}")
-
-    _engine_elo_levels[engine_name] = levels
-    return levels
+    return playable_engines()
 
 
 # ============================================================================
@@ -1922,9 +1796,8 @@ def _start_game_mode(
                                       resume, where moves are replayed AFTER game mode starts.
     """
     global app_state, protocol_manager, display_manager, controller_manager, _is_position_game
-    global _active_player_signature, _pending_player_rebuild, _pending_layout_rebuild
-    global _pending_lichess_next_reason
-    global _lichess_join, _cancel_game_start, _lichess_session
+    global _active_player_signature
+    global _lichess_join, _lichess_session
 
     log.info(f"[App] Transitioning to GAME mode (position_game={is_position_game})")
 
@@ -1946,7 +1819,7 @@ def _start_game_mode(
 
     join = _lichess_join
     _lichess_join = None
-    _cancel_game_start = False
+    _pending.cancel_game_start.clear()
     settings = _get_settings()
     # A stashed join is the Lichess lobby (or its web equivalent) asking for a
     # Lichess game outright, so the pairing it runs with is derived rather than
@@ -2012,12 +1885,12 @@ def _start_game_mode(
     # rebuild request (this start already reflects the latest settings). A later
     # board-reset new game compares against this to detect a settings change.
     _active_player_signature = settings.player_config_signature()
-    _pending_player_rebuild = False
-    _pending_lichess_next_reason = None
+    _pending.player_rebuild.clear()
+    _pending.lichess_next.clear()
     # A fresh start rebuilds the DisplayManager and its layout from current
     # settings, so any layout rebuild an interrupted new game had scheduled is
     # already satisfied here.
-    _pending_layout_rebuild = False
+    _pending.layout_rebuild.clear()
 
     # Player 1 is at the bottom of the board (White's physical side).
     # Lichess names the account's color after the pieces are already set, so a
@@ -2051,6 +1924,8 @@ def _start_game_mode(
             )
             return HumanPlayer(config)
         elif ps.type == 'engine':
+            from universalchess.services import uci_schema
+
             engine_display = engine_display_name(ps.engine)
             # Use custom name if provided, otherwise use engine display name with
             # the picker's strength label (an uncapped "Default" -> "Unlimited")
@@ -2205,7 +2080,7 @@ def _start_game_mode(
 
     def _abort_cancelled_game_start() -> bool:
         """Honor BACK that arrived while this start was still constructing."""
-        if not _cancel_game_start:
+        if not _pending.cancel_game_start.requested():
             return False
         log.info("[App] Game cancelled before players started")
         if lichess_session is not None:
@@ -2274,10 +2149,10 @@ def _start_game_mode(
         the key callback chain and _show_menu() would block waiting for key events
         from the same callback thread. Instead, set a flag and let the main loop handle it.
         """
-        global app_state, _return_to_positions_menu
+        global app_state
         log.info("[App] Position game back pressed - signaling return to positions menu")
         _cleanup_game()
-        _return_to_positions_menu = True
+        _pending.positions_menu_return.request()
         app_state = AppState.MENU
 
     def _on_takeback():
@@ -2555,8 +2430,7 @@ def _start_game_mode(
     _clock_started = False
     def _on_game_event(event):
         nonlocal _clock_started
-        global _switch_to_normal_game, _is_position_game, _pending_player_rebuild
-        global _pending_layout_rebuild
+        global _is_position_game
         if event == EVENT_NEW_GAME:
             from universalchess.services.analysis import get_analysis_service
             get_analysis_service().reset()
@@ -2599,18 +2473,18 @@ def _start_game_mode(
             # signal transition to normal game mode
             if _is_position_game:
                 log.info("[App] Starting position detected in position game - signaling switch to normal game")
-                _switch_to_normal_game = True
+                _pending.switch_to_normal_game.request()
             elif _player_config_changed_since_game_start():
                 # A board-reset new game reuses the current player objects, but
                 # player-defining settings changed since they were built (e.g. the
                 # engine was changed from the web). Defer a full rebuild to the main
                 # thread so the new game uses the new players/engine. This callback
                 # runs on the controller event thread; game/display teardown must
-                # run on the main thread (mirrors _switch_to_normal_game). A full
-                # rebuild also re-lays-out the display, so no separate layout
-                # rebuild is needed in this branch.
+                # run on the main thread (mirrors the switch-to-normal-game slot). A
+                # full rebuild also re-lays-out the display, so no separate
+                # layout rebuild is needed in this branch.
                 log.info("[App] New game on board with changed player settings - scheduling player rebuild")
-                _pending_player_rebuild = True
+                _pending.player_rebuild.request()
             elif player_manager.requires_rebuild_on_new_game:
                 # In-place reset only clears the local board. A remote player
                 # would keep streaming the old game, and the waiting splash
@@ -2618,14 +2492,14 @@ def _start_game_mode(
                 # Lichess rebuild asks before posting a new seek (PLAY / lobby /
                 # web New Game skip that prompt because they are explicit).
                 log.info("[App] New game on board during remote play - scheduling rebuild")
-                _pending_player_rebuild = True
+                _pending.player_rebuild.request()
             elif display_manager.layout_needs_rebuild():
                 # The reused widgets no longer match current settings (the
                 # set_time_control_spec above may have flipped timed<->untimed).
                 # Defer the layout rebuild to the main thread so this new game is
                 # laid out like a full start, regardless of how it began.
                 log.info("[App] New game on board with layout-affecting setting change - scheduling layout rebuild")
-                _pending_layout_rebuild = True
+                _pending.layout_rebuild.request()
         elif event == EVENT_WHITE_TURN or event == EVENT_BLACK_TURN:
             # Start clock on first turn event (game has truly started)
             # Turn indicator is handled by ChessClockWidget observing ChessGameState directly
@@ -2662,7 +2536,7 @@ def _cleanup_game():
     
     Used when exiting a game, whether returning to menu or positions menu.
     """
-    global protocol_manager, display_manager, controller_manager, _pending_piece_events, _is_position_game
+    global protocol_manager, display_manager, controller_manager, _is_position_game
     global _lichess_session
 
     # Clear position game flag
@@ -2679,7 +2553,7 @@ def _cleanup_game():
         _lichess_session = None
     
     # Clear any stale pending piece events from previous game
-    _pending_piece_events.clear()
+    _pending.piece_events.clear()
     
     # Clear ConnectionManager handler and pending data
     _connection_manager.clear_handler()
@@ -2733,7 +2607,7 @@ def _return_to_menu(reason: str):
     Args:
         reason: Reason for returning to menu (for logging)
     """
-    global app_state, _return_to_positions_menu, _is_position_game, _suspended_menu_restore_path
+    global app_state, _is_position_game, _suspended_menu_restore_path
 
     # Check if this was a position game BEFORE cleanup clears the flag
     was_position_game = _is_position_game
@@ -2750,7 +2624,7 @@ def _return_to_menu(reason: str):
         # Reopen the Positions menu at the position just played rather than the
         # bare main menu. Positions is a main-menu entry, so this is a MENU view:
         # a restart here restores the main menu, not Settings.
-        _return_to_positions_menu = True
+        _pending.positions_menu_return.request()
         app_state = AppState.MENU
         _record_session_view(VIEW_MENU, game_db_id=0)
     else:
@@ -2936,9 +2810,8 @@ def _schedule_lichess_after_unfinished(termination: str) -> None:
     (resign, abort, mate, ...) instead of the board-reset question. The stream
     thread must not open that menu itself.
     """
-    global _pending_player_rebuild, _pending_lichess_next_reason
-    _pending_player_rebuild = True
-    _pending_lichess_next_reason = termination
+    _pending.player_rebuild.request()
+    _pending.lichess_next.request(termination)
 
 
 def _stash_lichess_seek() -> None:
@@ -2975,7 +2848,7 @@ def _enter_game(*, explicit_lichess_seek: bool = False):
     Any piece events queued while the menu was showing are forwarded as the first
     move, and an already-connected client is switched to remote control.
     """
-    global _lichess_join, _pending_piece_events
+    global _lichess_join
 
     if _has_suspended_game() and not _player_config_changed_since_game_start():
         _resume_game_mode()
@@ -2991,7 +2864,7 @@ def _enter_game(*, explicit_lichess_seek: bool = False):
             explicit_seek=explicit_lichess_seek,
         ):
             log.info("[App] Lichess start skipped; PLAY or New Game required to seek")
-            _pending_piece_events.clear()
+            _pending.piece_events.clear()
             return
         if (
             explicit_lichess_seek
@@ -3011,8 +2884,8 @@ def _enter_game(*, explicit_lichess_seek: bool = False):
     # Forward piece events queued while the menu was showing (e.g. the lift that
     # triggered entry) so they are processed as the first move. The queue may
     # grow during forwarding as more events arrive, so drain until empty.
-    while _pending_piece_events:
-        pe, field, ts = _pending_piece_events.pop(0)
+    while (queued := _pending.piece_events.next()) is not None:
+        pe, field, ts = queued
         log.info(f"[App] Forwarding piece event: field={field}, event={pe}")
         if controller_manager:
             controller_manager.on_field_event(pe, field, ts)
@@ -3061,15 +2934,14 @@ def _on_board_command(parsed: dict) -> None:
     from every nested ``show_menu``, so the command unwinds to the main loop from
     any menu depth (root or a deep settings submenu) rather than being swallowed.
     During a game no menu widget is active, so the command is instead picked up by
-    the main loop's per-iteration poll of ``_pending_board_command``.
+    the main loop's per-iteration poll of the board-command slot.
     """
-    global _pending_board_command, _pending_display_profile
     command = parsed.get("command")
     # Live waveform-profile change: defer to the main thread (it re-inits the
     # panel and forces a full refresh -- display work). Does not need to unwind a
     # menu, since the per-iteration poll applies it from any app_state.
     if command == "display_profile":
-        _pending_display_profile = parsed
+        _pending.display_profile.request(parsed)
         return
     # Bluetooth pairing commands are handled here (off the main loop): pairing
     # runs on its own worker thread and confirming an incoming pairing only
@@ -3127,7 +2999,7 @@ def _on_board_command(parsed: dict) -> None:
             log.warning(f"[App] Ignoring web key_press: {e}")
         return
 
-    _pending_board_command = parsed
+    _pending.board_command.request(parsed)
     # Cancel whenever a menu widget is active, regardless of MENU vs SETTINGS
     # app_state: a settings submenu (app_state == SETTINGS) must also unwind, or
     # the web command would block until the on-board user pressed a key. In GAME
@@ -3151,11 +3023,10 @@ def _process_pending_display_profile() -> None:
     The Manager is read from the board module rather than held here, so a panel
     that only came up on the late-initialization path is tuned as well.
     """
-    global _pending_display_profile
-    cmd = _pending_display_profile
-    _pending_display_profile = None
-    if not cmd:
+    requested = _pending.display_profile.take()
+    if requested is None:
         return
+    cmd = requested.payload
     manager = board.display_manager
     if manager is None:
         return
@@ -3199,11 +3070,11 @@ def _process_pending_board_command() -> None:
     display widgets, game managers and in-memory settings are mutated on the main
     thread.
     """
-    global _pending_board_command, _lichess_join
-    cmd = _pending_board_command
-    _pending_board_command = None
-    if not cmd:
+    global _lichess_join
+    requested = _pending.board_command.take()
+    if requested is None:
         return
+    cmd = requested.payload
 
     command = cmd.get("command")
     if command == "setup_position":
@@ -4140,10 +4011,11 @@ def _build_player_detail_context(player_num: int):
     def engine_levels():
         """Rows for the ELO select: the levels the current engine defines."""
         from universalchess.menus.engine import MenuRow
+        from universalchess.services import uci_schema
 
         return [
             MenuRow(key=level["value"], label=level["label"], icon="elo")
-            for level in _get_engine_elo_levels(settings_dict()["engine"])
+            for level in uci_schema.strength_sections_for_engine(settings_dict()["engine"])
         ]
 
     ctx = BoardMenuContext()
@@ -6315,7 +6187,7 @@ def _on_ble_connected(client_type: str):
     Args:
         client_type: Type of client ('millennium', 'pegasus', 'chessnut')
     """
-    global protocol_manager, controller_manager, app_state, _menu_manager, _pending_ble_client_type
+    global protocol_manager, controller_manager, app_state, _menu_manager
     
     log.info(f"[BLE] Client connected: {client_type}")
     
@@ -6335,7 +6207,7 @@ def _on_ble_connected(client_type: str):
     # Case 3: In menu/settings mode but between menus (no active widget) - set flag for main loop
     if app_state == AppState.MENU or app_state == AppState.SETTINGS:
         log.info(f"[BLE] Client connected between menus ({app_state.name}) - setting flag for game start")
-        _pending_ble_client_type = client_type
+        _pending.ble_client.request(client_type)
         return
     
     # Case 4: Other states - switch to remote controller and notify protocol manager
@@ -6474,8 +6346,6 @@ def sendMessage(data):
             log.error(f"[sendMessage] Error sending via RFCOMM")
 
 
-_cleanup_done = False  # Guard against running cleanup twice
-_shutdown_requested = False  # Flag to request shutdown from main thread (set by events thread)
 
 
 def _show_shutdown_splash(message: str, timeout: float = 5.0, show_battery: bool = False,
@@ -6524,20 +6394,18 @@ def cleanup_and_exit(reason: str = "Normal exit", system_shutdown: bool = False,
             bring the board back after Original Centaur on a stock (no
             passwordless-sudo) board. See services.power.restart_exit_code.
     """
-    global kill, running, mainloop
+    global mainloop
     global protocol_manager, display_manager, controller_manager, rfcomm_server, ble_manager, relay_manager
-    global _cleanup_done, bt_keyboard_manager
-    
-    # Guard against running cleanup twice (signal handler + finally block)
-    if _cleanup_done:
+    global bt_keyboard_manager
+
+    # Reached from the signal handler and from the main loop's finally block.
+    if not _lifecycle.begin_cleanup():
         log.debug(f"Cleanup already done, skipping: {reason}")
         return
-    _cleanup_done = True
-    
+
     try:
         log.info(f"[Cleanup] Starting cleanup: {reason}")
-        kill = 1
-        running = False
+        _lifecycle.stop(reason)
 
         # Freeze the menu navigation path before any teardown. cleanup ends in
         # sys.exit(), whose SystemExit unwinds the blocked menu stack and runs
@@ -6768,15 +6636,14 @@ def signal_handler(signum, frame):
     cleanup_and_exit(f"Received signal {signum}")
 
 
-# Counter for unhandled key events - used to detect broken state and recover
-_unhandled_key_count = 0
-_UNHANDLED_KEY_THRESHOLD = 5  # After this many unhandled keys, force recovery to main menu
+# Consecutive unhandled key presses, and the point at which they mean the board
+# has stopped routing keys and must be recovered. See app/key_recovery.py.
+_key_recovery = KeyRecovery()
 
 
 def _reset_unhandled_key_count():
-    """Reset the unhandled key counter after a successful key handling."""
-    global _unhandled_key_count
-    _unhandled_key_count = 0
+    """Note that a key reached something, so the board is answering its keys."""
+    _key_recovery.record_handled()
 
 
 def _handle_unhandled_key(key_id, reason: str):
@@ -6790,16 +6657,18 @@ def _handle_unhandled_key(key_id, reason: str):
         key_id: The key that was not handled
         reason: Description of why the key was not handled
     """
-    global _unhandled_key_count, app_state, protocol_manager, display_manager
-    
-    _unhandled_key_count += 1
+    global app_state, protocol_manager, display_manager
+
+    recover = _key_recovery.record_unhandled()
+    # Reaching the threshold clears the count, so report the threshold itself
+    # rather than the 0 that is left behind.
+    count = KeyRecovery.THRESHOLD if recover else _key_recovery.unhandled_count
     log.error(f"[App] UNHANDLED KEY: {key_id}, reason: {reason}, "
-              f"app_state={app_state}, count={_unhandled_key_count}/{_UNHANDLED_KEY_THRESHOLD}")
-    
-    if _unhandled_key_count >= _UNHANDLED_KEY_THRESHOLD:
-        log.error(f"[App] Too many unhandled keys ({_unhandled_key_count}) - forcing recovery to main menu")
-        _unhandled_key_count = 0
-        
+              f"app_state={app_state}, count={count}/{KeyRecovery.THRESHOLD}")
+
+    if recover:
+        log.error(f"[App] Too many unhandled keys ({KeyRecovery.THRESHOLD}) - forcing recovery to main menu")
+
         # Force cleanup and return to menu
         try:
             _cleanup_game()
@@ -6833,7 +6702,7 @@ def key_callback(key_id):
     too many unhandled keys (indicating a broken state), the app forces
     recovery by returning to the main menu.
     """
-    global running, kill, display_manager, app_state, _menu_manager, _active_keyboard_widget, _active_error_splash, _cancel_game_start
+    global display_manager, app_state, _menu_manager
     
     log.info(f"[App] Key event received: {key_id}, app_state={app_state}")
     
@@ -6843,10 +6712,7 @@ def key_callback(key_id):
         # Set flags to trigger clean shutdown from main thread
         # Don't call cleanup_and_exit here - it runs in events thread and sys.exit()
         # would only exit this thread, not the main thread
-        global _shutdown_requested
-        _shutdown_requested = True
-        running = False
-        kill = 1
+        _lifecycle.request_shutdown("LONG_PLAY")
         _reset_unhandled_key_count()
         # Cancel any active menu so the main loop can check the shutdown flag
         if _menu_manager is not None and _menu_manager.active_widget is not None:
@@ -6892,34 +6758,11 @@ def key_callback(key_id):
         _reset_unhandled_key_count()
         return
     
-    # Priority 0: Active help dialog - UP/DOWN turn the page of a tip too long
-    # for one panel, any other key dismisses it. Checked first so the help
-    # overlay (shown for the focused menu entry) consumes the next key rather
-    # than letting it reach the menu/keyboard underneath.
-    if _active_help_widget is not None:
-        _active_help_widget.handle_key(key_id)
-        _reset_unhandled_key_count()
-        return
-
-    # Priority 0b: Dismissible error splash - any key closes it so the user can
-    # read the message (missing Lichess scope, start failure, ...) and continue.
-    if _active_error_splash is not None:
-        _active_error_splash.handle_key(key_id)
-        _reset_unhandled_key_count()
-        return
-
-    # Priority 1: Active keyboard widget gets key events
-    if _active_keyboard_widget is not None:
-        handled = _active_keyboard_widget.handle_key(key_id)
-        if handled:
-            _reset_unhandled_key_count()
-            return
-
-    # Priority 2: Incoming-pairing confirmation overlay consumes all keys until
-    # the user accepts or rejects, so a pairing cannot be confirmed by accident
-    # nor leak keys to the menu/game underneath.
-    if _active_pairing_confirm is not None:
-        _active_pairing_confirm.handle_key(key_id)
+    # Priority 0: an overlay on screen (help tip, error splash, keyboard,
+    # pairing confirmation) gets the key before the menu or the game does, in
+    # the order app/modals.py states. Only the keyboard lets a key it has no use
+    # for continue past it.
+    if _modals.handle_key(key_id):
         _reset_unhandled_key_count()
         return
     
@@ -7067,7 +6910,7 @@ def key_callback(key_id):
                 key_id == board.Key.BACK
                 and back_cancels_unready_game_start(has_game_managers=False)
             ):
-                _cancel_game_start = True
+                _pending.cancel_game_start.request()
                 _reset_unhandled_key_count()
                 return
             # No controller or protocol_manager in GAME mode - should not happen
@@ -7099,7 +6942,7 @@ def key_callback(key_id):
                         # Handler is wired just before activate_local. BACK in
                         # that window must still cancel the seek that start()
                         # is about to post.
-                        _cancel_game_start = True
+                        _pending.cancel_game_start.request()
                     return
                 log.info("[App] BACK with no game - returning to menu")
                 _return_to_menu("BACK pressed")
@@ -7111,7 +6954,6 @@ def key_callback(key_id):
 
 # Pending piece events for menu -> game transition
 # Queue of (piece_event, field, time_in_seconds) tuples
-_pending_piece_events = []
 
 def field_callback(piece_event, field, time_in_seconds):
     """Handle field events (piece lift/place) from the board.
@@ -7126,13 +6968,14 @@ def field_callback(piece_event, field, time_in_seconds):
         field: Board field index (0-63)
         time_in_seconds: Event timestamp
     """
-    global app_state, protocol_manager, _active_keyboard_widget, _menu_manager, _pending_piece_events
+    global app_state, protocol_manager, _menu_manager
 
     # Priority 1: Active keyboard gets field events
-    if _active_keyboard_widget is not None:
+    keyboard = _modals.keyboard.widget
+    if keyboard is not None:
         # Convert piece_event to presence: 1 = place = present, 0 = lift = not present
         piece_present = (piece_event == 1)
-        _active_keyboard_widget.handle_field_event(field, piece_present)
+        keyboard.handle_field_event(field, piece_present)
         return
     
     # Priority 2: Menu/Settings mode - piece events trigger game start
@@ -7141,13 +6984,13 @@ def field_callback(piece_event, field, time_in_seconds):
     # - Game start is pending (events already queued, waiting for main thread to start game)
     active_widget = _menu_manager.active_widget if _menu_manager else None
     if app_state in (AppState.MENU, AppState.SETTINGS):
-        if active_widget is not None or len(_pending_piece_events) > 0:
+        if active_widget is not None or len(_pending.piece_events) > 0:
             # Queue the piece event to forward after game mode starts
             # Multiple events may arrive before game mode is ready (e.g., LIFT then PLACE)
-            _pending_piece_events.append((piece_event, field, time_in_seconds))
-            log.info(f"[App] Piece event in {app_state.name} - queued for game (field={field}, event={piece_event}, queue_size={len(_pending_piece_events)}, menu_active={active_widget is not None})")
+            _pending.piece_events.add((piece_event, field, time_in_seconds))
+            log.info(f"[App] Piece event in {app_state.name} - queued for game (field={field}, event={piece_event}, queue_size={len(_pending.piece_events)}, menu_active={active_widget is not None})")
             # Only trigger game start on first event (avoid multiple cancel calls)
-            if len(_pending_piece_events) == 1 and active_widget is not None:
+            if len(_pending.piece_events) == 1 and active_widget is not None:
                 log.info("[App] Cancelling menu selection with PIECE_MOVED")
                 _capture_menu_for_resume()
                 _menu_manager.cancel_selection("PIECE_MOVED")
@@ -7165,8 +7008,8 @@ def field_callback(piece_event, field, time_in_seconds):
             protocol_manager.receive_field(piece_event, field, time_in_seconds)
         else:
             # Game handler not yet created - queue event for when it's ready
-            _pending_piece_events.append((piece_event, field, time_in_seconds))
-            log.info(f"[App] Game handler not ready, queuing event (field={field}, event={piece_event}, queue_size={len(_pending_piece_events)})")
+            _pending.piece_events.add((piece_event, field, time_in_seconds))
+            log.info(f"[App] Game handler not ready, queuing event (field={field}, event={piece_event}, queue_size={len(_pending.piece_events)})")
 
 
 def main():
@@ -7176,11 +7019,8 @@ def main():
     BLE/RFCOMM connections can trigger auto-transition to game mode.
     """
     log.info("[Main] Entering main()")
-    global running, kill
     global mainloop, relay_mode, protocol_manager, relay_manager, app_state, _args
-    global _pending_piece_events, _return_to_positions_menu, _switch_to_normal_game, _menu_manager
-    global _pending_settings_reload, _pending_player_rebuild, _pending_layout_rebuild
-    global _pending_lichess_next_reason
+    global _menu_manager
     
     try:
         log.info("[Main] Parsing arguments...")
@@ -7275,11 +7115,10 @@ def main():
 
         Runs on the settings-subscriber thread. Reloads the in-memory settings and
         refreshes any active menu directly, but defers rebuilding the live game
-        display to the main loop via _pending_settings_reload: display widgets must
+        display to the main loop via the settings-reload slot: display widgets must
         only be (re)built on the main thread, the same way the on-board display
         menu applies changes (see the GAME-state handling of this flag).
         """
-        global _pending_settings_reload
         log.info("[Main] Settings changed from web app, reloading...")
         # The timezone may have changed via the web; refresh this process's libc
         # timezone cache so the e-paper wall clock (datetime.now()) reflects the
@@ -7312,7 +7151,7 @@ def main():
         # Only relevant in GAME state; menus already refresh above, and a game
         # start rebuilds widgets anyway, so avoid leaving a stale flag set.
         if app_state == AppState.GAME:
-            _pending_settings_reload = True
+            _pending.settings_reload.request()
     
     # Re-broadcast the current game state on demand. The web app sends this
     # request the moment a Live-board client connects without cached state
@@ -7578,7 +7417,7 @@ def main():
     if not args.no_rfcomm and _bluetooth_capable:
         def _on_rfcomm_connected():
             """Handle RFCOMM client connection."""
-            global app_state, _pending_ble_client_type
+            global app_state
 
             # Record the live link (classic RFCOMM, no BLE emulator) so the
             # board/web show the active connection and its transport.
@@ -7598,7 +7437,7 @@ def main():
                 _menu_manager.cancel_selection("CLIENT_CONNECTED")
             elif app_state == AppState.MENU or app_state == AppState.SETTINGS:
                 log.info(f"[RFCOMM] Client connected between menus ({app_state.name}) - setting flag")
-                _pending_ble_client_type = "rfcomm"
+                _pending.ble_client.request("rfcomm")
             elif protocol_manager:
                 protocol_manager.on_app_connected()
         
@@ -7710,8 +7549,7 @@ def main():
                 log.info(f"[Relay] {shadow_target_name} connection established")
             else:
                 log.error(f"[Relay] Failed to connect to {shadow_target_name}")
-                global kill
-                kill = 1
+                _lifecycle.stop(f"Relay could not connect to {shadow_target_name}")
         
         shadow_thread = threading.Thread(target=connect_shadow, daemon=True)
         shadow_thread.start()
@@ -7825,7 +7663,7 @@ def main():
 
     _uncaught_main_loop_error = False
     try:
-        while running and not kill:
+        while _lifecycle.keep_running:
             try:
                 # Clear the crash-loop guard once the app has run healthily for a
                 # short period after applying the restore. A restore that crashes
@@ -7842,28 +7680,27 @@ def main():
                 # Apply a pending live waveform-profile change (no reboot) from
                 # any app_state: it only re-inits the panel and redraws the
                 # current framebuffer, so it is independent of menu/game state.
-                if _pending_display_profile is not None:
+                if _pending.display_profile.requested():
                     _process_pending_display_profile()
 
                 if app_state == AppState.MENU:
                     # Apply a web board-control command (set up position / abort) that
                     # arrived while the menu was showing. Runs here on the main thread.
-                    if _pending_board_command is not None:
+                    if _pending.board_command.requested():
                         _process_pending_board_command()
                         continue  # Re-check app_state (may now be GAME)
 
                     # Check for pending BLE client connection (set when connection happens between menus)
-                    global _pending_ble_client_type
-                    if _pending_ble_client_type is not None:
-                        log.info(f"[App] Pending BLE client connection detected ({_pending_ble_client_type}) - entering game")
-                        _pending_ble_client_type = None
+                    ble_client = _pending.ble_client.take()
+                    if ble_client is not None:
+                        log.info(f"[App] Pending BLE client connection detected ({ble_client.payload}) - entering game")
                         _enter_game()
                         continue  # Re-check app_state (now should be GAME)
 
                     # Check for pending piece events before showing menu
                     # These may have been queued while in a submenu
-                    if _pending_piece_events:
-                        log.info(f"[App] Pending piece events detected ({len(_pending_piece_events)}) - entering game")
+                    if len(_pending.piece_events) > 0:
+                        log.info(f"[App] Pending piece events detected ({len(_pending.piece_events)}) - entering game")
                         _enter_game()
                         continue  # Re-check app_state (now should be GAME)
 
@@ -7921,8 +7758,7 @@ def main():
                     # from, so leaving lands where the position was chosen instead
                     # of at the top of the main menu. Backing out of it falls
                     # through to the main menu on the next iteration.
-                    if _return_to_positions_menu:
-                        _return_to_positions_menu = False
+                    if _pending.positions_menu_return.take() is not None:
                         _handle_positions_menu(return_to_last_position=True)
                         continue
 
@@ -7995,8 +7831,7 @@ def main():
 
                 elif app_state == AppState.GAME:
                     # Check if we need to switch from position game to normal game
-                    if _switch_to_normal_game:
-                        _switch_to_normal_game = False
+                    if _pending.switch_to_normal_game.take() is not None:
                         log.info("[App] Switching from position game to normal game")
                         _cleanup_game()
                         _start_game_mode(starting_fen=None, is_position_game=False)
@@ -8004,10 +7839,9 @@ def main():
                     # settings had changed (e.g. engine changed from the web). Rebuild
                     # the game so the new players/engine take effect. _start_game_mode
                     # tears down the stale players and re-reads the current settings.
-                    elif _pending_player_rebuild:
-                        _pending_player_rebuild = False
-                        next_reason = _pending_lichess_next_reason
-                        _pending_lichess_next_reason = None
+                    elif _pending.player_rebuild.take() is not None:
+                        lichess_next = _pending.lichess_next.take()
+                        next_reason = lichess_next.payload if lichess_next else None
                         from universalchess.players.lichess.lobby import (
                             board_reset_rebuild_action,
                         )
@@ -8060,8 +7894,7 @@ def main():
                     # timed<->untimed). Rebuild only the layout here on the main
                     # thread -- lighter than a full game rebuild, and enough since
                     # the players/engine are unchanged.
-                    elif _pending_layout_rebuild:
-                        _pending_layout_rebuild = False
+                    elif _pending.layout_rebuild.take() is not None:
                         log.info("[App] Rebuilding display layout for new game (layout-affecting setting changed)")
                         if display_manager:
                             display_manager._init_widgets()
@@ -8069,8 +7902,7 @@ def main():
                     # display/sprite toggles take effect live, matching the on-board
                     # display menu. Rebuilt here (main thread) - never from the
                     # subscriber thread that set the flag.
-                    elif _pending_settings_reload:
-                        _pending_settings_reload = False
+                    elif _pending.settings_reload.take() is not None:
                         # A Chess960 toggle changes the starting layout, which cannot be
                         # applied to a game already in progress. When the live game has no
                         # moves yet, restart it via the normal start path (which reads the
@@ -8120,7 +7952,7 @@ def main():
                                 ):
                                     display_manager.set_time_control_spec(desired_tc)
                                 display_manager._init_widgets()
-                    elif _pending_board_command is not None:
+                    elif _pending.board_command.requested():
                         # Web set up a position / aborted while a game was running.
                         # Applied here on the main thread (rebuilds the game display).
                         _process_pending_board_command()
@@ -8171,7 +8003,7 @@ def main():
             _pending_exc, uncaught_main_loop_error=_uncaught_main_loop_error
         )
         # Check if shutdown was requested from events thread (e.g., LONG_PLAY key)
-        if _shutdown_requested:
+        if _lifecycle.shutdown_requested:
             cleanup_and_exit("LONG_PLAY shutdown requested", system_shutdown=True)
         else:
             cleanup_and_exit("Main loop ended", exit_code=_restart_code)

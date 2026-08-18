@@ -39,6 +39,10 @@ could be tested.
 | `app/display_boot.py` | Controller probe and panel init |
 | `board/display_settings.py` | The `[display]` settings, read the same way by both apps |
 | `app/startup_splash.py` | The startup splash, shared with the slow imports |
+| `app/pending_work.py` | Work requested off the main loop and performed on it |
+| `app/modals.py` | The overlays that consume board keys, in priority order |
+| `app/lifecycle.py` | Whether the board keeps running, and how it stops |
+| `app/key_recovery.py` | Noticing that the board has stopped routing keys |
 | `app/board_app.py` | The application: menus, game modes, the main loop |
 
 ### Responsibilities
@@ -640,6 +644,8 @@ main.py (Entry Point)
     +-- app/ (Startup and Application)
     |     +-- bootstrap.py (boot sequence)
     |     +-- display_boot.py (panel bring-up)
+    |     +-- pending_work.py (cross-thread work handoff)
+    |     +-- modals.py, lifecycle.py, key_recovery.py (app state)
     |     +-- board_app.py (menus, game modes, main loop)
     |
     +-- board/ (Hardware Abstraction)

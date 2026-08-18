@@ -1650,6 +1650,53 @@ def engine_binary_subpath(engine_name: str) -> Optional[str]:
     return None
 
 
+_playable_engines: List[str] = []
+
+
+def playable_engines() -> List[str]:
+    """Return the engines that can be selected to play on this device.
+
+    Discovery does not depend on shipped ``.uci`` files -- there are none. The
+    catalog plus the operator-added custom store are the source of truth for
+    which engines exist: a catalog engine is playable when
+    :meth:`EngineManager.is_available` (a system package, or an installed
+    binary), and a custom engine when its binary is present, which is what
+    makes one selectable given it is not in the catalog at all. Strength
+    sections are generated lazily per engine at first use rather than
+    enumerated from files on disk.
+
+    Cached for the life of the process: it stats the engines directory once per
+    engine, and the pickers that ask are rebuilt on every menu redraw. Call
+    :func:`forget_playable_engines` after installing or removing one.
+
+    Returns:
+        Playable engine ids, sorted.
+    """
+    global _playable_engines
+
+    if _playable_engines:
+        return _playable_engines
+
+    from universalchess import paths
+    from universalchess.services.custom_engine_registry import CUSTOM_ENGINE_STORE
+
+    manager = get_engine_manager()
+    names = {name for name in ENGINES if manager.is_available(name)}
+    for custom in CUSTOM_ENGINE_STORE.list():
+        if paths.get_engine_path(custom.id):
+            names.add(custom.id)
+
+    _playable_engines = sorted(names)
+    log.info("[Engines] Playable engines (%d): %s", len(_playable_engines), _playable_engines)
+    return _playable_engines
+
+
+def forget_playable_engines() -> None:
+    """Drop the cached playable set so the next call re-reads the device."""
+    global _playable_engines
+    _playable_engines = []
+
+
 def engine_display_name(engine_id: str) -> str:
     """Return the human-readable name for an engine id.
 

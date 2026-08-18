@@ -5041,28 +5041,6 @@ def api_get_sprite_image(sheet):
         abort(404)
 
 
-@app.route("/api/engines", methods=["GET"])
-def api_get_engines():
-    """Get list of installed engines for dropdowns."""
-    try:
-        from universalchess.managers.engine_manager import EngineManager, ENGINES
-        
-        engine_manager = EngineManager()
-        engines_list = []
-        
-        for name, engine_def in ENGINES.items():
-            engines_list.append({
-                "name": name,
-                "display_name": engine_def.display_name,
-                "installed": engine_manager.is_available(name)
-            })
-        
-        return jsonify(engines_list)
-    except Exception as e:
-        # Fallback if engine manager not available
-        return jsonify([{"name": "stockfish", "display_name": "Stockfish", "installed": True}])
-
-
 # Engine option profiles are editable for every installed engine. The schema is
 # discovered by probing the binary's UCI options (services.uci_schema); the
 # writable config/engines/<name>.uci -- generated on first use, never shipped --
