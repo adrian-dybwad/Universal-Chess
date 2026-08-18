@@ -14,9 +14,9 @@ between PLAY and Settings, beside the other ways into a game.
 The main menu is rendered from the shared ``main`` container but dispatched by
 row key inside ``main()``, so a row added to the container without a matching
 branch renders and then does nothing when selected. That coupling is invisible in
-either file alone, so it is asserted against main.py's source --
-``universalchess.main`` performs hardware and display initialisation at import
-time, which the rest of the suite also avoids.
+either file alone, so it is asserted against the application module's source:
+the branch is a statement about the code, and reading it with ``ast`` states it
+directly.
 """
 
 import ast
@@ -28,13 +28,13 @@ from universalchess.epaper.icon_menu import IconMenuWidget
 from universalchess.epaper.status_bar import STATUS_BAR_HEIGHT
 from universalchess.menus.catalog.entry_builder import build_menu_entries
 from universalchess.menus.catalog.loader import load_catalog
+from universalchess.tests.app_source import BOARD_APP_PY, function_node
 
 # The panel the board renders the menu into, below the status bar. Mirrors what
 # main() hands the MenuManager.
 DISPLAY_WIDTH = 128
 DISPLAY_HEIGHT = 296
 
-MAIN_PY = Path(universalchess.__file__).resolve().parent / "main.py"
 CATALOG_JSON = Path(universalchess.__file__).resolve().parent / "menus" / "catalog" / "menu.json"
 
 POSITIONS_NODE = "main.positions"
@@ -51,12 +51,6 @@ def _catalog():
     return load_catalog()
 
 
-def _function_node(name):
-    """Return the AST for the named top-level function in main.py."""
-    for node in ast.parse(MAIN_PY.read_text()).body:
-        if isinstance(node, ast.FunctionDef) and node.name == name:
-            return node
-    raise AssertionError(f"{name} not found in {MAIN_PY}")
 
 
 def _compared_strings(function_name):
@@ -66,7 +60,7 @@ def _compared_strings(function_name):
     loop routes several tokens to the same branch that way.
     """
     compared = set()
-    for node in ast.walk(_function_node(function_name)):
+    for node in ast.walk(function_node(function_name)):
         if not isinstance(node, ast.Compare):
             continue
         for comparator in node.comparators:

@@ -13,9 +13,9 @@ the web orders its tabs (after Connectivity, before System).
 The board's Settings list is dispatched by row key in ``_handle_settings`` rather
 than through catalog actions, so a row added to the container without a matching
 branch renders and then does nothing when selected. That coupling is invisible in
-either file alone, so it is asserted here against main.py's source --
-``universalchess.main`` performs hardware and display initialisation at import
-time, which the rest of the suite also avoids.
+either file alone, so it is asserted here against the application module's
+source: the branch is a statement about the code, and reading it with ``ast``
+states it directly.
 """
 
 import ast
@@ -24,8 +24,7 @@ from pathlib import Path
 
 import universalchess
 from universalchess.menus.catalog.loader import load_catalog
-
-MAIN_PY = Path(universalchess.__file__).resolve().parent / "main.py"
+from universalchess.tests.app_source import BOARD_APP_PY, function_node
 CATALOG_JSON = Path(universalchess.__file__).resolve().parent / "menus" / "catalog" / "menu.json"
 
 ENGINES_NODE = "settings.engines"
@@ -38,19 +37,13 @@ def _catalog():
     return load_catalog()
 
 
-def _function_node(name):
-    """Return the AST for the named top-level function in main.py."""
-    for node in ast.parse(MAIN_PY.read_text()).body:
-        if isinstance(node, ast.FunctionDef) and node.name == name:
-            return node
-    raise AssertionError(f"{name} not found in {MAIN_PY}")
 
 
 def _compared_strings(function_name):
     """String literals the function compares against, i.e. the keys it dispatches."""
     return {
         comparator.value
-        for node in ast.walk(_function_node(function_name))
+        for node in ast.walk(function_node(function_name))
         if isinstance(node, ast.Compare)
         for comparator in node.comparators
         if isinstance(comparator, ast.Constant) and isinstance(comparator.value, str)
@@ -61,7 +54,7 @@ def _registered_actions(function_name):
     """Action names a ``_build_*_context`` function registers on its context."""
     return {
         node.args[0].value
-        for node in ast.walk(_function_node(function_name))
+        for node in ast.walk(function_node(function_name))
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "register_action"
@@ -143,7 +136,7 @@ def test_engines_row_opens_the_engine_manager():
 
 
 def test_every_settings_row_can_actually_be_selected():
-    """Each row in the Settings container has a dispatch branch in main.py.
+    """Each row in the Settings container has a dispatch branch in the app.
 
     Why this test exists: the Settings list is rendered from the catalog but
     dispatched by row key in ``_handle_settings``. Nothing connects the two, so a

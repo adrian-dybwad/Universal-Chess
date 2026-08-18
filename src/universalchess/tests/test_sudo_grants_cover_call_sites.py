@@ -86,8 +86,8 @@ UNENFORCED: dict[tuple[str, str], str] = {
     # sudoers authorizes a resolved absolute path, so a relative "./centaur" under
     # a caller-chosen working directory cannot be expressed as a grant at all --
     # closing this needs a helper that launches one pinned path.
-    ("main.py", "./centaur"): "relative path is not expressible as a grant",
-    ("main.py", "pkill"): "owed a pinned helper alongside the direct-mode launch",
+    ("app/board_app.py", "./centaur"): "relative path is not expressible as a grant",
+    ("app/board_app.py", "pkill"): "owed a pinned helper alongside the direct-mode launch",
 }
 
 

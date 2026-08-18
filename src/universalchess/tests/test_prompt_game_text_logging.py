@@ -3,10 +3,9 @@
 # This file is part of the Universal-Chess project
 # ( https://github.com/adrian-dybwad/Universal-Chess )
 #
-# Guards a CodeQL "clear-text logging of sensitive information" fix without
-# importing universalchess.main, which performs heavy hardware/display
-# initialization at import time (a convention documented across the test suite).
-# The regression is guarded structurally by parsing the source: the log calls in
+# Guards a CodeQL "clear-text logging of sensitive information" fix.
+# The regression is guarded structurally by parsing the source, because what is
+# being asserted is a property of the code rather than of a result: the log calls in
 # _prompt_game_text must not interpolate the settings `field` (which can be the
 # namespaced coach_api_key key, a CodeQL sensitive source) and must log the
 # constant UI `title` instead. The entered value is a separate variable
@@ -16,22 +15,15 @@
 # See LICENSE.md for details.
 
 import ast
-import os
 
-import universalchess
+from universalchess.tests.app_source import function_node
 
 _LOG_METHODS = {"info", "debug", "warning", "error", "exception", "critical"}
 
 
 def _prompt_game_text_node() -> ast.FunctionDef:
-    """Return the parsed AST for main._prompt_game_text (without importing main)."""
-    main_path = os.path.join(os.path.dirname(universalchess.__file__), "main.py")
-    with open(main_path, "r", encoding="utf-8") as f:
-        tree = ast.parse(f.read(), filename=main_path)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "_prompt_game_text":
-            return node
-    raise AssertionError("_prompt_game_text not found in main.py")
+    """Return the parsed AST for the application's _prompt_game_text."""
+    return function_node("_prompt_game_text")
 
 
 def _log_calls(func: ast.FunctionDef):

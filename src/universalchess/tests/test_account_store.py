@@ -285,12 +285,9 @@ def test_board_main_promotes_legacy_lichess_offline_on_boot():
     board that never opened them kept the token in ``[lichess]``. Failure:
     ``main()`` does not call ``ensure_lichess_migrated(resolver=None)``.
     """
-    from pathlib import Path
+    from universalchess.tests.app_source import BOARD_APP_PY
 
-    import universalchess
-
-    source = Path(universalchess.__file__).resolve().parent.joinpath("main.py").read_text()
-    assert "ensure_lichess_migrated(resolver=None)" in source
+    assert "ensure_lichess_migrated(resolver=None)" in BOARD_APP_PY.read_text()
 
 
 def test_migrate_legacy_lichess_moves_section_and_clears_legacy(config_files):

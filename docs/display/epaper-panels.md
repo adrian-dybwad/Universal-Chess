@@ -66,7 +66,7 @@ only the **active** controller's profiles.
   Zingg); see each profile's `source`.
 - **Selection logic:** `board/display_selection.py` →
   `should_attempt_alt(primary)` returns True **only** when the primary attempt
-  fails *by BUSY timeout* (the V1 signature). `main.py::_init_display_early`
+  fails *by BUSY timeout* (the V1 signature). `app/display_boot.py::init_display`
   tries UC8151D first and constructs the SSD1680 driver only on that timeout.
   The outcome (active controller + `busy_timeout`) is published to the
   cross-process display-status file read by the web UI.
@@ -183,7 +183,7 @@ Selecting a profile (or toggling high contrast) **takes effect immediately**:
 1. The web POST persists the setting and sends the board process a
    `display_profile` command (`send_board_command`, the same Unix-socket channel
    used for board remote control).
-2. `main.py::_on_board_command` defers it to the main thread
+2. `app/board_app.py::_on_board_command` defers it to the main thread
    (`_process_pending_display_profile`), which calls
    `Manager.apply_waveform_profile(...)`.
 3. That swaps the driver's profile (`EPD.apply_profile`), forces the scheduler to
@@ -365,9 +365,11 @@ the board. The live panel is SSD1680, so the SSD1680 driver is the one to tune
   `epd` property) and `.../scheduler.py` (`force_reinit`) — live re-init + full
   refresh.
 - `src/universalchess/board/display_selection.py` — primary→fallback selection.
-- `src/universalchess/main.py` (`_init_display_early`, `_read_display_selection`,
-  `_on_board_command`, `_process_pending_display_profile`) — startup wiring +
-  per-active-controller profile resolution + live-apply handling.
+- `src/universalchess/app/display_boot.py` (`init_display`,
+  `read_display_selection`) — startup wiring and controller selection.
+- `src/universalchess/app/board_app.py` (`_on_board_command`,
+  `_process_pending_display_profile`) — per-active-controller profile
+  resolution + live-apply handling.
 - `src/universalchess/web/app.py` (`/api/system/display-tuning`,
   `_display_tuning_available`, `_active_waveform_controller`) — web API +
   visibility gate + active-controller filtering + live-apply command.

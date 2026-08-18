@@ -6,7 +6,7 @@ This document provides a comprehensive overview of all modules, their internal g
 
 ## Table of Contents
 
-1. [main.py (Entry Point)](#mainpy-entry-point)
+1. [main.py + app/ (Entry Point and Startup)](#mainpy--app-entry-point-and-startup)
 2. [board/ Module](#board-module)
 3. [managers/ Module](#managers-module)
 4. [state/ Module](#state-module)
@@ -20,20 +20,30 @@ This document provides a comprehensive overview of all modules, their internal g
 
 ---
 
-## main.py (Entry Point)
+## main.py + app/ (Entry Point and Startup)
 
 ### Purpose
-Main application entry point. Starts the board UI (splash, menus, local and
-online play) and the BLE/RFCOMM relay so companion apps can connect.
+Starts the board UI (splash, menus, local and online play) and the BLE/RFCOMM
+relay so companion apps can connect.
 
-### Global Variables
-| Variable | Purpose |
-|----------|---------|
-| `incomplete_shutdown` | Flag indicating if previous shutdown was incomplete (filesystem errors detected) |
+`main.py` is only the entry point: it runs the bring-up, then the application.
+The split exists because importing the entry point used to boot the product --
+the startup steps were top-level statements, so any import of it probed the
+e-paper controllers and waited on the board controller, and nothing in the file
+could be tested.
+
+| Module | Holds |
+|--------|-------|
+| `main.py` | `python -m universalchess.main`: `boot()`, then run the app |
+| `app/bootstrap.py` | The bring-up sequence, in the order the hardware requires |
+| `app/display_boot.py` | Controller probe, panel init, `[display]` settings |
+| `app/startup_splash.py` | The startup splash, shared with the slow imports |
+| `app/board_app.py` | The application: menus, game modes, the main loop |
 
 ### Responsibilities
 - Application initialization and startup
-- Previous shutdown analysis (check for unclean shutdowns)
+- Previous shutdown analysis (`board/boot_report.py`, read before the
+  controller is touched)
 - Resource initialization (fonts, sprites, logos)
 - Display initialization with splash screen
 - Board controller initialization with retry logic
@@ -625,6 +635,11 @@ once the React app superseded it.
 
 ```
 main.py (Entry Point)
+    |
+    +-- app/ (Startup and Application)
+    |     +-- bootstrap.py (boot sequence)
+    |     +-- display_boot.py (panel bring-up)
+    |     +-- board_app.py (menus, game modes, main loop)
     |
     +-- board/ (Hardware Abstraction)
     |     +-- board.py (LED, sounds, state reading)

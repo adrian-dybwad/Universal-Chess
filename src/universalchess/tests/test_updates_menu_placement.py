@@ -14,9 +14,9 @@ between the device preferences and Reset, mirroring the web tab's card order.
 About keeps what the web's system-info card shows -- version and telemetry.
 
 These tests pin both halves of that: the catalog placement, and the board wiring
-that has to travel with the node. The wiring is checked against main.py's source
-because importing ``universalchess.main`` performs hardware and display
-initialisation at import time, which the rest of the suite also avoids.
+that has to travel with the node. The wiring is checked against the application
+module's source: which names a builder registers is a statement about the code,
+and reading it with ``ast`` states it directly.
 """
 
 import ast
@@ -26,8 +26,8 @@ import universalchess
 from universalchess.menus.board_context import BoardMenuContext
 from universalchess.menus.catalog.loader import load_catalog
 from universalchess.menus.engine import build_rows, dispatch, resolve_icon
+from universalchess.tests.app_source import BOARD_APP_PY, function_node
 
-MAIN_PY = Path(universalchess.__file__).resolve().parent / "main.py"
 
 UPDATES_NODE = "system.updates"
 SYSTEM_CONTEXT = "_build_system_context"
@@ -45,13 +45,6 @@ def _catalog():
     return load_catalog()
 
 
-def _function_node(name):
-    """Return the AST for the named top-level function in main.py."""
-    tree = ast.parse(MAIN_PY.read_text())
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name == name:
-            return node
-    raise AssertionError(f"{name} not found in {MAIN_PY}")
 
 
 def _registered(function_name):
@@ -61,7 +54,7 @@ def _registered(function_name):
     functions so a registration inside a closure still counts.
     """
     found = {}
-    for node in ast.walk(_function_node(function_name)):
+    for node in ast.walk(function_node(function_name)):
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
             continue
         kind = node.func.attr
@@ -80,7 +73,7 @@ def _store_keys_handled(function_name):
     compared in the function body is the set of keys it can serve.
     """
     keys = set()
-    for node in ast.walk(_function_node(function_name)):
+    for node in ast.walk(function_node(function_name)):
         if isinstance(node, ast.Compare):
             for comparator in node.comparators:
                 if isinstance(comparator, ast.Constant) and isinstance(comparator.value, str):
@@ -157,7 +150,7 @@ def test_updates_row_reads_its_icon_state_from_the_system_store():
 
 
 def test_system_context_supplies_everything_the_moved_row_needs():
-    """main.py registers the action, the label compute and the store key.
+    """The application module registers the action, the label compute and the store key.
 
     Why this test exists: the node carries three separate pieces of wiring, and
     moving the JSON without moving all three leaves a row that draws but cannot

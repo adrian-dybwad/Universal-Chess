@@ -18,6 +18,13 @@ from unittest.mock import MagicMock
 # Stub hardware-specific modules BEFORE any universalchess imports.
 # This allows tests to run on non-Raspberry Pi systems (CI, development machines).
 # These modules are only used for actual hardware interaction and are mocked during tests anyway.
+#
+# bluetooth (PyBluez) and gi (PyGObject/BlueZ) are here for the same reason as
+# the GPIO and SPI modules: they are the host's Bluetooth stack, they are not
+# installable on a development machine, and every test that reaches them mocks
+# the behaviour anyway. Stubbing them is what lets the application module be
+# imported at all off a Pi, which is the point -- a module no test can import is
+# a module no test can cover.
 
 _hardware_modules = [
     "spidev",
@@ -28,6 +35,14 @@ _hardware_modules = [
     "smbus",
     "smbus2",
     "serial",
+    "bluetooth",
+    "gi",
+    "gi.repository",
+    "dbus",
+    "dbus.service",
+    "dbus.exceptions",
+    "dbus.mainloop",
+    "dbus.mainloop.glib",
 ]
 
 for module_name in _hardware_modules:
@@ -37,6 +52,10 @@ for module_name in _hardware_modules:
         # For RPi, ensure RPi.GPIO is accessible
         if module_name == "RPi":
             mock_module.GPIO = MagicMock()
+        # gi.repository is imported from, not attribute-accessed, so it has to
+        # exist as its own entry as well as on the parent package.
+        if module_name == "gi":
+            mock_module.repository = MagicMock()
         sys.modules[module_name] = mock_module
 
 import pytest

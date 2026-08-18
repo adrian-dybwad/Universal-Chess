@@ -635,6 +635,34 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   - Better test isolation
   - Cleaner startup sequence
 
+- **Starting the board is a function, not a side effect of importing it**:
+  `main.py` began the product while it was still being imported -- the previous
+  shutdown audit, resource loading, the e-paper controller probe and the board
+  handshake were all top-level statements. Importing the entry point therefore
+  booted the board, so no test could import it: the file held the main loop, the
+  menu dispatch and the board-command routing, and every test that needed one of
+  them either duplicated the logic or asserted against the source text. Those
+  steps now live in `app/bootstrap.py:boot()`, and `main.py` is a dozen lines
+  that call it and then run the application (`app/board_app.py`). The order
+  boot() runs them in is the order the hardware requires, and a test now holds
+  that order, which nothing checked while it was a run of statements.
+  - The panel bring-up (controller probe, waveform profile, `[display]`
+    settings) moved to `app/display_boot.py`, and the previous-shutdown audit to
+    `board/boot_report.py`. The About screen read that verdict by importing the
+    entry point mid-render, which was the one runtime import of `main` in the
+    tree -- and would have booted the board from inside a widget had the module
+    not already been loaded.
+  - The startup splash is now shared through `app/startup_splash.py`, so the
+    slow imports still name what they are waiting on while the panel is up.
+  - The Bluetooth stack (`bluetooth`, `gi`, `dbus`) is stubbed for tests
+    alongside the SPI and GPIO modules it sits beside, since it is the same kind
+    of dependency: a host facility that is absent off a Pi and mocked by every
+    test that reaches it. With that, the application module imports in a test in
+    a fifth of a second.
+  - Live display tuning now reads the Manager from the board module rather than
+    from a variable captured at startup, so a panel that only came up on the
+    late-initialization path is tuned as well.
+
 ### Removed
 
 - **Deprecated Engines**: Fire, Laser (x86-only, incompatible with ARM)
