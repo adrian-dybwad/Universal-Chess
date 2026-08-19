@@ -762,6 +762,19 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **A PLACE with no lift put the board into correction mode**: the Centaur
+  sometimes reports a PLACE with no preceding LIFT -- a reed bounce after the
+  piece is already seated, a trailing duplicate after occupancy already accepted
+  the move, or a ghost PLACE on an occupied square. That was formed into a
+  destination-only move. Lichess rejects those unless the square is the pending
+  destination, which a bounce on the source or after the turn has switched never
+  is, so the board entered correction and the next real lift looked ignored. A
+  PLACE that does not change occupancy, with no move in progress, is now dropped
+  before it reaches the player. A real missed-lift move still vacates a source
+  square, so occupancy no longer matches and destination-only recovery still
+  runs; putting a lifted piece back still reaches the player so the lift buffer
+  is cleared.
+
 - **A request made from the board's serial, Bluetooth or web thread could be
   silently dropped**: eleven kinds of work are deferred from those threads to the
   main loop, because only the main loop may rebuild widgets or restart players.

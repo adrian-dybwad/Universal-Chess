@@ -57,6 +57,32 @@ class FieldEventContext:
     setup_mode_active_fn: Callable[[], bool] = lambda: False
 
 
+def _place_is_noise_on_matching_board(ctx: FieldEventContext) -> bool:
+    """Return True when a PLACE cannot be a move: occupancy already matches and nothing is in progress.
+
+    Used to drop reed-bounce and trailing-duplicate PLACE events that would
+    otherwise become destination-only moves and enter correction mode. Returns
+    False when occupancy cannot be read, so a failed state query does not
+    swallow a real PLACE.
+    """
+    if getattr(ctx.move_state, "source_square", INVALID_SQUARE) != INVALID_SQUARE:
+        return False
+    if getattr(ctx.move_state, "pending_move_source_lifted", INVALID_SQUARE) != INVALID_SQUARE:
+        return False
+    expected_state = ctx.chess_board_to_state_fn(ctx.chess_board)
+    physical_state = ctx.board_module.getChessState()
+    if expected_state is None or physical_state is None:
+        return False
+    try:
+        physical_len = len(physical_state)
+    except TypeError:
+        # Unreadable occupancy (tests, a failed state query) must not swallow a PLACE.
+        return False
+    if physical_len != 64:
+        return False
+    return ChessGameState.states_match(physical_state, expected_state)
+
+
 def process_field_event(
     ctx: FieldEventContext, piece_event: int, field: int, time_in_seconds: float
 ) -> None:
@@ -432,6 +458,23 @@ def process_field_event(
         # Only treat this as a move start if the square has at least one legal move.
         if any(move.from_square == field for move in ctx.chess_board.legal_moves):
             ctx.move_state.source_square = field
+
+    # PLACE with no move in progress on a board that already matches: reed bounce,
+    # trailing duplicate after occupancy already accepted the move, or a ghost
+    # PLACE on an occupied square. Forming a destination-only move from this
+    # enters correction mode -- Lichess rejects it unless the square is the
+    # pending destination, which a bounce on the source or after turn-switch
+    # never is. A real missed-lift move vacates a source square, so occupancy
+    # no longer matches and this guard does not fire. Checked before
+    # _try_execute_normal_move_from_physical_state, which clears source_square
+    # on a put-back; that PLACE must still reach the player so the lift buffer
+    # is cleared.
+    if not is_lift and _place_is_noise_on_matching_board(ctx):
+        log.info(
+            f"[GameManager.receive_field] PLACE {field_name} while physical board already "
+            "matches logical position and no move is in progress - ignoring"
+        )
+        return
 
     # BOARD STATE VALIDATION FOR NORMAL MOVES (must happen BEFORE forwarding to player)
     if pending_move is None and not is_lift:
